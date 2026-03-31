@@ -10,7 +10,7 @@ import {
   Alert,
   ScrollView,
 } from 'react-native';
-import { useAuth } from '../../../shared/hooks/useAuth';
+import { useAuth } from '../../../shared';
 import { useTheme } from '../../../app/providers/ThemeProvider';
 
 export default function LoginScreen() {

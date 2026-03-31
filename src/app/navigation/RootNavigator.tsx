@@ -2,7 +2,7 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, ActivityIndicator } from 'react-native';
-import { useAuth } from '../../shared/hooks/useAuth';
+import { useAuth } from '../../shared';
 import { useTheme } from '../providers/ThemeProvider';
 import LoginScreen from '../../pages/login/ui/LoginScreen';
 import LeadsPage from '../../pages/leads/ui/LeadsPage';

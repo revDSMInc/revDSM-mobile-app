@@ -9,10 +9,10 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../../../shared/hooks/useAuth';
+import { useAuth } from '../../../shared';
 import { useTheme } from '../../../app/providers/ThemeProvider';
-import { useLeadsData } from '../../../features/sales/hooks/useLeadsData';
-import type { Lead } from '../../../entities/lead/model/types';
+import { useLeadsData } from '../../../features/sales';
+import type { Lead } from '../../../entities/lead';
 
 const STATUS_MAP: Record<string, { bg: string; text: string; label: string }> = {
   active: { bg: '#D3FCD2', text: '#118D57', label: 'Active' },
