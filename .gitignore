@@ -70,3 +70,4 @@ android/*.iml
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+yarn.lock
