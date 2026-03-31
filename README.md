@@ -1,97 +1,175 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# revDSM Sales — React Native App
 
-# Getting Started
+A **Sales Representative** mobile application built with React Native, following **Feature-Sliced Design (FSD)** architecture. The app mirrors the functionality and design of the [mhalt-revdsm-frontend](https://github.com/your-org/mhalt-revdsm-frontend) web application, adapted for mobile.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+---
 
-## Step 1: Start Metro
+## Tech Stack
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+| Layer | Technology |
+|-------|-----------|
+| Framework | React Native 0.84 |
+| Language | TypeScript |
+| Styling | NativeWind (Tailwind CSS for RN) |
+| Navigation | React Navigation (Native Stack) |
+| Auth | JWT via Axios + AsyncStorage |
+| HTTP Client | Axios |
+| Code Quality | Prettier |
+| Architecture | Feature-Sliced Design (FSD) |
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+---
 
-```sh
-# Using npm
-npm start
+## Architecture — Feature-Sliced Design (FSD)
 
-# OR using Yarn
-yarn start
+The codebase strictly follows [FSD](https://feature-sliced.design/) layer rules. Each layer can **only import from layers below it**. No cross-slice imports between siblings.
+
+```
+src/
+├── app/                          ← Initialization: providers, navigation
+│   ├── navigation/
+│   │   └── RootNavigator.tsx     ← Auth-gated navigation
+│   └── providers/
+│       ├── AuthProvider.tsx      ← JWT auth state & session management
+│       └── ThemeProvider.tsx     ← Dark / Light theme (follows device)
+│
+├── pages/                        ← Screen composition (UI only, no business logic)
+│   ├── leads/
+│   │   └── ui/LeadsPage.tsx      ← Main page shown after login
+│   └── login/
+│       └── ui/LoginScreen.tsx    ← JWT login form
+│
+├── features/                     ← Business logic / user scenarios
+│   └── sales/
+│       ├── index.ts              ← Public API
+│       └── hooks/
+│           └── useLeadsData.ts   ← Fetches leads from API
+│
+├── entities/                     ← Business entity types & models
+│   └── lead/
+│       ├── index.ts
+│       └── model/types.ts        ← Lead type definition
+│
+└── shared/                       ← Pure reusables — no business logic
+    ├── index.ts
+    ├── api/axios.ts              ← Axios instance + all API endpoints
+    ├── auth/context.ts           ← AuthContext definition & types
+    ├── hooks/useAuth.ts          ← useAuth() hook
+    └── config/
+        ├── env.ts                ← API base URL config
+        └── theme.ts              ← Web-app matched colour palette tokens
 ```
 
-## Step 2: Build and run your app
+### Import Direction
+```
+app → pages → features → entities → shared
+```
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+---
 
-### Android
+## Environment Configuration
 
-```sh
-# Using npm
-npm run android
+Set the API base URL in `src/shared/config/env.ts`:
 
-# OR using Yarn
+```ts
+export const ENV = {
+  API_URL: 'https://staging-api.revdsm.com',
+};
+```
+
+Also mirrored in `.env`:
+```
+API_URL=https://staging-api.revdsm.com
+```
+
+---
+
+## Authentication
+
+JWT-based authentication mirroring the web app's `auth-provider.js`:
+
+1. On app start, `AuthProvider` checks `AsyncStorage` for an existing `accessToken`
+2. If found, calls `GET /company` to restore the session
+3. On login, calls `POST /company/login` → stores token → fetches user profile
+4. On logout, removes token and resets state
+5. `RootNavigator` shows `LoginScreen` or `LeadsPage` based on auth state
+
+---
+
+## Theme
+
+The app follows the device's dark/light mode automatically via `ThemeProvider`. The colour palette is directly mapped from the web app's `src/theme/palette.js` (MUI tokens → React Native style objects).
+
+| Token | Value |
+|-------|-------|
+| Primary | `#4CBB17` |
+| Secondary | `#8E33FF` |
+| Success | `#22C55E` |
+| Error | `#FF5630` |
+| Warning | `#FFAB00` |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js >= 22
+- React Native environment (Android Studio / Xcode)
+- Android device or emulator connected
+
+### Install
+
+```bash
+nvm use 22
+yarn install
+cd ios && pod install && cd ..
+```
+
+### Run
+
+```bash
+# Start Metro bundler
+yarn start --reset-cache
+
+# Run on Android
 yarn android
-```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
+# Run on iOS
 yarn ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+### Format Code
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+```bash
+npx prettier --write "src/**/*.{ts,tsx}" "App.tsx"
+```
 
-## Step 3: Modify your app
+---
 
-Now that you have successfully run the app, let's make changes!
+## Key API Endpoints
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/company/login` | POST | JWT login |
+| `/company` | GET | Fetch current user |
+| `/demo/v1/leads/sales-portal?repId={id}` | GET | Fetch leads for rep |
+| `/job-tracker` | GET | Fetch job tracker list |
+| `/appointments` | GET | Fetch appointments |
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+---
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## Screens
 
-## Congratulations! :tada:
+| Screen | Route | Description |
+|--------|-------|-------------|
+| Login | `Login` | Email/password JWT login |
+| Leads | `Leads` | Leads list with search, stats, pull-to-refresh |
 
-You've successfully run and modified your React Native App. :partying_face:
+---
 
-### Now what?
+## Code Quality
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+- **Prettier** config in `.prettierrc` — single quotes, 100 char width, trailing commas
+- **TypeScript** strict mode throughout
+- **FSD** layer rules enforced — no cross-feature or upward imports
+- Each feature slice exposes a public API via `index.ts`

@@ -1,0 +1,37 @@
+/** Web-app matched colour tokens — use via ThemeContext */
+export const PALETTE = {
+  primary: { main: '#4CBB17', light: '#5BE49B', dark: '#007867', contrastText: '#FFFFFF' },
+  secondary: { main: '#8E33FF', light: '#C684FF', dark: '#5119B7', contrastText: '#FFFFFF' },
+  success: { main: '#22C55E', light: '#77ED8B', dark: '#118D57', contrastText: '#FFFFFF' },
+  error: { main: '#FF5630', light: '#FFAC82', dark: '#B71D18', contrastText: '#FFFFFF' },
+  warning: { main: '#FFAB00', light: '#FFD666', dark: '#B76E00' },
+  info: { main: '#00B8D9', light: '#61F3F3', dark: '#006C9C', contrastText: '#FFFFFF' },
+  grey: {
+    0: '#FFFFFF',
+    100: '#F9FAFB',
+    200: '#F4F6F8',
+    300: '#DFE3E8',
+    400: '#C4CDD5',
+    500: '#919EAB',
+    600: '#637381',
+    700: '#454F5B',
+    800: '#212B36',
+    900: '#161C24',
+  },
+  light: {
+    background: '#FFFFFF',
+    surface: '#F4F6F8',
+    text: '#212B36',
+    textSecondary: '#637381',
+    border: '#DFE3E8',
+    card: '#FFFFFF',
+  },
+  dark: {
+    background: '#161C24',
+    surface: '#212B36',
+    text: '#FFFFFF',
+    textSecondary: '#919EAB',
+    border: '#454F5B',
+    card: '#212B36',
+  },
+} as const;
