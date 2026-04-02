@@ -1,4 +1,4 @@
-# revDSM Sales — CommoPlast Mobile Application
+# revDSM Sales — Mobile Application
 
 This report provides a comprehensive breakdown of the architecture, folder structure, and the systematic workflow followed in the CommoPlast Mobile Application.
 
