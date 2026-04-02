@@ -1,175 +1,101 @@
-# revDSM Sales — React Native App
+# revDSM Sales — CommoPlast Mobile Application
 
-A **Sales Representative** mobile application built with React Native, following **Feature-Sliced Design (FSD)** architecture. The app mirrors the functionality and design of the [mhalt-revdsm-frontend](https://github.com/your-org/mhalt-revdsm-frontend) web application, adapted for mobile.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Framework | React Native 0.84 |
-| Language | TypeScript |
-| Styling | NativeWind (Tailwind CSS for RN) |
-| Navigation | React Navigation (Native Stack) |
-| Auth | JWT via Axios + AsyncStorage |
-| HTTP Client | Axios |
-| Code Quality | Prettier |
-| Architecture | Feature-Sliced Design (FSD) |
+This report provides a comprehensive breakdown of the architecture, folder structure, and the systematic workflow followed in the CommoPlast Mobile Application.
 
 ---
 
-## Architecture — Feature-Sliced Design (FSD)
+## 🏗️ Project Architecture
 
-The codebase strictly follows [FSD](https://feature-sliced.design/) layer rules. Each layer can **only import from layers below it**. No cross-slice imports between siblings.
+The application follows a **Modular Layered Architecture**, which ensures a strict separation of concerns between the user interface, data management, and business logic.
 
-```
+- **Presentation Layer** (`screens/`, `widgets/`): Focused purely on UI/UX using React Native components and stylized via a centralized theme.
+- **Domain Layer** (`redux/`): Manages global application state (authentication, user profile, global data) using Redux Toolkit (RTK).
+- **Data Layer** (`services/`): Handles all external communications. It includes an API service layer built on Axios with interceptors for token management.
+- **Navigation Layer** (`navigation/`): Orchestrates screen transitions and authentication-gated routing.
+- **Utility Layer** (`hooks/`, `utils/`, `config/`): Contains reusable logic, environment variables, and helper functions.
+
+---
+
+## 📂 Folder Structure Overview
+
+```text
 src/
-├── app/                          ← Initialization: providers, navigation
-│   ├── navigation/
-│   │   └── RootNavigator.tsx     ← Auth-gated navigation
-│   └── providers/
-│       ├── AuthProvider.tsx      ← JWT auth state & session management
-│       └── ThemeProvider.tsx     ← Dark / Light theme (follows device)
-│
-├── pages/                        ← Screen composition (UI only, no business logic)
-│   ├── leads/
-│   │   └── ui/LeadsPage.tsx      ← Main page shown after login
-│   └── login/
-│       └── ui/LoginScreen.tsx    ← JWT login form
-│
-├── features/                     ← Business logic / user scenarios
-│   └── sales/
-│       ├── index.ts              ← Public API
-│       └── hooks/
-│           └── useLeadsData.ts   ← Fetches leads from API
-│
-├── entities/                     ← Business entity types & models
-│   └── lead/
-│       ├── index.ts
-│       └── model/types.ts        ← Lead type definition
-│
-└── shared/                       ← Pure reusables — no business logic
-    ├── index.ts
-    ├── api/axios.ts              ← Axios instance + all API endpoints
-    ├── auth/context.ts           ← AuthContext definition & types
-    ├── hooks/useAuth.ts          ← useAuth() hook
-    └── config/
-        ├── env.ts                ← API base URL config
-        └── theme.ts              ← Web-app matched colour palette tokens
-```
-
-### Import Direction
-```
-app → pages → features → entities → shared
+├── assets/              # Static files (images, icons, fonts)
+├── config/              # App constants, types, and environment configs
+│   ├── types/           # Global TypeScript interfaces
+│   └── env.ts           # API base URL config
+├── hooks/               # Custom React hooks (e.g., useAuth)
+├── locales/             # Multi-language support (i18n)
+├── navigation/          # Navigation stacks (Auth, App, Drawer)
+│   └── RootNavigator.tsx # Main entry point for navigation
+├── redux/               # Global state management
+│   ├── reducer/         # Redux Slices (Auth, Dashboard, etc.)
+│   └── store.ts         # Redux store & persist configuration
+├── screens/             # View components grouped by feature
+│   ├── auth/            # Login, Signup, OTP
+│   └── dashboard/       # Main App views (Leads, Profile, etc.)
+├── services/            # Backend integration
+│   ├── api/             # API endpoint definitions (Axios instance)
+│   └── local.storage/   # Async storage wrappers
+├── theme/               # Global styles (Colors, Typography, Spacing)
+│   ├── ThemeProvider.tsx # Theme context provider
+│   └── theme.ts         # Visual design tokens
+├── utils/               # Formatters, Validators, and Helpers
+└── widgets/             # Generic reusable components (Buttons, Inputs, Cards)
 ```
 
 ---
 
-## Environment Configuration
+## 🛠️ Step-by-Step Implementation Workflow
 
-Set the API base URL in `src/shared/config/env.ts`:
+When building a new module or feature, follow this exact sequence to maintain architectural integrity:
 
-```ts
-export const ENV = {
-  API_URL: 'https://staging-api.revdsm.com',
-};
-```
+### Step 1: Define the API Service
+Define your async functions and endpoints in `src/services/api/index.ts` (or a feature-specific file in that directory).
 
-Also mirrored in `.env`:
-```
-API_URL=https://staging-api.revdsm.com
-```
+### Step 2: Set Up Global State
+Create a slice in `src/redux/reducer/[feature].reducer.ts`.
+- Use `createSlice` from `@reduxjs/toolkit`.
+- Import and register the reducer in `src/redux/store.ts`.
 
----
+### Step 3: Configure Navigation
+If the new feature requires a new screen:
+- Add the screen component to the appropriate stack in `src/navigation/RootNavigator.tsx`.
 
-## Authentication
+### Step 4: Build Reusable Widgets
+Break down the UI into smaller pieces.
+- Create components in `src/widgets/`.
+- Apply styles using tokens from `src/theme/`.
 
-JWT-based authentication mirroring the web app's `auth-provider.js`:
-
-1. On app start, `AuthProvider` checks `AsyncStorage` for an existing `accessToken`
-2. If found, calls `GET /company` to restore the session
-3. On login, calls `POST /company/login` → stores token → fetches user profile
-4. On logout, removes token and resets state
-5. `RootNavigator` shows `LoginScreen` or `LeadsPage` based on auth state
-
----
-
-## Theme
-
-The app follows the device's dark/light mode automatically via `ThemeProvider`. The colour palette is directly mapped from the web app's `src/theme/palette.js` (MUI tokens → React Native style objects).
-
-| Token | Value |
-|-------|-------|
-| Primary | `#4CBB17` |
-| Secondary | `#8E33FF` |
-| Success | `#22C55E` |
-| Error | `#FF5630` |
-| Warning | `#FFAB00` |
+### Step 5: Implement the Screen
+Create the screen in `src/screens/[module]/[ScreenName].tsx`.
+- Use the `useAuth` hook or custom hooks from `src/hooks/` to trigger API calls.
+- Assemble the widgets to form the layout.
 
 ---
 
-## Getting Started
+## 🔐 Authentication & Session Security
 
-### Prerequisites
-
-- Node.js >= 22
-- React Native environment (Android Studio / Xcode)
-- Android device or emulator connected
-
-### Install
-
-```bash
-nvm use 22
-yarn install
-cd ios && pod install && cd ..
-```
-
-### Run
-
-```bash
-# Start Metro bundler
-yarn start --reset-cache
-
-# Run on Android
-yarn android
-
-# Run on iOS
-yarn ios
-```
-
-### Format Code
-
-```bash
-npx prettier --write "src/**/*.{ts,tsx}" "App.tsx"
-```
+- **JWT Persistence**: Tokens are stored in `AsyncStorage` and persisted via `redux-persist` in the auth slice.
+- **Axios Interceptors**: All requests automatically attach the `Authorization: Bearer [JWT]` header.
+- **Session Conflict**: If a 401 Unauthorized error is received (e.g., logged in from another device), the app clears the session and notifies the user before redirecting to the login screen.
 
 ---
 
-## Key API Endpoints
+## 🎨 Theme & Design
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/company/login` | POST | JWT login |
-| `/company` | GET | Fetch current user |
-| `/demo/v1/leads/sales-portal?repId={id}` | GET | Fetch leads for rep |
-| `/job-tracker` | GET | Fetch job tracker list |
-| `/appointments` | GET | Fetch appointments |
-
----
-
-## Screens
-
-| Screen | Route | Description |
-|--------|-------|-------------|
-| Login | `Login` | Email/password JWT login |
-| Leads | `Leads` | Leads list with search, stats, pull-to-refresh |
+The app uses a centralized theme system in `src/theme/`.
+- **Dynamic Mode**: Supports Light and Dark modes based on device settings.
+- **Standard Palette**:
+  - Primary: `#4CBB17`
+  - Success: `#22C55E`
+  - Error: `#FF5630`
 
 ---
 
-## Code Quality
+## 🚀 Getting Started
 
-- **Prettier** config in `.prettierrc` — single quotes, 100 char width, trailing commas
-- **TypeScript** strict mode throughout
-- **FSD** layer rules enforced — no cross-feature or upward imports
-- Each feature slice exposes a public API via `index.ts`
+1. **Install Dependencies**: `npm install`
+2. **Start Metro**: `npm start`
+3. **Run on Android**: `npm run android`
+4. **Run on iOS**: `npm run ios` (and `cd ios && pod install`)
