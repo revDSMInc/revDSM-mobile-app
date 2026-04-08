@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Modal, TouchableOpacity, Pressable } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
 import { useAuth } from '../../../../hooks/useAuth';
 import { useTheme } from '../../../../theme/ThemeProvider';
 
@@ -22,55 +22,130 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable className="flex-1 bg-black/30 items-end pr-5 pt-20" onPress={onClose}>
-        <View 
-          className="w-56 rounded-3xl overflow-hidden shadow-2xl" 
-          style={{ backgroundColor: isDark ? colors.surface : '#fff' }}
+      <Pressable style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]} onPress={onClose}>
+        <View
+          style={[
+            styles.container,
+            {
+              backgroundColor: isDark ? colors.surface : '#fff',
+            },
+          ]}
         >
           {/* User Profile Info */}
-          <View className="p-5 pb-4">
-            <Text className="text-sm font-black" style={{ color: colors.text }} numberOfLines={1}>
+          <View className="px-5 py-5 pb-4">
+            <Text
+              className="text-sm font-black uppercase tracking-widest"
+              style={{ color: colors.text }}
+              numberOfLines={1}
+            >
               {user ? `${user.firstName} ${user.lastName}` : ''}
             </Text>
-            <Text className="text-[11px] mt-1 opacity-60 font-bold" style={{ color: colors.textSecondary }} numberOfLines={1}>
+            <Text
+              className="text-[10px] font-bold mt-1 opacity-60"
+              style={{ color: colors.textSecondary }}
+              numberOfLines={1}
+            >
               {user?.email}
             </Text>
           </View>
 
-          <View className="h-[1px] mx-2" style={{ backgroundColor: isDark ? colors.border : '#E5E8EB' }} />
+          <View
+            className="h-px mx-2"
+            style={{ backgroundColor: isDark ? colors.border : '#E5E8EB' }}
+          />
 
           {/* Menu Items */}
-          <View className="p-3">
-            <TouchableOpacity 
-              onPress={() => { onClose(); onNavigate('Profile'); }} 
+          <View className="p-2">
+            <TouchableOpacity
+              onPress={() => {
+                onClose();
+                onNavigate('Profile');
+              }}
               className="p-3 rounded-2xl"
             >
-              <Text className="text-[13px] font-black" style={{ color: colors.text }}>Account Settings</Text>
+              <Text
+                className="text-[13px] font-black uppercase tracking-widest"
+                style={{ color: colors.text }}
+              >
+                Account Settings
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              onPress={() => { onClose(); onNavigate('JobTracker'); }} 
+            <TouchableOpacity
+              onPress={() => {
+                onClose();
+                onNavigate('JobTracker');
+              }}
               className="p-3 rounded-2xl"
             >
-              <Text className="text-[13px] font-black" style={{ color: colors.text }}>Job Tracker</Text>
+              <Text
+                className="text-[13px] font-black uppercase tracking-widest"
+                style={{ color: colors.text }}
+              >
+                Job Tracker
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              onPress={() => { onClose(); onNavigate('Learning'); }} 
+            <TouchableOpacity
+              onPress={() => {
+                onClose();
+                onNavigate('MyLearning');
+              }}
               className={`p-3 rounded-2xl ${hasLmsPermission ? '' : 'opacity-40'}`}
             >
-              <Text className="text-[13px] font-black" style={{ color: colors.text }}>My Learning</Text>
+              <Text
+                className="text-[13px] font-black uppercase tracking-widest"
+                style={{ color: colors.text }}
+              >
+                My Learning
+              </Text>
             </TouchableOpacity>
           </View>
 
-          <View className="h-[1px] mx-2" style={{ backgroundColor: isDark ? colors.border : '#E5E8EB' }} />
+          <View
+            className="h-px mx-2"
+            style={{ backgroundColor: isDark ? colors.border : '#E5E8EB' }}
+          />
 
           {/* Logout Button */}
-          <TouchableOpacity onPress={handleLogout} className="p-4 m-2 items-center rounded-2xl bg-red-500/10">
-            <Text className="text-[13px] font-black" style={{ color: colors.error.main }}>Logout</Text>
+          <TouchableOpacity
+            onPress={handleLogout}
+            style={[styles.logoutBtn, { backgroundColor: colors.error.main + '20' }]}
+          >
+            <Text
+              className="text-[13px] font-black uppercase tracking-widest"
+              style={{ color: colors.error.main }}
+            >
+              Logout
+            </Text>
           </TouchableOpacity>
         </View>
       </Pressable>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    alignItems: 'flex-end',
+    paddingTop: 80,
+    paddingRight: 20,
+  },
+  container: {
+    width: 224,
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  logoutBtn: {
+    padding: 16,
+    margin: 8,
+    alignItems: 'center',
+    borderRadius: 16,
+  },
+});

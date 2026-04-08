@@ -1,0 +1,73 @@
+// Pricing data constants mirrored from the web frontend
+export const pricing = {
+  gutters: {
+    '5_inch_all_stories': 22.0,
+    '6_inch_all_stories': 23.0,
+    '7_inch_all_stories': 31.0,
+  },
+  filters: {
+    versa_6: { 1: 40.0, 2: 42.0, 3: 44.0 },
+    versa_7: { 1: 40.0, 2: 42.0, 3: 44.0 },
+    filter_4_5: { 1: 39.0, 2: 41.0, 3: 43.0 },
+    versa_max_all_stories: 50.0,
+  },
+  filters2: {
+    versa_6: { 1: 14.5, 2: 14.5, 3: 14.5 },
+    versa_7: { 1: 14.5, 2: 14.5, 3: 14.5 },
+    filter_4_5: { 1: 14.5, 2: 14.5, 3: 14.5 },
+    versa_max_all_stories: 50.0,
+  },
+  extras: {
+    ribbedRoof: 4.0,
+    nailerBuildOut: 10.5,
+    sawzallHanger: 1.0,
+    removeProtection: 3.0,
+    wedges: 3.5,
+    straps: 3.5,
+    modifyHeight: 4.0,
+    csr: 7.0,
+    porchCeiling: 15.0,
+    trimWrap: 18.0,
+    vinylSoffit: 23.0,
+    cornersFilter: 30.0,
+    fasciaBoard: 25.0,
+    aluminumFasciaBoard: 25.0,
+    gutter7DsE: 30.0,
+    extendedSplashGuard: 5.0,
+    extendedSplashGuard032: 23.0,
+    groundSpout: 50.0,
+    extraLabor: 80.0,
+    replaceCorner: 100.0,
+  },
+  screens: 75.0,
+};
+
+export const markups: Record<number, number> = {
+  50: 0.5,
+  65: 0.65,
+  100: 1.0,
+  130: 1.3,
+};
+
+export const extrasList = [
+  { id: 'sawzallHanger', label: 'Sawzall Hanger', price: 1.0 },
+  { id: 'cornersFilter', label: 'Corners (Filter)', price: 30.0 },
+  { id: 'removeProtection', label: 'Remove Protection', price: 3.0 },
+  { id: 'ribbedRoof', label: 'Ribbed Roof', price: 4.0 },
+  { id: 'wedges', label: 'Wedges', price: 3.5 },
+  { id: 'straps', label: 'Straps', price: 3.5 },
+  { id: 'modifyHeight', label: 'Modify Height/R&R', price: 4.0 },
+  { id: 'csr', label: 'C-S-R', price: 7.0 },
+  { id: 'nailerBuildOut', label: 'Nailer Build Out', price: 10.5 },
+  { id: 'vinylSoffit', label: 'Vinyl Soffit', price: 23.0 },
+  { id: 'porchCeiling', label: 'Porch Ceiling Soffit (sqft)', price: 15.0 },
+  { id: 'fasciaBoard', label: 'Fascia Board', price: 25.0 },
+  { id: 'aluminumFasciaBoard', label: 'Aluminum 2"x2" Fascia Board', price: 25.0 },
+  { id: 'trimWrap', label: 'Trim Wrap [Fascia]', price: 18.0 },
+  { id: 'gutter7DsE', label: '7” Gutter & 4”x5” DS/E', price: 30.0 },
+  { id: 'extendedSplashGuard', label: 'Extended Splash Guard', price: 5.0 },
+  { id: 'extendedSplashGuard032', label: 'Extended .032 Splash Guard', price: 23.0 },
+  { id: 'replaceCorner', label: 'Replace Corner Miter', price: 100.0 },
+  { id: 'groundSpout', label: 'GroundSpout', price: 50.0 },
+  { id: 'extraLabor', label: 'Extra Labor', price: 80.0 },
+];

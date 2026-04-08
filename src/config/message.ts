@@ -68,7 +68,7 @@ export const FlashMessage = {
       icon: 'info',
       duration: 3000,
     });
-  }
+  },
 };
 
 /**

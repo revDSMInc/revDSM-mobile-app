@@ -25,5 +25,6 @@ export const AuthService = {
   updateProfile: (data: any): Promise<AxiosResponse<any>> => api.patch(AuthEndpoints.update, data),
   getTfaSettings: (): Promise<AxiosResponse<any>> => api.get(AuthEndpoints.tfaSettings),
   disableTfa: (): Promise<AxiosResponse<any>> => api.post(AuthEndpoints.tfaDisable),
-  setupTfa: (method: string): Promise<AxiosResponse<any>> => api.post(AuthEndpoints.tfaSetup(method)),
+  setupTfa: (method: string): Promise<AxiosResponse<any>> =>
+    api.post(AuthEndpoints.tfaSetup(method)),
 };

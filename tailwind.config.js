@@ -5,6 +5,11 @@ module.exports = {
   presets: [require("nativewind/preset")],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['PublicSans-Regular'],
+        bold: ['PublicSans-Bold'],
+        black: ['PublicSans-Black'],
+      },
       colors: {
         primary: {
           lighter: '#C8FAD6',

@@ -7,7 +7,9 @@ import { setSessionHeader } from '../services/api';
 
 export const useAuth = () => {
   const dispatch = useDispatch();
-  const { user, isAuthenticated, loading, isInitialized } = useSelector((state: RootState) => state.auth);
+  const { user, isAuthenticated, loading, isInitialized } = useSelector(
+    (state: RootState) => state.auth
+  );
 
   /**
    * Universal Logout Utility

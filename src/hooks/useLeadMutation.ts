@@ -50,14 +50,21 @@ export const useSubmitJobBuilderMutation = () => {
 export const useWorkLeadMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ leadId, userId, status = null }: { leadId: string; userId: string; status?: string | null }) => 
-      LeadService.workLead(leadId, userId, status),
+    mutationFn: ({
+      leadId,
+      userId,
+      status = null,
+    }: {
+      leadId: string;
+      userId: string;
+      status?: string | null;
+    }) => LeadService.workLead(leadId, userId, status),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       FlashMessage.success('Success', res.data?.message || 'Work status updated');
     },
     onError: (err: any) => {
       FlashMessage.error('Error', err?.message || 'Failed to update work status');
-    }
+    },
   });
 };

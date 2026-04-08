@@ -1,9 +1,12 @@
 import './global.css';
 import React from 'react';
+import { View, StyleSheet } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider as ReduxProvider } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from './src/redux/store';
+import { NavigationContainer } from '@react-navigation/native';
 import { ThemeProvider } from './src/theme/ThemeProvider';
 import RootNavigator from './src/navigation';
 import { useAppInitialization } from './src/hooks/useAppInitialization';
@@ -21,7 +24,9 @@ function AppContent() {
   useAppInitialization();
   return (
     <QueryClientProvider client={queryClient}>
-      <RootNavigator />
+      <NavigationContainer>
+          <RootNavigator />
+      </NavigationContainer>
       <FlashMessage position="top" />
     </QueryClientProvider>
   );
@@ -30,13 +35,21 @@ function AppContent() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <ReduxProvider store={store}>
-        <PersistGate loading={null} persistor={persistor}>
-          <ThemeProvider>
-            <AppContent />
-          </ThemeProvider>
-        </PersistGate>
-      </ReduxProvider>
+      <GestureHandlerRootView style={styles.root}>
+        <ReduxProvider store={store}>
+          <PersistGate loading={null} persistor={persistor}>
+            <ThemeProvider>
+              <AppContent />
+            </ThemeProvider>
+          </PersistGate>
+        </ReduxProvider>
+      </GestureHandlerRootView>
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1
+  }
+});

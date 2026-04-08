@@ -5,7 +5,6 @@ interface Props {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
   behavior?: 'padding' | 'height' | 'position';
-  className?: string;
   isModal?: boolean; // New prop to handle modal-specific flickering
 }
 
@@ -13,12 +12,11 @@ interface Props {
  * Standardized KeyboardAvoidingView wrapper
  * Consistent behavior across Android/iOS.
  */
-export const GlobalKeyboardAvoidingView: React.FC<Props> = ({ 
-  children, 
-  style, 
-  behavior, 
-  className,
-  isModal
+export const GlobalKeyboardAvoidingView: React.FC<Props> = ({
+  children,
+  style,
+  behavior,
+  isModal,
 }) => {
   // On iOS, 'padding' is the gold standard for everything.
   // On Android Modals, they often don't respect adjustResize automatically,
@@ -30,14 +28,13 @@ export const GlobalKeyboardAvoidingView: React.FC<Props> = ({
     if (isModal) return 'padding'; // Padding is less jumpy than height on Android
     return undefined;
   };
-  
+
   return (
     <KeyboardAvoidingView
-      className={className}
-      style={style || (!className ? styles.container : undefined)}
+      style={[styles.container, style]}
       behavior={getBehavior()}
-      // Offset by 20 on Android to prevent input from being too close to the keyboard
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : (isModal ? 24 : 0)}
+      // Offset by 24 on Android to prevent input from being too close to the keyboard
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : isModal ? 24 : 0}
       // This is crucial for Android to avoid flickering during layout transitions
       enabled
     >

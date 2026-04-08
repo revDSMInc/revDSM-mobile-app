@@ -43,15 +43,15 @@ axiosInstance.interceptors.response.use(
 
       // Do NOT trigger global logout logic for login failures
       if (!isLoginRequest) {
-        const isUserNotFound = 
-          errorMsg.toLowerCase().includes('user not found') || 
+        const isUserNotFound =
+          errorMsg.toLowerCase().includes('user not found') ||
           errorMsg.toLowerCase().includes('no user found') ||
           errorMsg.toLowerCase().includes('only sales representative');
 
         if (!isUserNotFound) {
           // Unified Flash Message before logout
           FlashMessage.error(
-            "Session Expired",
+            'Session Expired',
             "Your session has expired or you've logged in on another device. Please log in again."
           );
 
@@ -74,11 +74,16 @@ const clearSession = async () => {
 
 // Generic Methods
 export const api = {
-  get: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => axiosInstance.get(url, config),
-  post: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => axiosInstance.post(url, data, config),
-  put: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => axiosInstance.put(url, data, config),
-  patch: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => axiosInstance.patch(url, data, config),
-  delete: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => axiosInstance.delete(url, config),
+  get: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+    axiosInstance.get(url, config),
+  post: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+    axiosInstance.post(url, data, config),
+  put: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+    axiosInstance.put(url, data, config),
+  patch: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+    axiosInstance.patch(url, data, config),
+  delete: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
+    axiosInstance.delete(url, config),
 };
 
 export const setSessionHeader = async (token: string | null) => {

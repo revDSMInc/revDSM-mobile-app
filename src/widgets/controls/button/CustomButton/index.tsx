@@ -1,5 +1,12 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle } from 'react-native';
+import {
+  TouchableOpacity,
+  Text,
+  ActivityIndicator,
+  ViewStyle,
+  TextStyle,
+  StyleSheet,
+} from 'react-native';
 import { useTheme } from '../../../../theme/ThemeProvider';
 
 interface Props {
@@ -7,24 +14,24 @@ interface Props {
   title: string;
   loading?: boolean;
   disabled?: boolean;
-  style?: ViewStyle;
-  textStyle?: TextStyle;
+  style?: ViewStyle | ViewStyle[];
+  textStyle?: TextStyle | TextStyle[];
   variant?: 'primary' | 'secondary' | 'error';
 }
 
-export const CustomButton: React.FC<Props> = ({ 
-  onPress, 
-  title, 
-  loading, 
-  disabled, 
-  style, 
-  textStyle, 
-  variant = 'primary' 
+export const CustomButton: React.FC<Props> = ({
+  onPress,
+  title,
+  loading,
+  disabled,
+  style,
+  textStyle,
+  variant = 'primary',
 }) => {
   const { colors } = useTheme();
 
-  const getBackgroundColor = () => {
-    if (disabled || loading) return colors.textSecondary + '50';
+  const getBgColor = () => {
+    if (disabled || loading) return colors.textSecondary + '40';
     if (variant === 'secondary') return colors.secondary.main;
     if (variant === 'error') return colors.error.main;
     return colors.primary.main;
@@ -34,32 +41,40 @@ export const CustomButton: React.FC<Props> = ({
     <TouchableOpacity
       onPress={onPress}
       disabled={disabled || loading}
-      style={[
-        styles.button,
-        { backgroundColor: getBackgroundColor() },
-        style,
-      ]}
       activeOpacity={0.8}
+      style={[
+        styles.btn,
+        {
+          backgroundColor: getBgColor(),
+        },
+        style as any,
+      ]}
     >
       {loading ? (
         <ActivityIndicator color="#fff" />
       ) : (
-        <Text style={[styles.text, { color: '#fff' }, textStyle]}>{title}</Text>
+        <Text
+          className="text-white text-sm font-black uppercase tracking-[1.5px]"
+          style={textStyle}
+        >
+          {title}
+        </Text>
       )}
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
-  button: {
+  btn: {
     height: 52,
-    borderRadius: 12,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
-  },
-  text: {
-    fontSize: 15,
-    fontWeight: '700',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
   },
 });

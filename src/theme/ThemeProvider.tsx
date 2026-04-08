@@ -30,10 +30,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
   const mode: ThemeMode = isDark ? 'dark' : 'light';
-  const colors = useMemo(() => ({
-    ...PALETTE,
-    ...(isDark ? PALETTE.dark : PALETTE.light),
-  }), [isDark]);
+  const colors = useMemo(
+    () => ({
+      ...PALETTE,
+      ...(isDark ? PALETTE.dark : PALETTE.light),
+    }),
+    [isDark]
+  );
 
   const value = useMemo(() => ({ mode, colors, isDark }), [mode, colors, isDark]);
 

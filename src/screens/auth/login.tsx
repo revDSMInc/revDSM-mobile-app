@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ImageBackground } from 'react-native';
 import { FlashMessage } from '../../config/message';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { GlobalKeyboardAvoidingView } from '../../widgets/common/keyboard/GlobalKeyboard';
 import { CustomInput } from '../../widgets/controls/input/CustomInput';
 import { CustomButton } from '../../widgets/controls/button/CustomButton';
-
+import Logo from '../../assets/svgs/logo';
 import { useLoginMutation } from '../../hooks/useAuthMutation';
 import { validateEmail } from '../../utils/validation';
 
@@ -36,74 +36,72 @@ export default function LoginScreen() {
   };
 
   return (
-    <GlobalKeyboardAvoidingView className="flex-1" style={{ backgroundColor: colors.background }}>
-      <ScrollView
-        contentContainerClassName="flex-grow justify-center px-6"
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Brand */}
-        <View className="items-center mb-10">
-          <View
-            className="w-16 h-16 rounded-2xl items-center justify-center mb-4 shadow-lg"
-            style={{ backgroundColor: colors.primary.main }}
-          >
-            <Text className="text-white text-3xl font-black">R</Text>
-          </View>
-          <Text className="text-3xl font-black tracking-tighter" style={{ color: colors.text }}>
-            revDSM
-          </Text>
-          <Text className="text-xs mt-1 font-bold opacity-60" style={{ color: colors.textSecondary }}>
-            Sales Representative Portal
-          </Text>
-        </View>
-
-        {/* Form Card */}
-        <View
-          className="rounded-3xl p-6 shadow-xl border"
-          style={{
-            backgroundColor: isDark ? colors.surface : colors.card,
-            shadowColor: '#000',
-            shadowOpacity: isDark ? 0 : 0.08,
-            shadowRadius: 20,
-            elevation: 8,
-            borderColor: isDark ? colors.border : 'transparent',
-          }}
+    <ImageBackground
+      style={[
+        {
+          flexGrow: 1,
+          justifyContent: 'center',
+          backgroundColor: colors.background,
+        },
+      ]}
+      source={require('../../assets/images/home/login_bg.webp')}
+      imageStyle={{ opacity: 0.06, objectFit: 'cover' }}
+    >
+      <GlobalKeyboardAvoidingView style={styles.root}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
         >
-          <CustomInput
-            label="Email"
-            placeholder="your@email.com"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
+          {/* Brand */}
+          <View className="items-center mt-[30%]">
+            <Logo className="h-12 object-contain" />
+          </View>
 
-          <View className="relative">
+          {/* Form Card */}
+          <View className="flex-1 justify-center">
+            <Text className="text-2xl font-semibold mb-8" style={{ color: colors.text }}>
+              Sign in to <Text style={{ color: colors.primary.main }}>rev</Text>DSM
+            </Text>
+            <CustomInput
+              label="Email"
+              placeholder="Enter Your Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              rightIcon="mail-outline"
+            />
+
             <CustomInput
               label="Password"
-              placeholder="••••••••"
+              placeholder="Enter your password"
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
+              rightIcon={showPassword ? 'eye-off-outline' : 'eye-outline'}
+              onRightIconPress={() => setShowPassword((p) => !p)}
             />
-            <TouchableOpacity
-              onPress={() => setShowPassword((p) => !p)}
-              className="absolute right-3 top-10 p-1"
-            >
-              <Text className="text-[11px] font-black" style={{ color: colors.primary.main }}>
-                {showPassword ? 'HIDE' : 'SHOW'}
-              </Text>
-            </TouchableOpacity>
-          </View>
 
-          <CustomButton
-            title="Login"
-            onPress={handleLogin}
-            loading={loginMutation.isPending}
-            style={{ marginTop: 12 }}
-          />
-        </View>
-      </ScrollView>
-    </GlobalKeyboardAvoidingView>
+            <CustomButton
+              title="Login"
+              onPress={handleLogin}
+              loading={loginMutation.isPending}
+              style={{ marginTop: 12 }}
+            />
+          </View>
+        </ScrollView>
+      </GlobalKeyboardAvoidingView>
+    </ImageBackground>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    paddingHorizontal: 24,
+  },
+});
