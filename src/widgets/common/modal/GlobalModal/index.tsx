@@ -10,6 +10,8 @@ interface GlobalModalProps {
   onClose: () => void;
   confirmText?: string;
   onConfirm?: () => void;
+  cancelText?: string;
+  onCancel?: () => void;
   children?: React.ReactNode;
 }
 
@@ -21,6 +23,8 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
   onClose,
   confirmText = 'OK',
   onConfirm,
+  cancelText = 'Cancel',
+  onCancel,
   children,
 }) => {
   const { colors, isDark } = useTheme();
@@ -28,11 +32,11 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
   const getHeaderColor = () => {
     switch (type) {
       case 'error':
-        return colors.error.main;
+        return '#FF5630';
       case 'success':
-        return colors.success?.main || '#4CBB17';
+        return '#22C55E';
       case 'warning':
-        return colors.warning?.main || '#FF6B35';
+        return '#FFAB00';
       default:
         return colors.primary.main;
     }
@@ -40,12 +44,12 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]} onPress={onClose}>
+      <Pressable style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]} onPress={onClose}>
         <View
           style={[
             styles.container,
             {
-              backgroundColor: isDark ? colors.surface : '#fff',
+              backgroundColor: isDark ? '#1C1C1E' : '#fff',
             },
           ]}
         >
@@ -63,8 +67,11 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
 
           <View className="px-6 py-8 items-center">
             <Text
-              className="text-sm text-center leading-5 opacity-60"
-              style={{ color: colors.textSecondary, marginBottom: children ? 20 : 0 }}
+              className="text-sm text-center leading-5 opacity-80"
+              style={{
+                color: isDark ? '#fff' : colors.textSecondary,
+                marginBottom: children ? 20 : 0,
+              }}
             >
               {message}
             </Text>
@@ -72,11 +79,24 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
           </View>
 
           <View style={[styles.footer, { borderTopColor: isDark ? colors.border : '#eee' }]}>
+            {onCancel && (
+              <TouchableOpacity
+                onPress={onCancel}
+                style={[
+                  styles.btn,
+                  { backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8', marginRight: 12 },
+                ]}
+              >
+                <Text style={[styles.btnText, { color: isDark ? '#fff' : '#637381' }]}>
+                  {cancelText}
+                </Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={onConfirm || onClose}
-              style={[styles.confirmBtn, { backgroundColor: getHeaderColor() }]}
+              style={[styles.btn, { backgroundColor: getHeaderColor(), flex: onCancel ? 1 : 0 }]}
             >
-              <Text style={styles.confirmText}>{confirmText}</Text>
+              <Text style={styles.btnText}>{confirmText}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -104,26 +124,24 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   footer: {
-    padding: 24,
+    padding: 20,
     borderTopWidth: 1,
     flexDirection: 'row',
+    alignItems: 'center',
+  },
+  btn: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  confirmBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 40,
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  confirmText: {
+  btnText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     textTransform: 'uppercase',
-    letterSpacing: 1.2,
+    letterSpacing: 1.1,
   },
 });

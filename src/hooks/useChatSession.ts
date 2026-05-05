@@ -1,129 +1,284 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { AppState } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Socket } from 'socket.io-client';
-import { GiftedChat } from 'react-native-gifted-chat';
+/**
+ * useChatSession — Room-level subscription hook
+ *
+ * Does NOT own the socket. The socket is managed globally by SocketManager.
+ * This hook only:
+ *   1. Joins/leaves the specific chat room
+ *   2. Subscribes to room events (messages, reactions, pins)
+ *   3. Loads messages via REST
+ */
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Vibration } from 'react-native';
+import { IMessage } from 'react-native-gifted-chat';
 import ChatService from '../services/api/ChatService';
+import SocketManager from '../services/SocketManager';
 
 export const useChatSession = (
   initialChatId: string | null,
   leadId: string | undefined,
-  isChannel: boolean,
+  isChannel: boolean = false,
   user: any
 ) => {
   const [chatId, setChatId] = useState<string | null>(initialChatId);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<IMessage[]>([]);
   const [pinnedMessages, setPinnedMessages] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [participants, setParticipants] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [isConnected, setIsConnected] = useState(SocketManager.isConnected());
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const [hasMore, setHasMore] = useState(true);
-  const [limit, setLimit] = useState(20);
-  const [typingUsers, setTypingUsers] = useState<any[]>([]);
-  const socketRef = useRef<Socket | null>(null);
+  const [limit, setLimit] = useState(30);
+
   const currentUserId = user?._id || user?.id || 'ghost';
 
-  const patchMessage = useCallback((id: string, patch: any) => {
-    setMessages((prev) => prev.map((m) => (m._id === id || m.id === id ? { ...m, ...patch } : m)));
-  }, []);
+  const cleanFilePath = (filePath: string): string => {
+    let p = filePath;
+    if (!p) return '';
+    p = p.replace(/^(file:\/\/|content:\/\/|data:)/, '');
+    const roots = ['chat/', 'leads/', 'files/', 'customer/', 'revdsm/'];
+    for (const root of roots) {
+      if (p.includes(root)) return p.substring(p.indexOf(root));
+    }
+    return p.replace(/^\/+/, '');
+  };
+
+  const fetchSecureUrls = async (newMessages: IMessage[]) => {
+    try {
+      const paths = ChatService.extractFilePaths(newMessages).map(cleanFilePath);
+      const cleaned = Array.from(new Set(paths)).filter(Boolean);
+      if (cleaned.length === 0) return;
+      const links = await ChatService.getSecureFileUrls(cleaned).catch(() => ({}));
+      setImageUrls((prev) => ({ ...prev, ...links }));
+    } catch (error) {
+      console.error('Fetch secure URLs error:', error);
+    }
+  };
 
   const loadMessages = useCallback(async (id: string, lim: number) => {
+    setLoading(true);
     try {
       const raw = await ChatService.getMessages(id, lim);
       setHasMore(raw.length >= lim);
-      const gifted = raw
-        .map((m: any) => ({
-          ...m, // Keep original fields for bubble detection (files, etc.)
-          _id: m._id || m.id,
-          text: m.message || m.content || '',
-          createdAt: new Date(m.createdAt),
-          user: {
-            _id: m.senderId || m.sender?._id || 'ghost',
-            name: m.senderDetails?.name || 'User',
-            avatar: m.senderDetails?.image || undefined,
-          },
-          sent: true,
-          received: !!m.seenBy?.length,
-          reactions: m.reactions || [],
-          replyTo: m.replyTo,
-          replyToDetails: m.replyToDetails,
-          isEdited: !!m.oldMessage,
-          isPinned: m.isPinned || false,
-          tempId: m.tempId,
-        }))
-        .reverse();
-      setMessages(gifted);
-    } catch (e) {
-      console.error(e);
+      const normalized = raw.map((m) => ChatService.normalizeMessage(m)).reverse();
+      setMessages(normalized);
+      fetchSecureUrls(normalized);
+
+      // Pre-populate pinned from REST (before socket responds)
+      const initialPinned = normalized.filter((m: any) => m.isPinned === true);
+      if (initialPinned.length > 0) {
+        setPinnedMessages(initialPinned);
+      }
+    } catch (err) {
+      console.error('Load messages error:', err);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
+  // ─── Load messages + fetch participants ─────────────────────────────────────
   useEffect(() => {
-    let mounted = true;
     const init = async () => {
-      let activeId = chatId;
-      if (!activeId && leadId && !isChannel) {
-        const chat = await ChatService.getChatByLeadId(leadId);
-        activeId = chat?._id || chat?.id;
-      }
-      if (!activeId || !mounted) {
+      setLoading(true);
+      try {
+        let activeId = chatId;
+        if (!activeId && leadId && !isChannel) {
+          activeId = await ChatService.getChatByLeadId(leadId);
+          setChatId(activeId);
+        }
+        if (activeId) {
+          await loadMessages(activeId, limit);
+          const fetchAction = isChannel
+            ? ChatService.getChannelParticipants(activeId)
+            : ChatService.getLeadParticipants(activeId);
+          fetchAction.then(setParticipants).catch(console.error);
+        }
+      } finally {
         setLoading(false);
-        return;
-      }
-      setChatId(activeId);
-      await loadMessages(activeId, limit);
-      const token = await AsyncStorage.getItem('accessToken');
-      if (token && mounted) {
-        const socket = ChatService.connect(token, activeId);
-        socketRef.current = socket;
-        socket.on('connect', () => {
-          setLoading(false);
-          if (isChannel) {
-            socket.emit('join-team-channel', activeId);
-            ChatService.getPinnedMessages(activeId as string);
-          } else socket.emit('join-chat', activeId);
-        });
-        socket.on(
-          'pinned-messages-response',
-          (data) => data.pinnedMessages && setPinnedMessages(data.pinnedMessages)
-        );
-        socket.on('message-pinned', () => ChatService.getPinnedMessages(activeId as string));
-        socket.on('message-unpinned', () => ChatService.getPinnedMessages(activeId as string));
-        socket.on(isChannel ? 'new-channel-message' : 'new-message', (data) => {
-          const m = data.message || data;
-          setMessages((prev) => {
-            if (prev.some((p) => p._id === (m._id || m.id))) return prev;
-            const normalized = {
-              ...m,
-              _id: m._id || m.id,
-              text: m.message || m.content || '',
-              createdAt: new Date(m.createdAt || Date.now()),
-              user: {
-                _id: m.senderId || m.sender?._id || 'ghost',
-                name: m.senderDetails?.name || 'User',
-                avatar: m.senderDetails?.image || undefined,
-              },
-            };
-            return GiftedChat.append(prev, [normalized]);
-          });
-        });
       }
     };
     init();
-    return () => {
-      mounted = false;
-      ChatService.disconnect();
+  }, [chatId, leadId, isChannel, limit, loadMessages]);
+
+  // ─── Room join/leave + socket event subscriptions ───────────────────────────
+  useEffect(() => {
+    if (!chatId) return;
+
+    // Join the room via the global persistent socket
+    const joinEvent = isChannel ? 'join-team-channel' : 'join-chat';
+    SocketManager.joinRoom(chatId, joinEvent, currentUserId);
+
+    // Request pinned messages immediately after joining to sync state
+    SocketManager.emit(isChannel ? 'get-channel-pinned-messages' : 'get-pinned-messages', {
+      chatId,
+      channelId: chatId,
+    });
+
+    // Track socket connection state
+    const onConnect = () => setIsConnected(true);
+    const onDisconnect = () => setIsConnected(false);
+    const unsubConnect = SocketManager.on('connect', onConnect);
+    const unsubDisconnect = SocketManager.on('disconnect', onDisconnect);
+
+    // ── New messages ─────────────────────────────────────────────────────────
+    const handleNewMessage = (m: any) => {
+      const normalized = ChatService.normalizeMessage(m);
+
+      // Always fetch secure URLs for new incoming messages — do this OUTSIDE setState
+      // to ensure it always fires reliably regardless of React's batch strategy
+      fetchSecureUrls([normalized]);
+
+      setMessages((prev) => {
+        if (prev.some((msg) => msg._id === normalized._id)) return prev;
+
+        // Optimized replacement logic to avoid "double message" glitch
+        // Matches on sender + text OR sender + specific file path for media
+        const optimisticIndex = prev.findIndex((msg) => {
+          const isPending = !msg.sent || (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
+          if (!isPending) return false;
+
+          const sameUser = msg.user?._id === normalized.user?._id;
+          const sameText = msg.text === normalized.text && !!msg.text;
+          
+          // For media, check if any file path matches
+          const msgFiles = (msg as any).files || [];
+          const normFiles = (normalized as any).files || [];
+          const sameFiles = msgFiles.length > 0 && normFiles.length > 0 && 
+            msgFiles.some((f: any) => normFiles.some((nf: any) => nf.path === f.path || nf.url === f.url));
+
+          return sameUser && (sameText || sameFiles);
+        });
+
+        if (optimisticIndex !== -1) {
+          const updated = [...prev];
+          updated[optimisticIndex] = normalized;
+          return updated;
+        }
+
+        return [normalized, ...prev];
+      });
+
+      // Mark seen
+      if (isChannel) {
+        SocketManager.emit('mark-channel-message-seen', {
+          channelId: chatId,
+          messageIds: [normalized._id],
+          userId: currentUserId,
+        });
+      } else {
+        SocketManager.emit('mark-message-seen', {
+          chatId,
+          messageIds: [normalized._id],
+        });
+      }
     };
-  }, [chatId, leadId, isChannel]);
+
+    const unsubNewMsg = SocketManager.on('new-message', handleNewMessage);
+    const unsubNewChanMsg = SocketManager.on('new-channel-message', handleNewMessage);
+
+    // ── Edits ────────────────────────────────────────────────────────────────
+    const unsubEdited = SocketManager.on('message-edited', (m: any) => {
+      const normalized = ChatService.normalizeMessage(m);
+      const updater = (prev: any[]) =>
+        prev.map((msg) => (msg._id === normalized._id ? normalized : msg));
+      setMessages(updater);
+      setPinnedMessages(updater);
+    });
+
+    // ── Reactions ────────────────────────────────────────────────────────────
+    const handleReaction = (m: any) => {
+      Vibration.vibrate(50);
+      const msgId = (m.messageId || m.id || m.message?._id || m._id)?.toString();
+      const reactions = m.reactions || [];
+      const updater = (prev: any[]) =>
+        prev.map((msg) => (msg._id?.toString() === msgId ? { ...msg, reactions } : msg));
+      setMessages(updater);
+      setPinnedMessages(updater);
+    };
+
+    const unsubReactAdded = SocketManager.on('reaction-added', handleReaction);
+    const unsubReactRemoved = SocketManager.on('reaction-removed', handleReaction);
+
+    // ── Delete ───────────────────────────────────────────────────────────────
+    const unsubDeleted = SocketManager.on('message-deleted', (data: any) => {
+      const deletedId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
+      setMessages((prev) => prev.filter((msg) => msg._id?.toString() !== deletedId));
+      setPinnedMessages((prev) => prev.filter((msg) => (msg as any)._id?.toString() !== deletedId));
+    });
+
+    // ── Pin / Unpin ──────────────────────────────────────────────────────────
+    const unsubPinned = SocketManager.on('message-pinned', (data: any) => {
+      Vibration.vibrate(50);
+      const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
+      console.log('[useChatSession] message-pinned:', msgId);
+
+      setMessages((prev) => {
+        const updated = prev.map((m: any) =>
+          m._id?.toString() === msgId ? { ...m, isPinned: true } : m
+        );
+        const pinned = updated.find((m: any) => m._id?.toString() === msgId);
+        if (pinned) {
+          setPinnedMessages((pv: any[]) => {
+            const alreadyIn = pv.some((pm: any) => pm._id?.toString() === msgId);
+            if (alreadyIn) return pv;
+            return [...pv, { ...pinned, isPinned: true }];
+          });
+        }
+        return updated;
+      });
+    });
+
+    const unsubUnpinned = SocketManager.on('message-unpinned', (data: any) => {
+      Vibration.vibrate(50);
+      const msgId = (data.messageId || data.id || data.message?._id || data._id)?.toString();
+      console.log('[useChatSession] message-unpinned:', msgId);
+      setMessages((prev) =>
+        prev.map((m: any) => (m._id?.toString() === msgId ? { ...m, isPinned: false } : m))
+      );
+      setPinnedMessages((prev) => prev.filter((m: any) => m._id?.toString() !== msgId));
+    });
+
+    // ── Pinned messages list (response to get-pinned-messages) ───────────────
+    const unsubPinnedResponse = SocketManager.on('pinned-messages-response', (data: any) => {
+      const pins = data?.pinnedMessages || (Array.isArray(data) ? data : []);
+      const normalized = pins.map((m: any) => ChatService.normalizeMessage(m));
+      fetchSecureUrls(normalized);
+      const pinnedIds = new Set(normalized.map((m: any) => m._id));
+      setMessages((prev) => prev.map((m) => ({ ...m, isPinned: pinnedIds.has(m._id as string) })));
+      setPinnedMessages(normalized);
+    });
+
+    return () => {
+      // Leave the room but DO NOT disconnect the global socket
+      SocketManager.leaveRoom(chatId);
+
+      // Unsubscribe all event handlers
+      unsubConnect();
+      unsubDisconnect();
+      unsubNewMsg();
+      unsubNewChanMsg();
+      unsubEdited();
+      unsubReactAdded();
+      unsubReactRemoved();
+      unsubDeleted();
+      unsubPinned();
+      unsubUnpinned();
+      unsubPinnedResponse();
+    };
+  }, [chatId, isChannel, currentUserId]);
 
   return {
     chatId,
     messages,
     setMessages,
     pinnedMessages,
+    setPinnedMessages,
+    participants,
     loading,
-    hasMore,
-    limit,
-    setLimit,
-    typingUsers,
+    isConnected,
     currentUserId,
+    imageUrls,
+    hasMore,
+    setLimit,
   };
 };

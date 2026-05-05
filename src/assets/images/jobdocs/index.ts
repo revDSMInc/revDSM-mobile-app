@@ -1,0 +1,15 @@
+export const JobDocsThumbnails = {
+  front_view: require('./front_view.png'),
+  front_left: require('./front_left.jpg'),
+  front_right: require('./front_right.jpg'),
+  left_side: require('./left_side.png'),
+  right_side: require('./right_side.png'),
+  back_view: require('./back_view.jpg'),
+  back_left: require('./back_left.jpg'),
+  back_right: require('./back_right.jpg'),
+  gutter_kstyle: require('./gutter_kstyle.png'),
+  gutter_box: require('./gutter_box.png'),
+  gutter_super: require('./gutter_super.jpg'),
+  roof_edge: require('./roof_edge.jpg'),
+  misc: require('./misc.png'),
+};

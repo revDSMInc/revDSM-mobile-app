@@ -1,20 +1,20 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import AudioRecorderPlayer, {
+import Sound, {
   AudioSourceAndroidType,
   OutputFormatAndroidType,
   AudioEncoderAndroidType,
   AVEncoderAudioQualityIOSType,
-} from 'react-native-audio-recorder-player';
-import type { AudioSet, PlayBackType, RecordBackType } from 'react-native-audio-recorder-player';
+} from 'react-native-nitro-sound';
+import type { AudioSet, PlayBackType, RecordBackType } from 'react-native-nitro-sound';
 import { Platform, PermissionsAndroid, Alert } from 'react-native';
 import RNFS from 'react-native-fs';
 
 // The library exports a pre-created singleton instance (not a class).
 // We reference it directly — no instantiation needed.
-const player = AudioRecorderPlayer;
+const player = Sound;
 
 export type RecordingState = 'idle' | 'recording' | 'recorded';
-export type PlaybackState = 'idle' | 'playing' | 'paused';
+export type PlaybackState = 'idle' | 'loading' | 'playing' | 'paused';
 
 export interface VoiceNoteHookResult {
   recordingState: RecordingState;
@@ -28,7 +28,9 @@ export interface VoiceNoteHookResult {
   cancelRecording: () => void;
   startPlayback: (uri: string) => Promise<void>;
   pausePlayback: () => Promise<void>;
+  resumePlayback: () => Promise<void>;
   stopPlayback: () => Promise<void>;
+  setPlaybackSpeed: (speed: number) => Promise<void>;
   reset: () => void;
 }
 
@@ -41,6 +43,7 @@ export function useVoiceNote(): VoiceNoteHookResult {
   const [playbackDuration, setPlaybackDuration] = useState(0);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const currentPathRef = useRef<string | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -99,6 +102,7 @@ export function useVoiceNote(): VoiceNoteHookResult {
       AVFormatIDKeyIOS: 'aac',
     };
 
+    currentPathRef.current = path;
     await player.startRecorder(path, audioSet);
 
     timerRef.current = setInterval(() => {
@@ -113,7 +117,11 @@ export function useVoiceNote(): VoiceNoteHookResult {
     }
     const uri = await player.stopRecorder();
     player.removeRecordBackListener();
-    setRecordedUri(uri);
+
+    // Ensure we have the full path on iOS
+    const finalUri = uri && uri.includes('/') ? uri : currentPathRef.current;
+
+    setRecordedUri(finalUri);
     setRecordingState('recorded');
   }, []);
 
@@ -132,33 +140,95 @@ export function useVoiceNote(): VoiceNoteHookResult {
   // ─── Playback ─────────────────────────────────────────────────────────────────
 
   const startPlayback = useCallback(async (uri: string) => {
-    setPlaybackState('playing');
-    await player.startPlayer(uri);
+    if (!uri) return;
+    try {
+      setPlaybackState('loading');
 
-    player.addPlayBackListener((e: PlayBackType) => {
-      setPlaybackPos(e.currentPosition);
-      setPlaybackDuration(e.duration);
-    });
+      let playUri = uri;
+      // If it's just a filename, resolve to Cache dir
+      if (!uri.includes('/') && !uri.startsWith('http')) {
+        playUri = `${RNFS.CachesDirectoryPath}/${uri}`;
+      }
 
-    player.addPlaybackEndListener(() => {
-      setPlaybackState('idle');
-      setPlaybackPos(0);
-      player.removePlayBackListener();
-      player.removePlaybackEndListener();
-    });
+      // Handle the iOS cache path correctly
+      if (
+        Platform.OS === 'ios' &&
+        playUri.includes('Library/Caches') &&
+        !playUri.startsWith('file://')
+      ) {
+        playUri = `file://${playUri}`;
+      } else if (
+        Platform.OS === 'ios' &&
+        playUri.startsWith('/') &&
+        !playUri.startsWith('file://')
+      ) {
+        playUri = `file://${playUri}`;
+      }
+
+      // Encode/Decode URI properly: local files need literal paths
+      let playUriToPass = playUri;
+      if (playUri.startsWith('file://')) {
+        playUriToPass = decodeURI(playUri);
+      } else if (playUri.startsWith('http')) {
+        // DO NOT use encodeURI on http/https URLs!
+        // S3 pre-signed URLs might already contain URL-encoded characters (like %20).
+        // Running encodeURI doubly encodes them (e.g. %2520) and breaks the AWS signature.
+        playUriToPass = playUri;
+      } else {
+        playUriToPass = encodeURI(playUri);
+      }
+
+      await player.startPlayer(playUriToPass);
+      setPlaybackState('playing');
+
+      player.addPlayBackListener((e: PlayBackType) => {
+        setPlaybackPos(e.currentPosition);
+        setPlaybackDuration(e.duration);
+        if (e.currentPosition === e.duration) {
+          stopPlayback();
+        }
+      });
+    } catch (e) {
+      console.warn('Playback start error:', e);
+      setPlaybackState('idle'); // revert to idle if loading fails
+    }
   }, []);
 
   const pausePlayback = useCallback(async () => {
-    await player.pausePlayer();
-    setPlaybackState('paused');
+    try {
+      await player.pausePlayer();
+      setPlaybackState('paused');
+    } catch (e) {
+      console.warn('Pause error:', e);
+    }
+  }, []);
+
+  const resumePlayback = useCallback(async () => {
+    try {
+      await player.resumePlayer();
+      setPlaybackState('playing');
+    } catch (e) {
+      console.warn('Resume error:', e);
+    }
   }, []);
 
   const stopPlayback = useCallback(async () => {
-    await player.stopPlayer();
-    player.removePlayBackListener();
-    player.removePlaybackEndListener();
-    setPlaybackState('idle');
-    setPlaybackPos(0);
+    try {
+      await player.stopPlayer();
+      player.removePlayBackListener();
+      setPlaybackState('idle');
+      setPlaybackPos(0);
+    } catch (e) {
+      console.warn('Stop error:', e);
+    }
+  }, []);
+
+  const setPlaybackSpeed = useCallback(async (speed: number) => {
+    try {
+      await player.setPlaybackSpeed(speed);
+    } catch (e) {
+      console.warn('Speed set failed', e);
+    }
   }, []);
 
   // ─── Reset ────────────────────────────────────────────────────────────────────
@@ -193,7 +263,9 @@ export function useVoiceNote(): VoiceNoteHookResult {
     cancelRecording,
     startPlayback,
     pausePlayback,
+    resumePlayback,
     stopPlayback,
+    setPlaybackSpeed,
     reset,
   };
 }

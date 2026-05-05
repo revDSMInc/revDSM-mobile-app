@@ -1,17 +1,41 @@
 import './global.css';
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { Text, TextInput, View, StyleSheet, StatusBar } from 'react-native';
+
+// Professional Global Font Injection for RN 0.84+
+// This ensures Public Sans is the baseline for EVERYTHING.
+const applyGlobalFont = (Component: any) => {
+  const target = Component.render || Component.type?.render;
+  if (!target) return;
+
+  const oldRender = target;
+  const newRender = function (this: any, ...args: any) {
+    const origin = oldRender.call(this, ...args);
+    if (!origin) return origin;
+    return React.cloneElement(origin, {
+      style: [{ fontFamily: 'PublicSans-Regular' }, origin.props.style],
+    });
+  };
+
+  if (Component.render) Component.render = newRender;
+  else if (Component.type?.render) Component.type.render = newRender;
+};
+
+applyGlobalFont(Text);
+applyGlobalFont(TextInput);
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider as ReduxProvider } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from './src/redux/store';
 import { NavigationContainer } from '@react-navigation/native';
-import { ThemeProvider } from './src/theme/ThemeProvider';
+import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import RootNavigator from './src/navigation';
 import { useAppInitialization } from './src/hooks/useAppInitialization';
+import { useSocketManager } from './src/hooks/useSocketManager';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import FlashMessage from 'react-native-flash-message';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,8 +46,15 @@ const queryClient = new QueryClient({
 
 function AppContent() {
   useAppInitialization();
+  const { isDark, colors } = useTheme();
+  // Connect the global socket once — persists across all screens
+  useSocketManager();
   return (
     <QueryClientProvider client={queryClient}>
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={colors.background}
+      />
       <NavigationContainer>
           <RootNavigator />
       </NavigationContainer>
@@ -35,15 +66,17 @@ function AppContent() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <GestureHandlerRootView style={styles.root}>
-        <ReduxProvider store={store}>
-          <PersistGate loading={null} persistor={persistor}>
-            <ThemeProvider>
-              <AppContent />
-            </ThemeProvider>
-          </PersistGate>
-        </ReduxProvider>
-      </GestureHandlerRootView>
+      <KeyboardProvider>
+        <GestureHandlerRootView style={styles.root}>
+          <ReduxProvider store={store}>
+            <PersistGate loading={null} persistor={persistor}>
+              <ThemeProvider>
+                <AppContent />
+              </ThemeProvider>
+            </PersistGate>
+          </ReduxProvider>
+        </GestureHandlerRootView>
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }

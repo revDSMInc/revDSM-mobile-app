@@ -1,0 +1,183 @@
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, Modal, ScrollView, Platform } from 'react-native';
+import { useTheme } from '../../../theme/ThemeProvider';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+interface ResultLeadModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (data: any) => void;
+  initialResult?: string; // noDemo, reset, notHit
+  loading?: boolean;
+}
+
+const REASONS_MAP: { [key: string]: string[] } = {
+  noDemo: [
+    "Can't Do Work",
+    "Doesn't Own Home",
+    'Never Set Appointment',
+    'Not Able to Reach',
+    'Not Interested',
+  ],
+  reset: ['No Time', 'Leaving'],
+  notHit: ['Car Broke Down', 'Medical Emergency'],
+};
+
+const RESULT_LABELS: { [key: string]: string } = {
+  noDemo: 'No Demo',
+  reset: 'Reset',
+  notHit: 'Not Hit',
+};
+
+export const ResultLeadModal = ({
+  visible,
+  onClose,
+  onSubmit,
+  initialResult = 'noDemo',
+  loading,
+}: ResultLeadModalProps) => {
+  const { colors, isDark } = useTheme();
+  const [reason, setReason] = useState<string | null>(null);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setReason(null);
+      setIsDropdownOpen(false);
+    }
+  }, [visible, initialResult]);
+
+  const reasons = REASONS_MAP[initialResult] || [];
+  const resultLabel = RESULT_LABELS[initialResult] || initialResult;
+
+  const handleConfirm = () => {
+    if (!reason) return;
+    onSubmit({
+      result: initialResult,
+      reason: reason,
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent>
+      <View className="flex-1 justify-end bg-black/40">
+        <View
+          className="w-full rounded-t-[32px] px-6 pt-5 pb-8"
+          style={{ backgroundColor: isDark ? colors.surface : colors.background }}
+        >
+          {/* Handle bar */}
+          <View className="items-center mb-6">
+            <View className="w-12 h-1 bg-gray-300/30 rounded-full" />
+          </View>
+
+          {/* Header */}
+          <View className="flex-row items-center justify-between mb-8">
+            <Text className="text-xl font-bold" style={{ color: colors.text }}>
+              Result Lead
+            </Text>
+            <TouchableOpacity onPress={onClose} className="p-1">
+              <Icon name="close" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Result Block */}
+          <View className="mb-6">
+            <Text className="text-sm font-semibold mb-2" style={{ color: colors.text }}>
+              Result
+            </Text>
+            <View
+              className="w-full px-4 py-4 rounded-xl border"
+              style={{
+                borderColor: '#919EAB33',
+                backgroundColor: isDark ? '#FFFFFF08' : '#F4F6F8',
+              }}
+            >
+              <Text className="text-base" style={{ color: isDark ? '#919EAB' : '#919EAB' }}>
+                {resultLabel}
+              </Text>
+            </View>
+          </View>
+
+          {/* Reason Block */}
+          <View className="mb-10">
+            <Text className="text-sm font-semibold mb-2" style={{ color: colors.text }}>
+              Reason
+            </Text>
+            <TouchableOpacity
+              onPress={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="w-full px-4 py-4 rounded-xl border flex-row items-center justify-between"
+              style={{
+                borderColor: isDropdownOpen ? '#1C252E' : '#212B36',
+                backgroundColor: 'transparent',
+              }}
+            >
+              <Text
+                className="text-base"
+                style={{ color: reason ? colors.text : colors.textSecondary }}
+              >
+                {reason || 'Select Reason'}
+              </Text>
+              <Icon
+                name={isDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                size={24}
+                color={'#637381'}
+              />
+            </TouchableOpacity>
+
+            {isDropdownOpen && (
+              <View
+                className="mt-2 rounded-xl border overflow-hidden shadow-lg"
+                style={{
+                  borderColor: '#919EAB33',
+                  backgroundColor: isDark ? colors.surface : colors.background,
+                  maxHeight: 200,
+                }}
+              >
+                <ScrollView bounces={false}>
+                  {reasons.map((item) => (
+                    <TouchableOpacity
+                      key={item}
+                      onPress={() => {
+                        setReason(item);
+                        setIsDropdownOpen(false);
+                      }}
+                      className="px-4 py-4 border-b"
+                      style={{ borderBottomColor: '#919EAB14' }}
+                    >
+                      <Text className="text-base" style={{ color: colors.text }}>
+                        {item}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+
+          {/* Submit Button */}
+          <TouchableOpacity
+            disabled={!reason || loading}
+            onPress={handleConfirm}
+            className="w-full h-14 rounded-2xl items-center justify-center shadow-lg"
+            style={{
+              backgroundColor: !reason ? (isDark ? '#FFFFFF1F' : '#919EAB33') : colors.primary.main,
+              shadowColor: colors.primary.main,
+              shadowOpacity: !reason ? 0 : 0.3,
+              shadowRadius: 10,
+              elevation: !reason ? 0 : 4,
+            }}
+          >
+            <Text
+              className="text-base font-bold"
+              style={{ color: !reason ? colors.textSecondary : '#FFFFFF' }}
+            >
+              {loading ? 'Processing...' : 'Build Job'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+};

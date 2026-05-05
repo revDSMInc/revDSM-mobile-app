@@ -20,23 +20,20 @@ export function MainTabOption({ label, active, onPress, count }: any) {
         active
           ? {
               backgroundColor: isDark ? '#1e293b' : '#ffffff',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.1,
-              shadowRadius: 2,
-              elevation: 1,
+              borderBottomWidth: 2,
+              borderColor: isDark ? '#1e293b' : colors.primary.main,
             }
           : {}
       }
     >
       <Text
-        className="font-black uppercase tracking-widest text-[10px]"
-        style={{ color: active ? colors.text : colors.textSecondary }}
+        className="font-semibold text-sm"
+        style={{ color: active ? colors.primary.main : '#8D90A4' }}
       >
         {label}
       </Text>
       {count > 0 && (
-        <View className="ml-2 w-4 h-4 rounded-full bg-red-500 items-center justify-center">
+        <View className="ml-2 w-6 h-6 rounded-full bg-red-500 items-center justify-center">
           <Text className="text-white text-[8px] font-black">{count}</Text>
         </View>
       )}
@@ -62,7 +59,7 @@ export function StatusChip({ label, active, onPress, count, specialMode }: any) 
   return (
     <TouchableOpacity
       onPress={onPress}
-      className="mr-2.5 px-4 py-2 rounded-xl flex-row items-center border"
+      className="mr-2.5 px-4 py-2 h-10 rounded-xl flex-row items-center border"
       style={{
         backgroundColor: active ? activeBg : 'transparent',
         borderColor: active ? activeBg : isDark ? '#334155' : '#e2e8f0',
@@ -114,9 +111,8 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
   return (
     <TouchableOpacity
       onPress={onPress}
-      className="mb-4 p-5 rounded-[28px]"
+      className="mb-4 p-3 rounded-xl"
       style={{
-        borderLeftWidth: 8,
         borderColor: unreadCount > 0 ? colors.primary.main : isDark ? '#2A2A2A' : '#F1F1F1',
         backgroundColor:
           unreadCount > 0
@@ -137,21 +133,18 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
       <View className="flex-row items-center justify-between mb-2">
         <View className="flex-row items-center flex-1 pr-2">
           <Text
-            className="font-black text-[15px] mr-2"
+            className="font-semibold text-xs mr-2"
             style={{ color: colors.text }}
             numberOfLines={1}
           >
             {heading}
           </Text>
-          <View className="px-2 py-0.5 rounded-md" style={{ backgroundColor: statusObj.color }}>
-            <Text className="text-[9px] font-black uppercase text-white">{statusObj.label}</Text>
+          <View className="px-1.5 py-0.5 rounded-md" style={{ backgroundColor: '#212B36' }}>
+            <Text className="text-[10px] font-bold text-white">{statusObj.label}</Text>
           </View>
         </View>
         {lastMessageAt && (
-          <Text
-            className="text-[9px] font-bold opacity-30 uppercase"
-            style={{ color: colors.text }}
-          >
+          <Text className="text-[12px]" style={{ color: '#637381' }}>
             {formatDistanceToNow(new Date(lastMessageAt), { addSuffix: true }).replace(
               'about ',
               ''
@@ -161,30 +154,39 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
       </View>
 
       <View className="flex-row items-center mb-1">
-        <Icon name="person" size={10} color={colors.textSecondary} style={{ opacity: 0.5 }} />
-        <Text
-          className="text-[10px] font-black uppercase tracking-widest ml-1"
-          style={{ color: colors.textSecondary }}
-        >
-          Lead ID: {leadDetails?.leadId || 'N/A'} • {repName}
+        <Text className="text-xs" style={{ color: colors.textSecondary }}>
+          Lead ID: {leadDetails?.leadId || 'N/A'}
         </Text>
       </View>
 
-      <View className="flex-row items-center mt-2 pr-10">
-        <View
-          className="w-8 h-8 rounded-full items-center justify-center mr-2"
-          style={{ backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }}
-        >
-          <Text className="text-xs">💬</Text>
-        </View>
+      <View className="flex-row items-center mb-1">
+        <Icon name="chatbubble" size={16} color={colors.textSecondary} style={{ marginRight: 4 }} />
         <View className="flex-1">
           <Text
-            className="text-xs font-bold leading-4"
+            className="text-xs font-semibold"
             style={{ color: colors.textSecondary }}
             numberOfLines={2}
           >
-            <Text style={{ color: isDark ? '#93c5fd' : '#2563eb' }}>
-              {lastMsg?.senderDetails?.firstName || 'User'}:{' '}
+            <Text style={{ color: colors.primary.main }}>
+              {lastMsg?.senderDetails?.firstName + ' ' + lastMsg?.senderDetails?.lastName || 'User'}
+              :{' '}
+            </Text>
+          </Text>
+        </View>
+        <View className="absolute right-0 w-6 h-6 items-center justify-center">
+          <Icon name="chevron-forward-outline" size={12} color={colors.textSecondary} />
+        </View>
+      </View>
+      <View className="flex-row items-center">
+        <View className="">
+          <Text
+            className="text-[10px] font-semibold"
+            style={{ color: colors.textSecondary }}
+            numberOfLines={2}
+          >
+            <Text style={{ color: colors.primary.main }}>
+              {lastMsg?.senderDetails?.firstName + ' ' + lastMsg?.senderDetails?.lastName || 'User'}
+              :{' '}
             </Text>
             {lastMsg?.message || 'Started a new discussion.'}
           </Text>
@@ -199,40 +201,49 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
   );
 }
 
+const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
+  Announcements: { icon: '📢', color: '#FF6B6B' },
+  'Sales Wins': { icon: '🎉', color: '#51CF66' },
+  General: { icon: '💬', color: '#748FFC' },
+  Files: { icon: '📁', color: '#339AF0' },
+  Commission: { icon: '💰', color: '#FFC107' },
+  'Commission Sheets': { icon: '💰', color: '#FFC107' },
+  Questions: { icon: '❓', color: '#9775FA' },
+};
+
 // ─── ChannelThreadItem ────────────────────────────────────────────────────────
 export function ChannelThreadItem({ channel, onPress }: any) {
   const { colors, isDark } = useTheme();
   const { title, name, unreadCount, channelConfig } = channel;
+  const displayName = title || name || 'General';
+  const scheme = CHANNEL_SCHEMES[displayName] || CHANNEL_SCHEMES['General'];
 
   return (
     <TouchableOpacity
       onPress={onPress}
-      className="mb-4 p-5 rounded-[28px] border flex-row items-center"
+      className="mb-3 p-4 rounded-lg border flex-row items-center"
       style={{
-        borderColor: isDark ? '#2A2A2A' : '#F1F1F1',
+        borderColor: isDark ? '#2A2A2A' : '#919EAB33',
         backgroundColor: isDark ? colors.surface : '#fff',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: isDark ? 0 : 0.05,
-        shadowRadius: 10,
-        elevation: 2,
+        shadowRadius: 6,
+        elevation: 1,
       }}
     >
       <View
-        className="w-12 h-12 rounded-2xl items-center justify-center mr-4"
-        style={{ backgroundColor: isDark ? 'rgba(37,99,235,0.2)' : '#eff6ff' }}
+        className="w-10 h-10 rounded-md items-center justify-center mr-4"
+        style={{ backgroundColor: scheme.color + '20' }}
       >
-        <Icon name="layers" size={24} color={colors.primary.main} />
+        <Text className="text-lg">{scheme.icon}</Text>
       </View>
 
       <View className="flex-1 pr-4">
-        <Text className="font-black text-[16px] mb-1" style={{ color: colors.text }}>
+        <Text className="font-semibold text-xs mb-1" style={{ color: '#1C252E' }}>
           {title || name}
         </Text>
-        <Text
-          className="text-[11px] font-black uppercase tracking-widest opacity-40"
-          style={{ color: colors.text }}
-        >
+        <Text className="text-xs" style={{ color: '#637381' }}>
           {channelConfig?.description || 'Team Communication Channel'}
         </Text>
       </View>
@@ -242,12 +253,7 @@ export function ChannelThreadItem({ channel, onPress }: any) {
           <Text className="text-white text-[10px] font-black">{unreadCount}</Text>
         </View>
       )}
-      <Icon
-        name="chevron-forward"
-        size={18}
-        color={colors.textSecondary}
-        style={{ marginLeft: 10, opacity: 0.2 }}
-      />
+      <Icon name="caret-forward" size={16} color={'#637381'} style={{ marginLeft: 10 }} />
     </TouchableOpacity>
   );
 }

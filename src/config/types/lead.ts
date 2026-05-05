@@ -35,4 +35,16 @@ export type Lead = {
     lead_resume: number;
     lead_review: number;
   };
+  price?: number;
+  isFavourite?: boolean;
+  jobNumber?: string;
+  salesRepName?: string;
+  userName?: string;
+  firstName?: string;
+  lastName?: string;
+  generatedReports?: Array<{
+    reportType: string;
+    fileUrl: string;
+    createdAt?: string;
+  }>;
 };

@@ -21,6 +21,15 @@ import {
 } from '../../widgets/components/chat/ThreadItems';
 import { useChatThreads } from '../../hooks/useChatThreads';
 
+const STATUS_OPTIONS = [
+  'All',
+  'Unresulted Leads',
+  'Pending Install',
+  'Installing Today',
+  'Already Installed',
+  'No Sales',
+];
+
 export default function ChatThreadsScreen({ navigation }: any) {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -30,6 +39,8 @@ export default function ChatThreadsScreen({ navigation }: any) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [filterUnread, setFilterUnread] = useState(false);
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState('Unresulted Leads');
 
   const {
     filteredChats,
@@ -69,33 +80,27 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      <View className="px-6 py-4 flex-row items-center justify-between">
+      <View
+        className="px-6 py-4 flex-row items-center justify-between border-b"
+        style={{ borderColor: colors.border }}
+      >
+        <View className="flex-row items-center">
+          <Text className="text-xs font-semibold" style={{ color: colors.text }}>
+            Recent Leads
+          </Text>
+        </View>
         <View className="flex-row items-center">
           <TouchableOpacity
             onPress={() => navigation.goBack()}
-            className="w-10 h-10 rounded-full items-center justify-center bg-slate-100 dark:bg-slate-800 mr-4"
+            className="w-8 h-8 items-center justify-center"
           >
-            <Icon name="chevron-back" size={20} color={colors.text} />
+            <Icon name="close" size={20} color={colors.text} />
           </TouchableOpacity>
-          <Text className="text-2xl font-black" style={{ color: colors.text }}>
-            Messages
-          </Text>
-        </View>
-        <View className="flex-row items-center">
-          <Text className="text-xl font-black tracking-tighter" style={{ color: '#4CBB17' }}>
-            rev
-          </Text>
-          <Text
-            className="text-xl font-black tracking-tighter"
-            style={{ color: isDark ? '#fff' : '#000' }}
-          >
-            DSM
-          </Text>
         </View>
       </View>
 
-      <View className="px-6">
-        <View className="flex-row bg-slate-100 dark:bg-slate-900 rounded-2xl p-1.5 mb-2">
+      <View className="px-4 pt-4">
+        <View className="flex-row p-1.5 mb-2">
           <MainTabOption
             label="My Leads"
             active={mainTab === 'myleads'}
@@ -111,82 +116,116 @@ export default function ChatThreadsScreen({ navigation }: any) {
         </View>
       </View>
 
-      <View className="px-6 py-2">
-        <View className="flex-row items-center space-x-3">
-          <View className="flex-1 h-12 rounded-2xl bg-slate-100 dark:bg-slate-900 flex-row items-center px-4">
+      <View className="px-4 py-2 pt-4">
+        {mainTab === 'myleads' ? (
+          <View className="flex-row items-center gap-3">
+            {/* Custom Dropdown */}
+            <View className="relative z-50">
+              <TouchableOpacity
+                onPress={() => setShowStatusDropdown(!showStatusDropdown)}
+                className="h-12 px-3 rounded-xl border flex-row items-center justify-between"
+                style={{
+                  backgroundColor: colors.card,
+                  width: 160,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text
+                  className="text-xs flex-1 mr-2"
+                  numberOfLines={1}
+                  style={{ color: colors.text }}
+                >
+                  {selectedStatus}
+                </Text>
+                <Icon name="chevron-down" size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
+
+              {showStatusDropdown && (
+                <View
+                  className="absolute top-14 left-0 w-52 rounded-2xl shadow-2xl border overflow-hidden"
+                  style={{
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    zIndex: 999,
+                  }}
+                >
+                  {STATUS_OPTIONS.map((opt) => (
+                    <TouchableOpacity
+                      key={opt}
+                      onPress={() => {
+                        setSelectedStatus(opt);
+                        setStatusFilter(opt.toLowerCase().replace(/ /g, ''));
+                        setShowStatusDropdown(false);
+                      }}
+                      className="px-4 py-3 border-b last:border-0"
+                      style={{
+                        borderColor: colors.border,
+                        backgroundColor:
+                          selectedStatus === opt
+                            ? isDark
+                              ? colors.background
+                              : '#F4F6F8'
+                            : 'transparent',
+                      }}
+                    >
+                      <Text
+                        className="text-sm font-medium"
+                        style={{
+                          color: selectedStatus === opt ? colors.primary.main : colors.text,
+                        }}
+                      >
+                        {opt}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Search Input */}
+            <View
+              className="flex-1 h-12 rounded-xl border flex-row items-center px-4"
+              style={{ backgroundColor: colors.card, borderColor: colors.border }}
+            >
+              <Icon name="search" size={18} color={colors.textSecondary} style={{ opacity: 0.5 }} />
+              <TextInput
+                className="flex-1 ml-3 text-xs"
+                placeholder="Search by Lead ID."
+                placeholderTextColor={'#919EAB'}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                style={{ color: colors.text }}
+              />
+            </View>
+
+            {/* Filter Icon */}
+            <TouchableOpacity className="p-2">
+              <Icon name="filter" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View
+            className="h-12 rounded-xl border flex-row items-center px-4"
+            style={{ backgroundColor: colors.card, borderColor: colors.border }}
+          >
             <Icon name="search" size={18} color={colors.textSecondary} style={{ opacity: 0.5 }} />
             <TextInput
-              className="flex-1 ml-3 text-sm font-bold"
-              placeholder={mainTab === 'myleads' ? 'Search Leads...' : 'Search Channels...'}
-              placeholderTextColor={colors.textSecondary}
+              className="flex-1 ml-3 text-xs"
+              placeholder="Search channels..."
+              placeholderTextColor={'#919EAB'}
               value={searchQuery}
               onChangeText={setSearchQuery}
               style={{ color: colors.text }}
             />
           </View>
-          {mainTab === 'myleads' && (
-            <TouchableOpacity
-              onPress={() => setFilterUnread(!filterUnread)}
-              className="ml-3 w-12 h-12 rounded-2xl items-center justify-center"
-              style={{ backgroundColor: filterUnread ? '#2563eb' : isDark ? '#0f172a' : '#f1f5f9' }}
-            >
-              <Icon
-                name="mail-unread"
-                size={20}
-                color={filterUnread ? 'white' : colors.textSecondary}
-              />
-            </TouchableOpacity>
-          )}
-        </View>
+        )}
       </View>
-
-      {mainTab === 'myleads' && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="pl-6 py-2"
-          contentContainerStyle={{ paddingRight: 24 }}
-        >
-          <StatusChip
-            label="All"
-            active={statusFilter === 'all'}
-            onPress={() => setStatusFilter('all')}
-            count={chats.filter((c: any) => c.unreadCount > 0).length}
-            specialMode="all"
-          />
-          <StatusChip
-            label="Today"
-            active={statusFilter === 'currentLeads'}
-            onPress={() => setStatusFilter('currentLeads')}
-            count={
-              chats.filter((c: any) => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                return new Date(c.leadDetails?.createdAt) >= today && c.unreadCount > 0;
-              }).length
-            }
-            specialMode="current"
-          />
-          {availableStatuses.map((s: string) => (
-            <StatusChip
-              key={s}
-              label={s.charAt(0).toUpperCase() + s.slice(1).replace(/([A-Z])/g, ' $1')}
-              active={statusFilter === s}
-              onPress={() => setStatusFilter(s)}
-              count={
-                chats.filter((c: any) => c.leadDetails?.status === s && c.unreadCount > 0).length
-              }
-            />
-          ))}
-          <View className="w-10" />
-        </ScrollView>
-      )}
 
       <FlatList
         key={mainTab}
         data={mainTab === 'myleads' ? filteredChats : filteredChannels || []}
         keyExtractor={(item: any) => (item._id || item.id || Math.random().toString()).toString()}
-        contentContainerStyle={{ padding: 24, paddingBottom: 0 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 0 }}
         showsVerticalScrollIndicator={false}
         renderItem={renderItem}
         ListFooterComponent={<SafeBottomSpacer height={40} />}

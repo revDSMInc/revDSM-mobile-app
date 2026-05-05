@@ -3,7 +3,94 @@
 @tailwind utilities;
 
 @layer base {
-  * {
-    font-family: 'PublicSans-Regular';
+  text {
+    font-family: PublicSans-Regular;
   }
+  input {
+    font-family: PublicSans-Regular;
+  }
+}
+
+:root {
+  --color-primary-lighter: #C8FAD6;
+  --color-primary-light: #5BE49B;
+  --color-primary-main: #4CBB17;
+  --color-primary-dark: #007867;
+  --color-primary-darker: #004B50;
+  --color-primary-contrast: #FFFFFF;
+
+  --color-secondary-lighter: #EFD6FF;
+  --color-secondary-light: #C684FF;
+  --color-secondary-main: #8E33FF;
+  --color-secondary-dark: #5119B7;
+  --color-secondary-darker: #27097A;
+  --color-secondary-contrast: #FFFFFF;
+
+  --color-info-lighter: #CAFDF5;
+  --color-info-light: #61F3F3;
+  --color-info-main: #00B8D9;
+  --color-info-dark: #006C9C;
+  --color-info-darker: #003768;
+
+  --color-success-lighter: #D3FCD2;
+  --color-success-light: #77ED8B;
+  --color-success-main: #22C55E;
+  --color-success-dark: #118D57;
+  --color-success-darker: #065E49;
+
+  --color-warning-lighter: #FFF5CC;
+  --color-warning-light: #FFD666;
+  --color-warning-main: #FFAB00;
+  --color-warning-dark: #B76E00;
+  --color-warning-darker: #7A4100;
+
+  --color-error-lighter: #FFE9D5;
+  --color-error-light: #FFAC82;
+  --color-error-main: #FF5630;
+  --color-error-dark: #B71D18;
+  --color-error-darker: #7A0916;
+
+  --color-grey-0: #FFFFFF;
+  --color-grey-100: #F9FAFB;
+  --color-grey-200: #F4F6F8;
+  --color-grey-300: #DFE3E8;
+  --color-grey-400: #C4CDD5;
+  --color-grey-500: #919EAB;
+  --color-grey-600: #637381;
+  --color-grey-700: #454F5B;
+  --color-grey-800: #212B36;
+  --color-grey-900: #161C24;
+
+  --background: #FFFFFF;
+  --surface: #F4F6F8;
+  --text-primary: #212B36;
+  --text-secondary: #637381;
+  --border: #DFE3E8;
+  --card: #FFFFFF;
+}
+
+.dark {
+  --color-primary-lighter: #004B50;
+  --color-primary-light: #007867;
+  --color-primary-main: #4CBB17;
+  --color-primary-dark: #5BE49B;
+  --color-primary-darker: #C8FAD6;
+  
+  --background: #161C24;
+  --surface: #212B36;
+  --text-primary: #FFFFFF;
+  --text-secondary: #919EAB;
+  --border: #454F5B;
+  --card: #212B36;
+
+  --color-grey-0: #161C24;
+  --color-grey-100: #212B36;
+  --color-grey-200: #454F5B;
+  --color-grey-300: #637381;
+  --color-grey-400: #919EAB;
+  --color-grey-500: #C4CDD5;
+  --color-grey-600: #DFE3E8;
+  --color-grey-700: #F4F6F8;
+  --color-grey-800: #F9FAFB;
+  --color-grey-900: #FFFFFF;
 }

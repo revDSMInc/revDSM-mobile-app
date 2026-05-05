@@ -2,6 +2,7 @@ import UIKit
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+import GoogleMaps
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -9,6 +10,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
+
+  override init() {
+    super.init()
+    GMSServices.provideAPIKey("AIzaSyBT3b_a8aWTuI0l9wqjhiT7lSgV_36pkUg")
+    GMSServices.setMetalRendererEnabled(true)
+  }
 
   func application(
     _ application: UIApplication,

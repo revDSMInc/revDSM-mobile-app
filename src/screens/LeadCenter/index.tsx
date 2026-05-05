@@ -1,0 +1,750 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Platform,
+  StatusBar,
+  Modal,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ENV } from '../../config/env';
+import { useTheme } from '../../theme/ThemeProvider';
+import Pitchbook from '../../widgets/modals/lead-center/Pitchbook';
+import {
+  useSubmitJobBuilderMutation,
+  useSubmitDigitalConsentMutation,
+  useSubmitRoofWaiverMutation,
+  useUploadReportMutation,
+  useGenerateRevRenderMutation,
+  useUploadPaperConsentOCRMutation,
+  useUploadImagesMutation,
+  useFinalizeConsentUploadMutation,
+} from '../../hooks/useLeadMutation';
+import { LeadService } from '../../services/api/leads';
+import { resolveS3Url } from '../../utils/s3-utils';
+import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
+import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
+import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
+import { InspectionFormModal } from '../../widgets/modals/lead-center/InspectionFormModal';
+import { RiskReportModal } from '../../widgets/modals/lead-center/RiskReportModal';
+import { RevRenderModal } from '../../widgets/modals/lead-center/RevRenderModal';
+import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
+import { useAuth } from '../../hooks/useAuth';
+import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSection';
+import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
+import Icon from 'react-native-vector-icons/Ionicons';
+import { Header } from '../../widgets/common/MainHeader';
+import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import Feather from 'react-native-vector-icons/Feather';
+import FontAwesome from 'react-native-vector-icons/FontAwesome';
+import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
+import Ionicon from 'react-native-vector-icons/Ionicons';
+
+type TabType = 'job_docs' | 'tools';
+
+import { ImageGridModal } from '../../widgets/modals/lead-center/ImageGridModal';
+import { Linking } from 'react-native';
+import { FlashMessage } from '../../config/message';
+import { IMAGE_CATEGORIES } from '../../constants/lead-center';
+import ReactNativeBlobUtil from 'react-native-blob-util';
+import FileViewer from 'react-native-file-viewer';
+
+import { useLeadQuery } from '../../hooks/useLeadQuery';
+
+import { useLeadCenterData } from '../../hooks/useLeadCenterData';
+import { useLeadReports } from '../../hooks/useLeadReports';
+import { useLeadCenterModals } from '../../hooks/useLeadCenterModals';
+
+const SubModalWrap = ({
+  visible,
+  children,
+  onClose,
+  isDark,
+  colors,
+}: {
+  visible: boolean;
+  children: React.ReactNode;
+  onClose: () => void;
+  isDark: boolean;
+  colors: any;
+}) => (
+  <Modal
+    visible={visible}
+    animationType="slide"
+    transparent={false}
+    statusBarTranslucent={true}
+    hardwareAccelerated={true}
+    onRequestClose={onClose}
+  >
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor="transparent"
+        translucent
+        animated={false}
+      />
+      {children}
+    </View>
+  </Modal>
+);
+
+export default function LeadCenterPage() {
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const route = useRoute<any>();
+  const navigation = useNavigation<any>();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const { lead: initialLead, initialTool } = route.params || {};
+
+  // Custom Hooks for Data, Reports, and Modals
+  const {
+    lead,
+    setLead,
+    isRefreshing,
+    refetch,
+    jobState,
+    setJobState,
+    calculatorData,
+    outcomeForm,
+    isOutcomeLoading,
+    sectionImages,
+    setSectionImages,
+  } = useLeadCenterData(initialLead, user);
+
+  const {
+    secureUrls,
+    riskJob,
+    handleStartRiskReport,
+    handleDownloadRiskReport,
+    handleResetRiskReport,
+  } = useLeadReports(lead, refetch);
+
+  const {
+    showJobBuilder,
+    showInspectionGrid,
+    showConsentModal,
+    showPaperFallback,
+    showWaiverModal,
+    showInspectionModal,
+    showRiskModal,
+    showRevRenderModal,
+    showPdfModal,
+    pdfPreviewData,
+    toggleModal,
+    handleOpenPdf,
+    onToolAction,
+  } = useLeadCenterModals(lead, initialTool, secureUrls, riskJob, {
+    handleStartRiskReport,
+    handleDownloadRiskReport,
+    handleResetRiskReport,
+  });
+
+  const [activeTab, setActiveTab] = useState<TabType>('job_docs');
+  const [loading, setLoading] = useState(false);
+
+  // Auto-open Job Builder logic
+  useEffect(() => {
+    const handleAutoOpen = async () => {
+      if (route.params?.openJobBuilder && !isOutcomeLoading) {
+        try {
+          await LeadService.resetLead(lead?._id);
+          const res = await LeadService.getLeadOutcome(lead?._id);
+          const data = res.data?.data || res.data;
+          let updatedJobState;
+          if (data?.leadData?.jobBuilder) {
+            updatedJobState = data.leadData.jobBuilder;
+            setJobState(updatedJobState);
+          } else {
+            updatedJobState = {
+              gutter: {
+                partial: '',
+                gutterColorsMulti: [],
+                downspoutsMulti: [],
+                extrasColors: { groundSpout: 'Black' },
+              },
+              leaffilter: {
+                combinations: [],
+                extras: {
+                  csr: 0,
+                  cornersFilter: 0,
+                  sawzallHanger: 0,
+                  removeProtection: 0,
+                  ribbedRoof: 0,
+                },
+              },
+              soffit: { vinyl: { type: '' }, porch: { location: [] }, nailer: { type: '' } },
+              fascia: {
+                wrap: { type: '' },
+                boards: { boardType: '' },
+                aluminumBoards: { footage: '' },
+              },
+              additional: { extraLabor: 0 },
+              scheduleTime: null,
+            };
+            setJobState(updatedJobState);
+          }
+          navigation.navigate('JobBuilder', {
+            initialJobState: updatedJobState,
+            calculatorData,
+            leadId: lead?._id,
+            outcomeForm,
+            onGoBack: setJobState,
+          });
+        } catch (e) {
+          console.warn('Reset failed during auto-open', e);
+        }
+        navigation.setParams({ openJobBuilder: undefined });
+      }
+    };
+    handleAutoOpen();
+  }, [route.params?.openJobBuilder, isOutcomeLoading, calculatorData, outcomeForm]);
+
+  const handleOpenChat = () => {
+    navigation.navigate('ChatDetail', {
+      leadId: lead._id,
+      chatId: lead.chatId || '',
+      customerName: `${lead?.customerDetails?.firstName} ${lead?.customerDetails?.lastName}`,
+    });
+  };
+
+  const handleShowJobBuilder = async () => {
+    try {
+      setLoading(true);
+      await LeadService.resetLead(lead?._id);
+      const res = await LeadService.getLeadOutcome(lead?._id);
+      const data = res.data?.data || res.data;
+      let updatedJobState;
+      if (data?.leadData?.jobBuilder) {
+        updatedJobState = data.leadData.jobBuilder;
+        setJobState(updatedJobState);
+      } else {
+        updatedJobState = {
+          gutter: {
+            partial: '',
+            gutterColorsMulti: [],
+            downspoutsMulti: [],
+            extrasColors: { groundSpout: 'Black' },
+          },
+          leaffilter: {
+            combinations: [],
+            extras: {
+              csr: 0,
+              cornersFilter: 0,
+              sawzallHanger: 0,
+              removeProtection: 0,
+              ribbedRoof: 0,
+            },
+          },
+          soffit: { vinyl: { type: '' }, porch: { location: [] }, nailer: { type: '' } },
+          fascia: {
+            wrap: { type: '' },
+            boards: { boardType: '' },
+            aluminumBoards: { footage: '' },
+          },
+          additional: { extraLabor: 0 },
+          scheduleTime: null,
+        };
+        setJobState(updatedJobState);
+      }
+      navigation.navigate('JobBuilder', {
+        initialJobState: updatedJobState,
+        calculatorData,
+        leadId: lead?._id,
+        outcomeForm,
+        onGoBack: setJobState,
+      });
+    } catch (e) {
+      console.warn('Manual reset failed', e);
+      navigation.navigate('JobBuilder', {
+        initialJobState: jobState,
+        calculatorData,
+        leadId: lead?._id,
+        outcomeForm,
+        onGoBack: setJobState,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (initialTool === 'chat') handleOpenChat();
+  }, [initialTool]);
+
+  const submitJobBuilder = useSubmitJobBuilderMutation();
+  const consentMutation = useSubmitDigitalConsentMutation();
+  const waiverMutation = useSubmitRoofWaiverMutation();
+  const reportMutation = useUploadReportMutation();
+  const finalizeUploadMutation = useFinalizeConsentUploadMutation();
+  const ocrMutation = useUploadPaperConsentOCRMutation();
+  const revRenderMutation = useGenerateRevRenderMutation();
+
+  const handleConsentSubmit = async (data: any) => {
+    return await consentMutation.mutateAsync(data);
+  };
+
+  const handleFinalizeReportUpload = async (
+    pdfPath: string,
+    reportType: string = 'consent_form'
+  ) => {
+    try {
+      await finalizeUploadMutation.mutateAsync({ leadId: lead?._id, pdfPath, reportType });
+    } catch (e) {}
+  };
+
+  const handleWaiverSubmit = async (data: any) => {
+    return await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });
+  };
+
+  const handlePaperFallbackSubmit = async (fileData: any) => {
+    try {
+      await ocrMutation.mutateAsync(fileData);
+      const payload = {
+        fullName: lead?.customerDetails?.firstName + ' ' + (lead?.customerDetails?.lastName || ''),
+        phoneNumber: lead?.customerDetails?.phone,
+        email: lead?.customerDetails?.email,
+        leadId: lead?.leadId,
+        repName: 'Firstrep',
+        officeCode: '01',
+        address: lead?.fullAddress || '',
+        time: '12:00 AM',
+        date: '05/01/2025',
+        type: 'paper',
+        consent: 'true',
+        file: fileData,
+      };
+      await consentMutation.mutateAsync(payload);
+      toggleModal('showPaperFallback', false);
+    } catch (e) {}
+  };
+
+  const handleInspectionSubmit = async (data: any) => {
+    try {
+      FlashMessage.info('Generating inspection report...', 'Generating');
+      const token = await AsyncStorage.getItem('accessToken');
+      const { dirs } = ReactNativeBlobUtil.fs;
+      const fileName = `Inspection_${lead.jobNumber || lead.leadId || 'Report'}.pdf`;
+      const filePath = `${dirs.DocumentDir}/${fileName}`;
+
+      await ReactNativeBlobUtil.config({ fileCache: true, path: filePath }).fetch(
+        'POST',
+        `${ENV.API_URL}/pdf-reports/v1/inspection/${lead?._id}/generate`,
+        { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        JSON.stringify(data)
+      );
+
+      handleOpenPdf(filePath, 'Inspection Report');
+
+      const formData = new FormData();
+      formData.append('leadId', lead?._id);
+      formData.append('reportType', 'inspection_report');
+      formData.append('file', {
+        uri: `file://${filePath}`,
+        type: 'application/pdf',
+        name: fileName,
+      } as any);
+
+      await reportMutation.mutateAsync(formData);
+      toggleModal('showInspectionModal', false);
+      FlashMessage.show('Inspection report generated and uploaded.', 'success');
+    } catch (e) {
+      console.error('Inspection Submit Error:', e);
+      FlashMessage.show('Error generating inspection report', 'danger');
+    }
+  };
+
+  const handleJobSubmit = async (payload: any) => {
+    if (user?._id) {
+      await submitJobBuilder.mutateAsync({ leadId: lead?._id, payload });
+      toggleModal('showJobBuilder', false);
+    }
+  };
+
+  const handleClose = () => navigation.goBack();
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return '—';
+    const d = new Date(dateString);
+    return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(
+      2,
+      '0'
+    )}/${d.getFullYear()}`;
+  };
+
+  if (!lead) return null;
+
+  // Sub-modal renders with specific status bar handling
+
+  return (
+    <>
+      <SafeAreaView
+        style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.background }]}
+      >
+        <Header onNavigate={(route) => navigation.navigate(route)} />
+
+        {/* Logic-specific Modals */}
+        <ImageGridModal
+          visible={showInspectionGrid}
+          onClose={() => toggleModal('showInspectionGrid', false)}
+          images={
+            lead?.salesPhotos?.map((p: any) => ({ uri: p.s3url, category: p.category })) || []
+          }
+        />
+
+        <PdfPreviewModal
+          visible={showPdfModal}
+          onClose={() => toggleModal('showPdfModal', false)}
+          uri={pdfPreviewData.url}
+          title={pdfPreviewData.title}
+        />
+
+        <View
+          className="px-4 pb-4 pt-6"
+          style={{
+            backgroundColor: isDark ? colors.surface : colors.background,
+          }}
+        >
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center">
+              <TouchableOpacity
+                onPress={handleClose}
+                className="mr-3 p-1 items-center justify-center border border-border rounded-lg"
+                style={{
+                  width: 32,
+                  height: 32,
+                }}
+              >
+                <Feather
+                  name="arrow-left"
+                  size={14}
+                  color={isDark ? colors.text : colors.textSecondary}
+                />
+              </TouchableOpacity>
+              <View>
+                <Text className="text-lg font-black" style={{ color: colors.text }}>
+                  Lead Center
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          stickyHeaderIndices={[1]}
+          contentContainerStyle={{ paddingBottom: 20 }}
+        >
+          {/* Lead Identity Card */}
+          <View className="px-4">
+            <View className="flex-row gap-[30%] mb-4">
+              <View className="flex-col gap-3">
+                <Text className="text-sm" style={{ color: colors.textSecondary }}>
+                  Lead ID: {lead.leadId}
+                </Text>
+                <View className="flex-row items-center">
+                  <FontAwesome
+                    name="user"
+                    size={14}
+                    color={isDark ? colors.textSecondary : '#637381'}
+                  />
+                  <Text className="ml-1 text-xs font-semibold text-text-primary">
+                    {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
+                  </Text>
+                </View>
+                <View className="flex-row items-center">
+                  <FontAwesome
+                    name="phone"
+                    size={14}
+                    color={isDark ? colors.textSecondary : '#637381'}
+                  />
+                  <Text className="ml-1 text-xs font-semibold text-text-primary">
+                    {lead.customerDetails?.phone}
+                  </Text>
+                </View>
+                <View className="flex-row items-center">
+                  <Ionicon
+                    name="calendar-clear"
+                    size={14}
+                    color={isDark ? colors.textSecondary : '#637381'}
+                  />
+                  <Text className="ml-1 text-xs font-semibold uppercase text-text-primary">
+                    {formatDate(lead?.leadDatetime)}
+                  </Text>
+                </View>
+              </View>
+
+              <View className="flex-col gap-3">
+                <Text className="text-sm text-right" style={{ color: colors.textSecondary }}>
+                  Lead Code:{' '}
+                  <Text className="font-semibold" style={{ color: colors.text }}>
+                    {lead.leadCode || 'N/A'}
+                  </Text>
+                </Text>
+                <View>
+                  <Text className="ml-1 text-xs font-semibold text-[#1C252E]"></Text>
+                </View>
+                <View className="flex-row items-center">
+                  <Ionicon
+                    name="mail"
+                    size={14}
+                    color={isDark ? colors.textSecondary : '#637381'}
+                  />
+                  <Text className="ml-1 text-xs font-semibold uppercase text-text-primary">
+                    {lead?.customerDetails?.email || 'N/A'}
+                  </Text>
+                </View>
+                <View className="flex-row items-center">
+                  <MaterialIcon
+                    name="clock"
+                    size={14}
+                    color={isDark ? colors.textSecondary : '#637381'}
+                  />
+                  <Text className="ml-1 text-xs font-semibold uppercase text-text-primary">
+                    {lead.leadTime}
+                  </Text>
+                </View>
+              </View>
+            </View>
+            <View className="flex-row items-center mb-3">
+              <Ionicon
+                name="location-sharp"
+                size={14}
+                color={isDark ? colors.textSecondary : '#637381'}
+              />
+              <Text
+                className="ml-1 text-xs font-semibold uppercase"
+                style={{ color: colors.primary.main }}
+              >
+                {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
+              </Text>
+            </View>
+          </View>
+          {/* Modern Tab System - Sticky */}
+          <View
+            className="flex-row px-4"
+            style={{ backgroundColor: isDark ? colors.surface : colors.background }}
+          >
+            <View className="flex-1 flex-row gap-3 rounded-xl">
+              <TabButton
+                label="Job docs"
+                i="folder-open"
+                active={activeTab === 'job_docs'}
+                onPress={() => setActiveTab('job_docs')}
+                colors={colors}
+                isDark={isDark}
+              />
+              <TabButton
+                label="Map"
+                i="map"
+                active={false}
+                onPress={() => navigation.navigate('MapDetail', { currentLead: lead })}
+                colors={colors}
+                isDark={isDark}
+              />
+              <TabButton
+                label="Tools"
+                i="tools"
+                active={activeTab === 'tools'}
+                onPress={() => setActiveTab('tools')}
+                colors={colors}
+                isDark={isDark}
+              />
+            </View>
+          </View>
+
+          {/* Tab Content */}
+          <View style={{ flex: 1 }}>
+            {activeTab === 'job_docs' && (
+              <JobDocsSection
+                lead={lead}
+                sectionImages={sectionImages}
+                onSectionImagesChange={setSectionImages}
+                refetch={refetch}
+              />
+            )}
+            {activeTab === 'tools' && (
+              <ToolsSection
+                lead={lead}
+                secureUrls={secureUrls}
+                riskJob={riskJob}
+                onAction={onToolAction}
+                onShowJobBuilder={handleShowJobBuilder}
+                onShowCalculator={() => {
+                  navigation.navigate('DealCenter', { lead });
+                }}
+                onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
+                onShowInspectionGrid={() => toggleModal('showInspectionGrid', true)}
+                onOpenPdf={handleOpenPdf}
+              />
+            )}
+          </View>
+        </ScrollView>
+
+        {/* Global Footer Actions */}
+        <View
+          className="px-5 py-4 flex-row gap-2"
+          style={{
+            backgroundColor: isDark ? colors.surface : colors.background,
+            paddingBottom: Platform.OS === 'ios' ? insets.bottom : 16,
+          }}
+        >
+          <TouchableOpacity
+            onPress={handleOpenChat}
+            className="flex-[2] h-12 rounded-xl items-center justify-center bg-blue-600 shadow-lg shadow-blue-500/30 flex-row"
+          >
+            <Icon
+              name="chatbubble-ellipses"
+              size={14}
+              color="white"
+              style={{ marginRight: 6, marginBottom: 2 }}
+            />
+            <Text className="text-white text-[10px] font-black uppercase tracking-widest">
+              Msg Ops/IM
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+
+      {showConsentModal && (
+        <ConsentFormModal
+          visible={showConsentModal}
+          onClose={() => toggleModal('showConsentModal', false)}
+          onPaperFallback={() => {
+            toggleModal('showConsentModal', false);
+            toggleModal('showPaperFallback', true);
+          }}
+          onSubmit={handleConsentSubmit}
+          onFinalUpload={handleFinalizeReportUpload}
+          uploading={finalizeUploadMutation.isPending}
+          lead={lead}
+          type="consent"
+          loading={consentMutation.isPending}
+        />
+      )}
+
+      {showWaiverModal && (
+        <RoofWaiverModal
+          visible={showWaiverModal}
+          onClose={() => toggleModal('showWaiverModal', false)}
+          onPaperFallback={() => {
+            toggleModal('showWaiverModal', false);
+            toggleModal('showPaperFallback', true);
+          }}
+          onSubmit={handleWaiverSubmit}
+          onFinalUpload={(pdfPath) => handleFinalizeReportUpload(pdfPath, 'waiver_form')}
+          uploading={finalizeUploadMutation.isPending}
+          lead={lead}
+          loading={waiverMutation.isPending}
+        />
+      )}
+
+      {showPaperFallback && (
+        <PaperFallbackModal
+          visible={showPaperFallback}
+          onClose={() => toggleModal('showPaperFallback', false)}
+          onSubmit={handlePaperFallbackSubmit}
+          loading={consentMutation.isPending}
+        />
+      )}
+
+      {showInspectionModal && (
+        <InspectionFormModal
+          visible={showInspectionModal}
+          onClose={() => toggleModal('showInspectionModal', false)}
+          onSubmit={handleInspectionSubmit}
+          lead={lead}
+          loading={reportMutation.isPending}
+        />
+      )}
+
+      {showRiskModal && (
+        <RiskReportModal
+          visible={showRiskModal}
+          onClose={() => toggleModal('showRiskModal', false)}
+          lead={lead}
+        />
+      )}
+
+      {showRevRenderModal && (
+        <RevRenderModal
+          visible={showRevRenderModal}
+          onClose={() => toggleModal('showRevRenderModal', false)}
+          lead={lead}
+          sectionImages={sectionImages}
+          onNavToDocs={() => setActiveTab('job_docs')}
+          onGenerate={async (payload) => {
+            try {
+              const res = await revRenderMutation.mutateAsync(payload);
+              const rawUrl =
+                res?.data?.data?.generatedUrl ||
+                res?.data?.generatedUrl ||
+                (res as any)?.generatedUrl ||
+                null;
+
+              if (rawUrl) {
+                try {
+                  const secureRes = await LeadService.getSecureUrls([
+                    { bucketName: 'np-revdsm-staging', filePath: rawUrl },
+                  ]);
+                  const secureData = secureRes.data?.data || secureRes.data || [];
+                  if (secureData.length > 0 && secureData[0].secureUrl) {
+                    return secureData[0].secureUrl;
+                  }
+                } catch (e) {
+                  console.warn('Failed to secure generated URL, falling back', e);
+                }
+                return resolveS3Url(rawUrl);
+              }
+              return null;
+            } catch (error) {
+              return null;
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+});
+
+function TabButton({ label, i, active, onPress, colors, isDark }: any) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      className="flex-1 items-center justify-center py-2 rounded-xl"
+      style={{
+        backgroundColor: active ? colors.primary.main : isDark ? colors.card : '#919EAB1F',
+        shadowColor: active ? colors.primary.main : 'transparent',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: active ? 6 : 0,
+      }}
+    >
+      <FontAwesome5
+        name={active ? i : i}
+        size={18}
+        color={active ? 'white' : colors.textSecondary}
+      />
+      <Text
+        className="text-xs font-semibold mt-1"
+        style={{ color: active ? 'white' : colors.textSecondary }}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}

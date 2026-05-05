@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
-import { Header } from '../../widgets/components/headers/MainHeader';
+import { Header } from '../../widgets/common/MainHeader';
 import { useNavigation } from '@react-navigation/native';
 
 export default function LearningPage() {

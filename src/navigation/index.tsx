@@ -9,6 +9,14 @@ import JobTrackerPage from '../screens/JobTracker/index';
 import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
+import MapDetailPage from '../screens/MapDetail';
+import LeadCenterPage from '../screens/LeadCenter';
+import PitchbookScreen from '../screens/Pitchbook';
+import DealCenter from '../screens/DealCenter/index';
+import ForgotPasswordScreen from '../screens/auth/forgot-password';
+import EmailOTPScreen from '../screens/auth/email-otp';
+import AuthenticatorOTPScreen from '../screens/auth/authenticator-otp';
+import JobBuilderScreen from '../screens/JobBuilder/index';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -23,6 +31,20 @@ export type RootStackParamList = {
     chatId: string;
     customerName: string;
     chatType?: 'lead' | 'channel';
+  };
+  MapDetail: { currentLead?: any };
+  LeadCenter: { lead: any; initialTool?: string };
+  Pitchbook: { lead: any };
+  DealCenter: { lead: any };
+  ForgotPassword: undefined;
+  EmailOTP: { email: string };
+  AuthenticatorOTP: { email: string };
+  JobBuilder: {
+    initialJobState: any;
+    calculatorData: any;
+    leadId: string;
+    outcomeForm: any;
+    onGoBack?: (jobState: any) => void;
   };
 };
 
@@ -42,7 +64,12 @@ export default function RootNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!isAuthenticated ? (
-        <Stack.Screen name="Login" component={LoginPage} />
+        <>
+          <Stack.Screen name="Login" component={LoginPage} />
+          <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+          <Stack.Screen name="EmailOTP" component={EmailOTPScreen} />
+          <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
+        </>
       ) : (
         <>
           <Stack.Screen name="Leads" component={LeadsPage} />
@@ -51,6 +78,11 @@ export default function RootNavigator() {
           <Stack.Screen name="MyLearning" component={LearningPage} />
           <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
           <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+          <Stack.Screen name="MapDetail" component={MapDetailPage} />
+          <Stack.Screen name="LeadCenter" component={LeadCenterPage} />
+          <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
+          <Stack.Screen name="DealCenter" component={DealCenter} />
+          <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
         </>
       )}
     </Stack.Navigator>

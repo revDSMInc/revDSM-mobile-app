@@ -1,21 +1,35 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, ImageBackground } from 'react-native';
+import React, { useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  Image,
+  TextInput,
+  ImageBackground,
+} from 'react-native';
 import { FlashMessage } from '../../config/message';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { GlobalKeyboardAvoidingView } from '../../widgets/common/keyboard/GlobalKeyboard';
-import { CustomInput } from '../../widgets/controls/input/CustomInput';
-import { CustomButton } from '../../widgets/controls/button/CustomButton';
+import { CustomInput } from '../../widgets/common/CustomInput';
+import { CustomButton } from '../../widgets/common/CustomButton';
 import Logo from '../../assets/svgs/logo';
 import { useLoginMutation } from '../../hooks/useAuthMutation';
 import { validateEmail } from '../../utils/validation';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../navigation';
+import { TouchableOpacity } from 'react-native';
 
 export default function LoginScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const loginMutation = useLoginMutation();
   const { colors, isDark } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const passwordRef = useRef<TextInput>(null);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -37,60 +51,69 @@ export default function LoginScreen() {
 
   return (
     <ImageBackground
-      style={[
-        {
-          flexGrow: 1,
-          justifyContent: 'center',
-          backgroundColor: colors.background,
-        },
-      ]}
       source={require('../../assets/images/home/login_bg.webp')}
-      imageStyle={{ opacity: 0.06, objectFit: 'cover' }}
+      style={{ flex: 1, backgroundColor: colors.background }}
+      imageStyle={{ opacity: 0.1 }}
     >
-      <GlobalKeyboardAvoidingView style={styles.root}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Brand */}
-          <View className="items-center mt-[30%]">
-            <Logo className="h-12 object-contain" />
-          </View>
+      <View style={{ flex: 1 }}>
+        {/* Static Header: Logo won't move when keyboard opens */}
+        <View className="items-center" style={{ marginTop: '25%', height: 60 }}>
+          <Logo className="h-12 object-contain" />
+        </View>
 
-          {/* Form Card */}
-          <View className="flex-1 justify-center">
-            <Text className="text-2xl font-semibold mb-8" style={{ color: colors.text }}>
-              Sign in to <Text style={{ color: colors.primary.main }}>rev</Text>DSM
-            </Text>
-            <CustomInput
-              label="Email"
-              placeholder="Enter Your Email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              rightIcon="mail-outline"
-            />
+        {/* Shifting Content: Only the form lifting */}
+        <GlobalKeyboardAvoidingView style={{ flex: 1 }}>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View className="flex-1 justify-center px-6">
+              <Text className="text-2xl font-semibold mb-8" style={{ color: colors.text }}>
+                Sign in to <Text style={{ color: colors.primary.main }}>rev</Text>DSM
+              </Text>
+              <CustomInput
+                label="Email"
+                placeholder="Enter Your Email"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                rightIcon="mail"
+                returnKeyType="next"
+                onSubmitEditing={() => passwordRef.current?.focus()}
+                blurOnSubmit={false}
+              />
 
-            <CustomInput
-              label="Password"
-              placeholder="Enter your password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              rightIcon={showPassword ? 'eye-off-outline' : 'eye-outline'}
-              onRightIconPress={() => setShowPassword((p) => !p)}
-            />
+              <CustomInput
+                ref={passwordRef}
+                label="Password"
+                placeholder="Enter your password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                rightIcon={showPassword ? 'eye-off' : 'eye'}
+                onRightIconPress={() => setShowPassword((p) => !p)}
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
 
-            <CustomButton
-              title="Login"
-              onPress={handleLogin}
-              loading={loginMutation.isPending}
-              style={{ marginTop: 12 }}
-            />
-          </View>
-        </ScrollView>
-      </GlobalKeyboardAvoidingView>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ForgotPassword')}
+                className="self-end mb-6"
+              >
+                <Text className="text-sm font-semibold text-black">Forgot password?</Text>
+              </TouchableOpacity>
+
+              <CustomButton
+                title="Login"
+                onPress={handleLogin}
+                loading={loginMutation.isPending}
+                style={{ marginTop: 12 }}
+              />
+            </View>
+          </ScrollView>
+        </GlobalKeyboardAvoidingView>
+      </View>
     </ImageBackground>
   );
 }
@@ -99,9 +122,13 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
   },
+  backgroundImage: {
+    flex: 1,
+    justifyContent: 'center',
+  },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'flex-start',
     paddingHorizontal: 24,
+    paddingBottom: 40,
   },
 });

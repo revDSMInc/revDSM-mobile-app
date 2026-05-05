@@ -1,0 +1,456 @@
+import React from 'react';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import Feather from 'react-native-vector-icons/Feather';
+import { Section, SubHeader, InputField } from './SharedElements';
+import { pricing } from '../../../utils/calculator/pricing-data';
+
+export const CalculatorForm = ({
+  inputs,
+  extras,
+  expanded,
+  onToggle,
+  onUpdate,
+  results,
+  onClose,
+  setShowTrackerModal,
+  lead,
+  isDark,
+  colors,
+  isAutoSaving,
+  lastUpdatedAt,
+}: any) => {
+  const hasGutterInput =
+    Number(inputs.gutter5DsE) > 0 || Number(inputs.gutter6Ft1) > 0 || Number(inputs.gutter7DsE) > 0;
+  const hasVersaOrFilter = [1, 2, 3].some(
+    (s) =>
+      Number(inputs[`versa6Ft${s}`]) > 0 ||
+      Number(inputs[`versa7Ft${s}`]) > 0 ||
+      Number(inputs[`filter45Ft${s}`]) > 0
+  );
+  const hasVersaMax = Number(inputs.versaMaxFt1) > 0;
+
+  return (
+    <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false}>
+      <View className="px-5 pt-6 pb-40">
+        <View className="flex-row items-center justify-between pb-6">
+          <View className="flex-row items-center">
+            <TouchableOpacity
+              onPress={onClose}
+              className="mr-3 p-1 items-center justify-center w-8 h-8 border border-border rounded-lg"
+            >
+              <Feather
+                name="arrow-left"
+                size={14}
+                color={isDark ? colors.text : colors.textSecondary}
+              />
+            </TouchableOpacity>
+            <View>
+              <Text className="text-lg font-black text-text-primary">
+                {lead?.customerDetails?.firstName
+                  ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
+                  : lead?.title || 'Lead Center'}{' '}
+                <Text className="text-xs font-medium text-text-secondary">
+                  #{lead?.leadId || lead?.leadCode || ''}
+                </Text>
+              </Text>
+              <View className="flex-row items-center mt-0.5">
+                {lead?.leadTime && (
+                  <Text className="text-[10px] font-bold text-text-secondary uppercase">
+                    {lead.leadTime} Lead
+                  </Text>
+                )}
+                <View className="mx-2 w-1 h-1 rounded-full bg-slate-300" />
+                {isAutoSaving ? (
+                  <View className="flex-row items-center">
+                    <ActivityIndicator size={8} color="#4CBB17" />
+                    <Text className="text-[10px] font-black text-green-600 uppercase ml-1">
+                      Syncing...
+                    </Text>
+                  </View>
+                ) : lastUpdatedAt ? (
+                  <Text className="text-[10px] font-bold text-text-secondary uppercase">
+                    Last updated at {lastUpdatedAt}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <Section
+          title="Gutters"
+          id="gutters"
+          icon="home"
+          color="#00B8D9"
+          desc="Gutter installation and accessories"
+          expanded={expanded}
+          onToggle={onToggle}
+        >
+          <SubHeader title="All Stories" />
+          <InputField
+            label={'5" Gutter/DS/E'}
+            value={inputs.gutter5DsE}
+            keyName="gutter5DsE"
+            price={pricing.gutters['5_inch_all_stories']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'6" Gutter/DS/Elbows'}
+            value={inputs.gutter6Ft1}
+            keyName="gutter6Ft1"
+            price={pricing.gutters['6_inch_all_stories']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" Gutter/DS/Elbows'}
+            value={inputs.gutter7DsE}
+            keyName="gutter7DsE"
+            price={pricing.gutters['7_inch_all_stories']}
+            onUpdate={onUpdate}
+          />
+          <SubHeader title="Extras" />
+          <InputField
+            label="Wedges"
+            value={extras.wedges}
+            keyName="wedges"
+            price={pricing.extras.wedges}
+            onUpdate={onUpdate}
+            isExtra
+            highlighted={hasGutterInput}
+          />
+          <InputField
+            label="Straps"
+            value={extras.straps}
+            keyName="straps"
+            price={pricing.extras.straps}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Modify Height/R&R"
+            value={extras.modifyHeight}
+            keyName="modifyHeight"
+            price={pricing.extras.modifyHeight}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Replace Corner Miter"
+            value={extras.replaceCorner}
+            keyName="replaceCorner"
+            price={pricing.extras.replaceCorner}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="GroundSpout"
+            value={extras.groundSpout}
+            keyName="groundSpout"
+            price={pricing.extras.groundSpout}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Extended Splash Guard"
+            value={extras.extendedSplashGuard}
+            keyName="extendedSplashGuard"
+            price={pricing.extras.extendedSplashGuard}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Extended .032 Splash Guard"
+            value={extras.extendedSplashGuard032}
+            keyName="extendedSplashGuard032"
+            price={pricing.extras.extendedSplashGuard032}
+            onUpdate={onUpdate}
+            isExtra
+          />
+        </Section>
+
+        <Section
+          title="LeafFilter"
+          id="protection"
+          icon="shield-checkmark"
+          color="#4CBB17"
+          desc="Gutter protection system"
+          expanded={expanded}
+          onToggle={onToggle}
+        >
+          <SubHeader title="All Stories" />
+          <InputField
+            label={'Versa Max'}
+            value={inputs.versaMaxFt1}
+            keyName="versaMaxFt1"
+            price={pricing.filters.versa_max_all_stories}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'C-S-R'}
+            value={extras.csr}
+            keyName="csr"
+            price={pricing.extras.csr}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <SubHeader title="1st Story" />
+          <InputField
+            label={'6" Versa (1st Story)'}
+            value={inputs.versa6Ft1}
+            keyName="versa6Ft1"
+            price={pricing.filters.versa_6['1']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" Versa (1st Story)'}
+            value={inputs.versa7Ft1}
+            keyName="versa7Ft1"
+            price={pricing.filters.versa_7['1']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" & 5" Versa (1st Story)'}
+            value={inputs.filter45Ft1}
+            keyName="filter45Ft1"
+            price={pricing.filters.filter_4_5['1']}
+            onUpdate={onUpdate}
+          />
+          <SubHeader title="2nd Story" />
+          <InputField
+            label={'6" Versa (2nd Story)'}
+            value={inputs.versa6Ft2}
+            keyName="versa6Ft2"
+            price={pricing.filters.versa_6['2']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" Versa (2nd Story)'}
+            value={inputs.versa7Ft2}
+            keyName="versa7Ft2"
+            price={pricing.filters.versa_7['2']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" & 5" Versa (2nd Story)'}
+            value={inputs.filter45Ft2}
+            keyName="filter45Ft2"
+            price={pricing.filters.filter_4_5['2']}
+            onUpdate={onUpdate}
+          />
+          <SubHeader title="3rd Story" />
+          <InputField
+            label={'6" Versa (3rd Story)'}
+            value={inputs.versa6Ft3}
+            keyName="versa6Ft3"
+            price={pricing.filters.versa_6['3']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" Versa (3rd Story)'}
+            value={inputs.versa7Ft3}
+            keyName="versa7Ft3"
+            price={pricing.filters.versa_7['3']}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label={'7" & 5" Versa (3rd Story)'}
+            value={inputs.filter45Ft3}
+            keyName="filter45Ft3"
+            price={pricing.filters.filter_4_5['3']}
+            onUpdate={onUpdate}
+          />
+          <SubHeader title="Extras" />
+          <InputField
+            label="Corners (Filter)"
+            value={extras.cornersFilter}
+            keyName="cornersFilter"
+            price={pricing.extras.cornersFilter}
+            onUpdate={onUpdate}
+            isExtra
+            highlighted={hasVersaOrFilter}
+          />
+          <InputField
+            label="Sawzall Hanger"
+            value={extras.sawzallHanger}
+            keyName="sawzallHanger"
+            price={pricing.extras.sawzallHanger}
+            onUpdate={onUpdate}
+            isExtra
+            highlighted={hasVersaOrFilter}
+          />
+          <InputField
+            label="Remove Protection"
+            value={extras.removeProtection}
+            keyName="removeProtection"
+            price={pricing.extras.removeProtection}
+            onUpdate={onUpdate}
+            isExtra
+            highlighted={hasVersaOrFilter}
+          />
+          <InputField
+            label="Ribbed Roof"
+            value={extras.ribbedRoof}
+            keyName="ribbedRoof"
+            price={pricing.extras.ribbedRoof}
+            onUpdate={onUpdate}
+            isExtra
+            highlighted={hasVersaMax}
+          />
+        </Section>
+
+        <Section
+          title="Soffit"
+          id="structural"
+          icon="build"
+          color="#00B8D9"
+          desc="Soffit installation services"
+          expanded={expanded}
+          onToggle={onToggle}
+        >
+          <InputField
+            label="Vinyl Soffit"
+            value={extras.vinylSoffit}
+            keyName="vinylSoffit"
+            price={pricing.extras.vinylSoffit}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Porch Ceiling Soffit (sqft)"
+            value={extras.porchCeiling}
+            keyName="porchCeiling"
+            price={pricing.extras.porchCeiling}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Nailer Build Out"
+            value={extras.nailerBuildOut}
+            keyName="nailerBuildOut"
+            price={pricing.extras.nailerBuildOut}
+            onUpdate={onUpdate}
+            isExtra
+          />
+        </Section>
+
+        <Section
+          title="Fascia"
+          id="maintenance"
+          icon="layers"
+          color="#8E33FF"
+          desc="Fascia board and trim services"
+          expanded={expanded}
+          onToggle={onToggle}
+        >
+          <InputField
+            label="Trim Wrap (Fascia)"
+            value={extras.trimWrap}
+            keyName="trimWrap"
+            price={pricing.extras.trimWrap}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label="Fascia Board"
+            value={extras.fasciaBoard}
+            keyName="fasciaBoard"
+            price={pricing.extras.fasciaBoard}
+            onUpdate={onUpdate}
+            isExtra
+          />
+          <InputField
+            label={'Aluminum 2"x2" Fascia Board'}
+            value={extras.aluminumFasciaBoard}
+            keyName="aluminumFasciaBoard"
+            price={pricing.extras.aluminumFasciaBoard}
+            onUpdate={onUpdate}
+            isExtra
+          />
+        </Section>
+
+        <Section
+          title="Additional Services"
+          id="finance"
+          icon="add-circle"
+          color="#FFAB00"
+          desc="Extra labor and services"
+          expanded={expanded}
+          onToggle={onToggle}
+        >
+          <InputField
+            label="Extra Labor"
+            value={inputs.extraLabor}
+            keyName="extraLabor"
+            price={pricing.extras.extraLabor}
+            onUpdate={onUpdate}
+          />
+          <InputField
+            label="Installer Check"
+            value={inputs.ckToInstallers}
+            keyName="ckToInstallers"
+            onUpdate={onUpdate}
+          />
+        </Section>
+
+        <View className="mb-6 bg-card overflow-hidden rounded-[24px] border border-border shadow-sm">
+          <View className="flex-row items-center justify-between p-5 border-b border-border">
+            <View className="flex-row items-center">
+              <View className="w-10 h-10 rounded-xl bg-purple-500/10 items-center justify-center mr-4">
+                <Ionicons name="receipt" size={20} color="#637381" />
+              </View>
+              <View>
+                <Text className="text-sm font-black text-text-primary">Job Summary</Text>
+                <Text className="text-[10px] font-bold text-text-secondary uppercase">
+                  {results.items.length} Items Selected
+                </Text>
+              </View>
+            </View>
+          </View>
+          <View className="p-5">
+            <View className="flex-row flex-wrap gap-2 mb-4">
+              {results.items.map((it: any, i: number) => (
+                <View key={i} className="px-3 py-1.5 rounded-full bg-surface flex-row items-center">
+                  <View
+                    className={`w-1.5 h-1.5 rounded-full mr-2 ${
+                      it.label.includes('Gutter') ? 'bg-blue-400' : 'bg-purple-400'
+                    }`}
+                  />
+                  <Text className="text-[10px] font-bold text-text-secondary">
+                    {it.value}
+                    {it.unit || "'"} {it.label}
+                  </Text>
+                </View>
+              ))}
+            </View>
+            <View className="flex-row justify-between items-center bg-green-500/10 p-4 rounded-2xl">
+              <Text className="text-[10px] font-black text-green-600 uppercase">
+                Est. Retail Total
+              </Text>
+              <Text className="text-xl font-black text-green-600">
+                ${Math.round(results.total)}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View className="flex-row gap-3 mt-4 mb-24">
+          <TouchableOpacity
+            onPress={onClose}
+            className="flex-1 h-12 rounded-xl items-center justify-center border-2 border-[#4CBB17]"
+          >
+            <Text className="text-[12px] font-black uppercase text-[#4CBB17]">Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowTrackerModal(true)}
+            className="flex-[2] h-12 bg-[#4CBB17] rounded-xl items-center justify-center shadow-lg shadow-green-600/30"
+          >
+            <Text className="text-white text-[12px] font-black uppercase">
+              Add This Job into Job Tracker
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </ScrollView>
+  );
+};

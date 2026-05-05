@@ -1,0 +1,146 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { LeadService } from '../services/api/leads';
+import { resolveS3Url } from '../utils/s3-utils';
+import { IMAGE_CATEGORIES } from '../constants/lead-center';
+
+export const useLeadCenterData = (initialLead: any, user: any) => {
+  const queryClient = useQueryClient();
+  const [lead, setLead] = useState<any>(initialLead);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [outcomeForm, setOutcomeForm] = useState<any>({});
+  const [calculatorData, setCalculatorData] = useState<any>({});
+  const [isOutcomeLoading, setIsOutcomeLoading] = useState(true);
+  const [jobState, setJobState] = useState<any>({
+    gutter: {
+      partial: '',
+      gutterColorsMulti: [],
+      downspoutsMulti: [],
+      extrasColors: { groundSpout: 'Black' },
+    },
+    leaffilter: {
+      combinations: [],
+      extras: { csr: 0, cornersFilter: 0, sawzallHanger: 0, removeProtection: 0, ribbedRoof: 0 },
+    },
+    soffit: { vinyl: { type: '' }, porch: { location: [] }, nailer: { type: '' } },
+    fascia: { wrap: { type: '' }, boards: { boardType: '' }, aluminumBoards: { footage: '' } },
+    additional: { extraLabor: 0 },
+    scheduleTime: null,
+  });
+
+  const refetch = useCallback(async () => {
+    if (!user?._id) return;
+    try {
+      setIsRefreshing(true);
+      const res = await LeadService.getSalesLeads(user._id);
+      const allLeads = res.data?.data?.leads || res.data?.data;
+      if (Array.isArray(allLeads)) {
+        const updated = allLeads.find((l: any) => l._id === initialLead?._id);
+        if (updated) setLead(updated);
+      }
+    } catch (err) {
+      console.error('[LeadCenter] Refresh failed:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [user?._id, initialLead?._id]);
+
+  useEffect(() => {
+    if (!lead?._id) return;
+    const fetchOutcomeData = async () => {
+      try {
+        setIsOutcomeLoading(true);
+        const res = await LeadService.getLeadOutcome(lead._id);
+        const data = res.data?.data || res.data;
+        if (data?.leadData?.jobBuilder) setJobState(data.leadData.jobBuilder);
+        if (data?.leadData?.LFCalculator) setCalculatorData(data.leadData.LFCalculator);
+        if (data?.leadData) setOutcomeForm(data.leadData);
+      } catch (err: any) {
+        // 404 is expected for leads that haven't been resulted/processed yet
+        if (err?.response?.status !== 404 && err?.status !== 404) {
+          console.warn('[LeadCenter] Failed to fetch outcome data:', err);
+        }
+      } finally {
+        setIsOutcomeLoading(false);
+      }
+    };
+    fetchOutcomeData();
+  }, [lead?._id]);
+
+  const [sectionImages, setSectionImages] = useState<Record<string, any[]>>({});
+
+  useEffect(() => {
+    const fetchSecureImages = async () => {
+      if (lead?.salesPhotos?.length > 0) {
+        try {
+          const filePaths = lead.salesPhotos.map((p: any) => ({
+            bucketName: p.bucketName || 'np-revdsm-staging',
+            filePath: p.s3url,
+          }));
+          const secureRes = await LeadService.getSecureUrls(filePaths);
+          const secureData = secureRes.data?.data || secureRes.data || [];
+
+          const map: Record<string, any[]> = {};
+          lead.salesPhotos.forEach((photo: any) => {
+            const catName = photo.category;
+            if (!map[catName]) map[catName] = [];
+
+            const categoryConfig = IMAGE_CATEGORIES.find((c) => c.name === catName);
+            let subIndex = -1;
+            if (categoryConfig && photo.subcategory) {
+              subIndex =
+                categoryConfig.subCategories?.findIndex(
+                  (s) => s.id === photo.subcategory || s.name === photo.subcategory
+                ) ?? -1;
+            }
+
+            if (subIndex === -1) {
+              const parts = photo.subcategory?.split('-');
+              const numericPart = parseInt(parts?.[parts.length - 1] || '');
+              if (!isNaN(numericPart)) subIndex = numericPart - 1;
+            }
+
+            const secured = secureData.find(
+              (s: any) => s.s3url === photo.s3url || s.filePath === photo.s3url
+            );
+            const imageUri = secured?.secureUrl || resolveS3Url(photo.s3url);
+
+            map[catName].push({
+              uri: imageUri,
+              s3url: photo.s3url,
+              id: photo._id,
+              index: subIndex >= 0 ? subIndex : map[catName].length,
+              subcategory: photo.subcategory,
+            });
+          });
+          setSectionImages(map);
+        } catch (error) {
+          console.error('Failed to fetch secure URLs', error);
+        }
+      } else {
+        setSectionImages({});
+      }
+    };
+    fetchSecureImages();
+  }, [lead?.salesPhotos]);
+
+  useEffect(() => {
+    return () => {
+      queryClient.removeQueries({ queryKey: ['lead', initialLead?._id] });
+    };
+  }, [initialLead?._id, queryClient]);
+
+  return {
+    lead,
+    setLead,
+    isRefreshing,
+    refetch,
+    jobState,
+    setJobState,
+    calculatorData,
+    outcomeForm,
+    isOutcomeLoading,
+    sectionImages,
+    setSectionImages,
+  };
+};

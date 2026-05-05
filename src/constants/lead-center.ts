@@ -1,0 +1,419 @@
+export const ONE_LEG_OPTIONS = [
+  { label: 'Yes', value: 'yes' },
+  { label: 'No', value: 'no' },
+];
+
+export const RESULT_OPTIONS = [
+  { label: 'Demo', value: 'demo' },
+  { label: 'No Demo', value: 'noDemo' },
+  { label: 'Not Hit', value: 'notHit' },
+  { label: 'Reset', value: 'reset' },
+  { label: 'Sale', value: 'sale' },
+];
+
+export const PAYMENT_METHOD_OPTIONS = [
+  { label: 'Check', value: 'check' },
+  { label: 'MC/VISA/DSCVR', value: 'mcVisaDscvr' },
+  { label: 'AMEX', value: 'amex' },
+];
+
+export const BALANCE_PAYMENT_METHOD_OPTIONS = [
+  { label: 'Check', value: 'check' },
+  { label: 'MC/VISA/DSCVR', value: 'mcVisaDscvr' },
+  { label: 'AMEX', value: 'amex' },
+  // financing plans
+  { label: '2511 (GreenSky)', value: 'greensky2511' },
+  { label: '2521 (GreenSky)', value: 'greensky2521' },
+  { label: '2531 (GreenSky)', value: 'greensky2531' },
+  { label: '1599 (GreenSky)', value: 'greensky1599' },
+  { label: '4073 (Wells Fargo)', value: 'wf4073' },
+  { label: '4079 (Wells Fargo)', value: 'wf4079' },
+  { label: '4091 (Wells Fargo)', value: 'wf4091' },
+  { label: '4103 (Wells Fargo)', value: 'wf4103' },
+  { label: '4115 (Wells Fargo)', value: 'wf4115' },
+];
+
+export const IMAGE_CATEGORIES = [
+  {
+    id: 'front-view',
+    name: 'Front View',
+    subCategories: [
+      { id: 'front-image', name: 'Front of Home', required: 1, thumbnail: 'front_view' },
+      { id: 'front-left', name: 'Front-Left', required: 1, thumbnail: 'front_left' },
+      { id: 'front-right', name: 'Front-Right', required: 1, thumbnail: 'front_right' },
+    ],
+  },
+  {
+    id: 'side-views',
+    name: 'Side Views',
+    subCategories: [
+      { id: 'left-side', name: 'Left Side', required: 1, thumbnail: 'left_side' },
+      { id: 'right-side', name: 'Right Side', required: 1, thumbnail: 'right_side' },
+    ],
+  },
+  {
+    id: 'back-view',
+    name: 'Back View',
+    subCategories: [
+      { id: 'back-image', name: 'Back of Home', required: 1, thumbnail: 'back_view' },
+      { id: 'back-left', name: 'Back-Left', required: 1, thumbnail: 'back_left' },
+      { id: 'back-right', name: 'Back-Right', required: 1, thumbnail: 'back_right' },
+    ],
+  },
+  {
+    id: 'gutter-system',
+    name: 'Gutter System',
+    subCategories: [
+      { id: 'inside-k-style-gutter-run', name: 'Inside K-style gutter run', required: 1, thumbnail: 'gutter_kstyle' },
+      { id: 'inside-box-gutter-run', name: 'Inside Box gutter run', required: 1, thumbnail: 'gutter_box' },
+      { id: 'inside-super-gutter', name: 'Inside Super gutter', required: 1, thumbnail: 'gutter_super' },
+    ],
+  },
+  {
+    id: 'measurements',
+    name: 'Measurements',
+    subCategories: [
+      { id: 'box-gutter-width-measurement', name: 'Box gutter width measurement', required: 1, thumbnail: 'gutter_box' },
+      { id: 'super-gutter-width-measurement', name: 'Super gutter width measurement', required: 1, thumbnail: 'gutter_super' },
+      { id: 'fascia-board-width', name: 'Fascia board width', required: 1, thumbnail: 'misc' },
+      { id: 'fascia-height', name: 'Fascia height', required: 1, thumbnail: 'misc' },
+      { id: 'soffit-width', name: 'Soffit width (house to edge)', required: 1, thumbnail: 'misc' },
+      { id: 'soffit-panel-measurement', name: 'Soffit panel measurement', required: 1, thumbnail: 'misc' },
+      { id: 'k-styler-gutter-width-measurement', name: 'K Style Gutter Width Measurement', required: 1, thumbnail: 'gutter_kstyle' },
+    ],
+  },
+  {
+    id: 'miscellaneous',
+    name: 'Miscellaneous',
+    subCategories: [
+      { id: 'pool-screens', name: 'Pool screens', required: 1, thumbnail: 'misc' },
+      { id: 'misc-1', name: 'Miscellaneous 1', required: 1, thumbnail: 'misc' },
+      { id: 'misc-2', name: 'Miscellaneous 2', required: 1, thumbnail: 'misc' },
+      { id: 'misc-3', name: 'Miscellaneous 3', required: 1, thumbnail: 'misc' },
+      { id: 'misc-4', name: 'Miscellaneous 4', required: 1, thumbnail: 'misc' },
+    ],
+  },
+  {
+    id: 'roofline-observation',
+    name: 'Roofline Observation',
+    subCategories: [
+      { id: 'roof-edge-left-side', name: 'Roof Edge — Left Side', required: 1, thumbnail: 'roof_edge' },
+      { id: 'roof-edge-right-side', name: 'Roof Edge — Right Side', required: 1, thumbnail: 'roof_edge' },
+      { id: 'roof-penetration-vent-area', name: 'Roof Penetration / Vent Area', required: 1, thumbnail: 'roof_edge' },
+      { id: 'general-roof-surface-condition', name: 'General Roof Surface Condition', required: 1, thumbnail: 'roof_edge' },
+    ],
+  },
+];
+
+export const INSPECTION_ISSUES = {
+  gutters: [
+    {
+      label: 'Gutter Overflow',
+      description:
+        'Overflowing gutters are a clear sign of clogging or undersized drainage. Water spilling over the edge accelerates siding damage and foundation erosion.',
+    },
+    {
+      label: 'Gutter Clogged with Debris',
+      description:
+        'Debris like leaves and pine needles are visibly clogging the gutter system, preventing proper water flow and increasing the risk of overflow and fascia rot.',
+    },
+    {
+      label: 'Shingle Grit in Gutter',
+      description:
+        'Excessive shingle granules indicate an aging or deteriorating roof. This debris builds up over time, blocking drainage and reducing system effectiveness.',
+    },
+    {
+      label: 'Gutter Pulling Away',
+      description:
+        'Gutters pulling from the fascia show structural stress and improper fastener hold, usually caused by rot or prolonged water saturation.',
+    },
+    {
+      label: 'Improper Gutter Pitch',
+      description:
+        'Water pooling along the gutter indicates an incorrect pitch. Without slope, water stagnates and overflows during heavy rain.',
+    },
+    {
+      label: 'Gutter Chipped, Scratched, or Corroded',
+      description:
+        'Surface damage to gutters, including chipping, scratching, or corrosion, exposes the metal to accelerated wear and water intrusion.',
+    },
+    {
+      label: 'Spike and Ferrule Failure',
+      description:
+        'Traditional spike and ferrule gutter systems loosen over time, causing sagging and improper water flow.',
+    },
+    {
+      label: 'Crimped or Damaged Downspout',
+      description:
+        'Crimped downspouts restrict drainage, leading to water backflow at roof edges and pooling near the foundation.',
+    },
+    {
+      label: 'Downspout Installed Incorrectly',
+      description:
+        'Improper downspout installation directs excessive water to a concentrated area, leading to soil saturation, erosion, or water pooling at the foundation.',
+    },
+  ],
+  fascia: [
+    {
+      label: 'Rotting Fascia Board',
+      description:
+        'The fascia board shows visible rot, likely from prolonged exposure to trapped moisture. This weakens the area where gutters are attached.',
+    },
+    {
+      label: 'Peeling Fascia Paint',
+      description:
+        'Peeling paint suggests water intrusion behind the fascia. If not addressed, moisture will continue to soften the wood.',
+    },
+    {
+      label: 'Fascia Wrap Separating',
+      description:
+        'Gaps between fascia wrap and wood create a pocket where moisture becomes trapped, leading to hidden rot.',
+    },
+    {
+      label: 'Moisture Between Wrap and Wood',
+      description:
+        'Evidence of moisture beneath the fascia wrap suggests improper installation or failed sealing, softening the wood over time.',
+    },
+    {
+      label: 'Fascia Cracking or Warping',
+      description:
+        'Cracks or warping in the fascia signal water damage or structural strain, threatening gutter attachment points.',
+    },
+    {
+      label: 'Blistered or Swollen Wood',
+      description:
+        'Blistering or swelling along fascia or soffit lines points to prolonged moisture exposure and potential hidden rot.',
+    },
+    {
+      label: 'Bent or Warped Fascia Wrap',
+      description:
+        'Warped metal wrap creates openings for water infiltration and undermines structural protection.',
+    },
+    {
+      label: 'Rust Streaks on Fascia Wrap',
+      description:
+        'Rust stains originating from fasteners or wrap edges signal compromised metal integrity and hidden water penetration.',
+    },
+    {
+      label: 'Buckling Metal Wrap from Thermal Expansion',
+      description:
+        'Wrap material expanding and contracting without relief cuts causes warping, cracking protective barriers.',
+    },
+    {
+      label: 'Split Fascia Boards from Fastener Pressure',
+      description: 'Overdriven nails or screws split fascia boards, weakening the attachment system.',
+    },
+    {
+      label: 'Staining or Discoloration Around Fasteners',
+      description:
+        'Water leaks through fastener penetrations into fascia, leading to staining and internal wood decay.',
+    },
+    {
+      label: 'Fasteners Missing or Improperly Spaced',
+      description:
+        'Fastener gaps beyond spec distances lead to wrap detachment and moisture penetration over time.',
+    },
+  ],
+  ventilation: [
+    {
+      label: 'Painted-Over Soffit Vents',
+      description:
+        'Painted-over soffits restrict airflow into the attic, causing shingle damage and mold growth.',
+    },
+    {
+      label: 'Mold on Soffit',
+      description:
+        'Mold visible on the soffit vent indicates condensation and insufficient airflow, compromising attic health.',
+    },
+    {
+      label: 'Clogged Soffit Vent',
+      description:
+        'Clogged vents block the intake of cool, dry air, leading to extreme attic heat and moisture accumulation.',
+    },
+    {
+      label: 'Broken or Missing Soffit Panel',
+      description:
+        'A missing or broken soffit panel exposes the attic to pests and uncontrolled moisture entry.',
+    },
+    {
+      label: 'Insulation Blocking Soffit Ventilation',
+      description:
+        'Over-insulated eaves without ventilation baffles trap warm, moist air in the attic, causing mold and rot.',
+    },
+    {
+      label: 'Improvised or Incomplete Soffit Repairs',
+      description:
+        'Makeshift soffit repairs leave open gaps, restrict airflow, and compromise energy efficiency.',
+    },
+  ],
+  structural: [
+    {
+      label: 'Water Streaking on Fascia or Siding',
+      description:
+        'Water stains suggesting overflowing gutters or improper drip edge installation, causing long-term paint failure.',
+    },
+    {
+      label: 'Sagging Gutter',
+      description:
+        'A sagging section indicates the gutter is overloaded or pulling loose from deteriorated fascia.',
+    },
+    {
+      label: 'Cracks in Stucco or Siding',
+      description:
+        'Foundation cracks or erosion beneath the gutterline may stem from years of misdirected runoff.',
+    },
+    {
+      label: 'Roof Shingle Damage Near Gutter',
+      description:
+        'Damaged shingles suggest backflow or ice damming, with water backing up under shingles due to poor drainage.',
+    },
+    {
+      label: 'Animal Nests in Gutter',
+      description:
+        'Nests restrict water flow and introduce bacteria, creating weight that strains fasteners and fascia.',
+    },
+    {
+      label: 'Deck Connection Rot (Ledger Board Rot)',
+      description: 'Moisture pooling along the ledger board leads to deck instability and structural risk.',
+    },
+    {
+      label: 'Spike Heads or Nail Pops at Roofline',
+      description:
+        'Early signs of decking movement due to trapped attic moisture or structural shifting.',
+    },
+    {
+      label: 'Rotten Roof Sheathing at Eaves',
+      description: 'Water intrusion near gutter lines rots roof decking, weakening structural support.',
+    },
+    {
+      label: 'Fascia Pulling Away from Rafter Tails',
+      description: 'Movement of fascia boards away from rafters indicates deep water infiltration.',
+    },
+    {
+      label: 'Multiple Spike/Nail Holes in Fascia',
+      description: 'Excessive re-nailing suggests chronic gutter loosening and hidden rot issues.',
+    },
+    {
+      label: 'Cracked Deck Boards Near Ledger Connection',
+      description: 'Cracks at ledger connection points to walls signal major water intrusion.',
+    },
+    {
+      label: 'Water-Splattered Stucco Below Gutter Line',
+      description: 'Stucco staining below gutters shows chronic splashback from improper drainage.',
+    },
+    {
+      label: 'Weeping Mortar Joints',
+      description: 'Mortar lines oozing or darkened under gutters reveal continuous gutter overflow.',
+    },
+    {
+      label: 'Peeling Exterior Paint Only at Gutter Line',
+      description: 'Localized peeling paint directly below gutters is a sign of overflow-driven saturation.',
+    },
+  ],
+  erosion: [
+    {
+      label: 'Runoff Discharging Too Close to Foundation',
+      description:
+        'Water runoff is consistently discharging too close to the home’s foundation, leading to soil displacement.',
+    },
+    {
+      label: 'Missing or Inadequate Water Redirection',
+      description:
+        'Lack of splash blocks or extended downspouts accelerates erosion and may compromise slab integrity.',
+    },
+    {
+      label: 'Stucco Stains and Algae at Base of Wall',
+      description:
+        'Discolored stucco and algae growth at the wall’s base indicate prolonged moisture exposure.',
+    },
+    {
+      label: 'Foundation Risk: Cracks, Settlement & Moisture',
+      description:
+        'Erosion increases risk of foundation cracks, structural settlement, and interior water damage.',
+    },
+    {
+      label: 'Erosion at Ground Level',
+      description:
+        'Water runoff creating soil displacement, trenching, and weakening the foundation’s support structure.',
+    },
+    {
+      label: 'Foundation Saturation Risk',
+      description:
+        'Prolonged moisture buildup near foundation increases likelihood of cracking and settlement.',
+    },
+    {
+      label: 'Improper Splash Block Placement',
+      description: 'Missing or poorly positioned splash blocks allow uncontrolled runoff to saturate soil.',
+    },
+    {
+      label: 'Mulch or Soil Washing Away From Perimeter',
+      description: 'Mulch displacement shows chronic water discharge damaging landscaping.',
+    },
+    {
+      label: 'Standing Water at Downspout Exit',
+      description: 'Pooling at downspouts indicates drainage failure and foundation soaking.',
+    },
+    {
+      label: 'Trenching Along Foundation Wall',
+      description: 'Visible trenches at the drip line suggest long-term uncontrolled roof runoff.',
+    },
+    {
+      label: 'Settling or Cracking Driveway/Walkway Adjacent to Foundation',
+      description: 'Driveway cracks near the home hint at subsoil erosion from poor drainage.',
+    },
+    {
+      label: 'Basement or Crawlspace Musty Odor',
+      description: 'Persistent damp smells indoors can trace back to exterior drainage problems.',
+    },
+    {
+      label: 'Downspouts Terminating on Hard Surfaces',
+      description: 'Downspouts draining onto driveways cause surface cracking and icy conditions.',
+    },
+    {
+      label: 'Vegetation Growth Against Foundation',
+      description: 'Thick vegetation near foundation holds moisture, increasing risk of degradation.',
+    },
+    {
+      label: 'Splash Erosion Marks at Soil Line',
+      description: 'Heavy splash erosion against siding suggests chronic uncontrolled water runoff.',
+    },
+    {
+      label: 'Foundation Step Cracks at Downspout Locations',
+      description: 'Visible vertical cracks at foundation steps near downspouts show water-induced settlement.',
+    },
+    {
+      label: 'Mulch Volcanoes Around Downspouts',
+      description: 'Unmanaged runoff forms mounds of displaced mulch, showing severe soil disruption.',
+    },
+    {
+      label: 'Reverse Grading Toward Home',
+      description: 'Soil sloping inward traps water against foundation instead of shedding it away.',
+    },
+    {
+      label: 'Downspout Splash Zones Damaging Pavers',
+      description: 'Repeated heavy discharge fractures paver stones or concrete at landing areas.',
+    },
+    {
+      label: 'Moss or Algae Growth on Walkways',
+      description: 'Persistent moisture from downspouts creates slick, hazardous walkways.',
+    },
+    {
+      label: 'Exterior Mold on Foundation Walls',
+      description: 'Mold growing outside on foundation walls points to long-term standing water.',
+    },
+    {
+      label: 'Ground-Level Water Geyser at Buried Drain Exit',
+      description: 'Water bursting upward from clogged buried drains reveals massive drainage failure.',
+    },
+    {
+      label: 'Undermining of Porch or Step Supports',
+      description: 'Water flow under concrete or porch supports leads to settling or collapse over time.',
+    },
+    {
+      label: 'Sinkholes Developing Near Downspouts',
+      description: 'Localized soil collapse at downspout exits reveals subterranean washout.',
+    },
+  ],
+};
+
+

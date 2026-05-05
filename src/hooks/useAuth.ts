@@ -4,6 +4,7 @@ import { RootState } from '../redux/store';
 import { logout as logoutAction, setInitial } from '../redux/reducer/auth.reducer';
 import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
+import SocketManager from '../services/SocketManager';
 
 export const useAuth = () => {
   const dispatch = useDispatch();
@@ -17,7 +18,9 @@ export const useAuth = () => {
   const logout = useCallback(async () => {
     // 1. Clear session from persistent storage & headers
     await setSessionHeader(null);
-    // 2. Wipe memory / Redux state
+    // 2. Disconnect the global socket before wiping auth state
+    SocketManager.disconnect();
+    // 3. Wipe memory / Redux state
     dispatch(logoutAction());
   }, [dispatch]);
 

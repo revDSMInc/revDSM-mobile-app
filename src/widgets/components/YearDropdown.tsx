@@ -1,0 +1,147 @@
+import React, { useState, useRef } from 'react';
+import { View, Text, TouchableOpacity, Modal, FlatList, Animated, ScrollView } from 'react-native';
+
+const YearDropdown = ({
+  defaultValue = 3,
+  min = 1,
+  max = 5,
+  onChange,
+}: {
+  defaultValue?: number;
+  min?: number;
+  max?: number;
+  onChange?: (val: number) => void;
+}) => {
+  const [selectedValue, setSelectedValue] = useState(defaultValue);
+  const [isOpen, setIsOpen] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ x: 0, y: 0, width: 0 });
+  const triggerRef = useRef<View>(null);
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+
+  const years = Array.from({ length: max - min + 1 }, (_, i) => min + i);
+
+  const openDropdown = () => {
+    triggerRef.current?.measure((_fx: any, _fy: any, width: any, height: any, px: any, py: any) => {
+      setDropdownPos({ x: px, y: py + height + 4, width });
+      setIsOpen(true);
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  const closeDropdown = () => {
+    Animated.timing(rotateAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => setIsOpen(false));
+  };
+
+  const handleSelect = (year: number) => {
+    setSelectedValue(year);
+    onChange?.(year);
+    closeDropdown();
+  };
+
+  const rotate = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  return (
+    <View>
+      {/* Trigger */}
+      <TouchableOpacity
+        ref={triggerRef}
+        onPress={isOpen ? closeDropdown : openDropdown}
+        activeOpacity={0.8}
+        className="flex-row items-center justify-center px-3 py-2 bg-white border border-[#919EAB52] rounded-md"
+      >
+        <Text className="text-sm font-semibold mr-2" style={{ color: '#1C252E' }}>
+          {selectedValue} {selectedValue === 1 ? 'Year' : 'Years'}
+        </Text>
+        <Animated.View style={{ transform: [{ rotate }] }}>
+          <ChevronIcon />
+        </Animated.View>
+      </TouchableOpacity>
+
+      {/* Modal Dropdown — renders above everything */}
+      <Modal visible={isOpen} transparent animationType="fade" onRequestClose={closeDropdown}>
+        {/* Backdrop */}
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeDropdown}>
+          {/* Dropdown panel */}
+          <View
+            style={{
+              position: 'absolute',
+              top: dropdownPos.y,
+              left: dropdownPos.x,
+              width: dropdownPos.width,
+              maxHeight: 200,
+              backgroundColor: '#ffffff',
+              borderRadius: 8,
+              borderWidth: 0.5,
+              borderColor: '#E5E7EB',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.1,
+              shadowRadius: 12,
+              elevation: 8,
+              overflow: 'hidden',
+            }}
+          >
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              style={{ maxHeight: 250 }}
+            >
+              {years.map((item) => {
+                const isSelected = item === selectedValue;
+                return (
+                  <TouchableOpacity
+                    key={item}
+                    onPress={() => handleSelect(item)}
+                    activeOpacity={0.7}
+                    className="m-1 rounded-md"
+                    style={{
+                      paddingHorizontal: 6,
+                      paddingVertical: 12,
+                      backgroundColor: isSelected ? '#F3F4F6' : '#ffffff',
+                    }}
+                  >
+                    <Text
+                      className="text-sm font-semibold"
+                      style={{ color: isSelected ? '#1C252E' : '#637381' }}
+                    >
+                      {item} {item === 1 ? 'Year' : 'Years'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+};
+
+const ChevronIcon = () => (
+  <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
+    <View
+      style={{
+        width: 7,
+        height: 7,
+        borderRightWidth: 1.5,
+        borderBottomWidth: 1.5,
+        borderColor: '#637381',
+        transform: [{ rotate: '45deg' }],
+        marginTop: -4,
+      }}
+    />
+  </View>
+);
+
+export default YearDropdown;

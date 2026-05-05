@@ -15,9 +15,9 @@ import { logout } from '../../redux/reducer/auth.reducer';
  */
 const axiosInstance: AxiosInstance = axios.create({
   baseURL: ENV.API_URL,
-  timeout: 15000,
+  timeout: 120000,
   headers: {
-    'Content-Type': 'application/json',
+    Accept: 'application/json',
   },
 });
 
@@ -61,7 +61,9 @@ axiosInstance.interceptors.response.use(
         }
       }
     }
-    return Promise.reject(error.response?.data || { message: 'Something went wrong' });
+    return Promise.reject(
+      error.response?.data || { message: error.message || 'Something went wrong' }
+    );
   }
 );
 
