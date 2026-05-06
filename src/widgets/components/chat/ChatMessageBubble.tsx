@@ -72,17 +72,23 @@ export function ChatMessageBubble({
   const fileType = useMemo(() => {
     const fromUtils = getFileType(primaryFile);
     if (fromUtils !== 'text' && fromUtils !== 'file') return fromUtils;
-    
+
     if (!primaryFile) {
       if (msg.image) return 'image';
       if (msg.video) return 'video';
       if (msg.voice || msg.audio) return 'audio';
       return 'text';
     }
-    const type = (primaryFile.type || primaryFile.mimeType || primaryFile.contentType || '').toLowerCase();
+    const type = (
+      primaryFile.type ||
+      primaryFile.mimeType ||
+      primaryFile.contentType ||
+      ''
+    ).toLowerCase();
     if (type.startsWith('image') || msg.image) return 'image';
     if (type.startsWith('video') || msg.video) return 'video';
-    if (type.startsWith('audio') || type.includes('voice') || msg.voice || msg.audio) return 'audio';
+    if (type.startsWith('audio') || type.includes('voice') || msg.voice || msg.audio)
+      return 'audio';
     return fromUtils || 'file';
   }, [primaryFile, msg.image, msg.video, msg.voice, msg.audio]);
 
@@ -442,8 +448,23 @@ export function ChatMessageBubble({
                   >
                     {mediaUri ? (
                       <>
-                        <Icon name="play-circle-outline" size={48} color="#fff" style={{ opacity: 0.8 }} />
-                        <View style={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <Icon
+                          name="play-circle-outline"
+                          size={48}
+                          color="#fff"
+                          style={{ opacity: 0.8 }}
+                        />
+                        <View
+                          style={{
+                            position: 'absolute',
+                            bottom: 8,
+                            right: 8,
+                            backgroundColor: 'rgba(0,0,0,0.5)',
+                            paddingHorizontal: 6,
+                            paddingVertical: 2,
+                            borderRadius: 4,
+                          }}
+                        >
                           <Text style={{ color: '#fff', fontSize: 10 }}>VIDEO</Text>
                         </View>
                       </>
@@ -484,7 +505,9 @@ export function ChatMessageBubble({
                     ) : (
                       <View style={{ alignItems: 'center' }}>
                         <Icon name="image-outline" size={28} color={isDark ? '#555' : '#aaa'} />
-                        <Text style={{ fontSize: 10, color: isDark ? '#555' : '#aaa', marginTop: 4 }}>
+                        <Text
+                          style={{ fontSize: 10, color: isDark ? '#555' : '#aaa', marginTop: 4 }}
+                        >
                           Loading...
                         </Text>
                       </View>

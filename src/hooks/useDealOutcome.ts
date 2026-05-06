@@ -32,7 +32,25 @@ export const useDealOutcome = (
   const leadId = lead?._id || lead?.leadId || lead?.id;
 
   useEffect(() => {
+    // Reset state when lead changes to prevent data leakage
+    setOutcomeStatus(null);
+    setOutcomeForm({
+      oneLeg: 'No',
+      reason: '',
+      reasonExplanation: '',
+      downPayment: '',
+      balance: '',
+      originalContractPrice: '',
+      lastPriceQuoted: '',
+      downPaymentMethod: 'check',
+      balancePaymentMethod: 'check',
+      versatile: false,
+      pineapple: false,
+    });
+    setJobState({});
+
     if (!leadId) return;
+
     const fetchOutcomeData = async () => {
       try {
         const res = await LeadService.getLeadOutcome(leadId);
@@ -65,7 +83,8 @@ export const useDealOutcome = (
     setOutcomeStatus(status);
     const final = Number(activeCalculator.price) || results.total || 0;
     const planKey = activeCalculator?.inputs?.paymentPlan || 'check';
-    const dpMethod = planKey === 'mcVisaDscvr' ? 'card' : ['check', 'amex'].includes(planKey) ? planKey : 'check';
+    const dpMethod =
+      planKey === 'mcVisaDscvr' ? 'card' : ['check', 'amex'].includes(planKey) ? planKey : 'check';
 
     setOutcomeForm({
       ...outcomeForm,

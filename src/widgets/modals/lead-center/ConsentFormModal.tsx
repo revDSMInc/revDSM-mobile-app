@@ -374,15 +374,12 @@ export const ConsentFormModal = ({
 
           {/* ── PDF SUCCESS OVERLAY ── */}
           {generatedPdf && (
-            <View
-              className="absolute inset-0 bg-white"
-              style={{ zIndex: 1000 }}
-            >
+            <View className="absolute inset-0 bg-white" style={{ zIndex: 1000 }}>
               {/* PDF Preview Header */}
               <View className="flex-row items-center justify-between p-4 border-b border-slate-100">
                 <View>
                   <Text className="text-lg font-black text-slate-900">Signed Consent</Text>
-                  <Text className="text-[10px] font-bold text-green-600 uppercase">
+                  <Text className="text-[10px] font-bold text-green-600 ">
                     {uploading ? 'Uploading to S3...' : 'Successfully Generated'}
                   </Text>
                 </View>
@@ -398,7 +395,9 @@ export const ConsentFormModal = ({
               <View className="flex-1 bg-slate-50 items-center justify-center">
                 <Pdf
                   source={{
-                    uri: generatedPdf.startsWith('file://') ? generatedPdf : `file://${generatedPdf}`,
+                    uri: generatedPdf.startsWith('file://')
+                      ? generatedPdf
+                      : `file://${generatedPdf}`,
                     cache: false,
                   }}
                   trustAllCerts={false}
@@ -408,15 +407,16 @@ export const ConsentFormModal = ({
                     height: '100%',
                     backgroundColor: '#F8FAFC',
                   }}
-                  renderActivityIndicator={() => (
-                    <ActivityIndicator color="#22C55E" size="large" />
-                  )}
+                  renderActivityIndicator={() => <ActivityIndicator color="#22C55E" size="large" />}
                   onLoadComplete={(numberOfPages) => {
                     console.log(`PDF Loaded with ${numberOfPages} pages`);
                   }}
                   onError={(error) => {
                     console.log('PDF Render Error:', error);
-                    FlashMessage.error('Error', 'Unable to display PDF. Please try saving it localy.');
+                    FlashMessage.error(
+                      'Error',
+                      'Unable to display PDF. Please try saving it localy.'
+                    );
                   }}
                 />
               </View>
@@ -448,7 +448,7 @@ export const ConsentFormModal = ({
                   {uploading ? (
                     <ActivityIndicator color="white" />
                   ) : (
-                    <Text className="font-black text-white uppercase tracking-widest text-xs">
+                    <Text className="font-black text-white  tracking-widest text-xs">
                       Finish & Close
                     </Text>
                   )}

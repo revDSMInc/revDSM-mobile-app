@@ -33,7 +33,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
         >
           <View className="px-5 py-5 pb-4">
             <Text
-              className="text-sm font-black uppercase tracking-widest"
+              className="text-sm font-black  tracking-widest"
               style={{ color: colors.text }}
               numberOfLines={1}
             >
@@ -62,7 +62,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
               className="p-3 rounded-2xl"
             >
               <Text
-                className="text-[13px] font-black uppercase tracking-widest"
+                className="text-[13px] font-black  tracking-widest"
                 style={{ color: colors.text }}
               >
                 Account Settings
@@ -77,7 +77,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
               className="p-3 rounded-2xl"
             >
               <Text
-                className="text-[13px] font-black uppercase tracking-widest"
+                className="text-[13px] font-black  tracking-widest"
                 style={{ color: colors.text }}
               >
                 Job Tracker
@@ -92,7 +92,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
               className={`p-3 rounded-2xl ${hasLmsPermission ? '' : 'opacity-40'}`}
             >
               <Text
-                className="text-[13px] font-black uppercase tracking-widest"
+                className="text-[13px] font-black  tracking-widest"
                 style={{ color: colors.text }}
               >
                 My Learning
@@ -110,7 +110,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
             style={[styles.logoutBtn, { backgroundColor: colors.error.main + '20' }]}
           >
             <Text
-              className="text-[13px] font-black uppercase tracking-widest"
+              className="text-[13px] font-black  tracking-widest"
               style={{ color: colors.error.main }}
             >
               Logout

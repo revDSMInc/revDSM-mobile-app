@@ -5,11 +5,19 @@
 const n = (v: any) => parseFloat(v) || 0;
 
 export const validateGutter = (data: any, calculatorData: any) => {
-  const fiveInchFeet = n(calculatorData?.gutter5Inch);
-  const sixInchFeet = n(calculatorData?.gutter6Inch);
-  const sevenInchFeet = n(calculatorData?.gutter7Inch);
-  const eightInchFeet = n(calculatorData?.gutter8Inch);
-  const dsFootageAvail = n(calculatorData?.downspoutFootage);
+  // Helper for case-insensitive key lookup (Parity with web app)
+  const getVal = (baseKey: string) => {
+    if (!calculatorData) return 0;
+    const lowerKey = baseKey.toLowerCase();
+    const key = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
+    return key ? n(calculatorData[key]) : 0;
+  };
+
+  const fiveInchFeet = getVal('gutter5Inch');
+  const sixInchFeet = getVal('gutter6Inch');
+  const sevenInchFeet = getVal('gutter7Inch');
+  const eightInchFeet = getVal('gutter8Inch');
+  const dsFootageAvail = getVal('downspoutFootage');
   const totalAvailable =
     fiveInchFeet + sixInchFeet + sevenInchFeet + eightInchFeet + dsFootageAvail;
 
@@ -34,7 +42,10 @@ export const validateGutter = (data: any, calculatorData: any) => {
   const allocated = gutterFeet + dsFeet;
   const remaining = totalAvailable - allocated;
 
-  if (!data.partial) return { valid: false, error: 'Gutter Partial selection required' };
+  // Check if root partial is set OR if any combo has it (Web Parity)
+  const hasPartial = data.partial || (data.gutterColorsMulti || []).some((c: any) => c.partial);
+  if (!hasPartial) return { valid: false, error: 'Gutter Partial selection required' };
+
   if (Math.abs(remaining) > 0.1) {
     return {
       valid: false,
@@ -75,23 +86,21 @@ export const validateGutter = (data: any, calculatorData: any) => {
 };
 
 export const validateLeafFilter = (data: any, calculatorData: any) => {
+  const n = (v: any) => parseFloat(v) || 0;
+
+  // Helper for case-insensitive key lookup (Parity with web app)
+  const getVal = (baseKey: string) => {
+    if (!calculatorData) return 0;
+    const lowerKey = baseKey.toLowerCase();
+    const key = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
+    return key ? n(calculatorData[key]) : 0;
+  };
+
   const availableFootage = {
-    '6"': [
-      n(calculatorData?.versa6ft1),
-      n(calculatorData?.versa6ft2),
-      n(calculatorData?.versa6ft3),
-    ],
-    '7"': [
-      n(calculatorData?.versa7ft1),
-      n(calculatorData?.versa7ft2),
-      n(calculatorData?.versa7ft3),
-    ],
-    '4 & 5"': [
-      n(calculatorData?.filter45ft1),
-      n(calculatorData?.filter45ft2),
-      n(calculatorData?.filter45ft3),
-    ],
-    'Versa Max': n(calculatorData?.versaMaxFt1 || calculatorData?.versaMax),
+    '6"': [getVal('versa6ft1'), getVal('versa6ft2'), getVal('versa6ft3')],
+    '7"': [getVal('versa7ft1'), getVal('versa7ft2'), getVal('versa7ft3')],
+    '4 & 5"': [getVal('filter45ft1'), getVal('filter45ft2'), getVal('filter45ft3')],
+    'Versa Max': getVal('versaMaxFt1') || getVal('versaMax'),
   };
 
   const hasLFFootage =
@@ -137,14 +146,23 @@ export const validateLeafFilter = (data: any, calculatorData: any) => {
   // Verify matches
   for (const width of ['6"', '7"', '4 & 5"'] as const) {
     for (let s = 0; s < 3; s++) {
-      const remaining = availableFootage[width][s] - used[width][s];
-      if (Math.abs(remaining) > 0.1)
-        return { valid: false, error: `${width} Story ${s + 1} allocation mismatch` };
+      const avail = availableFootage[width][s];
+      const remaining = avail - used[width][s];
+      // Only validate if there is footage in this story OR if user entered something
+      if (avail > 0 || used[width][s] > 0) {
+        if (Math.abs(remaining) > 0.1)
+          return { valid: false, error: `${width} Story ${s + 1} allocation mismatch` };
+      }
     }
   }
 
-  const vmRemaining = availableFootage['Versa Max'] - used['Versa Max'];
-  if (Math.abs(vmRemaining) > 0.1) return { valid: false, error: 'Versa Max allocation mismatch' };
+  const vmAvail = availableFootage['Versa Max'];
+  const vmUsed = used['Versa Max'];
+  if (vmAvail > 0 || vmUsed > 0) {
+    const vmRemaining = vmAvail - vmUsed;
+    if (Math.abs(vmRemaining) > 0.1)
+      return { valid: false, error: 'Versa Max allocation mismatch' };
+  }
 
   return { valid: true };
 };

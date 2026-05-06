@@ -17,7 +17,9 @@ const axiosInstance: AxiosInstance = axios.create({
   baseURL: ENV.API_URL,
   timeout: 120000,
   headers: {
-    Accept: 'application/json',
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    Referer: 'https://dev-sales.revdsm.com/',
   },
 });
 

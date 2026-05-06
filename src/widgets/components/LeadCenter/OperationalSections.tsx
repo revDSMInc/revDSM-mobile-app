@@ -209,9 +209,7 @@ export const ToolsSection = ({
             {riskJob && riskJob.status !== 'completed' && (
               <View className="flex-row items-center gap-2">
                 <ActivityIndicator size="small" color={colors.primary.main} />
-                <Text className="text-[10px] font-bold text-slate-500 uppercase">
-                  {riskJob.progress}%
-                </Text>
+                <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
               </View>
             )}
           </View>
@@ -323,7 +321,7 @@ export const MapSection = ({ lead }: any) => {
     <View className="px-5 py-4">
       <View className="flex-row items-center justify-between mb-5">
         <Text
-          className="text-[14px] font-black uppercase tracking-widest"
+          className="text-[14px] font-black  tracking-widest"
           style={{ color: colors.textSecondary }}
         >
           Active Job Location
@@ -333,7 +331,7 @@ export const MapSection = ({ lead }: any) => {
           className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex-row items-center"
         >
           <Icon name="check-decagram" size={12} color="#10B981" />
-          <Text className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 ml-1 uppercase">
+          <Text className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 ml-1 ">
             Expand Map
           </Text>
         </TouchableOpacity>

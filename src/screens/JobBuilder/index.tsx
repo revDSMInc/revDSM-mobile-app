@@ -143,20 +143,20 @@ export default function JobBuilderScreen() {
         <View
           className={`w-10 h-10 rounded-full items-center justify-center mb-1.5 border-2 ${
             isActive
-              ? 'bg-blue-600 border-blue-600'
+              ? 'bg-[#0EA5E9] border-[#0EA5E9]'
               : isCompleted
               ? 'bg-emerald-500 border-emerald-500'
               : step.isLocked
               ? isDark
-                ? 'bg-red-900 border-red-700'
-                : 'bg-[#fad9d3] border-[#ff5630]'
+                ? 'bg-slate-800 border-slate-700'
+                : 'bg-slate-100 border-slate-200'
               : isDark
               ? 'bg-[#1C1C1E] border-[#2C2C2E]'
               : 'bg-white border-slate-200'
           }`}
         >
           {step.isLocked ? (
-            <Icon name="lock" size={14} color="#ff5630" />
+            <Text className="text-[10px] font-black text-slate-400">N/A</Text>
           ) : isCompleted ? (
             <Icon name="check" size={18} color="white" />
           ) : (
@@ -166,8 +166,8 @@ export default function JobBuilderScreen() {
           )}
         </View>
         <Text
-          className={`text-[8px] font-black uppercase tracking-tighter ${
-            isActive ? 'text-blue-600' : isCompleted ? 'text-emerald-500' : 'text-slate-400'
+          className={`text-[8px] font-black  tracking-tighter ${
+            isActive ? 'text-[#0EA5E9]' : isCompleted ? 'text-emerald-500' : 'text-slate-400'
           }`}
           numberOfLines={1}
         >
@@ -317,7 +317,7 @@ export default function JobBuilderScreen() {
                 return (
                   <View className="flex-row items-center justify-center bg-amber-50 py-2 mb-3 rounded-xl border border-amber-100">
                     <Icon name="alert-circle" size={14} color="#D97706" />
-                    <Text className="text-[10px] font-black text-amber-700 ml-2 uppercase tracking-tight">
+                    <Text className="text-[10px] font-black text-amber-700 ml-2  tracking-tight">
                       {validation.error}
                     </Text>
                   </View>
@@ -349,7 +349,7 @@ export default function JobBuilderScreen() {
                 }}
               >
                 <Text
-                  className={`font-black uppercase text-[10px] tracking-widest`}
+                  className={`font-black  text-[10px] tracking-widest`}
                   style={{ color: currentStepIndex === 0 ? colors.textSecondary : colors.text }}
                 >
                   Back
@@ -382,7 +382,7 @@ export default function JobBuilderScreen() {
                   }}
                 >
                   <Text
-                    className="font-black uppercase text-[10px] tracking-widest"
+                    className="font-black  text-[10px] tracking-widest"
                     style={{
                       color: validateStep(activeStep?.category, jobState, calculatorData).valid
                         ? isDark
@@ -426,7 +426,7 @@ export default function JobBuilderScreen() {
                   }}
                 >
                   <Text
-                    className="font-black uppercase text-[10px] tracking-widest"
+                    className="font-black  text-[10px] tracking-widest"
                     style={{
                       color: validateStep(activeStep?.category, jobState, calculatorData).valid
                         ? '#FFFFFF'
@@ -490,7 +490,7 @@ const ValidationErrorModal = ({
             }}
           >
             <Text
-              className="font-black uppercase text-[12px] tracking-widest"
+              className="font-black  text-[12px] tracking-widest"
               style={{ color: isDark ? '#000000' : '#FFFFFF' }}
             >
               Got it, thanks

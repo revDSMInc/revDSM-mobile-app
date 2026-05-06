@@ -22,12 +22,23 @@ export const useCalculatorSummary = (
     Number(activeCalc.inputs.discountPercentage) || 15
   );
   const [displayDrop, setDisplayDrop] = useState<any>(null);
+  const [downPayment, setDownPayment] = useState(0);
+  const [showDownPaymentInput, setShowDownPaymentInput] = useState(false);
+  const [addedPlans, setAddedPlans] = useState<string[]>([]);
+  const [tempPlan, setTempPlan] = useState<string | null>(null);
 
   const handleAddDrop = async (status = 'declined') => {
     const num = Number(dropValue.replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.price50);
+    const endPrice = Number(activeCalc.price) || 0;
+
     if (num < costPrice) {
       setError(`Drop price cannot be less than cost ($${costPrice.toLocaleString()})`);
+      return;
+    }
+
+    if (endPrice > 0 && num > endPrice) {
+      setError(`Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`);
       return;
     }
     try {
@@ -36,10 +47,15 @@ export const useCalculatorSummary = (
         dropedPrice: num,
         status,
         paymentMethod: dropPaymentMethod,
+        downPayment,
+        addedPlans,
       };
 
-      const updatedDrops = [...(activeCalc.dropPrice || []), newDrop];
-      
+      const updatedDrops = (activeCalc.dropPrice || []).map((d: any) =>
+        status === 'accepted' ? { ...d, status: 'declined' } : d
+      );
+      updatedDrops.push(newDrop);
+
       const payload: any = {
         ...activeCalc.inputs,
         ...activeCalc.extras,
@@ -54,14 +70,14 @@ export const useCalculatorSummary = (
         payload.paymentMethod = dropPaymentMethod;
       }
 
-      updateActive({ 
+      updateActive({
         dropPrice: updatedDrops,
         price: status === 'accepted' ? num : activeCalc.price,
         isRolloutConfirmed: true,
         inputs: {
           ...activeCalc.inputs,
-          paymentPlan: status === 'accepted' ? dropPaymentMethod : activeCalc.inputs.paymentPlan
-        }
+          paymentPlan: status === 'accepted' ? dropPaymentMethod : activeCalc.inputs.paymentPlan,
+        },
       });
 
       await LeadService.updateCalculator(activeCalc._id, payload);
@@ -181,5 +197,13 @@ export const useCalculatorSummary = (
     handleDiscountChange,
     displayDrop,
     setDisplayDrop,
+    downPayment,
+    setDownPayment,
+    showDownPaymentInput,
+    setShowDownPaymentInput,
+    addedPlans,
+    setAddedPlans,
+    tempPlan,
+    setTempPlan,
   };
 };

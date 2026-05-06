@@ -288,7 +288,9 @@ export default function LeadCenterPage() {
   const revRenderMutation = useGenerateRevRenderMutation();
 
   const handleConsentSubmit = async (data: any) => {
-    return await consentMutation.mutateAsync(data);
+    const res = await consentMutation.mutateAsync(data);
+    await refetch();
+    return res;
   };
 
   const handleFinalizeReportUpload = async (
@@ -301,7 +303,9 @@ export default function LeadCenterPage() {
   };
 
   const handleWaiverSubmit = async (data: any) => {
-    return await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });
+    const res = await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });
+    await refetch();
+    return res;
   };
 
   const handlePaperFallbackSubmit = async (fileData: any) => {
@@ -322,6 +326,7 @@ export default function LeadCenterPage() {
         file: fileData,
       };
       await consentMutation.mutateAsync(payload);
+      await refetch();
       toggleModal('showPaperFallback', false);
     } catch (e) {}
   };
@@ -475,7 +480,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color={isDark ? colors.textSecondary : '#637381'}
                   />
-                  <Text className="ml-1 text-xs font-semibold uppercase text-text-primary">
+                  <Text className="ml-1 text-xs font-semibold text-text-primary">
                     {formatDate(lead?.leadDatetime)}
                   </Text>
                 </View>
@@ -497,7 +502,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color={isDark ? colors.textSecondary : '#637381'}
                   />
-                  <Text className="ml-1 text-xs font-semibold uppercase text-text-primary">
+                  <Text className="ml-1 text-xs font-semibold  text-text-primary">
                     {lead?.customerDetails?.email || 'N/A'}
                   </Text>
                 </View>
@@ -507,7 +512,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color={isDark ? colors.textSecondary : '#637381'}
                   />
-                  <Text className="ml-1 text-xs font-semibold uppercase text-text-primary">
+                  <Text className="ml-1 text-xs font-semibold  text-text-primary">
                     {lead.leadTime}
                   </Text>
                 </View>
@@ -519,10 +524,7 @@ export default function LeadCenterPage() {
                 size={14}
                 color={isDark ? colors.textSecondary : '#637381'}
               />
-              <Text
-                className="ml-1 text-xs font-semibold uppercase"
-                style={{ color: colors.primary.main }}
-              >
+              <Text className="ml-1 text-xs font-semibold " style={{ color: colors.primary.main }}>
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
               </Text>
             </View>
@@ -606,9 +608,7 @@ export default function LeadCenterPage() {
               color="white"
               style={{ marginRight: 6, marginBottom: 2 }}
             />
-            <Text className="text-white text-[10px] font-black uppercase tracking-widest">
-              Msg Ops/IM
-            </Text>
+            <Text className="text-white text-[10px] font-black  tracking-widest">Msg Ops/IM</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

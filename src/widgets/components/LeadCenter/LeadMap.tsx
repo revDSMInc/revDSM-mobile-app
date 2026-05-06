@@ -15,10 +15,13 @@ import MapViewDirections from 'react-native-maps-directions';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Geolocation from 'react-native-geolocation-service';
 import { launchCamera, launchImageLibrary, MediaType } from 'react-native-image-picker';
+import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useLeadsData } from '../../../hooks/useLeadsData';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
+import { MapJobCard } from './MapJobCard';
+import { useAuth } from '../../../hooks/useAuth';
 
 const { width, height } = Dimensions.get('window');
 
@@ -36,10 +39,33 @@ interface LeadMapProps {
 }
 
 export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
+  const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
   const { leads, refresh } = useLeadsData();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const mapRef = useRef<MapView>(null);
+  const isInternalMove = useRef(false);
+
+  const [filteredLeads, setFilteredLeads] = useState<any[]>([]);
+
+  useEffect(() => {
+    let result = [...leads];
+    
+    // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
+    result = result.filter((item) => {
+      const jobNumber = item?.jobNumber;
+      if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
+        const number = parseInt(jobNumber.replace('TAM', ''), 10);
+        if (!isNaN(number) && number >= 30000 && number <= 30032) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    setFilteredLeads(result);
+  }, [leads]);
 
   const [region, setRegion] = useState({
     ...TAMPA_COORDS,
@@ -50,6 +76,7 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
   const [userLocation, setUserLocation] = useState<any>(null);
   const [isHeatMap, setIsHeatMap] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
+  const [selectedLead, setSelectedLead] = useState<any>(null);
 
   useEffect(() => {
     requestLocationPermission();
@@ -108,25 +135,31 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
     setRegion(newReg);
     mapRef.current?.animateToRegion(newReg, 1000);
   };
+ 
 
   const handleMarkerClick = (lead: any) => {
     const coords = lead.location?.coordinates;
     if (!coords) return;
+ 
+    setSelectedLead(lead);
 
-    // Web logic replication: Animate camera with an upward offset (latitude)
-    // to ensure the popup is perfectly centered and visible.
+    isInternalMove.current = true;
     mapRef.current?.animateCamera(
       {
         center: {
-          latitude: coords[1] + 0.0025, // Shift view up so popup fits
+          latitude: coords[1] + 0.0055, // Larger offset to center the modal, not the marker
           longitude: coords[0],
         },
         zoom: 16,
         pitch: 0,
         heading: 0,
       },
-      { duration: 1000 }
+      { duration: 800 }
     );
+    // Reset flag after animation
+    setTimeout(() => {
+      isInternalMove.current = false;
+    }, 1000);
   };
 
   const handleToggleFavorite = async (leadId: string) => {
@@ -213,10 +246,16 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
+        customMapStyle={isDark ? darkMapStyle : []}
         initialRegion={region}
-        showsUserLocation={!!userLocation}
-        onUserLocationChange={() => {}} // Suppress "topuserlocationnchange" error
+        showsUserLocation={false}
         showsMyLocationButton={false}
+        onRegionChangeStart={() => {
+          if (!isInternalMove.current) {
+            setSelectedLead(null);
+          }
+        }}
+        onPress={() => setSelectedLead(null)}
       >
         {showRoute && userLocation && destination && GOOGLE_MAPS_API_KEY ? (
           <MapViewDirections
@@ -235,18 +274,22 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
         ) : null}
 
         {!isHeatMap &&
-          leads.map((lead) => {
+          leads.map((lead: any) => {
             const coords = lead.location?.coordinates;
             if (!coords) return null;
-            const isActive = currentLead?._id === lead._id;
+            const isActive = selectedLead?._id === lead._id || currentLead?._id === lead._id;
 
             return (
               <Marker
                 key={lead._id}
                 coordinate={{ latitude: coords[1], longitude: coords[0] }}
                 onPress={() => handleMarkerClick(lead)}
+                onSelect={() => handleMarkerClick(lead)}
+                anchor={{ x: 0.5, y: 1 }}
+                tracksViewChanges={true}
+                zIndex={isActive ? 999 : 1}
               >
-                <View className="items-center justify-center">
+                <View className="items-center justify-center" collapsable={false}>
                   <View className="shadow-2xl">
                     <Icon
                       name="location"
@@ -269,106 +312,9 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
                   )}
                 </View>
 
-                <Callout tooltip>
-                  <View
-                    className="bg-white rounded-[24px] shadow-2xl border border-slate-100"
-                    style={{ width: 280 }}
-                  >
-                    {/* Header Row: Job # and Date */}
-                    <View className="bg-slate-50 p-4 rounded-t-[24px]">
-                      <Text className="text-[16px] font-black text-[#4CBB17] mb-1">
-                        {lead.jobNumber ? `Job#${lead.jobNumber}` : `Lead#${lead.leadId || 'N/A'}`}
-                      </Text>
-                      <View className="flex-row items-center">
-                        <Icon
-                          name="calendar-outline"
-                          size={12}
-                          color="#4CBB17"
-                          style={{ marginRight: 4 }}
-                        />
-                        <Text className="text-[10px] text-slate-500 font-bold">
-                          {lead.installationDate || 'Schedule Pending'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Info Section */}
-                    <View className="p-4">
-                      <View className="flex-row bg-slate-50 rounded-xl p-3 mb-4">
-                        <View className="flex-1">
-                          <Text className="text-[10px] text-slate-400 font-bold uppercase mb-1">
-                            Sales Rep
-                          </Text>
-                          <Text className="text-[12px] font-black text-[#4CBB17]" numberOfLines={1}>
-                            {lead.salesRepName || lead.userName || 'Unassigned'}
-                          </Text>
-                        </View>
-                        <View className="w-[1px] bg-slate-200 mx-3" />
-                        <View className="flex-1">
-                          <Text className="text-[10px] text-slate-400 font-bold uppercase mb-1">
-                            Price
-                          </Text>
-                          <Text className="text-[12px] font-black text-[#4CBB17]">
-                            ${(lead.price || 0).toLocaleString()}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View className="flex-row items-center mb-4">
-                        <View className="w-8 h-8 rounded-full bg-blue-50 items-center justify-center mr-3">
-                          <Text className="font-black text-[12px] text-blue-600">
-                            {(lead.customerDetails?.firstName || lead.firstName || 'C')[0]}
-                          </Text>
-                        </View>
-                        <View className="flex-1">
-                          <Text className="font-bold text-[13px] text-slate-800" numberOfLines={1}>
-                            {lead.customerDetails?.firstName || lead.firstName}{' '}
-                            {lead.customerDetails?.lastName || lead.lastName}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View className="h-[1px] bg-slate-100 mb-4" />
-
-                      <View className="flex-row justify-around">
-                        <TouchableOpacity onPress={handleOpenCamera} className="items-center">
-                          <View className="w-9 h-9 rounded-xl bg-blue-50 items-center justify-center mb-1">
-                            <Icon name="camera" size={16} color={colors.primary.main} />
-                          </View>
-                          <Text className="text-[8px] font-black uppercase text-slate-400">
-                            Capture
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={handleOpenGallery} className="items-center">
-                          <View className="w-9 h-9 rounded-xl bg-emerald-50 items-center justify-center mb-1">
-                            <Icon name="images" size={16} color="#10B981" />
-                          </View>
-                          <Text className="text-[8px] font-black uppercase text-slate-400">
-                            Gallery
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => handleToggleFavorite(lead._id)}
-                          className="items-center"
-                        >
-                          <View className="w-9 h-9 rounded-xl bg-amber-50 items-center justify-center mb-1">
-                            <Icon
-                              name={lead.isFavourite ? 'star' : 'star-outline'}
-                              size={16}
-                              color="#FBC02D"
-                            />
-                          </View>
-                          <Text className="text-[8px] font-black uppercase text-slate-400">
-                            Fav
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </View>
-                </Callout>
               </Marker>
-            );
-          })}
+            )})}
+
 
         {isHeatMap && heatmapData.length > 0 && (
           <Heatmap
@@ -376,8 +322,8 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
             radius={Platform.OS === 'ios' ? 40 : 50}
             opacity={0.6}
             gradient={{
-              colors: ['#00B8D9', '#36B37E', '#FFAB00', '#FF5630', '#DE350B'],
-              startPoints: [0.1, 0.25, 0.5, 0.75, 1],
+              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
+              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
               colorMapSize: 2048,
             }}
           />
@@ -441,7 +387,7 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
       {/* Heatmap Legend */}
       {isHeatMap && (
         <View className="absolute bottom-6 left-6 right-6 px-4 py-2 bg-white/90 dark:bg-black/80 rounded-full flex-row items-center justify-between">
-          <Text className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+          <Text className="text-[10px] font-black  tracking-widest text-gray-500">
             Price Intensity
           </Text>
           <View className="flex-row items-center gap-4">
@@ -452,6 +398,64 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
             <View className="flex-row items-center">
               <View className="w-2 h-2 rounded-full bg-red-500 mr-1" />
               <Text className="text-[9px] font-bold">High</Text>
+            </View>
+          </View>
+        </View>
+      )}
+ 
+      {/* Custom High-Fidelity Overlay Modal */}
+      {selectedLead && (
+        <View 
+          className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
+          pointerEvents="box-none"
+          style={{ zIndex: 1000 }}
+        >
+          <View style={{ width: 260, height: 360, marginTop: -60 }}>
+            <View
+              style={{
+                backgroundColor: 'white',
+                borderRadius: 24,
+                overflow: 'hidden',
+                borderWidth: 1,
+                borderColor: '#f1f5f9',
+                height: 320,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 10 },
+                shadowOpacity: 0.2,
+                shadowRadius: 20,
+                elevation: 20,
+              }}
+            >
+              <MapJobCard
+                job={selectedLead}
+                onClose={() => setSelectedLead(null)}
+                isMyJob={selectedLead.salesRepId === (user as any)?._id}
+                onReferencePress={() => navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'referral' })}
+                onCameraPress={() => navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' })}
+                onGalleryPress={() => {
+                  setSelectedLead(null);
+                  navigation.navigate('LeadCenter', { lead: selectedLead });
+                }}
+              />
+            </View>
+            
+            {/* Arrow Triangle */}
+            <View className="items-center">
+              <View
+                style={{
+                  width: 0,
+                  height: 0,
+                  backgroundColor: 'transparent',
+                  borderStyle: 'solid',
+                  borderLeftWidth: 12,
+                  borderRightWidth: 12,
+                  borderTopWidth: 15,
+                  borderLeftColor: 'transparent',
+                  borderRightColor: 'transparent',
+                  borderTopColor: 'white',
+                  marginTop: -1,
+                }}
+              />
             </View>
           </View>
         </View>

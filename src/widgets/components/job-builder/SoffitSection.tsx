@@ -48,9 +48,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
   const renderWarning = (message: string) => (
     <View className="flex-row items-center bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
       <Icon name="alert" size={18} color="#D97706" />
-      <Text className="text-[11px] font-black text-amber-700 ml-2 uppercase tracking-tight">
-        {message}
-      </Text>
+      <Text className="text-[11px] font-black text-amber-700 ml-2  tracking-tight">{message}</Text>
     </View>
   );
 
@@ -70,7 +68,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
     >
       {incomplete && renderWarning(warningMsg)}
       <Text
-        className={`text-[10px] font-black uppercase tracking-widest mb-4 ${
+        className={`text-[10px] font-black  tracking-widest mb-4 ${
           incomplete ? 'text-amber-600' : 'text-slate-400'
         }`}
       >
@@ -98,7 +96,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
               style={{ width: '48%' }}
             >
               <Text
-                className={`text-[11px] font-black uppercase tracking-widest ${
+                className={`text-[11px] font-black  tracking-widest ${
                   selected ? 'text-white' : 'text-slate-900'
                 }`}
               >
@@ -111,7 +109,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
       {currentValue && (Array.isArray(currentValue) ? currentValue.length > 0 : true) && (
         <View className="flex-row items-center mt-3 ml-1">
           <Icon name="check" size={14} color="#10B981" />
-          <Text className="text-emerald-500 font-black text-[11px] ml-1 uppercase">
+          <Text className="text-emerald-500 font-black text-[11px] ml-1 ">
             {Array.isArray(currentValue) ? currentValue.join(', ') : currentValue}
           </Text>
         </View>
@@ -140,7 +138,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
         {incomplete && renderWarning('Incomplete-Color Required')}
         <View className="flex-row justify-between items-center mb-4">
           <Text
-            className={`text-[10px] font-black uppercase tracking-widest ${
+            className={`text-[10px] font-black  tracking-widest ${
               incomplete ? 'text-amber-600' : 'text-slate-400'
             }`}
           >
@@ -189,9 +187,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
         {selectedColor && (
           <View className="flex-row items-center mt-4 bg-emerald-50 self-start px-2 py-1 rounded-lg">
             <Icon name="check" size={12} color="#10B981" />
-            <Text className="text-[10px] font-black text-emerald-600 ml-1 uppercase">
-              {selectedColor}
-            </Text>
+            <Text className="text-[10px] font-black text-emerald-600 ml-1 ">{selectedColor}</Text>
           </View>
         )}
       </View>
@@ -208,7 +204,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
         className="mb-6 p-1 rounded-lg bg-emerald-50/20 border border-emerald-100/50"
       >
         <View className="p-4">
-          <Text className="text-[12px] font-black text-emerald-700 uppercase mb-4 tracking-wider">
+          <Text className="text-[12px] font-black text-emerald-700  mb-4 tracking-wider">
             {title}
           </Text>
 
@@ -234,7 +230,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
 
           <View className="p-4 rounded-lg bg-slate-50 border border-slate-100 mb-4 flex-row justify-between items-center">
             <View>
-              <Text className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
+              <Text className="text-[9px] font-black text-slate-400  tracking-widest mb-1">
                 {title} Footage
               </Text>
               <Text className="text-sm font-black text-slate-900">{footage} FT</Text>
@@ -286,7 +282,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
           <View className="items-center py-20 bg-white rounded-lg border border-dashed border-slate-200">
             <Icon name="information-outline" size={48} color="#CBD5E1" />
             <Text className="text-slate-400 font-bold mt-4">No Soffit Requirements Found</Text>
-            <Text className="text-slate-300 text-[10px] uppercase font-black tracking-widest mt-1">
+            <Text className="text-slate-300 text-[10px]  font-black tracking-widest mt-1">
               Check Calculator Data
             </Text>
           </View>

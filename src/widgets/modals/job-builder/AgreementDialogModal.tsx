@@ -38,8 +38,8 @@ export const AgreementDialogModal = ({
                 <Icon name="close" size={20} color="#64748b" />
               </TouchableOpacity>
             </View>
-            <Text className="text-2xl font-black text-slate-900 uppercase">Agreement Method</Text>
-            <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2 leading-4">
+            <Text className="text-2xl font-black text-slate-900 ">Agreement Method</Text>
+            <Text className="text-[10px] font-bold text-slate-400  tracking-widest mt-2 leading-4">
               Choose how you want to provide the agreement document.
             </Text>
           </View>
@@ -54,10 +54,8 @@ export const AgreementDialogModal = ({
                 <Icon name="magic-staff" size={24} color="#3b82f6" />
               </View>
               <View className="flex-1">
-                <Text className="font-black text-slate-900 uppercase text-xs">
-                  Generate Document
-                </Text>
-                <Text className="text-[9px] font-bold text-slate-400 uppercase mt-1">
+                <Text className="font-black text-slate-900  text-xs">Generate Document</Text>
+                <Text className="text-[9px] font-bold text-slate-400  mt-1">
                   Create a digital PDF from job data
                 </Text>
               </View>
@@ -72,10 +70,8 @@ export const AgreementDialogModal = ({
                 <Icon name="camera" size={24} color="#22c55e" />
               </View>
               <View className="flex-1">
-                <Text className="font-black text-slate-900 uppercase text-xs">
-                  Scan Paper Document
-                </Text>
-                <Text className="text-[9px] font-bold text-slate-400 uppercase mt-1">
+                <Text className="font-black text-slate-900  text-xs">Scan Paper Document</Text>
+                <Text className="text-[9px] font-bold text-slate-400  mt-1">
                   Use camera to capture physical form
                 </Text>
               </View>
@@ -88,9 +84,7 @@ export const AgreementDialogModal = ({
               onPress={onClose}
               className="h-14 rounded-2xl items-center justify-center border border-slate-100"
             >
-              <Text className="font-black text-slate-500 uppercase text-[10px] tracking-widest">
-                Cancel
-              </Text>
+              <Text className="font-black text-slate-500  text-[10px] tracking-widest">Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>

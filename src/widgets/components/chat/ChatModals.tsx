@@ -70,7 +70,7 @@ export const PinnedMessagesArea = ({
       <View className="flex-row items-center px-4 mb-2">
         <Icon name="pin" size={14} color="#F59E0B" />
         <Text
-          className="text-[11px] font-black uppercase tracking-[2px] ml-2"
+          className="text-[11px] font-black tracking-[2px] ml-2"
           style={{ color: colors.primary.main }}
         >
           Pinned Insights
@@ -98,7 +98,7 @@ export const PinnedMessagesArea = ({
                 </View>
                 <View className="flex-1">
                   <Text
-                    className="text-[10px] font-bold uppercase opacity-40 mb-0.5"
+                    className="text-[10px] font-bold opacity-40 mb-0.5"
                     style={{ color: colors.text }}
                   >
                     {msg.user?.name || msg.authorName || 'Member'}'s Message
@@ -180,7 +180,7 @@ export const ParticipantsModal = ({ visible, onClose, chatId, isChannel }: any) 
               <View className="py-20 items-center">
                 <ActivityIndicator size="large" color={colors.primary.main} />
                 <Text
-                  className="mt-4 font-bold opacity-40 uppercase tracking-widest text-[10px]"
+                  className="mt-4 font-bold opacity-40 tracking-widest text-[10px]"
                   style={{ color: colors.text }}
                 >
                   Loading Roster...
@@ -209,7 +209,7 @@ export const ParticipantsModal = ({ visible, onClose, chatId, isChannel }: any) 
                           <View className="flex-row items-center mt-1">
                             <View className="w-2 h-2 rounded-full bg-emerald-500 mr-2" />
                             <Text
-                              className="text-[10px] font-black uppercase opacity-40 tracking-widest"
+                              className="text-[10px] font-black opacity-40 tracking-widest"
                               style={{ color: colors.text }}
                             >
                               {u.role || (u.isAdmin ? 'Admin' : 'Member')}
@@ -261,7 +261,7 @@ export const MentionSuggestions = ({ participants, onSelect, colors, isDark }: a
       }}
     >
       <View className="px-4 py-2 border-b border-zinc-100 dark:border-zinc-800">
-        <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+        <Text className="text-[10px] font-black text-slate-400 tracking-widest">
           Mention Member
         </Text>
       </View>
@@ -369,7 +369,7 @@ export const EditHistoryModal = ({ visible, onClose, history = [] }: any) => {
                     className="mb-6 pb-4 border-b border-zinc-50 dark:border-zinc-900"
                   >
                     <View className="flex-row items-center justify-between mb-2">
-                      <Text className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <Text className="text-[10px] font-black tracking-widest text-slate-400">
                         Version {sorted.length - idx}
                       </Text>
                       <Text className="text-[10px] font-bold text-slate-400">

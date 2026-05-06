@@ -14,7 +14,7 @@ export const PricingInputField = ({
   return (
     <View className={noLabel ? '' : 'mb-8'}>
       {!noLabel && (
-        <Text className="text-[10px] font-black text-slate-500 uppercase mb-3 ml-1 tracking-widest">
+        <Text className="text-[10px] font-black text-slate-500  mb-3 ml-1 tracking-widest">
           {label}
         </Text>
       )}
@@ -38,7 +38,7 @@ export const PricingInputField = ({
         />
         {confirmed && !noLabel && (
           <View className="bg-slate-100 px-4 py-2 rounded-xl">
-            <Text className="text-[10px] font-black text-slate-500 uppercase">Confirmed</Text>
+            <Text className="text-[10px] font-black text-slate-500 ">Confirmed</Text>
           </View>
         )}
       </View>
@@ -67,7 +67,7 @@ export const Section = ({ title, id, children, icon, color, desc, expanded, onTo
           <Text className="text-sm font-black" style={{ color: '#1C252E' }}>
             {title}
           </Text>
-          {desc && <Text className="text-[9px] font-bold text-slate-400 uppercase">{desc}</Text>}
+          {desc && <Text className="text-[9px] font-bold text-slate-400 ">{desc}</Text>}
         </View>
       </View>
       <Ionicons name={expanded[id] ? 'chevron-up' : 'chevron-down'} size={14} color="#637381" />
@@ -96,7 +96,7 @@ export const InputField = ({
   return (
     <View className="relative mt-2 mb-3">
       <View className="absolute -top-[7px] left-3 z-10 px-1" style={{ backgroundColor: bgColor }}>
-        <Text className="text-[10px] font-black text-[#1C252E] uppercase">{label}</Text>
+        <Text className="text-[10px] font-black text-[#1C252E] ">{label}</Text>
       </View>
       <View
         className="flex-row items-center border rounded-lg"
@@ -122,7 +122,7 @@ export const InputField = ({
           placeholderTextColor="#919EAB"
         />
         <View className="flex-row items-center border-l border-[#919EAB33] pl-3 ml-2">
-          <Text className="text-[10px] font-bold text-slate-400 uppercase mr-1">{unit}</Text>
+          <Text className="text-[10px] font-bold text-slate-400  mr-1">{unit}</Text>
           {price && <Text className="text-[10px] font-bold text-green-600">${price}</Text>}
         </View>
       </View>

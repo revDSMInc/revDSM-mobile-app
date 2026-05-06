@@ -276,33 +276,59 @@ export const RoofWaiverModal = ({
               }}
             >
               {/* PDF Preview Header */}
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: 16,
-                borderBottomWidth: 1,
-                borderBottomColor: '#F4F6F8'
-              }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: 16,
+                  borderBottomWidth: 1,
+                  borderBottomColor: '#F4F6F8',
+                }}
+              >
                 <View>
-                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }}>Signed Waiver</Text>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#72BD00', textTransform: 'uppercase' }}>
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
+                    Signed Waiver
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: '700',
+                      color: '#72BD00',
+                      textTransform: 'uppercase',
+                    }}
+                  >
                     {uploading ? 'Uploading to Cloud...' : 'Successfully Generated'}
                   </Text>
                 </View>
                 <TouchableOpacity
                   onPress={onClose}
-                  style={{ width: 40, height: 40, alignItems: 'center', borderRadius: 20, backgroundColor: '#F4F6F8' }}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    alignItems: 'center',
+                    borderRadius: 20,
+                    backgroundColor: '#F4F6F8',
+                  }}
                 >
                   <Icon name="close" size={24} color="#637381" />
                 </TouchableOpacity>
               </View>
 
               {/* Live PDF Viewer */}
-              <View style={{ flex: 1, backgroundColor: '#F4F6F8', alignItems: 'center', justifyContent: 'center' }}>
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: '#F4F6F8',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 <Pdf
                   source={{
-                    uri: generatedPdf.startsWith('file://') ? generatedPdf : `file://${generatedPdf}`,
+                    uri: generatedPdf.startsWith('file://')
+                      ? generatedPdf
+                      : `file://${generatedPdf}`,
                     cache: false,
                   }}
                   trustAllCerts={false}
@@ -312,9 +338,7 @@ export const RoofWaiverModal = ({
                     height: '100%',
                     backgroundColor: '#F4F6F8',
                   }}
-                  renderActivityIndicator={() => (
-                    <ActivityIndicator color="#72BD00" size="large" />
-                  )}
+                  renderActivityIndicator={() => <ActivityIndicator color="#72BD00" size="large" />}
                   onLoadComplete={(num) => console.log('Waiver PDF Loaded:', num)}
                   onError={(err) => {
                     console.log('Waiver PDF Error:', err);
@@ -324,18 +348,44 @@ export const RoofWaiverModal = ({
               </View>
 
               {/* Action Bar */}
-              <View style={{ padding: 16, backgroundColor: 'white', borderTopWidth: 1, borderTopColor: '#F4F6F8', gap: 12 }}>
+              <View
+                style={{
+                  padding: 16,
+                  backgroundColor: 'white',
+                  borderTopWidth: 1,
+                  borderTopColor: '#F4F6F8',
+                  gap: 12,
+                }}
+              >
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity
                     onPress={handleViewPdf}
-                    style={{ flex: 1, height: 48, backgroundColor: '#F4F6F8', borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+                    style={{
+                      flex: 1,
+                      height: 48,
+                      backgroundColor: '#F4F6F8',
+                      borderRadius: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
                     <Icon name="eye" size={18} color="#637381" style={{ marginRight: 8 }} />
-                    <Text style={{ fontWeight: '700', color: '#637381', fontSize: 12 }}>Preview</Text>
+                    <Text style={{ fontWeight: '700', color: '#637381', fontSize: 12 }}>
+                      Preview
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={handleDownload}
-                    style={{ flex: 1, height: 48, backgroundColor: '#F4F6F8', borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+                    style={{
+                      flex: 1,
+                      height: 48,
+                      backgroundColor: '#F4F6F8',
+                      borderRadius: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
                     <Icon name="download" size={18} color="#637381" style={{ marginRight: 8 }} />
                     <Text style={{ fontWeight: '700', color: '#637381', fontSize: 12 }}>Save</Text>
@@ -362,7 +412,15 @@ export const RoofWaiverModal = ({
                   {uploading ? (
                     <ActivityIndicator color="white" />
                   ) : (
-                    <Text style={{ fontWeight: '900', color: 'white', textTransform: 'uppercase', letterSpacing: 1, fontSize: 12 }}>
+                    <Text
+                      style={{
+                        fontWeight: '900',
+                        color: 'white',
+                        textTransform: 'uppercase',
+                        letterSpacing: 1,
+                        fontSize: 12,
+                      }}
+                    >
                       Finish & Close
                     </Text>
                   )}

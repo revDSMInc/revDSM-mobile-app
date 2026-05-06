@@ -190,21 +190,30 @@ export const getUpdatedCalculatorTitles = (
       (a: any, b: any) => a - b
     );
 
-    group.forEach((item: { price: any; _id: string | number; baseName: any; isRolloutConfirmed: boolean }) => {
-      const isDuplicatePrice = priceCounts[item.price] > 1;
-      // Confirmed rollouts never show as warnings, even if duplicates exist
-      if (isDuplicatePrice && !item.isRolloutConfirmed) {
-        finalTitles[item._id] = `⚠️ ${item.baseName} ⚠️`;
-      } else {
-        if (uniquePriceLevels.length > 1) {
-          const priceIndex = uniquePriceLevels.indexOf(item.price);
-          const suffix = getSizingSuffix(priceIndex, uniquePriceLevels.length);
-          finalTitles[item._id] = `${item.baseName}${suffix}`;
+    group.forEach(
+      (item: { price: any; _id: string | number; baseName: any; isRolloutConfirmed: boolean }) => {
+        const isDuplicatePrice = priceCounts[item.price] > 1;
+
+        // If it's an empty calculator (no items), don't show warning
+        if (!item.baseName) {
+          finalTitles[item._id] = '';
+          return;
+        }
+
+        // Confirmed rollouts never show as warnings, even if duplicates exist
+        if (isDuplicatePrice && !item.isRolloutConfirmed) {
+          finalTitles[item._id] = `⚠️ ${item.baseName} ⚠️`;
         } else {
-          finalTitles[item._id] = item.baseName;
+          if (uniquePriceLevels.length > 1) {
+            const priceIndex = uniquePriceLevels.indexOf(item.price);
+            const suffix = getSizingSuffix(priceIndex, uniquePriceLevels.length);
+            finalTitles[item._id] = `${item.baseName}${suffix}`;
+          } else {
+            finalTitles[item._id] = item.baseName;
+          }
         }
       }
-    });
+    );
   });
 
   return finalTitles;

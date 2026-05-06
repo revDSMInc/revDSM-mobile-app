@@ -53,10 +53,8 @@ export const AppointmentSchedulerModal = ({
         >
           <View className="flex-row justify-between items-center mb-8">
             <View>
-              <Text className="text-xl font-black text-slate-900 uppercase">
-                Schedule Appointment
-              </Text>
-              <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+              <Text className="text-xl font-black text-slate-900 ">Schedule Appointment</Text>
+              <Text className="text-[10px] font-bold text-slate-400  tracking-widest mt-1">
                 Required for Agreement Generation
               </Text>
             </View>
@@ -70,7 +68,7 @@ export const AppointmentSchedulerModal = ({
 
           <ScrollView showsVerticalScrollIndicator={false}>
             {/* Date Picker */}
-            <Text className="text-[10px] font-black text-slate-400 uppercase tracking-[2px] mb-4 ml-1">
+            <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-4 ml-1">
               Select Install Date
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-8">
@@ -88,7 +86,7 @@ export const AppointmentSchedulerModal = ({
                   color={selectedDate === 'TBD' ? 'white' : '#64748b'}
                 />
                 <Text
-                  className={`text-[10px] font-black uppercase mt-2 ${
+                  className={`text-[10px] font-black  mt-2 ${
                     selectedDate === 'TBD' ? 'text-white' : 'text-slate-600'
                   }`}
                 >
@@ -108,7 +106,7 @@ export const AppointmentSchedulerModal = ({
                     }`}
                   >
                     <Text
-                      className={`text-[10px] font-bold uppercase ${
+                      className={`text-[10px] font-bold  ${
                         isSelected ? 'text-slate-400' : 'text-slate-400'
                       }`}
                     >
@@ -122,7 +120,7 @@ export const AppointmentSchedulerModal = ({
                       {format(date, 'd')}
                     </Text>
                     <Text
-                      className={`text-[10px] font-bold uppercase mt-1 ${
+                      className={`text-[10px] font-bold  mt-1 ${
                         isSelected ? 'text-slate-300' : 'text-slate-500'
                       }`}
                     >
@@ -135,7 +133,7 @@ export const AppointmentSchedulerModal = ({
 
             {selectedDate === 'TBD' ? (
               <View className="mb-8">
-                <Text className="text-[10px] font-black text-slate-400 uppercase tracking-[2px] mb-4 ml-1">
+                <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-4 ml-1">
                   Reason for TBD
                 </Text>
                 <TextInput
@@ -149,7 +147,7 @@ export const AppointmentSchedulerModal = ({
               </View>
             ) : (
               <View className="mb-8">
-                <Text className="text-[10px] font-black text-slate-400 uppercase tracking-[2px] mb-4 ml-1">
+                <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-4 ml-1">
                   Time Window
                 </Text>
                 <View className="gap-3">
@@ -173,7 +171,7 @@ export const AppointmentSchedulerModal = ({
                         )}
                       </View>
                       <Text
-                        className={`font-black uppercase text-xs ${
+                        className={`font-black  text-xs ${
                           selectedWindow === w ? 'text-white' : 'text-slate-700'
                         }`}
                       >
@@ -195,7 +193,7 @@ export const AppointmentSchedulerModal = ({
               }`}
             >
               <Text
-                className={`font-black uppercase tracking-widest ${
+                className={`font-black  tracking-widest ${
                   selectedDate === 'TBD' && !tbdReason.trim() ? 'text-slate-400' : 'text-white'
                 }`}
               >

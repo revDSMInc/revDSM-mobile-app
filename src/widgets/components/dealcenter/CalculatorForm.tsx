@@ -14,6 +14,8 @@ export const CalculatorForm = ({
   results,
   onClose,
   setShowTrackerModal,
+  isAlreadyInTracker,
+  handleAddJobToTracker,
   lead,
   isDark,
   colors,
@@ -51,25 +53,18 @@ export const CalculatorForm = ({
                   ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
                   : lead?.title || 'Lead Center'}{' '}
                 <Text className="text-xs font-medium text-text-secondary">
-                  #{lead?.leadId || lead?.leadCode || ''}
+                  {lead.leadTime || ''} Lead
                 </Text>
               </Text>
               <View className="flex-row items-center mt-0.5">
-                {lead?.leadTime && (
-                  <Text className="text-[10px] font-bold text-text-secondary uppercase">
-                    {lead.leadTime} Lead
-                  </Text>
-                )}
                 <View className="mx-2 w-1 h-1 rounded-full bg-slate-300" />
                 {isAutoSaving ? (
                   <View className="flex-row items-center">
                     <ActivityIndicator size={8} color="#4CBB17" />
-                    <Text className="text-[10px] font-black text-green-600 uppercase ml-1">
-                      Syncing...
-                    </Text>
+                    <Text className="text-[10px] font-black text-green-600  ml-1">Syncing...</Text>
                   </View>
                 ) : lastUpdatedAt ? (
-                  <Text className="text-[10px] font-bold text-text-secondary uppercase">
+                  <Text className="text-[10px] font-bold text-text-secondary ">
                     Last updated at {lastUpdatedAt}
                   </Text>
                 ) : null}
@@ -393,44 +388,89 @@ export const CalculatorForm = ({
           />
         </Section>
 
-        <View className="mb-6 bg-card overflow-hidden rounded-[24px] border border-border shadow-sm">
-          <View className="flex-row items-center justify-between p-5 border-b border-border">
+        <View className="mb-24 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] overflow-hidden">
+          <View className="p-5 flex-row items-center justify-between">
             <View className="flex-row items-center">
-              <View className="w-10 h-10 rounded-xl bg-purple-500/10 items-center justify-center mr-4">
-                <Ionicons name="receipt" size={20} color="#637381" />
+              <View className="w-12 h-12 rounded-2xl bg-[#E5D9FF] items-center justify-center mr-4">
+                <Ionicons name="receipt" size={24} color="#6B46C1" />
               </View>
               <View>
-                <Text className="text-sm font-black text-text-primary">Job Summary</Text>
-                <Text className="text-[10px] font-bold text-text-secondary uppercase">
-                  {results.items.length} Items Selected
+                <Text className="text-xl font-extrabold text-[#1C252E]">Job Summary</Text>
+                <Text className="text-sm text-[#637381] font-medium">
+                  {results.items.length} items
                 </Text>
               </View>
             </View>
+            <View className="bg-[#E5D9FF] px-4 py-2 rounded-xl">
+              <Text className="text-[12px] font-extrabold text-[#6B46C1]  tracking-wider">
+                {results.items.length} Items
+              </Text>
+            </View>
           </View>
-          <View className="p-5">
-            <View className="flex-row flex-wrap gap-2 mb-4">
-              {results.items.map((it: any, i: number) => (
-                <View key={i} className="px-3 py-1.5 rounded-full bg-surface flex-row items-center">
-                  <View
-                    className={`w-1.5 h-1.5 rounded-full mr-2 ${
-                      it.label.includes('Gutter') ? 'bg-blue-400' : 'bg-purple-400'
-                    }`}
-                  />
-                  <Text className="text-[10px] font-bold text-text-secondary">
-                    {it.value}
-                    {it.unit || "'"} {it.label}
-                  </Text>
+
+          <View className="px-5 pb-6">
+            {Object.entries(
+              results.items.reduce((acc: any, item: any) => {
+                const cat = item.category || 'Additional Services';
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(item);
+                return acc;
+              }, {})
+            ).map(([category, items]: any) => {
+              const categoryStyles: Record<string, { color: string; icon: string; bg: string }> = {
+                Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+                LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+                Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+                Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+              };
+              const style = categoryStyles[category] || {
+                color: '#637381',
+                icon: 'list',
+                bg: '#F4F6F8',
+              };
+
+              return (
+                <View key={category} className="mb-6">
+                  <View className="flex-row mb-3">
+                    <View
+                      className="flex-row items-center px-3 py-1.5 rounded-full"
+                      style={{ backgroundColor: style.bg }}
+                    >
+                      <Ionicons name={style.icon} size={14} color={style.color} />
+                      <Text
+                        className="ml-2 text-[10px] font-black  tracking-tight"
+                        style={{ color: style.color }}
+                      >
+                        {category}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View className="gap-3">
+                    {items.map((item: any, i: number) => (
+                      <View
+                        key={i}
+                        className="flex-row items-center bg-white rounded-2xl p-4 shadow-sm border border-[#F4F6F8]"
+                      >
+                        <View
+                          className="w-10 h-10 rounded-xl items-center justify-center mr-4"
+                          style={{ backgroundColor: style.bg }}
+                        >
+                          <Ionicons name={style.icon} size={18} color={style.color} />
+                        </View>
+                        <View className="flex-1">
+                          <Text className="text-sm font-bold text-[#1C252E]">
+                            {item.value}
+                            {item.unit || "'"} {item.label}
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
                 </View>
-              ))}
-            </View>
-            <View className="flex-row justify-between items-center bg-green-500/10 p-4 rounded-2xl">
-              <Text className="text-[10px] font-black text-green-600 uppercase">
-                Est. Retail Total
-              </Text>
-              <Text className="text-xl font-black text-green-600">
-                ${Math.round(results.total)}
-              </Text>
-            </View>
+              );
+            })}
           </View>
         </View>
 
@@ -439,14 +479,22 @@ export const CalculatorForm = ({
             onPress={onClose}
             className="flex-1 h-12 rounded-xl items-center justify-center border-2 border-[#4CBB17]"
           >
-            <Text className="text-[12px] font-black uppercase text-[#4CBB17]">Back</Text>
+            <Text className="text-[12px] font-black  text-[#4CBB17]">Back</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setShowTrackerModal(true)}
-            className="flex-[2] h-12 bg-[#4CBB17] rounded-xl items-center justify-center shadow-lg shadow-green-600/30"
+            onPress={handleAddJobToTracker}
+            className={`flex-[2] h-12 rounded-xl items-center justify-center shadow-lg ${
+              isAlreadyInTracker || results.items.length > 0
+                ? 'bg-[#4CBB17] shadow-green-600/30'
+                : 'bg-[#2169f3] shadow-blue-600/30'
+            }`}
           >
-            <Text className="text-white text-[12px] font-black uppercase">
-              Add This Job into Job Tracker
+            <Text className="text-white text-[12px] font-black ">
+              {isAlreadyInTracker
+                ? 'Go to Job Tracker'
+                : results.items.length > 0
+                ? 'Add This Job into Job Tracker'
+                : 'Go to Job Tracker'}
             </Text>
           </TouchableOpacity>
         </View>

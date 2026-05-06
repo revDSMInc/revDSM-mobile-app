@@ -111,8 +111,16 @@ class ChatService {
 
     return {
       ...m,
-      _id: (m._id || m.id || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`).toString(),
-      id: (m.id || m._id || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`).toString(),
+      _id: (
+        m._id ||
+        m.id ||
+        `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      ).toString(),
+      id: (
+        m.id ||
+        m._id ||
+        `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      ).toString(),
       text: (() => {
         const raw = m.text || m.message || m.content || m.body || '';
         if (typeof raw === 'string') return raw;
@@ -148,10 +156,11 @@ class ChatService {
         if (m.image) return m.image;
         if (m.contentType === 'image' && typeof m.content === 'string') return m.content;
         const files = m.files || m.messageFiles || [];
-        const imgFile = files.find((f: any) => 
-          f.type?.startsWith('image') || 
-          f.mimeType?.startsWith('image') ||
-          f.contentType?.startsWith('image')
+        const imgFile = files.find(
+          (f: any) =>
+            f.type?.startsWith('image') ||
+            f.mimeType?.startsWith('image') ||
+            f.contentType?.startsWith('image')
         );
         return imgFile?.path || imgFile?.url || undefined;
       })(),
@@ -159,22 +168,28 @@ class ChatService {
         if (m.video) return m.video;
         if (m.contentType === 'video' && typeof m.content === 'string') return m.content;
         const files = m.files || m.messageFiles || [];
-        const vidFile = files.find((f: any) => 
-          f.type?.startsWith('video') || 
-          f.mimeType?.startsWith('video') ||
-          f.contentType?.startsWith('video')
+        const vidFile = files.find(
+          (f: any) =>
+            f.type?.startsWith('video') ||
+            f.mimeType?.startsWith('video') ||
+            f.contentType?.startsWith('video')
         );
         return vidFile?.path || vidFile?.url || undefined;
       })(),
       audio: (() => {
         if (m.audio) return m.audio;
         if (m.voice) return m.voice;
-        if ((m.messageType === 'voice' || m.contentType === 'audio') && typeof m.content === 'string') return m.content;
+        if (
+          (m.messageType === 'voice' || m.contentType === 'audio') &&
+          typeof m.content === 'string'
+        )
+          return m.content;
         const files = m.files || m.messageFiles || [];
-        const audFile = files.find((f: any) => 
-          f.type?.startsWith('audio') || 
-          f.mimeType?.startsWith('audio') ||
-          f.contentType?.startsWith('audio')
+        const audFile = files.find(
+          (f: any) =>
+            f.type?.startsWith('audio') ||
+            f.mimeType?.startsWith('audio') ||
+            f.contentType?.startsWith('audio')
         );
         return audFile?.path || audFile?.url || undefined;
       })(),

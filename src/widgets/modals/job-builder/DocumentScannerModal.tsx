@@ -111,7 +111,7 @@ export const DocumentScannerModal = ({
           <TouchableOpacity onPress={onClose} className="p-2">
             <Icon name="close" size={24} color="white" />
           </TouchableOpacity>
-          <Text className="text-white font-black uppercase text-sm tracking-widest">{title}</Text>
+          <Text className="text-white font-black  text-sm tracking-widest">{title}</Text>
           <TouchableOpacity
             onPress={handleSave}
             disabled={scannedPages.length === 0 || loading}
@@ -122,7 +122,7 @@ export const DocumentScannerModal = ({
             {loading ? (
               <ActivityIndicator size="small" color="white" />
             ) : (
-              <Text className="text-white font-black uppercase text-[10px]">
+              <Text className="text-white font-black  text-[10px]">
                 Save ({scannedPages.length})
               </Text>
             )}
@@ -134,10 +134,8 @@ export const DocumentScannerModal = ({
             <View className="w-24 h-24 rounded-full bg-slate-800 items-center justify-center mb-6">
               <Icon name="file-document-outline" size={48} color={colors.primary.main} />
             </View>
-            <Text className="text-white text-xl font-black text-center uppercase mb-2">
-              Native Scanner
-            </Text>
-            <Text className="text-slate-400 text-center text-xs font-medium leading-5 mb-10 uppercase tracking-widest">
+            <Text className="text-white text-xl font-black text-center  mb-2">Native Scanner</Text>
+            <Text className="text-slate-400 text-center text-xs font-medium leading-5 mb-10  tracking-widest">
               Capture documents with automatic edge detection and corner highlighting
             </Text>
 
@@ -146,7 +144,7 @@ export const DocumentScannerModal = ({
               className="w-full h-16 bg-white rounded-3xl items-center justify-center flex-row"
             >
               <Icon name="camera" size={24} color="black" />
-              <Text className="ml-3 font-black uppercase text-sm">Open Native Scanner</Text>
+              <Text className="ml-3 font-black  text-sm">Open Native Scanner</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -177,9 +175,7 @@ export const DocumentScannerModal = ({
                   className="w-[48%] aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-700 items-center justify-center mb-4"
                 >
                   <Icon name="plus-circle-outline" size={32} color="#475569" />
-                  <Text className="mt-2 text-slate-500 font-black uppercase text-[10px]">
-                    Add Page
-                  </Text>
+                  <Text className="mt-2 text-slate-500 font-black  text-[10px]">Add Page</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -189,7 +185,7 @@ export const DocumentScannerModal = ({
         {/* Bottom Tip */}
         <View className="px-8 py-6 bg-slate-900 flex-row items-center">
           <Icon name="shield-check" size={20} color="#22c55e" />
-          <Text className="ml-3 text-[10px] font-bold text-slate-400 uppercase leading-4 flex-1">
+          <Text className="ml-3 text-[10px] font-bold text-slate-400  leading-4 flex-1">
             The native scanner will automatically detect borders. You can manually adjust corners if
             needed.
           </Text>

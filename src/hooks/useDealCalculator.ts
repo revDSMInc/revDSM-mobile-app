@@ -42,7 +42,7 @@ export const useDealCalculator = (lead: any) => {
   const [calculators, setCalculators] = useState<any[]>([
     {
       _id: null,
-      name: 'Rollout 1',
+      name: '.',
       inputs: INITIAL_INPUTS,
       extras: INITIAL_EXTRAS,
       discounts: { seniorVet: false, preOrder: false },
@@ -151,6 +151,7 @@ export const useDealCalculator = (lead: any) => {
       const finalLeadDate = lead.leadDate
         ? lead.leadDate
         : dateStr.split('T')[0] + 'T00:00:00+05:00';
+      console.log('finalLeadDate', finalLeadDate, lead.leadDate);
 
       let res = await LeadService.getAppointments({ lead_date: finalLeadDate });
       let appointments = res.data?.data || res.data || [];
@@ -195,7 +196,7 @@ export const useDealCalculator = (lead: any) => {
 
       if (calculatorsData.length === 0) {
         const fullPayload = {
-          title: '1',
+          title: '.',
           position: 1,
           ...INITIAL_INPUTS,
           paymentMethod: 'check',
@@ -262,7 +263,7 @@ export const useDealCalculator = (lead: any) => {
           return res.baseRetailTotal;
         };
         const titles = getUpdatedCalculatorTitles(mappedCalculators, getRetailPrice);
-        mappedCalculators.forEach((c: { _id: string | number; name: any; }) => {
+        mappedCalculators.forEach((c: { _id: string | number; name: any }) => {
           if (c._id && titles[c._id]) c.name = titles[c._id];
         });
 
@@ -275,7 +276,26 @@ export const useDealCalculator = (lead: any) => {
   };
 
   useEffect(() => {
-    fetchCalculators();
+    // Reset state when lead changes to prevent data leakage
+    setCalculators([
+      {
+        _id: null,
+        name: '.',
+        inputs: INITIAL_INPUTS,
+        extras: INITIAL_EXTRAS,
+        discounts: { seniorVet: false, preOrder: false },
+        price: 0,
+      },
+    ]);
+    setActiveIdx(0);
+    setAppointmentId(null);
+    setLastUpdatedAt(null);
+    isPendingSave.current = false;
+    latestActiveRef.current = null;
+
+    if (lead?._id) {
+      fetchCalculators();
+    }
   }, [lead?._id]);
 
   const updateActive = useCallback(
@@ -402,7 +422,7 @@ export const useDealCalculator = (lead: any) => {
       const initialTitle = leadName || `${calculators.length + 1}`;
 
       const fullPayload = {
-        title: initialTitle,
+        title: initialTitle || '.',
         position: calculators.length,
         ...INITIAL_INPUTS,
         paymentMethod: 'check',
@@ -412,19 +432,27 @@ export const useDealCalculator = (lead: any) => {
       };
       const res = await LeadService.createCalculator(apptId, fullPayload);
       const newC = res.data?.data || res.data;
-      setCalculators([
-        ...calculators,
-        {
-          _id: newC._id,
-          name: newC.title || initialTitle,
-          inputs: INITIAL_INPUTS,
-          extras: INITIAL_EXTRAS,
-          discounts: { seniorVet: false, preOrder: false },
-          price: 0,
-        },
-      ]);
-      setActiveIdx(calculators.length);
+
+      if (newC) {
+        setCalculators((prev) => {
+          const newList = [
+            ...prev,
+            {
+              _id: newC._id,
+              name: newC.title || initialTitle || '.',
+              inputs: INITIAL_INPUTS,
+              extras: INITIAL_EXTRAS,
+              discounts: { seniorVet: false, preOrder: false },
+              price: 0,
+            },
+          ];
+          // Set active index to the newly added item
+          setActiveIdx(newList.length - 1);
+          return newList;
+        });
+      }
     } catch (e) {
+      console.error('Failed to add calculator', e);
     } finally {
       setLoading(false);
     }

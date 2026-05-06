@@ -33,7 +33,7 @@ export function ChatReplyBar({ replyingTo, onCancel }: ReplyBarProps) {
         style={{ backgroundColor: '#007AFF', minHeight: 30 }}
       />
       <View className="flex-1">
-        <Text className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-0.5">
+        <Text className="text-[10px] font-black  tracking-widest text-blue-500 mb-0.5">
           Replying to {senderName}
         </Text>
         <Text
@@ -71,7 +71,7 @@ export function ChatEditBar({ editingMessage, onCancel }: EditBarProps) {
     >
       <Icon name="create-outline" size={16} color="#F59E0B" style={{ marginRight: 10 }} />
       <View className="flex-1">
-        <Text className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-0.5">
+        <Text className="text-[10px] font-black  tracking-widest text-amber-500 mb-0.5">
           Editing Message
         </Text>
         <Text

@@ -303,10 +303,21 @@ export default function PitchbookScreen() {
             <TouchableOpacity
               onPress={() => navigation.goBack()}
               className="flex-row items-center p-1.5 rounded-md"
-              style={{ backgroundColor: "#F9FFF6", borderColor: colors.primary.main, borderWidth: 2 }}
+              style={{
+                backgroundColor: '#F9FFF6',
+                borderColor: colors.primary.main,
+                borderWidth: 2,
+              }}
             >
-              <IonIcon name="location" size={18} color={colors.primary.main} style={{ marginRight: 6 }} />
-              <Text className="font-bold text-sm" style={{ color: colors.primary.main }}>Back to Map</Text>
+              <IonIcon
+                name="location"
+                size={18}
+                color={colors.primary.main}
+                style={{ marginRight: 6 }}
+              />
+              <Text className="font-bold text-sm" style={{ color: colors.primary.main }}>
+                Back to Map
+              </Text>
             </TouchableOpacity>
             <View className="bg-[#1C252E] p-1.5 rounded-md">
               <Text className="text-white text-xs font-bold">
@@ -381,7 +392,7 @@ export default function PitchbookScreen() {
                 paddingBottom: Platform.OS === 'ios' ? 16 : 16,
                 borderTopLeftRadius: 8,
                 borderTopRightRadius: 8,
-                backgroundColor: "#F9FFF6",
+                backgroundColor: '#F9FFF6',
                 borderWidth: 2,
                 borderColor: colors.primary.main,
               }}
@@ -509,7 +520,8 @@ export default function PitchbookScreen() {
                                 style={{ backgroundColor: '#212B36' }}
                               >
                                 <Text className="text-sm text-white font-semibold">
-                                  {categoryPhotos.length} of {Math.max(sectionTotal, categoryPhotos.length)} complete
+                                  {categoryPhotos.length} of{' '}
+                                  {Math.max(sectionTotal, categoryPhotos.length)} complete
                                 </Text>
                               </View>
                               <Icon
@@ -535,7 +547,7 @@ export default function PitchbookScreen() {
                                     />
                                     <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-1">
                                       <Text
-                                        className="text-white text-[8px] font-black text-center uppercase px-1"
+                                        className="text-white text-[8px] font-black text-center  px-1"
                                         numberOfLines={1}
                                       >
                                         {img.subcategory || 'Photo'}
@@ -749,9 +761,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
               {riskJob && riskJob.status !== 'completed' && (
                 <View className="flex-row items-center gap-2">
                   <ActivityIndicator size="small" color={colors.primary.main} />
-                  <Text className="text-[10px] font-bold text-slate-500 uppercase">
-                    {riskJob.progress}%
-                  </Text>
+                  <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
                 </View>
               )}
             </View>
@@ -772,7 +782,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
       )}
       {reports.length > 1 && (
         <View className="mt-2 gap-3">
-          <Text className="text-xs font-black uppercase text-gray-400 tracking-widest mb-1">
+          <Text className="text-xs font-black  text-gray-400 tracking-widest mb-1">
             Generated History
           </Text>
           {reports.map((report: any, idx: number) => (

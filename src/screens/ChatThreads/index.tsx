@@ -242,7 +242,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
                   style={{ opacity: 0.15 }}
                 />
                 <Text
-                  className="mt-4 font-black uppercase text-xs tracking-widest opacity-40 text-center"
+                  className="mt-4 font-black text-xs tracking-widest opacity-40 text-center"
                   style={{ color: colors.textSecondary }}
                 >
                   No {mainTab === 'myleads' ? 'Leads Conversations' : 'Channels'} found

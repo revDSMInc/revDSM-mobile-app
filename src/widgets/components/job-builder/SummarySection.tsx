@@ -457,16 +457,14 @@ export const SummarySection = ({
         style={{ backgroundColor: section.color }}
         className="px-6 py-4 flex-row justify-between items-center"
       >
-        <Text className="text-xs font-black text-white uppercase tracking-widest">
-          {section.title}
-        </Text>
+        <Text className="text-xs font-black text-white  tracking-widest">{section.title}</Text>
         <Icon name="check-circle" size={16} color="white" />
       </View>
       <View className="p-6">
         {section.subsections.map((sub: any, sIdx: number) => (
           <View key={sIdx} className={sIdx > 0 ? 'mt-6' : ''}>
             {sub.name ? (
-              <Text className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">
+              <Text className="text-[10px] font-black text-slate-400  mb-4 tracking-widest">
                 {sub.name}
               </Text>
             ) : null}
@@ -476,7 +474,7 @@ export const SummarySection = ({
                   <View className="flex-row">
                     <View className="flex-1">
                       {field.label ? (
-                        <Text className="text-[9px] font-bold text-slate-400 uppercase mb-1 tracking-tight">
+                        <Text className="text-[9px] font-bold text-slate-400  mb-1 tracking-tight">
                           {field.label}
                         </Text>
                       ) : null}
@@ -493,10 +491,10 @@ export const SummarySection = ({
                           key={rIdx}
                           className="flex-row justify-between items-center bg-slate-50 px-2 py-1.5 rounded-lg"
                         >
-                          <Text className="text-[8px] font-black text-slate-500 uppercase">
+                          <Text className="text-[8px] font-black text-slate-500 ">
                             {row.location}
                           </Text>
-                          <Text className="text-[8px] font-bold text-emerald-600 uppercase">
+                          <Text className="text-[8px] font-bold text-emerald-600 ">
                             {row.entries.map((e: any) => `${e.story}: ${e.value}ft`).join(' · ')}
                           </Text>
                         </View>
@@ -539,7 +537,7 @@ export const SummarySection = ({
             type === 'agreement' ? 'bg-red-500' : 'bg-blue-500'
           }`}
         >
-          <Text className="text-sm font-black text-white uppercase tracking-widest">{title}</Text>
+          <Text className="text-sm font-black text-white  tracking-widest">{title}</Text>
           <Pressable
             onPress={() => {
               setScannerType(type);
@@ -553,7 +551,7 @@ export const SummarySection = ({
           {isEmpty ? (
             <View className="items-center py-6">
               <Icon name="file-document-outline" size={32} color="#CBD5E1" />
-              <Text className="text-[10px] font-black text-slate-300 uppercase mt-2">
+              <Text className="text-[10px] font-black text-slate-300  mt-2">
                 No documents added
               </Text>
             </View>
@@ -569,7 +567,7 @@ export const SummarySection = ({
                     <View className="flex-1 items-center justify-center">
                       <Icon name="file-pdf-box" size={32} color="#EF4444" />
                       <Text
-                        className="text-[8px] font-black text-slate-400 uppercase mt-2 px-1 text-center"
+                        className="text-[8px] font-black text-slate-400  mt-2 px-1 text-center"
                         numberOfLines={1}
                       >
                         {file.name || 'PDF'}
@@ -583,7 +581,7 @@ export const SummarySection = ({
                     />
                   )}
                   <View className="absolute bottom-0 left-0 right-0 bg-black/60 py-1">
-                    <Text className="text-white text-[8px] font-black text-center uppercase">
+                    <Text className="text-white text-[8px] font-black text-center ">
                       Page {i + 1}
                     </Text>
                   </View>
@@ -601,7 +599,7 @@ export const SummarySection = ({
   return (
     <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
       <View className="px-5 py-5 pb-24 bg-white">
-        <Text className="text-[10px] font-black uppercase tracking-[2px] mb-6 ml-1 text-slate-400">
+        <Text className="text-[10px] font-black  tracking-[2px] mb-6 ml-1 text-slate-400">
           Job Completion Blueprint
         </Text>
 
@@ -625,14 +623,14 @@ export const SummarySection = ({
             </View>
             <View className="ml-4 flex-1">
               <Text
-                className={`text-base font-black uppercase ${
+                className={`text-base font-black  ${
                   !isScheduled ? 'text-red-900' : 'text-emerald-900'
                 }`}
               >
                 {!isScheduled ? 'Schedule Required' : 'Appointment Locked'}
               </Text>
               {isScheduled && (
-                <Text className="text-[10px] font-bold text-emerald-600 uppercase">
+                <Text className="text-[10px] font-bold text-emerald-600 ">
                   {jobState.scheduleTime.date} · {jobState.scheduleTime.timeWindow || 'TBD'}
                 </Text>
               )}
@@ -643,14 +641,14 @@ export const SummarySection = ({
                 !isScheduled ? 'bg-red-600' : 'bg-emerald-600'
               }`}
             >
-              <Text className="text-white font-black uppercase text-[10px] tracking-widest">
+              <Text className="text-white font-black  text-[10px] tracking-widest">
                 {!isScheduled ? 'Schedule' : 'Edit'}
               </Text>
             </Pressable>
           </View>
           {isScheduled && jobState.scheduleTime.reason && (
             <View className="p-3 bg-white/60 rounded-xl">
-              <Text className="text-[10px] font-bold text-emerald-800 uppercase tracking-tight">
+              <Text className="text-[10px] font-bold text-emerald-800  tracking-tight">
                 TBD Reason: {jobState.scheduleTime.reason}
               </Text>
             </View>
@@ -677,7 +675,7 @@ export const SummarySection = ({
           className="h-16 bg-slate-900 rounded-2xl items-center justify-center flex-row shadow-lg shadow-slate-900/20"
         >
           <Icon name="file-pdf-box" size={24} color="white" />
-          <Text className="ml-3 text-white font-black uppercase text-sm tracking-[2px]">
+          <Text className="ml-3 text-white font-black  text-sm tracking-[2px]">
             Generate Agreement
           </Text>
         </Pressable>
@@ -744,10 +742,8 @@ export const SummarySection = ({
         <View className="flex-1 bg-black/60 items-center justify-center">
           <View className="bg-white p-8 rounded-[32px] items-center shadow-2xl">
             <ActivityIndicator size="large" color="#00B8D9" />
-            <Text className="mt-4 text-slate-900 font-black text-base uppercase">
-              Generating Document
-            </Text>
-            <Text className="mt-1 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+            <Text className="mt-4 text-slate-900 font-black text-base ">Generating Document</Text>
+            <Text className="mt-1 text-slate-400 text-[10px] font-bold  tracking-widest">
               Preparing your agreement
             </Text>
           </View>

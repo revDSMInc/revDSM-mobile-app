@@ -54,7 +54,7 @@ export const ModalHeader = ({ title, subtitle, onClose, children }: any) => {
             </Text>
             {subtitle && (
               <Text
-                className="text-[10px] font-black uppercase tracking-widest"
+                className="text-[10px] font-black  tracking-widest"
                 style={{ color: colors.textSecondary }}
               >
                 {subtitle}
@@ -101,6 +101,6 @@ export const ActionButton = ({ title, icon, color, onPress, style }: any) => (
     style={[{ backgroundColor: color }, style]}
   >
     {icon && <Text className="text-white mr-2 text-lg">{icon}</Text>}
-    <Text className="text-white text-[11px] font-black uppercase tracking-widest">{title}</Text>
+    <Text className="text-white text-[11px] font-black  tracking-widest">{title}</Text>
   </TouchableOpacity>
 );

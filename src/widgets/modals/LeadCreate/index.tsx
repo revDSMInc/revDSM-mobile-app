@@ -78,6 +78,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   useEffect(() => {
     const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
@@ -134,6 +135,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
           );
           if (res.data.results?.[0]) {
             setForm((prev) => ({ ...prev, address: res.data.results[0].formatted_address }));
+            setLocation({ latitude, longitude });
           }
         } catch (e) {
           console.warn('Geocoding failed', e);
@@ -265,6 +267,12 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
             })(),
             lfLeadTime: form.lfLeadTime,
             fullAddress: form.address,
+            location: location
+              ? {
+                  type: 'Point',
+                  coordinates: [location.longitude, location.latitude],
+                }
+              : undefined,
             customer: {
               firstName: form.firstName,
               lastName: form.lastName,
@@ -277,6 +285,12 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
             leadType: 'selfGen',
             repId: user?._id || user?.id,
             fullAddress: form.address,
+            location: location
+              ? {
+                  type: 'Point',
+                  coordinates: [location.longitude, location.latitude],
+                }
+              : undefined,
             customer: {
               firstName: form.firstName,
               lastName: form.lastName,

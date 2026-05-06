@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { resolveS3Url } from '../utils/s3-utils';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
+import { logEvent } from '../services/api/LoggerService';
 
 export const useLeadCenterData = (initialLead: any, user: any) => {
   const queryClient = useQueryClient();
@@ -123,6 +124,30 @@ export const useLeadCenterData = (initialLead: any, user: any) => {
     };
     fetchSecureImages();
   }, [lead?.salesPhotos]);
+
+  useEffect(() => {
+    if (!lead?._id || !user?._id) return;
+    LeadService.workLead(lead._id, user._id)
+      .then((res) => console.log('Work started successfully:', res.data))
+      .catch((e) => console.warn('[LeadCenter] Work start failed:', e));
+    return () => {
+      if (user?._id && lead?._id) {
+        logEvent('unload', {
+          user_id: user._id,
+          module_type: 'lead_check_out',
+          action: 'check_out_unloaded',
+          created_by: user._id,
+          meta: {
+            leadId: lead._id,
+            unload: true,
+          },
+        });
+      }
+      LeadService.endWorkLead(lead._id)
+        .then((res) => console.log('Work ended successfully:', res.data))
+        .catch((e) => console.warn('[LeadCenter] Work end failed:', e));
+    };
+  }, [lead?._id, user?._id]);
 
   useEffect(() => {
     return () => {

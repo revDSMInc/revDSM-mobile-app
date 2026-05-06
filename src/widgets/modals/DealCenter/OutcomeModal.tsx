@@ -77,9 +77,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   ) => (
     <View className="mb-5 relative" style={{ zIndex }}>
       <View className="absolute -top-2 left-3 z-10 px-1 bg-white">
-        <Text className="text-[10px] font-semibold text-black uppercase tracking-[0.5px]">
-          {label}
-        </Text>
+        <Text className="text-[10px] font-semibold text-black  tracking-[0.5px]">{label}</Text>
       </View>
       <TouchableOpacity
         className={`flex-row items-center border rounded-lg px-[14px] py-3 min-h-[48px] bg-white ${
@@ -110,9 +108,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   ) => (
     <View className="mb-5 relative">
       <View className="absolute -top-2 left-3 z-10 px-1 bg-white">
-        <Text className="text-[10px] font-semibold text-black uppercase tracking-[0.5px]">
-          {label}
-        </Text>
+        <Text className="text-[10px] font-semibold text-black  tracking-[0.5px]">{label}</Text>
       </View>
       <View className="flex-row items-center border border-[#919EAB33] rounded-lg px-[14px] py-3 min-h-[48px] bg-white">
         <Text
@@ -142,9 +138,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   ) => (
     <View className="mb-5 relative">
       <View className="absolute -top-2 left-3 z-10 px-1 bg-white">
-        <Text className="text-[10px] font-semibold text-black uppercase tracking-[0.5px]">
-          {label}
-        </Text>
+        <Text className="text-[10px] font-semibold text-black  tracking-[0.5px]">{label}</Text>
       </View>
       <View
         className={`border border-[#919EAB33] rounded-lg px-[14px] py-3 bg-white ${
@@ -187,7 +181,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                     className="flex-row items-center bg-white/15 px-2 py-1 rounded-md ml-3"
                   >
                     <Ionicons name="refresh" size={14} color="white" />
-                    <Text className="text-white text-[10px] font-bold ml-1 uppercase">Reset</Text>
+                    <Text className="text-white text-[10px] font-bold ml-1 ">Reset</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -481,7 +475,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                 {/* Calculator Dropdown Overlay */}
                 <View className="z-[60]">
                   <View className="flex-row justify-between items-center mb-2.5 mt-1">
-                    <Text className="text-[10px] font-extrabold text-[#1C252E] uppercase tracking-[0.5px]">
+                    <Text className="text-[10px] font-extrabold text-[#1C252E]  tracking-[0.5px]">
                       Associated LF Calculator
                     </Text>
                     <TouchableOpacity
@@ -489,9 +483,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       className="flex-row items-center"
                     >
                       <Ionicons name="refresh" size={13} color="#637381" />
-                      <Text className="text-[9px] font-bold text-[#637381] ml-1 uppercase">
-                        Refresh
-                      </Text>
+                      <Text className="text-[9px] font-bold text-[#637381] ml-1 ">Refresh</Text>
                     </TouchableOpacity>
                   </View>
                   {renderField(
@@ -545,9 +537,6 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       <Text className="text-sm font-bold text-[#1C252E]">Job Summary</Text>
                     </View>
                     <View className="flex-row items-center">
-                      <Text className="text-[12px] text-[#637381] font-semibold mr-2">
-                        {(results?.items || []).length} item
-                      </Text>
                       <View className="bg-[#E5D9FF] px-3 py-1.5 rounded-lg">
                         <Text className="text-[12px] font-extrabold text-[#6B46C1]">
                           {(results?.items || []).length} Item
@@ -617,7 +606,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       backgroundColor: '#FFAB00',
                     }}
                   >
-                    <Text className="font-bold text-[11px] uppercase" style={{ color: '#212B36' }}>
+                    <Text className="font-bold text-[11px] " style={{ color: '#212B36' }}>
                       Versatile
                     </Text>
                   </TouchableOpacity>
@@ -630,7 +619,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       backgroundColor: '#FFAB00',
                     }}
                   >
-                    <Text className="font-bold text-[11px] uppercase" style={{ color: '#212B36' }}>
+                    <Text className="font-bold text-[11px] " style={{ color: '#212B36' }}>
                       Pineapple
                     </Text>
                   </TouchableOpacity>
@@ -662,7 +651,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       {outcomeStatus === 'sale'
                         ? 'Build Job'
                         : outcomeStatus === 'demo'
-                        ? 'Confirm Outcome'
+                        ? 'Demo'
                         : 'Select Result'}
                     </Text>
                   </TouchableOpacity>
@@ -679,7 +668,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             >
               <ActivityIndicator size="large" color="#00B8D9" />
               <View className="items-center mt-6">
-                <Text className="text-[#1C252E] font-black text-xl uppercase tracking-tighter">
+                <Text className="text-[#1C252E] font-black text-xl  tracking-tighter">
                   Preparing Job Builder
                 </Text>
                 <View className="flex-row items-center mt-2 bg-blue-50 px-3 py-1 rounded-full">
@@ -688,12 +677,12 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                     color="#00B8D9"
                     style={{ transform: [{ scale: 0.8 }] }}
                   />
-                  <Text className="text-[#00B8D9] text-[10px] font-black uppercase ml-2 tracking-widest">
+                  <Text className="text-[#00B8D9] text-[10px] font-black  ml-2 tracking-widest">
                     Optimizing Allocation
                   </Text>
                 </View>
               </View>
-              <Text className="absolute bottom-12 text-[#919EAB] text-[10px] font-black uppercase tracking-[2px]">
+              <Text className="absolute bottom-12 text-[#919EAB] text-[10px] font-black  tracking-[2px]">
                 Almost there • revDSM Mobile
               </Text>
             </View>

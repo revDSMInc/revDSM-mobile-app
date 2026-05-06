@@ -53,12 +53,10 @@ export const LeadService = {
     const query = new URLSearchParams({ repId, ...params }).toString();
     return api.get(`${LeadEndpoints.salesPortal}?${query}`);
   },
-  workLead: (
-    leadId: string,
-    userId: string,
-    status: string | null = null
-  ): Promise<AxiosResponse<any>> =>
-    api.put(LeadEndpoints.work(leadId), { userId, workStartedBy: userId, status }),
+  workLead: (leadId: string, userId: string): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.work(leadId), { userId, workStartedBy: userId }),
+  endWorkLead: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.work(leadId), { workStartedBy: null }),
   getJobBuilder: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.outcome(leadId)),
   getLeadOutcome: (leadId: string): Promise<AxiosResponse<any>> =>
@@ -74,7 +72,7 @@ export const LeadService = {
     }),
   deleteImage: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.images(leadId), { data: payload }),
-  resetLead: (leadId: string): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.reset(leadId)),
+  resetLead: (leadId: string): Promise<AxiosResponse<any>> => api.put(LeadEndpoints.reset(leadId)),
   getAdditionalSlots: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.additionalSlots(leadId)),
   saveAdditionalSlots: (leadId: string, slots: any): Promise<AxiosResponse<any>> =>

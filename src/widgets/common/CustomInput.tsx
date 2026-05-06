@@ -74,7 +74,7 @@ export const CustomInput = memo(
           </View>
           {error && (
             <Text
-              className="text-[10px] font-bold uppercase tracking-wider mt-1.5 ml-1"
+              className="text-[10px] font-bold  tracking-wider mt-1.5 ml-1"
               style={{ color: colors.error.main }}
             >
               {error}

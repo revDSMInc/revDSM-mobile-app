@@ -14,6 +14,7 @@ export interface FilterState {
   endDate: string | null;
   myJobsOnly: boolean;
   isHeatMap: boolean;
+  showRoute: boolean;
 }
 
 interface MapFiltersModalProps {
@@ -37,12 +38,6 @@ export const MapFiltersModal = ({
   const [showEndDate, setShowEndDate] = useState(false);
 
   const radiusOptions = [5, 10, 25, 50, 100];
-  const sortOptions = [
-    { label: 'Price Ascending', value: 'price-asc' },
-    { label: 'Price Descending', value: 'price-desc' },
-    { label: 'Date Ascending', value: 'date-asc' },
-    { label: 'Date Descending', value: 'date-desc' },
-  ];
 
   const handleApply = () => {
     onApply(localFilters);
@@ -54,231 +49,121 @@ export const MapFiltersModal = ({
     onClose();
   };
 
-  return (
-    <Modal visible={visible} animationType="fade" transparent>
-      <View className="flex-1 bg-black/50 justify-end">
-        <View className="bg-white dark:bg-zinc-900 rounded-t-[40px] p-6 h-[85%]">
-          <View className="flex-row justify-between items-center mb-6">
-            <Text className="text-2xl font-black dark:text-white">Filters</Text>
-            <TouchableOpacity
-              onPress={onClose}
-              className="bg-slate-100 dark:bg-zinc-800 p-2 rounded-full"
-            >
-              <Icon name="close" size={24} color={isDark ? 'white' : 'black'} />
-            </TouchableOpacity>
-          </View>
+  const FilterInput = ({ icon, label, children, isGreen = true }: any) => (
+    <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+      <View
+        className={`w-[50px] h-full ${
+          isGreen ? 'bg-green-600' : 'bg-slate-100'
+        } items-center justify-center`}
+      >
+        <Icon name={icon} size={20} color={isGreen ? 'white' : '#64748b'} />
+      </View>
+      <View className="flex-1 px-3 justify-center">{children}</View>
+    </View>
+  );
 
-          <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-            {/* Search by Job Number */}
-            <Text className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">
-              Search
-            </Text>
-            <View className="bg-slate-50 dark:bg-zinc-800 rounded-2xl p-4 mb-6 border border-slate-100 dark:border-zinc-700 flex-row items-center">
-              <Icon name="magnify" size={20} color="#94a3b8" />
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View className="flex-1 bg-black/40 justify-center px-8">
+        <View className="bg-white rounded-[24px] p-5 shadow-2xl relative">
+          <TouchableOpacity onPress={onClose} className="absolute right-4 top-4 z-10 p-1">
+            <Icon name="close" size={20} color="#64748b" />
+          </TouchableOpacity>
+
+          <View className="mt-6">
+            {/* Job Number / Location */}
+            <FilterInput icon="map-marker-outline">
               <TextInput
-                className="flex-1 ml-3 dark:text-white font-medium"
-                placeholder="Job Number (e.g. TAM123)"
+                placeholder="Enter a location or Job#"
                 placeholderTextColor="#94a3b8"
+                className="font-bold text-slate-700 text-[13px]"
                 value={localFilters.jobNumber}
                 onChangeText={(text) => setLocalFilters({ ...localFilters, jobNumber: text })}
               />
-            </View>
+            </FilterInput>
 
-            {/* Sorting */}
-            <Text className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">
-              Sort By
-            </Text>
-            <View className="flex-row flex-wrap gap-2 mb-6">
-              {sortOptions.map((opt) => (
-                <TouchableOpacity
-                  key={opt.value}
-                  onPress={() => setLocalFilters({ ...localFilters, sortOrder: opt.value })}
-                  className={`px-4 py-2 rounded-full border ${
-                    localFilters.sortOrder === opt.value
-                      ? 'bg-green-600 border-green-600'
-                      : 'border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800'
-                  }`}
-                >
-                  <Text
-                    className={`font-bold ${
-                      localFilters.sortOrder === opt.value
-                        ? 'text-white'
-                        : 'text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Radius */}
-            <Text className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">
-              Distance (Miles)
-            </Text>
-            <View className="flex-row justify-between mb-6">
-              {radiusOptions.map((r) => (
-                <TouchableOpacity
-                  key={r}
-                  onPress={() => setLocalFilters({ ...localFilters, radius: r })}
-                  className={`w-12 h-12 rounded-full items-center justify-center border ${
-                    localFilters.radius === r
-                      ? 'bg-green-600 border-green-600'
-                      : 'border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800'
-                  }`}
-                >
-                  <Text
-                    className={`font-bold ${
-                      localFilters.radius === r
-                        ? 'text-white'
-                        : 'text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    {r}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Price Range */}
-            <Text className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">
-              Price Range
-            </Text>
-            <View className="flex-row gap-4 mb-6">
-              <View className="flex-1 bg-slate-50 dark:bg-zinc-800 rounded-2xl p-4 border border-slate-100 dark:border-zinc-700">
-                <Text className="text-[10px] text-slate-400 font-bold mb-1">MIN PRICE</Text>
-                <TextInput
-                  keyboardType="numeric"
-                  className="dark:text-white font-bold p-0"
-                  value={localFilters.minPrice}
-                  onChangeText={(text) => setLocalFilters({ ...localFilters, minPrice: text })}
-                  placeholder="$0"
-                />
+            {/* Distance */}
+            <FilterInput icon="radius-outline">
+              <View className="flex-row items-center justify-between">
+                <Text className="font-bold text-slate-400 text-[13px]">Select Distance</Text>
+                <Icon name="chevron-down" size={18} color="#94a3b8" />
               </View>
-              <View className="flex-1 bg-slate-50 dark:bg-zinc-800 rounded-2xl p-4 border border-slate-100 dark:border-zinc-700">
-                <Text className="text-[10px] text-slate-400 font-bold mb-1">MAX PRICE</Text>
-                <TextInput
-                  keyboardType="numeric"
-                  className="dark:text-white font-bold p-0"
-                  value={localFilters.maxPrice}
-                  onChangeText={(text) => setLocalFilters({ ...localFilters, maxPrice: text })}
-                  placeholder="$No Limit"
-                />
-              </View>
-            </View>
+            </FilterInput>
+
+            {/* Min Price */}
+            <FilterInput icon="minus-circle-outline">
+              <TextInput
+                placeholder="Min Price"
+                placeholderTextColor="#94a3b8"
+                keyboardType="numeric"
+                className="font-bold text-slate-700 text-[13px]"
+                value={localFilters.minPrice}
+                onChangeText={(text) => setLocalFilters({ ...localFilters, minPrice: text })}
+              />
+            </FilterInput>
+
+            {/* Max Price */}
+            <FilterInput icon="plus-circle-outline">
+              <TextInput
+                placeholder="Max Price"
+                placeholderTextColor="#94a3b8"
+                keyboardType="numeric"
+                className="font-bold text-slate-700 text-[13px]"
+                value={localFilters.maxPrice}
+                onChangeText={(text) => setLocalFilters({ ...localFilters, maxPrice: text })}
+              />
+            </FilterInput>
 
             {/* Date Range */}
-            <Text className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">
-              Date Range
-            </Text>
-            <View className="flex-row gap-4 mb-6">
+            <FilterInput icon="calendar-range-outline">
               <TouchableOpacity
                 onPress={() => setShowStartDate(true)}
-                className="flex-1 bg-slate-50 dark:bg-zinc-800 rounded-2xl p-4 border border-slate-100 dark:border-zinc-700"
+                className="flex-row items-center justify-between"
               >
-                <Text className="text-[10px] text-slate-400 font-bold mb-1">START DATE</Text>
-                <Text className="dark:text-white font-bold">
+                <Text className="font-bold text-slate-400 text-[13px]">
                   {localFilters.startDate
                     ? new Date(localFilters.startDate).toLocaleDateString()
-                    : 'Select'}
+                    : 'Select Date Range'}
                 </Text>
+                <Icon name="chevron-down" size={18} color="#94a3b8" />
               </TouchableOpacity>
+            </FilterInput>
+
+            {/* Bottom Controls Row */}
+            <View className="flex-row items-center justify-between mb-5 px-1">
+              <View className="flex-row gap-3 items-center">
+                <TouchableOpacity className="p-1">
+                  <Icon name="format-list-checks" size={24} color="#64748b" />
+                </TouchableOpacity>
+
+                <View className="w-8 h-5 bg-green-500 rounded-full px-1 justify-center">
+                  <View className="w-3.5 h-3.5 bg-white rounded-full self-end" />
+                </View>
+
+                <TouchableOpacity className="p-1 ml-1">
+                  <Icon name="star" size={22} color="#f59e0b" />
+                </TouchableOpacity>
+
+                <View className="w-8 h-5 bg-slate-200 rounded-full px-1 justify-center">
+                  <View className="w-3.5 h-3.5 bg-white rounded-full" />
+                </View>
+              </View>
+
               <TouchableOpacity
-                onPress={() => setShowEndDate(true)}
-                className="flex-1 bg-slate-50 dark:bg-zinc-800 rounded-2xl p-4 border border-slate-100 dark:border-zinc-700"
+                onPress={onReset}
+                className="w-14 h-10 bg-green-600 rounded-lg items-center justify-center shadow-md"
               >
-                <Text className="text-[10px] text-slate-400 font-bold mb-1">END DATE</Text>
-                <Text className="dark:text-white font-bold">
-                  {localFilters.endDate
-                    ? new Date(localFilters.endDate).toLocaleDateString()
-                    : 'Select'}
-                </Text>
+                <Icon name="refresh" size={20} color="white" />
               </TouchableOpacity>
             </View>
 
-            {/* Toggles */}
-            <View className="bg-slate-50 dark:bg-zinc-800 rounded-[32px] p-6 mb-10 gap-6">
-              <TouchableOpacity
-                onPress={() =>
-                  setLocalFilters({ ...localFilters, myJobsOnly: !localFilters.myJobsOnly })
-                }
-                className="flex-row justify-between items-center"
-              >
-                <View className="flex-row items-center">
-                  <View
-                    className={`w-10 h-10 rounded-xl items-center justify-center ${
-                      localFilters.myJobsOnly ? 'bg-blue-100' : 'bg-slate-200'
-                    }`}
-                  >
-                    <Icon
-                      name="account-check"
-                      size={20}
-                      color={localFilters.myJobsOnly ? '#3b82f6' : '#64748b'}
-                    />
-                  </View>
-                  <Text className="ml-3 font-bold dark:text-white">My Jobs Only</Text>
-                </View>
-                <View
-                  className={`w-12 h-6 rounded-full px-1 justify-center ${
-                    localFilters.myJobsOnly ? 'bg-green-500' : 'bg-slate-300'
-                  }`}
-                >
-                  <View
-                    className={`w-4 h-4 rounded-full bg-white ${
-                      localFilters.myJobsOnly ? 'self-end' : 'self-start'
-                    }`}
-                  />
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() =>
-                  setLocalFilters({ ...localFilters, isHeatMap: !localFilters.isHeatMap })
-                }
-                className="flex-row justify-between items-center"
-              >
-                <View className="flex-row items-center">
-                  <View
-                    className={`w-10 h-10 rounded-xl items-center justify-center ${
-                      localFilters.isHeatMap ? 'bg-orange-100' : 'bg-slate-200'
-                    }`}
-                  >
-                    <Icon
-                      name="fire"
-                      size={20}
-                      color={localFilters.isHeatMap ? '#f97316' : '#64748b'}
-                    />
-                  </View>
-                  <Text className="ml-3 font-bold dark:text-white">Heatmap View</Text>
-                </View>
-                <View
-                  className={`w-12 h-6 rounded-full px-1 justify-center ${
-                    localFilters.isHeatMap ? 'bg-green-500' : 'bg-slate-300'
-                  }`}
-                >
-                  <View
-                    className={`w-4 h-4 rounded-full bg-white ${
-                      localFilters.isHeatMap ? 'self-end' : 'self-start'
-                    }`}
-                  />
-                </View>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-
-          {/* Action Buttons */}
-          <View className="flex-row gap-4 mt-4">
-            <TouchableOpacity
-              onPress={handleReset}
-              className="flex-1 h-16 rounded-2xl items-center justify-center border border-slate-200 dark:border-zinc-700"
-            >
-              <Text className="font-bold text-slate-600 dark:text-slate-300">Reset</Text>
-            </TouchableOpacity>
+            {/* Search Button */}
             <TouchableOpacity
               onPress={handleApply}
-              className="flex-[2] h-16 bg-green-600 rounded-2xl items-center justify-center shadow-lg shadow-green-200"
+              className="w-full h-12 bg-green-600 rounded-xl flex-row items-center justify-center shadow-lg shadow-green-200"
             >
-              <Text className="text-white font-black text-lg">Apply Filters</Text>
+              <Icon name="magnify" size={20} color="white" />
+              <Text className="text-white font-black text-base ml-2">Search</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -292,17 +177,6 @@ export const MapFiltersModal = ({
           onChange={(event, date) => {
             setShowStartDate(false);
             if (date) setLocalFilters({ ...localFilters, startDate: date.toISOString() });
-          }}
-        />
-      )}
-      {showEndDate && (
-        <DateTimePicker
-          value={localFilters.endDate ? new Date(localFilters.endDate) : new Date()}
-          mode="date"
-          display="default"
-          onChange={(event, date) => {
-            setShowEndDate(false);
-            if (date) setLocalFilters({ ...localFilters, endDate: date.toISOString() });
           }}
         />
       )}

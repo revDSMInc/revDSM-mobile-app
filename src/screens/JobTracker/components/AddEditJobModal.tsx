@@ -13,7 +13,8 @@ import {
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import JobService, { JobEntry } from '../../../services/api/JobService';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
+import { CustomDatePicker } from './CustomDatePicker';
 
 interface Props {
   visible: boolean;
@@ -22,12 +23,59 @@ interface Props {
   job?: JobEntry | null;
 }
 
-const PAYMENT_METHODS = [
-  { label: 'Check (0% Fee)', value: 'Check' },
-  { label: 'MC/VISA/DSCVR (3.00% Fee)', value: 'Credit Card' },
-  { label: 'AMEX (5.00% Fee)', value: 'AMEX' },
-  { label: 'GreenSky Plans', value: 'GreenSky' },
+const PAYMENT_GROUPS = [
+  {
+    title: 'Basic Options',
+    options: [
+      { label: 'Check (0% Fee)', value: 'check' },
+      { label: 'MC/VISA/DSCVR (3.00% Fee)', value: 'mcVisaDscvr' },
+      { label: 'AMEX (5.00% Fee)', value: 'amex' },
+    ],
+  },
+  {
+    title: 'GreenSky Plans',
+    options: [
+      { label: '2511 (6 Months 0% Interest)', value: 'greensky2511' },
+      { label: '2521 (12 Months 0% Interest)', value: 'greensky2521' },
+      { label: '2531 (18 Months 0% Interest)', value: 'greensky2531' },
+      { label: '1599 (Fixed Rate 9.99% APR)', value: 'greensky1599' },
+    ],
+  },
+  {
+    title: 'Wells Fargo Plans',
+    options: [
+      { label: '1148 (6 Months no interest)', value: 'wf1148' },
+      { label: '1019 (12 Months no interest)', value: 'wf1019' },
+      { label: '1157 (6.9% APR, 1/50th)', value: 'wf1157' },
+      { label: '1197 (9.99% APR, 3.5% payment)', value: 'wf1197' },
+      { label: '2225 (12.9% APR, 1/50th)', value: 'wf2225' },
+      { label: '3198 (5.99% APR, 60 payments)', value: 'wf3198' },
+      { label: '1529 (8.99% APR, 84 payments)', value: 'wf1529' },
+      { label: '4073 (18 Months, 0% interest)', value: 'wf4073' },
+      { label: '4079 (24 Months, 0% interest)', value: 'wf4079' },
+      { label: '4091 (36 Months, 0% interest)', value: 'wf4091' },
+      { label: '4103 (48 Months, 0% interest)', value: 'wf4103' },
+      { label: '4115 (60 Months, 0% interest)', value: 'wf4115' },
+    ],
+  },
+  {
+    title: 'Wells Fargo Plans (Jobs over $7,500)',
+    options: [
+      { label: '3672 (7.99% APR, 96 payments)', value: 'wf3672' },
+      { label: '3667 (7.99% APR, 108 payments)', value: 'wf3667' },
+      { label: '3668 (7.99% APR, 120 payments)', value: 'wf3668' },
+      { label: '3669 (9.99% APR, 96 payments)', value: 'wf3669' },
+      { label: '3670 (9.99% APR, 108 payments)', value: 'wf3670' },
+      { label: '3671 (9.99% APR, 120 payments)', value: 'wf3671' },
+    ],
+  },
+  {
+    title: 'Concora Credit',
+    options: [{ label: 'Concora (19.9% APR)', value: 'concora' }],
+  },
 ];
+
+const ALL_PAYMENT_METHODS = PAYMENT_GROUPS.flatMap((g) => g.options);
 
 export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => {
   const { colors, isDark } = useTheme();
@@ -36,7 +84,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
     jobNumber: '',
     customerName: '',
     salesPrice: 0,
-    paymentMethod: 'Check',
+    paymentMethod: 'check',
     commission: 0,
     installDate: null,
     soldDate: format(new Date(), 'yyyy-MM-dd'),
@@ -46,6 +94,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
 
   const [loading, setLoading] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [datePickerTarget, setDatePickerTarget] = useState<'install' | 'sold'>('install');
 
   useEffect(() => {
     if (job) {
@@ -55,7 +105,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
         jobNumber: '',
         customerName: '',
         salesPrice: 0,
-        paymentMethod: 'Check',
+        paymentMethod: 'check',
         commission: 0,
         installDate: null,
         soldDate: format(new Date(), 'yyyy-MM-dd'),
@@ -68,10 +118,15 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
   const handleSave = async () => {
     setLoading(true);
     try {
+      const payload = {
+        ...formData,
+        jobNumber: formData.jobNumber?.trim() || '.',
+        customerName: formData.customerName?.trim() || '.',
+      };
       if (job?.id || job?._id) {
-        await JobService.updateJob((job.id || job._id)!, formData);
+        await JobService.updateJob((job.id || job._id)!, payload);
       } else {
-        await JobService.createJob(formData as JobEntry);
+        await JobService.createJob(payload as JobEntry);
       }
       onSuccess();
       onClose();
@@ -86,32 +141,30 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
         <View style={[styles.content, { backgroundColor: colors.card }]}>
-          {/* Header */}
-          <View
-            className="flex-row items-center justify-between p-6"
-            style={{ backgroundColor: colors.primary.main }}
-          >
-            <Text className="text-white text-base font-semibold">
-              {job ? 'Edit Job' : 'Add This Job to Job Tracker'}
+          <ScrollView className="px-8 py-8" showsVerticalScrollIndicator={false}>
+            <Text className="text-[22px] font-black text-[#1C252E] mb-10 mt-2">
+              Add This Job to Job Tracker
             </Text>
-            <TouchableOpacity onPress={onClose}>
-              <Icon name="close" size={24} color="white" />
-            </TouchableOpacity>
-          </View>
 
-          <ScrollView className="px-6 py-8" showsVerticalScrollIndicator={false}>
             <View style={styles.fieldWrap}>
-              <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                  Job Number
-                </Text>
-              </View>
+              {!formData.jobNumber && (
+                <View style={styles.placeholderContainer}>
+                  <Text style={styles.placeholderText}>Job Number</Text>
+                </View>
+              )}
+              {formData.jobNumber ? (
+                <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
+                    Job Number
+                  </Text>
+                </View>
+              ) : null}
               <View style={[styles.fieldBox, { borderColor: colors.border }]}>
                 <TextInput
                   value={formData.jobNumber}
                   onChangeText={(t) => setFormData({ ...formData, jobNumber: t })}
                   style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder="e.g. 12345"
+                  placeholder=""
                   placeholderTextColor={colors.textSecondary}
                 />
               </View>
@@ -128,7 +181,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                   value={formData.customerName}
                   onChangeText={(t) => setFormData({ ...formData, customerName: t })}
                   style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder="Full Name"
+                  placeholder=""
                   placeholderTextColor={colors.textSecondary}
                 />
               </View>
@@ -142,11 +195,11 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               </View>
               <View style={[styles.fieldBox, { borderColor: colors.border }]}>
                 <TextInput
-                  value={formData.salesPrice === 0 ? '' : formData.salesPrice?.toString()}
+                  value={formData.salesPrice === 0 ? '0' : formData.salesPrice?.toString()}
                   keyboardType="numeric"
                   onChangeText={(t) => setFormData({ ...formData, salesPrice: parseFloat(t) || 0 })}
                   style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder="0.00"
+                  placeholder=""
                   placeholderTextColor={colors.textSecondary}
                 />
               </View>
@@ -164,7 +217,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                 style={[styles.fieldBox, { borderColor: showPicker ? '#72BD00' : colors.border }]}
               >
                 <Text style={[styles.fieldInput, { color: colors.text }]}>
-                  {PAYMENT_METHODS.find((m) => m.value === formData.paymentMethod)?.label ||
+                  {ALL_PAYMENT_METHODS.find((m) => m.value === formData.paymentMethod)?.label ||
                     'Select Method'}
                 </Text>
                 <Icon
@@ -181,30 +234,49 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                     { backgroundColor: colors.card, borderColor: colors.border },
                   ]}
                 >
-                  {PAYMENT_METHODS.map((method) => (
-                    <TouchableOpacity
-                      key={method.value}
-                      className="py-4 px-4"
-                      style={{
-                        backgroundColor:
-                          formData.paymentMethod === method.value ? '#72BD0010' : 'transparent',
-                      }}
-                      onPress={() => {
-                        setFormData({ ...formData, paymentMethod: method.value });
-                        setShowPicker(false);
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: formData.paymentMethod === method.value ? '#72BD00' : colors.text,
-                          fontWeight: 'semibold',
-                          fontSize: 13,
-                        }}
-                      >
-                        {method.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={true}>
+                    {PAYMENT_GROUPS.map((group) => (
+                      <View key={group.title}>
+                        <View
+                          style={[
+                            styles.pickerHeader,
+                            { backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa' },
+                          ]}
+                        >
+                          <Text style={[styles.pickerHeaderText, { color: colors.textSecondary }]}>
+                            {group.title}
+                          </Text>
+                        </View>
+                        {group.options.map((method) => (
+                          <TouchableOpacity
+                            key={method.value}
+                            className="py-4 px-4"
+                            style={{
+                              backgroundColor:
+                                formData.paymentMethod === method.value
+                                  ? '#72BD0010'
+                                  : 'transparent',
+                            }}
+                            onPress={() => {
+                              setFormData({ ...formData, paymentMethod: method.value });
+                              setShowPicker(false);
+                            }}
+                          >
+                            <Text
+                              style={{
+                                color:
+                                  formData.paymentMethod === method.value ? '#72BD00' : colors.text,
+                                fontWeight: 'semibold',
+                                fontSize: 13,
+                              }}
+                            >
+                              {method.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    ))}
+                  </ScrollView>
                 </View>
               )}
             </View>
@@ -234,17 +306,35 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                     Install Date
                   </Text>
                 </View>
-                <View style={[styles.fieldBox, { borderColor: colors.border }]}>
-                  <TextInput
-                    value={formData.installDate || ''}
-                    onChangeText={(t: string) => setFormData({ ...formData, installDate: t })}
-                    editable={!formData.toBeDetermined}
-                    style={[styles.fieldInput, { color: colors.text }]}
-                    placeholder="MM/DD/YYYY"
-                    placeholderTextColor={colors.textSecondary}
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (!formData.toBeDetermined) {
+                      setDatePickerTarget('install');
+                      setShowDatePicker(true);
+                    }
+                  }}
+                  style={[
+                    styles.fieldBox,
+                    { borderColor: colors.border, opacity: formData.toBeDetermined ? 0.5 : 1 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.fieldInput,
+                      { color: formData.installDate ? colors.text : colors.textSecondary },
+                    ]}
+                  >
+                    {formData.installDate
+                      ? format(parseISO(formData.installDate), 'MM/dd/yyyy')
+                      : 'Install Date'}
+                  </Text>
+                  <Icon
+                    name={formData.installDate ? 'calendar' : 'chevron-down'}
+                    size={20}
+                    color={colors.textSecondary}
                   />
-                  <Icon name="calendar" size={20} color={colors.textSecondary} />
-                </View>
+                </TouchableOpacity>
               </View>
               <View className="flex-row items-center mb-6 px-1">
                 <Switch
@@ -261,7 +351,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                   style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
                 />
                 <Text
-                  className="text-[12px] font-semibold uppercase ml-1 opacity-60"
+                  className="text-[12px] font-semibold ml-1 opacity-60"
                   style={{ color: colors.text }}
                 >
                   TBD Install Date
@@ -275,41 +365,63 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                   Date Sold
                 </Text>
               </View>
-              <View style={[styles.fieldBox, { borderColor: colors.border }]}>
-                <TextInput
-                  value={formData.soldDate}
-                  onChangeText={(t: string) => setFormData({ ...formData, soldDate: t })}
-                  style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor={colors.textSecondary}
-                />
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => {
+                  setDatePickerTarget('sold');
+                  setShowDatePicker(true);
+                }}
+                style={[styles.fieldBox, { borderColor: colors.border }]}
+              >
+                <Text
+                  style={[
+                    styles.fieldInput,
+                    { color: formData.soldDate ? colors.text : colors.textSecondary },
+                  ]}
+                >
+                  {formData.soldDate
+                    ? format(parseISO(formData.soldDate), 'MM/dd/yyyy')
+                    : 'MM/DD/YYYY'}
+                </Text>
                 <Icon name="calendar" size={20} color={colors.textSecondary} />
-              </View>
+              </TouchableOpacity>
             </View>
 
-            <View className="flex-row gap-4 mb-14 mt-4 justify-end">
+            <View className="flex-row gap-3 mb-14 mt-6 justify-end items-center">
               <TouchableOpacity
                 onPress={onClose}
-                className="px-6 py-2.5 items-center rounded-lg border"
-                style={{ borderColor: colors.border }}
+                className="px-8 h-12 items-center justify-center rounded-xl border-2 border-[#919EAB33]"
               >
-                <Text style={{ color: colors.text, fontWeight: 'semibold', fontSize: 13 }}>
-                  Cancel
-                </Text>
+                <Text style={{ color: '#1C252E', fontWeight: 'bold', fontSize: 15 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleSave}
                 disabled={loading}
-                className="px-6 py-2.5 items-center rounded-lg bg-[#72BD00]"
+                className="px-6 h-12 items-center justify-center rounded-xl bg-[#4CBB17] shadow-lg shadow-green-600/20"
               >
-                <Text className="font-semibold text-white text-[13px]">
-                  {loading ? '...' : job ? 'Update' : 'Submit'}
+                <Text className="font-bold text-white text-[15px]">
+                  {loading ? '...' : job ? 'Update' : 'Add to Job Tracker'}
                 </Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         </View>
       </View>
+
+      <CustomDatePicker
+        visible={showDatePicker}
+        onClose={() => setShowDatePicker(false)}
+        initialDate={
+          datePickerTarget === 'install' ? formData.installDate || undefined : formData.soldDate
+        }
+        onSelect={(date) => {
+          if (datePickerTarget === 'install') {
+            setFormData({ ...formData, installDate: date });
+          } else {
+            setFormData({ ...formData, soldDate: date });
+          }
+        }}
+      />
     </Modal>
   );
 };
@@ -339,15 +451,29 @@ const styles = StyleSheet.create({
     zIndex: 10,
     paddingHorizontal: 4,
   },
-  floatingLabelText: { fontSize: 11, fontWeight: '600' },
+  floatingLabelText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  placeholderContainer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 14,
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  placeholderText: {
+    color: '#919EAB',
+    fontSize: 14,
+    fontWeight: '500',
+  },
   fieldBox: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#919EAB33',
-    borderRadius: 8,
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingVertical: Platform.OS === 'ios' ? 16 : 14,
+    minHeight: 56,
   },
   fieldInput: { flex: 1, fontSize: 12, padding: 0, color: '#1C252E', fontWeight: '500' },
   pickerList: {
@@ -366,5 +492,17 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 10,
     overflow: 'hidden',
+  },
+  pickerHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(145, 158, 171, 0.12)',
+  },
+  pickerHeaderText: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
 });

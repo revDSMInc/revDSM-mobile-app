@@ -9,15 +9,10 @@ import {
   PermissionsAndroid,
   Dimensions,
   StatusBar,
-  Alert,
-  TextInput,
-  Modal,
   ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Heatmap as MapHeatmap, PROVIDER_GOOGLE, Callout } from 'react-native-maps';
+import MapView, { Marker, Heatmap as MapHeatmap, PROVIDER_GOOGLE } from 'react-native-maps';
 const Heatmap = MapHeatmap as any;
-import MapViewDirections from 'react-native-maps-directions';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Feather from 'react-native-vector-icons/Feather';
 import Geolocation from 'react-native-geolocation-service';
@@ -28,15 +23,20 @@ import { useAuth } from '../../hooks/useAuth';
 import { format } from 'date-fns';
 import { MapJobCard } from '../../widgets/components/LeadCenter/MapJobCard';
 import { ENV } from '../../config/env';
+import MapViewDirections from 'react-native-maps-directions';
+
+const GOOGLE_MAPS_API_KEY = ENV.GOOGLE_MAPS_API_KEY;
 import { RootStackParamList } from '../../navigation';
 import { ReferralModal } from '../../widgets/modals/ReferralModal';
-import { launchCamera } from 'react-native-image-picker';
-import { JobImageUploadModal } from '../../widgets/modals/JobImageUploadModal';
+import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
 import { MapFiltersModal, FilterState } from '../../widgets/modals/MapFiltersModal';
 import { Header } from '../../widgets/common/MainHeader';
+import { Callout } from 'react-native-maps';
+import Svg, { Path } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
-const GOOGLE_MAPS_API_KEY = ENV.GOOGLE_MAPS_API_KEY;
+
+import { MapToggleSwitch } from '../../widgets/common/MapToggleSwitch';
 
 export default function MapDetailScreen() {
   const { colors, isDark } = useTheme();
@@ -45,12 +45,12 @@ export default function MapDetailScreen() {
   const route = useRoute<RouteProp<RootStackParamList, 'MapDetail'>>();
   const { currentLead } = route.params || {};
   const mapRef = useRef<MapView>(null);
-  const markerRefs = useRef<{ [key: string]: any }>({});
+  const isInternalMove = useRef(false);
 
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [userLocation, setUserLocation] = useState<any>(null);
-  const [selectedJob, setSelectedJob] = useState<any>(currentLead || null);
+  const [selectedJob, setSelectedJob] = useState<any>(null);
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [showImageUploadModal, setShowImageUploadModal] = useState(false);
   const [showFiltersModal, setShowFiltersModal] = useState(false);
@@ -64,10 +64,8 @@ export default function MapDetailScreen() {
     endDate: null,
     myJobsOnly: false,
     isHeatMap: false,
+    showRoute: false,
   });
-
-  // Filters
-  const [showRoute, setShowRoute] = useState(false);
 
   const [region, setRegion] = useState({
     latitude: currentLead?.location?.coordinates?.[1] || 27.9506,
@@ -76,36 +74,30 @@ export default function MapDetailScreen() {
     longitudeDelta: 0.1,
   });
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [isMapReady, setIsMapReady] = useState(false);
   const [mapVisible, setMapVisible] = useState(false);
+  const [isListView, setIsListView] = useState(false);
 
   useEffect(() => {
-    console.log('[MapDetail] PROVIDER_GOOGLE constant:', PROVIDER_GOOGLE);
     const timer = setTimeout(() => {
-      console.log('[MapDetail] Setting mapVisible to true');
       setMapVisible(true);
-    }, 1000);
+    }, 500);
     return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    console.log('[MapDetail] Mounting...');
     requestLocationPermission();
     fetchLeads();
   }, []);
 
   const requestLocationPermission = async () => {
-    console.log('[MapDetail] Requesting location permission...');
     if (Platform.OS === 'ios') {
-      const auth = await Geolocation.requestAuthorization('whenInUse');
-      console.log('[MapDetail] iOS Auth Status:', auth);
+      await Geolocation.requestAuthorization('whenInUse');
       startTracking();
     } else {
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       );
-      console.log('[MapDetail] Android Auth Status:', granted);
       if (granted === PermissionsAndroid.RESULTS.GRANTED) {
         startTracking();
       }
@@ -113,15 +105,11 @@ export default function MapDetailScreen() {
   };
 
   const startTracking = () => {
-    console.log('[MapDetail] Starting location tracking...');
     Geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
-        console.log('[MapDetail] Current Position:', { latitude, longitude });
         setUserLocation({ latitude, longitude });
         if (!currentLead) {
-          console.log('[MapDetail] Moving region to user location');
-          setRegion((prev) => ({ ...prev, latitude, longitude }));
           mapRef.current?.animateToRegion(
             {
               latitude,
@@ -139,11 +127,7 @@ export default function MapDetailScreen() {
   };
 
   const fetchLeads = async () => {
-    if (!user?._id) {
-      console.log('[MapDetail] Skipping fetch: No user ID');
-      return;
-    }
-    console.log('[MapDetail] Fetching leads with filters:', filters);
+    if (!user?._id) return;
     try {
       setLoading(true);
       const payload: any = {
@@ -165,11 +149,9 @@ export default function MapDetailScreen() {
       if (userLocation) {
         payload.coordinates = [userLocation.longitude, userLocation.latitude];
       }
-      
-      console.log('[MapDetail] Search Payload:', payload);
+
       const res = await LeadService.findJobs(payload);
       const data = res.data?.data || [];
-      console.log(`[MapDetail] Successfully fetched ${data.length} leads`);
       setLeads(data);
     } catch (err) {
       console.error('[MapDetail] Fetch Leads Error:', err);
@@ -180,21 +162,20 @@ export default function MapDetailScreen() {
 
   const filteredLeads = useMemo(() => {
     let result = [...leads];
-
     if (filters.myJobsOnly && user?._id) {
       result = result.filter((l) => l.salesRepId === user._id || l.salesRep?._id === user._id);
     }
-
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (l) =>
-          l.customerDetails?.firstName?.toLowerCase().includes(q) ||
-          l.customerDetails?.lastName?.toLowerCase().includes(q) ||
-          l.fullAddress?.toLowerCase().includes(q) ||
-          l.jobNumber?.toLowerCase().includes(q)
-      );
-    }
+    // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
+    result = result.filter((item) => {
+      const jobNumber = item?.jobNumber;
+      if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
+        const number = parseInt(jobNumber.replace('TAM', ''), 10);
+        if (!isNaN(number) && number >= 30000 && number <= 30032) {
+          return false;
+        }
+      }
+      return true;
+    });
 
     const currentSort = filters.sortOrder;
     if (currentSort) {
@@ -214,9 +195,12 @@ export default function MapDetailScreen() {
         return 0;
       });
     }
-
     return result;
-  }, [leads, filters.myJobsOnly, filters.sortOrder, user?._id, searchQuery]);
+  }, [leads, filters.myJobsOnly, filters.sortOrder, user?._id]);
+
+  const toggleFilter = (key: 'myJobsOnly' | 'isHeatMap' | 'showRoute') => {
+    setFilters((prev) => ({ ...prev, [key]: !prev[key as keyof FilterState] }));
+  };
 
   const heatmapData = useMemo(() => {
     return filteredLeads
@@ -228,151 +212,175 @@ export default function MapDetailScreen() {
       }));
   }, [filteredLeads]);
 
-  const [isListView, setIsListView] = useState(false);
+ 
+  const handleMarkerPress = useCallback(
+    (job: any) => {
+      console.log('[MapDetail] Marker Pressed:', job.jobNumber);
+      setSelectedJob(job);
 
-  const handleMarkerPress = useCallback((job: any) => {
-    setSelectedJob(job);
-
-    // Log event like web
-    if (user?._id) {
-      LeadService.logEvent('click', {
-        user_id: user._id,
-        created_by: user._id,
-        module_type: 'map_interaction',
-        meta: {
-          jobNumber: job.jobNumber,
-          jobId: job._id,
-          address: job.fullAddress,
-          coordinates: job.location?.coordinates,
-          price: job.price || 0,
-          action: 'job_pin_selected',
+    isInternalMove.current = true;
+    mapRef.current?.animateCamera(
+      {
+        center: {
+          latitude: job.location.coordinates[1] + 0.005, // Larger offset to center the modal
+          longitude: job.location.coordinates[0],
         },
-      });
-    }
+        zoom: 16,
+        pitch: 0,
+        heading: 0,
+      },
+      { duration: 800 }
+    );
+    // Reset flag after animation completes
+    setTimeout(() => {
+      isInternalMove.current = false;
+    }, 1000);
 
-    const coords = job.location?.coordinates;
-    if (coords) {
-      mapRef.current?.animateToRegion(
-        {
-          latitude: coords[1] + 0.0007,
-          longitude: coords[0],
-          latitudeDelta: 0.002,
-          longitudeDelta: 0.002,
-        },
-        1000
-      );
-      // Wait for animation then show callout
-      setTimeout(() => {
-        markerRefs.current[job.jobNumber]?.showCallout();
-      }, 1100);
-    }
-  }, []);
+      if (user?._id) {
+        LeadService.logEvent('click', {
+          user_id: user._id,
+          created_by: user._id,
+          module_type: 'map_interaction',
+          meta: {
+            jobNumber: job.jobNumber,
+            jobId: job._id,
+            action: 'job_pin_selected',
+          },
+        });
+      }
+    },
+    [user?._id]
+  );
 
-  // Handle auto-open for currentLead from params
   useEffect(() => {
     if (currentLead && isMapReady) {
       handleMarkerPress(currentLead);
     }
   }, [currentLead, isMapReady]);
 
-  const handleCameraPress = async (job: any) => {
-    setSelectedJob(job);
-    setShowImageUploadModal(true);
+  const handleZoom = (type: 'in' | 'out') => {
+    mapRef.current?.getCamera().then((camera) => {
+      const zoomLevel = camera.zoom || 10;
+      mapRef.current?.animateCamera({
+        zoom: type === 'in' ? zoomLevel + 1 : zoomLevel - 1,
+      });
+    });
   };
 
   return (
-    <View className="flex-1 bg-background">
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+    <View style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
+      <StatusBar barStyle="light-content" />
 
-      <Header onNavigate={(route) => navigation.navigate(route)} />
+      <View
+        className="flex-row items-center justify-between px-4 py-3"
+        style={{
+          backgroundColor: isDark ? '#1C252E' : '#101828',
+          paddingTop: Platform.OS === 'ios' ? 50 : 10,
+        }}
+      >
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Leads')}
+          className="flex-row items-center"
+        >
+          <Text className="text-[22px] font-black text-green-400">rev</Text>
+          <Text className="text-[22px] font-black text-white">DSM</Text>
+        </TouchableOpacity>
 
-      <View className="bg-background border-b border-border">
-        <View className="px-4 py-3 flex-row justify-between items-center">
-          <View className="flex-row items-center">
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              className="mr-3 p-1 items-center justify-center border border-border rounded-lg"
-              style={{ width: 32, height: 32 }}
-            >
-              <Feather
-                name="arrow-left"
-                size={14}
-                color={isDark ? colors.text : colors.textSecondary}
-              />
-            </TouchableOpacity>
-            <Text className="text-lg font-black" style={{ color: colors.text }}>
-              Sales Map
-            </Text>
-          </View>
+        <View className="flex-row items-center gap-1.5">
+          <TouchableOpacity
+            onPress={() => setShowFiltersModal(true)}
+            className="w-8 h-8 bg-green-500 rounded-lg items-center justify-center"
+          >
+            <Icon name="filter-variant" size={18} color="white" />
+          </TouchableOpacity>
 
-          <View className="flex-row gap-3">
-            <TouchableOpacity
-              onPress={() => setShowFiltersModal(true)}
-              className="px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 flex-row items-center"
-            >
-              <Icon name="filter-variant" size={16} color="#4CBB17" />
-              <Text className="ml-1 text-xs font-bold text-green-600">Filters</Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setIsListView(!isListView)}
+            className="w-8 h-8 bg-green-500 rounded-lg items-center justify-center"
+          >
+            <Icon
+              name={isListView ? 'map-outline' : 'format-list-bulleted'}
+              size={18}
+              color="white"
+            />
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => setIsListView(!isListView)}
-              className="px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 flex-row items-center"
-            >
-              <Icon name={isListView ? 'map' : 'view-list'} size={16} color="#4CBB17" />
-              <Text className="ml-1 text-xs font-bold text-green-600">
-                {isListView ? 'Map' : 'List'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Chat')}
+            className="w-8 h-8 bg-green-500 rounded-full items-center justify-center"
+          >
+            <Icon name="message-outline" size={16} color="white" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => {}}
+            className="w-8 h-8 bg-slate-400 rounded-full items-center justify-center border border-white/20"
+          >
+            <Icon name="account" size={18} color="white" />
+          </TouchableOpacity>
         </View>
       </View>
 
-      <View className="flex-1">
+      <View style={{ flex: 1 }}>
         {isListView ? (
-          <View className="flex-1 bg-surface px-4 pt-4">
-            <View className="bg-card rounded-xl p-4 mb-4 shadow-sm border border-border">
-              <Text className="text-[12px] font-bold text-text-secondary mb-2">Order By</Text>
-              <TouchableOpacity className="flex-row justify-between items-center">
-                <Text className="text-[16px] font-bold text-text-primary">Price Ascending</Text>
-                <Icon name="chevron-down" size={20} color="#94a3b8" />
-              </TouchableOpacity>
+          <View style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
+            <View className="p-3 flex-row justify-between items-center bg-white dark:bg-zinc-900 border-b border-slate-100 dark:border-zinc-800">
+              <View className="flex-row items-center">
+                <View className="px-3 py-1 bg-green-50 rounded-lg">
+                  <Text className="text-[12px] font-black text-green-600">
+                    Job List ({filteredLeads.length})
+                  </Text>
+                </View>
+              </View>
+              <View className="flex-row items-center gap-2">
+                <TouchableOpacity
+                  onPress={() => setShowFiltersModal(true)}
+                  className="w-9 h-9 bg-green-600 rounded-lg items-center justify-center"
+                >
+                  <Icon name="filter-variant" size={18} color="white" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setIsListView(false)}
+                  className="w-9 h-9 bg-green-600 rounded-lg items-center justify-center"
+                >
+                  <Icon name="map-outline" size={18} color="white" />
+                </TouchableOpacity>
+              </View>
             </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ padding: 12 }}
+            >
               {filteredLeads.map((item) => (
                 <TouchableOpacity
                   key={item._id}
                   onPress={() => {
                     setIsListView(false);
-                    // Defer centering and opening callout to allow list to close
-                    setTimeout(() => {
-                      handleMarkerPress(item);
-                    }, 300);
+                    setTimeout(() => handleMarkerPress(item), 300);
                   }}
-                  className="bg-card rounded-2xl p-4 mb-4 shadow-sm border border-border"
+                  className="bg-white dark:bg-zinc-900 rounded-[20px] p-4 mb-3 border border-slate-100 dark:border-zinc-800 shadow-sm"
                 >
-                  <View className="flex-row justify-between mb-4">
-                    <View className="bg-green-50 dark:bg-green-900/20 px-3 py-1 rounded-lg">
-                      <Text className="text-green-600 font-bold">#{item.jobNumber}</Text>
+                  <View className="flex-row justify-between items-center mb-3">
+                    <View className="px-3 py-0.5 bg-green-50 dark:bg-green-900/30 rounded-lg">
+                      <Text className="text-[11px] font-black text-green-600">
+                        #{item.jobNumber}
+                      </Text>
                     </View>
+                    <Icon name="image-outline" size={16} color="#94a3b8" />
                   </View>
 
-                  <View className="flex-row justify-between mb-3">
+                  <View className="flex-row justify-between">
                     <View>
-                      <Text className="text-[10px] font-bold text-text-secondary uppercase">
-                        Price
-                      </Text>
-                      <Text className="text-[16px] font-black text-green-600">
+                      <Text className="text-[10px] font-bold text-slate-400 mb-0.5">Price</Text>
+                      <Text className="text-[15px] font-black text-green-600">
                         ${(item.price || 0).toLocaleString()}
                       </Text>
                     </View>
                     <View>
-                      <Text className="text-[10px] font-bold text-text-secondary uppercase text-right">
-                        Date
-                      </Text>
+                      <Text className="text-[10px] font-bold text-slate-400 mb-0.5">Date</Text>
                       <View className="flex-row items-center">
-                        <Icon name="calendar" size={14} color="#4CBB17" />
-                        <Text className="text-[14px] font-bold text-text-primary ml-1">
+                        <Icon name="calendar-outline" size={12} color="#3b82f6" />
+                        <Text className="text-[12px] font-bold text-slate-700 dark:text-slate-300 ml-1">
                           {item.installationDate
                             ? format(new Date(item.installationDate), 'MM/dd/yyyy')
                             : 'N/A'}
@@ -380,184 +388,299 @@ export default function MapDetailScreen() {
                       </View>
                     </View>
                   </View>
-
-                  <View>
-                    <Text className="text-[10px] font-bold text-text-secondary uppercase">Rep</Text>
-                    <View className="flex-row items-center">
-                      <Icon name="account" size={14} color="#4CBB17" />
-                      <Text className="text-[14px] font-bold text-text-primary ml-1">sr</Text>
-                    </View>
-                  </View>
                 </TouchableOpacity>
               ))}
-              <View className="h-20" />
+              <View style={{ height: 100 }} />
             </ScrollView>
           </View>
         ) : (
           <View style={{ flex: 1 }}>
             {mapVisible && (
-              <MapView
+              <>
+                <MapView
                 ref={mapRef}
                 provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-                style={styles.map}
+                style={StyleSheet.absoluteFillObject}
+                customMapStyle={isDark ? darkMapStyle : []}
                 initialRegion={region}
-                showsUserLocation={true}
+                showsUserLocation={false}
                 showsMyLocationButton={false}
-                // customMapStyle={isDark ? darkMapStyle : []}
-                onMapReady={() => {
-                  console.log('[MapDetail] Map Ready Callback (Google Maps)');
-                  setIsMapReady(true);
+                onMapReady={() => setIsMapReady(true)}
+                onRegionChangeStart={() => {
+                  if (!isInternalMove.current) {
+                    setSelectedJob(null);
+                  }
                 }}
-                onMapLoaded={() => {
-                  console.log('[MapDetail] Map Loaded (Tiles Finished)');
-                }}
-                onRegionChangeComplete={(r) => {
-                  console.log('[MapDetail] Region Change Complete:', r);
+                onPress={() => {
+                  setSelectedJob(null);
                 }}
               >
-                {/* Heatmap Layer */}
                 {filters.isHeatMap && heatmapData.length > 0 && (
                   <Heatmap
                     points={heatmapData}
                     radius={Platform.OS === 'ios' ? 40 : 50}
                     opacity={0.6}
                     gradient={{
-                      colors: ['#00B8D9', '#36B37E', '#FFAB00', '#FF5630', '#DE350B'],
-                      startPoints: [0.1, 0.25, 0.5, 0.75, 1],
+                      colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
+                      startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
                       colorMapSize: 2048,
                     }}
                   />
                 )}
 
-                {/* Markers */}
+                {filters.showRoute && userLocation && selectedJob && (
+                  <MapViewDirections
+                    origin={userLocation}
+                    destination={{
+                      latitude: selectedJob.location.coordinates[1],
+                      longitude: selectedJob.location.coordinates[0],
+                    }}
+                    apikey={GOOGLE_MAPS_API_KEY}
+                    strokeWidth={4}
+                    strokeColor="#3b82f6"
+                    lineDashPattern={[0]}
+                  />
+                )}
+
                 {!filters.isHeatMap &&
                   filteredLeads.map((job) => {
                     const coords = job.location?.coordinates;
                     if (!coords) return null;
-                    const isActive = selectedJob?._id === job._id;
+                    const hasImages =
+                      (job?.images?.beforeImages?.length || 0) > 0 ||
+                      (job?.images?.afterImages?.length || 0) > 0;
+
                     return (
                       <Marker
-                        key={job._id}
-                        ref={(el) => {
-                          markerRefs.current[job.jobNumber] = el;
+                        key={job._id || job.jobNumber}
+                        coordinate={{
+                          latitude: job.location.coordinates[1],
+                          longitude: job.location.coordinates[0],
                         }}
-                        coordinate={{ latitude: coords[1], longitude: coords[0] }}
                         onPress={() => handleMarkerPress(job)}
-                        tracksViewChanges={Platform.OS === 'ios' ? isActive : false}
+                        onSelect={() => handleMarkerPress(job)}
+                        anchor={{ x: 0.5, y: 1 }}
+                        calloutAnchor={{ x: 0.5, y: 0.2 }}
+                        tracksViewChanges={true}
+                        zIndex={selectedJob?._id === job._id ? 999 : 1}
                       >
-                        <View className="items-center justify-center">
-                          <View
-                            style={{
-                              transform: [{ scale: isActive ? 1.4 : 1 }],
-                            }}
-                          >
+                        <View style={{ alignItems: 'center', width: 34, height: 44 }} collapsable={false}>
+                          <Svg width={32} height={40} viewBox="0 0 38 48">
+                            <Path
+                              d="M19 0C8.5 0 0 8.5 0 19C0 32.5 19 48 19 48C19 48 38 32.5 38 19C38 8.5 29.5 0 19 0Z"
+                              fill={job.isFavorite || job.isFavourite ? '#f59e0b' : '#4CBB17'}
+                              stroke="white"
+                              strokeWidth={2}
+                            />
+                            <Path
+                              d="M19 28C24 28 28 24 28 19C28 14 24 10 19 10C14 10 10 14 10 19C10 24 14 28 19 28Z"
+                              fill="white"
+                              fillOpacity={0.3}
+                            />
+                          </Svg>
+
+                          <View className="absolute top-1.5 items-center justify-center">
                             <Icon
-                              name={
-                                job.isFavorite || job.isFavourite ? 'star-circle' : 'map-marker'
-                              }
-                              size={isActive ? 44 : 36}
-                              color={job.isFavorite || job.isFavourite ? '#f59e0b' : '#4CBB17'}
+                              name={job.isFavorite || job.isFavourite ? 'star' : 'map-marker'}
+                              size={14}
+                              color="white"
                             />
                           </View>
-                          {isActive && (
-                            <View className="w-2 h-2 rounded-full bg-blue-500 border-2 border-white absolute -top-1 -right-1" />
+
+                          {hasImages && (
+                            <View
+                              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-white items-center justify-center shadow-md border border-slate-100"
+                              style={{ zIndex: 5 }}
+                            >
+                              <Icon name="camera" size={11} color="#3b82f6" />
+                            </View>
                           )}
                         </View>
-                        <Callout
-                          tooltip={true}
-                          onPress={() => navigation.navigate('LeadCenter', { lead: job })}
-                        >
-                          <View style={{ width: 320 }}>
-                            <MapJobCard
-                              job={job}
-                              onClose={() => {
-                                setSelectedJob(null);
-                                markerRefs.current[job.jobNumber]?.hideCallout();
-                              }}
-                              isMyJob={user?._id === job.salesRep?._id}
-                              onCameraPress={handleCameraPress}
-                              onReferencePress={(j) => {
-                                setSelectedJob(j);
-                                setShowReferralModal(true);
-                              }}
-                            />
-                          </View>
-                        </Callout>
+
                       </Marker>
                     );
                   })}
               </MapView>
-            )}
+ 
+              {selectedJob && (
+                <View 
+                  className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
+                  pointerEvents="box-none"
+                  style={{ zIndex: 1000 }}
+                >
+                  <View style={{ width: 260, height: 360, marginTop: -60 }}>
+                    <View
+                      style={{
+                        backgroundColor: 'white',
+                        borderRadius: 24,
+                        overflow: 'hidden',
+                        borderWidth: 1,
+                        borderColor: '#f1f5f9',
+                        height: 320,
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 10 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 20,
+                        elevation: 20,
+                      }}
+                    >
+                        <MapJobCard
+                          job={selectedJob}
+                          onClose={() => setSelectedJob(null)}
+                          isMyJob={user?._id === (selectedJob.salesRepId || selectedJob.salesRep?._id)}
+                          onReferencePress={() => setShowReferralModal(true)}
+                          onCameraPress={() => setShowImageUploadModal(true)}
+                          onGalleryPress={() => {
+                            setSelectedJob(null);
+                            navigation.navigate('LeadCenter', { lead: selectedJob });
+                          }}
+                        />
+                    </View>
+                    
+                    {/* Fixed Arrow Triangle */}
+                    <View className="items-center">
+                      <View
+                        style={{
+                          width: 0,
+                          height: 0,
+                          backgroundColor: 'transparent',
+                          borderStyle: 'solid',
+                          borderLeftWidth: 12,
+                          borderRightWidth: 12,
+                          borderTopWidth: 15,
+                          borderLeftColor: 'transparent',
+                          borderRightColor: 'transparent',
+                          borderTopColor: 'white',
+                          marginTop: -1,
+                        }}
+                      />
+                    </View>
+                  </View>
+                </View>
+                      )}
+                      
 
-            {/* Map Controls */}
-            <View className="absolute bottom-10 right-4 gap-3">
+            {/* Right Controls Container */}
+            <View
+              style={{
+                position: 'absolute',
+                right: 15,
+                bottom: 30,
+                gap: 10,
+                zIndex: 10,
+                alignItems: 'center',
+              }}
+            >
               <TouchableOpacity
-                onPress={() => setFilters({ ...filters, isHeatMap: !filters.isHeatMap })}
-                className="w-12 h-12 rounded-full bg-card shadow-lg items-center justify-center"
+                onPress={() => navigation.goBack()}
+                className="w-10 h-10 rounded-full bg-green-600 items-center justify-center shadow-lg mb-2"
               >
-                <Icon
-                  name="fire"
-                  size={24}
-                  color={filters.isHeatMap ? '#ef4444' : isDark ? '#FFF' : '#666'}
-                />
+                <Icon name="arrow-left" size={20} color="white" />
               </TouchableOpacity>
+
+              {/* Toggle Switches */}
+              <View className="items-center bg-white/10 rounded-2xl p-1">
+                <MapToggleSwitch
+                  value={filters.myJobsOnly}
+                  onValueChange={() => toggleFilter('myJobsOnly')}
+                  activeLabel="RF"
+                  inactiveLabel="DEF"
+                />
+                <MapToggleSwitch
+                  value={filters.isHeatMap}
+                  onValueChange={() => toggleFilter('isHeatMap')}
+                  activeLabel="AJ"
+                  inactiveLabel="AJ"
+                />
+                <MapToggleSwitch
+                  value={filters.showRoute}
+                  onValueChange={() => toggleFilter('showRoute')}
+                  activeLabel="RF"
+                  inactiveLabel="DEF"
+                />
+              </View>
+
               <TouchableOpacity
                 onPress={startTracking}
-                className="w-12 h-12 rounded-full bg-green-500 shadow-lg items-center justify-center"
+                className="w-12 h-12 rounded-full bg-green-600 items-center justify-center shadow-lg mt-2"
               >
-                <Icon name="crosshairs-gps" size={24} color="white" />
+                <Icon name="target" size={24} color="white" />
               </TouchableOpacity>
+
+              {/* Zoom Controls */}
+              <View className="bg-white rounded-xl shadow-lg border border-slate-100 overflow-hidden mt-2">
+                <TouchableOpacity
+                  onPress={() => handleZoom('in')}
+                  className="w-10 h-10 items-center justify-center border-b border-slate-100"
+                >
+                  <Icon name="plus" size={20} color="#64748b" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleZoom('out')}
+                  className="w-10 h-10 items-center justify-center"
+                >
+                  <Icon name="minus" size={20} color="#64748b" />
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        )}
-      </View>
 
-      {/* Loading Overlay */}
 
-      {/* Loading Overlay */}
+        </>
+      )}
+    </View>
+  )}
+</View>
+
+      <ReferralModal
+        visible={showReferralModal}
+        onClose={() => setShowReferralModal(false)}
+        selectedJob={selectedJob}
+      />
+      <BeforeAfterModal
+        visible={showImageUploadModal}
+        onClose={() => setShowImageUploadModal(false)}
+        selectedJob={selectedJob}
+        onUploadSuccess={fetchLeads}
+      />
+      <MapFiltersModal
+        visible={showFiltersModal}
+        onClose={() => setShowFiltersModal(false)}
+        filters={filters}
+        onApply={(f) => {
+          setFilters(f);
+          fetchLeads();
+        }}
+        onReset={() => {
+          setFilters({
+            jobNumber: '',
+            sortOrder: 'date-desc',
+            radius: 50,
+            minPrice: '',
+            maxPrice: '',
+            startDate: null,
+            endDate: null,
+            myJobsOnly: false,
+            isHeatMap: false,
+            showRoute: false,
+          });
+          fetchLeads();
+        }}
+      />
+
       {loading && !leads.length && (
-        <View className="absolute inset-0 bg-black/10 items-center justify-center z-50">
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: 'rgba(0,0,0,0.1)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 100,
+            },
+          ]}
+        >
           <ActivityIndicator size="large" color="#4CBB17" />
         </View>
-      )}
-      {showReferralModal && (
-        <ReferralModal
-          visible={showReferralModal}
-          onClose={() => setShowReferralModal(false)}
-          selectedJob={selectedJob}
-        />
-      )}
-      {showImageUploadModal && (
-        <JobImageUploadModal
-          visible={showImageUploadModal}
-          onClose={() => setShowImageUploadModal(false)}
-          selectedJob={selectedJob}
-        />
-      )}
-      {showFiltersModal && (
-        <MapFiltersModal
-          visible={showFiltersModal}
-          onClose={() => setShowFiltersModal(false)}
-          filters={filters}
-          onApply={(newFilters) => {
-            setFilters(newFilters);
-            fetchLeads();
-          }}
-          onReset={() => {
-            setFilters({
-              jobNumber: '',
-              sortOrder: 'date-desc',
-              radius: 50,
-              minPrice: '',
-              maxPrice: '',
-              startDate: null,
-              endDate: null,
-              myJobsOnly: false,
-              isHeatMap: filters.isHeatMap,
-            });
-            fetchLeads();
-          }}
-        />
       )}
     </View>
   );
@@ -574,13 +697,16 @@ const darkMapStyle = [
 ];
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    overflow: 'hidden',
-  },
-  map: {
-    flex: 1,
-    width: width,
-    height: height,
+  absoluteControl: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
 });

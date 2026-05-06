@@ -30,6 +30,9 @@ import Feather from 'react-native-vector-icons/Feather';
 import FontAwesome from 'react-native-vector-icons/FontAwesome5';
 import Geolocation from 'react-native-geolocation-service';
 import { PermissionsAndroid } from 'react-native';
+import { logEvent } from '../../services/api/LoggerService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import ChatService from '../../services/api/ChatService';
 
 export default function LeadsPage() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -102,8 +105,8 @@ export default function LeadsPage() {
           (err) => console.warn('Location watch error', err),
           {
             enableHighAccuracy: true,
-            distanceFilter: 20,    // Increased: only update after 20m movement
-            interval: 10000,       // Android: poll every 10s instead of 5s
+            distanceFilter: 20, // Increased: only update after 20m movement
+            interval: 10000, // Android: poll every 10s instead of 5s
             fastestInterval: 5000, // Android: minimum interval
             forceRequestLocation: false,
             showLocationDialog: false,
@@ -124,9 +127,11 @@ export default function LeadsPage() {
   const filteredLeads = useMemo(() => {
     if (!leads) return [];
     const q = searchQuery.toLowerCase();
-    
+
     const filtered = leads.filter((l) => {
-      const name = `${l.customerDetails?.firstName || ''} ${l.customerDetails?.lastName || ''}`.toLowerCase();
+      const name = `${l.customerDetails?.firstName || ''} ${
+        l.customerDetails?.lastName || ''
+      }`.toLowerCase();
       return (
         name.includes(q) ||
         l.fullAddress?.toLowerCase().includes(q) ||
@@ -153,14 +158,83 @@ export default function LeadsPage() {
 
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
+
+    // Save leadId for cross-module logging (parity with web localStorage)
+    if (item._id) {
+      await AsyncStorage.setItem('leadId', item._id);
+    }
+
+    // 1. Log Card Select (Web Parity)
+    if (user?._id) {
+      logEvent('select', {
+        user_id: user._id,
+        module_type: 'lead_card',
+        created_by: user._id,
+        meta: {
+          leadId: item._id,
+          contactPerson:
+            `${item.customerDetails?.firstName || ''} ${
+              item.customerDetails?.lastName || ''
+            }`.trim() || 'N/A',
+          address: item.fullAddress || 'N/A',
+          action: 'view_lead_details',
+        },
+      });
+    }
+
     try {
       const workflow = item.workflowState;
       let targetLead = item;
 
+      // Determine log module type based on current state (Web Parity)
+      const isInRange =
+        userLocation && item.location?.coordinates
+          ? calculateDistance(
+              userLocation.latitude,
+              userLocation.longitude,
+              item.location.coordinates[1],
+              item.location.coordinates[0]
+            ) <= 1.0
+          : false;
+
+      const scheduledTime = getScheduledDateTime(item);
+      const now = new Date();
+      const fifteenMinutesBefore = scheduledTime ? scheduledTime.getTime() - 15 * 60 * 1000 : 0;
+      const isUpcoming = scheduledTime ? now.getTime() < fifteenMinutesBefore : false;
+
+      let logModule = '';
+      if (workflow === 'preview' || !workflow) {
+        if (isInRange && !isUpcoming) logModule = 'lead_check_in';
+      } else if (workflow === 'resume') {
+        logModule = isInRange ? 'lead_resume' : 'lead_review';
+      }
+
       if (workflow === 'preview' || workflow === 'resume' || !workflow) {
         if (user?._id) {
           const res = await workMutation.mutateAsync({ leadId: item._id, userId: user._id });
-          // Merge portal data with work data to ensure generatedReports are preserved
+
+          // 2. Log Action Click if work API succeeds
+          if (logModule) {
+            logEvent('click', {
+              user_id: user._id,
+              module_type: logModule,
+              action: `${logModule}_clicked`,
+              created_by: user._id,
+              meta: {
+                leadId: item._id,
+                hasExistingImages: (item.salesPhotos || []).length > 0,
+                isSelfGenerated: item.status === 'selfGenerated',
+              },
+            });
+
+            // 3. Create Chat if becoming ACTIVE (Web Parity)
+            if (logModule === 'lead_check_in' && item._id) {
+              ChatService.createChatForLead(item._id).catch((e) =>
+                console.warn('[Chat] Auto-creation failed:', e)
+              );
+            }
+          }
+
           const workData = res.data?.data || res.data;
           if (workData) {
             targetLead = { ...item, ...workData };
@@ -170,7 +244,6 @@ export default function LeadsPage() {
       navigation.navigate('LeadCenter', { lead: targetLead });
     } catch (err) {
       console.log('Action Error:', err);
-      // Still navigate even if workMutation fails, using current item
       navigation.navigate('LeadCenter', { lead: item });
     }
   };
@@ -327,6 +400,22 @@ export default function LeadsPage() {
               actionLoading={workMutation.isPending && selectedLead?._id === item._id}
               onPress={() => handleActionPress(item)}
               onPitchbookPress={() => {
+                if (user?._id) {
+                  logEvent('select', {
+                    user_id: user._id,
+                    module_type: 'lead_card',
+                    created_by: user._id,
+                    meta: {
+                      leadId: item._id,
+                      contactPerson:
+                        `${item.customerDetails?.firstName || ''} ${
+                          item.customerDetails?.lastName || ''
+                        }`.trim() || 'N/A',
+                      address: item.fullAddress || 'N/A',
+                      action: 'view_pitchbook',
+                    },
+                  });
+                }
                 navigation.navigate('Pitchbook', { lead: item });
               }}
               onActionPress={() => handleActionPress(item)}

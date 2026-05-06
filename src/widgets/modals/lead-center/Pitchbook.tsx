@@ -240,9 +240,7 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
               }`}
             >
               <IonIcon name="chevron-back" size={20} color="white" />
-              <Text className="text-white font-black uppercase tracking-widest ml-1 text-sm">
-                Previous
-              </Text>
+              <Text className="text-white font-black  tracking-widest ml-1 text-sm">Previous</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleNext}
@@ -251,9 +249,7 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
                 currentGlobalPageNumber === totalGlobalPages ? 'bg-gray-200' : 'bg-[#72BD00]'
               }`}
             >
-              <Text className="text-white font-black uppercase tracking-widest mr-1 text-sm">
-                Next
-              </Text>
+              <Text className="text-white font-black  tracking-widest mr-1 text-sm">Next</Text>
               <IonIcon name="chevron-forward" size={20} color="white" />
             </TouchableOpacity>
           </View>
@@ -438,9 +434,7 @@ const RiskContent = ({ lead }: any) => {
 
             {riskReport && !resetView && (
               <View className="bg-violet-100 px-2 py-1 rounded-lg border border-violet-200 mr-2">
-                <Text className="text-[9px] font-black text-violet-700 uppercase">
-                  Already Generated
-                </Text>
+                <Text className="text-[9px] font-black text-violet-700 ">Already Generated</Text>
               </View>
             )}
 

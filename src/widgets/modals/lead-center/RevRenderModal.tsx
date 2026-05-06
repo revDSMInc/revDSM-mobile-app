@@ -358,7 +358,7 @@ export const RevRenderModal = ({
                 <View className="px-4 pb-4 border-t" style={{ borderTopColor: colors.border }}>
                   {/* Type Selector */}
                   <Text
-                    className="text-[10px] font-black uppercase tracking-widest mt-3 mb-2"
+                    className="text-[10px] font-black  tracking-widest mt-3 mb-2"
                     style={{ color: colors.textSecondary }}
                   >
                     Type
@@ -393,7 +393,7 @@ export const RevRenderModal = ({
 
                   {/* Color Selector */}
                   <Text
-                    className="text-[10px] font-black uppercase tracking-widest mt-4 mb-2"
+                    className="text-[10px] font-black  tracking-widest mt-4 mb-2"
                     style={{ color: colors.textSecondary }}
                   >
                     Color
@@ -581,7 +581,7 @@ export const RevRenderModal = ({
           style={{ borderColor: colors.border, backgroundColor: isDark ? '#1E1E1E' : '#F8FAFB' }}
         >
           <Text
-            className="text-[10px] font-black uppercase tracking-widest mb-3"
+            className="text-[10px] font-black  tracking-widest mb-3"
             style={{ color: colors.textSecondary }}
           >
             Applied Configuration

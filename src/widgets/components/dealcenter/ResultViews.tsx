@@ -42,7 +42,7 @@ export const PaymentPlanPicker = ({ selected, onSelect, onClose }: any) => (
         >
           <View className="flex-1 pr-4">
             <Text className="text-sm font-black text-text-primary mb-1">{plan.label}</Text>
-            <Text className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">
+            <Text className="text-[10px] font-bold text-text-secondary  tracking-widest">
               {plan.desc}
             </Text>
           </View>
@@ -53,19 +53,24 @@ export const PaymentPlanPicker = ({ selected, onSelect, onClose }: any) => (
   </ModalContainer>
 );
 
-export const ResultView = ({ onBack, setShowTrackerModal }: any) => (
+export const ResultView = ({
+  onBack,
+  handleAddJobToTracker,
+  hasItems,
+  isAlreadyInTracker,
+}: any) => (
   <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false}>
     <View className="px-5 pt-12 pb-32 items-center">
       <View className="w-24 h-24 bg-green-500/10 rounded-full items-center justify-center mb-8 shadow-xl shadow-green-500/10">
         <Ionicons name="checkmark-done" size={48} color="#4CBB17" />
       </View>
       <Text className="text-2xl font-black text-text-primary mb-2">Deal Secured!</Text>
-      <Text className="text-sm font-bold text-text-secondary uppercase tracking-[2px] mb-12 text-center">
+      <Text className="text-sm font-bold text-text-secondary  tracking-[2px] mb-12 text-center">
         Outcome Recorded Successfully
       </Text>
 
       <View className="w-full bg-surface p-6 rounded-[40px] border border-border mb-12">
-        <Text className="text-xs font-black text-text-secondary uppercase mb-4 text-center tracking-widest">
+        <Text className="text-xs font-black text-text-secondary  mb-4 text-center tracking-widest">
           Next Steps
         </Text>
         <View className="gap-4">
@@ -93,14 +98,18 @@ export const ResultView = ({ onBack, setShowTrackerModal }: any) => (
           onPress={onBack}
           className="flex-1 h-12 rounded-xl items-center justify-center border-2 border-[#4CBB17]"
         >
-          <Text className="text-[12px] font-black uppercase text-[#4CBB17]">Back</Text>
+          <Text className="text-[12px] font-black  text-[#4CBB17]">Back</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setShowTrackerModal(true)}
-          className="flex-[2] h-12 bg-[#4CBB17] rounded-xl items-center justify-center shadow-lg shadow-green-600/30"
+          onPress={handleAddJobToTracker}
+          className={`flex-[2] h-12 rounded-xl items-center justify-center shadow-lg ${
+            isAlreadyInTracker || hasItems
+              ? 'bg-[#4CBB17] shadow-green-600/30'
+              : 'bg-[#2169f3] shadow-blue-600/30'
+          }`}
         >
-          <Text className="text-white text-[12px] font-black uppercase">
-            Add This Job into Job Tracker
+          <Text className="text-white text-[12px] font-black ">
+            {isAlreadyInTracker ? 'Go to Job Tracker' : hasItems ? 'Done' : 'Demo'}
           </Text>
         </TouchableOpacity>
       </View>

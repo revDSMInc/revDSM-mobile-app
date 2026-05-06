@@ -73,140 +73,137 @@ export const ReferralModal = ({ visible, onClose, selectedJob }: ReferralModalPr
       onClose();
     } catch (error) {
       console.error('Referral Error:', error);
+      Alert.alert('Error', 'Failed to submit referral');
     } finally {
       setLoading(false);
     }
   };
 
+  const FormField = ({ label, icon, children }: any) => (
+    <View className="mb-4">
+      <View className="flex-row items-center mb-2">
+        <View className="w-6 h-6 rounded-md bg-green-50 items-center justify-center mr-2">
+          <Icon name={icon} size={14} color="#4CBB17" />
+        </View>
+        <Text className="text-[11px] font-black text-slate-400  tracking-widest">{label}</Text>
+      </View>
+      <View className="bg-slate-50 rounded-2xl border border-slate-100 p-4">{children}</View>
+    </View>
+  );
+
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View className="flex-1 justify-end bg-black/50">
+      <View className="flex-1 justify-end bg-black/60">
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          className="bg-white dark:bg-zinc-900 rounded-t-[40px] h-[85%]"
+          className="bg-white rounded-t-[40px] h-[85%]"
         >
-          <View className="p-6 border-b border-slate-100 dark:border-zinc-800 flex-row justify-between items-center">
-            <Text className="text-[20px] font-black dark:text-white">Add Reference</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Icon name="close" size={24} color={isDark ? 'white' : 'black'} />
+          {/* Header */}
+          <View className="p-4 border-b border-slate-50 flex-row justify-between items-center">
+            <View>
+              <Text className="text-[17px] font-black text-slate-800">Add Referral</Text>
+              <Text className="text-[11px] font-bold text-slate-400">
+                Reference for #{selectedJob?.jobNumber}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} className="p-1.5 bg-slate-50 rounded-full">
+              <Icon name="close" size={20} color="#64748b" />
             </TouchableOpacity>
           </View>
 
-          <ScrollView className="p-6">
-            <View className="mb-4">
-              <Text className="text-[12px] font-black text-slate-400 uppercase mb-2">
-                Full Name
-              </Text>
+          <ScrollView className="p-4" showsVerticalScrollIndicator={false}>
+            <FormField label="Full Name" icon="account-outline">
               <TextInput
-                className="bg-slate-50 dark:bg-zinc-800 p-4 rounded-2xl dark:text-white font-bold"
-                placeholder="Enter full name"
-                placeholderTextColor="#94a3b8"
+                placeholder="Enter customer name"
+                className="font-bold text-slate-700 p-0 text-[13px]"
                 value={form.firstName}
                 onChangeText={(t) => setForm((f) => ({ ...f, firstName: t }))}
               />
-            </View>
+            </FormField>
 
-            <View className="mb-4">
-              <Text className="text-[12px] font-black text-slate-400 uppercase mb-2">
-                Phone Number *
-              </Text>
+            <FormField label="Phone Number" icon="phone-outline">
               <TextInput
-                className="bg-slate-50 dark:bg-zinc-800 p-4 rounded-2xl dark:text-white font-bold"
                 placeholder="Enter phone number"
                 keyboardType="phone-pad"
-                placeholderTextColor="#94a3b8"
+                className="font-bold text-slate-700 p-0 text-[13px]"
                 value={form.phoneNumber}
                 onChangeText={(t) => setForm((f) => ({ ...f, phoneNumber: t }))}
               />
-            </View>
+            </FormField>
 
-            <View className="flex-row gap-4 mb-4">
+            <View className="flex-row gap-4">
               <View className="flex-1">
-                <Text className="text-[12px] font-black text-slate-400 uppercase mb-2">
-                  Contact Method
-                </Text>
-                <View className="flex-row bg-slate-50 dark:bg-zinc-800 rounded-2xl p-1">
-                  {['call', 'text'].map((m) => (
-                    <TouchableOpacity
-                      key={m}
-                      onPress={() => setForm((f) => ({ ...f, preferredContactMethod: m }))}
-                      className={`flex-1 py-3 rounded-xl items-center ${
-                        form.preferredContactMethod === m ? 'bg-white shadow-sm' : ''
-                      }`}
-                    >
-                      <Text
-                        className={`font-black uppercase text-[10px] ${
-                          form.preferredContactMethod === m ? 'text-blue-600' : 'text-slate-400'
-                        }`}
+                <FormField label="Method" icon="message-outline">
+                  <View className="flex-row gap-4">
+                    {['call', 'text'].map((m) => (
+                      <TouchableOpacity
+                        key={m}
+                        onPress={() => setForm((f) => ({ ...f, preferredContactMethod: m }))}
+                        className="flex-row items-center"
                       >
-                        {m}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                        <View
+                          className={`w-4 h-4 rounded-full border-2 items-center justify-center ${
+                            form.preferredContactMethod === m
+                              ? 'border-green-500'
+                              : 'border-slate-300'
+                          }`}
+                        >
+                          {form.preferredContactMethod === m && (
+                            <View className="w-2 h-2 rounded-full bg-green-500" />
+                          )}
+                        </View>
+                        <Text
+                          className={`ml-2 text-[12px] font-bold capitalize ${
+                            form.preferredContactMethod === m ? 'text-slate-800' : 'text-slate-400'
+                          }`}
+                        >
+                          {m}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </FormField>
               </View>
               <View className="flex-1">
-                <Text className="text-[12px] font-black text-slate-400 uppercase mb-2">
-                  Best Time
-                </Text>
-                <View className="bg-slate-50 dark:bg-zinc-800 rounded-2xl">
-                  {/* Simplification: Just show a cycle button or similar since Picker is separate */}
-                  <TouchableOpacity
-                    onPress={() => {
-                      const times = ['morning', 'afternoon', 'evening', 'anytime'];
-                      const next =
-                        times[(times.indexOf(form.bestTimeToContact) + 1) % times.length];
-                      setForm((f) => ({ ...f, bestTimeToContact: next }));
-                    }}
-                    className="p-4 items-center"
-                  >
-                    <Text className="font-black text-blue-600 uppercase text-[10px]">
-                      {form.bestTimeToContact}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                <FormField label="Zip Code" icon="map-marker-outline">
+                  <TextInput
+                    placeholder="Zip"
+                    className="font-bold text-slate-700 p-0"
+                    value={form.zipCode}
+                    onChangeText={(t) => setForm((f) => ({ ...f, zipCode: t }))}
+                  />
+                </FormField>
               </View>
             </View>
 
-            <View className="mb-4">
-              <Text className="text-[12px] font-black text-slate-400 uppercase mb-2">Zip Code</Text>
+            <FormField label="Notes" icon="text-box-outline">
               <TextInput
-                className="bg-slate-50 dark:bg-zinc-800 p-4 rounded-2xl dark:text-white font-bold"
-                placeholder="Enter zip code"
-                placeholderTextColor="#94a3b8"
-                value={form.zipCode}
-                onChangeText={(t) => setForm((f) => ({ ...f, zipCode: t }))}
-              />
-            </View>
-
-            <View className="mb-4">
-              <Text className="text-[12px] font-black text-slate-400 uppercase mb-2">Note</Text>
-              <TextInput
-                className="bg-slate-50 dark:bg-zinc-800 p-4 rounded-2xl dark:text-white font-bold"
-                placeholder="Enter notes"
+                placeholder="Any special instructions..."
                 multiline
                 numberOfLines={3}
-                placeholderTextColor="#94a3b8"
+                className="font-bold text-slate-700 p-0"
                 value={form.note}
                 onChangeText={(t) => setForm((f) => ({ ...f, note: t }))}
               />
-            </View>
+            </FormField>
 
-            <View className="mb-8">
-              <Text className="text-[12px] font-black text-slate-400 uppercase mb-3">
-                Select Products
+            <View className="mb-10">
+              <Text className="text-[11px] font-black text-slate-400  tracking-widest mb-3">
+                Products Interested
               </Text>
               <View className="flex-row flex-wrap gap-2">
                 {products.map((p) => (
                   <TouchableOpacity
                     key={p}
                     onPress={() => toggleProduct(p)}
-                    className={`px-4 py-2 rounded-full border ${
-                      form.items.includes(p) ? 'bg-blue-500 border-blue-500' : 'border-slate-200'
+                    className={`px-4 py-2 rounded-xl border ${
+                      form.items.includes(p)
+                        ? 'bg-green-600 border-green-600'
+                        : 'bg-slate-50 border-slate-100'
                     }`}
                   >
                     <Text
-                      className={`font-bold text-[12px] ${
+                      className={`font-black text-[11px]  tracking-wider ${
                         form.items.includes(p) ? 'text-white' : 'text-slate-500'
                       }`}
                     >
@@ -220,13 +217,13 @@ export const ReferralModal = ({ visible, onClose, selectedJob }: ReferralModalPr
             <TouchableOpacity
               onPress={handleSubmit}
               disabled={loading}
-              className="bg-blue-600 h-16 rounded-2xl items-center justify-center shadow-xl shadow-blue-200 mb-10"
+              className="bg-green-600 h-12 rounded-xl items-center justify-center shadow-lg shadow-green-100 mb-10"
             >
               {loading ? (
                 <ActivityIndicator color="white" />
               ) : (
-                <Text className="text-white font-black uppercase tracking-widest">
-                  Submit Reference
+                <Text className="text-white font-black tracking-widest text-base">
+                  Submit Referral
                 </Text>
               )}
             </TouchableOpacity>

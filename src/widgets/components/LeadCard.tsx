@@ -1,12 +1,30 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, Animated, Alert } from 'react-native';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  Animated,
+  Alert,
+  StyleSheet,
+} from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import type { Lead } from '../../config/types/lead';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Ionicon from 'react-native-vector-icons/Ionicons';
-import { useArchiveLeadMutation, useDeleteLeadMutation } from '../../hooks/useLeadMutation';
+import {
+  useArchiveLeadMutation,
+  useDeleteLeadMutation,
+  useResetLeadMutation,
+} from '../../hooks/useLeadMutation';
 import { GlobalModal } from '../common/modal/GlobalModal';
+import { format } from 'date-fns';
+import {
+  calculateDistance,
+  isSelfGeneratedLead,
+  getScheduledDateTime,
+} from '../../utils/location-util';
 
 interface Props {
   lead: Lead;
@@ -23,36 +41,44 @@ interface Props {
   userLocation?: { latitude: number; longitude: number } | null;
 }
 
-const STATES = {
-  ACTIVE: { color: '#ff6b35', label: 'ACTIVE NOW', action: 'Start Appointment', shouldPulse: true },
-  PROGRESS: { color: '#6fcf97', label: 'IN PROGRESS', action: 'Resume Appointment', shouldPulse: false },
-  OFFSITE: { color: '#9e9e9e', label: 'OFF-SITE', action: 'Review Appointment', shouldPulse: false },
-  UPCOMING: { color: '#2196f3', label: 'UPCOMING', action: 'Preview Appointment', shouldPulse: false },
-  RESULTED: { color: '#9ca3af', label: 'RESULTED', action: 'View Result', shouldPulse: false },
+const CARD_COLOR = {
+  ACTIVE: '#ff6b35', // Orange - Start Appointment
+  PROGRESS: '#6fcf97', // Green - Resume Application
+  OFFSITE: '#9e9e9e', // Gray - Review Appointment
+  UPCOMING: '#2196f3', // Blue - Preview Appointment
+  RESULTED: '#9ca3af', // Grayish - Resulted
 };
 
-const toReadableLabel = (str: string) => {
-  if (!str) return '';
-  // Handle camelCase
-  const result = str.replace(/([A-Z])/g, ' $1');
-  const final = result.charAt(0).toUpperCase() + result.slice(1);
-  return final.trim();
+const formatTime = (leadTime: string) => {
+  if (!leadTime || leadTime === 'N/A') return 'N/A';
+  const timeStr = leadTime.toLowerCase().trim();
+  const isPM = timeStr.includes('pm');
+  const timeMatch = timeStr.match(/(\d+)/);
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1], 10);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours > 12 ? hours - 12 : hours === 0 ? 12 : hours;
+    return `${displayHours.toString().padStart(2, '0')}:00 ${period}`;
+  }
+  return leadTime;
 };
 
-const RESULT_LABELS: Record<string, string> = {
-  noDemo: 'No Demo',
-  notHit: 'Not Hit',
-  reset: 'Reset',
-  sold: 'Sold',
-  sale: 'Sale',
-  cancelled: 'Cancelled',
-};
+const getLastCheckInTime = (actionlogs: any[]) => {
+  if (!Array.isArray(actionlogs) || actionlogs.length === 0) return null;
+  const relevantActions = actionlogs
+    .filter(
+      (log) =>
+        log?.created_at && ['lead_check_in', 'lead_resume', 'lead_review'].includes(log.module_type)
+    )
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-import {
-  calculateDistance,
-  isSelfGeneratedLead,
-  getScheduledDateTime,
-} from '../../utils/location-util';
+  if (relevantActions.length === 0) return null;
+  try {
+    return format(new Date(relevantActions[0].created_at), 'hh:mm a');
+  } catch (e) {
+    return null;
+  }
+};
 
 export function LeadCard({
   lead,
@@ -67,24 +93,49 @@ export function LeadCard({
   userLocation,
 }: Props) {
   const { colors, isDark } = useTheme();
-
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const archiveMutation = useArchiveLeadMutation();
   const deleteMutation = useDeleteLeadMutation();
+  const resetMutation = useResetLeadMutation();
 
-  // Pulsing animation for ACTIVE state
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Determine state matching web-app logic
-  const leadState = (() => {
-    // 1. Resulted Leads ("RESULTED" chip)
+  const actionCounts = useMemo(() => {
+    if (lead.actionCounts) return lead.actionCounts;
+    const logs = Array.isArray(lead.actionlogs) ? lead.actionlogs : [];
+    return {
+      lead_check_in: logs.filter((l) => l.module_type === 'lead_check_in').length,
+      lead_resume: logs.filter((l) => l.module_type === 'lead_resume').length,
+      lead_review: logs.filter((l) => l.module_type === 'lead_review').length,
+    };
+  }, [lead.actionCounts, lead.actionlogs]);
+
+  const leadState = useMemo(() => {
     const NON_RESULTED = ['lfLead', 'selfGenerated', 'scheduled'];
     const isResulted = !NON_RESULTED.includes(lead.status || '');
+
     if (isResulted) {
+      const statusLabels: Record<string, string> = {
+        demoNoSale: 'Demo No Sale',
+        noDemo: 'No Demo',
+        notHome: 'Not Home',
+        notHit: 'Not Hit',
+        sale: 'Sale',
+        cancelled: 'Cancelled',
+        rescheduled: 'Rescheduled',
+        demo: 'Demo',
+        pitchbook: 'Pitchbook',
+        resulted: 'Resulted',
+      };
+      const label = statusLabels[lead.status || ''] || lead.status || 'Resulted';
+
       return {
-        ...STATES.RESULTED,
+        status: 'RESULTED',
+        color: '#94a3b8',
+        action: `Resulted - ${label}`,
         label: 'RESULTED',
-        action: 'View Result', // Text below button
+        disabled: false,
+        shouldPulse: false,
       };
     }
 
@@ -96,71 +147,91 @@ export function LeadCard({
             userLocation.longitude,
             lead.location.coordinates[1],
             lead.location.coordinates[0]
-          ) <= 1.0 // 1 mile range
+          ) <= 1.0
         : false;
 
-    // Web Parity Logic: 15 min before to 1 hour after
     const scheduledTime = getScheduledDateTime(lead);
     const now = new Date();
     const nowTime = now.getTime();
-    const fifteenMinutesBefore = scheduledTime ? scheduledTime.getTime() - (15 * 60 * 1000) : 0;
-    const oneHourAfter = scheduledTime ? scheduledTime.getTime() + (60 * 60 * 1000) : 0;
+    const fifteenMinutesBefore = scheduledTime ? scheduledTime.getTime() - 15 * 60 * 1000 : 0;
+    const oneHourAfter = scheduledTime ? scheduledTime.getTime() + 60 * 60 * 1000 : 0;
 
     const isBeforeTimeWindow = scheduledTime ? nowTime < fifteenMinutesBefore : false;
-    const isWithinTimeWindow = scheduledTime ? (nowTime >= fifteenMinutesBefore && nowTime <= oneHourAfter) : true;
+    const isWithinTimeWindow = scheduledTime
+      ? nowTime >= fifteenMinutesBefore && nowTime <= oneHourAfter
+      : true;
     const timeHasPassed = scheduledTime ? nowTime > oneHourAfter : false;
-    const isResume = lead.workflowState === 'resume';
-    const isPreview = lead.workflowState === 'preview';
 
-    // 1. Tomorrow / Upcoming (Priority 1)
-    if (isTomorrow || isBeforeTimeWindow) return STATES.UPCOMING;
+    const isResume =
+      lead.workflowState === 'resume' ||
+      actionCounts.lead_check_in > 0 ||
+      actionCounts.lead_resume > 0;
 
-    // 2. Self-Generated Lead Logic
-    if (isSelfGen) {
-      // If we've started or previewed and we are in range
-      if (isInRange && (isResume || isPreview)) return isResume ? STATES.PROGRESS : STATES.ACTIVE;
-      // If never started and off-site
-      if (!isInRange && !isResume && !isPreview) return STATES.OFFSITE;
-      // Fallback for self-gen off-site (e.g. preview state or resume state but left site)
-      if (!isInRange) return STATES.UPCOMING;
-      // In range but never started
-      return STATES.ACTIVE;
+    // 1. Tomorrow (Priority 1) - Always Preview
+    if (isTomorrow) {
+      return {
+        status: 'UPCOMING',
+        color: CARD_COLOR.UPCOMING,
+        action: 'Preview Appointment',
+        label: 'TOMORROW',
+        disabled: true,
+        shouldPulse: false,
+      };
     }
 
-    // 3. Regular Lead Logic
-    // Review Appointment (Time passed + checked in)
-    if (timeHasPassed && isResume) return STATES.OFFSITE;
-
-    // Not in range
-    if (!isInRange) {
-        // Web Parity: If it was previewed but we are off-site, or it's a fallback
-        if (isPreview) return STATES.UPCOMING;
-        return STATES.OFFSITE;
+    // 2. On-Site Logic (Priority 2) - If in range, allow Start or Resume
+    if (isInRange) {
+      if (isResume) {
+        const count = actionCounts.lead_resume;
+        return {
+          status: 'PROGRESS',
+          color: CARD_COLOR.PROGRESS,
+          action: count >= 1 ? `Resume Application (${count})` : 'Resume Application',
+          label: 'IN PROGRESS',
+          disabled: false,
+          shouldPulse: false,
+        };
+      }
+      return {
+        status: 'ACTIVE',
+        color: CARD_COLOR.ACTIVE,
+        action: 'Start Appointment',
+        label: 'ON-SITE',
+        disabled: false,
+        shouldPulse: true,
+      };
     }
 
-    // Resume (In range + within window + checked in)
-    if (isResume && isInRange && isWithinTimeWindow) return STATES.PROGRESS;
+    // 3. Early Arrival / Upcoming Logic (Off-site)
+    if (isBeforeTimeWindow) {
+      return {
+        status: 'UPCOMING',
+        color: CARD_COLOR.UPCOMING,
+        action: 'Preview Appointment',
+        label: 'UPCOMING',
+        disabled: true,
+        shouldPulse: false,
+      };
+    }
 
-    // Start (In range + within window + not checked in)
-    if (!isResume && isInRange && (isWithinTimeWindow || timeHasPassed)) return STATES.ACTIVE;
-
-    return STATES.OFFSITE;
-  })();
+    // 4. Past or Current Window (Off-site)
+    const count = actionCounts.lead_review;
+    return {
+      status: 'OFFSITE',
+      color: CARD_COLOR.OFFSITE,
+      action: count >= 1 ? `Review Appointment (${count})` : 'Review Appointment',
+      label: 'OFF-SITE',
+      disabled: false,
+      shouldPulse: false,
+    };
+  }, [lead, userLocation, isTomorrow, actionCounts]);
 
   useEffect(() => {
     if (leadState.shouldPulse) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.05,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 800,
-            useNativeDriver: true,
-          }),
+          Animated.timing(pulseAnim, { toValue: 1.03, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
         ])
       ).start();
     } else {
@@ -170,216 +241,234 @@ export function LeadCard({
 
   const handleArchive = () => {
     if (!lead._id) return;
-    const newStatus = !isArchived;
     archiveMutation.mutate(
-      { leadId: lead._id, isArchive: newStatus },
+      { leadId: lead._id, isArchive: !isArchived },
       { onSuccess: () => onArchiveSuccess?.(lead._id!) }
     );
   };
 
-  const handleDelete = () => {
-    setShowDeleteModal(true);
-  };
-
-  const confirmDelete = () => {
-    if (lead._id) {
-      deleteMutation.mutate(lead._id, {
-        onSuccess: () => {
-          onDeleteSuccess?.(lead._id!);
-          setShowDeleteModal(false);
+  const handleReset = () => {
+    Alert.alert(
+      'Reset Lead',
+      'Are you sure you want to reset this lead? This will clear current work state.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            if (lead._id) resetMutation.mutate(lead._id, { onSuccess: () => onPress() });
+          },
         },
-      });
-    }
+      ]
+    );
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '—';
-    const d = new Date(dateString);
-    return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(
-      2,
-      '0'
-    )}/${d.getFullYear()}`;
-  };
+  const lastCheckInTime = useMemo(
+    () => getLastCheckInTime(lead.actionlogs || []),
+    [lead.actionlogs]
+  );
 
   return (
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={() => {
-        if (leadState === STATES.UPCOMING) {
+        if (leadState.status === 'UPCOMING') {
           const scheduledTime = getScheduledDateTime(lead);
-          if (scheduledTime) {
-            const timeStr = lead.leadTime || 'N/A';
-            const beforeTime = new Date(scheduledTime.getTime() - 15 * 60 * 1000);
-            const hour = beforeTime.getHours();
-            const min = beforeTime.getMinutes();
-            const ampm = hour >= 12 ? 'PM' : 'AM';
-            const displayHour = hour % 12 || 12;
-            const displayMin = min.toString().padStart(2, '0');
-            
-            Alert.alert(
-              'Appointment Preview',
-              `This appointment opens at ${displayHour}:${displayMin} ${ampm} when you arrive on-site.`
-            );
-          } else {
-            Alert.alert('Appointment Preview', 'This appointment opens when you arrive on-site.');
-          }
+          const msg = scheduledTime
+            ? `This appointment opens at ${format(
+                new Date(scheduledTime.getTime() - 15 * 60 * 1000),
+                'hh:mm a'
+              )} when you arrive on-site.`
+            : 'This appointment opens when you arrive on-site.';
+          Alert.alert('Appointment Preview', msg);
         } else {
           onPress();
         }
       }}
-      className="mb-3 rounded-xl overflow-hidden"
+      className="mb-4 rounded-2xl overflow-hidden border-2"
       style={{
         backgroundColor:
-          leadState.color === STATES.RESULTED.color ? (isDark ? colors.surface : '#F4F6F8') : leadState.color + '15',
+          leadState.status === 'RESULTED'
+            ? isDark
+              ? colors.surface
+              : '#F4F6F8'
+            : leadState.color + '10',
         borderColor: leadState.color,
-        borderWidth: 2,
-        opacity: leadState.color === STATES.RESULTED.color ? 0.85 : 1,
       }}
     >
-      <View className="px-4 py-3">
-        <View className="flex-row items-center justify-between mb-3">
+      <View className="p-4">
+        {/* Header: Time & Status Chip */}
+        <View className="flex-row items-center justify-between mb-4">
           <View className="flex-row items-center">
-            <MaterialIcon
-              name="clock"
-              size={14}
-              color={isDark ? colors.textSecondary : '#637381'}
+            <Ionicon
+              name="time-outline"
+              size={16}
+              color={
+                leadState.status === 'RESULTED'
+                  ? '#72BD00'
+                  : isDark
+                  ? colors.textSecondary
+                  : '#637381'
+              }
             />
-            <Text className="ml-1 text-sm font-bold uppercase" style={{ color: colors.text }}>
-              {(() => {
-                const time = lead.leadTime || 'N/A';
-                const match = time.match(/^(\d+)(am|pm)$/i);
-                if (match) {
-                  return `${match[1]}:00 ${match[2].toLowerCase()}`;
-                }
-                return time;
-              })()}
+            <Text
+              className="ml-1.5 text-sm font-bold"
+              style={{ color: leadState.status === 'RESULTED' ? '#72BD00' : colors.primary.main }}
+            >
+              {formatTime(lead.leadTime || 'N/A')}
             </Text>
           </View>
-          <View className="flex-row items-center gap-2">
+
+          <View className="flex-row gap-2 ml-1">
+            {leadState.status === 'RESULTED' && (
+              <View>
+                <View className="bg-[#94a3b8] px-3 py-1.5 rounded-lg">
+                  <Text className="text-[11px] font-black text-white tracking-widest uppercase">
+                    RESULTED
+                  </Text>
+                </View>
+              </View>
+            )}
             {!isArchived && (
               <TouchableOpacity
                 onPress={handleArchive}
-                disabled={archiveMutation.isPending}
-                className="h-8 w-8 rounded-full justify-center items-center"
-                style={{ backgroundColor: '#FFAB00' }}
+                className="w-10 h-10 rounded-full items-center justify-center bg-[#FFAB00]"
               >
-                {archiveMutation.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <MaterialIcon name="folder" size={16} color="#ffffff" />
-                )}
+                <MaterialIcon name="folder" size={18} color="white" />
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              onPress={handleDelete}
-              disabled={deleteMutation.isPending}
-              className="h-8 w-8 rounded-full justify-center items-center"
-              style={{ backgroundColor: '#FF5630' }}
+              onPress={() => setShowDeleteModal(true)}
+              className="w-10 h-10 rounded-full items-center justify-center bg-[#FF5630]"
             >
-              {deleteMutation.isPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <MaterialIcon name="delete" size={16} color="#ffffff" />
-              )}
+              <MaterialIcon name="delete" size={18} color="white" />
             </TouchableOpacity>
           </View>
         </View>
 
-        <View className="mb-3">
-          <Text className="text-sm" style={{ color: colors.textSecondary }}>
-            Lead ID: {lead.leadId || 'N/A'}
+        {/* Lead Info */}
+        <View className="mb-4">
+          <Text className="text-xs text-slate-400 mb-1">Lead ID: {lead.leadId}</Text>
+          <View className="flex-row justify-between items-center">
+            <View className="flex-row items-center flex-1">
+              <FontAwesome name="user" size={14} color="#637381" />
+              <Text className="ml-2 text-sm font-bold" style={{ color: colors.text }}>
+                {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
+              </Text>
+            </View>
+            <View className="flex-row items-center">
+              <Ionicon name="calendar-clear" size={14} color="#637381" />
+              <Text
+                className="ml-1.5 text-xs font-semibold"
+                style={{ color: colors.textSecondary }}
+              >
+                {lead.leadDate ? format(new Date(lead.leadDate), 'MM/dd/yyyy') : 'N/A'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View className="flex-row justify-between items-center mb-4">
+          <Text className="text-xs font-semibold" style={{ color: colors.textSecondary }}>
+            Lead Code: <Text style={{ color: colors.primary.main }}>{lead.leadCode || 'N/A'}</Text>
           </Text>
-        </View>
-
-        <View className="flex-row justify-between mb-3">
-          <View className="flex-row items-center">
-            <FontAwesome name="user" size={14} color={isDark ? colors.textSecondary : '#637381'} />
-            <Text className="ml-1 text-xs font-semibold" style={{ color: colors.textSecondary }}>
-              {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
-            </Text>
-          </View>
-          <View className="flex-row items-center">
-            <Ionicon
-              name="calendar-clear"
-              size={14}
-              color={isDark ? colors.textSecondary : '#637381'}
-            />
-            <Text
-              className="ml-1 text-xs font-semibold uppercase"
-              style={{ color: colors.textSecondary }}
-            >
-              {formatDate(lead?.leadDate)}
-            </Text>
-          </View>
-        </View>
-
-        <View className="flex-row justify-between items-center mb-3">
-          <View className="flex-row items-center">
-            <Text className="text-xs font-semibold" style={{ color: colors.textSecondary }}>
-              Lead Code: <Text style={{ color: colors.text }}>{lead.leadCode || 'NO CODE'}</Text>
-            </Text>
-          </View>
           <TouchableOpacity
             onPress={onPitchbookPress || onPress}
-            disabled={leadState === STATES.UPCOMING}
-            activeOpacity={0.7}
-            className="w-8 h-8 rounded-full items-center justify-center"
-            style={{ 
-              backgroundColor: colors.primary.main,
-              opacity: leadState === STATES.UPCOMING ? 0.5 : 1
-            }}
+            disabled={leadState.disabled}
+            className="w-10 h-10 rounded-full items-center justify-center bg-green-600"
+            style={{ opacity: leadState.disabled ? 0.5 : 1 }}
           >
-            <MaterialIcon name="book-open-blank-variant" size={16} color="#FFFFFF" />
+            <MaterialIcon name="book-open-blank-variant" size={20} color="white" />
           </TouchableOpacity>
         </View>
 
-        <View className="flex-row items-start mb-3">
+        <View className="flex-row items-start mb-5">
           <Ionicon
             name="location-sharp"
-            size={16}
-            color={colors.textSecondary}
-            style={{ marginRight: 4 }}
+            size={18}
+            color={leadState.status === 'RESULTED' ? '#72BD00' : '#637381'}
+            style={{ marginTop: 2 }}
           />
           <Text
-            className="flex-1 text-xs font-semibold"
-            style={{ color: colors.text }}
-            numberOfLines={2}
+            className="ml-1.5 flex-1 text-xs font-bold leading-5"
+            style={{ color: leadState.status === 'RESULTED' ? '#72BD00' : colors.text }}
+            numberOfLines={3}
           >
-            {lead.fullAddress || lead.customerDetails?.address || 'Address not available'}
+            {lead.fullAddress || 'Address Pending'}
           </Text>
         </View>
 
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          <TouchableOpacity
-            onPress={onActionPress}
-            disabled={actionLoading || leadState === STATES.UPCOMING}
-            className="h-12 rounded-xl items-center justify-center shadow-lg"
-            style={{
-              backgroundColor: leadState.color,
-              opacity: leadState === STATES.UPCOMING ? 0.5 : 1,
-              elevation: 4,
-            }}
-          >
-            {actionLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <View className="flex-row items-center">
-                <Ionicon name="location-sharp" size={20} color={'#ffffff'} />
-                <Text className="text-white ml-2 text-sm font-bold">{leadState.action}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
+        {/* Action Button & Check-in Info */}
+        <View>
+          {leadState.status === 'RESULTED' ? (
+            <View className="flex-row gap-2">
+              <TouchableOpacity
+                onPress={onActionPress}
+                className="flex-[3] h-12 rounded-xl bg-[#94a3b8] items-center justify-center"
+              >
+                <Text className="text-white font-bold text-sm tracking-tight">
+                  {leadState.action}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleReset}
+                disabled={resetMutation.isPending}
+                className="flex-1 h-12 rounded-xl bg-[#94a3b8] items-center justify-center"
+              >
+                {resetMutation.isPending ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Ionicon name="refresh" size={24} color="white" />
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <TouchableOpacity
+                onPress={onActionPress}
+                disabled={actionLoading || leadState.disabled}
+                className="h-12 rounded-xl items-center justify-center shadow-lg flex-row"
+                style={{ backgroundColor: leadState.color, opacity: leadState.disabled ? 0.6 : 1 }}
+              >
+                {actionLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    <Ionicon name="location-sharp" size={20} color="white" />
+                    <Text className="text-white ml-2 text-sm font-bold">{leadState.action}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+
+          {lastCheckInTime && (
+            <Text
+              className="text-center text-[11px] italic mt-2"
+              style={{ color: colors.textSecondary }}
+            >
+              Last check-in: {lastCheckInTime}
+            </Text>
+          )}
+        </View>
       </View>
 
       <GlobalModal
         visible={showDeleteModal}
         type="error"
         title="Delete Lead"
-        message="Are you sure you want to permanently delete this lead? This action cannot be undone."
+        message="Permanently delete this lead? This cannot be undone."
         confirmText="Delete"
-        cancelText="Cancel"
-        onConfirm={confirmDelete}
+        onConfirm={() => {
+          if (lead._id)
+            deleteMutation.mutate(lead._id, {
+              onSuccess: () => {
+                onDeleteSuccess?.(lead._id!);
+                setShowDeleteModal(false);
+              },
+            });
+        }}
         onCancel={() => setShowDeleteModal(false)}
         onClose={() => setShowDeleteModal(false)}
       />

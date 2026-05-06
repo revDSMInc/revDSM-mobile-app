@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { pricing, extrasList, extrasList50 } from '../../utils/calculator/pricing-data';
 import { paymentPlans } from '../../utils/calculator/payment-plans';
 import { useAuth } from '../../hooks/useAuth';
@@ -34,6 +34,8 @@ import {
 } from '../../widgets/components/dealcenter/ResultViews';
 import { OutcomeModal, LoadingOverlay } from '../../widgets/modals/DealCenter/OutcomeModal';
 import { getAvailableSteps } from '../../utils/job-builder-util';
+import { AddEditJobModal } from '../../screens/JobTracker/components/AddEditJobModal';
+import { format } from 'date-fns';
 
 import { useDealCalculator } from '../../hooks/useDealCalculator';
 import { useDealOutcome } from '../../hooks/useDealOutcome';
@@ -69,8 +71,10 @@ export default function LFCalculator({ route }: any) {
   >('form');
   const [prevView, setPrevView] = useState<'form' | 'summary'>('form');
   const [showTrackerModal, setShowTrackerModal] = useState(false);
+  const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [showJobBuilder, setShowJobBuilder] = useState(false);
   const [menuVisible, setMenuVisible] = useState<number | null>(null);
+  const [trackerJobs, setTrackerJobs] = useState<any[]>([]);
 
   const {
     calculators,
@@ -108,43 +112,62 @@ export default function LFCalculator({ route }: any) {
     setJobState,
   } = useDealOutcome(lead, active, results, appointmentId, onRefresh, onClose);
 
+  const fetchTrackerJobs = useCallback(async () => {
+    try {
+      const jobs = await JobService.getJobs();
+      setTrackerJobs(jobs);
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    fetchTrackerJobs();
+  }, [fetchTrackerJobs]);
+
+  const isAlreadyInTracker = useMemo(() => {
+    if (!active?._id) return false;
+    return trackerJobs.some((j) => j.calculatorId === active._id);
+  }, [trackerJobs, active?._id]);
+
   const handleStatusSelect = (status: 'demo' | 'sale') => {
     handleStatusSelectHook(status);
     setCurrentView('outcome');
   };
 
+  const handleAddJobToTracker = () => {
+    if (isAlreadyInTracker) {
+      navigation.navigate('JobTracker');
+    } else if (results.items.length > 0) {
+      setShowAddJobModal(true);
+    } else {
+      navigation.navigate('JobTracker');
+    }
+  };
+
+  const prefilledJob = useMemo(() => {
+    if (!lead || !active) return null;
+
+    const customerName = lead.customerDetails
+      ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
+      : lead.title || '';
+
+    // Map calculator payment plan to JobTracker payment method
+    const paymentMethod = active.inputs?.paymentPlan || 'check';
+
+    return {
+      customerName,
+      salesPrice: results.total || 0,
+      paymentMethod,
+      soldDate: format(new Date(), 'yyyy-MM-dd'),
+      appointmentId: appointmentId || undefined,
+      calculatorId: active._id || undefined,
+      isManual: false,
+    };
+  }, [lead, active, results.total, appointmentId]);
+
   const handleFinishOutcome = () => {
     handleFinishOutcomeHook((showJB: boolean) => {
       if (showJB) {
-        setCurrentView('summary');
-        navigation.navigate('JobBuilder', {
-          initialJobState: jobState,
-          calculatorData: {
-            ...active,
-            ...active.inputs,
-            ...active.extras,
-            title: active.name,
-            appointmentId: appointmentId,
-            createdBy: user?._id || user?.id,
-            gutter5Inch: active.inputs.gutter5DsE,
-            gutter6Inch: active.inputs.gutter6Ft1,
-            gutter7Inch: active.inputs.gutter7DsE,
-            downspoutFootage: active.inputs.spoutSavers,
-            versa6ft1: active.inputs.versa6Ft1,
-            versa6ft2: active.inputs.versa6Ft2,
-            versa6ft3: active.inputs.versa6Ft3,
-            versa7ft1: active.inputs.versa7Ft1,
-            versa7ft2: active.inputs.versa7Ft2,
-            versa7ft3: active.inputs.versa7Ft3,
-            filter45ft1: active.inputs.filter45Ft1,
-            filter45ft2: active.inputs.filter45Ft2,
-            filter45ft3: active.inputs.filter45Ft3,
-            versaMaxFt1: active.inputs.versaMaxFt1,
-          },
-          leadId: lead?._id,
-          outcomeForm: outcomeForm,
-          onGoBack: setJobState,
-        });
+        setCurrentView('result');
       }
     });
   };
@@ -258,7 +281,8 @@ export default function LFCalculator({ route }: any) {
             onUpdate={updateActive}
             results={results}
             onClose={onClose}
-            setShowTrackerModal={setShowTrackerModal}
+            handleAddJobToTracker={handleAddJobToTracker}
+            isAlreadyInTracker={isAlreadyInTracker}
             lead={lead}
             isDark={isDark}
             colors={colors}
@@ -273,8 +297,7 @@ export default function LFCalculator({ route }: any) {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1 mr-4">
                 <View className="flex-row items-center gap-2">
                   {calculators.map((calc, idx) => {
-                    const isWarning =
-                      calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️');
+                    const isWarning = calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️');
                     const isActive = idx === activeIdx;
 
                     return (
@@ -290,22 +313,22 @@ export default function LFCalculator({ route }: any) {
                         }`}
                       >
                         <Text
-                          className={`text-[10px] font-black uppercase ${
+                          className={`text-[10px] font-black  ${
                             isActive ? 'text-white' : 'text-text-secondary'
                           }`}
                         >
                           {calc.name || `Rollout ${idx + 1}`}
                         </Text>
-                      {calculators.length > 1 && (
-                        <TouchableOpacity onPress={() => setMenuVisible(idx)} className="ml-2">
-                          <Ionicons
-                            name="ellipsis-vertical"
-                            size={14}
-                            color={idx === activeIdx ? 'white' : '#637381'}
-                          />
-                        </TouchableOpacity>
-                      )}
-                    </TouchableOpacity>
+                        {calculators.length > 1 && (
+                          <TouchableOpacity onPress={() => setMenuVisible(idx)} className="ml-2">
+                            <Ionicons
+                              name="ellipsis-vertical"
+                              size={14}
+                              color={idx === activeIdx ? 'white' : '#637381'}
+                            />
+                          </TouchableOpacity>
+                        )}
+                      </TouchableOpacity>
                     );
                   })}
                 </View>
@@ -345,6 +368,17 @@ export default function LFCalculator({ route }: any) {
           insets={insets}
           refresh={refreshCalculators}
           onClose={onClose}
+          handleAddJobToTracker={handleAddJobToTracker}
+          isAlreadyInTracker={isAlreadyInTracker}
+        />
+      )}
+
+      {currentView === 'result' && (
+        <ResultView
+          onBack={() => setCurrentView('summary')}
+          handleAddJobToTracker={handleAddJobToTracker}
+          hasItems={results.items.length > 0}
+          isAlreadyInTracker={isAlreadyInTracker}
         />
       )}
 
@@ -410,7 +444,7 @@ export default function LFCalculator({ route }: any) {
 
                 {/* GreenSky Plans */}
                 <View className="bg-[#d9ead3] p-3 rounded-xl mt-4">
-                  <Text className="text-xs font-black text-black uppercase">GreenSky Plans</Text>
+                  <Text className="text-xs font-black text-black ">GreenSky Plans</Text>
                 </View>
                 {[
                   'greensky2511',
@@ -444,7 +478,7 @@ export default function LFCalculator({ route }: any) {
                           {plan.label}
                         </Text>
                         {plan.displayMonths && (
-                          <Text className="text-[10px] font-bold text-text-secondary uppercase mt-1">
+                          <Text className="text-[10px] font-bold text-text-secondary  mt-1">
                             {plan.displayMonths}
                           </Text>
                         )}
@@ -458,7 +492,7 @@ export default function LFCalculator({ route }: any) {
 
                 {/* Wells Fargo Plans */}
                 <View className="bg-[#f4cccc] p-3 rounded-xl mt-4">
-                  <Text className="text-xs font-black text-black uppercase">Wells Fargo Plans</Text>
+                  <Text className="text-xs font-black text-black ">Wells Fargo Plans</Text>
                 </View>
                 {[
                   'wf1148',
@@ -498,7 +532,7 @@ export default function LFCalculator({ route }: any) {
                           {plan.label}
                         </Text>
                         {plan.displayMonths && (
-                          <Text className="text-[10px] font-bold text-text-secondary uppercase mt-1">
+                          <Text className="text-[10px] font-bold text-text-secondary  mt-1">
                             {plan.displayMonths}
                           </Text>
                         )}
@@ -512,7 +546,7 @@ export default function LFCalculator({ route }: any) {
 
                 {/* Wells Fargo High Plans */}
                 <View className="bg-[#f4cccc] p-3 rounded-xl mt-4">
-                  <Text className="text-xs font-black text-black uppercase">
+                  <Text className="text-xs font-black text-black ">
                     Wells Fargo Plans (Over $7,500)
                   </Text>
                 </View>
@@ -541,7 +575,7 @@ export default function LFCalculator({ route }: any) {
                           {plan.label}
                         </Text>
                         {plan.displayMonths && (
-                          <Text className="text-[10px] font-bold text-text-secondary uppercase mt-1">
+                          <Text className="text-[10px] font-bold text-text-secondary  mt-1">
                             {plan.displayMonths}
                           </Text>
                         )}
@@ -555,7 +589,7 @@ export default function LFCalculator({ route }: any) {
 
                 {/* Concora Credit */}
                 <View className="bg-[#c9daf8] p-3 rounded-xl mt-4">
-                  <Text className="text-xs font-black text-black uppercase">Concora Credit</Text>
+                  <Text className="text-xs font-black text-black ">Concora Credit</Text>
                 </View>
                 {['concora'].map((key) => {
                   const plan = paymentPlans[key];
@@ -594,9 +628,7 @@ export default function LFCalculator({ route }: any) {
               onPress={() => setCurrentView(prevView)}
               className="mt-8 h-16 bg-grey-900 rounded-3xl items-center justify-center"
             >
-              <Text className="text-grey-0 font-black uppercase tracking-widest text-xs">
-                Close
-              </Text>
+              <Text className="text-grey-0 font-black  tracking-widest text-xs">Close</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -620,13 +652,13 @@ export default function LFCalculator({ route }: any) {
                 onPress={() => setShowTrackerModal(false)}
                 className="flex-1 h-16 bg-surface rounded-3xl items-center justify-center"
               >
-                <Text className="text-text-secondary font-black uppercase text-xs">Dismiss</Text>
+                <Text className="text-text-secondary font-black  text-xs">Dismiss</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowTrackerModal(false)}
                 className="flex-[1.5] h-16 bg-[#4CBB17] rounded-3xl items-center justify-center shadow-lg shadow-green-600/30"
               >
-                <Text className="text-white font-black uppercase text-xs">View Tracker</Text>
+                <Text className="text-white font-black  text-xs">View Tracker</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -640,11 +672,8 @@ export default function LFCalculator({ route }: any) {
           animationType="fade"
           onRequestClose={() => setMenuVisible(null)}
         >
-          <Pressable
-            className="flex-1 bg-black/20"
-            onPress={() => setMenuVisible(null)}
-          >
-            <View 
+          <Pressable className="flex-1 bg-black/20" onPress={() => setMenuVisible(null)}>
+            <View
               style={{
                 position: 'absolute',
                 bottom: insets.bottom + 70,
@@ -670,7 +699,7 @@ export default function LFCalculator({ route }: any) {
               >
                 <Feather name="copy" size={18} color={isDark ? '#919EAB' : '#637381'} />
                 <Text className="ml-3 text-sm font-semibold" style={{ color: colors.text }}>
-                  Duplicate Rollout
+                  Duplicate
                 </Text>
               </TouchableOpacity>
 
@@ -683,9 +712,7 @@ export default function LFCalculator({ route }: any) {
                 className="flex-row items-center p-3 rounded-xl"
               >
                 <Feather name="trash-2" size={18} color="#FF5630" />
-                <Text className="ml-3 text-sm font-semibold text-[#FF5630]">
-                  Delete Rollout
-                </Text>
+                <Text className="ml-3 text-sm font-semibold text-[#FF5630]">Delete</Text>
               </TouchableOpacity>
 
               <View className="h-[1px] bg-border/50 my-1" />
@@ -695,15 +722,24 @@ export default function LFCalculator({ route }: any) {
                 className="flex-row items-center p-3 rounded-xl"
               >
                 <Feather name="x" size={18} color="#919EAB" />
-                <Text className="ml-3 text-sm font-semibold text-[#919EAB]">
-                  Cancel
-                </Text>
+                <Text className="ml-3 text-sm font-semibold text-[#919EAB]">Cancel</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
         </Modal>
       )}
       <LoadingOverlay visible={loading} message={loadingMessage} />
+
+      <AddEditJobModal
+        visible={showAddJobModal}
+        onClose={() => setShowAddJobModal(false)}
+        onSuccess={() => {
+          setShowAddJobModal(false);
+          fetchTrackerJobs(); // Refresh the list
+          setShowTrackerModal(true);
+        }}
+        job={prefilledJob as any}
+      />
     </ModalContainer>
   );
 }

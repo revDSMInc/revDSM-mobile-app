@@ -134,17 +134,22 @@ export const useChatSession = (
         // Optimized replacement logic to avoid "double message" glitch
         // Matches on sender + text OR sender + specific file path for media
         const optimisticIndex = prev.findIndex((msg) => {
-          const isPending = !msg.sent || (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
+          const isPending =
+            !msg.sent || (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
           if (!isPending) return false;
 
           const sameUser = msg.user?._id === normalized.user?._id;
           const sameText = msg.text === normalized.text && !!msg.text;
-          
+
           // For media, check if any file path matches
           const msgFiles = (msg as any).files || [];
           const normFiles = (normalized as any).files || [];
-          const sameFiles = msgFiles.length > 0 && normFiles.length > 0 && 
-            msgFiles.some((f: any) => normFiles.some((nf: any) => nf.path === f.path || nf.url === f.url));
+          const sameFiles =
+            msgFiles.length > 0 &&
+            normFiles.length > 0 &&
+            msgFiles.some((f: any) =>
+              normFiles.some((nf: any) => nf.path === f.path || nf.url === f.url)
+            );
 
           return sameUser && (sameText || sameFiles);
         });

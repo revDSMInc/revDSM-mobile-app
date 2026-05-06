@@ -9,6 +9,7 @@ import {
   TextInput,
   RefreshControl,
   Alert,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -24,6 +25,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { Modal, Pressable } from 'react-native';
 
 const YEARS = [2026, 2025, 2024];
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 import { useJobTracker } from '../../hooks/useJobTracker';
 
@@ -39,9 +41,14 @@ export default function JobTrackerPage() {
   const [showYearPicker, setShowYearPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerTarget, setDatePickerTarget] = useState<'sold' | 'payout' | null>(null);
-  const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const [showStatusFilterPicker, setShowStatusFilterPicker] = useState(false);
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [selectedJobForMenu, setSelectedJobForMenu] = useState<JobEntry | null>(null);
+  const [menuPosition, setMenuPosition] = useState(0);
+  const [showStatusUpdateModal, setShowStatusUpdateModal] = useState(false);
+  const [jobToUpdateStatus, setJobToUpdateStatus] = useState<JobEntry | null>(null);
 
   const {
     monthlyStats,
@@ -349,9 +356,7 @@ export default function JobTrackerPage() {
                 }}
               >
                 <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-text-secondary uppercase">
-                    Date Sold
-                  </Text>
+                  <Text className="text-[10px] font-bold text-text-secondary">Date Sold</Text>
                   <Text
                     className={`text-sm font-medium ${
                       soldDateFilter ? 'text-text-primary' : 'text-text-secondary'
@@ -384,7 +389,7 @@ export default function JobTrackerPage() {
                 }}
               >
                 <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-text-secondary uppercase">
+                  <Text className="text-[10px] font-bold text-text-secondary">
                     Expected Payout Date
                   </Text>
                   <Text
@@ -406,7 +411,7 @@ export default function JobTrackerPage() {
                 )}
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => setShowStatusPicker(true)}
+                onPress={() => setShowStatusFilterPicker(true)}
                 className="flex-row items-center justify-between"
                 style={{
                   paddingVertical: 10,
@@ -628,13 +633,14 @@ export default function JobTrackerPage() {
 
                                 <View className="w-12 flex-row justify-end">
                                   <TouchableOpacity
-                                    onPress={() => {
-                                      setEditingJob(job);
-                                      setModalVisible(true);
+                                    onPress={(e) => {
+                                      const { pageY } = e.nativeEvent;
+                                      setMenuPosition(pageY);
+                                      setSelectedJobForMenu(job);
                                     }}
                                   >
                                     <Icon
-                                      name="dots-vertical"
+                                      name="ellipsis-vertical"
                                       size={20}
                                       color={colors.textSecondary}
                                     />
@@ -672,10 +678,10 @@ export default function JobTrackerPage() {
       />
 
       {/* Status Picker Modal */}
-      <Modal visible={showStatusPicker} transparent animationType="fade">
+      <Modal visible={showStatusFilterPicker} transparent animationType="fade">
         <Pressable
           className="flex-1 bg-black/40 justify-center px-6"
-          onPress={() => setShowStatusPicker(false)}
+          onPress={() => setShowStatusFilterPicker(false)}
         >
           <View className="bg-card rounded-[32px] overflow-hidden">
             <View className="p-6 border-b border-border">
@@ -687,7 +693,7 @@ export default function JobTrackerPage() {
                   key={s}
                   onPress={() => {
                     setStatusFilter(s);
-                    setShowStatusPicker(false);
+                    setShowStatusFilterPicker(false);
                   }}
                   className={`p-4 rounded-2xl mb-1 ${statusFilter === s ? 'bg-[#72BD0010]' : ''}`}
                 >
@@ -752,9 +758,7 @@ export default function JobTrackerPage() {
               ].map((cat) => (
                 <View key={cat.label}>
                   <View className="bg-[#72BD0015] px-4 py-2 mt-4 mb-2 rounded-lg">
-                    <Text className="text-[11px] font-black text-[#72BD00] uppercase">
-                      {cat.label}
-                    </Text>
+                    <Text className="text-[11px] font-black text-[#72BD00]">{cat.label}</Text>
                   </View>
                   {Object.keys(paymentPlans)
                     .filter((key) => {
@@ -785,6 +789,154 @@ export default function JobTrackerPage() {
               ))}
               <View className="h-6" />
             </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Action Menu Popover */}
+      <Modal visible={!!selectedJobForMenu} transparent animationType="fade">
+        <Pressable className="flex-1" onPress={() => setSelectedJobForMenu(null)}>
+          <View
+            className="absolute right-10 bg-white rounded-2xl shadow-2xl py-2 w-52 border border-border/50"
+            style={{
+              top: Math.min(menuPosition - 20, SCREEN_HEIGHT - 200), // Dynamic safe positioning
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.1,
+              shadowRadius: 20,
+              elevation: 20,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => {
+                setEditingJob(selectedJobForMenu);
+                setModalVisible(true);
+                setSelectedJobForMenu(null);
+              }}
+              className="flex-row items-center px-4 py-3"
+            >
+              <Feather name="edit-2" size={18} color="#1C252E" />
+              <Text className="ml-3 text-sm font-semibold text-[#1C252E]">Manual Edit</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setJobToUpdateStatus(selectedJobForMenu);
+                setShowStatusUpdateModal(true);
+                setShowStatusDropdown(false);
+                setSelectedJobForMenu(null);
+              }}
+              className="flex-row items-center px-4 py-3"
+            >
+              <Feather name="rotate-ccw" size={18} color="#1C252E" />
+              <Text className="ml-3 text-sm font-semibold text-[#1C252E]">Change Status</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                const jobToDelete = selectedJobForMenu;
+                setSelectedJobForMenu(null);
+                handleDelete(jobToDelete!);
+              }}
+              className="flex-row items-center px-4 py-3"
+            >
+              <Feather name="trash-2" size={18} color="#FF4842" />
+              <Text className="ml-3 text-sm font-semibold text-[#FF4842]">Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Status Update Modal */}
+      <Modal visible={showStatusUpdateModal} transparent animationType="fade">
+        <Pressable
+          className="flex-1 bg-black/60 justify-center px-8"
+          onPress={() => setShowStatusUpdateModal(false)}
+        >
+          <View className="bg-white rounded-[24px] p-6 shadow-2xl">
+            <Text className="text-xl font-bold text-[#1C252E] mb-8">Change Status</Text>
+
+            <View className="mb-8">
+              <TouchableOpacity
+                onPress={() => setShowStatusDropdown(!showStatusDropdown)}
+                className="h-14 border border-[#1C252E] rounded-xl px-4 flex-row items-center justify-between"
+              >
+                <View className="absolute -top-2.5 left-3 bg-white px-1">
+                  <Text className="text-xs font-bold text-[#1C252E]">Status</Text>
+                </View>
+                <Text className="text-sm font-semibold text-[#1C252E]">
+                  {(jobToUpdateStatus?.status || 'unpaid').charAt(0).toUpperCase() +
+                    (jobToUpdateStatus?.status || 'unpaid').slice(1)}
+                </Text>
+                <Feather
+                  name={showStatusDropdown ? 'chevron-up' : 'chevron-down'}
+                  size={20}
+                  color="#637381"
+                />
+              </TouchableOpacity>
+
+              {showStatusDropdown && (
+                <View className="mt-1 bg-white rounded-xl shadow-lg border border-border/50 py-1">
+                  {[
+                    { label: 'Unpaid', value: 'unpaid' },
+                    { label: 'Paid', value: 'paid' },
+                    { label: 'Cancelled', value: 'cancelled' },
+                    { label: 'Bank Decline', value: 'bank decline' },
+                  ].map((s) => (
+                    <TouchableOpacity
+                      key={s.value}
+                      onPress={() => {
+                        setJobToUpdateStatus({ ...jobToUpdateStatus!, status: s.value as any });
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`px-4 py-3 ${
+                        jobToUpdateStatus?.status === s.value ? 'bg-slate-50' : ''
+                      }`}
+                    >
+                      <Text
+                        className={`text-sm font-semibold ${
+                          jobToUpdateStatus?.status === s.value
+                            ? 'text-[#1C252E]'
+                            : 'text-[#637381]'
+                        }`}
+                      >
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            <View className="flex-row justify-end gap-2">
+              <TouchableOpacity
+                onPress={() => {
+                  setShowStatusUpdateModal(false);
+                  setShowStatusDropdown(false);
+                }}
+                className="px-5 h-10 items-center justify-center rounded-xl border border-border"
+              >
+                <Text className="text-sm font-bold text-[#1C252E]">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    await JobService.updateStatus(
+                      (jobToUpdateStatus!.id || jobToUpdateStatus!._id)!,
+                      jobToUpdateStatus!.status!
+                    );
+                    setShowStatusUpdateModal(false);
+                    setShowStatusDropdown(false);
+                    fetchJobs();
+                  } catch (e) {
+                    Alert.alert('Error', 'Failed to update status');
+                  }
+                }}
+                className="px-5 h-10 items-center justify-center rounded-xl bg-[#72BD00]"
+              >
+                <Text className="text-sm font-bold text-white">Update</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </Pressable>
       </Modal>

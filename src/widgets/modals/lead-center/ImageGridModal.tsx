@@ -33,10 +33,7 @@ export const ImageGridModal = ({
           className="px-5 py-4 flex-row items-center justify-between border-b"
           style={{ borderBottomColor: colors.border }}
         >
-          <Text
-            className="text-lg font-black uppercase tracking-widest"
-            style={{ color: colors.text }}
-          >
+          <Text className="text-lg font-black  tracking-widest" style={{ color: colors.text }}>
             {title}
           </Text>
           <TouchableOpacity onPress={onClose} className="p-1">
@@ -64,10 +61,7 @@ export const ImageGridModal = ({
             >
               <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} />
               <View className="absolute bottom-0 left-0 right-0 p-1 bg-black/40">
-                <Text
-                  className="text-[8px] text-white font-bold uppercase truncate"
-                  numberOfLines={1}
-                >
+                <Text className="text-[8px] text-white font-bold  truncate" numberOfLines={1}>
                   {item.category}
                 </Text>
               </View>

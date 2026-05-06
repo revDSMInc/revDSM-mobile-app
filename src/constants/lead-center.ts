@@ -73,24 +73,24 @@ export const IMAGE_CATEGORIES = [
     id: 'measurements',
     name: 'Measurements',
     subCategories: [
-      { id: 'box-gutter-width-measurement', name: 'Box gutter width measurement', required: 1, thumbnail: 'gutter_box' },
-      { id: 'super-gutter-width-measurement', name: 'Super gutter width measurement', required: 1, thumbnail: 'gutter_super' },
-      { id: 'fascia-board-width', name: 'Fascia board width', required: 1, thumbnail: 'misc' },
-      { id: 'fascia-height', name: 'Fascia height', required: 1, thumbnail: 'misc' },
-      { id: 'soffit-width', name: 'Soffit width (house to edge)', required: 1, thumbnail: 'misc' },
-      { id: 'soffit-panel-measurement', name: 'Soffit panel measurement', required: 1, thumbnail: 'misc' },
-      { id: 'k-styler-gutter-width-measurement', name: 'K Style Gutter Width Measurement', required: 1, thumbnail: 'gutter_kstyle' },
+      { id: 'box-gutter-width-measurement', name: 'Box gutter width measurement', required: 1, thumbnail: 'box_gutter_width' },
+      { id: 'super-gutter-width-measurement', name: 'Super gutter width measurement', required: 1, thumbnail: 'super_gutter_width' },
+      { id: 'fascia-board-width', name: 'Fascia board width', required: 1, thumbnail: 'fascia_width' },
+      { id: 'fascia-height', name: 'Fascia height', required: 1, thumbnail: 'fascia_height' },
+      { id: 'soffit-width', name: 'Soffit width (house to edge)', required: 1, thumbnail: 'soffit_width' },
+      { id: 'soffit-panel-measurement', name: 'Soffit panel measurement', required: 1, thumbnail: 'soffit_panel' },
+      { id: 'k-styler-gutter-width-measurement', name: 'K Style Gutter Width Measurement', required: 1, thumbnail: 'k_style_width' },
     ],
   },
   {
     id: 'miscellaneous',
     name: 'Miscellaneous',
     subCategories: [
-      { id: 'pool-screens', name: 'Pool screens', required: 1, thumbnail: 'misc' },
-      { id: 'misc-1', name: 'Miscellaneous 1', required: 1, thumbnail: 'misc' },
-      { id: 'misc-2', name: 'Miscellaneous 2', required: 1, thumbnail: 'misc' },
-      { id: 'misc-3', name: 'Miscellaneous 3', required: 1, thumbnail: 'misc' },
-      { id: 'misc-4', name: 'Miscellaneous 4', required: 1, thumbnail: 'misc' },
+      { id: 'pool-screens', name: 'Pool screens', required: 1, thumbnail: 'pool_screens' },
+      { id: 'misc-1', name: 'Miscellaneous 1', required: 1, thumbnail: 'misc1' },
+      { id: 'misc-2', name: 'Miscellaneous 2', required: 1, thumbnail: 'misc2' },
+      { id: 'misc-3', name: 'Miscellaneous 3', required: 1, thumbnail: 'misc3' },
+      { id: 'misc-4', name: 'Miscellaneous 4', required: 1, thumbnail: 'misc4' },
     ],
   },
   {
@@ -101,6 +101,67 @@ export const IMAGE_CATEGORIES = [
       { id: 'roof-edge-right-side', name: 'Roof Edge — Right Side', required: 1, thumbnail: 'roof_edge' },
       { id: 'roof-penetration-vent-area', name: 'Roof Penetration / Vent Area', required: 1, thumbnail: 'roof_edge' },
       { id: 'general-roof-surface-condition', name: 'General Roof Surface Condition', required: 1, thumbnail: 'roof_edge' },
+    ],
+  },
+  {
+    id: 'roof-inspection',
+    name: 'Roof Inspection',
+    subCategories: [],
+    cardGroups: [
+      {
+        id: 'granule-loss',
+        name: 'Granule Loss',
+        subCategories: [
+          { id: 'bare-spots-on-shingles', name: 'Bare Spots on Shingles', required: 1, thumbnail: 'bare_spots' },
+          { id: 'granules-in-gutters', name: 'Granules in Gutters', required: 1, thumbnail: 'granules_gutters' },
+          { id: 'granules-at-downspout', name: 'Granules at Downspout', required: 1, thumbnail: 'granules_downspout' },
+        ],
+      },
+      {
+        id: 'curling-cracking',
+        name: 'Curling & Cracking Shingles',
+        subCategories: [
+          { id: 'curling-edges', name: 'Curling Edges', required: 1, thumbnail: 'curling_edges' },
+          { id: 'cracked-surface', name: 'Cracked Surface', required: 1, thumbnail: 'cracked_surface' },
+          { id: 'curling-corner', name: 'Curling Corner', required: 1, thumbnail: 'curling_corner' },
+        ],
+      },
+      {
+        id: 'blistering-buckling',
+        name: 'Blistering & Buckling Shingles',
+        subCategories: [
+          { id: 'blistered-shingles', name: 'Blistered Shingles', required: 1, thumbnail: 'blistered_shingles' },
+          { id: 'buckled-shingles', name: 'Buckled Shingles', required: 1, thumbnail: 'buckled_shingles' },
+          { id: 'lifted-shingle-field', name: 'Lifted Shingle Field', required: 1, thumbnail: 'lifted_shingle_field' },
+        ],
+      },
+      {
+        id: 'missing-loose',
+        name: 'Missing or Loose Shingles',
+        subCategories: [
+          { id: 'missing-shingle-gap', name: 'Missing Shingle Gap', required: 1, thumbnail: 'missing_shingle_gap' },
+          { id: 'slipped-shingle', name: 'Slipped Shingle', required: 1, thumbnail: 'slipped_shingle' },
+          { id: 'loose-shingle-edge', name: 'Loose Shingle Edge', required: 1, thumbnail: 'loose_shingle_edge' },
+        ],
+      },
+      {
+        id: 'streaking-algae',
+        name: 'Streaking & Algae Growth',
+        subCategories: [
+          { id: 'dark-streaks', name: 'Dark Streaks', required: 1, thumbnail: 'dark_streaks' },
+          { id: 'algae-coverage', name: 'Algae Coverage', required: 1, thumbnail: 'algae_coverage' },
+          { id: 'streak-pattern', name: 'Streak Pattern', required: 1, thumbnail: 'streak_pattern' },
+        ],
+      },
+      {
+        id: 'pipe-boots-flashing',
+        name: 'Pipe Boots & Flashing',
+        subCategories: [
+          { id: 'cracked-pipe-boot', name: 'Cracked Pipe Boot', required: 1, thumbnail: 'cracked_pipe_boot' },
+          { id: 'tarred-flashing', name: 'Tarred Flashing', required: 1, thumbnail: 'tarred_flashing' },
+          { id: 'missing-flashing', name: 'Missing Flashing', required: 1, thumbnail: 'missing_flashing' },
+        ],
+      },
     ],
   },
 ];
@@ -201,7 +262,8 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Split Fascia Boards from Fastener Pressure',
-      description: 'Overdriven nails or screws split fascia boards, weakening the attachment system.',
+      description:
+        'Overdriven nails or screws split fascia boards, weakening the attachment system.',
     },
     {
       label: 'Staining or Discoloration Around Fasteners',
@@ -274,7 +336,8 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Deck Connection Rot (Ledger Board Rot)',
-      description: 'Moisture pooling along the ledger board leads to deck instability and structural risk.',
+      description:
+        'Moisture pooling along the ledger board leads to deck instability and structural risk.',
     },
     {
       label: 'Spike Heads or Nail Pops at Roofline',
@@ -283,7 +346,8 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Rotten Roof Sheathing at Eaves',
-      description: 'Water intrusion near gutter lines rots roof decking, weakening structural support.',
+      description:
+        'Water intrusion near gutter lines rots roof decking, weakening structural support.',
     },
     {
       label: 'Fascia Pulling Away from Rafter Tails',
@@ -303,11 +367,13 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Weeping Mortar Joints',
-      description: 'Mortar lines oozing or darkened under gutters reveal continuous gutter overflow.',
+      description:
+        'Mortar lines oozing or darkened under gutters reveal continuous gutter overflow.',
     },
     {
       label: 'Peeling Exterior Paint Only at Gutter Line',
-      description: 'Localized peeling paint directly below gutters is a sign of overflow-driven saturation.',
+      description:
+        'Localized peeling paint directly below gutters is a sign of overflow-driven saturation.',
     },
   ],
   erosion: [
@@ -343,7 +409,8 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Improper Splash Block Placement',
-      description: 'Missing or poorly positioned splash blocks allow uncontrolled runoff to saturate soil.',
+      description:
+        'Missing or poorly positioned splash blocks allow uncontrolled runoff to saturate soil.',
     },
     {
       label: 'Mulch or Soil Washing Away From Perimeter',
@@ -371,23 +438,28 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Vegetation Growth Against Foundation',
-      description: 'Thick vegetation near foundation holds moisture, increasing risk of degradation.',
+      description:
+        'Thick vegetation near foundation holds moisture, increasing risk of degradation.',
     },
     {
       label: 'Splash Erosion Marks at Soil Line',
-      description: 'Heavy splash erosion against siding suggests chronic uncontrolled water runoff.',
+      description:
+        'Heavy splash erosion against siding suggests chronic uncontrolled water runoff.',
     },
     {
       label: 'Foundation Step Cracks at Downspout Locations',
-      description: 'Visible vertical cracks at foundation steps near downspouts show water-induced settlement.',
+      description:
+        'Visible vertical cracks at foundation steps near downspouts show water-induced settlement.',
     },
     {
       label: 'Mulch Volcanoes Around Downspouts',
-      description: 'Unmanaged runoff forms mounds of displaced mulch, showing severe soil disruption.',
+      description:
+        'Unmanaged runoff forms mounds of displaced mulch, showing severe soil disruption.',
     },
     {
       label: 'Reverse Grading Toward Home',
-      description: 'Soil sloping inward traps water against foundation instead of shedding it away.',
+      description:
+        'Soil sloping inward traps water against foundation instead of shedding it away.',
     },
     {
       label: 'Downspout Splash Zones Damaging Pavers',
@@ -403,11 +475,13 @@ export const INSPECTION_ISSUES = {
     },
     {
       label: 'Ground-Level Water Geyser at Buried Drain Exit',
-      description: 'Water bursting upward from clogged buried drains reveals massive drainage failure.',
+      description:
+        'Water bursting upward from clogged buried drains reveals massive drainage failure.',
     },
     {
       label: 'Undermining of Porch or Step Supports',
-      description: 'Water flow under concrete or porch supports leads to settling or collapse over time.',
+      description:
+        'Water flow under concrete or porch supports leads to settling or collapse over time.',
     },
     {
       label: 'Sinkholes Developing Near Downspouts',
@@ -415,5 +489,3 @@ export const INSPECTION_ISSUES = {
     },
   ],
 };
-
-

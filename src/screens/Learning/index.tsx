@@ -14,14 +14,11 @@ export default function LearningPage() {
       <Header onNavigate={(route) => navigation.navigate(route)} />
       <View className="flex-1 items-center justify-center -mt-20">
         <Text className="text-[60px] opacity-40">📚</Text>
-        <Text
-          className="text-xl font-black uppercase tracking-widest mt-6"
-          style={{ color: colors.text }}
-        >
+        <Text className="text-xl font-black  tracking-widest mt-6" style={{ color: colors.text }}>
           My Learning
         </Text>
         <Text
-          className="mt-2 opacity-50 font-black uppercase text-[10px] tracking-widest"
+          className="mt-2 opacity-50 font-black  text-[10px] tracking-widest"
           style={{ color: colors.textSecondary }}
         >
           Training materials and courses coming soon...

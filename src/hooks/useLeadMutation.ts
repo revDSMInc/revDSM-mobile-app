@@ -295,7 +295,12 @@ export const useFinalizeConsentUploadMutation = () => {
       formData.append('leadId', leadId);
       formData.append('reportType', reportType);
       formData.append('file', {
-        uri: Platform.OS === 'android' ? (pdfPath.startsWith('file://') ? pdfPath : `file://${pdfPath}`) : pdfPath,
+        uri:
+          Platform.OS === 'android'
+            ? pdfPath.startsWith('file://')
+              ? pdfPath
+              : `file://${pdfPath}`
+            : pdfPath,
         name: `${reportType}.pdf`,
         type: 'application/pdf',
       } as any);

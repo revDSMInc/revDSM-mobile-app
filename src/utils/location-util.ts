@@ -34,7 +34,9 @@ export const isSelfGeneratedLead = (lead: any): boolean => {
     lead?.isSelfGen === true ||
     lead?.selfGen === true ||
     lead?.leadType === 'selfGen' ||
-    lead?.leadType === 'self-generated'
+    lead?.leadType === 'self-generated' ||
+    lead?.status === 'selfGenerated' ||
+    lead?.status === 'self-generated'
   );
 };
 

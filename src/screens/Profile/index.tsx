@@ -206,19 +206,24 @@ export default function ProfilePage() {
               Account Settings
             </Text>
             <View className="flex-row items-center mt-1">
-              <Text
-                className="text-[11px] font-bold uppercase"
-                style={{ color: colors.textSecondary }}
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Leads')}
+                className="flex-row items-center"
               >
-                Map View
-              </Text>
+                <Icon
+                  name="menu"
+                  size={14}
+                  color={colors.textSecondary}
+                  style={{ marginRight: 4 }}
+                />
+                <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
+                  Map View
+                </Text>
+              </TouchableOpacity>
               <Text className="text-[11px] font-bold mx-2" style={{ color: colors.textSecondary }}>
                 •
               </Text>
-              <Text
-                className="text-[11px] font-bold uppercase"
-                style={{ color: colors.textSecondary }}
-              >
+              <Text className="text-[11px] font-bold " style={{ color: colors.textSecondary }}>
                 Account Settings
               </Text>
             </View>
@@ -247,7 +252,7 @@ export default function ProfilePage() {
                   className="mr-2"
                 />
                 <Text
-                  className={`font-black uppercase tracking-widest text-[11px] ${
+                  className={`font-black  tracking-widest text-[11px] ${
                     activeTab === 'profile' ? 'text-white' : ''
                   }`}
                   style={{ color: activeTab === 'profile' ? '#fff' : colors.textSecondary }}
@@ -268,7 +273,7 @@ export default function ProfilePage() {
                   className="mr-2"
                 />
                 <Text
-                  className={`font-black uppercase tracking-widest text-[11px] ${
+                  className={`font-black  tracking-widest text-[11px] ${
                     activeTab === '2fa' ? 'text-white' : ''
                   }`}
                   style={{ color: activeTab === '2fa' ? '#fff' : colors.textSecondary }}
@@ -300,7 +305,7 @@ export default function ProfilePage() {
                     <View className="items-center">
                       <Icon name="camera-outline" size={28} color={colors.textSecondary} />
                       <Text
-                        className="text-[10px] mt-1 font-bold uppercase"
+                        className="text-[10px] mt-1 font-bold "
                         style={{ color: colors.textSecondary }}
                       >
                         Upload photo
@@ -309,7 +314,7 @@ export default function ProfilePage() {
                   )}
                 </TouchableOpacity>
                 <Text
-                  className="text-[10px] mt-6 font-bold text-center uppercase tracking-wide"
+                  className="text-[10px] mt-6 font-bold text-center  tracking-wide"
                   style={{ color: colors.textSecondary }}
                 >
                   Allowed *.jpeg, *.jpg, *.png, *.gif{'\n'}Max size of 3.1 MB
@@ -390,8 +395,8 @@ export default function ProfilePage() {
                   className="text-[10px] font-bold mb-6"
                   style={{ color: colors.textSecondary }}
                 >
-                  Password must be at least 8 characters long, include one uppercase letter, and
-                  contain one special character.
+                  Password must be at least 8 characters long, include one letter, and contain one
+                  special character.
                 </Text>
 
                 <TouchableOpacity
@@ -402,7 +407,7 @@ export default function ProfilePage() {
                   {loading ? (
                     <ActivityIndicator color={colors.background} />
                   ) : (
-                    <Text className="text-grey-0 font-black uppercase text-[11px] tracking-widest">
+                    <Text className="text-grey-0 font-black  text-[11px] tracking-widest">
                       Update Profile
                     </Text>
                   )}
@@ -447,7 +452,7 @@ export default function ProfilePage() {
                 >
                   <View className="flex-row items-center">
                     <Icon name="alert-circle" size={20} color="#FFAB00" />
-                    <Text className="ml-3 text-[11px] font-black text-[#FFAB00] uppercase tracking-wider">
+                    <Text className="ml-3 text-[11px] font-black text-[#FFAB00]  tracking-wider">
                       2FA is {tfaSettings.enabled ? 'Active' : 'Disabled'}
                     </Text>
                   </View>
@@ -456,7 +461,7 @@ export default function ProfilePage() {
                       tfaSettings.enabled ? 'bg-[#72BD00]' : 'bg-[#FF5630]'
                     }`}
                   >
-                    <Text className="text-[9px] font-black text-white uppercase">
+                    <Text className="text-[9px] font-black text-white ">
                       {tfaSettings.enabled ? 'Active' : 'Inactive'}
                     </Text>
                   </View>
@@ -479,7 +484,7 @@ export default function ProfilePage() {
                 </View>
 
                 <Text
-                  className="mt-8 mb-4 text-[11px] font-black uppercase"
+                  className="mt-8 mb-4 text-[11px] font-black "
                   style={{ color: colors.textSecondary }}
                 >
                   Choose 2FA Method
@@ -514,7 +519,7 @@ export default function ProfilePage() {
                   {loading ? (
                     <ActivityIndicator color={colors.background} />
                   ) : (
-                    <Text className="text-grey-0 font-black uppercase text-[11px] tracking-widest">
+                    <Text className="text-grey-0 font-black  text-[11px] tracking-widest">
                       {tfaSettings.enabled ? 'Disable 2FA' : 'Enable Two-Factor Authentication'}
                     </Text>
                   )}

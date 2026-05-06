@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,12 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { useAnimatedStyle, SharedValue } from 'react-native-reanimated';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import Feather from 'react-native-vector-icons/Feather';
 import { PALETTE } from '../../../theme/theme';
@@ -18,6 +22,22 @@ import Doc from '../../../assets/svgs/icons/doc';
 
 import { useCalculatorSummary } from '../../../hooks/useCalculatorSummary';
 import { useTheme } from '../../../theme/ThemeProvider';
+
+const getOrdinal = (n: number) => {
+  const j = n % 10,
+    k = n % 100;
+  if (j === 1 && k !== 11) return n + 'st';
+  if (j === 2 && k !== 12) return n + 'nd';
+  if (j === 3 && k !== 13) return n + 'rd';
+  return n + 'th';
+};
+
+const alpha = (hex: string, opacity: number) => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+};
 
 export const CalculatorSummary = ({
   activeCalc,
@@ -33,9 +53,12 @@ export const CalculatorSummary = ({
   insets,
   refresh,
   onClose,
+  handleAddJobToTracker,
+  isAlreadyInTracker,
 }: any) => {
   const { colors } = useTheme();
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
+  const dpInputRef = useRef<TextInput>(null);
   const {
     error,
     setError,
@@ -62,6 +85,14 @@ export const CalculatorSummary = ({
     handleDiscountChange,
     displayDrop,
     setDisplayDrop,
+    downPayment,
+    setDownPayment,
+    showDownPaymentInput,
+    setShowDownPaymentInput,
+    addedPlans,
+    setAddedPlans,
+    tempPlan,
+    setTempPlan,
   } = useCalculatorSummary(activeCalc, results, calculators, updateActive, handleSave, refresh);
 
   const isSaved = Number(activeCalc.price) > 0;
@@ -71,7 +102,8 @@ export const CalculatorSummary = ({
   // Note: results.total already includes screens, so we don't add them again in the fallback case.
   const securedDrop = (activeCalc.dropPrice || []).find((d: any) => d.status === 'accepted');
   const effectiveEndPrice = securedDrop ? securedDrop.dropedPrice : endPrice;
-  const priceWithScreens = (effectiveEndPrice > 0 ? effectiveEndPrice : results.total) + screensCount * 75;
+  const priceWithScreens =
+    (effectiveEndPrice > 0 ? effectiveEndPrice : results.total) + screensCount * 75;
 
   const msrp = priceWithScreens / (1 - (currentDiscount + 10) / 100);
   const srVetDiscount = msrp * 0.1;
@@ -94,14 +126,34 @@ export const CalculatorSummary = ({
     const sameMarkup = c.inputs?.markup === activeCalc.inputs?.markup;
     return sameGutter && samePlan && sameMarkup;
   });
+  const scrollViewRef = useRef<ScrollView>(null);
 
   const fCurrency = (num: number) => `$${Math.round(num).toLocaleString()}`;
+
+  const getPlanCategory = (planKey: string) => {
+    if (!planKey || planKey === 'check' || planKey === 'mcVisaDscvr' || planKey === 'amex')
+      return 'Basic Options';
+    if (planKey.startsWith('greensky')) return 'GreenSky Plans';
+    if (['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'].includes(planKey))
+      return 'Wells Fargo High (>$7,500)';
+    if (planKey.startsWith('wf')) return 'Wells Fargo Plans';
+    if (planKey === 'concora') return 'Concora Credit';
+    return 'Payment Method';
+  };
+
+  useEffect(() => {
+    if (showDropInput) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [showDropInput]);
 
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
     >
       <View className="flex-1 bg-background">
         {/* Top Header & Tabs */}
@@ -118,59 +170,78 @@ export const CalculatorSummary = ({
             </View>
           </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
-            <View className="flex-row gap-4 h-10 items-center">
-              {calculators.map((calc: any, idx: number) => {
-                const isLocked = calc.isRolloutConfirmed;
-                const isOtherDuplicate = calculators.some((other: any, oIdx: number) => {
-                  if (oIdx === idx) return false;
+          <View className={`flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}>
+            {calculators.length <= 3 ? (
+              <View className="flex-1 flex-row">
+                {calculators.map((calc: any, idx: number) => {
+                  const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
                   return (
-                    other.inputs?.gutter5DsE === calc.inputs?.gutter5DsE &&
-                    other.inputs?.gutter6Ft1 === calc.inputs?.gutter6Ft1 &&
-                    other.inputs?.gutter7DsE === calc.inputs?.gutter7DsE &&
-                    other.inputs?.paymentPlan === calc.inputs?.paymentPlan &&
-                    other.inputs?.markup === calc.inputs?.markup
-                  );
-                });
-
-                return (
-                  <TouchableOpacity
-                    key={idx}
-                    onPress={() => setActiveIdx(idx)}
-                    className={`flex-row items-center h-full px-4 border-b-2 ${
-                      idx === activeIdx ? 'border-green-500' : 'border-transparent'
-                    }`}
-                  >
-                    <View className="flex-row items-center">
+                    <TouchableOpacity
+                      key={idx}
+                      onPress={() => setActiveIdx(idx)}
+                      className={`flex-1 flex-row items-center justify-center h-full border-b-2 ${
+                        idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                      }`}
+                    >
                       {isLocked && (
                         <Ionicons
                           name="lock-closed"
-                          size={12}
+                          size={10}
                           color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
-                          style={{ marginRight: 6 }}
+                          style={{ marginRight: 4 }}
                         />
                       )}
                       <Text
-                        className={`text-sm font-black uppercase ${
-                          idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
-                        }`}
+                        numberOfLines={1}
+                        className={`font-black  ${
+                          calculators.length > 1 ? 'text-[10px]' : 'text-sm'
+                        } ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'}`}
                       >
-                        {calc.name || `Rollout ${idx + 1}`}
+                        {calc.name || `R${idx + 1}`}
                       </Text>
-                      {isOtherDuplicate && (
-                        <View className="ml-2">
-                          <Feather name="alert-triangle" size={12} color="#CA8A04" />
-                        </View>
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </ScrollView>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
+                {calculators.map((calc: any, idx: number) => {
+                  const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
+                  return (
+                    <TouchableOpacity
+                      key={idx}
+                      onPress={() => setActiveIdx(idx)}
+                      className={`flex-row items-center h-full px-4 border-b-2 ${
+                        idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                      }`}
+                    >
+                      <View className="flex-row items-center">
+                        {isLocked && (
+                          <Ionicons
+                            name="lock-closed"
+                            size={12}
+                            color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
+                            style={{ marginRight: 6 }}
+                          />
+                        )}
+                        <Text
+                          className={`text-sm font-black  ${
+                            idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
+                          }`}
+                        >
+                          {calc.name || `Rollout ${idx + 1}`}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           className="flex-1"
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -186,9 +257,7 @@ export const CalculatorSummary = ({
                 {activeCalc.isRolloutConfirmed ? (
                   <View className="bg-green-600 px-2 py-1 rounded-md flex-row items-center">
                     <Ionicons name="lock-closed" size={10} color="white" />
-                    <Text className="text-[10px] font-black text-white uppercase ml-1">
-                      Confirmed
-                    </Text>
+                    <Text className="text-[10px] font-black text-white  ml-1">Confirmed</Text>
                   </View>
                 ) : (
                   !isSaved && (
@@ -215,8 +284,8 @@ export const CalculatorSummary = ({
                   className="h-14 bg-card border border-border rounded-2xl px-4 flex-row items-center justify-between shadow-sm"
                 >
                   <View>
-                    <Text className="text-[8px] font-black text-text-secondary uppercase tracking-widest mb-0.5">
-                      Select Payment Method
+                    <Text className="text-[8px] font-black text-text-secondary  tracking-widest mb-0.5">
+                      {getPlanCategory(activeCalc.inputs.paymentPlan)}
                     </Text>
                     <Text className="text-sm font-black text-text-primary">
                       {paymentPlans[activeCalc.inputs.paymentPlan]?.label || 'Check (0% Fee)'}
@@ -226,64 +295,97 @@ export const CalculatorSummary = ({
                 </TouchableOpacity>
               </View>
 
-              <View className="mb-6">
-                {Object.entries(
-                  results.items.reduce((acc: any, item: any) => {
-                    const cat = item.category || 'Additional Services';
-                    if (!acc[cat]) acc[cat] = [];
-                    acc[cat].push(item);
-                    return acc;
-                  }, {})
-                ).map(([category, items]: any) => {
-                  const categoryStyles: Record<string, { color: string; icon: string }> = {
-                    Gutters: { color: '#00B8D9', icon: 'home' },
-                    LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark' },
-                    Soffit: { color: '#00B8D9', icon: 'build' },
-                    Fascia: { color: '#8E33FF', icon: 'layers' },
-                    'Additional Services': { color: '#FFAB00', icon: 'add-circle' },
-                  };
-                  const style = categoryStyles[category] || { color: '#637381', icon: 'list' };
+              <View className="mb-6 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] overflow-hidden">
+                <View className="p-5 flex-row items-center justify-between">
+                  <View className="flex-row items-center">
+                    <View className="w-12 h-12 rounded-2xl bg-[#E5D9FF] items-center justify-center mr-4">
+                      <Ionicons name="receipt" size={24} color="#6B46C1" />
+                    </View>
+                    <View>
+                      <Text className="text-xl font-extrabold text-[#1C252E]">Job Summary</Text>
+                      <Text className="text-sm text-[#637381] font-medium">
+                        {results.items.length} items
+                      </Text>
+                    </View>
+                  </View>
+                  <View className="bg-[#E5D9FF] px-4 py-2 rounded-xl">
+                    <Text className="text-[12px] font-extrabold text-[#6B46C1]  tracking-wider">
+                      {results.items.length} Items
+                    </Text>
+                  </View>
+                </View>
 
-                  return (
-                    <View key={category} className="mb-4">
-                      <View className="mb-2 flex-row items-center">
-                        <Text
-                          className="text-[9px] font-black text-white px-2 py-1 rounded-md uppercase tracking-tighter"
-                          style={{ backgroundColor: style.color }}
-                        >
-                          {category}
-                        </Text>
-                      </View>
+                <View className="px-5 pb-6">
+                  {Object.entries(
+                    results.items.reduce((acc: any, item: any) => {
+                      const cat = item.category || 'Additional Services';
+                      if (!acc[cat]) acc[cat] = [];
+                      acc[cat].push(item);
+                      return acc;
+                    }, {})
+                  ).map(([category, items]: any) => {
+                    const categoryStyles: Record<
+                      string,
+                      { color: string; icon: string; bg: string }
+                    > = {
+                      Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+                      LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+                      Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+                      Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                      'Additional Services': {
+                        color: '#FFAB00',
+                        icon: 'add-circle',
+                        bg: '#FFF8E6',
+                      },
+                    };
+                    const style = categoryStyles[category] || {
+                      color: '#637381',
+                      icon: 'list',
+                      bg: '#F4F6F8',
+                    };
 
-                      <View className="gap-1">
-                        {items.map((item: any, i: number) => (
+                    return (
+                      <View key={category} className="mb-6">
+                        <View className="flex-row mb-3">
                           <View
-                            key={i}
-                            className="flex-row items-center gap-3 py-1.5 px-1 border-b border-border last:border-0"
+                            className="flex-row items-center px-3 py-1.5 rounded-full"
+                            style={{ backgroundColor: style.bg }}
                           >
-                            <View
-                              className="w-7 h-7 rounded-full items-center justify-center"
-                              style={{ backgroundColor: style.color + '15' }}
+                            <Ionicons name={style.icon} size={14} color={style.color} />
+                            <Text
+                              className="ml-2 text-[10px] font-black  tracking-tight"
+                              style={{ color: style.color }}
                             >
-                              <Ionicons name={style.icon} size={14} color={style.color} />
-                            </View>
-                            <View className="flex-1">
-                              <View className="flex-row items-baseline">
-                                <Text className="text-sm font-black text-text-primary mr-2">
+                              {category}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View className="gap-3">
+                          {items.map((item: any, i: number) => (
+                            <View
+                              key={i}
+                              className="flex-row items-center bg-white rounded-2xl p-4 shadow-sm border border-[#F4F6F8]"
+                            >
+                              <View
+                                className="w-10 h-10 rounded-xl items-center justify-center mr-4"
+                                style={{ backgroundColor: style.bg }}
+                              >
+                                <Ionicons name={style.icon} size={18} color={style.color} />
+                              </View>
+                              <View className="flex-1">
+                                <Text className="text-sm font-bold text-[#1C252E]">
                                   {item.value}
-                                  {item.unit || "'"}
-                                </Text>
-                                <Text className="text-[11px] font-medium text-text-secondary uppercase tracking-tight">
-                                  {item.label}
+                                  {item.unit || "'"} {item.label}
                                 </Text>
                               </View>
                             </View>
-                          </View>
-                        ))}
+                          ))}
+                        </View>
                       </View>
-                    </View>
-                  );
-                })}
+                    );
+                  })}
+                </View>
               </View>
 
               <View className="flex-row gap-2 mb-6">
@@ -308,7 +410,7 @@ export const CalculatorSummary = ({
 
               <View>
                 <Text
-                  className={`text-[10px] font-black uppercase mb-2 ml-1 tracking-widest ${
+                  className={`text-[10px] font-black  mb-2 ml-1 tracking-widest ${
                     isSaved ? 'text-green-600' : 'text-amber-500'
                   }`}
                 >
@@ -316,7 +418,13 @@ export const CalculatorSummary = ({
                 </Text>
                 <View
                   className={`flex-row items-center bg-card border rounded-2xl px-4 h-16 shadow-sm ${
-                    error ? 'border-red-500' : securedDrop ? 'border-green-500' : isSaved ? 'border-green-500' : 'border-border'
+                    error
+                      ? 'border-red-500'
+                      : securedDrop
+                      ? 'border-green-500'
+                      : isSaved
+                      ? 'border-green-500'
+                      : 'border-border'
                   }`}
                 >
                   <Text
@@ -328,7 +436,9 @@ export const CalculatorSummary = ({
                   </Text>
                   <TextInput
                     className={`flex-1 font-black text-lg ${
-                      securedDrop || activeCalc.isRolloutConfirmed ? 'text-green-600' : 'text-text-primary'
+                      securedDrop || activeCalc.isRolloutConfirmed
+                        ? 'text-green-600'
+                        : 'text-text-primary'
                     }`}
                     value={effectiveEndPrice ? String(effectiveEndPrice) : ''}
                     placeholder="Enter End Price"
@@ -337,25 +447,23 @@ export const CalculatorSummary = ({
                     editable={!activeCalc.isRolloutConfirmed && !securedDrop}
                     onChangeText={handlePriceChange}
                   />
-                  {(securedDrop || activeCalc.isRolloutConfirmed) ? (
+                  {securedDrop || activeCalc.isRolloutConfirmed ? (
                     <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
                       <Ionicons name="lock-closed" size={12} color="#16A34A" />
-                      <Text className="text-[10px] font-black text-green-600 uppercase ml-1.5 tracking-wider">
+                      <Text className="text-[10px] font-black text-green-600  ml-1.5 tracking-wider">
                         LOCKED
                       </Text>
                     </View>
                   ) : null}
                 </View>
                 {error && (
-                  <Text className="text-[10px] font-bold text-red-500 mt-2 ml-1 uppercase">
-                    {error}
-                  </Text>
+                  <Text className="text-[10px] font-bold text-red-500 mt-2 ml-1 ">{error}</Text>
                 )}
                 {isDuplicate && (
                   <View className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-2xl flex-row items-center">
                     <Feather name="alert-triangle" size={20} color="#CA8A04" />
                     <View className="ml-3 flex-1">
-                      <Text className="text-xs font-black text-yellow-700 uppercase tracking-tight">
+                      <Text className="text-xs font-black text-yellow-700  tracking-tight">
                         Duplicate Calculator detected
                       </Text>
                       <Text className="text-[10px] text-yellow-600 font-medium mt-0.5">
@@ -376,7 +484,7 @@ export const CalculatorSummary = ({
                 <View className="bg-card rounded-3xl border border-border shadow-sm overflow-hidden mb-6">
                   <View className="flex-row">
                     <View className="flex-1 py-6 items-center border-r border-border">
-                      <Text className="text-[10px] font-bold text-text-secondary uppercase mb-1">
+                      <Text className="text-[10px] font-bold text-text-secondary  mb-1">
                         End Price w/ Screens
                       </Text>
                       <Text className="text-3xl font-black text-green-600">
@@ -385,11 +493,11 @@ export const CalculatorSummary = ({
                     </View>
                     <View className="flex-1 p-5 justify-center">
                       <View className="flex-row items-center justify-between mb-3">
-                        <Text className="text-[10px] font-bold text-text-secondary uppercase">
+                        <Text className="text-[10px] font-bold text-text-secondary ">
                           Pre Order {'\n'} Discount
                         </Text>
                         <View className="flex-row items-center">
-                          <Text className="text-[8px] font-bold text-text-secondary mr-1 uppercase">
+                          <Text className="text-[8px] font-bold text-text-secondary mr-1 ">
                             Default
                           </Text>
                           <TouchableOpacity
@@ -435,12 +543,12 @@ export const CalculatorSummary = ({
                   </View>
                 </View>
 
-                <View className="bg-[#4CAF50] rounded-3xl p-5 mb-6">
-                  <Text className="text-xl font-black text-white mb-2 text-center">
-                    {fCurrency(msrp)}
-                  </Text>
-                  <Text className="text-[10px] font-black text-white/70 uppercase text-center tracking-widest">
+                <View className="border border-[#919EAB33] rounded-3xl p-5 mb-6">
+                  <Text className="text-[10px] font-black text-black  text-center tracking-widest">
                     MSRP
+                  </Text>
+                  <Text className="text-xl font-black text-[#4CAF50] mb-2 text-center">
+                    {fCurrency(msrp)}
                   </Text>
                 </View>
 
@@ -448,7 +556,7 @@ export const CalculatorSummary = ({
                 <View className="flex-row gap-4 mb-6">
                   {/* 1 Year Program */}
                   <View className="flex-1 bg-card rounded-3xl border border-border p-5 shadow-sm">
-                    <Text className="text-xs font-black text-text-primary mb-6 uppercase tracking-wider">
+                    <Text className="text-xs font-black text-text-primary mb-6  tracking-wider">
                       1 Year Program
                     </Text>
 
@@ -466,9 +574,7 @@ export const CalculatorSummary = ({
                     </View>
 
                     <View className="flex-row justify-between">
-                      <Text className="text-xs font-black text-text-secondary uppercase">
-                        Grand Total
-                      </Text>
+                      <Text className="text-xs font-black text-text-secondary ">Grand Total</Text>
                       <Text className="text-sm font-black text-text-primary">
                         {fCurrency(oneYearGrandTotal)}
                       </Text>
@@ -478,7 +584,7 @@ export const CalculatorSummary = ({
                   {/* In Home Pre Order */}
                   <View className="flex-1 bg-card rounded-3xl border-2 border-green-500 p-5 shadow-sm overflow-hidden">
                     <View className="absolute top-0 left-0 right-0 h-10 bg-green-500 items-center justify-center">
-                      <Text className="text-[10px] font-black text-white uppercase tracking-widest">
+                      <Text className="text-[10px] font-black text-white  tracking-widest">
                         In Home Pre Order
                       </Text>
                     </View>
@@ -505,7 +611,7 @@ export const CalculatorSummary = ({
                       </View>
 
                       <View className="flex-row justify-between mb-4">
-                        <Text className="text-[10px] font-black text-text-secondary uppercase">
+                        <Text className="text-[10px] font-black text-text-secondary ">
                           Grand total
                         </Text>
                         <Text className="text-base font-black text-green-600">
@@ -514,7 +620,7 @@ export const CalculatorSummary = ({
                       </View>
 
                       <View className="items-center">
-                        <Text className="text-lg font-black text-green-600 mb-1">
+                        <Text className="text-lg font-black text-blue-400 mb-1">
                           {fCurrency(calculateMonthly(preOrderGrandTotal))}/mo
                         </Text>
                         <Text className="text-[8px] text-text-secondary text-center px-2">
@@ -542,7 +648,7 @@ export const CalculatorSummary = ({
             {activeCalc.isRolloutConfirmed && (
               <View className="mt-8">
                 {/* <View className="bg-green-500/10 rounded-3xl p-6 border border-green-500/20 items-center mb-8">
-                  <Text className="text-sm font-black text-green-600 uppercase tracking-widest mb-2">
+                  <Text className="text-sm font-black text-green-600  tracking-widest mb-2">
                     Final Secured Price
                   </Text>
                   <Text className="text-5xl font-black text-green-700">
@@ -559,12 +665,12 @@ export const CalculatorSummary = ({
                         <View key={idx} className="mb-6">
                           <View className="flex-row items-center justify-between mb-2 px-1">
                             <View className="flex-row items-center">
-                              <Text className="text-[11px] font-black text-green-600 mr-2 uppercase tracking-tight">
-                                {idx === 0 ? '1st' : '2nd'} Dropped Price
+                              <Text className="text-[11px] font-black text-green-600 mr-2  tracking-tight">
+                                {getOrdinal(idx + 1)} Dropped Price
                               </Text>
                               {isSecured && (
                                 <View className="bg-green-600 px-2 py-0.5 rounded-md">
-                                  <Text className="text-[8px] font-black text-white uppercase">
+                                  <Text className="text-[8px] font-black text-white ">
                                     ✓ SECURED
                                   </Text>
                                 </View>
@@ -572,7 +678,13 @@ export const CalculatorSummary = ({
                             </View>
                             <View className="flex-row items-center gap-4">
                               <TouchableOpacity onPress={() => setDisplayDrop(drop)}>
-                                <Text className={`text-[11px] font-bold ${isSecured ? 'text-green-600' : 'text-slate-500'}`}>View</Text>
+                                <Text
+                                  className={`text-[11px] font-bold ${
+                                    isSecured ? 'text-green-600' : 'text-slate-500'
+                                  }`}
+                                >
+                                  View
+                                </Text>
                               </TouchableOpacity>
                               {isSecured && (
                                 <TouchableOpacity onPress={() => handleUnselectDrop(idx)}>
@@ -584,20 +696,38 @@ export const CalculatorSummary = ({
                             </View>
                           </View>
 
-                          <View className={`bg-white border-2 rounded-xl p-3 flex-row items-center justify-between ${
-                            isSecured ? 'border-green-500' : 'border-slate-200'
-                          }`}>
-                            <Text className={`text-xl font-black ${isSecured ? 'text-green-600' : 'text-slate-400'}`}>
+                          <View
+                            className={`bg-white border-2 rounded-xl p-3 flex-row items-center justify-between ${
+                              isSecured ? 'border-green-500' : 'border-slate-200'
+                            }`}
+                          >
+                            <Text
+                              className={`text-xl font-black ${
+                                isSecured ? 'text-green-600' : 'text-slate-400'
+                              }`}
+                            >
                               {fCurrency(drop.dropedPrice)}
                             </Text>
                             <View className="flex-row items-center gap-4">
                               <TouchableOpacity
                                 onPress={() => setDisplayDrop(drop)}
-                                className={`px-6 py-2 rounded-lg ${isSecured ? 'bg-[#22C55E]' : 'bg-slate-200'}`}
+                                className={`px-6 py-2 rounded-lg ${
+                                  isSecured ? 'bg-[#22C55E]' : 'bg-slate-200'
+                                }`}
                               >
-                                <Text className={`text-xs font-black ${isSecured ? 'text-white' : 'text-slate-500'}`}>Display</Text>
+                                <Text
+                                  className={`text-xs font-black ${
+                                    isSecured ? 'text-white' : 'text-slate-500'
+                                  }`}
+                                >
+                                  Display
+                                </Text>
                               </TouchableOpacity>
-                              <Text className={`text-[10px] font-black uppercase ${isSecured ? 'text-green-600' : 'text-slate-400'}`}>
+                              <Text
+                                className={`text-[10px] font-black  ${
+                                  isSecured ? 'text-green-600' : 'text-slate-400'
+                                }`}
+                              >
                                 {isSecured ? 'SECURED' : 'LOCKED'}
                               </Text>
                             </View>
@@ -621,10 +751,22 @@ export const CalculatorSummary = ({
                         autoFocus
                         value={dropValue}
                         onChangeText={setDropValue}
-                        onBlur={() => {
-                          if (Number(dropValue) > 0) {
+                        onSubmitEditing={() => {
+                          const num = Number(dropValue);
+                          const endPrice = Number(activeCalc.price) || 0;
+                          if (num > 0) {
+                            if (endPrice > 0 && num > endPrice) {
+                              setError(
+                                `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
+                              );
+                              return;
+                            }
                             if (!selectedPlan) {
-                              setSelectedPlan(activeCalc.inputs.paymentPlan);
+                              const initialPlan = activeCalc.inputs.paymentPlan;
+                              setSelectedPlan(initialPlan);
+                              if (!addedPlans.includes(initialPlan)) {
+                                setAddedPlans([initialPlan]);
+                              }
                             }
                             setShowDropModal(true);
                           }
@@ -639,13 +781,36 @@ export const CalculatorSummary = ({
                 <View className="flex-row gap-4 mb-20">
                   <TouchableOpacity
                     onPress={() => {
-                      setDropValue('');
-                      setShowDropInput(true);
+                      if (showDropInput) {
+                        // Submit if there's a value
+                        const num = Number(dropValue);
+                        const endPrice = Number(activeCalc.price) || 0;
+                        if (num > 0) {
+                          if (endPrice > 0 && num > endPrice) {
+                            setError(
+                              `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
+                            );
+                            return;
+                          }
+                          if (!selectedPlan) {
+                            const initialPlan = activeCalc.inputs.paymentPlan;
+                            setSelectedPlan(initialPlan);
+                            if (!addedPlans.includes(initialPlan)) {
+                              setAddedPlans([initialPlan]);
+                            }
+                          }
+                          setShowDropModal(true);
+                        }
+                        setShowDropInput(false);
+                      } else {
+                        setDropValue('');
+                        setShowDropInput(true);
+                      }
                     }}
                     className="flex-1 h-14 bg-white border-2 border-[#1976D2] rounded-2xl items-center justify-center"
                   >
-                    <Text className="text-[#1976D2] font-black uppercase text-xs">
-                      + {(activeCalc.dropPrice?.length || 0) > 0 ? '2nd' : '1st'} Drop
+                    <Text className="text-[#1976D2] font-black text-xs">
+                      {`+ ${getOrdinal((activeCalc.dropPrice?.length || 0) + 1)} Drop`}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -654,9 +819,7 @@ export const CalculatorSummary = ({
                   >
                     <View className="flex-row items-center">
                       <Ionicons name="document-text-outline" size={16} color="orange" />
-                      <Text className="text-orange-600 font-black uppercase text-xs ml-2">
-                        Result Lead
-                      </Text>
+                      <Text className="text-orange-600 font-black  text-xs ml-2">Result Lead</Text>
                     </View>
                     <Text className="text-orange-600 font-black text-sm">
                       {fCurrency(
@@ -702,7 +865,7 @@ export const CalculatorSummary = ({
                 onPress={handleConfirmAll}
               >
                 <Text
-                  className={`text-[10px] font-black uppercase tracking-widest ${
+                  className={`text-[10px] font-black  tracking-widest ${
                     allCalculatorsConfirmed && !error ? 'text-white' : 'text-text-secondary'
                   }`}
                 >
@@ -714,130 +877,222 @@ export const CalculatorSummary = ({
         )}
 
         {/* Payment Method Picker Modal */}
-        <Modal visible={showPaymentPicker} transparent animationType="slide">
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-            <View className="bg-white rounded-t-[32px] p-6 pb-10">
-              <View className="w-12 h-1 bg-slate-200 self-center rounded-full mb-4" />
-              <Text className="text-lg font-black text-slate-900 mb-4">Select Payment Method</Text>
-              <ScrollView className="max-h-[500px]" showsVerticalScrollIndicator={false}>
-                {/* Basic */}
-                {[
-                  { value: 'check', label: 'Check (0% Fee)' },
-                  { value: 'mcVisaDscvr', label: 'MC/VISA/DSCVR (3.00% Fee)' },
-                  { value: 'amex', label: 'AMEX (5.00% Fee)' },
-                ].map((opt) => (
-                  <TouchableOpacity
-                    key={opt.value}
-                    onPress={() => {
-                      updateActive({ inputs: { paymentPlan: opt.value } });
-                      setShowPaymentPicker(false);
-                    }}
-                    className={`px-4 py-3 mb-1 rounded-xl border ${
-                      activeCalc.inputs.paymentPlan === opt.value
-                        ? 'bg-green-50 border-green-400'
-                        : 'bg-slate-50 border-slate-100'
-                    }`}
-                  >
-                    <Text className={`text-sm font-semibold ${
-                      activeCalc.inputs.paymentPlan === opt.value ? 'text-green-700' : 'text-slate-800'
-                    }`}>{opt.label}</Text>
-                  </TouchableOpacity>
-                ))}
+        <Modal visible={showPaymentPicker} transparent animationType="fade">
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              justifyContent: 'center',
+              padding: 20,
+            }}
+          >
+            <View className="bg-white rounded-[32px] overflow-hidden max-h-[80%] shadow-2xl">
+              <View className="p-6 border-b border-slate-100 flex-row justify-between items-center bg-slate-50">
+                <Text className="text-lg font-black text-slate-900">Payment Plan</Text>
+                <TouchableOpacity onPress={() => setShowPaymentPicker(false)} className="p-2">
+                  <Ionicons name="close" size={24} color="#637381" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView className="p-4" showsVerticalScrollIndicator={false}>
+                {/* Basic Options */}
+                <View className="mb-4">
+                  {[
+                    { value: 'check', label: 'Check (0% Fee)' },
+                    { value: 'mcVisaDscvr', label: 'MC/VISA/DSCVR (3.00% Fee)' },
+                    { value: 'amex', label: 'AMEX (5.00% Fee)' },
+                  ].map((opt) => (
+                    <TouchableOpacity
+                      key={opt.value}
+                      onPress={() => {
+                        updateActive({ inputs: { paymentPlan: opt.value } });
+                        setShowPaymentPicker(false);
+                      }}
+                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
+                        activeCalc.inputs.paymentPlan === opt.value
+                          ? 'bg-green-50 border-green-500'
+                          : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <Text
+                        className={`text-sm font-bold ${
+                          activeCalc.inputs.paymentPlan === opt.value
+                            ? 'text-green-700'
+                            : 'text-slate-800'
+                        }`}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 {/* GreenSky */}
-                <View className="px-3 py-2 mt-3 mb-1 rounded-md" style={{ backgroundColor: '#d9ead3' }}>
-                  <Text className="text-xs font-black text-slate-800">GreenSky Plans</Text>
-                </View>
-                {['greensky2511', 'greensky2521', 'greensky2531', 'greensky1599', 'greensky1509', 'greensky2011'].map((key) => (
-                  <TouchableOpacity
-                    key={key}
-                    onPress={() => {
-                      updateActive({ inputs: { paymentPlan: key } });
-                      setShowPaymentPicker(false);
-                    }}
-                    className={`px-4 py-3 mb-1 rounded-xl border ${
-                      activeCalc.inputs.paymentPlan === key
-                        ? 'bg-green-50 border-green-400'
-                        : 'bg-slate-50 border-slate-100'
-                    }`}
+                <View className="mb-4">
+                  <View
+                    className="px-4 py-2 mb-2 rounded-lg"
+                    style={{ backgroundColor: '#d9ead3' }}
                   >
-                    <Text className={`text-sm font-semibold ${
-                      activeCalc.inputs.paymentPlan === key ? 'text-green-700' : 'text-slate-800'
-                    }`}>{paymentPlans[key]?.label}</Text>
-                  </TouchableOpacity>
-                ))}
+                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
+                      GreenSky Plans
+                    </Text>
+                  </View>
+                  {[
+                    'greensky2511',
+                    'greensky2521',
+                    'greensky2531',
+                    'greensky1599',
+                    'greensky1509',
+                    'greensky2011',
+                  ].map((key) => (
+                    <TouchableOpacity
+                      key={key}
+                      onPress={() => {
+                        updateActive({ inputs: { paymentPlan: key } });
+                        setShowPaymentPicker(false);
+                      }}
+                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
+                        activeCalc.inputs.paymentPlan === key
+                          ? 'bg-green-50 border-green-500'
+                          : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <Text
+                        className={`text-sm font-bold ${
+                          activeCalc.inputs.paymentPlan === key
+                            ? 'text-green-700'
+                            : 'text-slate-800'
+                        }`}
+                      >
+                        {paymentPlans[key]?.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 {/* Wells Fargo */}
-                <View className="px-3 py-2 mt-3 mb-1 rounded-md" style={{ backgroundColor: '#f4cccc' }}>
-                  <Text className="text-xs font-black text-slate-800">Wells Fargo Plans</Text>
-                </View>
-                {['wf1148', 'wf1019', 'wf1157', 'wf1197', 'wf2225', 'wf3198', 'wf1529', 'wf4073', 'wf4079', 'wf4091', 'wf4103', 'wf4115'].map((key) => (
-                  <TouchableOpacity
-                    key={key}
-                    onPress={() => {
-                      updateActive({ inputs: { paymentPlan: key } });
-                      setShowPaymentPicker(false);
-                    }}
-                    className={`px-4 py-3 mb-1 rounded-xl border ${
-                      activeCalc.inputs.paymentPlan === key
-                        ? 'bg-green-50 border-green-400'
-                        : 'bg-slate-50 border-slate-100'
-                    }`}
+                <View className="mb-4">
+                  <View
+                    className="px-4 py-2 mb-2 rounded-lg"
+                    style={{ backgroundColor: '#f4cccc' }}
                   >
-                    <Text className={`text-sm font-semibold ${
-                      activeCalc.inputs.paymentPlan === key ? 'text-green-700' : 'text-slate-800'
-                    }`}>{paymentPlans[key]?.label}</Text>
-                  </TouchableOpacity>
-                ))}
+                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
+                      Wells Fargo Plans
+                    </Text>
+                  </View>
+                  {[
+                    'wf1148',
+                    'wf1019',
+                    'wf1157',
+                    'wf1197',
+                    'wf2225',
+                    'wf3198',
+                    'wf1529',
+                    'wf4073',
+                    'wf4079',
+                    'wf4091',
+                    'wf4103',
+                    'wf4115',
+                  ].map((key) => (
+                    <TouchableOpacity
+                      key={key}
+                      onPress={() => {
+                        updateActive({ inputs: { paymentPlan: key } });
+                        setShowPaymentPicker(false);
+                      }}
+                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
+                        activeCalc.inputs.paymentPlan === key
+                          ? 'bg-green-50 border-green-500'
+                          : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <Text
+                        className={`text-sm font-bold ${
+                          activeCalc.inputs.paymentPlan === key
+                            ? 'text-green-700'
+                            : 'text-slate-800'
+                        }`}
+                      >
+                        {paymentPlans[key]?.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 {/* Wells Fargo High */}
-                <View className="px-3 py-2 mt-3 mb-1 rounded-md" style={{ backgroundColor: '#f4cccc' }}>
-                  <Text className="text-xs font-black text-slate-800">Wells Fargo Plans (Jobs over $7,500)</Text>
-                </View>
-                {['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'].map((key) => (
-                  <TouchableOpacity
-                    key={key}
-                    onPress={() => {
-                      updateActive({ inputs: { paymentPlan: key } });
-                      setShowPaymentPicker(false);
-                    }}
-                    className={`px-4 py-3 mb-1 rounded-xl border ${
-                      activeCalc.inputs.paymentPlan === key
-                        ? 'bg-green-50 border-green-400'
-                        : 'bg-slate-50 border-slate-100'
-                    }`}
+                <View className="mb-4">
+                  <View
+                    className="px-4 py-2 mb-2 rounded-lg"
+                    style={{ backgroundColor: '#f4cccc' }}
                   >
-                    <Text className={`text-sm font-semibold ${
-                      activeCalc.inputs.paymentPlan === key ? 'text-green-700' : 'text-slate-800'
-                    }`}>{paymentPlans[key]?.label}</Text>
-                  </TouchableOpacity>
-                ))}
+                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
+                      Wells Fargo High (&gt;$7,500)
+                    </Text>
+                  </View>
+                  {['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'].map((key) => (
+                    <TouchableOpacity
+                      key={key}
+                      onPress={() => {
+                        updateActive({ inputs: { paymentPlan: key } });
+                        setShowPaymentPicker(false);
+                      }}
+                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
+                        activeCalc.inputs.paymentPlan === key
+                          ? 'bg-green-50 border-green-500'
+                          : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <Text
+                        className={`text-sm font-bold ${
+                          activeCalc.inputs.paymentPlan === key
+                            ? 'text-green-700'
+                            : 'text-slate-800'
+                        }`}
+                      >
+                        {paymentPlans[key]?.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 {/* Concora */}
-                <View className="px-3 py-2 mt-3 mb-1 rounded-md" style={{ backgroundColor: '#c9daf8' }}>
-                  <Text className="text-xs font-black text-slate-800">Concora Credit</Text>
+                <View className="mb-8">
+                  <View
+                    className="px-4 py-2 mb-2 rounded-lg"
+                    style={{ backgroundColor: '#c9daf8' }}
+                  >
+                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
+                      Concora Credit
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      updateActive({ inputs: { paymentPlan: 'concora' } });
+                      setShowPaymentPicker(false);
+                    }}
+                    className={`px-4 py-3.5 mb-2 rounded-xl border ${
+                      activeCalc.inputs.paymentPlan === 'concora'
+                        ? 'bg-green-50 border-green-500'
+                        : 'bg-white border-slate-200'
+                    }`}
+                  >
+                    <Text
+                      className={`text-sm font-bold ${
+                        activeCalc.inputs.paymentPlan === 'concora'
+                          ? 'text-green-700'
+                          : 'text-slate-800'
+                      }`}
+                    >
+                      {paymentPlans.concora?.label || 'Concora Plan'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    updateActive({ inputs: { paymentPlan: 'concora' } });
-                    setShowPaymentPicker(false);
-                  }}
-                  className={`px-4 py-3 mb-1 rounded-xl border ${
-                    activeCalc.inputs.paymentPlan === 'concora'
-                      ? 'bg-green-50 border-green-400'
-                      : 'bg-slate-50 border-slate-100'
-                  }`}
-                >
-                  <Text className={`text-sm font-semibold ${
-                    activeCalc.inputs.paymentPlan === 'concora' ? 'text-green-700' : 'text-slate-800'
-                  }`}>{paymentPlans['concora']?.label}</Text>
-                </TouchableOpacity>
               </ScrollView>
               <TouchableOpacity
                 onPress={() => setShowPaymentPicker(false)}
                 className="mt-5 h-14 bg-slate-900 rounded-2xl items-center justify-center"
               >
-                <Text className="text-white font-black text-sm uppercase">Close</Text>
+                <Text className="text-white font-black text-sm ">Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -860,7 +1115,11 @@ export const CalculatorSummary = ({
                 Result Job {activeCalc.name}
               </Text>
               <Text className="text-sm text-[#999999] text-center mb-6">
-                How would you like to result this lead?
+                Most recent price:{' '}
+                {fCurrency(
+                  activeCalc.dropPrice?.find((d: any) => d.status === 'accepted')?.dropedPrice ||
+                    activeCalc.price
+                )}
               </Text>
 
               <View className="gap-3">
@@ -874,23 +1133,17 @@ export const CalculatorSummary = ({
                     backgroundColor: PALETTE.primary.main,
                   }}
                 >
-                  <View>
-                    <Text className="text-base font-bold text-[#FFFFFF]">Sale</Text>
-                  </View>
+                  <Text className="text-base font-bold text-[#FFFFFF]">Sale</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   onPress={() => {
                     setShowResultModal(false);
                     handleStatusSelect('demo');
                   }}
-                  className="rounded-lg flex-row justify-center items-center py-3"
-                  style={{
-                    backgroundColor: '#FF9800',
-                  }}
+                  className="rounded-lg flex-row justify-center items-center py-3 bg-[#FF9800]"
                 >
-                  <View>
-                    <Text className="text-base font-bold text-[#FFFFFF]">Demo</Text>
-                  </View>
+                  <Text className="text-base font-bold text-[#FFFFFF]">Demo</Text>
                 </TouchableOpacity>
               </View>
 
@@ -906,169 +1159,247 @@ export const CalculatorSummary = ({
 
         <Modal visible={showDropModal} transparent animationType="fade">
           <View className="flex-1 bg-black/60 justify-center px-5">
-            <View className="bg-card rounded-[32px] p-6 shadow-2xl">
+            <View className="bg-white rounded-[40px] p-6 shadow-2xl">
               {/* Header: Icon + UPDATED PRICE + CK/CC badges */}
               <View className="items-center mb-6">
-                <View className="w-16 h-16 rounded-full bg-green-50 items-center justify-center mb-4">
-                  <Ionicons name="checkmark-circle" size={40} color="#31D076" />
+                <View className="w-12 h-12 rounded-full bg-green-50 items-center justify-center mb-4">
+                  <Ionicons name="checkmark" size={24} color="#31D076" />
                 </View>
-                <Text className="text-[10px] font-black text-text-secondary uppercase tracking-[2px] mb-3">
+                <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-2">
                   UPDATED PRICE
                 </Text>
-                {/* Price + CK/CC badge row — exactly like web app */}
-                <View className="flex-row items-center" style={{ gap: 16 }}>
-                  <Text className="text-4xl font-black text-text-primary">
+
+                <View className="flex-row items-center gap-4">
+                  <Text className="text-4xl font-black text-[#1C252E]">
                     {fCurrency(Number(dropValue) || 0)}
                   </Text>
-                  <View style={{ gap: 6 }}>
+                  <View className="flex-row items-center gap-2">
                     {/* CK Badge */}
                     <TouchableOpacity
                       onPress={() => setSelectedPlan('check')}
-                      style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 5,
-                        borderRadius: 8,
-                        minWidth: 38,
-                        alignItems: 'center',
-                        backgroundColor: selectedPlan === 'check' ? '#31D076' : 'transparent',
-                        borderWidth: 1.5,
-                        borderColor: selectedPlan === 'check' ? '#31D076' : '#D1D5DB',
-                      }}
+                      className={`px-3 py-1.5 rounded-lg border-2 ${
+                        selectedPlan === 'check'
+                          ? 'bg-[#31D076] border-[#31D076]'
+                          : 'bg-white border-slate-200'
+                      }`}
                     >
-                      <Text style={{
-                        fontSize: 11,
-                        fontWeight: '800',
-                        color: selectedPlan === 'check' ? '#fff' : '#9CA3AF',
-                      }}>CK</Text>
+                      <Text
+                        className={`text-[11px] font-black ${
+                          selectedPlan === 'check' ? 'text-white' : 'text-slate-400'
+                        }`}
+                      >
+                        CK
+                      </Text>
                     </TouchableOpacity>
                     {/* CC Badge */}
                     <TouchableOpacity
                       onPress={() => setSelectedPlan('mcVisaDscvr')}
-                      style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 5,
-                        borderRadius: 8,
-                        minWidth: 38,
-                        alignItems: 'center',
-                        backgroundColor: selectedPlan === 'mcVisaDscvr' ? '#31D076' : 'transparent',
-                        borderWidth: 1.5,
-                        borderColor: selectedPlan === 'mcVisaDscvr' ? '#31D076' : '#D1D5DB',
-                      }}
+                      className={`px-3 py-1.5 rounded-lg border-2 ${
+                        selectedPlan === 'mcVisaDscvr'
+                          ? 'bg-[#31D076] border-[#31D076]'
+                          : 'bg-white border-slate-200'
+                      }`}
                     >
-                      <Text style={{
-                        fontSize: 11,
-                        fontWeight: '800',
-                        color: selectedPlan === 'mcVisaDscvr' ? '#fff' : '#9CA3AF',
-                      }}>CC</Text>
+                      <Text
+                        className={`text-[11px] font-black ${
+                          selectedPlan === 'mcVisaDscvr' ? 'text-white' : 'text-slate-400'
+                        }`}
+                      >
+                        CC
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-              </View>
 
-              <View className="h-[1px] bg-border w-full mb-5" />
-
-              {/* Monthly Options — web parity plan rows */}
-              <View className="mb-6">
-                <View className="flex-row items-center justify-between mb-3">
-                  <Text className="text-[11px] font-black text-text-secondary uppercase tracking-widest">
-                    Monthly Options
-                  </Text>
+                {!showDownPaymentInput ? (
                   <TouchableOpacity
-                    onPress={() => setIsPlanPickerVisible(true)}
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 6,
-                      borderRadius: 20,
-                      borderWidth: 2,
-                      borderStyle: 'dashed',
-                      borderColor: '#31D076',
-                    }}
+                    onPress={() => setShowDownPaymentInput(true)}
+                    className="mt-4 px-5 py-2 border-2 border-dashed border-slate-200 rounded-2xl flex-row items-center"
                   >
-                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#31D076' }}>+ Add Plan</Text>
+                    <Ionicons name="add" size={16} color="#919EAB" />
+                    <Text className="ml-1 text-sm font-bold text-[#919EAB]">Add Down Payment</Text>
                   </TouchableOpacity>
-                </View>
-
-                {selectedPlan && paymentPlans[selectedPlan]?.type === 'financing' && (
-                  <View
-                    style={{
-                      borderWidth: 2,
-                      borderColor: '#31D076',
-                      borderRadius: 16,
-                      backgroundColor: '#F0FFF4',
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      marginBottom: 6,
-                    }}
-                  >
-                    {/* Plan label primary: monthly payment */}
-                    <View className="flex-row items-center justify-between">
-                      <View className="flex-1">
-                        {calculateMonthly(Number(dropValue) || 0, selectedPlan) > 0 ? (
-                          <View className="flex-row items-baseline">
-                            <Text style={{ fontSize: 20, fontWeight: '900', color: '#1F2D52', lineHeight: 24 }}>
-                              {fCurrency(calculateMonthly(Number(dropValue) || 0, selectedPlan))}
-                            </Text>
-                            <Text style={{ fontSize: 13, fontWeight: '600', color: '#919EAB', marginLeft: 2 }}>/mo</Text>
-                          </View>
-                        ) : (
-                          <Text style={{ fontSize: 15, fontWeight: '800', color: '#1F2D52' }} numberOfLines={1}>
-                            {paymentPlans[selectedPlan]?.label?.split('(')[0]?.trim()}
+                ) : (
+                  <View className="flex-row gap-3 mt-6 w-full">
+                    <View className="flex-1">
+                      <Pressable
+                        onPress={() => dpInputRef.current?.focus()}
+                        className="bg-white border-2 border-slate-900 rounded-2xl px-3 py-2"
+                      >
+                        <Text className="text-[10px] font-black text-slate-900 absolute -top-2 left-3 bg-white px-1">
+                          Down Payment
+                        </Text>
+                        <View className="flex-row items-center">
+                          <Text className="text-sm font-bold text-slate-900 mr-1">$</Text>
+                          <TextInput
+                            ref={dpInputRef}
+                            className="flex-1 h-8 font-black text-base text-slate-900 p-0"
+                            keyboardType="numeric"
+                            value={String(downPayment || '')}
+                            onChangeText={(t) => setDownPayment(Number(t.replace(/[^0-9]/g, '')))}
+                            placeholder="0"
+                          />
+                        </View>
+                      </Pressable>
+                    </View>
+                    <View className="flex-1">
+                      <View className="bg-slate-50 border-2 border-slate-100 rounded-2xl px-3 py-2 opacity-60">
+                        <Text className="text-[10px] font-black text-slate-400 absolute -top-2 left-3 bg-white px-1">
+                          Balance
+                        </Text>
+                        <View className="flex-row items-center">
+                          <Text className="text-sm font-bold text-slate-400 mr-1">$</Text>
+                          <Text className="text-base font-black text-slate-400">
+                            {Math.max(0, (Number(dropValue) || 0) - downPayment).toLocaleString()}
                           </Text>
-                        )}
-                        {/* APR / Term sub-label */}
-                        {(() => {
-                          const plan = paymentPlans[selectedPlan];
-                          const aprMatch = (plan?.label || '').match(/(\d+\.?\d*)%/);
-                          const apr = aprMatch ? `${aprMatch[1]}% APR` : null;
-                          const term = plan?.duration ? `${plan.duration} Mo` : null;
-                          return (apr || term) ? (
-                            <View className="flex-row items-center mt-1" style={{ gap: 6 }}>
-                              {apr && <Text style={{ fontSize: 11, fontWeight: '700', color: selectedPlan ? '#1F2D52' : '#9CA3AF' }}>{apr}</Text>}
-                              {term && <Text style={{ fontSize: 10, fontWeight: '600', color: '#9CA3AF' }}>{term}</Text>}
-                            </View>
-                          ) : null;
-                        })()}
-                      </View>
-                      {/* Selected check circle */}
-                      <View style={{
-                        width: 28, height: 28, borderRadius: 14,
-                        backgroundColor: '#31D076',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <Ionicons name="checkmark" size={16} color="#fff" />
+                        </View>
                       </View>
                     </View>
                   </View>
                 )}
-
-                {(!selectedPlan || paymentPlans[selectedPlan]?.type !== 'financing') && (
-                  <TouchableOpacity
-                    onPress={() => setIsPlanPickerVisible(true)}
-                    style={{
-                      height: 56,
-                      backgroundColor: '#F8FAFC',
-                      borderRadius: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 2,
-                      borderStyle: 'dashed',
-                      borderColor: '#CBD5E1',
-                    }}
-                  >
-                    <Text style={{ color: '#64748B', fontWeight: '700', fontSize: 12, textTransform: 'uppercase' }}>Select Financing Plan</Text>
-                  </TouchableOpacity>
-                )}
               </View>
 
-              <View className="flex-row gap-4">
+              <View className="h-[1px] bg-slate-100 w-full mb-6" />
+
+              {/* Monthly Options */}
+              <View className="mb-6">
+                <View className="flex-row items-center justify-between mb-4">
+                  <Text className="text-[10px] font-black text-slate-400  tracking-widest uppercase">
+                    Monthly Options
+                  </Text>
+                  {addedPlans.length > 0 && (
+                    <View className="flex-row items-center bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
+                      <Ionicons name="chevron-back" size={10} color="#FF5630" />
+                      <Text className="text-[8px] font-black text-[#FF5630] uppercase ml-0.5">
+                        swipe to delete
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <ScrollView className="max-h-60" showsVerticalScrollIndicator={false}>
+                  {addedPlans.map((planKey, idx) => {
+                    const plan = paymentPlans[planKey];
+                    const balance = Math.max(0, (Number(dropValue) || 0) - downPayment);
+                    const monthly = calculateMonthly(balance, planKey);
+                    const isSelected = selectedPlan === planKey;
+
+                    const planCode = planKey.replace(/^[a-z]+/, '').toUpperCase();
+                    const planTitle = planCode || plan.label.split('(')[0].trim();
+                    const planDesc = plan.label.includes('(')
+                      ? plan.label.split('(')[1].split(')')[0]
+                      : plan.label;
+
+                    const renderRightActions = (
+                      prog: SharedValue<number>,
+                      drag: SharedValue<number>
+                    ) => {
+                      const styleAnimation = useAnimatedStyle(() => ({
+                        transform: [{ translateX: drag.value + 80 }],
+                      }));
+
+                      return (
+                        <View className="w-20 ml-2">
+                          <Animated.View style={styleAnimation}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                const newPlans = addedPlans.filter((k) => k !== planKey);
+                                setAddedPlans(newPlans);
+                                if (selectedPlan === planKey) {
+                                  setSelectedPlan(newPlans[0] || 'check');
+                                }
+                              }}
+                              className="bg-[#FF5630] h-full rounded-2xl items-center justify-center"
+                            >
+                              <Text className="text-white font-black text-xs">Delete</Text>
+                            </TouchableOpacity>
+                          </Animated.View>
+                        </View>
+                      );
+                    };
+
+                    return (
+                      <Swipeable
+                        key={planKey}
+                        renderRightActions={renderRightActions}
+                        rightThreshold={40}
+                      >
+                        <TouchableOpacity
+                          onPress={() => setSelectedPlan(planKey)}
+                          className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${
+                            isSelected
+                              ? 'bg-white border-[#31D076]'
+                              : 'bg-slate-50 border-slate-100'
+                          }`}
+                        >
+                          <View className="flex-1">
+                            <View className="flex-row items-center gap-2 mb-1">
+                              <Text
+                                className={`text-base font-black ${
+                                  isSelected ? 'text-slate-900' : 'text-slate-400'
+                                }`}
+                              >
+                                {planTitle}
+                              </Text>
+                              {isSelected && (
+                                <View className="bg-[#31D076] px-1.5 py-0.5 rounded-md">
+                                  <Text className="text-[8px] font-black text-white">SELECTED</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text
+                              className="text-[10px] font-medium text-slate-400 mb-2"
+                              numberOfLines={1}
+                            >
+                              {planDesc}
+                            </Text>
+                            <View className="flex-row items-baseline">
+                              <Text
+                                className={`text-xl font-black ${
+                                  isSelected ? 'text-slate-900' : 'text-slate-400'
+                                }`}
+                              >
+                                ${Math.round(monthly).toLocaleString()}
+                              </Text>
+                              <Text className="text-xs font-bold text-slate-400 ml-1">/mo</Text>
+                            </View>
+                          </View>
+
+                          <View
+                            className={`w-7 h-7 rounded-full border-2 items-center justify-center ${
+                              isSelected
+                                ? 'border-[#31D076] bg-white'
+                                : 'border-slate-200 bg-slate-100'
+                            }`}
+                          >
+                            {isSelected && <View className="w-4 h-4 rounded-full bg-[#31D076]" />}
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    );
+                  })}
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      setTempPlan(null);
+                      setIsPlanPickerVisible(true);
+                    }}
+                    className="h-14 border-2 border-dashed border-[#31D076] rounded-2xl items-center justify-center bg-green-50/30"
+                  >
+                    <Text className="text-[#31D076] font-black text-sm">+ Add Plan</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+
+              <View className="flex-row gap-4 mt-2">
                 <TouchableOpacity
                   onPress={() => {
                     handleAddDrop('declined');
                     setShowDropModal(false);
                   }}
-                  className="flex-1 h-14 bg-[#FF5630] rounded-2xl items-center justify-center"
+                  className="flex-1 h-14 bg-[#FF5630] rounded-2xl items-center justify-center shadow-lg shadow-red-100"
                 >
-                  <Text className="text-white font-black uppercase text-xs">Decline</Text>
+                  <Text className="text-white font-black text-base">Decline</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   disabled={!selectedPlan}
@@ -1077,58 +1408,140 @@ export const CalculatorSummary = ({
                     setShowDropModal(false);
                     setShowResultModal(true);
                   }}
-                  className={`flex-[1.4] h-14 rounded-2xl items-center justify-center ${!selectedPlan ? 'bg-slate-200' : 'bg-[#31D076]'}`}
+                  className={`flex-1 h-14 rounded-2xl items-center justify-center shadow-lg ${
+                    !selectedPlan ? 'bg-slate-200' : 'bg-[#31D076] shadow-green-100'
+                  }`}
                 >
-                  <Text className={`font-black uppercase text-xs ${!selectedPlan ? 'text-slate-400' : 'text-white'}`}>Secure This Price</Text>
+                  <Text
+                    className={`font-black text-base ${
+                      !selectedPlan ? 'text-slate-400' : 'text-white'
+                    }`}
+                  >
+                    Secure This Price
+                  </Text>
                 </TouchableOpacity>
               </View>
-
             </View>
-          </View>
+          </View>{' '}
+          <Modal visible={isPlanPickerVisible} transparent animationType="fade">
+            <View className="flex-1 bg-black/40 justify-center px-8">
+              <View className="bg-white rounded-[24px] overflow-hidden shadow-2xl max-h-[70%]">
+                <View className="flex-row justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+                  <Text className="text-sm font-black text-[#1C252E]">Add Payment Plan</Text>
+                  <TouchableOpacity
+                    onPress={() => setIsPlanPickerVisible(false)}
+                    className="w-6 h-6 bg-white rounded-full items-center justify-center border border-slate-200"
+                  >
+                    <Ionicons name="close" size={16} color="#919EAB" />
+                  </TouchableOpacity>
+                </View>
 
-          {/* Payment Plan Sub-Picker Modal */}
-          <Modal visible={isPlanPickerVisible} transparent animationType="slide">
-            <View className="flex-1 bg-black/40 justify-end">
-              <View className="bg-white rounded-t-[32px] p-8 pb-12">
-                <View className="w-12 h-1 bg-slate-200 self-center rounded-full mb-6" />
-                <Text className="text-xl font-black text-slate-900 mb-6">Select Payment Plan</Text>
-                <ScrollView className="max-h-[400px]">
-                  <View className="gap-3">
-                    {Object.entries(paymentPlans).map(([key, plan]) => (
-                      <TouchableOpacity
-                        key={key}
-                        onPress={() => {
-                          setSelectedPlan(key);
-                          setIsPlanPickerVisible(false);
-                        }}
-                        className={`p-4 rounded-xl border-2 ${
-                          selectedPlan === key
-                            ? 'bg-green-50 border-green-500'
-                            : 'bg-slate-50 border-slate-100'
-                        }`}
-                      >
-                        <Text
-                          className={`font-black text-sm ${
-                            selectedPlan === key ? 'text-green-600' : 'text-slate-900'
-                          }`}
+                <ScrollView className="px-4 py-4" showsVerticalScrollIndicator={false}>
+                  {(() => {
+                    const categories = [
+                      {
+                        title: 'Basic Options',
+                        bg: 'bg-slate-50',
+                        text: 'text-slate-900',
+                        plans: ['check', 'mcVisaDscvr', 'amex'],
+                      },
+                      {
+                        title: 'GreenSky Plans',
+                        bg: 'bg-[#d9ead3]',
+                        text: 'text-[#2e4d2e]',
+                        plans: Object.keys(paymentPlans).filter((k) => k.startsWith('greensky')),
+                      },
+                      {
+                        title: 'Wells Fargo Plans',
+                        bg: 'bg-[#f4cccc]',
+                        text: 'text-[#662222]',
+                        plans: Object.keys(paymentPlans).filter(
+                          (k) =>
+                            k.startsWith('wf') &&
+                            !['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'].includes(
+                              k
+                            )
+                        ),
+                      },
+                      {
+                        title: 'Wells Fargo High (>$7,500)',
+                        bg: 'bg-[#f4cccc]',
+                        text: 'text-[#662222]',
+                        plans: ['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'],
+                      },
+                      {
+                        title: 'Concora Credit',
+                        bg: 'bg-[#c9daf8]',
+                        text: 'text-[#223366]',
+                        plans: ['concora'],
+                      },
+                    ];
+
+                    return categories.map((cat, ci) => (
+                      <View key={ci} className="mb-4">
+                        <View
+                          className={`px-3 py-1 rounded-md mb-2 inline-block self-start ${cat.bg}`}
                         >
-                          {plan.label}
-                        </Text>
-                        {plan.displayMonths && (
-                          <Text className="text-[10px] font-bold text-slate-400 uppercase mt-1">
-                            {plan.displayMonths}
+                          <Text
+                            className={`text-[10px] font-black uppercase tracking-wider ${cat.text}`}
+                          >
+                            {cat.title}
                           </Text>
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                        </View>
+                        <View className="gap-1.5">
+                          {cat.plans.map((key) => {
+                            const plan = paymentPlans[key];
+                            if (!plan) return null;
+                            const isSelected = tempPlan === key;
+                            return (
+                              <TouchableOpacity
+                                key={key}
+                                onPress={() => setTempPlan(key)}
+                                className={`p-3 rounded-xl border ${
+                                  isSelected
+                                    ? 'bg-green-50 border-[#31D076]'
+                                    : 'bg-white border-slate-100'
+                                }`}
+                              >
+                                <Text
+                                  className={`font-bold text-[11px] ${
+                                    isSelected ? 'text-[#31D076]' : 'text-slate-900'
+                                  }`}
+                                >
+                                  {plan.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ));
+                  })()}
                 </ScrollView>
-                <TouchableOpacity
-                  onPress={() => setIsPlanPickerVisible(false)}
-                  className="mt-6 h-14 bg-slate-900 rounded-xl items-center justify-center"
-                >
-                  <Text className="text-white font-black uppercase text-xs">Close</Text>
-                </TouchableOpacity>
+
+                <View className="flex-row gap-3 p-4 border-t border-slate-100">
+                  <TouchableOpacity
+                    onPress={() => setIsPlanPickerVisible(false)}
+                    className="flex-1 h-10 border border-slate-200 rounded-xl items-center justify-center"
+                  >
+                    <Text className="text-slate-400 font-bold text-xs">Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={!tempPlan}
+                    onPress={() => {
+                      if (tempPlan && !addedPlans.includes(tempPlan)) {
+                        setAddedPlans([...addedPlans, tempPlan]);
+                        setSelectedPlan(tempPlan);
+                      }
+                      setIsPlanPickerVisible(false);
+                    }}
+                    className={`flex-1 h-10 rounded-xl items-center justify-center ${
+                      !tempPlan ? 'bg-slate-200' : 'bg-[#31D076]'
+                    }`}
+                  >
+                    <Text className="text-white font-black text-xs">Add Plan</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </Modal>
@@ -1136,44 +1549,67 @@ export const CalculatorSummary = ({
 
         {/* Customer Display Modal (Web Parity) */}
         <Modal visible={!!displayDrop} transparent animationType="fade">
-          <Pressable
-            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', paddingHorizontal: 20 }}
-            onPress={() => setDisplayDrop(null)}
-          >
-            <Pressable onPress={(e) => e.stopPropagation()}>
-              <View className="bg-card rounded-[32px] p-8 shadow-2xl border border-border">
-                <View className="items-center mb-8">
-                  <View className="w-20 h-20 rounded-full bg-green-50 items-center justify-center mb-6">
-                    <Ionicons name="checkmark-circle" size={48} color="#31D076" />
-                  </View>
-                  <Text className="text-xs font-black text-text-secondary uppercase tracking-[3px] mb-2">
-                    Special Offer Price
-                  </Text>
-                  <Text className="text-5xl font-black text-text-primary mb-2">
+          <View className="flex-1 bg-black/60 justify-center px-6">
+            <View className="bg-white rounded-[40px] p-8 shadow-2xl">
+              {/* Header Icon */}
+              <View className="items-center mb-6">
+                <View className="w-14 h-14 rounded-full bg-green-50 items-center justify-center mb-4">
+                  <Ionicons name="checkmark" size={30} color="#22C55E" />
+                </View>
+
+                <Text className="text-[10px] font-black text-slate-400 tracking-[1.5px] uppercase mb-2">
+                  Updated Price
+                </Text>
+
+                <View className="flex-row items-center gap-3">
+                  <Text className="text-5xl font-black text-[#1C252E]">
                     {fCurrency(displayDrop?.dropedPrice || 0)}
                   </Text>
-                  <View className="bg-green-600/10 px-3 py-1 rounded-full border border-green-600/20">
-                    <Text className="text-[10px] font-black text-green-600 uppercase tracking-widest">
-                      {displayDrop?.status === 'accepted' ? 'Secured' : 'Recorded Scenario'}
-                    </Text>
+                  <View className="flex-row items-center gap-1.5">
+                    <View className="px-3 py-1.5 rounded-lg bg-[#22C55E] border border-[#22C55E]">
+                      <Text className="text-[11px] font-black text-white">CK</Text>
+                    </View>
+                    <View className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white">
+                      <Text className="text-[11px] font-black text-slate-400">CC</Text>
+                    </View>
                   </View>
                 </View>
 
-                <View className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-                  <Text className="text-xs font-black text-slate-400 uppercase tracking-wider mb-4">Financing Option</Text>
-                  <View className="flex-row items-baseline">
-                    <Text className="text-3xl font-black text-text-primary mr-1">
-                      {fCurrency(calculateMonthly(displayDrop?.dropedPrice || 0, displayDrop?.paymentMethod))}
-                    </Text>
-                    <Text className="text-sm font-bold text-text-secondary">/mo</Text>
-                  </View>
-                  <Text className="text-xs font-bold text-text-secondary mt-1">
-                    {paymentPlans[displayDrop?.paymentMethod]?.label}
-                  </Text>
-                </View>
+                {/* Add Down Payment Button */}
+                <TouchableOpacity className="mt-5 w-full h-12 border-2 border-dashed border-slate-200 rounded-2xl items-center justify-center flex-row">
+                  <Ionicons name="add" size={16} color="#919EAB" />
+                  <Text className="ml-1 text-sm font-bold text-[#919EAB]">Add Down Payment</Text>
+                </TouchableOpacity>
               </View>
-            </Pressable>
-          </Pressable>
+
+              <View className="h-[1px] bg-slate-100 w-full mb-6" />
+
+              <View className="mb-8">
+                <Text className="text-[10px] font-black text-slate-400 tracking-[1px] uppercase mb-4">
+                  Monthly Options
+                </Text>
+
+                <TouchableOpacity className="w-full h-14 border-2 border-dashed border-[#22C55E] rounded-2xl items-center justify-center">
+                  <Text className="text-[#22C55E] font-black text-base">+ Add Plan</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-row gap-4">
+                <TouchableOpacity
+                  onPress={() => setDisplayDrop(null)}
+                  className="flex-1 h-16 bg-[#EF4444] rounded-3xl items-center justify-center shadow-lg shadow-red-100"
+                >
+                  <Text className="text-white font-black text-lg">Decline</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setDisplayDrop(null)}
+                  className="flex-1 h-16 bg-[#22C55E] rounded-3xl items-center justify-center shadow-lg shadow-green-100"
+                >
+                  <Text className="text-white font-black text-lg">Secure This Price</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
         </Modal>
       </View>
     </KeyboardAvoidingView>

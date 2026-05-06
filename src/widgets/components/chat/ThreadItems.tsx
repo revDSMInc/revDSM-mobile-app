@@ -74,7 +74,7 @@ export function StatusChip({ label, active, onPress, count, specialMode }: any) 
         />
       )}
       <Text
-        className="text-[10px] font-black uppercase tracking-widest"
+        className="text-[10px] font-black tracking-widest"
         style={{ color: active ? labelColor : colors.textSecondary }}
       >
         {label}

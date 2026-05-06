@@ -269,7 +269,9 @@ export const InspectionFormModal = ({
               <View style={styles.floatingLabel}>
                 <Text style={styles.floatingLabelText}>Description</Text>
               </View>
-              <View style={[styles.fieldBox, { height: 80, alignItems: 'flex-start', paddingTop: 12 }]}>
+              <View
+                style={[styles.fieldBox, { height: 80, alignItems: 'flex-start', paddingTop: 12 }]}
+              >
                 <TextInput
                   value={item.description}
                   onChangeText={(t) => updateItem(sectionId, idx, 'description', t)}

@@ -409,7 +409,7 @@ export default function ChatDetailScreen() {
       if (isViewOnly) {
         return (
           <View className="p-4 items-center justify-center bg-gray-50 border-t border-gray-100">
-            <Text className="text-[10px] font-black uppercase tracking-[2px] text-gray-400">
+            <Text className="text-[10px] font-black text-gray-400">
               Only Managers can message here
             </Text>
           </View>

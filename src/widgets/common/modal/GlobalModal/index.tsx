@@ -58,7 +58,7 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
             style={{ borderBottomColor: isDark ? colors.border : '#eee' }}
           >
             <Text
-              className="text-lg font-black uppercase tracking-widest text-center"
+              className="text-lg font-black tracking-widest text-center"
               style={{ color: getHeaderColor() }}
             >
               {title}

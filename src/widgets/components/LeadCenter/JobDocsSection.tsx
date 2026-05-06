@@ -62,7 +62,12 @@ export const JobDocsSection = ({
 
   // ── Progress ──────────────────────────────────────────────────────────────
   const totalRequired = IMAGE_CATEGORIES.reduce((acc, section) => {
-    return acc + (section.subCategories?.reduce((s, sub) => s + (sub.required || 1), 0) || 0);
+    const subTotal = section.subCategories?.reduce((s, sub) => s + (sub.required || 1), 0) || 0;
+    const groupTotal =
+      section.cardGroups?.reduce((g, group) => {
+        return g + (group.subCategories?.reduce((s, sub) => s + (sub.required || 1), 0) || 0);
+      }, 0) || 0;
+    return acc + subTotal + groupTotal;
   }, 0);
 
   const totalUploaded = Object.values(sectionImages).reduce((acc, imgs) => acc + imgs.length, 0);
@@ -90,13 +95,24 @@ export const JobDocsSection = ({
     }
   };
 
-  const handleUpload = async (catName: string, idx: number, asset: any) => {
+  const handleUpload = async (catName: string, idx: number, asset: any, groupName?: string) => {
     if (!lead?._id) return;
 
     const catObj = IMAGE_CATEGORIES.find((c) => c.name === catName);
-    const sub = catObj?.subCategories?.[idx];
-    // Use name as requested in latest example (e.g. "Left Side")
-    const subcategoryName = sub?.name || `Extra ${catName}`;
+    let subcategoryName = `Extra ${catName}`;
+
+    if (groupName) {
+      subcategoryName =
+        catObj?.cardGroups
+          ?.find((g) => g.name === groupName)
+          ?.subCategories?.find((_, sIdx) => sIdx === idx)?.name ||
+        groupName ||
+        catObj?.subCategories?.[idx]?.name ||
+        'Photo';
+    } else {
+      const sub = catObj?.subCategories?.[idx];
+      subcategoryName = sub?.name || `Extra ${catName}`;
+    }
 
     // Get current location
     let coords = { latitude: 0, longitude: 0 };
@@ -158,7 +174,7 @@ export const JobDocsSection = ({
     formData.append('images', JSON.stringify(imageInfo));
     formData.append('category', 'salesPhotos');
 
-    const slotKey = `${catName}-${idx}`;
+    const slotKey = `${groupName || catName}-${idx}`;
     setUploadingSlots((prev) => ({ ...prev, [slotKey]: true }));
 
     try {
@@ -262,6 +278,7 @@ export const JobDocsSection = ({
           />
         </View>
       </View>
+      <View style={{ height: 20 }} />
 
       {/* Accordion Sections */}
       {IMAGE_CATEGORIES.map((section) => {
@@ -273,12 +290,15 @@ export const JobDocsSection = ({
             title={section.name}
             subCategories={section.subCategories}
             images={sectionImages[section.name] || []}
-            onUpload={(idx: number, asset: any) => handleUpload(section.name, idx, asset)}
+            onUpload={(idx: number, asset: any, groupName?: string) =>
+              handleUpload(section.name, idx, asset, groupName)
+            }
             onDelete={(image: SectionImage) => handleDelete(section.name, image)}
             onPreview={(uri: string) => setPreviewImage(uri)}
             forceExpanded={expandedAll}
             isUploading={uploadImagesMutation.isPending}
             uploadingSlots={uploadingSlots}
+            cardGroups={section.cardGroups}
           />
         );
       })}
@@ -341,9 +361,23 @@ export const JobDocsSection = ({
 
 // ─── AccordionItem ────────────────────────────────────────────────────────────
 
+interface AccordionItemProps {
+  title: string;
+  subCategories?: any[];
+  cardGroups?: any[];
+  images: SectionImage[];
+  onUpload: (idx: number, asset: any, groupName?: string) => void;
+  onDelete: (image: SectionImage) => void;
+  onPreview: (uri: string) => void;
+  forceExpanded: boolean;
+  isUploading: boolean;
+  uploadingSlots: { [key: string]: boolean };
+}
+
 const AccordionItem = ({
   title,
   subCategories,
+  cardGroups,
   images,
   onUpload,
   onDelete,
@@ -351,15 +385,12 @@ const AccordionItem = ({
   forceExpanded,
   isUploading,
   uploadingSlots,
-}: any) => {
+}: AccordionItemProps) => {
   const { colors, isDark } = useTheme();
   const [localExpanded, setLocalExpanded] = useState(false);
-  const [pickerIndex, setPickerIndex] = useState<number | null>(null);
+  const [pickerIndex, setPickerIndex] = useState<{ idx: number; groupName?: string } | null>(null);
 
   const expanded = forceExpanded || localExpanded;
-  const total = subCategories?.length || 0;
-  const displaySlots = Math.max(total, images.length) + 1;
-  const displayTotal = Math.max(total, images.length);
 
   const openCamera = async () => {
     if (Platform.OS === 'android') {
@@ -367,14 +398,14 @@ const AccordionItem = ({
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) return;
     }
 
-    const targetIndex = pickerIndex;
+    const target = pickerIndex;
     setPickerIndex(null);
 
     setTimeout(
       () => {
         launchCamera({ mediaType: 'photo', quality: 0.8 }, (response) => {
-          if (response.assets?.[0]?.uri && targetIndex !== null) {
-            onUpload(targetIndex, response.assets[0]);
+          if (response.assets?.[0]?.uri && target !== null) {
+            onUpload(target.idx, response.assets[0], target.groupName);
           }
         });
       },
@@ -383,17 +414,129 @@ const AccordionItem = ({
   };
 
   const openGallery = () => {
-    const targetIndex = pickerIndex;
+    const target = pickerIndex;
     setPickerIndex(null);
 
     setTimeout(() => {
       launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, (response) => {
-        if (response.assets?.[0]?.uri && targetIndex !== null) {
-          onUpload(targetIndex, response.assets[0]);
+        if (response.assets?.[0]?.uri && target !== null) {
+          onUpload(target.idx, response.assets[0], target.groupName);
         }
       });
     }, 400);
   };
+
+  const renderSlots = (subs: any[] = [], groupName?: string) => {
+    const total = subs.length;
+    const groupImages = groupName
+      ? images.filter(
+          (img) => img.subcategory === groupName || subs.some((s) => s.name === img.subcategory)
+        )
+      : images;
+
+    const displaySlots = Math.max(total, groupImages.length) + 1;
+
+    return (
+      <View className="flex-row flex-wrap justify-between">
+        {[...Array(displaySlots)].map((_, idx) => {
+          const sub = subs[idx];
+          const existingImage = groupImages.find((img: any) =>
+            sub ? img.subcategory === sub.name : img.index === idx && !img.subcategory
+          );
+          const isAddMoreSlot = idx >= total && !existingImage;
+
+          return (
+            <View
+              key={idx}
+              className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
+              style={{
+                borderColor: existingImage
+                  ? 'transparent'
+                  : isAddMoreSlot
+                  ? '#00AB55'
+                  : colors.primary.main,
+                backgroundColor: isDark
+                  ? isAddMoreSlot
+                    ? '#00AB5510'
+                    : colors.primary.main + '10'
+                  : isAddMoreSlot
+                  ? '#00AB5508'
+                  : colors.primary.main + '05',
+              }}
+            >
+              {existingImage ? (
+                <>
+                  <Image
+                    source={{ uri: existingImage.uri }}
+                    className="w-full h-full"
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity
+                    onPress={() => onPreview(existingImage.uri)}
+                    className="absolute top-2 left-2 p-1.5 bg-black/40 rounded-full"
+                  >
+                    <Icon name="eye-outline" size={16} color="white" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => onDelete(existingImage)}
+                    className="absolute top-2 right-2 p-1.5 bg-red-500/80 rounded-full"
+                  >
+                    <Icon name="trash-can-outline" size={16} color="white" />
+                  </TouchableOpacity>
+                  <View className="absolute bottom-0 left-0 right-0 p-1.5 bg-black/40">
+                    <Text className="text-[9px] text-white font-bold text-center" numberOfLines={1}>
+                      {existingImage.subcategory?.replace(/-/g, ' ')}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => setPickerIndex({ idx, groupName })}
+                  disabled={isUploading}
+                  className="w-full h-full items-center justify-center p-2"
+                >
+                  {uploadingSlots[`${groupName || title}-${idx}`] ? (
+                    <View className="items-center justify-center w-full h-full bg-black/5">
+                      <ActivityIndicator size="small" color={colors.primary.main} />
+                    </View>
+                  ) : (
+                    <>
+                      <View className="absolute inset-0">
+                        {sub?.thumbnail && (JobDocsThumbnails as any)[sub.thumbnail] && (
+                          <Image
+                            source={(JobDocsThumbnails as any)[sub.thumbnail]}
+                            className="w-full h-full"
+                            style={{ opacity: isDark ? 0.2 : 0.1 }}
+                            resizeMode="cover"
+                          />
+                        )}
+                      </View>
+                      <Icon
+                        name={isAddMoreSlot ? 'image-plus' : 'camera-plus-outline'}
+                        size={32}
+                        color={isAddMoreSlot ? '#00AB55' : colors.text}
+                        style={{ opacity: 0.5, marginBottom: 8 }}
+                      />
+                      <Text
+                        className="text-[10px] font-black text-center mx-2"
+                        style={{ color: isAddMoreSlot ? '#00AB55' : colors.text }}
+                      >
+                        {isAddMoreSlot ? 'Add Extra' : sub?.name || `${title} ${idx + 1}`}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const displayTotal = cardGroups
+    ? cardGroups.reduce((acc, g) => acc + (g.subCategories?.length || 0), 0)
+    : subCategories?.length || 0;
 
   return (
     <View className="mb-3">
@@ -466,115 +609,19 @@ const AccordionItem = ({
             backgroundColor: isDark ? colors.background : colors.surface,
           }}
         >
-          <View className="flex-row flex-wrap justify-between">
-            {[...Array(displaySlots)].map((_, idx) => {
-              const existingImage = images.find((img: any) => img.index === idx);
-              const isAddMoreSlot = idx >= total && !existingImage;
-              const slotKey = `${title}-${idx}`;
-
-              return (
-                <View
-                  key={idx}
-                  className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
-                  style={{
-                    borderColor: existingImage
-                      ? 'transparent'
-                      : isAddMoreSlot
-                      ? '#00AB55'
-                      : colors.primary.main,
-                    backgroundColor: isDark
-                      ? isAddMoreSlot
-                        ? '#00AB5510'
-                        : colors.primary.main + '10'
-                      : isAddMoreSlot
-                      ? '#00AB5508'
-                      : colors.primary.main + '05',
-                  }}
-                >
-                  {existingImage ? (
-                    <>
-                      <Image
-                        source={{ uri: existingImage.uri }}
-                        className="w-full h-full"
-                        resizeMode="cover"
-                      />
-
-                      {/* Top Left Eye Icon */}
-                      <TouchableOpacity
-                        onPress={() => onPreview(existingImage.uri)}
-                        className="absolute top-2 left-2 p-1.5 bg-black/40 rounded-full"
-                      >
-                        <Icon name="eye-outline" size={16} color="white" />
-                      </TouchableOpacity>
-
-                      {/* Top Right Delete Icon */}
-                      <TouchableOpacity
-                        onPress={() => onDelete(existingImage)}
-                        className="absolute top-2 right-2 p-1.5 bg-red-500/80 rounded-full"
-                      >
-                        <Icon name="trash-can-outline" size={16} color="white" />
-                      </TouchableOpacity>
-
-                      {/* Bottom Info Overlay */}
-                      <View className="absolute bottom-0 left-0 right-0 p-1.5 bg-black/40">
-                        <Text
-                          className="text-[9px] text-white font-bold text-center"
-                          numberOfLines={1}
-                        >
-                          {existingImage.subcategory?.replace(/-/g, ' ')}
-                        </Text>
-                      </View>
-                    </>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={() => setPickerIndex(idx)}
-                      disabled={isUploading}
-                      className="w-full h-full items-center justify-center p-2"
-                    >
-                      {uploadingSlots[`${title}-${idx}`] ? (
-                        <View className="items-center justify-center w-full h-full bg-black/5">
-                          <ActivityIndicator size="small" color={colors.primary.main} />
-                          <Text className="text-[9px] font-black uppercase text-gray-500 mt-2">
-                            Uploading...
-                          </Text>
-                          <View className="w-16 h-1 bg-gray-200 rounded-full mt-2 overflow-hidden">
-                            <View
-                              className="h-full bg-green-500"
-                              style={{ width: '60%' }} // Indeterminate look
-                            />
-                          </View>
-                        </View>
-                      ) : (
-                        <>
-                          <View className="absolute inset-0 items-center justify-center opacity-20">
-                            {subCategories[idx]?.thumbnail && (JobDocsThumbnails as any)[subCategories[idx].thumbnail] && (
-                              <Image
-                                source={(JobDocsThumbnails as any)[subCategories[idx].thumbnail]}
-                                className="w-20 h-20"
-                                resizeMode="contain"
-                              />
-                            )}
-                          </View>
-                          <Icon
-                            name={isAddMoreSlot ? 'image-plus' : 'camera-plus-outline'}
-                            size={32}
-                            color={isAddMoreSlot ? '#00AB55' : colors.text}
-                            style={{ opacity: 0.5, marginBottom: 8 }}
-                          />
-                          <Text
-                            className="text-[10px] font-black uppercase text-center mx-2"
-                            style={{ color: isAddMoreSlot ? '#00AB55' : colors.text }}
-                          >
-                            {isAddMoreSlot ? 'Add Extra' : (subCategories[idx]?.name || `${title} ${idx + 1}`)}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
+          {cardGroups
+            ? cardGroups.map((group: any) => (
+                <View key={group.id} className="mb-6">
+                  <View className="flex-row items-center mb-4">
+                    <View className="w-1 h-4 bg-green-500 rounded-full mr-2" />
+                    <Text className="text-[11px] font-black text-slate-400 tracking-widest">
+                      {group.name}
+                    </Text>
+                  </View>
+                  {renderSlots(group.subCategories, group.name)}
                 </View>
-              );
-            })}
-          </View>
+              ))
+            : renderSlots(subCategories)}
         </View>
       )}
     </View>
