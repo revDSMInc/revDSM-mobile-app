@@ -20,22 +20,41 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
   const { colors, isDark } = useTheme();
   const { fetchProductImage, image, loading: imageLoading } = useProductImage('soffit');
 
+  const n = (v: any) => parseFloat(v) || 0;
+  const getVal = (baseKey: string) => {
+    if (!calculatorData) return 0;
+    const lowerKey = baseKey.toLowerCase();
+    // Check root
+    const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
+    const topVal = topKey ? n(calculatorData[topKey]) : 0;
+    if (topVal > 0) return topVal;
+    // Check extras (soffit/fascia keys live here)
+    const extras = calculatorData.extras || {};
+    const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
+    const extrasVal = extrasKey ? n(extras[extrasKey]) : 0;
+    if (extrasVal > 0) return extrasVal;
+    // Check inputs
+    const inputs = calculatorData.inputs || {};
+    const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
+    return inputKey ? n(inputs[inputKey]) : 0;
+  };
+
   const data = {
     vinyl: {
       type: jobState.soffit?.vinyl?.type || '',
-      footage: jobState.soffit?.vinyl?.footage || calculatorData?.vinylSoffit || '',
+      footage: jobState.soffit?.vinyl?.footage || getVal('vinylSoffit') || '',
       soffitType: jobState.soffit?.vinyl?.soffitType || '',
       color: jobState.soffit?.vinyl?.color || '',
     },
     porch: {
       location: jobState.soffit?.porch?.location || [],
-      footage: jobState.soffit?.porch?.footage || calculatorData?.porchCeiling || '',
+      footage: jobState.soffit?.porch?.footage || getVal('porchCeiling') || '',
       soffitType: jobState.soffit?.porch?.soffitType || '',
       color: jobState.soffit?.porch?.color || '',
     },
     nailer: {
       type: jobState.soffit?.nailer?.type || '',
-      footage: jobState.soffit?.nailer?.footage || calculatorData?.nailerBuildOut || '',
+      footage: jobState.soffit?.nailer?.footage || getVal('nailerBuildOut') || '',
       soffitType: jobState.soffit?.nailer?.soffitType || '',
       color: jobState.soffit?.nailer?.color || '',
     },
@@ -44,6 +63,38 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
   const handleSubUpdate = (section: string, field: string, value: any) => {
     onUpdate('soffit', section, { ...data[section as keyof typeof data], [field]: value });
   };
+
+  const isSubSectionComplete = (sectionData: any, sectionKey: string) => {
+    const footage = n(sectionData.footage);
+    if (footage <= 0) return true;
+    const locOk =
+      sectionKey === 'porch'
+        ? Array.isArray(sectionData.location)
+          ? sectionData.location.length > 0
+          : sectionData.location !== ''
+        : true;
+    const typeOk = sectionKey !== 'porch' ? sectionData.type !== '' : true;
+    const colorOk =
+      sectionKey !== 'nailer' ? sectionData.soffitType !== '' && sectionData.color !== '' : true;
+    return locOk && typeOk && colorOk;
+  };
+
+  const isComplete = React.useMemo(() => {
+    const vF = n(data.vinyl.footage);
+    const pF = n(data.porch.footage);
+    const nF = n(data.nailer.footage);
+    if (vF === 0 && pF === 0 && nF === 0) return false;
+    return (
+      isSubSectionComplete(data.vinyl, 'vinyl') &&
+      isSubSectionComplete(data.porch, 'porch') &&
+      isSubSectionComplete(data.nailer, 'nailer')
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobState.soffit, calculatorData]);
+
+  React.useEffect(() => {
+    onUpdate('soffit', 'isComplete', isComplete);
+  }, [isComplete, onUpdate]);
 
   const renderWarning = (message: string) => (
     <View className="flex-row items-center bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
@@ -126,6 +177,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
   ) => {
     const list =
       soffitType === 'PINHOLE VINYL' ? COLORS['Soffit(Pinhole)'] : COLORS['Soffit(Hidden vent)'];
+    const selectedHex = list.find((c) => c.name === selectedColor)?.hex || '';
 
     return (
       <View
@@ -136,23 +188,14 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
         }`}
       >
         {incomplete && renderWarning('Incomplete-Color Required')}
-        <View className="flex-row justify-between items-center mb-4">
+        <View className="flex-row justify-between items-center mb-3">
           <Text
-            className={`text-[10px] font-black  tracking-widest ${
+            className={`text-[10px] font-black tracking-widest ${
               incomplete ? 'text-amber-600' : 'text-slate-400'
             }`}
           >
             {label}
           </Text>
-          {image.imageUrl && image.color === selectedColor && (
-            <View className="w-12 h-12 rounded-lg overflow-hidden border border-slate-100">
-              <Image
-                source={{ uri: image.imageUrl }}
-                className="w-full h-full"
-                resizeMode="cover"
-              />
-            </View>
-          )}
           {imageLoading && <ActivityIndicator size="small" color="#10B981" />}
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -163,7 +206,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
                 onPress={() => {
                   onSelect(c.name);
                   fetchProductImage(
-                    c.name,
+                    c.hex,
                     soffitType === 'PINHOLE VINYL' ? 'soffit Pinhole' : 'soffit '
                   );
                 }}
@@ -185,9 +228,21 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
           </View>
         </ScrollView>
         {selectedColor && (
-          <View className="flex-row items-center mt-4 bg-emerald-50 self-start px-2 py-1 rounded-lg">
+          <View className="flex-row items-center mt-3 bg-emerald-50 self-start px-2 py-1 rounded-lg">
             <Icon name="check" size={12} color="#10B981" />
-            <Text className="text-[10px] font-black text-emerald-600 ml-1 ">{selectedColor}</Text>
+            <Text className="text-[10px] font-black text-emerald-600 ml-1">{selectedColor}</Text>
+          </View>
+        )}
+        {image.imageUrl && image.color === selectedHex && (
+          <View
+            className="mt-3 rounded-xl overflow-hidden border border-slate-100"
+            style={{ height: 120 }}
+          >
+            <Image
+              source={{ uri: image.imageUrl }}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="cover"
+            />
           </View>
         )}
       </View>
@@ -196,7 +251,6 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
 
   const renderSubSection = (title: string, sectionKey: string, sectionData: any) => {
     const footage = parseFloat(sectionData.footage || '0');
-    if (footage <= 0) return null;
 
     return (
       <View
@@ -270,23 +324,26 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
       keyboardShouldPersistTaps="handled"
     >
       <View className="px-5 py-5 pb-24 bg-white">
-        {renderSubSection('Vinyl Soffit', 'vinyl', data.vinyl)}
-        {renderSubSection('Porch Ceiling SqFT', 'porch', data.porch)}
-        {renderSubSection('Nailer Build Out', 'nailer', data.nailer)}
+        {n(data.vinyl.footage) > 0 && renderSubSection('Vinyl Soffit', 'vinyl', data.vinyl)}
+        {n(data.porch.footage) > 0 && renderSubSection('Porch Ceiling SqFT', 'porch', data.porch)}
+        {n(data.nailer.footage) > 0 && renderSubSection('Nailer Build Out', 'nailer', data.nailer)}
 
-        {!(
-          parseFloat(data.vinyl.footage) > 0 ||
-          parseFloat(data.porch.footage) > 0 ||
-          parseFloat(data.nailer.footage) > 0
-        ) && (
-          <View className="items-center py-20 bg-white rounded-lg border border-dashed border-slate-200">
-            <Icon name="information-outline" size={48} color="#CBD5E1" />
-            <Text className="text-slate-400 font-bold mt-4">No Soffit Requirements Found</Text>
-            <Text className="text-slate-300 text-[10px]  font-black tracking-widest mt-1">
-              Check Calculator Data
-            </Text>
-          </View>
-        )}
+        {n(data.vinyl.footage) === 0 &&
+          n(data.porch.footage) === 0 &&
+          n(data.nailer.footage) === 0 && (
+            <View className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30">
+              {renderWarning('INCOMPLETE - No valid footage found for Soffit section')}
+              <View className="p-4 mt-4 rounded-lg bg-white border border-amber-100 flex-row justify-between items-center">
+                <View>
+                  <Text className="text-[9px] font-black text-slate-400 tracking-widest mb-1">
+                    Total Footage
+                  </Text>
+                  <Text className="text-sm font-black text-slate-900">0 FT</Text>
+                </View>
+                <Icon name="lock" size={16} color="#919EAB" />
+              </View>
+            </View>
+          )}
       </View>
     </ScrollView>
   );

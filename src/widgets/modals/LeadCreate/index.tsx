@@ -184,11 +184,23 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
     }
   };
 
-  const handleSelectSuggestion = (suggestion: any) => {
+  const handleSelectSuggestion = async (suggestion: any) => {
     setForm({ ...form, address: suggestion.description });
     setShowSuggestions(false);
     setSuggestions([]);
     Keyboard.dismiss();
+
+    try {
+      const res = await axios.get(
+        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${suggestion.place_id}&fields=geometry&key=${ENV.GOOGLE_MAPS_API_KEY}`
+      );
+      if (res.data.result?.geometry?.location) {
+        const { lat, lng } = res.data.result.geometry.location;
+        setLocation({ latitude: lat, longitude: lng });
+      }
+    } catch (e) {
+      console.warn('Place details failed', e);
+    }
   };
 
   const handleSubmit = async () => {

@@ -111,7 +111,20 @@ export const JobDocsSection = ({
         'Photo';
     } else {
       const sub = catObj?.subCategories?.[idx];
-      subcategoryName = sub?.name || `Extra ${catName}`;
+      if (sub) {
+        subcategoryName = sub.name;
+      } else {
+        // "Add Extra" slot logic - Use FULL catName and offset by required count
+        const existingImages = sectionImages[catName] || [];
+        const requiredCount = catObj?.subCategories?.length || 0;
+
+        // Count images that follow the "SectionName - Image X" pattern
+        const extraCount = existingImages.filter((img) =>
+          img.subcategory?.includes(`${catName} - Image`)
+        ).length;
+
+        subcategoryName = `${catName} - Image ${requiredCount + extraCount + 1}`;
+      }
     }
 
     // Get current location
@@ -178,8 +191,27 @@ export const JobDocsSection = ({
     setUploadingSlots((prev) => ({ ...prev, [slotKey]: true }));
 
     try {
+      // 1. Optimistic Update: Add to local state immediately
+      const optimisticImage: SectionImage = {
+        uri: asset.uri,
+        s3url: asset.uri, // Use URI as temporary S3 key
+        index: idx,
+        subcategory: subcategoryName,
+        isOptimistic: true,
+      };
+
+      const currentImages = sectionImages[catName] || [];
+      const updatedImages = {
+        ...sectionImages,
+        [catName]: [...currentImages, optimisticImage],
+      };
+      onSectionImagesChange(updatedImages);
+
+      // 2. Perform actual upload
       await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData });
-      await refetch();
+
+      // 3. Silent refetch in background
+      refetch();
     } catch (error) {
       console.error('Upload failed', error);
     } finally {
@@ -223,8 +255,8 @@ export const JobDocsSection = ({
             <Icon name="close" size={24} color="white" />
           </TouchableOpacity>
           {previewImage && (
-            <Image
-              source={{ uri: previewImage }}
+            <LoadingImage
+              uri={previewImage}
               className="w-full h-3/4 rounded-2xl"
               resizeMode="contain"
             />
@@ -427,68 +459,39 @@ const AccordionItem = ({
   };
 
   const renderSlots = (subs: any[] = [], groupName?: string) => {
-    const total = subs.length;
+    const totalRequired = subs.length;
+
+    // Get images belonging to this section/group
     const groupImages = groupName
       ? images.filter(
           (img) => img.subcategory === groupName || subs.some((s) => s.name === img.subcategory)
         )
       : images;
 
-    const displaySlots = Math.max(total, groupImages.length) + 1;
+    // Separate required images from extra images
+    const requiredImages = subs.map((sub) =>
+      groupImages.find((img) => img.subcategory === sub.name)
+    );
+    const extraImages = groupImages.filter(
+      (img) => !subs.some((sub) => sub.name === img.subcategory)
+    );
 
     return (
       <View className="flex-row flex-wrap justify-between">
-        {[...Array(displaySlots)].map((_, idx) => {
-          const sub = subs[idx];
-          const existingImage = groupImages.find((img: any) =>
-            sub ? img.subcategory === sub.name : img.index === idx && !img.subcategory
-          );
-          const isAddMoreSlot = idx >= total && !existingImage;
-
+        {/* 1. Required Slots */}
+        {subs.map((sub, idx) => {
+          const existingImage = requiredImages[idx];
           return (
             <View
-              key={idx}
+              key={`req-${idx}`}
               className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
               style={{
-                borderColor: existingImage
-                  ? 'transparent'
-                  : isAddMoreSlot
-                  ? '#00AB55'
-                  : colors.primary.main,
-                backgroundColor: isDark
-                  ? isAddMoreSlot
-                    ? '#00AB5510'
-                    : colors.primary.main + '10'
-                  : isAddMoreSlot
-                  ? '#00AB5508'
-                  : colors.primary.main + '05',
+                borderColor: existingImage ? 'transparent' : colors.primary.main,
+                backgroundColor: isDark ? colors.primary.main + '10' : colors.primary.main + '05',
               }}
             >
               {existingImage ? (
-                <>
-                  <Image
-                    source={{ uri: existingImage.uri }}
-                    className="w-full h-full"
-                    resizeMode="cover"
-                  />
-                  <TouchableOpacity
-                    onPress={() => onPreview(existingImage.uri)}
-                    className="absolute top-2 left-2 p-1.5 bg-black/40 rounded-full"
-                  >
-                    <Icon name="eye-outline" size={16} color="white" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => onDelete(existingImage)}
-                    className="absolute top-2 right-2 p-1.5 bg-red-500/80 rounded-full"
-                  >
-                    <Icon name="trash-can-outline" size={16} color="white" />
-                  </TouchableOpacity>
-                  <View className="absolute bottom-0 left-0 right-0 p-1.5 bg-black/40">
-                    <Text className="text-[9px] text-white font-bold text-center" numberOfLines={1}>
-                      {existingImage.subcategory?.replace(/-/g, ' ')}
-                    </Text>
-                  </View>
-                </>
+                renderFilledSlot(existingImage, false)
               ) : (
                 <TouchableOpacity
                   onPress={() => setPickerIndex({ idx, groupName })}
@@ -496,9 +499,7 @@ const AccordionItem = ({
                   className="w-full h-full items-center justify-center p-2"
                 >
                   {uploadingSlots[`${groupName || title}-${idx}`] ? (
-                    <View className="items-center justify-center w-full h-full bg-black/5">
-                      <ActivityIndicator size="small" color={colors.primary.main} />
-                    </View>
+                    <ActivityIndicator size="small" color={colors.primary.main} />
                   ) : (
                     <>
                       <View className="absolute inset-0">
@@ -506,23 +507,24 @@ const AccordionItem = ({
                           <Image
                             source={(JobDocsThumbnails as any)[sub.thumbnail]}
                             className="w-full h-full"
-                            style={{ opacity: isDark ? 0.2 : 0.1 }}
+                            style={{ opacity: 0.3 }}
                             resizeMode="cover"
                           />
                         )}
                       </View>
                       <Icon
-                        name={isAddMoreSlot ? 'image-plus' : 'camera-plus-outline'}
+                        name="camera-plus-outline"
                         size={32}
-                        color={isAddMoreSlot ? '#00AB55' : colors.text}
-                        style={{ opacity: 0.5, marginBottom: 8 }}
+                        color={colors.text}
+                        style={{ opacity: 0.5, marginBottom: 4 }}
                       />
                       <Text
                         className="text-[10px] font-black text-center mx-2"
-                        style={{ color: isAddMoreSlot ? '#00AB55' : colors.text }}
+                        style={{ color: colors.text }}
                       >
-                        {isAddMoreSlot ? 'Add Extra' : sub?.name || `${title} ${idx + 1}`}
+                        {sub.name}
                       </Text>
+                      <Text className="text-[8px] font-bold text-slate-400 mt-1">CAPTURE</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -530,9 +532,67 @@ const AccordionItem = ({
             </View>
           );
         })}
+
+        {/* 2. Extra Uploaded Slots */}
+        {extraImages.map((img, idx) => (
+          <View
+            key={`extra-filled-${idx}`}
+            className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
+            style={{ borderColor: 'transparent' }}
+          >
+            {renderFilledSlot(img, true)}
+          </View>
+        ))}
+
+        {/* 3. The Final "Add more" Slot */}
+        <View
+          className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
+          style={{
+            borderColor: '#00AB55',
+            backgroundColor: isDark ? '#00AB5510' : '#00AB5508',
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => setPickerIndex({ idx: totalRequired + extraImages.length, groupName })}
+            className="w-full h-full items-center justify-center"
+          >
+            <View className="w-10 h-10 rounded-full bg-[#00AB5520] items-center justify-center mb-2">
+              <Icon name="plus" size={24} color="#00AB55" />
+            </View>
+            <Text className="text-[12px] font-black text-[#00AB55]">Add more</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
+
+  const renderFilledSlot = (img: SectionImage, isExtra: boolean) => (
+    <>
+      <LoadingImage uri={img.uri} className="w-full h-full" resizeMode="cover" />
+      <TouchableOpacity
+        onPress={() => onPreview(img.uri)}
+        className="absolute top-2 left-2 p-1.5 bg-black/40 rounded-full"
+      >
+        <Icon name="eye-outline" size={16} color="white" />
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => onDelete(img)}
+        className="absolute top-2 right-2 p-1.5 bg-red-500/80 rounded-full"
+      >
+        <Icon name="trash-can-outline" size={16} color="white" />
+      </TouchableOpacity>
+      <View
+        className={`absolute bottom-0 left-0 right-0 ${
+          isExtra ? 'py-1.5 flex-row items-center justify-center gap-1' : 'p-1.5'
+        } bg-black/40`}
+      >
+        <Text className="text-[9px] text-white font-bold text-center" numberOfLines={1}>
+          {img.subcategory?.replace(/-/g, ' ')}
+        </Text>
+        {isExtra && <Icon name="chevron-down" size={10} color="white" />}
+      </View>
+    </>
+  );
 
   const displayTotal = cardGroups
     ? cardGroups.reduce((acc, g) => acc + (g.subCategories?.length || 0), 0)
@@ -627,3 +687,34 @@ const AccordionItem = ({
     </View>
   );
 };
+
+const loadedUris = new Set<string>();
+
+const LoadingImage = React.memo(({ uri, className, style, resizeMode }: any) => {
+  const [loading, setLoading] = useState(!loadedUris.has(uri));
+  const { colors } = useTheme();
+
+  return (
+    <View className="w-full h-full justify-center items-center">
+      {loading && (
+        <View className="absolute z-10 w-full h-full justify-center items-center bg-black/5">
+          <ActivityIndicator size="small" color={colors.primary.main} />
+        </View>
+      )}
+      <Image
+        source={{ uri }}
+        style={style}
+        className={className}
+        resizeMode={resizeMode}
+        onLoadStart={() => {
+          if (!loadedUris.has(uri)) setLoading(true);
+        }}
+        onLoadEnd={() => {
+          loadedUris.add(uri);
+          setLoading(false);
+        }}
+        onError={() => setLoading(false)}
+      />
+    </View>
+  );
+});

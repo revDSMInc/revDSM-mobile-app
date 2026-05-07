@@ -218,7 +218,7 @@ export const ToolsSection = ({
         {/* Progress Bar for Risk Job */}
         {riskJob && riskJob.status !== 'completed' && (
           <View className="mt-3 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-            <View className="h-full bg-emerald-500" style={{ width: `${riskJob.progress}%` }} />
+            <View className="h-full bg-[#4CBB17]" style={{ width: `${riskJob.progress}%` }} />
           </View>
         )}
         {riskJob && riskJob.status !== 'completed' && (

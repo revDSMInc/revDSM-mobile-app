@@ -194,7 +194,7 @@ export default function LeadsPage() {
               userLocation.longitude,
               item.location.coordinates[1],
               item.location.coordinates[0]
-            ) <= 1.0
+            ) <= 0.15 // Web Parity: 0.15 miles for address-level accuracy
           : false;
 
       const scheduledTime = getScheduledDateTime(item);

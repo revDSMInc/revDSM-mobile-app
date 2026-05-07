@@ -2,26 +2,37 @@
  * Validation utilities for Job Builder sections
  */
 
+type ValidationResult = { valid: boolean; error?: string };
+
 const n = (v: any) => parseFloat(v) || 0;
 
-export const validateGutter = (data: any, calculatorData: any) => {
-  // Helper for case-insensitive key lookup (Parity with web app)
+export const validateGutter = (data: any, calculatorData: any): ValidationResult => {
+
   const getVal = (baseKey: string) => {
     if (!calculatorData) return 0;
     const lowerKey = baseKey.toLowerCase();
-    const key = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
-    return key ? n(calculatorData[key]) : 0;
+    const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
+    const topVal = topKey ? n(calculatorData[topKey]) : 0;
+    if (topVal > 0) return topVal;
+    const extras = calculatorData.extras || {};
+    const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
+    const extrasVal = extrasKey ? n(extras[extrasKey]) : 0;
+    if (extrasVal > 0) return extrasVal;
+    const inputs = calculatorData.inputs || {};
+    const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
+    return inputKey ? n(inputs[inputKey]) : 0;
   };
 
-  const fiveInchFeet = getVal('gutter5Inch');
-  const sixInchFeet = getVal('gutter6Inch');
-  const sevenInchFeet = getVal('gutter7Inch');
-  const eightInchFeet = getVal('gutter8Inch');
-  const dsFootageAvail = getVal('downspoutFootage');
-  const totalAvailable =
-    fiveInchFeet + sixInchFeet + sevenInchFeet + eightInchFeet + dsFootageAvail;
+  const availableFootage = {
+    '5" K-Style': getVal('gutter5DsE'),
+    '6" K-Style': getVal('gutter6Ft1'),
+    '7" K-Style': getVal('gutter7DsE'),
+    '8" K-Style': getVal('gutter8Inch'),
+    downspoutPool: getVal('downspoutFootage'),
+  };
 
-  if (totalAvailable === 0) return { valid: true };
+  const totalAvail = Math.round(Object.values(availableFootage).reduce((a, b) => a + b, 0));
+  if (totalAvail === 0) return { valid: true };
 
   const gutterFeet = (data.gutterColorsMulti || []).reduce((sum: number, combo: any) => {
     return sum + (combo.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
@@ -39,61 +50,88 @@ export const validateGutter = (data: any, calculatorData: any) => {
     );
   }, 0);
 
-  const allocated = gutterFeet + dsFeet;
-  const remaining = totalAvailable - allocated;
+  const allocatedTotal = Math.round(gutterFeet + dsFeet);
+  const remainingTotal = totalAvail - allocatedTotal;
 
-  // Check if root partial is set OR if any combo has it (Web Parity)
-  const hasPartial = data.partial || (data.gutterColorsMulti || []).some((c: any) => c.partial);
-  if (!hasPartial) return { valid: false, error: 'Gutter Partial selection required' };
+  if (allocatedTotal > 0 && !data.partial) {
+    return { valid: false, error: 'Gutter Partial selection required' };
+  }
 
-  if (Math.abs(remaining) > 0.1) {
+  if (Math.abs(remainingTotal) > 0.1) {
     return {
       valid: false,
       error:
-        remaining > 0
-          ? `${remaining.toFixed(1)} ft remaining`
-          : `Over-allocated by ${Math.abs(remaining).toFixed(1)} ft`,
+        remainingTotal > 0
+          ? `${remainingTotal.toFixed(1)} ft remaining`
+          : `Over-allocated by ${Math.abs(remainingTotal).toFixed(1)} ft`,
     };
   }
 
-  // Check combos
+  // Combinations
   for (const combo of data.gutterColorsMulti || []) {
-    const comboTotal = (combo.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
-    if (comboTotal > 0) {
-      if (!combo.color)
-        return { valid: false, error: 'Color required for all gutter combinations' };
+    const hasMeas = (combo.measurements || []).some((m: any) => n(m) > 0);
+    if (hasMeas) {
+      if (!combo.color) return { valid: false, error: 'Color required for all combinations' };
       if (
         combo.mitersOutside === '' ||
         combo.mitersInside === '' ||
         combo.endCapsRights === '' ||
         combo.endCapsLefts === ''
       ) {
-        return { valid: false, error: 'Miters and End Caps required for all gutter combinations' };
+        return { valid: false, error: 'Miters and End Caps required for all combinations' };
       }
     }
   }
 
-  // Check downspouts
+  // Downspouts
   for (const ds of data.downspoutsMulti || []) {
-    const dsTotal = n(ds.footage) + n(ds.aElbows) + n(ds.bElbows); // basic check
-    if (dsTotal > 0) {
+    const hasVal = [
+      'footage',
+      'aElbows',
+      'bElbows',
+      'roundElbow',
+      'offsetElbows',
+      'spoutSavers',
+    ].some((f) => n(ds[f]) > 0);
+    if (hasVal) {
       if (!ds.type || !ds.color)
         return { valid: false, error: 'Type and Color required for all downspouts' };
     }
   }
 
+  // Extras — use getVal so they are found in extras/inputs/root
+  if (getVal('replaceCorner') > 0 && !data.extrasColors?.replaceCorner)
+    return { valid: false, error: 'Replace Corner Color required' };
+  if (getVal('extendedSplashGuard') > 0 && !data.extrasColors?.extendedSplashGuard)
+    return { valid: false, error: 'Splash Guard Color required' };
+  if (getVal('extendedSplashGuard032') > 0 && !data.extrasColors?.extendedSplashGuard032)
+    return { valid: false, error: 'Splash Guard (.032) Color required' };
+
+  const modifyHeight = n(data.modifyHeight ?? getVal('modifyHeight'));
+  if (modifyHeight > 0 && (data.modifyHeightLocations || []).length === 0) {
+    return { valid: false, error: 'Modify Height location required' };
+  }
+
   return { valid: true };
 };
 
-export const validateLeafFilter = (data: any, calculatorData: any) => {
+export const validateLeafFilter = (data: any, calculatorData: any): ValidationResult => {
   const n = (v: any) => parseFloat(v) || 0;
 
   // Helper for case-insensitive key lookup (Parity with web app)
   const getVal = (baseKey: string) => {
     if (!calculatorData) return 0;
     const lowerKey = baseKey.toLowerCase();
-    const key = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
-    return key ? n(calculatorData[key]) : 0;
+    const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
+    const topVal = topKey ? n(calculatorData[topKey]) : 0;
+    if (topVal > 0) return topVal;
+    const inputs = calculatorData.inputs || {};
+    const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
+    const inputVal = inputKey ? n(inputs[inputKey]) : 0;
+    if (inputVal > 0) return inputVal;
+    const extras = calculatorData.extras || {};
+    const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
+    return extrasKey ? n(extras[extrasKey]) : 0;
   };
 
   const availableFootage = {
@@ -167,44 +205,105 @@ export const validateLeafFilter = (data: any, calculatorData: any) => {
   return { valid: true };
 };
 
-export const validateSoffit = (data: any, calculatorData: any) => {
-  const vinylFootage = n(calculatorData?.vinylSoffit);
-  const porchFootage = n(calculatorData?.porchCeiling);
+export const validateSoffit = (data: any, calculatorData: any): ValidationResult => {
+  const getExtrasVal = (key: string) => {
+    if (!calculatorData) return 0;
+    const lower = key.toLowerCase();
+    // root
+    const rk = Object.keys(calculatorData).find((k) => k.toLowerCase() === lower);
+    const rv = rk ? n(calculatorData[rk]) : 0;
+    if (rv > 0) return rv;
+    // extras (soffit keys live here)
+    const extras = calculatorData.extras || {};
+    const ek = Object.keys(extras).find((k) => k.toLowerCase() === lower);
+    const ev = ek ? n(extras[ek]) : 0;
+    if (ev > 0) return ev;
+    // inputs
+    const inputs = calculatorData.inputs || {};
+    const ik = Object.keys(inputs).find((k) => k.toLowerCase() === lower);
+    return ik ? n(inputs[ik]) : 0;
+  };
+
+  const vinylFootage = getExtrasVal('vinylSoffit');
+  const porchFootage = getExtrasVal('porchCeiling');
+  const nailerFootage = getExtrasVal('nailerBuildOut');
+
+  // If no footage at all, section is optional – pass
+  if (vinylFootage === 0 && porchFootage === 0 && nailerFootage === 0) return { valid: true };
 
   if (vinylFootage > 0) {
     const v = data.vinyl || {};
-    if (!v.type || !v.soffitType || !v.color)
-      return { valid: false, error: 'Vinyl Soffit specs required' };
+    if (!v.type) return { valid: false, error: 'Vinyl Soffit: Type required' };
+    if (!v.soffitType) return { valid: false, error: 'Vinyl Soffit: Soffit Type required' };
+    if (!v.color) return { valid: false, error: 'Vinyl Soffit: Color required' };
   }
   if (porchFootage > 0) {
     const p = data.porch || {};
-    if (!p.location || p.location.length === 0 || !p.soffitType || !p.color)
-      return { valid: false, error: 'Porch Ceiling specs and location required' };
+    if (!p.location || (Array.isArray(p.location) ? p.location.length === 0 : !p.location))
+      return { valid: false, error: 'Porch Ceiling: Location required' };
+    if (!p.soffitType) return { valid: false, error: 'Porch Ceiling: Soffit Type required' };
+    if (!p.color) return { valid: false, error: 'Porch Ceiling: Color required' };
+  }
+  if (nailerFootage > 0) {
+    const na = data.nailer || {};
+    if (!na.type) return { valid: false, error: 'Nailer Build Out: Type required' };
   }
   return { valid: true };
 };
 
-export const validateFascia = (data: any, calculatorData: any) => {
-  const wrapFootage = n(calculatorData?.trimWrap);
-  const boardFootage = n(calculatorData?.fasciaBoard);
+export const validateFascia = (data: any, calculatorData: any): ValidationResult => {
+  const getExtrasVal = (key: string) => {
+    if (!calculatorData) return 0;
+    const lower = key.toLowerCase();
+    // root
+    const rk = Object.keys(calculatorData).find((k) => k.toLowerCase() === lower);
+    const rv = rk ? n(calculatorData[rk]) : 0;
+    if (rv > 0) return rv;
+    // extras (fascia keys live here)
+    const extras = calculatorData.extras || {};
+    const ek = Object.keys(extras).find((k) => k.toLowerCase() === lower);
+    const ev = ek ? n(extras[ek]) : 0;
+    if (ev > 0) return ev;
+    // inputs
+    const inputs = calculatorData.inputs || {};
+    const ik = Object.keys(inputs).find((k) => k.toLowerCase() === lower);
+    return ik ? n(inputs[ik]) : 0;
+  };
+
+  const wrapFootage = getExtrasVal('trimWrap');
+  const boardFootage = getExtrasVal('fasciaBoard');
+  const aluminumFootage = getExtrasVal('aluminumFasciaBoard');
+
+  // If no footage at all, section is optional – pass
+  if (wrapFootage === 0 && boardFootage === 0 && aluminumFootage === 0) return { valid: true };
 
   if (wrapFootage > 0) {
     const w = data.wrap || {};
-    if (!w.type || !w.size || !w.color)
-      return { valid: false, error: 'Fascia Wrap specs required' };
+    if (!w.type) return { valid: false, error: 'Fascia Wrap: Type required' };
+    if (!w.size) return { valid: false, error: 'Fascia Wrap: Size required' };
+    if (!w.color) return { valid: false, error: 'Fascia Wrap: Color required' };
   }
   if (boardFootage > 0) {
     const b = data.boards || {};
-    if (!b.type || !b.size || !b.boardType)
-      return { valid: false, error: 'Fascia Board specs required' };
+    if (!b.type) return { valid: false, error: 'Fascia Boards: Type required' };
+    if (!b.size) return { valid: false, error: 'Fascia Boards: Size required' };
+    if (!b.boardType) return { valid: false, error: 'Fascia Boards: Board Type required' };
   }
+  // aluminumBoards only requires footage (auto-locked) — no extra user fields needed
   return { valid: true };
 };
 
-export const validateStep = (stepId: string, jobState: any, calculatorData: any) => {
+export const validateMisc = (_data: any, _calculatorData: any): ValidationResult => {
+  // Misc / Additional section has no mandatory fields — always valid
+  return { valid: true };
+};
+
+export const validateStep = (stepId: string, jobState: any, calculatorData: any): ValidationResult => {
   if (stepId === 'gutter') return validateGutter(jobState.gutter || {}, calculatorData);
   if (stepId === 'leaffilter') return validateLeafFilter(jobState.leaffilter || {}, calculatorData);
   if (stepId === 'soffit') return validateSoffit(jobState.soffit || {}, calculatorData);
   if (stepId === 'fascia') return validateFascia(jobState.fascia || {}, calculatorData);
+  if (stepId === 'additional') return validateMisc(jobState.additional || {}, calculatorData);
   return { valid: true };
 };
+

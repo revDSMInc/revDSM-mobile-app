@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Feather from 'react-native-vector-icons/Feather';
+import JobService from '../../../services/api/JobService';
 import { Section, SubHeader, InputField } from './SharedElements';
 import { pricing } from '../../../utils/calculator/pricing-data';
 
@@ -16,6 +17,8 @@ export const CalculatorForm = ({
   setShowTrackerModal,
   isAlreadyInTracker,
   handleAddJobToTracker,
+  refresh,
+  active,
   lead,
   isDark,
   colors,
@@ -24,6 +27,19 @@ export const CalculatorForm = ({
 }: any) => {
   const hasGutterInput =
     Number(inputs.gutter5DsE) > 0 || Number(inputs.gutter6Ft1) > 0 || Number(inputs.gutter7DsE) > 0;
+  const hasGutterData =
+    hasGutterInput ||
+    ['miters', 'endCaps', 'spoutSavers'].some((k) => Number(inputs[k]) > 0) ||
+    [
+      'wedges',
+      'straps',
+      'modifyHeight',
+      'replaceCorner',
+      'groundSpout',
+      'extendedSplashGuard',
+      'extendedSplashGuard032',
+    ].some((k) => Number(extras[k]) > 0);
+
   const hasVersaOrFilter = [1, 2, 3].some(
     (s) =>
       Number(inputs[`versa6Ft${s}`]) > 0 ||
@@ -31,6 +47,20 @@ export const CalculatorForm = ({
       Number(inputs[`filter45Ft${s}`]) > 0
   );
   const hasVersaMax = Number(inputs.versaMaxFt1) > 0;
+  const hasProtectionData =
+    hasVersaMax ||
+    hasVersaOrFilter ||
+    ['csr', 'cornersFilter', 'sawzallHanger', 'removeProtection', 'ribbedRoof'].some(
+      (k) => Number(extras[k]) > 0
+    );
+
+  const hasSoffitData = ['vinylSoffit', 'porchCeiling', 'nailerBuildOut'].some(
+    (k) => Number(extras[k]) > 0
+  );
+  const hasFasciaData = ['trimWrap', 'fasciaBoard', 'aluminumFasciaBoard'].some(
+    (k) => Number(extras[k]) > 0
+  );
+  const hasAdditionalData = Number(inputs.extraLabor) > 0 || Number(inputs.ckToInstallers) > 0;
 
   return (
     <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false}>
@@ -52,8 +82,8 @@ export const CalculatorForm = ({
                 {lead?.customerDetails?.firstName
                   ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
                   : lead?.title || 'Lead Center'}{' '}
-                <Text className="text-xs font-medium text-text-secondary">
-                  {lead.leadTime || ''} Lead
+                <Text className="text-lg font-black text-text-primary">
+                  - {lead.leadTime || ''} Lead
                 </Text>
               </Text>
               <View className="flex-row items-center mt-0.5">
@@ -81,6 +111,30 @@ export const CalculatorForm = ({
           desc="Gutter installation and accessories"
           expanded={expanded}
           onToggle={onToggle}
+          onClear={
+            hasGutterData
+              ? () =>
+                  onUpdate({
+                    inputs: {
+                      gutter5DsE: '',
+                      gutter6Ft1: '',
+                      gutter7DsE: '',
+                      miters: '',
+                      endCaps: '',
+                      spoutSavers: '',
+                    },
+                    extras: {
+                      wedges: '',
+                      straps: '',
+                      modifyHeight: '',
+                      replaceCorner: '',
+                      groundSpout: '',
+                      extendedSplashGuard: '',
+                      extendedSplashGuard032: '',
+                    },
+                  })
+              : null
+          }
         >
           <SubHeader title="All Stories" />
           <InputField
@@ -172,6 +226,32 @@ export const CalculatorForm = ({
           desc="Gutter protection system"
           expanded={expanded}
           onToggle={onToggle}
+          onClear={
+            hasProtectionData
+              ? () =>
+                  onUpdate({
+                    inputs: {
+                      versaMaxFt1: '',
+                      versa6Ft1: '',
+                      versa7Ft1: '',
+                      filter45Ft1: '',
+                      versa6Ft2: '',
+                      versa7Ft2: '',
+                      filter45Ft2: '',
+                      versa6Ft3: '',
+                      versa7Ft3: '',
+                      filter45Ft3: '',
+                    },
+                    extras: {
+                      csr: '',
+                      cornersFilter: '',
+                      sawzallHanger: '',
+                      removeProtection: '',
+                      ribbedRoof: '',
+                    },
+                  })
+              : null
+          }
         >
           <SubHeader title="All Stories" />
           <InputField
@@ -302,6 +382,14 @@ export const CalculatorForm = ({
           desc="Soffit installation services"
           expanded={expanded}
           onToggle={onToggle}
+          onClear={
+            hasSoffitData
+              ? () =>
+                  onUpdate({
+                    extras: { vinylSoffit: '', porchCeiling: '', nailerBuildOut: '' },
+                  })
+              : null
+          }
         >
           <InputField
             label="Vinyl Soffit"
@@ -337,6 +425,14 @@ export const CalculatorForm = ({
           desc="Fascia board and trim services"
           expanded={expanded}
           onToggle={onToggle}
+          onClear={
+            hasFasciaData
+              ? () =>
+                  onUpdate({
+                    extras: { trimWrap: '', fasciaBoard: '', aluminumFasciaBoard: '' },
+                  })
+              : null
+          }
         >
           <InputField
             label="Trim Wrap (Fascia)"
@@ -372,6 +468,11 @@ export const CalculatorForm = ({
           desc="Extra labor and services"
           expanded={expanded}
           onToggle={onToggle}
+          onClear={
+            hasAdditionalData
+              ? () => onUpdate({ inputs: { extraLabor: '', ckToInstallers: '' } })
+              : null
+          }
         >
           <InputField
             label="Extra Labor"
@@ -388,7 +489,7 @@ export const CalculatorForm = ({
           />
         </Section>
 
-        <View className="mb-24 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] overflow-hidden">
+        <View className="mb-8 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] overflow-hidden">
           <View className="p-5 flex-row items-center justify-between">
             <View className="flex-row items-center">
               <View className="w-12 h-12 rounded-2xl bg-[#E5D9FF] items-center justify-center mr-4">
@@ -474,28 +575,53 @@ export const CalculatorForm = ({
           </View>
         </View>
 
-        <View className="flex-row gap-3 mt-4 mb-24">
+        <View className="pb-24">
+          {isAlreadyInTracker ? (
+            <View className="gap-3">
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    const jobs = await JobService.getJobs();
+                    const jobToRemove = jobs.find((j: any) => j.calculatorId === active?._id);
+                    if (jobToRemove?._id || jobToRemove?.id) {
+                      await JobService.deleteJob((jobToRemove._id || jobToRemove.id)!);
+                      if (refresh) refresh();
+                    }
+                  } catch (e) {
+                    console.error('Failed to remove job', e);
+                  }
+                }}
+                className="w-full bg-[#FF5630] py-4 rounded-xl items-center justify-center border border-red-200"
+              >
+                <Text className="text-white font-black text-sm text-center px-4">
+                  {active?.name || ''} has already been added to job tracker. Click to remove.
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleAddJobToTracker}
+                className="w-full h-12 bg-[#4CBB17] rounded-xl flex-row items-center justify-center"
+              >
+                <Text className="text-white font-black text-sm mr-2">Go to Job Tracker</Text>
+                <Feather name="arrow-right" size={18} color="white" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              onPress={handleAddJobToTracker}
+              className="w-full h-12 bg-[#4CBB17] rounded-xl items-center justify-center"
+            >
+              <Text className="text-white font-black text-sm">Add This Job to Job Tracker</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             onPress={onClose}
-            className="flex-1 h-12 rounded-xl items-center justify-center border-2 border-[#4CBB17]"
+            className="w-full h-12 bg-[#4CBB17] rounded-xl items-center justify-center mt-3"
           >
-            <Text className="text-[12px] font-black  text-[#4CBB17]">Back</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleAddJobToTracker}
-            className={`flex-[2] h-12 rounded-xl items-center justify-center shadow-lg ${
-              isAlreadyInTracker || results.items.length > 0
-                ? 'bg-[#4CBB17] shadow-green-600/30'
-                : 'bg-[#2169f3] shadow-blue-600/30'
-            }`}
-          >
-            <Text className="text-white text-[12px] font-black ">
-              {isAlreadyInTracker
-                ? 'Go to Job Tracker'
-                : results.items.length > 0
-                ? 'Add This Job into Job Tracker'
-                : 'Go to Job Tracker'}
-            </Text>
+            <View className="flex-row items-center">
+              <Feather name="arrow-left" size={18} color="white" />
+              <Text className="text-white font-black text-sm ml-2">Back</Text>
+            </View>
           </TouchableOpacity>
         </View>
       </View>

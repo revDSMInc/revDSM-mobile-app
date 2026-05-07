@@ -50,7 +50,17 @@ export const SubHeader = ({ title }: any) => (
   <Text className="text-xs font-semibold text-[#637381] mt-6 mb-3">{title}</Text>
 );
 
-export const Section = ({ title, id, children, icon, color, desc, expanded, onToggle }: any) => (
+export const Section = ({
+  title,
+  id,
+  children,
+  icon,
+  color,
+  desc,
+  expanded,
+  onToggle,
+  onClear,
+}: any) => (
   <View className="mb-6 bg-white overflow-hidden rounded-[24px] border border-slate-100 shadow-sm">
     <TouchableOpacity
       onPress={() => onToggle(id)}
@@ -70,7 +80,20 @@ export const Section = ({ title, id, children, icon, color, desc, expanded, onTo
           {desc && <Text className="text-[9px] font-bold text-slate-400 ">{desc}</Text>}
         </View>
       </View>
-      <Ionicons name={expanded[id] ? 'chevron-up' : 'chevron-down'} size={14} color="#637381" />
+      <View className="flex-row items-center">
+        {onClear && (
+          <TouchableOpacity
+            onPress={(e) => {
+              e.stopPropagation();
+              onClear();
+            }}
+            className="mr-3 px-3 py-1.5 border border-slate-200 rounded-xl"
+          >
+            <Text className="text-[11px] font-extrabold text-[#FF5630]">Clear</Text>
+          </TouchableOpacity>
+        )}
+        <Ionicons name={expanded[id] ? 'chevron-up' : 'chevron-down'} size={14} color="#637381" />
+      </View>
     </TouchableOpacity>
     {expanded[id] && <View className="px-5 pb-6">{children}</View>}
   </View>
@@ -85,23 +108,27 @@ export const InputField = ({
   unit = '',
   onUpdate,
   highlighted = false,
+  red = false,
 }: any) => {
   const [localValue, setLocalValue] = useState(String(value || ''));
   useEffect(() => {
     setLocalValue(String(value || ''));
   }, [value]);
 
-  const bgColor = highlighted ? '#fff5da' : 'white';
+  const bgColor = red ? '#FFF1F0' : highlighted ? '#fff5da' : 'white';
+  const borderColor = red ? '#FF4D4F' : '#919EAB33';
 
   return (
     <View className="relative mt-2 mb-3">
       <View className="absolute -top-[7px] left-3 z-10 px-1" style={{ backgroundColor: bgColor }}>
-        <Text className="text-[10px] font-black text-[#1C252E] ">{label}</Text>
+        <Text className={`text-[10px] font-black ${red ? 'text-[#FF4D4F]' : 'text-[#1C252E]'} `}>
+          {label}
+        </Text>
       </View>
       <View
         className="flex-row items-center border rounded-lg"
         style={{
-          borderColor: '#919EAB33',
+          borderColor: borderColor,
           backgroundColor: bgColor,
           paddingVertical: 2,
           paddingHorizontal: 14,

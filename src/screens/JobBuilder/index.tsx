@@ -21,6 +21,7 @@ import { MiscSection } from '../../widgets/components/job-builder/MiscSection';
 import { SummarySection } from '../../widgets/components/job-builder/SummarySection';
 import { LeadService } from '../../services/api/leads';
 import { validateStep } from '../../utils/job-builder-validation';
+import { useAuth } from '../../hooks/useAuth';
 import { Alert } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
@@ -63,6 +64,8 @@ export default function JobBuilderScreen() {
   const activeStep = availableStepsInfo[currentStepIndex];
 
   // Auto-save logic
+  const { user } = useAuth();
+
   useEffect(() => {
     if (!leadId) return;
 
@@ -73,10 +76,15 @@ export default function JobBuilderScreen() {
           ...outcomeForm,
           result: 'Sale',
           jobBuilder: jobState,
-          LFCalculator: calculatorData,
+          LFCalculator: {
+            ...calculatorData,
+            createdBy: user?._id || user?.id || calculatorData?.createdBy,
+            appointmentId: calculatorData?.appointmentId || leadId,
+            title: calculatorData?.title || 'Job Builder Estimate',
+          },
           calculatorId: calculatorData?._id,
           selectedCalculatorId: calculatorData?._id,
-          selectedAppointmentId: calculatorData?.appointmentId,
+          selectedAppointmentId: calculatorData?.appointmentId || leadId,
         };
         await LeadService.updateLeadOutcome(leadId, payload);
       } catch (error) {
@@ -87,7 +95,7 @@ export default function JobBuilderScreen() {
     }, 2000); // 2 second debounce
 
     return () => clearTimeout(timer);
-  }, [jobState, leadId, outcomeForm, calculatorData]);
+  }, [jobState, leadId, outcomeForm, calculatorData, user]);
 
   const handleUpdate = useCallback((section: string, field: string, value: any) => {
     if (!section) {
@@ -124,10 +132,9 @@ export default function JobBuilderScreen() {
       const validation = validateStep(activeStep?.category, jobState, calculatorData);
 
       if (index > currentStepIndex) {
-        if (!validation.valid) {
-          setValidationModal({ visible: true, error: validation.error || '' });
-          return;
-        }
+        // User said: "tabs cannot be clicked by user to move only from next and back button"
+        // So we block ALL forward navigation via tabs
+        return;
       }
 
       setCurrentStepIndex(index);
@@ -147,16 +154,14 @@ export default function JobBuilderScreen() {
               : isCompleted
               ? 'bg-emerald-500 border-emerald-500'
               : step.isLocked
-              ? isDark
-                ? 'bg-slate-800 border-slate-700'
-                : 'bg-slate-100 border-slate-200'
+              ? 'bg-[#FAD9D3] border-[#FE6644]'
               : isDark
               ? 'bg-[#1C1C1E] border-[#2C2C2E]'
               : 'bg-white border-slate-200'
           }`}
         >
           {step.isLocked ? (
-            <Text className="text-[10px] font-black text-slate-400">N/A</Text>
+            <Icon name="lock" size={16} color="#FE6644" />
           ) : isCompleted ? (
             <Icon name="check" size={18} color="white" />
           ) : (
@@ -187,6 +192,7 @@ export default function JobBuilderScreen() {
             jobState={jobState}
             onUpdate={handleUpdate}
             calculatorData={calculatorData}
+            jobSummaryItems={calculatorData?.jobSummaryItems || []}
           />
         );
       case 'leaffilter':
@@ -304,57 +310,52 @@ export default function JobBuilderScreen() {
           <View
             className="px-6 border-t"
             style={{
-              paddingBottom: insets.bottom + 20,
-              paddingTop: 10,
+              paddingBottom:  10,
+              paddingTop: 5,
               backgroundColor: colors.card,
               borderColor: colors.border,
             }}
           >
-            {/* Inline Validation Warning */}
-            {(() => {
-              const validation = validateStep(activeStep?.category, jobState, calculatorData);
-              if (!validation.valid) {
-                return (
-                  <View className="flex-row items-center justify-center bg-amber-50 py-2 mb-3 rounded-xl border border-amber-100">
-                    <Icon name="alert-circle" size={14} color="#D97706" />
-                    <Text className="text-[10px] font-black text-amber-700 ml-2  tracking-tight">
-                      {validation.error}
-                    </Text>
-                  </View>
-                );
-              }
-              return null;
-            })()}
-
-            <View className="flex-row gap-3">
-              <Pressable
-                onPress={() => {
-                  let prevIdx = currentStepIndex - 1;
-                  while (prevIdx >= 0 && availableStepsInfo[prevIdx].isLocked) {
-                    prevIdx--;
-                  }
-                  if (prevIdx >= 0) setCurrentStepIndex(prevIdx);
-                }}
-                disabled={(() => {
-                  let prevIdx = currentStepIndex - 1;
-                  while (prevIdx >= 0 && availableStepsInfo[prevIdx].isLocked) {
-                    prevIdx--;
-                  }
-                  return prevIdx < 0;
-                })()}
-                className={`flex-1 h-14 rounded-lg items-center justify-center border`}
-                style={{
-                  backgroundColor: currentStepIndex === 0 ? colors.background : colors.surface,
-                  borderColor: colors.border,
-                }}
-              >
-                <Text
-                  className={`font-black  text-[10px] tracking-widest`}
-                  style={{ color: currentStepIndex === 0 ? colors.textSecondary : colors.text }}
+            <View className="flex-row gap-4 justify-between">
+              {currentStepIndex > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    let prevIdx = currentStepIndex - 1;
+                    while (prevIdx >= 0 && availableStepsInfo[prevIdx].isLocked) {
+                      prevIdx--;
+                    }
+                    if (prevIdx >= 0) setCurrentStepIndex(prevIdx);
+                  }}
+                  className="p-1.5 rounded-lg items-center justify-center border"
+                  style={{
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                  }}
                 >
-                  Back
-                </Text>
-              </Pressable>
+                  <Text
+                    className="font-semibold text-[12px]"
+                    style={{ color: colors.text }}
+                  >
+                    Back
+                  </Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={handleClose}
+                  className="p-1.5 rounded-lg items-center justify-center border"
+                  style={{
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <Text
+                    className="font-semibold text-[12px]"
+                    style={{ color: colors.text }}
+                  >
+                    Cancel
+                  </Text>
+                </Pressable>
+              )}
 
               {currentStepIndex === availableStepsInfo.length - 1 ? (
                 <Pressable
@@ -366,32 +367,23 @@ export default function JobBuilderScreen() {
                     }
                     handleClose();
                   }}
-                  className={`flex-[2] h-14 rounded-lg items-center justify-center border-2`}
+                  disabled={!validateStep(activeStep?.category, jobState, calculatorData).valid}
+                  className="p-1.5 rounded-lg items-center justify-center"
                   style={{
-                    backgroundColor: validateStep(activeStep?.category, jobState, calculatorData)
-                      .valid
-                      ? isDark
-                        ? '#FFFFFF'
-                        : '#0F172A'
-                      : colors.surface,
-                    borderColor: validateStep(activeStep?.category, jobState, calculatorData).valid
-                      ? isDark
-                        ? '#FFFFFF'
-                        : '#0F172A'
-                      : colors.border,
+                    backgroundColor: validateStep(activeStep?.category, jobState, calculatorData).valid
+                      ? '#000000'
+                      : '#E2E8F0',
                   }}
                 >
                   <Text
-                    className="font-black  text-[10px] tracking-widest"
+                    className="font-semibold text-[12px]"
                     style={{
                       color: validateStep(activeStep?.category, jobState, calculatorData).valid
-                        ? isDark
-                          ? '#000000'
-                          : '#FFFFFF'
-                        : colors.textSecondary,
+                        ? '#FFFFFF'
+                        : '#94A3B8',
                     }}
                   >
-                    Finish & Close
+                    Finish
                   </Text>
                 </Pressable>
               ) : (
@@ -414,27 +406,34 @@ export default function JobBuilderScreen() {
                       setCurrentStepIndex(nextIdx);
                     }
                   }}
-                  className={`flex-[2] h-14 rounded-lg items-center justify-center border-2`}
+                  disabled={!validateStep(activeStep?.category, jobState, calculatorData).valid}
+                  className="p-1.5 flex-row rounded-lg items-center justify-center"
                   style={{
-                    backgroundColor: validateStep(activeStep?.category, jobState, calculatorData)
-                      .valid
-                      ? '#2563EB' // blue-600
-                      : colors.surface,
-                    borderColor: validateStep(activeStep?.category, jobState, calculatorData).valid
-                      ? '#2563EB'
-                      : colors.border,
+                    backgroundColor: validateStep(activeStep?.category, jobState, calculatorData).valid
+                      ? '#000000'
+                      : '#E2E8F0',
                   }}
                 >
                   <Text
-                    className="font-black  text-[10px] tracking-widest"
+                    className="font-semibold text-[12px]"
                     style={{
                       color: validateStep(activeStep?.category, jobState, calculatorData).valid
                         ? '#FFFFFF'
-                        : colors.textSecondary,
+                        : '#94A3B8',
                     }}
                   >
                     Next
                   </Text>
+                  <Icon
+                    name="arrow-right"
+                    size={18}
+                    color={
+                      validateStep(activeStep?.category, jobState, calculatorData).valid
+                        ? 'white'
+                        : '#94A3B8'
+                    }
+                    style={{ marginLeft: 8 }}
+                  />
                 </Pressable>
               )}
             </View>

@@ -171,7 +171,7 @@ export const useDealCalculator = (lead: any) => {
         );
       let myAppt = findMyAppt(appointments);
 
-      if (!myAppt && appointments.length === 0) {
+      if (!myAppt) {
         try {
           await LeadService.createAppointment({
             title: targetTitle,
@@ -185,7 +185,6 @@ export const useDealCalculator = (lead: any) => {
         } catch (err: any) {}
       }
 
-      if (!myAppt && appointments.length > 0) myAppt = appointments[0];
       if (!myAppt) return;
 
       const apptId = myAppt._id;
@@ -195,8 +194,11 @@ export const useDealCalculator = (lead: any) => {
       let calculatorsData = calcRes.data?.data || calcRes.data || [];
 
       if (calculatorsData.length === 0) {
+        const leadName = `${lead.customerDetails?.firstName || ''} ${
+          lead.customerDetails?.lastName || ''
+        }`.trim();
         const fullPayload = {
-          title: '.',
+          title: leadName || '.',
           position: 1,
           ...INITIAL_INPUTS,
           paymentMethod: 'check',
@@ -277,10 +279,14 @@ export const useDealCalculator = (lead: any) => {
 
   useEffect(() => {
     // Reset state when lead changes to prevent data leakage
+    const leadName = `${lead.customerDetails?.firstName || ''} ${
+      lead.customerDetails?.lastName || ''
+    }`.trim();
+
     setCalculators([
       {
         _id: null,
-        name: '.',
+        name: leadName || '.',
         inputs: INITIAL_INPUTS,
         extras: INITIAL_EXTRAS,
         discounts: { seniorVet: false, preOrder: false },
@@ -422,7 +428,7 @@ export const useDealCalculator = (lead: any) => {
       const initialTitle = leadName || `${calculators.length + 1}`;
 
       const fullPayload = {
-        title: initialTitle || '.',
+        title: '.',
         position: calculators.length,
         ...INITIAL_INPUTS,
         paymentMethod: 'check',
@@ -439,7 +445,7 @@ export const useDealCalculator = (lead: any) => {
             ...prev,
             {
               _id: newC._id,
-              name: newC.title || initialTitle || '.',
+              name: newC.title || '.',
               inputs: INITIAL_INPUTS,
               extras: INITIAL_EXTRAS,
               discounts: { seniorVet: false, preOrder: false },

@@ -19,6 +19,7 @@ import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import Feather from 'react-native-vector-icons/Feather';
 import { PALETTE } from '../../../theme/theme';
 import Doc from '../../../assets/svgs/icons/doc';
+import JobService from '../../../services/api/JobService';
 
 import { useCalculatorSummary } from '../../../hooks/useCalculatorSummary';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -100,8 +101,11 @@ export const CalculatorSummary = ({
   const endPrice = Number(activeCalc.price) || 0;
   // If endPrice is 0, use results.total (Retail) as the base.
   // Note: results.total already includes screens, so we don't add them again in the fallback case.
-  const securedDrop = (activeCalc.dropPrice || []).find((d: any) => d.status === 'accepted');
-  const effectiveEndPrice = securedDrop ? securedDrop.dropedPrice : endPrice;
+  const activeDrop =
+    (activeCalc.dropPrice || []).length > 0
+      ? activeCalc.dropPrice[activeCalc.dropPrice.length - 1]
+      : null;
+  const effectiveEndPrice = activeDrop ? activeDrop.dropedPrice : endPrice;
   const priceWithScreens =
     (effectiveEndPrice > 0 ? effectiveEndPrice : results.total) + screensCount * 75;
 
@@ -157,20 +161,17 @@ export const CalculatorSummary = ({
     >
       <View className="flex-1 bg-background">
         {/* Top Header & Tabs */}
-        <View className="px-5 pt-4 pb-2 border-b border-border bg-card">
-          <View className="flex-row items-center gap-3 mb-4">
-            <TouchableOpacity
-              onPress={() => setCurrentView('form')}
-              className="p-2 items-center justify-center border border-border rounded-xl bg-card shadow-sm"
-            >
-              <Feather name="arrow-left" size={18} color={colors.text} />
-            </TouchableOpacity>
-            <View className="flex-row items-center">
-              <Text className="text-sm font-black text-text-primary">Rollout</Text>
-            </View>
-          </View>
+        <View className="px-5 pt-4 pb-2 border-b border-border bg-card flex-row items-center">
+          <TouchableOpacity
+            onPress={() => setCurrentView('form')}
+            className="p-2 mr-3 items-center justify-center border border-border rounded-xl bg-card shadow-sm"
+          >
+            <Feather name="arrow-left" size={18} color={colors.text} />
+          </TouchableOpacity>
 
-          <View className={`flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}>
+          <View
+            className={`flex-1 flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}
+          >
             {calculators.length <= 3 ? (
               <View className="flex-1 flex-row">
                 {calculators.map((calc: any, idx: number) => {
@@ -281,9 +282,9 @@ export const CalculatorSummary = ({
                 <TouchableOpacity
                   onPress={() => !activeCalc.isRolloutConfirmed && setShowPaymentPicker(true)}
                   disabled={activeCalc.isRolloutConfirmed}
-                  className="h-14 bg-card border border-border rounded-2xl px-4 flex-row items-center justify-between shadow-sm"
+                  className="min-h-[56px] bg-card border border-border rounded-2xl px-4 py-3 flex-row items-center justify-between shadow-sm"
                 >
-                  <View>
+                  <View className="flex-1 pr-4">
                     <Text className="text-[8px] font-black text-text-secondary  tracking-widest mb-0.5">
                       {getPlanCategory(activeCalc.inputs.paymentPlan)}
                     </Text>
@@ -295,35 +296,19 @@ export const CalculatorSummary = ({
                 </TouchableOpacity>
               </View>
 
-              <View className="mb-6 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] overflow-hidden">
-                <View className="p-5 flex-row items-center justify-between">
-                  <View className="flex-row items-center">
-                    <View className="w-12 h-12 rounded-2xl bg-[#E5D9FF] items-center justify-center mr-4">
-                      <Ionicons name="receipt" size={24} color="#6B46C1" />
-                    </View>
-                    <View>
-                      <Text className="text-xl font-extrabold text-[#1C252E]">Job Summary</Text>
-                      <Text className="text-sm text-[#637381] font-medium">
-                        {results.items.length} items
-                      </Text>
-                    </View>
-                  </View>
+              <View className="mb-6 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] p-5">
+                <View className="flex-row items-center justify-end mb-4">
                   <View className="bg-[#E5D9FF] px-4 py-2 rounded-xl">
-                    <Text className="text-[12px] font-extrabold text-[#6B46C1]  tracking-wider">
-                      {results.items.length} Items
+                    <Text className="text-[12px] font-extrabold text-[#6B46C1] tracking-wider">
+                      {results.items.length} items
                     </Text>
                   </View>
                 </View>
 
-                <View className="px-5 pb-6">
-                  {Object.entries(
-                    results.items.reduce((acc: any, item: any) => {
-                      const cat = item.category || 'Additional Services';
-                      if (!acc[cat]) acc[cat] = [];
-                      acc[cat].push(item);
-                      return acc;
-                    }, {})
-                  ).map(([category, items]: any) => {
+                <View className="flex-row flex-wrap gap-2 mb-4">
+                  {Array.from(
+                    new Set(results.items.map((i: any) => i.category || 'Additional Services'))
+                  ).map((category: any) => {
                     const categoryStyles: Record<
                       string,
                       { color: string; icon: string; bg: string }
@@ -345,42 +330,61 @@ export const CalculatorSummary = ({
                     };
 
                     return (
-                      <View key={category} className="mb-6">
-                        <View className="flex-row mb-3">
-                          <View
-                            className="flex-row items-center px-3 py-1.5 rounded-full"
-                            style={{ backgroundColor: style.bg }}
-                          >
-                            <Ionicons name={style.icon} size={14} color={style.color} />
-                            <Text
-                              className="ml-2 text-[10px] font-black  tracking-tight"
-                              style={{ color: style.color }}
-                            >
-                              {category}
-                            </Text>
-                          </View>
-                        </View>
+                      <View
+                        key={category}
+                        className="flex-row items-center px-3 py-1.5 rounded-full"
+                        style={{ backgroundColor: style.bg }}
+                      >
+                        <Ionicons name={style.icon} size={12} color={style.color} />
+                        <Text
+                          className="ml-1.5 text-[10px] font-black tracking-tight"
+                          style={{ color: style.color }}
+                        >
+                          {category}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
 
-                        <View className="gap-3">
-                          {items.map((item: any, i: number) => (
-                            <View
-                              key={i}
-                              className="flex-row items-center bg-white rounded-2xl p-4 shadow-sm border border-[#F4F6F8]"
-                            >
-                              <View
-                                className="w-10 h-10 rounded-xl items-center justify-center mr-4"
-                                style={{ backgroundColor: style.bg }}
-                              >
-                                <Ionicons name={style.icon} size={18} color={style.color} />
-                              </View>
-                              <View className="flex-1">
-                                <Text className="text-sm font-bold text-[#1C252E]">
-                                  {item.value}
-                                  {item.unit || "'"} {item.label}
-                                </Text>
-                              </View>
-                            </View>
-                          ))}
+                <View className="gap-3">
+                  {results.items.map((item: any, i: number) => {
+                    const categoryStyles: Record<
+                      string,
+                      { color: string; icon: string; bg: string }
+                    > = {
+                      Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+                      LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+                      Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+                      Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                      'Additional Services': {
+                        color: '#FFAB00',
+                        icon: 'add-circle',
+                        bg: '#FFF8E6',
+                      },
+                    };
+                    const style = categoryStyles[item.category] || {
+                      color: '#637381',
+                      icon: 'list',
+                      bg: '#F4F6F8',
+                    };
+
+                    return (
+                      <View
+                        key={i}
+                        className="flex-row items-center bg-white rounded-2xl p-4 shadow-sm border border-[#F4F6F8]"
+                      >
+                        <View
+                          className="w-10 h-10 rounded-xl items-center justify-center mr-4"
+                          style={{ backgroundColor: style.bg }}
+                        >
+                          <Ionicons name={style.icon} size={18} color={style.color} />
+                        </View>
+                        <View className="flex-1">
+                          <Text className="text-sm font-bold text-[#1C252E]">
+                            {item.value}
+                            {item.unit || "'"} {item.label}
+                          </Text>
                         </View>
                       </View>
                     );
@@ -420,7 +424,7 @@ export const CalculatorSummary = ({
                   className={`flex-row items-center bg-card border rounded-2xl px-4 h-16 shadow-sm ${
                     error
                       ? 'border-red-500'
-                      : securedDrop
+                      : activeDrop
                       ? 'border-green-500'
                       : isSaved
                       ? 'border-green-500'
@@ -429,14 +433,14 @@ export const CalculatorSummary = ({
                 >
                   <Text
                     className={`text-xl font-black mr-2 ${
-                      securedDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
+                      activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
                     }`}
                   >
                     $
                   </Text>
                   <TextInput
                     className={`flex-1 font-black text-lg ${
-                      securedDrop || activeCalc.isRolloutConfirmed
+                      activeDrop || activeCalc.isRolloutConfirmed
                         ? 'text-green-600'
                         : 'text-text-primary'
                     }`}
@@ -444,10 +448,10 @@ export const CalculatorSummary = ({
                     placeholder="Enter End Price"
                     placeholderTextColor="#919EAB"
                     keyboardType="numeric"
-                    editable={!activeCalc.isRolloutConfirmed && !securedDrop}
+                    editable={!activeCalc.isRolloutConfirmed && !activeDrop}
                     onChangeText={handlePriceChange}
                   />
-                  {securedDrop || activeCalc.isRolloutConfirmed ? (
+                  {activeDrop || activeCalc.isRolloutConfirmed ? (
                     <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
                       <Ionicons name="lock-closed" size={12} color="#16A34A" />
                       <Text className="text-[10px] font-black text-green-600  ml-1.5 tracking-wider">
@@ -456,7 +460,7 @@ export const CalculatorSummary = ({
                     </View>
                   ) : null}
                 </View>
-                {error && (
+                {error && !showDropInput && (
                   <Text className="text-[10px] font-bold text-red-500 mt-2 ml-1 ">{error}</Text>
                 )}
                 {isDuplicate && (
@@ -750,11 +754,22 @@ export const CalculatorSummary = ({
                         keyboardType="numeric"
                         autoFocus
                         value={dropValue}
-                        onChangeText={setDropValue}
+                        onChangeText={(v) => {
+                          setDropValue(v);
+                          if (error) setError(null);
+                        }}
                         onSubmitEditing={() => {
-                          const num = Number(dropValue);
+                          const num = Number(dropValue.replace(/[^0-9.]/g, ''));
+                          const costPrice = Math.round(results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
+
                           if (num > 0) {
+                            if (num < costPrice) {
+                              setError(
+                                `Drop price cannot be less than cost ($${costPrice.toLocaleString()})`
+                              );
+                              return;
+                            }
                             if (endPrice > 0 && num > endPrice) {
                               setError(
                                 `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
@@ -769,11 +784,16 @@ export const CalculatorSummary = ({
                               }
                             }
                             setShowDropModal(true);
+                            setShowDropInput(false);
                           }
-                          setShowDropInput(false);
                         }}
                       />
                     </View>
+                    {error && (
+                      <View className="bg-red-50 p-2 rounded-lg mt-2 ml-1 border border-red-100">
+                        <Text className="text-[10px] font-bold text-red-500">{error}</Text>
+                      </View>
+                    )}
                   </View>
                 )}
 
@@ -782,10 +802,17 @@ export const CalculatorSummary = ({
                   <TouchableOpacity
                     onPress={() => {
                       if (showDropInput) {
-                        // Submit if there's a value
-                        const num = Number(dropValue);
+                        const num = Number(dropValue.replace(/[^0-9.]/g, ''));
+                        const costPrice = Math.round(results.price50);
                         const endPrice = Number(activeCalc.price) || 0;
+
                         if (num > 0) {
+                          if (num < costPrice) {
+                            setError(
+                              `Drop price cannot be less than cost ($${costPrice.toLocaleString()})`
+                            );
+                            return;
+                          }
                           if (endPrice > 0 && num > endPrice) {
                             setError(
                               `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
@@ -800,11 +827,12 @@ export const CalculatorSummary = ({
                             }
                           }
                           setShowDropModal(true);
+                          setShowDropInput(false);
                         }
-                        setShowDropInput(false);
                       } else {
                         setDropValue('');
                         setShowDropInput(true);
+                        if (error) setError(null);
                       }
                     }}
                     className="flex-1 h-14 bg-white border-2 border-[#1976D2] rounded-2xl items-center justify-center"
@@ -823,12 +851,15 @@ export const CalculatorSummary = ({
                     </View>
                     <Text className="text-orange-600 font-black text-sm">
                       {fCurrency(
-                        activeCalc.dropPrice?.find((d: any) => d.status === 'accepted')
-                          ?.dropedPrice || activeCalc.price
+                        activeCalc.dropPrice && activeCalc.dropPrice.length > 0
+                          ? activeCalc.dropPrice[activeCalc.dropPrice.length - 1].dropedPrice
+                          : activeCalc.price
                       )}
                     </Text>
                   </TouchableOpacity>
                 </View>
+
+                <View className="mb-20" />
               </View>
             )}
           </View>
@@ -1117,8 +1148,9 @@ export const CalculatorSummary = ({
               <Text className="text-sm text-[#999999] text-center mb-6">
                 Most recent price:{' '}
                 {fCurrency(
-                  activeCalc.dropPrice?.find((d: any) => d.status === 'accepted')?.dropedPrice ||
-                    activeCalc.price
+                  activeCalc.dropPrice && activeCalc.dropPrice.length > 0
+                    ? activeCalc.dropPrice[activeCalc.dropPrice.length - 1].dropedPrice
+                    : activeCalc.price
                 )}
               </Text>
 

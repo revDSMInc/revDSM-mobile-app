@@ -20,28 +20,73 @@ export const FasciaSection = ({ jobState, onUpdate, calculatorData }: FasciaSect
   const { colors, isDark } = useTheme();
   const { fetchProductImage, image, loading: imageLoading } = useProductImage('fascia');
 
+  const n = (v: any) => parseFloat(v) || 0;
+  const getVal = (baseKey: string) => {
+    if (!calculatorData) return 0;
+    const lowerKey = baseKey.toLowerCase();
+    // Check root
+    const topKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
+    const topVal = topKey ? n(calculatorData[topKey]) : 0;
+    if (topVal > 0) return topVal;
+    // Check extras (fascia/soffit keys live here)
+    const extras = calculatorData.extras || {};
+    const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
+    const extrasVal = extrasKey ? n(extras[extrasKey]) : 0;
+    if (extrasVal > 0) return extrasVal;
+    // Check inputs
+    const inputs = calculatorData.inputs || {};
+    const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
+    return inputKey ? n(inputs[inputKey]) : 0;
+  };
+
   const data = {
     wrap: {
       type: jobState.fascia?.wrap?.type || '',
-      footage: jobState.fascia?.wrap?.footage || calculatorData?.trimWrap || '',
+      footage: jobState.fascia?.wrap?.footage || getVal('trimWrap') || '',
       size: jobState.fascia?.wrap?.size || '',
       color: jobState.fascia?.wrap?.color || '',
     },
     boards: {
       type: jobState.fascia?.boards?.type || '',
-      footage: jobState.fascia?.boards?.footage || calculatorData?.fasciaBoard || '',
+      footage: jobState.fascia?.boards?.footage || getVal('fasciaBoard') || '',
       size: jobState.fascia?.boards?.size || '',
       boardType: jobState.fascia?.boards?.boardType || '',
     },
     aluminumBoards: {
-      footage:
-        jobState.fascia?.aluminumBoards?.footage || calculatorData?.aluminumFasciaBoard || '',
+      footage: jobState.fascia?.aluminumBoards?.footage || getVal('aluminumFasciaBoard') || '',
     },
   };
 
   const handleSubUpdate = (section: string, field: string, value: any) => {
     onUpdate('fascia', section, { ...data[section as keyof typeof data], [field]: value });
   };
+
+  const isSubSectionComplete = (sectionData: any, sectionKey: string) => {
+    const footage = n(sectionData.footage);
+    if (footage <= 0) return true;
+    if (sectionKey === 'wrap')
+      return sectionData.type !== '' && sectionData.size !== '' && sectionData.color !== '';
+    if (sectionKey === 'boards')
+      return sectionData.type !== '' && sectionData.size !== '' && sectionData.boardType !== '';
+    return true;
+  };
+
+  const isComplete = React.useMemo(() => {
+    const wF = n(data.wrap.footage);
+    const bF = n(data.boards.footage);
+    const aF = n(data.aluminumBoards.footage);
+    if (wF === 0 && bF === 0 && aF === 0) return false;
+    return (
+      isSubSectionComplete(data.wrap, 'wrap') &&
+      isSubSectionComplete(data.boards, 'boards') &&
+      isSubSectionComplete(data.aluminumBoards, 'aluminumBoards')
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobState.fascia, calculatorData]);
+
+  React.useEffect(() => {
+    onUpdate('fascia', 'isComplete', isComplete);
+  }, [isComplete, onUpdate]);
 
   const renderWarning = (message: string) => (
     <View className="flex-row items-center bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
@@ -109,61 +154,74 @@ export const FasciaSection = ({ jobState, onUpdate, calculatorData }: FasciaSect
     selectedColor: string,
     onSelect: (c: string) => void,
     incomplete = false
-  ) => (
-    <View
-      className={`p-4 rounded-lg mb-4 ${
-        incomplete ? 'border-2 border-amber-200 bg-amber-50/30' : 'bg-white border border-slate-100'
-      }`}
-    >
-      {incomplete && renderWarning('Incomplete-Color Required')}
-      <View className="flex-row justify-between items-center mb-4">
-        <Text
-          className={`text-[10px] font-black  tracking-widest ${
-            incomplete ? 'text-amber-600' : 'text-slate-400'
-          }`}
-        >
-          {label}
-        </Text>
-        {image.imageUrl && image.color === selectedColor && (
-          <View className="w-12 h-12 rounded-lg overflow-hidden border border-slate-100">
-            <Image source={{ uri: image.imageUrl }} className="w-full h-full" resizeMode="cover" />
+  ) => {
+    const selectedHex = COLORS.Fascia.find((c) => c.name === selectedColor)?.hex || '';
+    return (
+      <View
+        className={`p-4 rounded-lg mb-4 ${
+          incomplete
+            ? 'border-2 border-amber-200 bg-amber-50/30'
+            : 'bg-white border border-slate-100'
+        }`}
+      >
+        {incomplete && renderWarning('Incomplete-Color Required')}
+        <View className="flex-row justify-between items-center mb-3">
+          <Text
+            className={`text-[10px] font-black tracking-widest ${
+              incomplete ? 'text-amber-600' : 'text-slate-400'
+            }`}
+          >
+            {label}
+          </Text>
+          {imageLoading && <ActivityIndicator size="small" color="#10B981" />}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View className="flex-row gap-3">
+            {COLORS.Fascia.map((c) => (
+              <TouchableOpacity
+                key={c.name}
+                onPress={() => {
+                  onSelect(c.name);
+                  fetchProductImage(c.hex);
+                }}
+                style={{
+                  width: 50,
+                  height: 40,
+                  backgroundColor: c.hex,
+                  borderRadius: 8,
+                  borderWidth: 2,
+                  borderColor:
+                    selectedColor === c.name ? '#10B981' : isDark ? '#404040' : '#E2E8F0',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {selectedColor === c.name && <Icon name="check" size={16} color="white" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+        {selectedColor && (
+          <View className="flex-row items-center mt-3 bg-emerald-50 self-start px-2 py-1 rounded-lg">
+            <Icon name="check" size={12} color="#10B981" />
+            <Text className="text-[10px] font-black text-emerald-600 ml-1">{selectedColor}</Text>
           </View>
         )}
-        {imageLoading && <ActivityIndicator size="small" color="#10B981" />}
+        {image.imageUrl && image.color === selectedHex && (
+          <View
+            className="mt-3 rounded-xl overflow-hidden border border-slate-100"
+            style={{ height: 120 }}
+          >
+            <Image
+              source={{ uri: image.imageUrl }}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="cover"
+            />
+          </View>
+        )}
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View className="flex-row gap-3">
-          {COLORS.Fascia.map((c) => (
-            <TouchableOpacity
-              key={c.name}
-              onPress={() => {
-                onSelect(c.name);
-                fetchProductImage(c.name);
-              }}
-              style={{
-                width: 50,
-                height: 40,
-                backgroundColor: c.hex,
-                borderRadius: 8,
-                borderWidth: 2,
-                borderColor: selectedColor === c.name ? '#10B981' : isDark ? '#404040' : '#E2E8F0',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              {selectedColor === c.name && <Icon name="check" size={16} color="white" />}
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
-      {selectedColor && (
-        <View className="flex-row items-center mt-4 bg-emerald-50 self-start px-2 py-1 rounded-lg">
-          <Icon name="check" size={12} color="#10B981" />
-          <Text className="text-[10px] font-black text-emerald-600 ml-1 ">{selectedColor}</Text>
-        </View>
-      )}
-    </View>
-  );
+    );
+  };
 
   const renderSubSection = (
     title: string,
@@ -174,7 +232,6 @@ export const FasciaSection = ({ jobState, onUpdate, calculatorData }: FasciaSect
     borderColor = 'border-blue-100/50'
   ) => {
     const footage = parseFloat(sectionData.footage || '0');
-    if (footage <= 0) return null;
 
     return (
       <View key={sectionKey} className={`mb-6 p-1 rounded-lg ${lightBg} border ${borderColor}`}>
@@ -252,44 +309,50 @@ export const FasciaSection = ({ jobState, onUpdate, calculatorData }: FasciaSect
       keyboardShouldPersistTaps="handled"
     >
       <View className="px-5 py-5 pb-24 bg-white">
-        {renderSubSection(
-          'Fascia Wrap',
-          'wrap',
-          data.wrap,
-          '#3B82F6',
-          'bg-blue-50/20',
-          'border-blue-100/50'
-        )}
-        {renderSubSection(
-          'Fascia Boards',
-          'boards',
-          data.boards,
-          '#F59E0B',
-          'bg-amber-50/20',
-          'border-amber-100/50'
-        )}
-        {renderSubSection(
-          'Aluminum 2"x2" Fascia Board',
-          'aluminumBoards',
-          data.aluminumBoards,
-          '#10B981',
-          'bg-emerald-50/20',
-          'border-emerald-100/50'
-        )}
+        {n(data.wrap.footage) > 0 &&
+          renderSubSection(
+            'Fascia Wrap',
+            'wrap',
+            data.wrap,
+            '#3B82F6',
+            'bg-blue-50/20',
+            'border-blue-100/50'
+          )}
+        {n(data.boards.footage) > 0 &&
+          renderSubSection(
+            'Fascia Boards',
+            'boards',
+            data.boards,
+            '#F59E0B',
+            'bg-amber-50/20',
+            'border-amber-100/50'
+          )}
+        {n(data.aluminumBoards.footage) > 0 &&
+          renderSubSection(
+            'Aluminum 2"x2" Fascia Board',
+            'aluminumBoards',
+            data.aluminumBoards,
+            '#10B981',
+            'bg-emerald-50/20',
+            'border-emerald-100/50'
+          )}
 
-        {!(
-          parseFloat(data.wrap.footage) > 0 ||
-          parseFloat(data.boards.footage) > 0 ||
-          parseFloat(data.aluminumBoards.footage) > 0
-        ) && (
-          <View className="items-center py-20 bg-white rounded-lg border border-dashed border-slate-200">
-            <Icon name="information-outline" size={48} color="#CBD5E1" />
-            <Text className="text-slate-400 font-bold mt-4">No Fascia Requirements Found</Text>
-            <Text className="text-slate-300 text-[10px]  font-black tracking-widest mt-1">
-              Check Calculator Data
-            </Text>
-          </View>
-        )}
+        {n(data.wrap.footage) === 0 &&
+          n(data.boards.footage) === 0 &&
+          n(data.aluminumBoards.footage) === 0 && (
+            <View className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30">
+              {renderWarning('INCOMPLETE - No valid footage found for Fascia section')}
+              <View className="p-4 mt-4 rounded-lg bg-white border border-amber-100 flex-row justify-between items-center">
+                <View>
+                  <Text className="text-[9px] font-black text-slate-400 tracking-widest mb-1">
+                    Total Footage
+                  </Text>
+                  <Text className="text-sm font-black text-slate-900">0 FT</Text>
+                </View>
+                <Icon name="lock" size={16} color="#919EAB" />
+              </View>
+            </View>
+          )}
       </View>
     </ScrollView>
   );

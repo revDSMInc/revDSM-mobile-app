@@ -1,64 +1,48 @@
-import React, { useMemo, useCallback, useEffect } from 'react';
+import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   TextInput,
-  ScrollView,
   TouchableOpacity,
-  Image,
-  ActivityIndicator,
+  ScrollView,
+  Dimensions,
   Modal,
-  FlatList,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { useProductImage } from '../../../hooks/useProductImage';
 import { COLORS } from './color-constant';
-import { validateGutter } from '../../../utils/job-builder-validation';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const LOCATIONS = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
-const STORIES = ['1st Story', '2nd Story', '3rd Story'];
-const DOWNSPOUT_TYPES = [
-  '2 X 3',
-  '3 X 3 (alt)',
-  '3 Round (alt)',
-  '3 X 4',
-  '4 Round (alt)',
-  '4 X 5',
+const STORIES = ['1ST STORY', '2ND STORY', '3RD STORY'];
+
+const ALL_DOWNSPOUT_TYPES = [
+  { name: '2 X 3', size: '5" K-Style' },
+  { name: '3 X 3 (alt)', size: '5" K-Style' },
+  { name: '3 Round (alt)', size: '5" K-Style' },
+  { name: '3 X 4', size: '6" K-Style' },
+  { name: '4 Round (alt)', size: '6" K-Style' },
+  { name: '4 X 5', size: '7" K-Style' },
 ];
-
-const autoSelectedDownspoutTypes: any = {
-  '5" K-Style': '2 X 3',
-  '6" K-Style': '3 X 4',
-  '7" K-Style': '4 X 5',
-  '8" K-Style': '4 X 5',
-};
-
-const downspoutTypeToGutterSize: any = {
-  '2 X 3': '5" K-Style',
-  '3 X 3 (alt)': '5" K-Style',
-  '3 Round (alt)': '5" K-Style',
-  '3 X 4': '6" K-Style',
-  '4 Round (alt)': '6" K-Style',
-  '4 X 5': '7" K-Style',
-};
 
 interface GutterSectionProps {
   jobState: any;
   onUpdate: (section: string, field: string, value: any) => void;
   calculatorData: any;
+  jobSummaryItems?: any[];
 }
 
-export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSectionProps) => {
-  const { colors, isDark } = useTheme();
-  const { fetchProductImage, image, loading: imageLoading } = useProductImage('gutter');
-  const [colorModal, setColorModal] = React.useState<{
-    show: boolean;
-    type: 'gutter' | 'downspout';
-    index: number;
-  }>({ show: false, type: 'gutter', index: 0 });
+export const GutterSection = ({
+  jobState,
+  onUpdate,
+  calculatorData,
+  jobSummaryItems,
+}: GutterSectionProps) => {
+  const { isDark } = useTheme();
+  const [colorModal, setColorModal] = useState<{ visible: boolean; target: any } | null>(null);
 
-  const gutterState = jobState.gutter || {
+  const data = jobState?.gutter || {
     partial: '',
     gutterColorsMulti: [],
     downspoutsMulti: [],
@@ -69,136 +53,234 @@ export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSect
       groundSpout: 'Black',
     },
     modifyHeightLocations: [],
+    modifyHeight: 0,
   };
-
-  const handleUpdate = useCallback(
-    (updates: any) => {
-      onUpdate('gutter', '', { ...gutterState, ...updates });
-    },
-    [gutterState, onUpdate]
-  );
 
   const n = (v: any) => parseFloat(v) || 0;
 
-  // Helper for case-insensitive key lookup (Parity with web app)
   const getVal = useCallback(
-    (baseKey: string) => {
-      if (!calculatorData) return 0;
-      const lowerKey = baseKey.toLowerCase();
-      const key = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
-      return key ? n(calculatorData[key]) : 0;
+    (key: string) => {
+      const inputs = calculatorData?.inputs || {};
+      const extras = calculatorData?.extras || {};
+      return (
+        n(inputs[key]) ||
+        n(extras[key]) ||
+        n(calculatorData?.[key])
+      );
     },
     [calculatorData]
   );
 
-  // Footage Calculations (Parity with web app logic)
-  const fiveInchFeet = getVal('gutter5Inch');
-  const sixInchFeet = getVal('gutter6Inch');
-  const sevenInchFeet = getVal('gutter7Inch');
-  const eightInchFeet = getVal('gutter8Inch');
   const dsFootageAvail = getVal('downspoutFootage');
 
-  const availableSizes = [
-    { label: '5" K-Style', footage: fiveInchFeet },
-    { label: '6" K-Style', footage: sixInchFeet },
-    { label: '7" K-Style', footage: sevenInchFeet },
-    { label: '8" K-Style', footage: eightInchFeet },
-  ].filter((s) => s.footage > 0);
+  const availableFootageRaw = useMemo(
+    () => ({
+      '5" K-Style': getVal('gutter5DsE'),
+      '6" K-Style': getVal('gutter6Ft1'),
+      '7" K-Style': getVal('gutter7DsE'),
+      '8" K-Style': getVal('gutter8Inch'),
+    }),
+    [getVal]
+  );
 
-  const isMultipleSizes = availableSizes.length > 1;
+  const availableSizes = useMemo(
+    () =>
+      Object.keys(availableFootageRaw).filter(
+        (s) => availableFootageRaw[s as keyof typeof availableFootageRaw] > 0
+      ),
+    [availableFootageRaw]
+  );
 
-  const totalAvailableAll =
-    fiveInchFeet + sixInchFeet + sevenInchFeet + eightInchFeet + dsFootageAvail;
-  const totalAllocatedAll =
-    (gutterState.gutterColorsMulti || []).reduce(
-      (sum: number, combo: any) =>
-        sum + (combo.measurements || []).reduce((s: number, v: any) => s + (parseFloat(v) || 0), 0),
-      0
-    ) +
-    (gutterState.downspoutsMulti || []).reduce(
-      (sum: number, ds: any) =>
-        sum +
-        (parseFloat(ds.footage) || 0) +
-        (parseFloat(ds.aElbows) || 0) +
-        (parseFloat(ds.bElbows) || 0),
-      0
+  // Auto-set size if only one available
+  useEffect(() => {
+    if (availableSizes.length === 1 && data.gutterColorsMulti?.length > 0) {
+      const needsUpdate = data.gutterColorsMulti.some((c: any) => c.size !== availableSizes[0]);
+      if (needsUpdate) {
+        const next = data.gutterColorsMulti.map((c: any) => ({ ...c, size: availableSizes[0] }));
+        onUpdate('gutter', 'gutterColorsMulti', next);
+      }
+    }
+  }, [availableSizes, data.gutterColorsMulti, onUpdate]);
+
+  const filteredDownspoutTypes = useMemo(() => {
+    if (availableSizes.length === 0) return ALL_DOWNSPOUT_TYPES;
+    return ALL_DOWNSPOUT_TYPES.filter(
+      (dt) =>
+        availableSizes.includes(dt.size) ||
+        (dt.size === '7" K-Style' && availableSizes.includes('8" K-Style'))
     );
+  }, [availableSizes]);
 
-  // Sync initial state alignment with web app
-  useEffect(() => {
-    if (gutterState.gutterColorsMulti.length === 0 && availableSizes.length > 0) {
-      const initialSize = availableSizes[0].label;
-      handleUpdate({
-        gutterColorsMulti: [
-          {
-            id: Date.now(),
-            size: initialSize,
-            color: 'White',
-            measurements: Array(18).fill(''),
-            mitersOutside: '',
-            mitersInside: '',
-            endCapsRights: '',
-            endCapsLefts: '',
-          },
-        ],
-      });
-    }
-  }, [availableSizes.length, gutterState.gutterColorsMulti.length, handleUpdate]);
+  const getStoryAllocation = useCallback(
+    (sizeFilter: string | null = null) => {
+      const gutterFeet = (data.gutterColorsMulti || []).reduce((sum: number, combo: any) => {
+        if (sizeFilter && combo.size !== sizeFilter) return sum;
+        return sum + (combo.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
+      }, 0);
 
-  useEffect(() => {
-    if (gutterState.downspoutsMulti.length === 0 && availableSizes.length > 0) {
-      const initialSize = availableSizes[0].label;
-      const initialType = autoSelectedDownspoutTypes[initialSize] || '2 X 3';
-      handleUpdate({
-        downspoutsMulti: [
-          {
-            id: Date.now() + 1,
-            type: initialType,
-            color: 'White',
-            footage: '',
-            aElbows: '',
-            bElbows: '',
-            roundElbow: '',
-            offsetElbows: '',
-            spoutSavers: '',
-          },
-        ],
-      });
-    }
-  }, [availableSizes.length, gutterState.downspoutsMulti.length, handleUpdate]);
-  const getStoryAllocation = (size: string) => {
-    const gutterFeet = (gutterState.gutterColorsMulti || []).reduce((sum: number, combo: any) => {
-      if (combo.size !== size) return sum;
+      const dsFeet = (data.downspoutsMulti || []).reduce((sum: number, ds: any) => {
+        const dsTypeInfo = ALL_DOWNSPOUT_TYPES.find((t) => t.name === ds.type);
+        const dsGutterSize = dsTypeInfo?.size || '';
+
+        const isMatch =
+          !sizeFilter ||
+          dsGutterSize === sizeFilter ||
+          (sizeFilter === '8" K-Style' && dsGutterSize === '7" K-Style');
+        if (!isMatch) return sum;
+        return (
+          sum +
+          n(ds.footage) +
+          n(ds.aElbows) +
+          n(ds.bElbows) +
+          n(ds.roundElbow) +
+          n(ds.offsetElbows) +
+          n(ds.spoutSavers)
+        );
+      }, 0);
+
+      return gutterFeet + dsFeet;
+    },
+    [data.gutterColorsMulti, data.downspoutsMulti]
+  );
+
+  const totalAvail = Math.round(
+    Object.values(availableFootageRaw).reduce((a, b) => a + b, 0) + dsFootageAvail
+  );
+  const allocatedTotal = Math.round(getStoryAllocation());
+  const remainingTotal = totalAvail - allocatedTotal;
+
+  const extrasValues = useMemo(
+    () => ({
+      wedges: getVal('wedges'),
+      straps: getVal('straps'),
+      modifyHeight: getVal('modifyHeight'),
+      groundSpout: getVal('groundSpout'),
+      replaceCorner: getVal('replaceCorner'),
+      extendedSplashGuard: getVal('extendedSplashGuard'),
+      extendedSplashGuard032: getVal('extendedSplashGuard032'),
+    }),
+    [calculatorData, data.modifyHeight, getVal]
+  );
+
+  const isComplete = useMemo(() => {
+    if (totalAvail === 0) return true;
+    if (allocatedTotal > 0 && !data.partial) return false;
+    if (Math.abs(remainingTotal) > 0.1) return false;
+
+    const combosOk = (data.gutterColorsMulti || []).every((c: any) => {
+      const hasMeas = (c.measurements || []).some((m: any) => m !== '' && n(m) > 0);
+      if (!hasMeas) return true;
       return (
-        sum + (combo.measurements || []).reduce((s: number, v: any) => s + (parseFloat(v) || 0), 0)
+        !!c.color &&
+        c.mitersOutside !== '' &&
+        c.mitersInside !== '' &&
+        c.endCapsRights !== '' &&
+        c.endCapsLefts !== ''
       );
-    }, 0);
+    });
+    if (!combosOk) return false;
 
-    const dsFeet = (gutterState.downspoutsMulti || []).reduce((sum: number, ds: any) => {
-      const dsGutterSize = downspoutTypeToGutterSize[ds.type];
-      if (dsGutterSize !== size) return sum;
-      return (
-        sum +
-        (parseFloat(ds.footage) || 0) +
-        (parseFloat(ds.aElbows) || 0) +
-        (parseFloat(ds.bElbows) || 0)
-      );
-    }, 0);
+    const dsOk = (data.downspoutsMulti || []).every((ds: any) => {
+      const hasVal = [
+        'footage',
+        'aElbows',
+        'bElbows',
+        'roundElbow',
+        'offsetElbows',
+        'spoutSavers',
+      ].some((f) => n(ds[f]) > 0);
+      if (!hasVal) return true;
+      return !!ds.type && !!ds.color;
+    });
+    if (!dsOk) return false;
 
-    return gutterFeet + dsFeet;
+    const extrasOk =
+      (extrasValues.replaceCorner === 0 || !!data.extrasColors?.replaceCorner) &&
+      (extrasValues.extendedSplashGuard === 0 || !!data.extrasColors?.extendedSplashGuard) &&
+      (extrasValues.extendedSplashGuard032 === 0 || !!data.extrasColors?.extendedSplashGuard032);
+    if (!extrasOk) return false;
+
+    const modifyOk = !extrasValues.modifyHeight || (data.modifyHeightLocations || []).length > 0;
+    if (!modifyOk) return false;
+
+    return true;
+  }, [totalAvail, allocatedTotal, remainingTotal, data, extrasValues]);
+
+  useEffect(() => {
+    onUpdate('gutter', 'isComplete', isComplete);
+  }, [isComplete, onUpdate]);
+
+  useEffect(() => {
+    if (totalAvail > 0 && (!data.gutterColorsMulti || data.gutterColorsMulti.length === 0)) {
+      onUpdate('gutter', 'gutterColorsMulti', [
+        {
+          id: Date.now() + Math.random(),
+          size: availableSizes[0] || '6" K-Style',
+          color: '',
+          measurements: Array(18).fill(''),
+          mitersOutside: '',
+          mitersInside: '',
+          endCapsRights: '',
+          endCapsLefts: '',
+        },
+      ]);
+    }
+    if (totalAvail > 0 && (!data.downspoutsMulti || data.downspoutsMulti.length === 0)) {
+      onUpdate('gutter', 'downspoutsMulti', [
+        {
+          id: Date.now() + Math.random(),
+          type: '',
+          color: '',
+          footage: '',
+          aElbows: '',
+          bElbows: '',
+          roundElbow: '',
+          offsetElbows: '',
+          spoutSavers: '',
+        },
+      ]);
+    }
+  }, [
+    totalAvail,
+    data.gutterColorsMulti?.length,
+    data.downspoutsMulti?.length,
+    onUpdate,
+    availableSizes,
+  ]);
+
+  const updateCombo = (idx: number, updates: any) => {
+    const next = [...(data.gutterColorsMulti || [])];
+    next[idx] = { ...next[idx], ...updates };
+    onUpdate('gutter', 'gutterColorsMulti', next);
+  };
+
+  const updateDS = (idx: number, updates: any) => {
+    const next = [...(data.downspoutsMulti || [])];
+    next[idx] = { ...next[idx], ...updates };
+    onUpdate('gutter', 'downspoutsMulti', next);
+  };
+
+  const updateExtrasColor = (field: string, color: string) => {
+    onUpdate('gutter', 'extrasColors', { ...data.extrasColors, [field]: color });
+  };
+
+  const toggleModifyLoc = (loc: string) => {
+    const current = data.modifyHeightLocations || [];
+    const next = current.includes(loc)
+      ? current.filter((l: string) => l !== loc)
+      : [...current, loc];
+    onUpdate('gutter', 'modifyHeightLocations', next);
   };
 
   const renderAllocationCard = (size: string, available: number) => {
     const allocated = getStoryAllocation(size);
-    // Add DS pool to available if this is the only size or if mapped
-    const totalAvail = available + (availableSizes.length === 1 ? dsFootageAvail : 0);
-    const remaining = totalAvail - allocated;
-    const isSingle = availableSizes.length === 1;
+    const totalAvailSize = available + (availableSizes.length === 1 ? dsFootageAvail : 0);
+    const remaining = totalAvailSize - allocated;
 
     return (
       <View
         key={size}
-        className={`py-1 rounded-2xl border-2 ${isSingle ? 'w-full' : 'flex-1'}`}
+        className="py-1 rounded-2xl border-2 flex-1 mx-1"
         style={{
           borderColor: '#A5E1ED',
           backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
@@ -215,11 +297,10 @@ export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSect
         >
           {size}
         </Text>
-
         <View className="flex-row justify-between px-1">
           <View className="items-center">
             <Text className="text-[6px] font-bold text-slate-400  mb-1">Avail</Text>
-            <Text className="text-sm font-black text-[#7DD3FC]">{totalAvail.toFixed(0)}ft</Text>
+            <Text className="text-sm font-black text-[#7DD3FC]">{totalAvailSize.toFixed(0)}ft</Text>
           </View>
           <View className="items-center">
             <Text className="text-[6px] font-bold text-slate-400  mb-1">Used</Text>
@@ -232,24 +313,21 @@ export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSect
                 remaining < -0.1 ? 'text-red-500' : isDark ? 'text-white' : 'text-slate-800'
               }`}
             >
-              {remaining.toFixed(1)}ft
+              {remaining.toFixed(0)}ft
             </Text>
           </View>
         </View>
-
-        {Math.abs(remaining) <= 0.1 && totalAvail > 0 && isSingle && (
-          <View className="bg-[#22C55E] rounded-xl py-2.5 px-2 mt-1 flex-row items-center justify-center">
+        {Math.abs(remaining) <= 0.1 && totalAvailSize > 0 && (
+          <View className="bg-[#22C55E] rounded-xl py-2.5 px-2 mt-1 flex-row items-center justify-center mx-1">
             <Text className="text-white text-[8px] font-black  tracking-tight">
               ✓ Perfectly allocated!
             </Text>
           </View>
         )}
-
         {remaining < -0.1 && (
-          <View className="bg-[#FF4D4F] rounded-xl py-2.5 px-2 mt-1 flex-row items-center justify-center">
-            <Icon name="alert" size={14} color="white" />
-            <Text className="text-white text-[10px] font-black  tracking-tight ml-2">
-              OVER {Math.abs(remaining).toFixed(1)}ft
+          <View className="bg-red-500 rounded-xl py-2.5 px-2 mt-1 flex-row items-center justify-center mx-1">
+            <Text className="text-white text-[8px] font-black  tracking-tight">
+              ⚠ Over by {Math.abs(remaining).toFixed(0)}ft
             </Text>
           </View>
         )}
@@ -259,409 +337,292 @@ export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSect
 
   return (
     <View style={{ flex: 1 }}>
-      {/* ── Fixed Footage Allocation Tracker ── */}
+      {/* ── Tracker ── */}
       <View
-        className="bg-background"
         style={{
-          paddingHorizontal: 20,
-          paddingTop: 8,
+          backgroundColor: isDark ? '#0F0F0F' : '#F8FAFC',
+          paddingHorizontal: 12,
+          paddingVertical: 12,
         }}
       >
-        {availableSizes.length === 1 ? (
-          <View>{availableSizes.map((s) => renderAllocationCard(s.label, s.footage))}</View>
-        ) : (
-          <View className="flex-row gap-2 justify-between">
-            {availableSizes.map((s) => renderAllocationCard(s.label, s.footage))}
-          </View>
-        )}
+        <View className="flex-row justify-between">
+          {availableSizes.map((size) =>
+            renderAllocationCard(
+              size,
+              availableFootageRaw[size as keyof typeof availableFootageRaw]
+            )
+          )}
+        </View>
       </View>
 
-      {/* ── Validation Summary Section ── */}
-      {(() => {
-        const errors: string[] = [];
-
-        // 1. Partial Check
-        const hasPartial =
-          gutterState.partial || (gutterState.gutterColorsMulti || []).some((c: any) => c.partial);
-        if (!hasPartial) errors.push('Partial selection required');
-
-        // 2. Footage checks
-        availableSizes.forEach((s) => {
-          const allocated = getStoryAllocation(s.label);
-          const totalAvail = s.footage + (availableSizes.length === 1 ? dsFootageAvail : 0);
-          const remaining = totalAvail - allocated;
-          if (Math.abs(remaining) > 0.1) {
-            if (remaining > 0) {
-              errors.push(`${s.label}: ${remaining.toFixed(1)}ft unallocated`);
-            } else {
-              errors.push(`${s.label}: Over-allocated by ${Math.abs(remaining).toFixed(1)}ft`);
-            }
-          }
-        });
-
-        // 3. Combos check (colors, miters, endcaps)
-        (gutterState.gutterColorsMulti || []).forEach((combo: any, idx: number) => {
-          const comboTotal = (combo.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
-          if (comboTotal > 0) {
-            if (!combo.color) errors.push(`Combo #${idx + 1}: No color`);
-            if (
-              combo.mitersOutside === '' ||
-              combo.mitersInside === '' ||
-              combo.endCapsRights === '' ||
-              combo.endCapsLefts === ''
-            ) {
-              errors.push(`Combo #${idx + 1}: Missing Miters/Endcaps`);
-            }
-          }
-        });
-
-        // 4. Downspouts check
-        (gutterState.downspoutsMulti || []).forEach((ds: any, idx: number) => {
-          const dsTotal = n(ds.footage) + n(ds.aElbows) + n(ds.bElbows);
-          if (dsTotal > 0) {
-            if (!ds.type) errors.push(`DS #${idx + 1}: No type`);
-            if (!ds.color) errors.push(`DS #${idx + 1}: No color`);
-          }
-        });
-
-        if (errors.length === 0) return null;
-
-        return (
-          <View className="px-5 py-3 bg-amber-50/50 border-b border-amber-100">
-            <View className="flex-row items-center mb-2">
-              <Icon name="alert-circle" size={14} color="#D97706" />
-              <Text className="text-[10px] font-black text-amber-700 ml-2  tracking-widest">
-                Incomplete Requirements
-              </Text>
-            </View>
-            <View className="flex-row flex-wrap gap-2">
-              {errors.map((err, i) => (
-                <View
-                  key={i}
-                  className="bg-white border border-amber-200 px-3 py-1.5 rounded-lg shadow-sm"
-                >
-                  <Text className="text-[10px] font-bold text-amber-800">{err}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        );
-      })()}
-
-      {/* ── Scrollable Content ── */}
       <ScrollView
-        style={{ flex: 1 }}
+        className="flex-1"
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <View className="px-5 py-5 pb-24 bg-background">
-          {/* Warnings moved inside Combination cards for better context parity */}
+        <View className="px-4 py-6 pb-40">
+          <View className="rounded-[32px] p-1 mb-10 border-2 border-slate-200">
 
-          {/* Gutter Combinations */}
-          <Text className="text-[10px] font-black text-text-secondary  tracking-widest mb-4 ml-1">
-            Combinations
-          </Text>
-          {(gutterState.gutterColorsMulti || []).map((combo: any, idx: number) => {
-            const validation = validateGutter(gutterState, calculatorData);
-            const isIncomplete =
-              !validation.valid &&
-              (validation.error?.includes('remaining') ||
-                validation.error?.includes('Over-allocated'));
+            {(data.gutterColorsMulti || []).map((combo: any, idx: number) => {
+              const hasMeas = (combo.measurements || []).some((m: any) => m !== '' && n(m) > 0);
+              const subtotal = (combo.measurements || []).reduce(
+                (s: number, v: any) => s + n(v),
+                0
+              );
+              const selectedColorObj = COLORS.Gutter.find((c) => c.name === combo.color);
+              const colorMissing = hasMeas && !combo.color;
 
-            return (
-              <View key={combo.id} className="mb-8">
-                {isIncomplete && (
-                  <View className="flex-row items-center bg-[#FEF3C7] border-x-2 border-t-2 border-[#FDE68A] rounded-t-[32px] px-6 py-3.5 -mb-1">
-                    <Icon name="alert-circle" size={18} color="#D97706" />
-                    <Text className="text-[11px] font-black text-[#D97706] ml-2  tracking-tight">
-                      {validation.error}
-                    </Text>
-                  </View>
-                )}
+              return (
                 <View
-                  className={`bg-card rounded-[32px] border-2 overflow-hidden shadow-sm ${
-                    isIncomplete ? 'rounded-t-none border-[#FDE68A]' : 'border-[#6366F122]'
-                  }`}
-                  style={!isIncomplete ? { borderColor: 'rgba(99, 102, 241, 0.15)' } : {}}
+                  key={combo.id}
+                  className="mb-4 bg-white rounded-[24px] border border-slate-200 p-5 shadow-sm"
                 >
-                  <View className="px-6 py-4 flex-row justify-between items-center bg-white border-b border-slate-50">
-                    <View className="flex-row items-center">
-                      {availableSizes.length === 1 && (
-                        <View className="bg-[#7DD3FC] px-4 py-2.5 rounded-2xl flex-row items-center shadow-sm">
-                          <Icon name="lock" size={14} color="white" />
-                          <Text className="text-white font-black text-[10px] ml-2  tracking-tight">
-                            {combo.size}
+                  <View className="flex-row items-center gap-2 mb-6">
+                    <View className="flex-1 flex-row gap-2">
+                      {availableSizes.length === 1 ? (
+                        <View className="flex-1 h-11 rounded-xl items-center justify-center bg-sky-500 flex-row px-4">
+                          <Icon name="lock" size={14} color="white" className="mr-2" />
+                          <Text className="text-[11px] font-black text-white">
+                            {availableSizes[0]}
                           </Text>
                         </View>
+                      ) : (
+                        availableSizes.map((s) => {
+                          const isSelected = combo.size === s;
+                          return (
+                            <TouchableOpacity
+                              activeOpacity={1}
+                              key={s}
+                              onPress={() => updateCombo(idx, { size: s })}
+                              className={`flex-1 h-11 rounded-xl items-center justify-center border-2 ${
+                                isSelected
+                                  ? 'bg-[#22C55E] border-[#22C55E]'
+                                  : 'border-slate-100 bg-white'
+                              }`}
+                            >
+                              <Text
+                                className={`text-[11px] font-black ${
+                                  isSelected ? 'text-white' : 'text-slate-500'
+                                }`}
+                              >
+                                {s}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })
                       )}
                     </View>
-                    <View className="flex-row items-center">
-                      {availableSizes.length === 1 && (
-                        <Text className="text-[10px] italic text-slate-400 font-bold  tracking-tighter mr-3">
-                          Only option available
-                        </Text>
-                      )}
-                      {gutterState.gutterColorsMulti.length > 1 && (
-                        <TouchableOpacity
-                          onPress={() =>
-                            handleUpdate({
-                              gutterColorsMulti: gutterState.gutterColorsMulti.filter(
-                                (c: any) => c.id !== combo.id
-                              ),
-                            })
-                          }
-                        >
-                          <Icon name="close-circle" size={20} color="#94A3B8" />
-                        </TouchableOpacity>
-                      )}
-                    </View>
+                    {data.gutterColorsMulti.length > 1 && (
+                      <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={() =>
+                          onUpdate(
+                            'gutter',
+                            'gutterColorsMulti',
+                            data.gutterColorsMulti.filter((c: any) => c.id !== combo.id)
+                          )
+                        }
+                      >
+                        <Icon
+                          name="close"
+                          size={24}
+                          color="#EF4444"
+                          className="bg-red-50 p-1 rounded-full"
+                        />
+                      </TouchableOpacity>
+                    )}
                   </View>
 
-                  <View className="p-6">
-                    {/* Gutter Partial Selector - Screenshot Parity */}
-                    <View className="mb-8">
-                      <Text className="text-[10px] font-black text-text-secondary mb-3  tracking-widest">
-                        Gutter Partial?
-                      </Text>
-                      <View className="flex-row gap-4">
-                        {['Yes', 'No'].map((val) => (
+                  <View
+                    className={`mb-6 p-3 rounded-2xl ${
+                      allocatedTotal > 0 && !data.partial
+                        ? 'border-2 border-amber-400 bg-amber-50/20'
+                        : ''
+                    }`}
+                  >
+                    <View className="flex-row items-center mb-3">
+                      <Text className="text-[11px] font-black text-slate-500">Gutter Partial?</Text>
+                      {allocatedTotal > 0 && !data.partial && (
+                        <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                          Selection Required
+                        </Text>
+                      )}
+                    </View>
+                    <View className="flex-row gap-2">
+                      {['Yes', 'No'].map((opt) => {
+                        const isSelected = data.partial === opt;
+                        return (
                           <TouchableOpacity
-                            key={val}
-                            onPress={() => {
-                              const newCombos = [...gutterState.gutterColorsMulti];
-                              newCombos[idx].partial = val;
-                              handleUpdate({ gutterColorsMulti: newCombos });
-                            }}
-                            className={`flex-1 h-12 rounded-2xl items-center justify-center border-2 ${
-                              combo.partial === val
-                                ? 'bg-[#82D995] border-[#82D995]'
-                                : isDark
-                                ? 'bg-[#1C1C1E] border-[#2C2C2E]'
-                                : 'bg-white border-slate-100'
+                            activeOpacity={1}
+                            key={opt}
+                            onPress={() => onUpdate('gutter', 'partial', opt)}
+                            className={`flex-1 h-11 rounded-xl items-center justify-center border-2 ${
+                              isSelected
+                                ? 'bg-[#22C55E] border-[#22C55E]'
+                                : 'border-slate-100 bg-white'
                             }`}
                           >
                             <Text
-                              className={`font-black  text-[11px] tracking-widest ${
-                                combo.partial === val ? 'text-white' : 'text-slate-400'
+                              className={`text-[11px] font-black ${
+                                isSelected ? 'text-white' : 'text-slate-500'
                               }`}
                             >
-                              {val}
+                              {opt}
                             </Text>
                           </TouchableOpacity>
-                        ))}
-                      </View>
-                      {combo.partial === 'Yes' && (
-                        <Text className="mt-2 text-[#82D995] text-[10px] font-bold ml-1">
-                          ✓ Yes
-                        </Text>
-                      )}
+                        );
+                      })}
                     </View>
-                    <View className="mb-8">
-                      {availableSizes.length > 1 && (
-                        <>
-                          <Text className="text-[10px] font-black text-text-secondary  tracking-widest mb-4">
-                            Gutter Size Selection
-                          </Text>
-                          <View className="flex-row gap-2">
-                            {availableSizes.map((s) => (
-                              <TouchableOpacity
-                                key={s.label}
-                                onPress={() => {
-                                  const newCombos = [...gutterState.gutterColorsMulti];
-                                  newCombos[idx].size = s.label;
-                                  handleUpdate({ gutterColorsMulti: newCombos });
-                                }}
-                                className={`flex-1 h-12 rounded-2xl items-center justify-center border-2 ${
-                                  combo.size === s.label
-                                    ? 'bg-[#22C55E] border-[#22C55E]'
-                                    : isDark
-                                    ? 'bg-[#1C1C1E] border-[#2C2C2E]'
-                                    : 'bg-white border-slate-100'
-                                }`}
-                              >
-                                <Text
-                                  className={`font-black text-[11px]  tracking-wider ${
-                                    combo.size === s.label ? 'text-white' : 'text-slate-400'
-                                  }`}
-                                >
-                                  {s.label}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                        </>
-                      )}
-                    </View>
+                  </View>
 
-                    {/* Color Picker */}
-                    <View className="mb-6">
-                      <View className="flex-row justify-between items-center mb-3">
-                        <Text className="text-[10px] font-black text-text-secondary  tracking-widest">
-                          Color
+                  <View
+                    className={`mb-6 p-3 rounded-2xl ${
+                      colorMissing ? 'border-2 border-amber-400 bg-amber-50/20' : ''
+                    }`}
+                  >
+                    <View className="flex-row justify-between items-center mb-3">
+                      <View className="flex-row items-center">
+                        <Text className="text-[11px] font-black text-amber-500 uppercase tracking-tight">
+                          {combo.size} Color
                         </Text>
-                        <TouchableOpacity
-                          onPress={() => setColorModal({ show: true, type: 'gutter', index: idx })}
-                          className="flex-row items-center"
-                        >
-                          <Text className="text-[#38BDF8] text-[10px] font-bold  mr-1">
-                            More Colors
+                        {colorMissing && (
+                          <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                            Required
                           </Text>
-                          <Icon name="arrow-right" size={12} color="#38BDF8" />
-                        </TouchableOpacity>
+                        )}
                       </View>
-                      <View>
-                        <View className="flex-row gap-2.5">
-                          {COLORS.Gutter.slice(0, 4).map((c) => (
-                            <TouchableOpacity
-                              key={c.name}
-                              onPress={() => {
-                                const newCombos = [...gutterState.gutterColorsMulti];
-                                newCombos[idx].color = c.name;
-                                handleUpdate({ gutterColorsMulti: newCombos });
-                                fetchProductImage(c.name);
-                              }}
-                              style={{ backgroundColor: c.hex }}
-                              className={`w-[23%] h-12 rounded-lg border-2 ${
-                                combo.color === c.name
-                                  ? 'border-[#22C55E]'
-                                  : 'border-white shadow-sm'
-                              }`}
-                            >
-                              {combo.color === c.name && (
-                                <View className="absolute top-1 right-1 bg-[#22C55E] w-5 h-5 rounded-full items-center justify-center">
-                                  <Icon name="check" size={10} color="white" />
-                                </View>
-                              )}
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                      {combo.color !== '' && (
-                        <View className="mt-3 flex-row items-center">
-                          <View className="bg-[#DCFCE7] px-3 py-1.5 rounded-xl flex-row items-center border border-[#BBF7D0]">
-                            <View
-                              style={{
-                                backgroundColor:
-                                  COLORS.Gutter.find((c) => c.name === combo.color)?.hex || '#000',
-                              }}
-                              className="w-3 h-3 rounded-full mr-2 border border-white"
-                            />
-                            <Text className="text-[#166534] text-[10px] font-black ">
-                              ✓ {combo.color}
-                            </Text>
-                          </View>
-                        </View>
-                      )}
+                      <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={() =>
+                          setColorModal({ visible: true, target: { type: 'combo', idx } })
+                        }
+                        className="flex-row items-center"
+                      >
+                        <Text className="text-[10px] font-black text-slate-500 mr-1">
+                          More Colors
+                        </Text>
+                        <Icon name="arrow-right" size={12} color="#94A3B8" />
+                      </TouchableOpacity>
                     </View>
-
-                    {/* Measurements Matrix - Web App Style */}
-                    <View className="bg-surface rounded-2xl p-4 mb-4">
-                      <View className="flex-row mb-3 px-1">
-                        <View className="flex-[1.5]">
-                          <Text className="text-[8px] font-black text-text-secondary ">
-                            Location
-                          </Text>
-                        </View>
-                        {STORIES.map((s) => (
-                          <View key={s} className="flex-1 items-center">
-                            <Text className="text-[8px] font-black text-text-secondary ">
-                              {s.split(' ')[0]}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
-                      {LOCATIONS.map((loc, lIdx) => (
-                        <View key={loc} className="flex-row items-center mb-1.5">
-                          <View className="flex-[1.5]">
-                            <Text className="text-[8px] font-black text-text-primary ">{loc}</Text>
-                          </View>
-                          {STORIES.map((_, sIdx) => (
-                            <View key={sIdx} className="flex-1 px-1">
-                              <TextInput
-                                value={String(combo.measurements[lIdx * 3 + sIdx] || '')}
-                                onChangeText={(v) => {
-                                  const newCombos = [...gutterState.gutterColorsMulti];
-                                  newCombos[idx].measurements[lIdx * 3 + sIdx] = v;
-                                  handleUpdate({ gutterColorsMulti: newCombos });
-                                }}
-                                keyboardType="numeric"
-                                placeholder="0"
-                                placeholderTextColor="#CBD5E1"
-                                className="h-10 bg-white rounded-lg text-center font-black text-[11px] border border-slate-100"
+                    <View className="flex-row justify-between mb-4">
+                      {COLORS.Gutter.slice(0, 4).map((c) => {
+                        const isSelected = combo.color === c.name;
+                        return (
+                          <TouchableOpacity
+                            key={c.name}
+                            activeOpacity={1}
+                            onPress={() => updateCombo(idx, { color: c.name })}
+                            style={{ backgroundColor: c.hex }}
+                            className={`w-[23%] h-14 rounded-xl border-4 items-center justify-center ${
+                              isSelected ? 'border-emerald-500' : 'border-white'
+                            }`}
+                          >
+                            {isSelected && (
+                              <Icon
+                                name="check"
+                                size={24}
+                                color={c.name === 'White' ? '#22C55E' : 'white'}
                               />
-                            </View>
-                          ))}
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {combo.color && selectedColorObj && (
+                      <View className="bg-[#22C55E] rounded-full py-2 px-4 self-start flex-row items-center">
+                        <View
+                          style={{ backgroundColor: selectedColorObj.hex }}
+                          className="w-4 h-4 rounded-full border border-white/20 mr-2"
+                        />
+                        <Icon name="check" size={12} color="white" className="mr-1" />
+                        <Text className="text-white text-[10px] font-black">{combo.color}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View className="mb-6">
+                    <Text className="text-[11px] font-black text-amber-500 uppercase tracking-tight mb-4">
+                      {combo.size} Gutter Measurements
+                    </Text>
+                    <View className="flex-row items-center mb-2">
+                      <View className="flex-[1.5] items-start pl-1">
+                        <Text className="text-[7px] font-black text-slate-400 uppercase">
+                          Locations
+                        </Text>
+                      </View>
+                      {STORIES.map((story) => (
+                        <View key={story} className="flex-1 items-center">
+                          <Text className="text-[7px] font-black text-slate-400 uppercase">
+                            {story}
+                          </Text>
                         </View>
                       ))}
-                      <View className="flex-row items-center mt-3 pt-3 border-t border-slate-100">
-                        <View className="flex-[1.5]">
-                          <Text className="text-[8px] font-black text-text-primary ">TOTAL</Text>
-                        </View>
-                        {STORIES.map((_, sIdx) => {
-                          const storyTotal = LOCATIONS.reduce(
-                            (sum, __, lIdx) =>
-                              sum + parseFloat(combo.measurements[lIdx * 3 + sIdx] || '0'),
-                            0
-                          );
-                          return (
-                            <View key={sIdx} className="flex-1 px-1">
-                              <View className="h-10 bg-[#E0F2FE] rounded-lg items-center justify-center border border-[#BAE6FD]">
-                                <Text className="text-[10px] font-black text-[#0369A1]">
-                                  {storyTotal}
-                                </Text>
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
                     </View>
-
-                    <TouchableOpacity className="bg-[#82D995] h-12 rounded-[20px] items-center justify-center mb-8 shadow-sm">
-                      <Text className="text-white font-black text-[13px]  tracking-tight">
-                        Grand Total:{' '}
-                        {combo.measurements?.reduce(
-                          (s: number, d: any) => s + (parseFloat(d) || 0),
-                          0
-                        ) || 0}{' '}
-                        ft
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* Accessories Grid - Screenshot 2 Parity */}
-                    <View className="mb-2">
-                      <Text className="text-[11px] font-black text-[#64748B] mb-4 ml-1  tracking-widest">
-                        Miters & End Caps
-                      </Text>
-                      {[
-                        { label: '# of Miters (Outside) *', key: 'mitersOutside' },
-                        { label: '# of Miters (Inside) *', key: 'mitersInside' },
-                        { label: '# End Caps (Rights) *', key: 'endCapsRights' },
-                        { label: '# End Caps (Lefts) *', key: 'endCapsLefts' },
-                      ].map((item) => {
-                        const hasMeas = (combo.measurements || []).some(
-                          (m: any) => parseFloat(m) > 0
-                        );
-                        const isMissing =
-                          hasMeas && (combo[item.key] === '' || combo[item.key] === undefined);
-
-                        return (
-                          <View key={item.key} className="mb-4">
+                    {LOCATIONS.map((loc, lIdx) => (
+                      <View key={loc} className="flex-row items-center mb-2">
+                        <View className="flex-[1.5]">
+                          <Text className="text-[9px] font-black text-slate-600 uppercase">
+                            {loc}
+                          </Text>
+                        </View>
+                        {[0, 1, 2].map((sIdx) => (
+                          <View key={sIdx} className="flex-1 px-1">
                             <TextInput
-                              value={String(combo[item.key] || '')}
+                              value={String(combo.measurements[lIdx * 3 + sIdx] ?? '')}
                               onChangeText={(v) => {
-                                const newCombos = [...gutterState.gutterColorsMulti];
-                                newCombos[idx][item.key] = v;
-                                handleUpdate({ gutterColorsMulti: newCombos });
+                                const next = [...combo.measurements];
+                                next[lIdx * 3 + sIdx] = v;
+                                updateCombo(idx, { measurements: next });
                               }}
                               keyboardType="numeric"
-                              placeholder={item.label}
-                              placeholderTextColor="#94A3B8"
-                              className={`h-14 px-6 rounded-2xl font-black text-slate-800 text-[13px] border-2 ${
-                                isMissing
-                                  ? 'bg-[#FFF1F0] border-[#FF4D4F]'
-                                  : isDark
-                                  ? 'bg-[#1C1C1E] border-[#2C2C2E]'
-                                  : 'bg-white border-slate-100'
+                              placeholder="0"
+                              className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
+                            />
+                          </View>
+                        ))}
+                      </View>
+                    ))}
+                    <TouchableOpacity
+                      activeOpacity={1}
+                      disabled
+                      className="mt-4 bg-[#63D88E] h-12 rounded-2xl items-center justify-center"
+                    >
+                      <Text className="text-white font-black text-[12px]">
+                        Grand Total: {subtotal.toFixed(0)} ft
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View>
+                    <Text className="text-[12px] font-black text-slate-500 mb-4">
+                      Miters & End Caps
+                    </Text>
+                    <View className="gap-2">
+                      {[
+                        { label: '# of Miters (Outside)', field: 'mitersOutside' },
+                        { label: '# of Miters (Inside)', field: 'mitersInside' },
+                        { label: '# End Caps (Rights)', field: 'endCapsRights' },
+                        { label: '# End Caps (Lefts)', field: 'endCapsLefts' },
+                      ].map((f) => {
+                        const val = combo[f.field as keyof typeof combo];
+                        const isError =
+                          hasMeas && (val === '' || val === undefined || val === null);
+                        return (
+                          <View key={f.field} className="relative mb-1">
+                            <Text
+                              className={`text-[9px] font-black absolute -top-1.5 left-4 bg-white px-1 z-10 ${
+                                isError ? 'text-red-500' : 'text-slate-400'
+                              }`}
+                            >
+                              {f.label} *
+                            </Text>
+                            <TextInput
+                              value={String(val ?? '')}
+                              onChangeText={(v) => updateCombo(idx, { [f.field]: v })}
+                              keyboardType="numeric"
+                              className={`h-12 rounded-2xl border-2 px-5 text-[12px] font-black text-black ${
+                                isError
+                                  ? 'border-red-500 bg-red-50/10'
+                                  : 'border-slate-300 bg-white'
                               }`}
                             />
                           </View>
@@ -670,19 +631,16 @@ export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSect
                     </View>
                   </View>
                 </View>
-              </View>
-            );
-          })}
-
-          <TouchableOpacity
-            onPress={() => {
-              const defaultSize = availableSizes[0]?.label || '6" K-Style';
-              handleUpdate({
-                gutterColorsMulti: [
-                  ...(gutterState.gutterColorsMulti || []),
+              );
+            })}
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={() =>
+                onUpdate('gutter', 'gutterColorsMulti', [
+                  ...(data.gutterColorsMulti || []),
                   {
-                    id: Date.now(),
-                    size: defaultSize,
+                    id: Date.now() + Math.random(),
+                    size: availableSizes[0] || '6" K-Style',
                     color: '',
                     measurements: Array(18).fill(''),
                     mitersOutside: '',
@@ -690,390 +648,433 @@ export const GutterSection = ({ jobState, onUpdate, calculatorData }: GutterSect
                     endCapsRights: '',
                     endCapsLefts: '',
                   },
-                ],
-              });
-            }}
-            className="mb-10 py-5 rounded-3xl border border-dashed border-border items-center justify-center flex-row bg-surface"
-          >
-            <Icon name="plus" size={18} color="#64748B" />
-            <Text className="text-text-secondary font-black text-xs  ml-2 tracking-widest">
-              Add Combination
-            </Text>
-          </TouchableOpacity>
-
-          {/* Downspouts Header with Dashed Lines */}
-          <View className="flex-row items-center mb-8 mt-4 px-2">
-            <View
-              className="flex-1 h-[1px] bg-slate-200"
-              style={{ borderStyle: 'dashed', borderWidth: 1 }}
-            />
-            <Text className="mx-4 text-[10px] font-black text-slate-500  tracking-[3px]">
-              Downspouts & Accessories
-            </Text>
-            <View
-              className="flex-1 h-[1px] bg-slate-200"
-              style={{ borderStyle: 'dashed', borderWidth: 1 }}
-            />
+                ])
+              }
+              className="h-16 rounded-[24px] border-2 border-dashed border-indigo-200 items-center justify-center flex-row bg-white mt-2 mb-4 mx-1"
+            >
+              <Icon name="plus" size={16} color="#6366F1" />
+              <Text className="text-indigo-500 font-black text-[11px] ml-2 uppercase">
+                + Add Combination
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {(gutterState.downspoutsMulti || []).map((ds: any, idx: number) => (
-            <View key={ds.id} className="mb-8">
-              <View
-                className={`bg-card rounded-[32px] border-2 overflow-hidden shadow-sm border-[#6366F111]`}
-              >
-                <View className="px-6 py-4 flex-row justify-between items-center bg-white border-b border-slate-50">
-                  <Text className="text-slate-800 font-black text-[10px]  tracking-widest">
-                    Downspout #{idx + 1}
-                  </Text>
-                  {gutterState.downspoutsMulti.length > 1 && (
-                    <TouchableOpacity
-                      onPress={() =>
-                        handleUpdate({
-                          downspoutsMulti: gutterState.downspoutsMulti.filter(
-                            (d: any) => d.id !== ds.id
-                          ),
-                        })
-                      }
-                    >
-                      <Icon name="close-circle" size={20} color="#94A3B8" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <View className="p-6">
-                  <Text className="text-[10px] font-black text-text-secondary  tracking-widest mb-3">
-                    Type
-                  </Text>
-                  <View className="flex-row gap-2 mb-3">
-                    {DOWNSPOUT_TYPES.slice(0, 2).map((type) => (
-                      <TouchableOpacity
-                        key={type}
-                        onPress={() => {
-                          const newDS = [...gutterState.downspoutsMulti];
-                          newDS[idx].type = type;
-                          handleUpdate({ downspoutsMulti: newDS });
-                        }}
-                        className={`flex-1 h-12 rounded-2xl items-center justify-center border-2 ${
-                          ds.type === type
-                            ? 'bg-[#22C55E] border-[#22C55E]'
-                            : isDark
-                            ? 'bg-[#1C1C1E] border-[#2C2C2E]'
-                            : 'bg-white border-slate-100'
-                        }`}
-                      >
-                        <Text
-                          className={`text-[10px] font-black  tracking-tight ${
-                            ds.type === type ? 'text-white' : 'text-slate-400'
-                          }`}
-                        >
-                          {type}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const newDS = [...gutterState.downspoutsMulti];
-                      newDS[idx].type = DOWNSPOUT_TYPES[2];
-                      handleUpdate({ downspoutsMulti: newDS });
-                    }}
-                    className={`h-12 rounded-2xl items-center justify-center border-2 mb-6 ${
-                      ds.type === DOWNSPOUT_TYPES[2]
-                        ? 'bg-[#22C55E] border-[#22C55E]'
-                        : isDark
-                        ? 'bg-[#1C1C1E] border-[#2C2C2E]'
-                        : 'bg-white border-slate-100'
-                    }`}
-                  >
-                    <Text
-                      className={`text-[10px] font-black  tracking-tight ${
-                        ds.type === DOWNSPOUT_TYPES[2] ? 'text-white' : 'text-slate-400'
-                      }`}
-                    >
-                      {DOWNSPOUT_TYPES[2]}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {/* Color Grid for DS */}
-                  <View className="mb-6">
-                    <View className="flex-row justify-between items-center mb-3">
-                      <Text className="text-[10px] font-black text-text-secondary  tracking-widest">
-                        Downspout Color
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => setColorModal({ show: true, type: 'downspout', index: idx })}
-                        className="flex-row items-center"
-                      >
-                        <Text className="text-[#38BDF8] text-[10px] font-bold  mr-1">
-                          More Colors
-                        </Text>
-                        <Icon name="arrow-right" size={12} color="#38BDF8" />
-                      </TouchableOpacity>
-                    </View>
-                    <View>
-                      <View className="flex-row gap-2.5">
-                        {COLORS.Gutter.slice(0, 4).map((c) => (
-                          <TouchableOpacity
-                            key={c.name}
-                            onPress={() => {
-                              const newDS = [...gutterState.downspoutsMulti];
-                              newDS[idx].color = c.name;
-                              handleUpdate({ downspoutsMulti: newDS });
-                            }}
-                            style={{ backgroundColor: c.hex }}
-                            className={`w-[23%] h-12 rounded-lg border-2 ${
-                              ds.color === c.name ? 'border-[#22C55E]' : 'border-white shadow-sm'
-                            }`}
-                          >
-                            {ds.color === c.name && (
-                              <View className="absolute top-1 right-1 bg-[#22C55E] w-5 h-5 rounded-full items-center justify-center">
-                                <Icon name="check" size={10} color="white" />
-                              </View>
-                            )}
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </View>
-
-                  <View className="gap-3">
-                    {[
-                      { label: 'Downspout Footage (ft)', key: 'footage' },
-                      { label: '# of A Elbows (1=1FT)', key: 'aElbows' },
-                      { label: '# of B Elbows', key: 'bElbows' },
-                      { label: '# of Round Elbow', key: 'roundElbow' },
-                      { label: '# of Offset Elbows', key: 'offsetElbows' },
-                      { label: '# of Spout Savers', key: 'spoutSavers' },
-                    ].map((item) => (
-                      <View key={item.key} className="mb-0">
-                        <TextInput
-                          value={String(ds[item.key] || '')}
-                          onChangeText={(v) => {
-                            const newDS = [...gutterState.downspoutsMulti];
-                            newDS[idx][item.key] = v;
-                            handleUpdate({ downspoutsMulti: newDS });
-                          }}
-                          keyboardType="numeric"
-                          placeholder={item.label}
-                          placeholderTextColor="#94A3B8"
-                          className={`h-14 px-5 rounded-2xl font-black text-slate-800 text-[13px] border-2 ${
-                            isDark ? 'bg-[#1C1C1E] border-[#2C2C2E]' : 'bg-white border-slate-100'
-                          }`}
-                        />
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              </View>
-            </View>
-          ))}
-
-          <TouchableOpacity
-            onPress={() =>
-              handleUpdate({
-                downspoutsMulti: [
-                  ...(gutterState.downspoutsMulti || []),
-                  {
-                    id: Date.now(),
-                    type: '2 X 3',
-                    color: '',
-                    footage: '',
-                    aElbows: '',
-                    bElbows: '',
-                    roundElbow: '',
-                    offsetElbows: '',
-                    spoutSavers: '',
-                  },
-                ],
-              })
-            }
-            className="mb-10 py-5 rounded-3xl border border-dashed border-border items-center justify-center flex-row bg-surface"
-          >
-            <Icon name="plus" size={18} color="#64748B" />
-            <Text className="text-text-secondary font-black text-xs  ml-2 tracking-widest">
-              Add Downspout
-            </Text>
-          </TouchableOpacity>
-
-          {/* Extras Locked Section - Screenshot 2 Parity */}
-          <View
-            className={`rounded-[32px] border-2 overflow-hidden shadow-sm mb-10 ${
-              isDark ? 'bg-[#1C1C1E] border-[#2C2C2E]' : 'bg-white border-slate-50'
-            }`}
-          >
-            <View className="px-6 py-5 flex-row justify-between items-center border-b border-slate-50 bg-[#F8FAFC]">
-              <Text className="text-[12px] font-black text-[#22C55E]  tracking-widest">Extras</Text>
-              <View className="bg-black px-4 py-2 rounded-xl flex-row items-center">
-                <Text className="text-white text-[9px] font-black  tracking-tight">
-                  Locked from Job Summary
-                </Text>
-              </View>
+          {/* ── DOWNSPOUTS & ACCESSORIES ── */}
+          <View className="mb-10">
+            <View className="flex-row items-center mb-8">
+              <View className="flex-1 h-[1px] bg-slate-200" />
+              <Text className="mx-4 text-[11px] font-black text-slate-500 tracking-widest uppercase">
+                DOWNSPOUTS & ACCESSORIES
+              </Text>
+              <View className="flex-1 h-[1px] bg-slate-200" />
             </View>
 
-            <View>
-              {[
-                { label: 'Wedges', val: calculatorData?.wedges, unit: 'QTY' },
-                { label: 'Straps', val: calculatorData?.straps, unit: 'QTY' },
-                {
-                  label: 'Modify Height/R&R',
-                  val: calculatorData?.modifyHeight,
-                  unit: 'FT',
-                  key: 'modifyHeight',
-                },
-                {
-                  label: 'GroundSpout',
-                  val: calculatorData?.groundSpout,
-                  unit: 'FT',
-                  key: 'groundSpout',
-                  hasColor: true,
-                },
-                {
-                  label: 'Replace Corner Miter',
-                  val: calculatorData?.replaceCorner,
-                  unit: 'FT',
-                  key: 'replaceCorner',
-                  hasColor: true,
-                },
-                {
-                  label: 'Extended Splash Guard',
-                  val: calculatorData?.extendedSplashGuard,
-                  unit: 'FT',
-                  key: 'extendedSplashGuard',
-                  hasColor: true,
-                },
-                {
-                  label: 'Extended .032 Splash Guard',
-                  val: calculatorData?.extendedSplashGuard032,
-                  unit: 'FT',
-                  key: 'extendedSplashGuard032',
-                  hasColor: true,
-                },
-              ].map((item, i, arr) => {
-                const val = parseFloat(item.val || '0');
-                const isLast = i === arr.length - 1;
-                const hasColor = item.hasColor;
+            <View className="border-2 border-[#A5B4FC] rounded-[32px] p-2">
+              {(data.downspoutsMulti || []).map((ds: any, dsIdx: number) => {
+                const hasVal = [
+                  'footage',
+                  'aElbows',
+                  'bElbows',
+                  'roundElbow',
+                  'offsetElbows',
+                  'spoutSavers',
+                ].some((f) => n(ds[f]) > 0);
+                const dsColorObj = COLORS.Gutter.find((c) => c.name === ds.color);
+                const dsColorMissing = hasVal && !ds.color;
 
                 return (
                   <View
-                    key={item.label}
-                    className={`flex-row ${!isLast ? 'border-b' : ''} border-slate-50`}
+                    key={ds.id}
+                    className="mb-4 bg-white rounded-[24px] border border-indigo-100 p-5 shadow-sm"
                   >
-                    <View className={`flex-1 p-6 ${hasColor ? 'border-r border-slate-50' : ''}`}>
-                      <View className="flex-row justify-between items-center">
-                        <View>
-                          <Text className="text-[10px] font-black text-slate-400  mb-2 tracking-tight">
-                            {item.label}
-                          </Text>
-                          <Text className="text-xl font-black text-slate-800">{val || 0}</Text>
-                        </View>
-                        <Icon name="lock" size={18} color="#CBD5E1" />
-                      </View>
+                    <View className="flex-row justify-between items-center mb-6">
+                      <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        Downspout #{dsIdx + 1}
+                      </Text>
+                      {data.downspoutsMulti.length > 1 && (
+                        <TouchableOpacity
+                          activeOpacity={1}
+                          onPress={() =>
+                            onUpdate(
+                              'gutter',
+                              'downspoutsMulti',
+                              data.downspoutsMulti.filter((d: any) => d.id !== ds.id)
+                            )
+                          }
+                        >
+                          <Icon name="close" size={18} color="#EF4444" />
+                        </TouchableOpacity>
+                      )}
                     </View>
-
-                    {hasColor && (
-                      <View className="flex-1 p-6">
-                        <View className="flex-row justify-between items-center">
-                          <View>
-                            <Text className="text-[10px] font-black text-slate-400  mb-2 tracking-tight">
-                              Color
+                    <View className="flex-row flex-wrap gap-2 mb-6">
+                      {filteredDownspoutTypes.map((it) => {
+                        const isSelected = ds.type === it.name;
+                        return (
+                          <TouchableOpacity
+                            activeOpacity={1}
+                            key={it.name}
+                            onPress={() => updateDS(dsIdx, { type: it.name })}
+                            className={`w-[48%] h-11 rounded-xl items-center justify-center border-2 ${
+                              isSelected
+                                ? 'bg-[#22C55E] border-[#22C55E]'
+                                : 'border-slate-100 bg-white'
+                            }`}
+                          >
+                            <Text
+                              className={`text-[10px] font-black ${
+                                isSelected ? 'text-white' : 'text-slate-700'
+                              }`}
+                            >
+                              {it.name}
                             </Text>
-                            <Text className="text-xl font-black text-slate-800">
-                              {gutterState.extrasColors?.[item.key!] || '—'}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <View
+                      className={`mb-6 p-3 rounded-2xl ${
+                        dsColorMissing ? 'border-2 border-amber-400 bg-amber-50/20' : ''
+                      }`}
+                    >
+                      <View className="flex-row justify-between items-center mb-3">
+                        <View className="flex-row items-center">
+                          <Text className="text-[11px] font-black text-indigo-500 uppercase tracking-tight">
+                            Downspout Color
+                          </Text>
+                          {dsColorMissing && (
+                            <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                              Required
                             </Text>
-                          </View>
-                          <Icon name="lock" size={18} color="#CBD5E1" />
+                          )}
                         </View>
+                        <TouchableOpacity
+                          activeOpacity={1}
+                          onPress={() =>
+                            setColorModal({ visible: true, target: { type: 'ds', idx: dsIdx } })
+                          }
+                          className="flex-row items-center"
+                        >
+                          <Text className="text-[10px] font-black text-slate-500 mr-1">
+                            More Colors
+                          </Text>
+                          <Icon name="arrow-right" size={12} color="#94A3B8" />
+                        </TouchableOpacity>
                       </View>
-                    )}
+                      <View className="flex-row justify-between mb-4">
+                        {COLORS.Gutter.slice(0, 4).map((c) => {
+                          const isSel = ds.color === c.name;
+                          return (
+                            <TouchableOpacity
+                              key={c.name}
+                              activeOpacity={1}
+                              onPress={() => updateDS(dsIdx, { color: c.name })}
+                              style={{ backgroundColor: c.hex }}
+                              className={`w-[23%] h-14 rounded-xl border-4 items-center justify-center ${
+                                isSel ? 'border-emerald-500' : 'border-white'
+                              }`}
+                            >
+                              {isSel && (
+                                <Icon
+                                  name="check"
+                                  size={24}
+                                  color={c.name === 'White' ? '#22C55E' : 'white'}
+                                />
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      {ds.color && dsColorObj && (
+                        <View className="bg-[#22C55E] rounded-full py-2 px-4 self-start flex-row items-center">
+                          <View
+                            style={{ backgroundColor: dsColorObj.hex }}
+                            className="w-4 h-4 rounded-full border border-white/20 mr-2"
+                          />
+                          <Icon name="check" size={12} color="white" className="mr-1" />
+                          <Text className="text-white text-[10px] font-black">{ds.color}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View className="gap-2">
+                      {[
+                        { label: 'Downspout Footage (ft)', field: 'footage' },
+                        { label: '# of A Elbows (1=1FT)', field: 'aElbows' },
+                        { label: '# of B Elbows', field: 'bElbows' },
+                        { label: '# of Round Elbow', field: 'roundElbow' },
+                        { label: '# of Offset Elbows', field: 'offsetElbows' },
+                        { label: '# of Spout Savers', field: 'spoutSavers' },
+                      ].map((f) => (
+                        <View key={f.field} className="relative mb-1">
+                          <Text className="text-[9px] font-black absolute -top-1.5 left-4 bg-white px-1 z-10 text-slate-400 uppercase">
+                            {f.label}
+                          </Text>
+                          <TextInput
+                            value={String(ds[f.field] ?? '')}
+                            onChangeText={(v) => updateDS(dsIdx, { [f.field]: v })}
+                            keyboardType="numeric"
+                            className="h-12 bg-white rounded-2xl border-2 border-slate-100 px-5 text-[12px] font-black text-black"
+                          />
+                        </View>
+                      ))}
+                    </View>
                   </View>
                 );
               })}
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() =>
+                  onUpdate('gutter', 'downspoutsMulti', [
+                    ...(data.downspoutsMulti || []),
+                    {
+                      id: Date.now() + Math.random(),
+                      type: '',
+                      color: '',
+                      footage: '',
+                      aElbows: '',
+                      bElbows: '',
+                      roundElbow: '',
+                      offsetElbows: '',
+                      spoutSavers: '',
+                    },
+                  ])
+                }
+                className="h-14 rounded-[24px] border-2 border-dashed border-indigo-200 items-center justify-center flex-row bg-white mx-1 mb-2"
+              >
+                <Icon name="plus" size={16} color="#6366F1" />
+                <Text className="text-indigo-500 font-black text-[11px] ml-2 uppercase">
+                  + Add Downspout
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Premium Select Color Modal */}
-          <Modal
-            visible={colorModal.show}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={() => setColorModal({ ...colorModal, show: false })}
-          >
-            <View className="flex-1 bg-black/40 justify-end">
-              <View className="bg-white rounded-t-[40px] h-[90%] shadow-2xl">
-                <View className="p-8 flex-row justify-between items-center border-b border-slate-50">
-                  <Text className="text-xl font-black text-slate-800">Select Color</Text>
-                  <TouchableOpacity
-                    onPress={() => setColorModal({ ...colorModal, show: false })}
-                    className="p-2"
-                  >
-                    <Icon name="close" size={24} color="#64748B" />
-                  </TouchableOpacity>
-                </View>
-
-                <FlatList
-                  data={COLORS.Gutter}
-                  numColumns={3}
-                  contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-                  keyExtractor={(item) => item.name}
-                  renderItem={({ item }) => {
-                    const combo =
-                      colorModal.type === 'gutter'
-                        ? gutterState.gutterColorsMulti[colorModal.index]
-                        : gutterState.downspoutsMulti[colorModal.index];
-                    const isSelected = combo?.color === item.name;
-
-                    return (
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (colorModal.type === 'gutter') {
-                            const newCombos = [...gutterState.gutterColorsMulti];
-                            newCombos[colorModal.index].color = item.name;
-                            handleUpdate({ gutterColorsMulti: newCombos });
-                            fetchProductImage(item.name);
-                          } else {
-                            const newDS = [...gutterState.downspoutsMulti];
-                            newDS[colorModal.index].color = item.name;
-                            handleUpdate({ downspoutsMulti: newDS });
-                          }
-                        }}
-                        className={`flex-1 m-1.5 p-3 rounded-2xl border-2 items-center ${
-                          isSelected ? 'border-[#22C55E] bg-[#F0FDF4]' : 'border-slate-100 bg-white'
-                        }`}
-                      >
-                        <View
-                          style={{ backgroundColor: item.hex }}
-                          className="w-14 h-14 rounded-xl mb-3 shadow-sm relative border border-black/5"
-                        >
-                          {isSelected && (
-                            <View className="absolute -top-1.5 -right-1.5 bg-[#22C55E] w-6 h-6 rounded-full items-center justify-center border-2 border-white">
-                              <Icon name="check" size={12} color="white" />
-                            </View>
-                          )}
-                        </View>
-                        <Text
-                          className={`text-[10px] font-black text-center  tracking-tight ${
-                            isSelected ? 'text-[#166534]' : 'text-slate-500'
-                          }`}
-                        >
-                          {item.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  }}
-                />
-
-                <View className="absolute bottom-10 left-8 right-8">
-                  <TouchableOpacity
-                    onPress={() => setColorModal({ ...colorModal, show: false })}
-                    className="bg-[#1E293B] h-14 rounded-2xl items-center justify-center shadow-lg"
-                  >
-                    <Text className="text-white font-black  tracking-widest text-[13px]">Done</Text>
-                  </TouchableOpacity>
-                </View>
+          {/* ── EXTRAS (LOCKED) ── */}
+          <View className="bg-white rounded-[24px] border border-slate-100 overflow-hidden shadow-sm">
+            <View className="px-5 py-4 flex-row justify-between items-center border-b border-slate-100">
+              <Text className="text-[14px] font-black text-[#22C55E] uppercase">Extras</Text>
+              <View className="bg-black px-3 py-1.5 rounded-lg">
+                <Text className="text-[9px] font-black text-white">Locked from Job Summary</Text>
               </View>
             </View>
-          </Modal>
+
+            <View className="p-4 gap-4">
+              {[
+                { label: 'Wedges', val: extrasValues.wedges },
+                { label: 'Straps', val: extrasValues.straps },
+              ].map((it) => (
+                <View
+                  key={it.label}
+                  className="flex-row justify-between items-center border-b border-slate-50 pb-4"
+                >
+                  <View>
+                    <Text className="text-[10px] font-black text-slate-400 uppercase mb-1">
+                      {it.label}
+                    </Text>
+                    <Text className="text-xs font-black text-slate-800">{it.val}</Text>
+                  </View>
+                  <Icon name="lock" size={18} color="#CBD5E1" />
+                </View>
+              ))}
+
+              <View
+                className={`border-b border-slate-50 pb-4 p-2 rounded-xl ${
+                  extrasValues.modifyHeight > 0 && (data.modifyHeightLocations || []).length === 0
+                    ? 'bg-amber-50/50 border border-amber-400'
+                    : ''
+                }`}
+              >
+                <View className="flex-row justify-between items-center mb-3">
+                  <View>
+                    <View className="flex-row items-center">
+                      <Text className="text-[10px] font-black text-slate-400 uppercase mb-1">
+                        Modify Height/R&R
+                      </Text>
+                      {extrasValues.modifyHeight > 0 &&
+                        (data.modifyHeightLocations || []).length === 0 && (
+                          <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                            Loc Required
+                          </Text>
+                        )}
+                    </View>
+                    <Text className="text-xs font-black text-slate-800">
+                      {extrasValues.modifyHeight}
+                    </Text>
+                  </View>
+                  <Icon name="lock" size={18} color="#CBD5E1" />
+                </View>
+                {extrasValues.modifyHeight > 0 && (
+                  <View className="flex-row flex-wrap gap-2">
+                    {['Front', 'Rear', 'Left', 'Right'].map((loc) => {
+                      const isSel = data.modifyHeightLocations?.includes(loc);
+                      return (
+                        <TouchableOpacity
+                          key={loc}
+                          onPress={() => toggleModifyLoc(loc)}
+                          className={`w-[48%] h-10 rounded-xl items-center justify-center border-2 ${
+                            isSel ? 'bg-emerald-500 border-emerald-500' : 'border-slate-200'
+                          }`}
+                        >
+                          <Text
+                            className={`text-[10px] font-black ${
+                              isSel ? 'text-white' : 'text-slate-500'
+                            }`}
+                          >
+                            {loc}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              <View className="flex-row border-b border-slate-50 pb-4">
+                <View className="flex-1 border-r border-slate-50 pr-4">
+                  <View className="flex-row justify-between items-center mb-1">
+                    <Text className="text-[10px] font-black text-slate-400 uppercase">
+                      GroundSpout
+                    </Text>
+                    <Icon name="lock" size={14} color="#CBD5E1" />
+                  </View>
+                  <Text className="text-xs font-black text-slate-800">
+                    {extrasValues.groundSpout}
+                  </Text>
+                </View>
+                <View className="flex-1 pl-4">
+                  <View className="flex-row justify-between items-center mb-1">
+                    <Text className="text-[10px] font-black text-slate-400 uppercase">Color</Text>
+                    <Icon name="lock" size={14} color="#CBD5E1" />
+                  </View>
+                  <Text
+                    className={`text-[14px] font-black ${
+                      extrasValues.groundSpout > 0 ? 'text-slate-800' : 'text-slate-300'
+                    }`}
+                  >
+                    {extrasValues.groundSpout > 0 ? 'Black' : '—'}
+                  </Text>
+                </View>
+              </View>
+
+              {[
+                {
+                  label: 'Replace Corner Miter',
+                  val: extrasValues.replaceCorner,
+                  field: 'replaceCorner',
+                },
+                {
+                  label: 'Extended Splash Guard',
+                  val: extrasValues.extendedSplashGuard,
+                  field: 'extendedSplashGuard',
+                },
+                {
+                  label: 'Extended .032 Splash Guard',
+                  val: extrasValues.extendedSplashGuard032,
+                  field: 'extendedSplashGuard032',
+                },
+              ].map((it) => (
+                <View key={it.label} className="flex-row border-b border-slate-50 pb-4">
+                  <View className="flex-1 border-r border-slate-50 pr-4">
+                    <View className="flex-row justify-between items-center mb-1">
+                      <Text className="text-[10px] font-black text-slate-400 uppercase">
+                        {it.label}
+                      </Text>
+                      <Icon name="lock" size={14} color="#CBD5E1" />
+                    </View>
+                    <Text className="text-xs font-black text-slate-800">{it.val}</Text>
+                  </View>
+                  <View className="flex-1 pl-4">
+                    <View className="flex-row justify-between items-center mb-2">
+                      <Text className="text-[10px] font-black text-slate-400 uppercase">Color</Text>
+                    </View>
+                    {it.val > 0 ? (
+                      <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={() =>
+                          setColorModal({ visible: true, target: { type: 'extras', field: it.field } })
+                        }
+                        className={`flex-row items-center p-2 rounded-xl border ${
+                          !data.extrasColors?.[it.field]
+                            ? 'border-amber-400 bg-amber-50/50'
+                            : 'border-slate-100 bg-slate-50'
+                        }`}
+                      >
+                        {data.extrasColors?.[it.field] ? (
+                          <>
+                            <View
+                              style={{
+                                backgroundColor:
+                                  COLORS.Gutter.find((c) => c.name === data.extrasColors[it.field])?.hex || '#000',
+                              }}
+                              className="w-4 h-4 rounded-full mr-2 border border-black/10"
+                            />
+                            <Text className="text-[10px] font-black text-slate-700 flex-1">
+                              {data.extrasColors[it.field]}
+                            </Text>
+                            <Icon name="chevron-right" size={14} color="#94A3B8" />
+                          </>
+                        ) : (
+                          <>
+                            <Text className="text-[10px] font-black text-amber-600 flex-1">
+                              Select Color
+                            </Text>
+                            <Icon name="plus" size={14} color="#F59E0B" />
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    ) : (
+                      <Text className="text-[14px] font-black text-slate-300">—</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
         </View>
       </ScrollView>
+
+      {/* ── Color Picker Modal ── */}
+      <Modal visible={!!colorModal} transparent animationType="slide">
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white rounded-t-[32px] p-6 max-h-[70%]">
+            <View className="flex-row justify-between items-center mb-6">
+              <Text className="text-lg font-black">Select Gutter Color</Text>
+              <TouchableOpacity activeOpacity={1} onPress={() => setColorModal(null)}>
+                <Icon name="close" size={24} color="#000" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View className="flex-row flex-wrap gap-4 justify-center">
+                {COLORS.Gutter.map((c) => (
+                  <TouchableOpacity
+                    key={c.name}
+                    onPress={() => {
+                      if (colorModal?.target.type === 'combo')
+                        updateCombo(colorModal.target.idx, { color: c.name });
+                      else if (colorModal?.target.type === 'ds')
+                        updateDS(colorModal.target.idx, { color: c.name });
+                      else if (colorModal?.target.type === 'extras')
+                        updateExtrasColor(colorModal.target.field, c.name);
+                      setColorModal(null);
+                    }}
+                    className="items-center w-[20%]"
+                  >
+                    <View
+                      style={{ backgroundColor: c.hex }}
+                      className="w-12 h-12 rounded-xl border border-slate-100 shadow-sm mb-1"
+                    />
+                    <Text
+                      className="text-[8px] font-bold text-center text-slate-500"
+                      numberOfLines={1}
+                    >
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };

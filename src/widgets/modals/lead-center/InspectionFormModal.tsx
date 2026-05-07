@@ -288,6 +288,14 @@ export const InspectionFormModal = ({
 
         {/* Add / Remove Row */}
         <View style={styles.addRemoveRow}>
+          <Pressable
+            onPress={() => addItem(sectionId)}
+            className="flex-row items-center"
+            style={({ pressed }) => [styles.addPhotoBtn, { opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Icon name="plus" size={14} color={colors.primary.main} />
+            <Text style={[styles.addPhotoBtnText, { color: colors.primary.main }]}>Add Item</Text>
+          </Pressable>
           {items.length > 1 && (
             <TouchableOpacity
               onPress={() => removeItem(sectionId, items.length - 1)}
@@ -297,13 +305,6 @@ export const InspectionFormModal = ({
               <Text style={styles.removeBtnText}>Remove</Text>
             </TouchableOpacity>
           )}
-          <Pressable
-            onPress={() => addItem(sectionId)}
-            style={({ pressed }) => [styles.addPhotoBtn, { opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Icon name="plus" size={14} color={colors.primary.main} />
-            <Text style={[styles.addPhotoBtnText, { color: colors.primary.main }]}>Add Item</Text>
-          </Pressable>
         </View>
       </View>
     );
@@ -477,7 +478,7 @@ const styles = StyleSheet.create({
   // Add/Remove row
   addRemoveRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'flex-end',
     gap: 12,
     marginTop: 4,

@@ -69,14 +69,18 @@ export const MapJobCard = ({
         {/* Price & Sales Rep Row */}
         <View className="flex-row gap-2 mb-3">
           <View className="flex-1 bg-slate-50 rounded-lg p-2.5">
-            <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-0.5">Price</Text>
+            <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-0.5">
+              Price
+            </Text>
             <Text className="text-[16px] font-black text-green-600">
               ${(job.price || 0).toLocaleString()}
             </Text>
           </View>
           {isMyJob && (
             <View className="flex-1 bg-slate-50 rounded-lg p-2.5">
-              <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-0.5">Sales Rep</Text>
+              <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-0.5">
+                Sales Rep
+              </Text>
               <Text className="text-[12px] font-black text-green-600" numberOfLines={1}>
                 {job.salesRepName || job.salesRep?.name || 'Me'}
               </Text>
@@ -140,10 +144,10 @@ export const MapJobCard = ({
               onPress={() => onReferencePress?.(job)}
               className="w-8 h-8 rounded-lg bg-slate-50 items-center justify-center border border-slate-100 ml-2"
             >
-              <Icon 
-                name="account-group-outline" 
-                size={16} 
-                color={job.jobReferrals?.length > 0 ? '#10b981' : '#94a3b8'} 
+              <Icon
+                name="account-group-outline"
+                size={16}
+                color={job.jobReferrals?.length > 0 ? '#10b981' : '#94a3b8'}
               />
             </TouchableOpacity>
           )}

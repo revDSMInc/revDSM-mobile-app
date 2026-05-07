@@ -74,45 +74,67 @@ export const useLeadCenterData = (initialLead: any, user: any) => {
     const fetchSecureImages = async () => {
       if (lead?.salesPhotos?.length > 0) {
         try {
-          const filePaths = lead.salesPhotos.map((p: any) => ({
-            bucketName: p.bucketName || 'np-revdsm-staging',
-            filePath: p.s3url,
-          }));
-          const secureRes = await LeadService.getSecureUrls(filePaths);
-          const secureData = secureRes.data?.data || secureRes.data || [];
+          // Check what we already have to avoid redundant fetching
+          const existingMap = { ...sectionImages };
+          const existingS3Urls = new Set(
+            Object.values(existingMap)
+              .flat()
+              .map((img) => img.s3url)
+          );
+
+          const newPhotos = lead.salesPhotos.filter((p: any) => !existingS3Urls.has(p.s3url));
+
+          let updatedSecureData: any[] = [];
+          if (newPhotos.length > 0) {
+            const filePaths = newPhotos.map((p: any) => ({
+              bucketName: p.bucketName || 'np-revdsm-staging',
+              filePath: p.s3url,
+            }));
+            const secureRes = await LeadService.getSecureUrls(filePaths);
+            updatedSecureData = secureRes.data?.data || secureRes.data || [];
+          }
 
           const map: Record<string, any[]> = {};
           lead.salesPhotos.forEach((photo: any) => {
             const catName = photo.category;
             if (!map[catName]) map[catName] = [];
 
-            const categoryConfig = IMAGE_CATEGORIES.find((c) => c.name === catName);
-            let subIndex = -1;
-            if (categoryConfig && photo.subcategory) {
-              subIndex =
-                categoryConfig.subCategories?.findIndex(
-                  (s) => s.id === photo.subcategory || s.name === photo.subcategory
-                ) ?? -1;
+            // Try to find existing image data first
+            let imageData = Object.values(existingMap)
+              .flat()
+              .find((img) => img.s3url === photo.s3url);
+
+            if (!imageData) {
+              const categoryConfig = IMAGE_CATEGORIES.find((c) => c.name === catName);
+              let subIndex = -1;
+              if (categoryConfig && photo.subcategory) {
+                subIndex =
+                  categoryConfig.subCategories?.findIndex(
+                    (s) => s.id === photo.subcategory || s.name === photo.subcategory
+                  ) ?? -1;
+              }
+
+              if (subIndex === -1) {
+                const parts = photo.subcategory?.split('-');
+                const numericPart = parseInt(parts?.[parts.length - 1] || '');
+                if (!isNaN(numericPart)) subIndex = numericPart - 1;
+              }
+
+              const secured = updatedSecureData.find(
+                (s: any) => s.s3url === photo.s3url || s.filePath === photo.s3url
+              );
+              const imageUri = secured?.secureUrl || resolveS3Url(photo.s3url);
+
+              imageData = {
+                uri: imageUri,
+                s3url: photo.s3url,
+                id: photo._id,
+                index: subIndex >= 0 ? subIndex : map[catName].length,
+                subcategory: photo.subcategory,
+              };
             }
 
-            if (subIndex === -1) {
-              const parts = photo.subcategory?.split('-');
-              const numericPart = parseInt(parts?.[parts.length - 1] || '');
-              if (!isNaN(numericPart)) subIndex = numericPart - 1;
-            }
-
-            const secured = secureData.find(
-              (s: any) => s.s3url === photo.s3url || s.filePath === photo.s3url
-            );
-            const imageUri = secured?.secureUrl || resolveS3Url(photo.s3url);
-
-            map[catName].push({
-              uri: imageUri,
-              s3url: photo.s3url,
-              id: photo._id,
-              index: subIndex >= 0 ? subIndex : map[catName].length,
-              subcategory: photo.subcategory,
-            });
+            map[catName].push(imageData);
           });
           setSectionImages(map);
         } catch (error) {

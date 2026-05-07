@@ -306,7 +306,7 @@ export default function PitchbookScreen() {
               style={{
                 backgroundColor: '#F9FFF6',
                 borderColor: colors.primary.main,
-                borderWidth: 2,
+                borderWidth: 1,
               }}
             >
               <IonIcon
@@ -319,7 +319,7 @@ export default function PitchbookScreen() {
                 Back to Map
               </Text>
             </TouchableOpacity>
-            <View className="bg-[#1C252E] p-1.5 rounded-md">
+            <View className="bg-[#4CBB17] p-1.5 rounded-md">
               <Text className="text-white text-xs font-bold">
                 {currentSlideIndex + 1} of {currentCategoryImages.length}
               </Text>
@@ -393,7 +393,7 @@ export default function PitchbookScreen() {
                 borderTopLeftRadius: 8,
                 borderTopRightRadius: 8,
                 backgroundColor: '#F9FFF6',
-                borderWidth: 2,
+                borderWidth: 1,
                 borderColor: colors.primary.main,
               }}
             >

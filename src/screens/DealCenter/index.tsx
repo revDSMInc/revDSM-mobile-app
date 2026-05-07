@@ -167,7 +167,16 @@ export default function LFCalculator({ route }: any) {
   const handleFinishOutcome = () => {
     handleFinishOutcomeHook((showJB: boolean) => {
       if (showJB) {
-        setCurrentView('result');
+        navigation.navigate('JobBuilder', {
+          initialJobState: jobState,
+          calculatorData: active,
+          leadId: lead?._id || lead?.leadId || lead?.id,
+          outcomeForm: outcomeForm,
+          onGoBack: (updatedJobState: any) => {
+            setJobState(updatedJobState);
+          },
+        });
+        setCurrentView('summary');
       }
     });
   };
@@ -192,7 +201,10 @@ export default function LFCalculator({ route }: any) {
     setCurrentView('picker');
   };
 
-  const refreshCalculators = () => fetchCalculators();
+  const refreshCalculators = () => {
+    fetchCalculators();
+    fetchTrackerJobs();
+  };
 
   const handleManualSave = async () => {
     if (!active?._id) return;
@@ -283,6 +295,8 @@ export default function LFCalculator({ route }: any) {
             onClose={onClose}
             handleAddJobToTracker={handleAddJobToTracker}
             isAlreadyInTracker={isAlreadyInTracker}
+            refresh={refreshCalculators}
+            active={active}
             lead={lead}
             isDark={isDark}
             colors={colors}
@@ -317,17 +331,15 @@ export default function LFCalculator({ route }: any) {
                             isActive ? 'text-white' : 'text-text-secondary'
                           }`}
                         >
-                          {calc.name || `Rollout ${idx + 1}`}
+                          {calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
                         </Text>
-                        {calculators.length > 1 && (
-                          <TouchableOpacity onPress={() => setMenuVisible(idx)} className="ml-2">
-                            <Ionicons
-                              name="ellipsis-vertical"
-                              size={14}
-                              color={idx === activeIdx ? 'white' : '#637381'}
-                            />
-                          </TouchableOpacity>
-                        )}
+                        <TouchableOpacity onPress={() => setMenuVisible(idx)} className="ml-2">
+                          <Ionicons
+                            name="ellipsis-vertical"
+                            size={14}
+                            color={idx === activeIdx ? 'white' : '#637381'}
+                          />
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     );
                   })}
@@ -703,17 +715,19 @@ export default function LFCalculator({ route }: any) {
                 </Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={() => {
-                  if (menuVisible !== null) {
-                    handleDeleteCalculator(menuVisible).then(() => setMenuVisible(null));
-                  }
-                }}
-                className="flex-row items-center p-3 rounded-xl"
-              >
-                <Feather name="trash-2" size={18} color="#FF5630" />
-                <Text className="ml-3 text-sm font-semibold text-[#FF5630]">Delete</Text>
-              </TouchableOpacity>
+              {calculators.length > 1 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    if (menuVisible !== null) {
+                      handleDeleteCalculator(menuVisible).then(() => setMenuVisible(null));
+                    }
+                  }}
+                  className="flex-row items-center p-3 rounded-xl"
+                >
+                  <Feather name="trash-2" size={18} color="#FF5630" />
+                  <Text className="ml-3 text-sm font-semibold text-[#FF5630]">Delete</Text>
+                </TouchableOpacity>
+              )}
 
               <View className="h-[1px] bg-border/50 my-1" />
 

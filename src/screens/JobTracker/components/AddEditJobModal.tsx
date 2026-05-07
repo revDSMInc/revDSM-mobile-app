@@ -89,28 +89,31 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
     installDate: null,
     soldDate: format(new Date(), 'yyyy-MM-dd'),
     toBeDetermined: false,
-    isManual: true,
+    isManual: false,
+    appointmentId: '',
+    calculatorId: '',
   });
 
   const [loading, setLoading] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [datePickerTarget, setDatePickerTarget] = useState<'install' | 'sold'>('install');
 
   useEffect(() => {
     if (job) {
-      setFormData(job);
-    } else {
       setFormData({
-        jobNumber: '',
-        customerName: '',
-        salesPrice: 0,
-        paymentMethod: 'check',
-        commission: 0,
-        installDate: null,
-        soldDate: format(new Date(), 'yyyy-MM-dd'),
-        toBeDetermined: false,
-        isManual: true,
+        ...formData,
+        ...job,
+        jobNumber: job.jobNumber || '',
+        customerName: job.customerName || '',
+        salesPrice: job.salesPrice || 0,
+        paymentMethod: job.paymentMethod || 'check',
+        commission: job.commission || 0,
+        installDate: job.installDate || null,
+        soldDate: job.soldDate || format(new Date(), 'yyyy-MM-dd'),
+        toBeDetermined: job.toBeDetermined ?? false,
+        isManual: job.isManual ?? false,
+        appointmentId: job.appointmentId || '',
+        calculatorId: job.calculatorId || '',
       });
     }
   }, [job, visible]);
@@ -119,10 +122,24 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
     setLoading(true);
     try {
       const payload = {
-        ...formData,
-        jobNumber: formData.jobNumber?.trim() || '.',
-        customerName: formData.customerName?.trim() || '.',
+        jobNumber: formData.jobNumber?.trim() || '',
+        salesPrice: formData.salesPrice || 0,
+        paymentMethod: formData.paymentMethod || 'check',
+        installDate: formData.toBeDetermined
+          ? null
+          : formData.installDate
+          ? new Date(formData.installDate).toISOString()
+          : null,
+        soldDate: formData.soldDate
+          ? new Date(formData.soldDate).toISOString()
+          : new Date().toISOString(),
+        toBeDetermined: formData.toBeDetermined || false,
+        commission: formData.commission || 0,
+        appointmentId: formData.appointmentId,
+        calculatorId: formData.calculatorId,
+        isManual: formData.isManual || false,
       };
+
       if (job?.id || job?._id) {
         await JobService.updateJob((job.id || job._id)!, payload);
       } else {
@@ -146,85 +163,53 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               Add This Job to Job Tracker
             </Text>
 
+            {/* Job Number */}
             <View style={styles.fieldWrap}>
-              {!formData.jobNumber && (
-                <View style={styles.placeholderContainer}>
-                  <Text style={styles.placeholderText}>Job Number</Text>
-                </View>
-              )}
-              {formData.jobNumber ? (
-                <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                  <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                    Job Number
-                  </Text>
-                </View>
-              ) : null}
               <View style={[styles.fieldBox, { borderColor: colors.border }]}>
                 <TextInput
                   value={formData.jobNumber}
                   onChangeText={(t) => setFormData({ ...formData, jobNumber: t })}
                   style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder=""
-                  placeholderTextColor={colors.textSecondary}
+                  placeholder="Job Number"
+                  placeholderTextColor="#919EAB"
                 />
               </View>
             </View>
 
+            {/* Sales Price */}
             <View style={styles.fieldWrap}>
               <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                  Customer Name
-                </Text>
+                <Text style={[styles.floatingLabelText, { color: '#919EAB' }]}>Sales Price</Text>
               </View>
               <View style={[styles.fieldBox, { borderColor: colors.border }]}>
                 <TextInput
-                  value={formData.customerName}
-                  onChangeText={(t) => setFormData({ ...formData, customerName: t })}
-                  style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder=""
-                  placeholderTextColor={colors.textSecondary}
-                />
-              </View>
-            </View>
-
-            <View style={styles.fieldWrap}>
-              <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                  Sales Price
-                </Text>
-              </View>
-              <View style={[styles.fieldBox, { borderColor: colors.border }]}>
-                <TextInput
-                  value={formData.salesPrice === 0 ? '0' : formData.salesPrice?.toString()}
+                  value={formData.salesPrice === 0 ? '' : formData.salesPrice?.toString()}
                   keyboardType="numeric"
                   onChangeText={(t) => setFormData({ ...formData, salesPrice: parseFloat(t) || 0 })}
                   style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder=""
-                  placeholderTextColor={colors.textSecondary}
+                  placeholder="0"
+                  placeholderTextColor="#919EAB"
                 />
               </View>
             </View>
 
+            {/* Payment Method */}
             <View style={styles.fieldWrap}>
               <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
+                <Text style={[styles.floatingLabelText, { color: '#919EAB' }]}>
                   Select Payment Method
                 </Text>
               </View>
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => setShowPicker(!showPicker)}
-                style={[styles.fieldBox, { borderColor: showPicker ? '#72BD00' : colors.border }]}
+                style={[styles.fieldBox, { borderColor: showPicker ? '#4CBB17' : colors.border }]}
               >
                 <Text style={[styles.fieldInput, { color: colors.text }]}>
                   {ALL_PAYMENT_METHODS.find((m) => m.value === formData.paymentMethod)?.label ||
                     'Select Method'}
                 </Text>
-                <Icon
-                  name={showPicker ? 'chevron-up' : 'chevron-down'}
-                  size={20}
-                  color={colors.textSecondary}
-                />
+                <Icon name={showPicker ? 'chevron-up' : 'chevron-down'} size={20} color="#919EAB" />
               </TouchableOpacity>
 
               {showPicker && (
@@ -243,7 +228,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                             { backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa' },
                           ]}
                         >
-                          <Text style={[styles.pickerHeaderText, { color: colors.textSecondary }]}>
+                          <Text style={[styles.pickerHeaderText, { color: '#919EAB' }]}>
                             {group.title}
                           </Text>
                         </View>
@@ -254,7 +239,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                             style={{
                               backgroundColor:
                                 formData.paymentMethod === method.value
-                                  ? '#72BD0010'
+                                  ? '#4CBB1710'
                                   : 'transparent',
                             }}
                             onPress={() => {
@@ -265,8 +250,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                             <Text
                               style={{
                                 color:
-                                  formData.paymentMethod === method.value ? '#72BD00' : colors.text,
-                                fontWeight: 'semibold',
+                                  formData.paymentMethod === method.value ? '#4CBB17' : colors.text,
+                                fontWeight: '600',
                                 fontSize: 13,
                               }}
                             >
@@ -281,123 +266,65 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               )}
             </View>
 
+            {/* Install Date */}
             <View style={styles.fieldWrap}>
-              <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                  Commission
-                </Text>
-              </View>
-              <View style={[styles.fieldBox, { borderColor: colors.border }]}>
-                <TextInput
-                  value={formData.commission === 0 ? '' : formData.commission?.toString()}
-                  keyboardType="numeric"
-                  onChangeText={(t) => setFormData({ ...formData, commission: parseFloat(t) || 0 })}
-                  style={[styles.fieldInput, { color: colors.text }]}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textSecondary}
-                />
-              </View>
-            </View>
-
-            <View className="relative">
-              <View style={styles.fieldWrap}>
-                <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                  <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                    Install Date
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    if (!formData.toBeDetermined) {
-                      setDatePickerTarget('install');
-                      setShowDatePicker(true);
-                    }
-                  }}
-                  style={[
-                    styles.fieldBox,
-                    { borderColor: colors.border, opacity: formData.toBeDetermined ? 0.5 : 1 },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.fieldInput,
-                      { color: formData.installDate ? colors.text : colors.textSecondary },
-                    ]}
-                  >
-                    {formData.installDate
-                      ? format(parseISO(formData.installDate), 'MM/dd/yyyy')
-                      : 'Install Date'}
-                  </Text>
-                  <Icon
-                    name={formData.installDate ? 'calendar' : 'chevron-down'}
-                    size={20}
-                    color={colors.textSecondary}
-                  />
-                </TouchableOpacity>
-              </View>
-              <View className="flex-row items-center mb-6 px-1">
-                <Switch
-                  value={formData.toBeDetermined}
-                  onValueChange={(v) =>
-                    setFormData({
-                      ...formData,
-                      toBeDetermined: v,
-                      installDate: v ? null : formData.installDate,
-                    })
-                  }
-                  trackColor={{ true: '#72BD00', false: '#F4F6F8' }}
-                  thumbColor="#fff"
-                  style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
-                />
-                <Text
-                  className="text-[12px] font-semibold ml-1 opacity-60"
-                  style={{ color: colors.text }}
-                >
-                  TBD Install Date
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.fieldWrap}>
-              <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: colors.textSecondary }]}>
-                  Date Sold
-                </Text>
-              </View>
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => {
-                  setDatePickerTarget('sold');
-                  setShowDatePicker(true);
+                  if (!formData.toBeDetermined) {
+                    setShowDatePicker(true);
+                  }
                 }}
-                style={[styles.fieldBox, { borderColor: colors.border }]}
+                style={[
+                  styles.fieldBox,
+                  { borderColor: colors.border, opacity: formData.toBeDetermined ? 0.5 : 1 },
+                ]}
               >
-                <Text
-                  style={[
-                    styles.fieldInput,
-                    { color: formData.soldDate ? colors.text : colors.textSecondary },
-                  ]}
-                >
-                  {formData.soldDate
-                    ? format(parseISO(formData.soldDate), 'MM/dd/yyyy')
-                    : 'MM/DD/YYYY'}
-                </Text>
-                <Icon name="calendar" size={20} color={colors.textSecondary} />
+                <TextInput
+                  value={
+                    formData.installDate ? format(parseISO(formData.installDate), 'MM/dd/yyyy') : ''
+                  }
+                  editable={false}
+                  pointerEvents="none"
+                  style={[styles.fieldInput, { color: colors.text }]}
+                  placeholder="Install Date"
+                  placeholderTextColor="#919EAB"
+                />
               </TouchableOpacity>
             </View>
 
-            <View className="flex-row gap-3 mb-14 mt-6 justify-end items-center">
+            {/* TBD Install Date */}
+            <View className="flex-row items-center mb-10 px-1">
+              <Switch
+                value={formData.toBeDetermined}
+                onValueChange={(v) =>
+                  setFormData({
+                    ...formData,
+                    toBeDetermined: v,
+                    installDate: v ? null : formData.installDate,
+                  })
+                }
+                trackColor={{ true: '#4CBB17', false: '#F4F6F8' }}
+                thumbColor="#fff"
+                style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
+              />
+              <Text className="text-[14px] font-black ml-3" style={{ color: '#1C252E' }}>
+                TBD Install Date
+              </Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View className="flex-row gap-3 mb-10 justify-end items-center">
               <TouchableOpacity
                 onPress={onClose}
-                className="px-8 h-12 items-center justify-center rounded-xl border-2 border-[#919EAB33]"
+                className="flex-1 h-12 items-center justify-center rounded-xl border-2 border-[#919EAB33]"
               >
                 <Text style={{ color: '#1C252E', fontWeight: 'bold', fontSize: 15 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleSave}
                 disabled={loading}
-                className="px-6 h-12 items-center justify-center rounded-xl bg-[#4CBB17] shadow-lg shadow-green-600/20"
+                className="flex-[1.5] h-12 items-center justify-center rounded-xl bg-[#4CBB17] shadow-lg shadow-green-600/20"
               >
                 <Text className="font-bold text-white text-[15px]">
                   {loading ? '...' : job ? 'Update' : 'Add to Job Tracker'}
@@ -411,15 +338,9 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
       <CustomDatePicker
         visible={showDatePicker}
         onClose={() => setShowDatePicker(false)}
-        initialDate={
-          datePickerTarget === 'install' ? formData.installDate || undefined : formData.soldDate
-        }
+        initialDate={formData.installDate || undefined}
         onSelect={(date) => {
-          if (datePickerTarget === 'install') {
-            setFormData({ ...formData, installDate: date });
-          } else {
-            setFormData({ ...formData, soldDate: date });
-          }
+          setFormData({ ...formData, installDate: date });
         }}
       />
     </Modal>

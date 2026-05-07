@@ -69,7 +69,11 @@ export const useDealOutcome = (
 
   useEffect(() => {
     if (outcomeStatus && activeCalculator) {
-      let final = Number(activeCalculator.price) || results.total || 0;
+      const latestDrop =
+        (activeCalculator.dropPrice || []).length > 0
+          ? activeCalculator.dropPrice[activeCalculator.dropPrice.length - 1].dropedPrice
+          : activeCalculator.price;
+      let final = Number(latestDrop) || results.total || 0;
       setOutcomeForm((prev: any) => ({
         ...prev,
         lastPriceQuoted: outcomeStatus === 'demo' ? String(final) : prev.lastPriceQuoted,
@@ -81,7 +85,11 @@ export const useDealOutcome = (
 
   const handleStatusSelect = (status: 'demo' | 'sale') => {
     setOutcomeStatus(status);
-    const final = Number(activeCalculator.price) || results.total || 0;
+    const latestDrop =
+      (activeCalculator.dropPrice || []).length > 0
+        ? activeCalculator.dropPrice[activeCalculator.dropPrice.length - 1].dropedPrice
+        : activeCalculator.price;
+    const final = Number(latestDrop) || results.total || 0;
     const planKey = activeCalculator?.inputs?.paymentPlan || 'check';
     const dpMethod =
       planKey === 'mcVisaDscvr' ? 'card' : ['check', 'amex'].includes(planKey) ? planKey : 'check';
@@ -166,9 +174,12 @@ export const useDealOutcome = (
               id: Date.now() + 3,
               color: 'White',
               size: (() => {
-                if (Number(inputs.gutter5Inch) > 0) return '5" K-Style';
-                if (Number(inputs.gutter6Inch) > 0) return '6" K-Style';
-                if (Number(inputs.gutter7Inch) > 0) return '7" K-Style';
+                if (Number(inputs.gutter5DsE) > 0 || Number(inputs.gutter5Inch) > 0)
+                  return '5" K-Style';
+                if (Number(inputs.gutter6Ft1) > 0 || Number(inputs.gutter6Inch) > 0)
+                  return '6" K-Style';
+                if (Number(inputs.gutter7DsE) > 0 || Number(inputs.gutter7Inch) > 0)
+                  return '7" K-Style';
                 if (Number(inputs.gutter8Inch) > 0) return '8" K-Style';
                 return '5" K-Style';
               })(),
@@ -222,6 +233,7 @@ export const useDealOutcome = (
         jobBuilder: initialJobState,
         selectedCalculatorId: activeCalculator?._id,
         selectedAppointmentId: appointmentId,
+        appointmentId: appointmentId, // Pass explicitly as requested
         lastPriceQuoted: (outcomeStatus as any) === 'demo' ? outcomeForm.lastPriceQuoted : '',
         originalContractPrice:
           (outcomeStatus as any) === 'sale' ? outcomeForm.originalContractPrice : '',

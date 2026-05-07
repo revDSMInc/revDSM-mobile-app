@@ -212,29 +212,28 @@ export default function MapDetailScreen() {
       }));
   }, [filteredLeads]);
 
- 
   const handleMarkerPress = useCallback(
     (job: any) => {
       console.log('[MapDetail] Marker Pressed:', job.jobNumber);
       setSelectedJob(job);
 
-    isInternalMove.current = true;
-    mapRef.current?.animateCamera(
-      {
-        center: {
-          latitude: job.location.coordinates[1] + 0.005, // Larger offset to center the modal
-          longitude: job.location.coordinates[0],
+      isInternalMove.current = true;
+      mapRef.current?.animateCamera(
+        {
+          center: {
+            latitude: job.location.coordinates[1] + 0.005, // Larger offset to center the modal
+            longitude: job.location.coordinates[0],
+          },
+          zoom: 16,
+          pitch: 0,
+          heading: 0,
         },
-        zoom: 16,
-        pitch: 0,
-        heading: 0,
-      },
-      { duration: 800 }
-    );
-    // Reset flag after animation completes
-    setTimeout(() => {
-      isInternalMove.current = false;
-    }, 1000);
+        { duration: 800 }
+      );
+      // Reset flag after animation completes
+      setTimeout(() => {
+        isInternalMove.current = false;
+      }, 1000);
 
       if (user?._id) {
         LeadService.logEvent('click', {
@@ -398,136 +397,140 @@ export default function MapDetailScreen() {
             {mapVisible && (
               <>
                 <MapView
-                ref={mapRef}
-                provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-                style={StyleSheet.absoluteFillObject}
-                customMapStyle={isDark ? darkMapStyle : []}
-                initialRegion={region}
-                showsUserLocation={false}
-                showsMyLocationButton={false}
-                onMapReady={() => setIsMapReady(true)}
-                onRegionChangeStart={() => {
-                  if (!isInternalMove.current) {
+                  ref={mapRef}
+                  provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+                  style={StyleSheet.absoluteFillObject}
+                  customMapStyle={isDark ? darkMapStyle : []}
+                  initialRegion={region}
+                  showsUserLocation={false}
+                  showsMyLocationButton={false}
+                  onMapReady={() => setIsMapReady(true)}
+                  onRegionChangeStart={() => {
+                    if (!isInternalMove.current) {
+                      setSelectedJob(null);
+                    }
+                  }}
+                  onPress={() => {
                     setSelectedJob(null);
-                  }
-                }}
-                onPress={() => {
-                  setSelectedJob(null);
-                }}
-              >
-                {filters.isHeatMap && heatmapData.length > 0 && (
-                  <Heatmap
-                    points={heatmapData}
-                    radius={Platform.OS === 'ios' ? 40 : 50}
-                    opacity={0.6}
-                    gradient={{
-                      colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
-                      startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
-                      colorMapSize: 2048,
-                    }}
-                  />
-                )}
-
-                {filters.showRoute && userLocation && selectedJob && (
-                  <MapViewDirections
-                    origin={userLocation}
-                    destination={{
-                      latitude: selectedJob.location.coordinates[1],
-                      longitude: selectedJob.location.coordinates[0],
-                    }}
-                    apikey={GOOGLE_MAPS_API_KEY}
-                    strokeWidth={4}
-                    strokeColor="#3b82f6"
-                    lineDashPattern={[0]}
-                  />
-                )}
-
-                {!filters.isHeatMap &&
-                  filteredLeads.map((job) => {
-                    const coords = job.location?.coordinates;
-                    if (!coords) return null;
-                    const hasImages =
-                      (job?.images?.beforeImages?.length || 0) > 0 ||
-                      (job?.images?.afterImages?.length || 0) > 0;
-
-                    return (
-                      <Marker
-                        key={job._id || job.jobNumber}
-                        coordinate={{
-                          latitude: job.location.coordinates[1],
-                          longitude: job.location.coordinates[0],
-                        }}
-                        onPress={() => handleMarkerPress(job)}
-                        onSelect={() => handleMarkerPress(job)}
-                        anchor={{ x: 0.5, y: 1 }}
-                        calloutAnchor={{ x: 0.5, y: 0.2 }}
-                        tracksViewChanges={true}
-                        zIndex={selectedJob?._id === job._id ? 999 : 1}
-                      >
-                        <View style={{ alignItems: 'center', width: 34, height: 44 }} collapsable={false}>
-                          <Svg width={32} height={40} viewBox="0 0 38 48">
-                            <Path
-                              d="M19 0C8.5 0 0 8.5 0 19C0 32.5 19 48 19 48C19 48 38 32.5 38 19C38 8.5 29.5 0 19 0Z"
-                              fill={job.isFavorite || job.isFavourite ? '#f59e0b' : '#4CBB17'}
-                              stroke="white"
-                              strokeWidth={2}
-                            />
-                            <Path
-                              d="M19 28C24 28 28 24 28 19C28 14 24 10 19 10C14 10 10 14 10 19C10 24 14 28 19 28Z"
-                              fill="white"
-                              fillOpacity={0.3}
-                            />
-                          </Svg>
-
-                          <View className="absolute top-1.5 items-center justify-center">
-                            <Icon
-                              name={job.isFavorite || job.isFavourite ? 'star' : 'map-marker'}
-                              size={14}
-                              color="white"
-                            />
-                          </View>
-
-                          {hasImages && (
-                            <View
-                              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-white items-center justify-center shadow-md border border-slate-100"
-                              style={{ zIndex: 5 }}
-                            >
-                              <Icon name="camera" size={11} color="#3b82f6" />
-                            </View>
-                          )}
-                        </View>
-
-                      </Marker>
-                    );
-                  })}
-              </MapView>
- 
-              {selectedJob && (
-                <View 
-                  className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
-                  pointerEvents="box-none"
-                  style={{ zIndex: 1000 }}
+                  }}
                 >
-                  <View style={{ width: 260, height: 360, marginTop: -60 }}>
-                    <View
-                      style={{
-                        backgroundColor: 'white',
-                        borderRadius: 24,
-                        overflow: 'hidden',
-                        borderWidth: 1,
-                        borderColor: '#f1f5f9',
-                        height: 320,
-                        shadowColor: '#000',
-                        shadowOffset: { width: 0, height: 10 },
-                        shadowOpacity: 0.2,
-                        shadowRadius: 20,
-                        elevation: 20,
+                  {filters.isHeatMap && heatmapData.length > 0 && (
+                    <Heatmap
+                      points={heatmapData}
+                      radius={Platform.OS === 'ios' ? 40 : 50}
+                      opacity={0.6}
+                      gradient={{
+                        colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
+                        startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
+                        colorMapSize: 2048,
                       }}
-                    >
+                    />
+                  )}
+
+                  {filters.showRoute && userLocation && selectedJob && (
+                    <MapViewDirections
+                      origin={userLocation}
+                      destination={{
+                        latitude: selectedJob.location.coordinates[1],
+                        longitude: selectedJob.location.coordinates[0],
+                      }}
+                      apikey={GOOGLE_MAPS_API_KEY}
+                      strokeWidth={4}
+                      strokeColor="#3b82f6"
+                      lineDashPattern={[0]}
+                    />
+                  )}
+
+                  {!filters.isHeatMap &&
+                    filteredLeads.map((job) => {
+                      const coords = job.location?.coordinates;
+                      if (!coords) return null;
+                      const hasImages =
+                        (job?.images?.beforeImages?.length || 0) > 0 ||
+                        (job?.images?.afterImages?.length || 0) > 0;
+
+                      return (
+                        <Marker
+                          key={job._id || job.jobNumber}
+                          coordinate={{
+                            latitude: job.location.coordinates[1],
+                            longitude: job.location.coordinates[0],
+                          }}
+                          onPress={() => handleMarkerPress(job)}
+                          onSelect={() => handleMarkerPress(job)}
+                          anchor={{ x: 0.5, y: 1 }}
+                          calloutAnchor={{ x: 0.5, y: 0.2 }}
+                          tracksViewChanges={true}
+                          zIndex={selectedJob?._id === job._id ? 999 : 1}
+                        >
+                          <View
+                            style={{ alignItems: 'center', width: 34, height: 44 }}
+                            collapsable={false}
+                          >
+                            <Svg width={32} height={40} viewBox="0 0 38 48">
+                              <Path
+                                d="M19 0C8.5 0 0 8.5 0 19C0 32.5 19 48 19 48C19 48 38 32.5 38 19C38 8.5 29.5 0 19 0Z"
+                                fill={job.isFavorite || job.isFavourite ? '#f59e0b' : '#4CBB17'}
+                                stroke="white"
+                                strokeWidth={2}
+                              />
+                              <Path
+                                d="M19 28C24 28 28 24 28 19C28 14 24 10 19 10C14 10 10 14 10 19C10 24 14 28 19 28Z"
+                                fill="white"
+                                fillOpacity={0.3}
+                              />
+                            </Svg>
+
+                            <View className="absolute top-1.5 items-center justify-center">
+                              <Icon
+                                name={job.isFavorite || job.isFavourite ? 'star' : 'map-marker'}
+                                size={14}
+                                color="white"
+                              />
+                            </View>
+
+                            {hasImages && (
+                              <View
+                                className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-white items-center justify-center shadow-md border border-slate-100"
+                                style={{ zIndex: 5 }}
+                              >
+                                <Icon name="camera" size={11} color="#3b82f6" />
+                              </View>
+                            )}
+                          </View>
+                        </Marker>
+                      );
+                    })}
+                </MapView>
+
+                {selectedJob && (
+                  <View
+                    className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
+                    pointerEvents="box-none"
+                    style={{ zIndex: 1000 }}
+                  >
+                    <View style={{ width: 260, height: 360, marginTop: -60 }}>
+                      <View
+                        style={{
+                          backgroundColor: 'white',
+                          borderRadius: 24,
+                          overflow: 'hidden',
+                          borderWidth: 1,
+                          borderColor: '#f1f5f9',
+                          height: 320,
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 10 },
+                          shadowOpacity: 0.2,
+                          shadowRadius: 20,
+                          elevation: 20,
+                        }}
+                      >
                         <MapJobCard
                           job={selectedJob}
                           onClose={() => setSelectedJob(null)}
-                          isMyJob={user?._id === (selectedJob.salesRepId || selectedJob.salesRep?._id)}
+                          isMyJob={
+                            user?._id === (selectedJob.salesRepId || selectedJob.salesRep?._id)
+                          }
                           onReferencePress={() => setShowReferralModal(true)}
                           onCameraPress={() => setShowImageUploadModal(true)}
                           onGalleryPress={() => {
@@ -535,101 +538,98 @@ export default function MapDetailScreen() {
                             navigation.navigate('LeadCenter', { lead: selectedJob });
                           }}
                         />
-                    </View>
-                    
-                    {/* Fixed Arrow Triangle */}
-                    <View className="items-center">
-                      <View
-                        style={{
-                          width: 0,
-                          height: 0,
-                          backgroundColor: 'transparent',
-                          borderStyle: 'solid',
-                          borderLeftWidth: 12,
-                          borderRightWidth: 12,
-                          borderTopWidth: 15,
-                          borderLeftColor: 'transparent',
-                          borderRightColor: 'transparent',
-                          borderTopColor: 'white',
-                          marginTop: -1,
-                        }}
-                      />
+                      </View>
+
+                      {/* Fixed Arrow Triangle */}
+                      <View className="items-center">
+                        <View
+                          style={{
+                            width: 0,
+                            height: 0,
+                            backgroundColor: 'transparent',
+                            borderStyle: 'solid',
+                            borderLeftWidth: 12,
+                            borderRightWidth: 12,
+                            borderTopWidth: 15,
+                            borderLeftColor: 'transparent',
+                            borderRightColor: 'transparent',
+                            borderTopColor: 'white',
+                            marginTop: -1,
+                          }}
+                        />
+                      </View>
                     </View>
                   </View>
+                )}
+
+                {/* Right Controls Container */}
+                <View
+                  style={{
+                    position: 'absolute',
+                    right: 15,
+                    bottom: 30,
+                    gap: 10,
+                    zIndex: 10,
+                    alignItems: 'center',
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    className="w-10 h-10 rounded-full bg-green-600 items-center justify-center shadow-lg mb-2"
+                  >
+                    <Icon name="arrow-left" size={20} color="white" />
+                  </TouchableOpacity>
+
+                  {/* Toggle Switches */}
+                  <View className="items-center bg-white/10 rounded-2xl p-1">
+                    <MapToggleSwitch
+                      value={filters.myJobsOnly}
+                      onValueChange={() => toggleFilter('myJobsOnly')}
+                      activeLabel="RF"
+                      inactiveLabel="DEF"
+                    />
+                    <MapToggleSwitch
+                      value={filters.isHeatMap}
+                      onValueChange={() => toggleFilter('isHeatMap')}
+                      activeLabel="AJ"
+                      inactiveLabel="AJ"
+                    />
+                    <MapToggleSwitch
+                      value={filters.showRoute}
+                      onValueChange={() => toggleFilter('showRoute')}
+                      activeLabel="RF"
+                      inactiveLabel="DEF"
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={startTracking}
+                    className="w-12 h-12 rounded-full bg-green-600 items-center justify-center shadow-lg mt-2"
+                  >
+                    <Icon name="target" size={24} color="white" />
+                  </TouchableOpacity>
+
+                  {/* Zoom Controls */}
+                  <View className="bg-white rounded-xl shadow-lg border border-slate-100 overflow-hidden mt-2">
+                    <TouchableOpacity
+                      onPress={() => handleZoom('in')}
+                      className="w-10 h-10 items-center justify-center border-b border-slate-100"
+                    >
+                      <Icon name="plus" size={20} color="#64748b" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleZoom('out')}
+                      className="w-10 h-10 items-center justify-center"
+                    >
+                      <Icon name="minus" size={20} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                      )}
-                      
-
-            {/* Right Controls Container */}
-            <View
-              style={{
-                position: 'absolute',
-                right: 15,
-                bottom: 30,
-                gap: 10,
-                zIndex: 10,
-                alignItems: 'center',
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => navigation.goBack()}
-                className="w-10 h-10 rounded-full bg-green-600 items-center justify-center shadow-lg mb-2"
-              >
-                <Icon name="arrow-left" size={20} color="white" />
-              </TouchableOpacity>
-
-              {/* Toggle Switches */}
-              <View className="items-center bg-white/10 rounded-2xl p-1">
-                <MapToggleSwitch
-                  value={filters.myJobsOnly}
-                  onValueChange={() => toggleFilter('myJobsOnly')}
-                  activeLabel="RF"
-                  inactiveLabel="DEF"
-                />
-                <MapToggleSwitch
-                  value={filters.isHeatMap}
-                  onValueChange={() => toggleFilter('isHeatMap')}
-                  activeLabel="AJ"
-                  inactiveLabel="AJ"
-                />
-                <MapToggleSwitch
-                  value={filters.showRoute}
-                  onValueChange={() => toggleFilter('showRoute')}
-                  activeLabel="RF"
-                  inactiveLabel="DEF"
-                />
-              </View>
-
-              <TouchableOpacity
-                onPress={startTracking}
-                className="w-12 h-12 rounded-full bg-green-600 items-center justify-center shadow-lg mt-2"
-              >
-                <Icon name="target" size={24} color="white" />
-              </TouchableOpacity>
-
-              {/* Zoom Controls */}
-              <View className="bg-white rounded-xl shadow-lg border border-slate-100 overflow-hidden mt-2">
-                <TouchableOpacity
-                  onPress={() => handleZoom('in')}
-                  className="w-10 h-10 items-center justify-center border-b border-slate-100"
-                >
-                  <Icon name="plus" size={20} color="#64748b" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => handleZoom('out')}
-                  className="w-10 h-10 items-center justify-center"
-                >
-                  <Icon name="minus" size={20} color="#64748b" />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-
-        </>
-      )}
-    </View>
-  )}
-</View>
+              </>
+            )}
+          </View>
+        )}
+      </View>
 
       <ReferralModal
         visible={showReferralModal}

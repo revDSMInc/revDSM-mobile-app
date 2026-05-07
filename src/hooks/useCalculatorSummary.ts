@@ -117,12 +117,17 @@ export const useCalculatorSummary = (
     if (error) setError(null);
     const costPrice = Math.round(results.price50);
     const activePaymentMethod = activeCalc.inputs.paymentPlan;
+    const planName = activePaymentMethod.startsWith('wf')
+      ? 'Wells Fargo'
+      : activePaymentMethod.startsWith('greensky')
+      ? 'GreenSky'
+      : 'This plan';
     const wellsFargoHighKeys = ['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'];
     if (num > 0) {
       if (num < costPrice)
         setError(`Price cannot be less than cost ($${costPrice.toLocaleString()})`);
       else if (wellsFargoHighKeys.includes(activePaymentMethod) && num < 7500)
-        setError(`This plan requires a minimum of $7,500`);
+        setError(`${planName} High plans require a minimum of $7,500`);
     }
     updateActive({ price: num });
     handleSave();

@@ -147,7 +147,7 @@ export function LeadCard({
             userLocation.longitude,
             lead.location.coordinates[1],
             lead.location.coordinates[0]
-          ) <= 1.0
+          ) <= 0.15 // Web Parity: 0.15 miles (~250m) for "at the house"
         : false;
 
     const scheduledTime = getScheduledDateTime(lead);
@@ -159,7 +159,7 @@ export function LeadCard({
     const isBeforeTimeWindow = scheduledTime ? nowTime < fifteenMinutesBefore : false;
     const isWithinTimeWindow = scheduledTime
       ? nowTime >= fifteenMinutesBefore && nowTime <= oneHourAfter
-      : true;
+      : true; // Default true for self-gen (no time)
     const timeHasPassed = scheduledTime ? nowTime > oneHourAfter : false;
 
     const isResume =
@@ -179,14 +179,48 @@ export function LeadCard({
       };
     }
 
-    // 2. On-Site Logic (Priority 2) - If in range, allow Start or Resume
-    if (isInRange) {
+    // 2. Self-Generated Lead Logic (Web Parity)
+    if (isSelfGen) {
+      if (isInRange) {
+        if (isResume) {
+          const count = actionCounts.lead_resume;
+          return {
+            status: 'PROGRESS',
+            color: CARD_COLOR.PROGRESS,
+            action: count >= 1 ? `Resume Appointment (${count})` : 'Resume Appointment',
+            label: 'IN PROGRESS',
+            disabled: false,
+            shouldPulse: false,
+          };
+        }
+        return {
+          status: 'ACTIVE',
+          color: CARD_COLOR.ACTIVE,
+          action: 'Start Appointment',
+          label: 'ON-SITE',
+          disabled: false,
+          shouldPulse: true,
+        };
+      }
+      // Off-site Self-Gen is always Preview (per user request)
+      return {
+        status: 'UPCOMING',
+        color: CARD_COLOR.UPCOMING,
+        action: 'Preview Appointment',
+        label: 'OFF-SITE (PREVIEW)',
+        disabled: false,
+        shouldPulse: false,
+      };
+    }
+
+    // 3. LeafFilter Lead Logic (Proper Dynamic Time + Location)
+    if (isInRange && (isWithinTimeWindow || timeHasPassed)) {
       if (isResume) {
         const count = actionCounts.lead_resume;
         return {
           status: 'PROGRESS',
           color: CARD_COLOR.PROGRESS,
-          action: count >= 1 ? `Resume Application (${count})` : 'Resume Application',
+          action: count >= 1 ? `Resume Appointment (${count})` : 'Resume Appointment',
           label: 'IN PROGRESS',
           disabled: false,
           shouldPulse: false,
@@ -202,7 +236,7 @@ export function LeadCard({
       };
     }
 
-    // 3. Early Arrival / Upcoming Logic (Off-site)
+    // 4. Off-site or Early Logic (LF Lead)
     if (isBeforeTimeWindow) {
       return {
         status: 'UPCOMING',
@@ -214,7 +248,7 @@ export function LeadCard({
       };
     }
 
-    // 4. Past or Current Window (Off-site)
+    // 5. Default: Off-site Review
     const count = actionCounts.lead_review;
     return {
       status: 'OFFSITE',

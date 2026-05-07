@@ -51,7 +51,7 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
 
   useEffect(() => {
     let result = [...leads];
-    
+
     // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
     result = result.filter((item) => {
       const jobNumber = item?.jobNumber;
@@ -135,12 +135,11 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
     setRegion(newReg);
     mapRef.current?.animateToRegion(newReg, 1000);
   };
- 
 
   const handleMarkerClick = (lead: any) => {
     const coords = lead.location?.coordinates;
     if (!coords) return;
- 
+
     setSelectedLead(lead);
 
     isInternalMove.current = true;
@@ -311,10 +310,9 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
                     </View>
                   )}
                 </View>
-
               </Marker>
-            )})}
-
+            );
+          })}
 
         {isHeatMap && heatmapData.length > 0 && (
           <Heatmap
@@ -402,10 +400,10 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
           </View>
         </View>
       )}
- 
+
       {/* Custom High-Fidelity Overlay Modal */}
       {selectedLead && (
-        <View 
+        <View
           className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
           pointerEvents="box-none"
           style={{ zIndex: 1000 }}
@@ -430,15 +428,19 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
                 job={selectedLead}
                 onClose={() => setSelectedLead(null)}
                 isMyJob={selectedLead.salesRepId === (user as any)?._id}
-                onReferencePress={() => navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'referral' })}
-                onCameraPress={() => navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' })}
+                onReferencePress={() =>
+                  navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'referral' })
+                }
+                onCameraPress={() =>
+                  navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' })
+                }
                 onGalleryPress={() => {
                   setSelectedLead(null);
                   navigation.navigate('LeadCenter', { lead: selectedLead });
                 }}
               />
             </View>
-            
+
             {/* Arrow Triangle */}
             <View className="items-center">
               <View

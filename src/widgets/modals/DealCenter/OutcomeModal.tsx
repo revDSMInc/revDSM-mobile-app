@@ -61,9 +61,30 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState<string | null>(null);
   const flashRef = useRef<any>(null);
+  const scrollRef = useRef<ScrollView>(null);
 
   const toggleExpand = (key: string) => {
-    setExpanded(expanded === key ? null : key);
+    const isExpanding = expanded !== key;
+    setExpanded(isExpanding ? key : null);
+    
+    if (isExpanding) {
+      // Small delay to allow the dropdown to render before scrolling
+      setTimeout(() => {
+        // This is a simple approximation. In a real app we'd use onLayout.
+        // For now, we scroll based on common field positions.
+        const scrollPositions: Record<string, number> = {
+          oneLeg: 0,
+          result: 60,
+          reason: 120,
+          dpMethod: 300,
+          balMethod: 400,
+          calc: 600,
+        };
+        if (scrollPositions[key] !== undefined) {
+          scrollRef.current?.scrollTo({ y: scrollPositions[key], animated: true });
+        }
+      }, 100);
+    }
   };
 
   const renderField = (
@@ -73,27 +94,32 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     icon: string = 'chevron-down',
     isExpanded: boolean = false,
     textTransform?: 'capitalize' | 'none',
-    zIndex: number = 0
+    zIndex: number = 0,
+    disabled: boolean = false
   ) => (
     <View className="mb-5 relative" style={{ zIndex }}>
       <View className="absolute -top-2 left-3 z-10 px-1 bg-white">
         <Text className="text-[10px] font-semibold text-black  tracking-[0.5px]">{label}</Text>
       </View>
       <TouchableOpacity
-        className={`flex-row items-center border rounded-lg px-[14px] py-3 min-h-[48px] bg-white ${
+        className={`flex-row items-center border rounded-lg px-[14px] py-3 min-h-[48px] ${
           isExpanded ? 'border-[#1C252E]' : 'border-[#919EAB33]'
-        }`}
-        onPress={onPress}
-        activeOpacity={0.7}
+        } ${disabled ? 'bg-[#F4F6F8]' : 'bg-white'}`}
+        onPress={disabled ? undefined : onPress}
+        activeOpacity={disabled ? 1 : 0.7}
       >
         <Text
           className={`flex-1 text-[13px] font-semibold p-0 ${
-            value ? 'text-[#1C252E]' : 'text-[#919EAB]'
+            disabled ? 'text-[#919EAB]' : value ? 'text-[#1C252E]' : 'text-[#919EAB]'
           } ${textTransform === 'capitalize' ? 'capitalize' : ''}`}
         >
           {value || `Select ${label}`}
         </Text>
-        <Ionicons name={isExpanded ? 'chevron-up' : icon} size={18} color="#919EAB" />
+        <Ionicons
+          name={disabled ? 'lock-closed' : isExpanded ? 'chevron-up' : icon}
+          size={18}
+          color="#919EAB"
+        />
       </TouchableOpacity>
     </View>
   );
@@ -167,7 +193,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View className="flex-1 bg-black/50 justify-center px-4">
-          <View className="bg-white rounded-2xl overflow-hidden shadow-2xl max-h-[85%]">
+          <View className="bg-white rounded-2xl shadow-2xl max-h-[85%]">
             {/* Header */}
             <View
               className="px-5 py-[18px] flex-row items-center justify-between"
@@ -191,6 +217,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             </View>
 
             <ScrollView
+              ref={scrollRef}
               className="px-5 pt-6"
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
@@ -209,7 +236,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                     100
                   )}
                   {expanded === 'oneLeg' && (
-                    <View className="absolute top-12 left-0 right-0 z-[999] border border-[#1C252E] rounded-lg bg-white shadow-lg">
+                    <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
                       {oneLegOptions.map((opt) => (
                         <TouchableOpacity
                           key={opt}
@@ -249,7 +276,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                     90
                   )}
                   {expanded === 'result' && (
-                    <View className="absolute top-12 left-0 right-0 z-[999] border border-[#1C252E] rounded-lg bg-white shadow-lg">
+                    <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
                       {['Demo', 'Sale'].map((opt) => (
                         <TouchableOpacity
                           key={opt}
@@ -292,8 +319,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         85
                       )}
                       {expanded === 'reason' && (
-                        <View className="absolute top-12 left-0 right-0 z-[999] border border-[#1C252E] rounded-lg bg-white shadow-lg max-h-[200px]">
-                          <ScrollView nestedScrollEnabled>
+                        <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
+                          <View>
                             {demoReasons.map((opt) => (
                               <TouchableOpacity
                                 key={opt}
@@ -317,7 +344,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                 )}
                               </TouchableOpacity>
                             ))}
-                          </ScrollView>
+                          </View>
                         </View>
                       )}
                     </View>
@@ -379,37 +406,37 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                           'none',
                           81
                         )}
-                        {expanded === 'dpMethod' && (
-                          <View className="absolute top-12 left-0 right-0 z-[999] border border-[#1C252E] rounded-lg bg-white shadow-lg">
-                            {downPaymentMethods.map((m) => (
-                              <TouchableOpacity
-                                key={m.value}
-                                className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                  outcomeForm.downPaymentMethod === m.value
-                                    ? 'rounded-lg bg-[#F4F6F8]'
-                                    : ''
-                                }`}
-                                onPress={() => {
-                                  setOutcomeForm({ ...outcomeForm, downPaymentMethod: m.value });
-                                  setExpanded(null);
-                                }}
-                              >
-                                <Text
-                                  className={`text-[13px] font-semibold ${
+                          {expanded === 'dpMethod' && (
+                            <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
+                              {downPaymentMethods.map((m) => (
+                                <TouchableOpacity
+                                  key={m.value}
+                                  className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
                                     outcomeForm.downPaymentMethod === m.value
-                                      ? 'text-[#1C252E]'
-                                      : 'text-[#637381]'
+                                      ? 'rounded-lg bg-[#F4F6F8]'
+                                      : ''
                                   }`}
+                                  onPress={() => {
+                                    setOutcomeForm({ ...outcomeForm, downPaymentMethod: m.value });
+                                    setExpanded(null);
+                                  }}
                                 >
-                                  {m.label}
-                                </Text>
-                                {outcomeForm.downPaymentMethod === m.value && (
-                                  <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                )}
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                        )}
+                                  <Text
+                                    className={`text-[13px] font-semibold ${
+                                      outcomeForm.downPaymentMethod === m.value
+                                        ? 'text-[#1C252E]'
+                                        : 'text-[#637381]'
+                                    }`}
+                                  >
+                                    {m.label}
+                                  </Text>
+                                  {outcomeForm.downPaymentMethod === m.value && (
+                                    <Ionicons name="checkmark" size={16} color="#1C252E" />
+                                  )}
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          )}
                       </View>
                     </View>
 
@@ -428,43 +455,172 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                           71
                         )}
                         {expanded === 'balMethod' && (
-                          <View className="absolute top-12 left-0 right-0 z-[999] border border-[#1C252E] rounded-lg bg-white shadow-lg max-h-[250px]">
-                            <ScrollView nestedScrollEnabled>
-                              {Object.entries(paymentPlans).map(([key, plan]: [string, any]) => (
-                                <TouchableOpacity
-                                  key={key}
-                                  className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                    outcomeForm.balancePaymentMethod === key
-                                      ? 'rounded-lg bg-[#F4F6F8]'
-                                      : ''
-                                  }`}
-                                  onPress={() => {
-                                    setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
-                                    setExpanded(null);
-                                  }}
-                                >
-                                  <View className="flex-1">
-                                    <Text
-                                      className={`text-[13px] font-semibold ${
-                                        outcomeForm.balancePaymentMethod === key
-                                          ? 'text-[#1C252E]'
-                                          : 'text-[#637381]'
-                                      }`}
-                                    >
-                                      {plan.label}
-                                    </Text>
-                                    {plan.displayMonths && (
-                                      <Text className="text-[10px] text-[#919EAB]">
-                                        {plan.displayMonths}
+                          <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
+                            <View>
+                              {/* Standard Methods */}
+                              {['check', 'mcVisaDscvr', 'amex'].map((key) => {
+                                const plan = paymentPlans[key];
+                                if (!plan) return null;
+                                return (
+                                  <TouchableOpacity
+                                    key={key}
+                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                                      outcomeForm.balancePaymentMethod === key
+                                        ? 'rounded-lg bg-[#F4F6F8]'
+                                        : ''
+                                    }`}
+                                    onPress={() => {
+                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
+                                      setExpanded(null);
+                                    }}
+                                  >
+                                    <View className="flex-1">
+                                      <Text
+                                        className={`text-[13px] font-semibold ${
+                                          outcomeForm.balancePaymentMethod === key
+                                            ? 'text-[#1C252E]'
+                                            : 'text-[#637381]'
+                                        }`}
+                                      >
+                                        {plan.label}
                                       </Text>
+                                    </View>
+                                    {outcomeForm.balancePaymentMethod === key && (
+                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
                                     )}
-                                  </View>
-                                  {outcomeForm.balancePaymentMethod === key && (
-                                    <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                  )}
-                                </TouchableOpacity>
-                              ))}
-                            </ScrollView>
+                                  </TouchableOpacity>
+                                );
+                              })}
+
+                              {/* GreenSky Plans */}
+                              <View className="bg-[#919EAB14] px-4 py-1.5">
+                                <Text className="text-[11px] font-bold text-black uppercase">
+                                  GreenSky Plans
+                                </Text>
+                              </View>
+                              {Object.entries(paymentPlans)
+                                .filter(([key]) => key.startsWith('greensky'))
+                                .map(([key, plan]) => (
+                                  <TouchableOpacity
+                                    key={key}
+                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                                      outcomeForm.balancePaymentMethod === key
+                                        ? 'rounded-lg bg-[#F4F6F8]'
+                                        : ''
+                                    }`}
+                                    onPress={() => {
+                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
+                                      setExpanded(null);
+                                    }}
+                                  >
+                                    <View className="flex-1">
+                                      <Text
+                                        className={`text-[13px] font-semibold ${
+                                          outcomeForm.balancePaymentMethod === key
+                                            ? 'text-[#1C252E]'
+                                            : 'text-[#637381]'
+                                        }`}
+                                      >
+                                        {plan.label}
+                                      </Text>
+                                      {plan.displayMonths && (
+                                        <Text className="text-[10px] text-[#919EAB]">
+                                          {plan.displayMonths}
+                                        </Text>
+                                      )}
+                                    </View>
+                                    {outcomeForm.balancePaymentMethod === key && (
+                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
+                                    )}
+                                  </TouchableOpacity>
+                                ))}
+
+                              {/* Wells Fargo Plans */}
+                              <View className="bg-[#919EAB14] px-4 py-1.5">
+                                <Text className="text-[11px] font-bold text-black uppercase">
+                                  Wells Fargo Plans
+                                </Text>
+                              </View>
+                              {Object.entries(paymentPlans)
+                                .filter(([key]) => key.startsWith('wf'))
+                                .map(([key, plan]) => (
+                                  <TouchableOpacity
+                                    key={key}
+                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                                      outcomeForm.balancePaymentMethod === key
+                                        ? 'rounded-lg bg-[#F4F6F8]'
+                                        : ''
+                                    }`}
+                                    onPress={() => {
+                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
+                                      setExpanded(null);
+                                    }}
+                                  >
+                                    <View className="flex-1">
+                                      <Text
+                                        className={`text-[13px] font-semibold ${
+                                          outcomeForm.balancePaymentMethod === key
+                                            ? 'text-[#1C252E]'
+                                            : 'text-[#637381]'
+                                        }`}
+                                      >
+                                        {plan.label}
+                                      </Text>
+                                      {plan.displayMonths && (
+                                        <Text className="text-[10px] text-[#919EAB]">
+                                          {plan.displayMonths}
+                                        </Text>
+                                      )}
+                                    </View>
+                                    {outcomeForm.balancePaymentMethod === key && (
+                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
+                                    )}
+                                  </TouchableOpacity>
+                                ))}
+
+                              {/* Other Plans */}
+                              <View className="bg-[#919EAB14] px-4 py-1.5">
+                                <Text className="text-[11px] font-bold text-black uppercase">
+                                  Other Plans
+                                </Text>
+                              </View>
+                              {Object.entries(paymentPlans)
+                                .filter(
+                                  ([key]) =>
+                                    !key.startsWith('greensky') &&
+                                    !key.startsWith('wf') &&
+                                    !['check', 'mcVisaDscvr', 'amex'].includes(key)
+                                )
+                                .map(([key, plan]) => (
+                                  <TouchableOpacity
+                                    key={key}
+                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                                      outcomeForm.balancePaymentMethod === key
+                                        ? 'rounded-lg bg-[#F4F6F8]'
+                                        : ''
+                                    }`}
+                                    onPress={() => {
+                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
+                                      setExpanded(null);
+                                    }}
+                                  >
+                                    <View className="flex-1">
+                                      <Text
+                                        className={`text-[13px] font-semibold ${
+                                          outcomeForm.balancePaymentMethod === key
+                                            ? 'text-[#1C252E]'
+                                            : 'text-[#637381]'
+                                        }`}
+                                      >
+                                        {plan.label}
+                                      </Text>
+                                    </View>
+                                    {outcomeForm.balancePaymentMethod === key && (
+                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
+                                    )}
+                                  </TouchableOpacity>
+                                ))}
+                            </View>
                           </View>
                         )}
                       </View>
@@ -493,11 +649,12 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                     'chevron-down',
                     expanded === 'calc',
                     'none',
-                    60
+                    60,
+                    !!outcomeStatus
                   )}
                   {expanded === 'calc' && (
-                    <View className="absolute top-12 left-0 right-0 z-[999] border border-[#1C252E] rounded-lg bg-white shadow-lg max-h-[180px]">
-                      <ScrollView nestedScrollEnabled>
+                    <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
+                      <View>
                         {calculators.map((c, i) => (
                           <TouchableOpacity
                             key={c._id || i}
@@ -521,7 +678,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                             )}
                           </TouchableOpacity>
                         ))}
-                      </ScrollView>
+                      </View>
                     </View>
                   )}
                 </View>
