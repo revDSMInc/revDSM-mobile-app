@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,11 @@ import {
   Platform,
   PermissionsAndroid,
   Alert,
+  Image,
 } from 'react-native';
-import MapView, { Marker, Callout, Heatmap, PROVIDER_GOOGLE } from 'react-native-maps';
-import MapViewDirections from 'react-native-maps-directions';
-import Icon from 'react-native-vector-icons/Ionicons';
+import * as Mapbox from '@rnmapbox/maps';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Geolocation from 'react-native-geolocation-service';
-import { launchCamera, launchImageLibrary, MediaType } from 'react-native-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useLeadsData } from '../../../hooks/useLeadsData';
@@ -22,10 +21,15 @@ import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
 import { MapJobCard } from './MapJobCard';
 import { useAuth } from '../../../hooks/useAuth';
+import { MapGalleryModal } from './MapGalleryModal';
+const markerImg = require('../../../assets/images/map/marker.png');
+
+const MarkerView = (Mapbox as any).MarkerView;
+
+// Initialize Mapbox with access token
+Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
 
 const { width, height } = Dimensions.get('window');
-
-const GOOGLE_MAPS_API_KEY = ENV.GOOGLE_MAPS_API_KEY;
 
 // STATIC TAMPA DATA
 const TAMPA_COORDS = {
@@ -36,47 +40,65 @@ const TAMPA_COORDS = {
 interface LeadMapProps {
   currentLead?: any;
   fullScreen?: boolean;
+  onGalleryPress?: (job: any) => void;
+  onCameraPress?: (job: any) => void;
+  onReferencePress?: (job: any) => void;
 }
 
-export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
+export const LeadMap = ({
+  currentLead,
+  fullScreen = false,
+  onGalleryPress,
+  onCameraPress,
+  onReferencePress,
+}: LeadMapProps) => {
   const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
   const { leads, refresh } = useLeadsData();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<Mapbox.MapView>(null);
+  const cameraRef = useRef<Mapbox.Camera>(null);
   const isInternalMove = useRef(false);
 
   const [filteredLeads, setFilteredLeads] = useState<any[]>([]);
+  const [userLocation, setUserLocation] = useState<any>(null);
+  const [isHeatMap, setIsHeatMap] = useState(false);
+  const [showRoute, setShowRoute] = useState(false);
+  const [selectedLead, setSelectedLead] = useState<any>(null);
+  const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
+  const [showGallery, setShowGallery] = useState(false);
+  const [galleryJob, setGalleryJob] = useState<any>(null);
+  const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-2']);
+  const [currentZoom, setCurrentZoom] = useState(10);
 
   useEffect(() => {
     let result = [...leads];
 
     // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
-    result = result.filter((item) => {
+    result = result.filter((item: any) => {
+      // ALWAYS show the current lead if jumping from list
+      if (currentLead && item._id === currentLead._id) return true;
+
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
-        const number = parseInt(jobNumber.replace('TAM', ''), 10);
-        if (!isNaN(number) && number >= 30000 && number <= 30032) {
-          return false;
-        }
+        const num = parseInt(jobNumber.substring(3), 10);
+        if (num >= 30000 && num <= 30032) return false;
       }
+
+      // Status Filtering logic
+      const status = item.status?.toLowerCase();
+      const isAJActive = activeFilters.some(f => f.startsWith('AJ'));
+      const isDEFActive = activeFilters.some(f => f.startsWith('DEF'));
+
+      if (!isAJActive && status === 'issued') return false;
+      if (!isDEFActive && status === 'deferred') return false;
+
       return true;
     });
 
     setFilteredLeads(result);
-  }, [leads]);
-
-  const [region, setRegion] = useState({
-    ...TAMPA_COORDS,
-    latitudeDelta: 0.1,
-    longitudeDelta: 0.1,
-  });
-
-  const [userLocation, setUserLocation] = useState<any>(null);
-  const [isHeatMap, setIsHeatMap] = useState(false);
-  const [showRoute, setShowRoute] = useState(false);
-  const [selectedLead, setSelectedLead] = useState<any>(null);
+  }, [leads, activeFilters]);
 
   useEffect(() => {
     requestLocationPermission();
@@ -100,20 +122,16 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
     Geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
-        setUserLocation({ latitude, longitude });
+        setUserLocation([longitude, latitude]);
 
-        // If we have a current lead, center on it. Otherwise center on user.
         if (currentLead?.location?.coordinates) {
-          centerOnLead(currentLead);
+          handleMarkerClick(currentLead);
         } else {
-          const newReg = {
-            latitude,
-            longitude,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          };
-          setRegion(newReg);
-          mapRef.current?.animateToRegion(newReg, 1000);
+          cameraRef.current?.setCamera({
+            centerCoordinate: [longitude, latitude],
+            zoomLevel: 12,
+            animationDuration: 1000,
+          });
         }
       },
       (error) => console.log(error),
@@ -125,15 +143,11 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
     const coords = lead.location?.coordinates;
     if (!coords) return;
 
-    // Web logic: center and offset slightly upwards (approx 0.005 deg for zoom 16)
-    const newReg = {
-      latitude: coords[1] - 0.002,
-      longitude: coords[0],
-      latitudeDelta: 0.012,
-      longitudeDelta: 0.012,
-    };
-    setRegion(newReg);
-    mapRef.current?.animateToRegion(newReg, 1000);
+    cameraRef.current?.setCamera({
+      centerCoordinate: [coords[0], coords[1]],
+      zoomLevel: 15,
+      animationDuration: 1000,
+    });
   };
 
   const handleMarkerClick = (lead: any) => {
@@ -143,249 +157,339 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
     setSelectedLead(lead);
 
     isInternalMove.current = true;
-    mapRef.current?.animateCamera(
-      {
-        center: {
-          latitude: coords[1] + 0.0055, // Larger offset to center the modal, not the marker
-          longitude: coords[0],
-        },
-        zoom: 16,
-        pitch: 0,
-        heading: 0,
-      },
-      { duration: 800 }
-    );
-    // Reset flag after animation
+    cameraRef.current?.setCamera({
+      centerCoordinate: [coords[0], coords[1]],
+      zoomLevel: 15,
+      animationDuration: 800,
+    });
+
     setTimeout(() => {
       isInternalMove.current = false;
     }, 1000);
   };
 
-  const handleToggleFavorite = async (leadId: string) => {
+  const fetchRoute = async () => {
+    if (!userLocation || !currentLead?.location?.coordinates) return;
+
+    const start = `${userLocation[0]},${userLocation[1]}`;
+    const end = `${currentLead.location.coordinates[0]},${currentLead.location.coordinates[1]}`;
+    
     try {
-      await LeadService.toggleFavourite(leadId);
-      refresh();
-      // Optional: Add haptic feedback here
-    } catch (e) {
-      Alert.alert('Error', 'Could not update favorite status.');
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start};${end}?geometries=geojson&access_token=${ENV.MAPBOX_ACCESS_TOKEN}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.routes && data.routes.length > 0) {
+        setRouteGeoJSON(data.routes[0].geometry);
+      }
+    } catch (error) {
+      console.error('Error fetching route:', error);
     }
   };
 
-  const handleOpenCamera = () => {
-    launchCamera(
-      { mediaType: 'photo' as MediaType, quality: 0.8, saveToPhotos: true },
-      (response) => {
-        if (response.didCancel) return;
-        if (response.assets?.[0]?.uri) {
-          Alert.alert(
-            'Photo Captured',
-            'Would you like to sync this photo to Job Docs immediately?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Sync Now',
-                onPress: () => Alert.alert('Sync', 'Image added to background upload queue.'),
-              },
-            ]
-          );
-        }
-      }
-    );
-  };
+  useEffect(() => {
+    if (showRoute) {
+      fetchRoute();
+    } else {
+      setRouteGeoJSON(null);
+    }
+  }, [showRoute, userLocation, currentLead]);
 
-  const handleOpenGallery = () => {
-    launchImageLibrary({ mediaType: 'photo' as MediaType, quality: 0.8 }, (response) => {
-      if (response.didCancel) return;
-      if (response.assets?.[0]?.uri) {
-        Alert.alert(
-          'Media Ready',
-          'Image selected for Lead Gallery. Tap "Job Docs" to view your saved assets.'
-        );
-      }
-    });
-  };
-
-  const handleOpenReferral = () => {
-    Alert.alert(
-      'Lead Referral',
-      'Referral modules are currently being synchronized with the web console. Please use the Lead Details screen to manage referrals for now.',
-      [{ text: 'Acknowledged' }]
-    );
-  };
-
-  // Convert leads to heatmap data
-  const heatmapData = leads
-    .filter((l) => l.location?.coordinates && l.price)
-    .map((l) => ({
-      latitude: l.location!.coordinates[1],
-      longitude: l.location!.coordinates[0],
-      weight: Math.min((l.price || 0) / 10000, 1) || 0.5,
-    }));
-
-  const userCoords = userLocation || region;
-
-  const destination = currentLead?.location?.coordinates
-    ? {
-        latitude: currentLead.location.coordinates[1],
-        longitude: currentLead.location.coordinates[0],
-      }
-    : null;
+  // Convert leads to GeoJSON for ShapeSource (Clustering & Heatmap)
+  const leadsGeoJSON = useMemo(() => {
+    return {
+      type: 'FeatureCollection' as const,
+      features: filteredLeads
+        .filter((l: any) => l.location?.coordinates)
+        .map((l: any) => ({
+          type: 'Feature' as const,
+          id: l._id,
+          properties: {
+            id: l._id,
+            price: l.price || 0,
+            isFavourite: l.isFavourite,
+            lead: l,
+          },
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [l.location.coordinates[0], l.location.coordinates[1]],
+          },
+        })),
+    };
+  }, [filteredLeads]);
 
   return (
     <View
       className={fullScreen ? 'flex-1' : 'rounded-[32px] overflow-hidden border-2 shadow-2xl mt-4'}
       style={{
         borderColor: colors.border,
-        height: fullScreen ? undefined : 420,
+        height: fullScreen ? '100%' : 420,
         width: '100%',
         backgroundColor: isDark ? '#121212' : '#f0f0f0',
       }}
     >
-      <MapView
+      <Mapbox.MapView
         ref={mapRef}
-        provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
-        customMapStyle={isDark ? darkMapStyle : []}
-        initialRegion={region}
-        showsUserLocation={false}
-        showsMyLocationButton={false}
-        onRegionChangeStart={() => {
-          if (!isInternalMove.current) {
-            setSelectedLead(null);
-          }
-        }}
+        styleURL={Mapbox.StyleURL.Street}
+        logoEnabled={false}
+        attributionEnabled={false}
         onPress={() => setSelectedLead(null)}
       >
-        {showRoute && userLocation && destination && GOOGLE_MAPS_API_KEY ? (
-          <MapViewDirections
-            origin={userLocation}
-            destination={destination}
-            apikey={GOOGLE_MAPS_API_KEY}
-            strokeWidth={4}
-            strokeColor={colors.primary.main}
-            optimizeWaypoints={true}
-            onReady={(result) => {
-              mapRef.current?.fitToCoordinates(result.coordinates, {
-                edgePadding: { right: 50, bottom: 50, left: 50, top: 50 },
-              });
-            }}
-          />
-        ) : null}
+        <Mapbox.Camera
+          ref={cameraRef}
+          defaultSettings={{
+            centerCoordinate: [TAMPA_COORDS.longitude, TAMPA_COORDS.latitude],
+            zoomLevel: currentZoom,
+          }}
+        />
 
-        {!isHeatMap &&
-          leads.map((lead: any) => {
-            const coords = lead.location?.coordinates;
-            if (!coords) return null;
-            const isActive = selectedLead?._id === lead._id || currentLead?._id === lead._id;
-
-            return (
-              <Marker
-                key={lead._id}
-                coordinate={{ latitude: coords[1], longitude: coords[0] }}
-                onPress={() => handleMarkerClick(lead)}
-                onSelect={() => handleMarkerClick(lead)}
-                anchor={{ x: 0.5, y: 1 }}
-                tracksViewChanges={true}
-                zIndex={isActive ? 999 : 1}
-              >
-                <View className="items-center justify-center" collapsable={false}>
-                  <View className="shadow-2xl">
-                    <Icon
-                      name="location"
-                      size={isActive ? 42 : 36}
-                      color={
-                        lead.isFavourite ? '#FFD700' : isActive ? colors.primary.main : '#FF5630'
-                      }
-                    />
-                  </View>
-                  {isActive && (
-                    <View
-                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg"
-                      style={{ elevation: 5 }}
-                    />
-                  )}
-                  {lead.isFavourite && !isActive && (
-                    <View className="absolute -top-1 -right-1">
-                      <Icon name="star" size={12} color="#FFD700" />
-                    </View>
-                  )}
-                </View>
-              </Marker>
-            );
-          })}
-
-        {isHeatMap && heatmapData.length > 0 && (
-          <Heatmap
-            points={heatmapData}
-            radius={Platform.OS === 'ios' ? 40 : 50}
-            opacity={0.6}
-            gradient={{
-              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
-              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
-              colorMapSize: 2048,
-            }}
-          />
+        {/* Route Layer */}
+        {routeGeoJSON && (
+          <Mapbox.ShapeSource id="routeSource" shape={routeGeoJSON}>
+            <Mapbox.LineLayer
+              id="routeLayer"
+              style={{
+                lineColor: colors.primary.main,
+                lineWidth: 4,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </Mapbox.ShapeSource>
         )}
 
-        {/* User Current Position Marker */}
+        {/* Heatmap Layer */}
+        {isHeatMap && (
+          <Mapbox.ShapeSource id="heatmapSource" shape={leadsGeoJSON as any}>
+            <Mapbox.HeatmapLayer
+              id="heatmapLayer"
+              style={{
+                heatmapWeight: ['interpolate', ['linear'], ['get', 'price'], 0, 0, 10000, 1],
+                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
+                heatmapColor: [
+                  'interpolate',
+                  ['linear'],
+                  ['heatmap-density'],
+                  0, 'rgba(116, 192, 255, 0)',
+                  0.1, '#74c0ff',
+                  0.3, '#0072ff',
+                  0.5, '#00c853',
+                  0.7, '#ffab00',
+                  0.85, '#ff6d00',
+                  1, '#d50000'
+                ] as any,
+                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 2, 15, 20],
+                heatmapOpacity: 0.7,
+              }}
+            />
+          </Mapbox.ShapeSource>
+        )}
+
+
+        {/* Individual Markers (Unclustered) */}
+        {!isHeatMap && (
+          <>
+            <Mapbox.Images images={{ markerIcon: markerImg }} />
+            <Mapbox.ShapeSource
+              id="leadsSource"
+              shape={leadsGeoJSON as any}
+              onPress={(e: { features: any[]; }) => {
+                const feature = e.features[0];
+                if (feature?.properties?.lead) {
+                  handleMarkerClick(feature.properties.lead);
+                }
+              }}
+            >
+              <Mapbox.SymbolLayer
+                id="leadsSymbols"
+                style={{
+                  iconImage: 'markerIcon',
+                  iconSize: [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    10, 0.4,
+                    15, 0.8
+                  ],
+                  iconAllowOverlap: true,
+                  iconAnchor: 'bottom',
+                }}
+              />
+            </Mapbox.ShapeSource>
+          </>
+        )}
+
+        {/* User Location Marker */}
         {userLocation && (
-          <Marker coordinate={userLocation} title="My Position" zIndex={100}>
+          <Mapbox.PointAnnotation 
+            id="userLocation" 
+            coordinate={[userLocation[0], userLocation[1]]}
+          >
             <View className="items-center justify-center">
               <View className="w-8 h-8 rounded-full bg-blue-500/20 border-2 border-white items-center justify-center shadow-lg">
                 <View className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
               </View>
+            </View>
+          </Mapbox.PointAnnotation>
+        )}
+
+        {/* Preload Marker Images (Optional if using layers) */}
+        {/* Selected Job Callout (Anchored to Marker) */}
+        {selectedLead && (
+          <MarkerView
+            key={`callout-${selectedLead._id}`}
+            id="selectedCallout"
+            coordinate={[
+              selectedLead.location.coordinates[0],
+              selectedLead.location.coordinates[1],
+            ]}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={{ width: 280, marginBottom: 40, alignItems: 'center' }}>
               <View
-                className="absolute -bottom-1 w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-transparent"
-                style={{ borderTopColor: colors.primary.main }}
+                style={{
+                  backgroundColor: isDark ? '#1E1E1E' : 'white',
+                  borderRadius: 24,
+                  overflow: 'hidden',
+                  borderWidth: 1,
+                  borderColor: isDark ? '#333' : '#f1f5f9',
+                  width: '100%',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 10 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 20,
+                  elevation: 20,
+                }}
+              >
+                <MapJobCard
+                  job={selectedLead}
+                  onClose={() => setSelectedLead(null)}
+                  isMyJob={
+                    selectedLead.salesRepId === (user as any)?._id || 
+                    selectedLead.salesRep?._id === (user as any)?._id
+                  }
+                  onReferencePress={() => {
+                    if (onReferencePress) onReferencePress(selectedLead);
+                    else navigation.push('LeadCenter', { lead: selectedLead, initialTool: 'referral' });
+                  }}
+                  onCameraPress={() => {
+                    if (onCameraPress) onCameraPress(selectedLead);
+                    else navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' });
+                  }}
+                  onGalleryPress={() => {
+                    if (onGalleryPress) onGalleryPress(selectedLead);
+                    else {
+                      setGalleryJob(selectedLead);
+                      setShowGallery(true);
+                    }
+                  }}
+                />
+              </View>
+
+              {/* Arrow Triangle */}
+              <View
+                style={{
+                  width: 0,
+                  height: 0,
+                  backgroundColor: 'transparent',
+                  borderStyle: 'solid',
+                  borderLeftWidth: 12,
+                  borderRightWidth: 12,
+                  borderTopWidth: 15,
+                  borderLeftColor: 'transparent',
+                  borderRightColor: 'transparent',
+                  borderTopColor: isDark ? '#1E1E1E' : 'white',
+                  marginTop: -1,
+                }}
               />
             </View>
-          </Marker>
+          </MarkerView>
         )}
-      </MapView>
+      </Mapbox.MapView>
 
-      {/* High-Fidelity Floating UI */}
-      <View className="absolute top-6 right-6 gap-3">
-        <TouchableOpacity
-          onPress={() => setIsHeatMap(!isHeatMap)}
-          className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 shadow-2xl items-center justify-center border border-gray-100 dark:border-zinc-700"
-        >
-          <Icon name="flame" size={24} color={isHeatMap ? '#EF4444' : '#94A3B8'} />
-        </TouchableOpacity>
+      {/* Floating Controls (Bottom Right) */}
+      <View className="absolute bottom-10 right-6 gap-3 items-center" style={{ zIndex: 10 }}>
+        {/* Status Capsules */}
+        <View className="gap-2">
+          {['DEF', 'AJ', 'DEF'].map((label, index) => {
+            const isFilterActive = activeFilters.includes(`${label}-${index}`);
+            return (
+              <TouchableOpacity
+                key={`${label}-${index}`}
+                onPress={() => {
+                  if (isFilterActive) setActiveFilters(activeFilters.filter(f => f !== `${label}-${index}`));
+                  else setActiveFilters([...activeFilters, `${label}-${index}`]);
+                }}
+                className="w-12 h-20 rounded-full bg-white items-center py-2 shadow-lg border border-slate-100"
+                style={{
+                  borderColor: isFilterActive ? '#2EDE56' : '#e2e8f0',
+                  borderWidth: 1,
+                }}
+              >
+                <View 
+                  className="w-8 h-8 rounded-full bg-white border-2 items-center justify-center mb-1"
+                  style={{ borderColor: isFilterActive ? '#2EDE56' : '#e2e8f0' }}
+                >
+                  <View 
+                    className="w-4 h-4 rounded-full" 
+                    style={{ backgroundColor: isFilterActive ? '#2EDE56' : '#f1f5f9' }} 
+                  />
+                </View>
+                <Text className="text-[10px] font-black text-slate-800">{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-        {destination && (
+        {/* Location & Zoom Group */}
+        <View className="gap-3 items-center">
           <TouchableOpacity
-            onPress={() => {
-              if (!GOOGLE_MAPS_API_KEY) {
-                Alert.alert(
-                  'API Key Required',
-                  'Google Maps Directions API key is missing in config.'
-                );
-                return;
-              }
-              setShowRoute(!showRoute);
-            }}
-            className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 shadow-2xl items-center justify-center border border-gray-100 dark:border-zinc-700"
+            onPress={startTracking}
+            className="w-14 h-14 rounded-full bg-[#2EDE56] items-center justify-center shadow-xl"
           >
-            <Icon
-              name="navigate-circle"
-              size={24}
-              color={showRoute ? colors.primary.main : '#94A3B8'}
-            />
+            <Icon name="crosshairs-gps" size={32} color="white" />
           </TouchableOpacity>
-        )}
 
+          <View className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
+            <TouchableOpacity
+              onPress={() => {
+                const newZoom = currentZoom + 1;
+                setCurrentZoom(newZoom);
+                cameraRef.current?.setCamera({ zoomLevel: newZoom, animationDuration: 300 });
+              }}
+              className="w-12 h-12 items-center justify-center border-b border-slate-100"
+            >
+              <Icon name="plus" size={24} color="#64748b" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                const newZoom = currentZoom - 1;
+                setCurrentZoom(newZoom);
+                cameraRef.current?.setCamera({ zoomLevel: newZoom, animationDuration: 300 });
+              }}
+              className="w-12 h-12 items-center justify-center"
+            >
+              <Icon name="minus" size={24} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* Back Button (Stays Top Right) */}
+      <View className="absolute top-6 right-6" style={{ zIndex: 10 }}>
         <TouchableOpacity
-          onPress={startTracking}
-          className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 shadow-2xl items-center justify-center border border-gray-100 dark:border-zinc-700"
+          onPress={() => navigation.goBack()}
+          className="w-14 h-14 rounded-full bg-[#2EDE56] items-center justify-center shadow-xl"
         >
-          <Icon name="locate" size={22} color={colors.primary.main} />
+          <Icon name="arrow-left" size={32} color="white" />
         </TouchableOpacity>
       </View>
 
       {/* Heatmap Legend */}
       {isHeatMap && (
         <View className="absolute bottom-6 left-6 right-6 px-4 py-2 bg-white/90 dark:bg-black/80 rounded-full flex-row items-center justify-between">
-          <Text className="text-[10px] font-black  tracking-widest text-gray-500">
+          <Text className="text-[10px] font-black tracking-widest text-gray-500">
             Price Intensity
           </Text>
           <View className="flex-row items-center gap-4">
@@ -401,77 +505,12 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
         </View>
       )}
 
-      {/* Custom High-Fidelity Overlay Modal */}
-      {selectedLead && (
-        <View
-          className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
-          pointerEvents="box-none"
-          style={{ zIndex: 1000 }}
-        >
-          <View style={{ width: 260, height: 360, marginTop: -60 }}>
-            <View
-              style={{
-                backgroundColor: 'white',
-                borderRadius: 24,
-                overflow: 'hidden',
-                borderWidth: 1,
-                borderColor: '#f1f5f9',
-                height: 320,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 10 },
-                shadowOpacity: 0.2,
-                shadowRadius: 20,
-                elevation: 20,
-              }}
-            >
-              <MapJobCard
-                job={selectedLead}
-                onClose={() => setSelectedLead(null)}
-                isMyJob={selectedLead.salesRepId === (user as any)?._id}
-                onReferencePress={() =>
-                  navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'referral' })
-                }
-                onCameraPress={() =>
-                  navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' })
-                }
-                onGalleryPress={() => {
-                  setSelectedLead(null);
-                  navigation.navigate('LeadCenter', { lead: selectedLead });
-                }}
-              />
-            </View>
-
-            {/* Arrow Triangle */}
-            <View className="items-center">
-              <View
-                style={{
-                  width: 0,
-                  height: 0,
-                  backgroundColor: 'transparent',
-                  borderStyle: 'solid',
-                  borderLeftWidth: 12,
-                  borderRightWidth: 12,
-                  borderTopWidth: 15,
-                  borderLeftColor: 'transparent',
-                  borderRightColor: 'transparent',
-                  borderTopColor: 'white',
-                  marginTop: -1,
-                }}
-              />
-            </View>
-          </View>
-        </View>
-      )}
+      <MapGalleryModal
+        visible={showGallery}
+        job={galleryJob}
+        onClose={() => setShowGallery(false)}
+        onPresent={() => {}}
+      />
     </View>
   );
 };
-
-const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#121212' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#212121' }] },
-  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#757575' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#181818' }] },
-  { featureType: 'road', elementType: 'geometry.fill', stylers: [{ color: '#2c2c2c' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#000000' }] },
-];

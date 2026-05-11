@@ -85,7 +85,9 @@ export const LeadService = {
   submitRoofWaiver: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.post(`/lead/v1/${leadId}/mobile/waiver-form`, payload, { timeout: 60000 }),
   uploadGeneratedReport: (payload: any): Promise<AxiosResponse<any>> =>
-    api.post('/generated-reports/v1', payload),
+    api.post('/generated-reports/v1', payload, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
   logReportGeneration: (payload: any): Promise<AxiosResponse<any>> =>
     api.post('/job/v1/generate-report-logs', payload),
   generateRevRender: (payload: any): Promise<AxiosResponse<any>> =>

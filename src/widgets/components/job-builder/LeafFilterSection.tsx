@@ -50,6 +50,7 @@ export const LeafFilterSection = ({
 }: LeafFilterSectionProps) => {
   const { isDark } = useTheme();
   const [colorModal, setColorModal] = useState<{ visible: boolean; comboIdx: number } | null>(null);
+  const [noticeModal, setNoticeModal] = useState(false);
   const [trackerExpanded, setTrackerExpanded] = useState(false);
   const lockedComboLoggedRef = useRef(new Set());
 
@@ -58,8 +59,8 @@ export const LeafFilterSection = ({
   const normalizeWidth = useCallback((width: string) => {
     if (!width) return '';
     const clean = width.replace(/\s+/g, '').toLowerCase();
-    if (clean.includes('4') && clean.includes('5')) return '4&5"';
-    if (clean === '4"' || clean === '5"') return '4&5"';
+    if (clean === '4&5"' || (clean.includes('4') && clean.includes('5') && !clean.includes('.'))) return '4 & 5"';
+    if (clean === '4"' || clean === '5"') return '4 & 5"';
     return clean;
   }, []);
 
@@ -175,7 +176,7 @@ export const LeafFilterSection = ({
       const subtotal = (c.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
       if (subtotal === 0) return true;
       const comboW = normalizeWidth(c.gutterOpeningWidth || '');
-      const is45 = comboW === '4&5"';
+      const is45 = comboW === '4 & 5"';
       return (
         !!c.lfProfile &&
         !!c.lfColor &&
@@ -394,7 +395,7 @@ export const LeafFilterSection = ({
           const subtotal = combo.measurements.reduce((s: number, v: any) => s + n(v), 0);
           const isVersaMax = combo.lfProfile === 'Versa Max';
           const comboW = normalizeWidth(combo.gutterOpeningWidth || '');
-          const is45 = comboW === '4&5"';
+          const is45 = comboW === '4 & 5"';
           const isCompleteCombo =
             !!combo.lfProfile &&
             !!combo.lfColor &&
@@ -447,12 +448,15 @@ export const LeafFilterSection = ({
                         {VERSA_MAX_WIDTH_OPTS.map((o) => (
                           <TouchableOpacity
                             key={o}
-                            onPress={() => {
-                              updateCombo(idx, {
-                                gutterOpeningWidth: o,
-                                exactSize: '',
-                              });
-                            }}
+                             onPress={() => {
+                               if (o === '< 2.5') {
+                                 setNoticeModal(true);
+                               }
+                               updateCombo(idx, {
+                                 gutterOpeningWidth: o,
+                                 exactSize: '',
+                               });
+                             }}
                             className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
                               combo.gutterOpeningWidth === o
                                 ? 'bg-[#22C55E] border-[#22C55E]'
@@ -862,6 +866,78 @@ export const LeafFilterSection = ({
         </View>
       </ScrollView>
 
+      <ImportantNoticeModal visible={noticeModal} onClose={() => setNoticeModal(false)} />
     </View>
+  );
+};
+
+const ImportantNoticeModal = ({ visible, onClose }: { visible: boolean; onClose: () => void }) => {
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.4)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 20,
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: 'white',
+            borderRadius: 24,
+            padding: 32,
+            width: '100%',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.2,
+            shadowRadius: 15,
+            elevation: 10,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 20,
+            }}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#1E293B' }}>
+              Important Notice
+            </Text>
+            <TouchableOpacity onPress={onClose}>
+              <Icon name="close" size={20} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+          <Text
+            style={{
+              fontSize: 14,
+              color: '#475569',
+              lineHeight: 22,
+              marginBottom: 30,
+              fontWeight: '500',
+            }}
+          >
+            Ensure Agreement has Special Can't Guarantee Cleaning or Sealing Clause
+          </Text>
+          <TouchableOpacity
+            onPress={onClose}
+            style={{
+              backgroundColor: '#4CBB17',
+              height: 48,
+              borderRadius: 12,
+              alignItems: 'center',
+              justifyContent: 'center',
+              alignSelf: 'flex-end',
+              paddingHorizontal: 32,
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>OK</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
   );
 };

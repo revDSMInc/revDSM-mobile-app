@@ -522,14 +522,15 @@ export const SummarySection = ({
   const handleGenerateAgreement = async (scheduleTimeOverride?: any) => {
     if (!leadId) return;
 
-    // Use override if provided, then fallback to jobState, then to TBD if none
     const installDate = scheduleTimeOverride?.date || jobState.scheduleTime?.date;
     const isTbd = installDate === 'TBD' || (scheduleTimeOverride?.reason && !scheduleTimeOverride?.date);
 
-    // If still no date/TBD, we'll allow it to proceed but log a warning, 
-    // per user request to stop blocking with the "installation scheduled" alert.
-    if (!installDate && !isTbd) {
-      console.warn('[Summary] Generating agreement without scheduled date.');
+    if (!installDate) {
+      Alert.alert(
+        'Appointment Required',
+        'Please schedule an appointment or select TBD to generate an agreement.'
+      );
+      return;
     }
 
     try {
@@ -1082,6 +1083,9 @@ export const SummarySection = ({
       type === 'agreement' ? resolvedDocuments.agreements : resolvedDocuments.orderSheets;
     const isEmpty = serverFiles.length === 0;
 
+    const isDemo = outcomeForm?.result?.toLowerCase() === 'demo';
+    const isRequired = type === 'agreement' ? !isDemo : isDemo;
+
     return (
       <View style={{ marginBottom: 24, backgroundColor: 'white', borderRadius: 16, borderWidth: 1, borderColor: '#f1f5f9', overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}>
         <View
@@ -1094,10 +1098,17 @@ export const SummarySection = ({
             backgroundColor: type === 'agreement' ? '#ef4444' : '#00B8D9'
           }}
         >
-          <Text style={{ fontSize: 8, fontWeight: '900', color: 'white', letterSpacing: 1.5, textTransform: 'uppercase' }}>
-            {title}
-          </Text>
-          {!isEmpty && (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ fontSize: 8, fontWeight: '900', color: 'white', letterSpacing: 1.5, textTransform: 'uppercase', marginRight: 8 }}>
+              {title}
+            </Text>
+            {isRequired && (
+              <View style={{ backgroundColor: 'white', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ color: type === 'agreement' ? '#ef4444' : '#00B8D9', fontSize: 6, fontWeight: '900' }}>REQUIRED</Text>
+              </View>
+            )}
+          </View>
+          {!isEmpty && (type !== 'agreement' || isAppointmentSet) && (
             <Pressable
               onPress={() => {
                 if (type === 'agreement') {
@@ -1132,13 +1143,21 @@ export const SummarySection = ({
 
               <View style={{ width: '100%', paddingHorizontal: 48, gap: 12 }}>
                 {type === 'agreement' ? (
-                  <Pressable
-                    onPress={handleGenerateAgreement}
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white', borderWidth: 1, borderColor: '#e2e8f0', height: 44, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
-                  >
-                    <Icon name="auto-fix" size={18} color="#22C55E" style={{ marginRight: 8 }} />
-                    <Text style={{ color: '#059669', fontWeight: '900', fontSize: 10 }}>Generate</Text>
-                  </Pressable>
+                  isAppointmentSet ? (
+                    <Pressable
+                      onPress={handleGenerateAgreement}
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white', borderWidth: 1, borderColor: '#e2e8f0', height: 44, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
+                    >
+                      <Icon name="auto-fix" size={18} color="#22C55E" style={{ marginRight: 8 }} />
+                      <Text style={{ color: '#059669', fontWeight: '900', fontSize: 10 }}>Generate</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={{ alignItems: 'center', padding: 8 }}>
+                      <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
+                        Schedule an appointment to enable agreements
+                      </Text>
+                    </View>
+                  )
                 ) : (
                   <Pressable
                     onPress={() => {
@@ -1225,7 +1244,8 @@ export const SummarySection = ({
     );
   };
 
-  const isScheduled = !!jobState.scheduleTime?.date;
+  const isAppointmentSet = !!jobState.scheduleTime?.date;
+  const isDateScheduled = isAppointmentSet && jobState.scheduleTime?.date !== 'TBD';
 
   return (
     <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
@@ -1241,7 +1261,7 @@ export const SummarySection = ({
         {summarySections.map(renderSection)}
 
         {/* Appointment Status Card */}
-        {!isScheduled ? (
+        {!isAppointmentSet ? (
           /* ── NOT SCHEDULED ─────────────────────────────────────── */
           <View
             style={{ marginBottom: 24, borderRadius: 16, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', padding: 20 }}
@@ -1324,7 +1344,7 @@ export const SummarySection = ({
         )}
 
         {/* Documents Section */}
-        {renderDocThumbnails('Agreements', jobState.agreements || [], 'agreement')}
+        {outcomeForm?.result?.toLowerCase() !== 'demo' && renderDocThumbnails('Agreements', jobState.agreements || [], 'agreement')}
         {renderDocThumbnails('Order Sheets', jobState.orderSheets || [], 'orderSheet')}
       </View>
 
@@ -1348,7 +1368,7 @@ export const SummarySection = ({
             leadData?.customerDetails?.lastName || ''
           }`.trim() || customerName || 'Customer'
         }
-        isEdit={isScheduled}
+        isEdit={isAppointmentSet}
       />
 
       <DocumentScannerModal

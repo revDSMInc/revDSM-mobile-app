@@ -63,7 +63,7 @@ export const useWorkLeadMutation = () => {
       leadId: string;
       userId: string;
       status?: string | null;
-    }) => LeadService.workLead(leadId, userId, status),
+    }) => LeadService.workLead(leadId, userId),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       FlashMessage.success('Success', res.data?.message || 'Work status updated');
@@ -146,7 +146,7 @@ export const useSubmitDigitalConsentMutation = () => {
         fileCache: true,
         appendExt: 'pdf',
         timeout: 120000,
-        path: `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/consent_${Date.now()}.pdf`,
+        path: `${ReactNativeBlobUtil.fs.dirs.CacheDir}/consent_${Date.now()}.pdf`,
       };
 
       const res = await ReactNativeBlobUtil.config(fetchConfig).fetch(
@@ -160,7 +160,26 @@ export const useSubmitDigitalConsentMutation = () => {
         body
       );
 
-      return res.path();
+      const pdfPath = res.path() || fetchConfig.path;
+      const status = res.info().status;
+
+      if (status >= 400) {
+        const errorText = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'utf8');
+        await ReactNativeBlobUtil.fs.unlink(pdfPath);
+        try {
+          const parsed = JSON.parse(errorText);
+          throw new Error(parsed.message || parsed.error || `Server Error: ${status}`);
+        } catch (e) {
+          throw new Error(`Server Error (${status}): ${errorText.substring(0, 100)}`);
+        }
+      }
+
+      const content = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'base64');
+      if (!content.startsWith('JVBERi')) {
+        await ReactNativeBlobUtil.fs.unlink(pdfPath);
+        throw new Error('Generated file is not a valid PDF.');
+      }
+      return pdfPath;
     },
     onSuccess: async (pdfPath: string) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -210,7 +229,7 @@ export const useSubmitRoofWaiverMutation = () => {
         fileCache: true,
         appendExt: 'pdf',
         timeout: 120000,
-        path: `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/waiver_${Date.now()}.pdf`,
+        path: `${ReactNativeBlobUtil.fs.dirs.CacheDir}/waiver_${Date.now()}.pdf`,
       };
 
       const res = await ReactNativeBlobUtil.config(fetchConfig).fetch(
@@ -224,7 +243,26 @@ export const useSubmitRoofWaiverMutation = () => {
         body
       );
 
-      return res.path();
+      const pdfPath = res.path() || fetchConfig.path;
+      const status = res.info().status;
+
+      if (status >= 400) {
+        const errorText = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'utf8');
+        await ReactNativeBlobUtil.fs.unlink(pdfPath);
+        try {
+          const parsed = JSON.parse(errorText);
+          throw new Error(parsed.message || parsed.error || `Server Error: ${status}`);
+        } catch (e) {
+          throw new Error(`Server Error (${status}): ${errorText.substring(0, 100)}`);
+        }
+      }
+
+      const content = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'base64');
+      if (!content.startsWith('JVBERi')) {
+        await ReactNativeBlobUtil.fs.unlink(pdfPath);
+        throw new Error('Generated file is not a valid PDF.');
+      }
+      return pdfPath;
     },
     onSuccess: (pdfPath: string) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });

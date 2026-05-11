@@ -64,7 +64,13 @@ export default function LFCalculator({ route }: any) {
   const { user } = useAuth();
   const lead = route.params?.lead;
   const onRefresh = route.params?.onRefresh;
-  const onClose = () => navigation.goBack();
+  const onClose = () => {
+    if (lead) {
+      navigation.navigate('LeadCenter', { lead, tab: 'tools' });
+    } else {
+      navigation.goBack();
+    }
+  };
 
   const [currentView, setCurrentView] = useState<
     'form' | 'summary' | 'picker' | 'result' | 'outcome'

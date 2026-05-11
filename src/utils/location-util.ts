@@ -1,5 +1,11 @@
 /**
+ * Web Parity: 1 mile radius — matches job-checkin-range.js: rangeMiles = 1
+ */
+export const GEOFENCE_RADIUS_MILES = 1;
+
+/**
  * Calculate distance between two coordinates using Haversine formula
+ * Matches web app: job-checkin-range.js calculateDistance()
  * @returns Distance in miles
  */
 export const calculateDistance = (
@@ -24,7 +30,9 @@ export const calculateDistance = (
 };
 
 /**
- * Check if lead is self-generated
+ * Check if lead is self-generated.
+ * Web parity: job-card.js isSelfGeneratedLead()
+ * Self-gen = no leadTime, or explicit flag, or leadType marker.
  */
 export const isSelfGeneratedLead = (lead: any): boolean => {
   return (
@@ -34,6 +42,7 @@ export const isSelfGeneratedLead = (lead: any): boolean => {
     lead?.isSelfGen === true ||
     lead?.selfGen === true ||
     lead?.leadType === 'selfGen' ||
+    lead?.leadType === 'self_gen' ||
     lead?.leadType === 'self-generated' ||
     lead?.status === 'selfGenerated' ||
     lead?.status === 'self-generated'
@@ -41,7 +50,31 @@ export const isSelfGeneratedLead = (lead: any): boolean => {
 };
 
 /**
- * Parse leadTime (e.g., "9am", "1pm") into a Date object for today
+ * Web parity: job-card.js canCheckIn()
+ * Returns true if the rep has already initiated a check-in at least once.
+ * workflowState "preview" means: checked in once, can still start.
+ * workflowState "resume" means: was working, paused, now resuming.
+ */
+export const canCheckIn = (lead: any): boolean => {
+  return (
+    lead?.workflowState === 'preview' ||
+    lead?.checkInCount > 0 ||
+    (Array.isArray(lead?.checkIns) && lead.checkIns.length > 0) ||
+    lead?.lastCheckIn != null
+  );
+};
+
+/**
+ * Web parity: job-card.js isResumeAppointment()
+ * Returns true ONLY if workflowState is explicitly "resume".
+ */
+export const isResumeAppointment = (lead: any): boolean => {
+  return lead?.workflowState === 'resume';
+};
+
+/**
+ * Parse leadTime (e.g., "9am", "1pm") and lead date into a scheduled Date object.
+ * Web parity: job-card.js getScheduledDateTime()
  */
 export const getScheduledDateTime = (lead: any): Date | null => {
   if (!lead?.leadTime || typeof lead.leadTime !== 'string') return null;

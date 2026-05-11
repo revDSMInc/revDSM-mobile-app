@@ -117,7 +117,7 @@ export const InspectionFormModal = ({
           {
             text: 'Camera',
             onPress: () => {
-              launchCamera({ mediaType: 'photo', quality: 0.8 }, (res) => {
+              launchCamera({ mediaType: 'photo', quality: 0.5, maxWidth: 1200, maxHeight: 1200 }, (res) => {
                 if (res.assets && res.assets[0]?.uri) {
                   updateItem(sectionId, index, 'photo', res.assets[0].uri);
                 }
@@ -127,7 +127,7 @@ export const InspectionFormModal = ({
           {
             text: 'Gallery',
             onPress: () => {
-              launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, (res) => {
+              launchImageLibrary({ mediaType: 'photo', quality: 0.5, maxWidth: 1200, maxHeight: 1200 }, (res) => {
                 if (res.assets && res.assets[0]?.uri) {
                   updateItem(sectionId, index, 'photo', res.assets[0].uri);
                 }
@@ -169,16 +169,17 @@ export const InspectionFormModal = ({
         const sectionId = key as SectionKey;
         const apiKey = mapping[sectionId];
         sections[sectionId].forEach((item, idx) => {
-          if (item.issue || item.description) {
+          if (item.issue || item.description || item.photo) {
             payload[`${apiKey}[${idx}][issue]`] = item.issue;
             payload[`${apiKey}[${idx}][description]`] = item.description;
             if (item.photo) {
-              payload[`${apiKey}[${idx}][photo]`] = item.photo;
+              payload[`${apiKey}[${idx}][image]`] = item.photo;
             }
           }
         });
       });
 
+      payload.leadId = lead?._id || lead?.id;
       onSubmit(payload);
     } catch (err) {
       console.error('Inspection Submit Error:', err);

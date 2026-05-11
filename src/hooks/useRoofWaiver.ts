@@ -6,7 +6,8 @@ import { FlashMessage } from '../config/message';
 export const useRoofWaiver = (
   lead: any,
   onSubmit: (data: any) => void,
-  onFinalUpload?: (pdfPath: string) => Promise<void>
+  onFinalUpload?: (pdfPath: string) => Promise<void>,
+  onSuccess?: () => void
 ) => {
   const [formData, setFormData] = useState({
     firstName: lead?.customerDetails?.firstName || '',
@@ -59,6 +60,15 @@ export const useRoofWaiver = (
   );
 
   const handleFinalSubmit = async () => {
+    if (!formData.email || !formData.email.includes('@')) {
+      FlashMessage.error('Validation Error', 'A valid email address is required.');
+      return;
+    }
+    if (savedPaths.length === 0) {
+      FlashMessage.error('Validation Error', 'Customer signature is required.');
+      return;
+    }
+
     try {
       const svgContent = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg width="500" height="200" viewBox="0 0 500 200" xmlns="http://www.w3.org/2000/svg">${savedPaths
         .map(
@@ -89,9 +99,11 @@ export const useRoofWaiver = (
         consent: 'true',
       });
       if (typeof res === 'string') {
-        setGeneratedPdf(res);
         if (onFinalUpload) {
           await onFinalUpload(res);
+        }
+        if (onSuccess) {
+          onSuccess();
         }
       }
     } catch (error: any) {

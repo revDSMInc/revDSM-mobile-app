@@ -15,6 +15,9 @@ export const FlashMessage = {
       type: type,
       icon: type as any,
       duration: 3000,
+      floating: true,
+      style: { zIndex: 9999, elevation: 9999 },
+      hideStatusBar: false,
     });
   },
 
@@ -28,6 +31,9 @@ export const FlashMessage = {
       type: 'success',
       icon: 'success',
       duration: 3000,
+      floating: true,
+      style: { zIndex: 9999, elevation: 9999 },
+      hideStatusBar: false,
     });
   },
 
@@ -41,6 +47,9 @@ export const FlashMessage = {
       type: 'danger',
       icon: 'danger',
       duration: 4000,
+      floating: true,
+      style: { zIndex: 9999, elevation: 9999 },
+      hideStatusBar: false,
     });
   },
 
@@ -54,6 +63,9 @@ export const FlashMessage = {
       type: 'warning',
       icon: 'warning',
       duration: 3500,
+      floating: true,
+      style: { zIndex: 9999, elevation: 9999 },
+      hideStatusBar: false,
     });
   },
 

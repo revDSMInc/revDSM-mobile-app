@@ -43,7 +43,15 @@ export default function LoginScreen() {
     }
 
     try {
-      await loginMutation.mutateAsync({ email: email.trim(), password });
+      const res: any = await loginMutation.mutateAsync({ email: email.trim(), password });
+      
+      if (res?.twoFactorRequired) {
+        if (res.method === 'authenticator') {
+          navigation.navigate('AuthenticatorOTP', { email: email.trim(), password });
+        } else {
+          navigation.navigate('EmailOTP', { email: email.trim(), password });
+        }
+      }
     } catch (err: any) {
       FlashMessage.error('Login Failed', err?.message || 'Invalid credentials');
     }
@@ -101,7 +109,7 @@ export default function LoginScreen() {
                 onPress={() => navigation.navigate('ForgotPassword')}
                 className="self-end mb-6"
               >
-                <Text className="text-sm font-semibold text-black">Forgot password?</Text>
+                <Text className="text-sm font-semibold" style={{ color: colors.primary.main }}>Forgot password?</Text>
               </TouchableOpacity>
 
               <CustomButton

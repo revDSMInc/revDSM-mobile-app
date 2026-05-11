@@ -16,7 +16,8 @@ export const AuthEndpoints = {
 export interface LoginData {
   email: string;
   password?: string;
-  otp?: string;
+  code?: string;
+  trustDevice?: boolean;
 }
 
 export const AuthService = {

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ImageBackground,
   TextInput,
+  Keyboard,
 } from 'react-native';
 import { FlashMessage } from '../../config/message';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -16,17 +17,19 @@ import Logo from '../../assets/svgs/logo';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation';
+import { useVerifyOtpMutation } from '../../hooks/useAuthMutation';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 export default function AuthenticatorOTPScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute<RouteProp<RootStackParamList, 'AuthenticatorOTP'>>();
-  const { email } = route.params;
+  const { email, password } = route.params;
   const { colors } = useTheme();
 
   const [code, setCode] = useState(['', '', '', '', '', '']);
-  const [loading, setLoading] = useState(false);
   const inputs = useRef<(TextInput | null)[]>(new Array(6).fill(null));
+  const verifyOtpMutation = useVerifyOtpMutation();
+  const [trustDevice, setTrustDevice] = useState(false);
 
   const handleTextChange = (text: string, index: number) => {
     const newCode = [...code];
@@ -45,22 +48,21 @@ export default function AuthenticatorOTPScreen() {
   };
 
   const handleVerify = async () => {
+    if (verifyOtpMutation.isPending) return;
+
     const fullCode = code.join('');
     if (fullCode.length < 6) {
       FlashMessage.error('Invalid PIN', 'Please enter the 6-digit authenticator PIN');
       return;
     }
 
-    setLoading(true);
+    Keyboard.dismiss();
+
     try {
-      // API call would go here
-      await new Promise((resolve) => setTimeout(() => resolve(undefined), 1500));
+      await verifyOtpMutation.mutateAsync({ email, code: fullCode, password, trustDevice });
       FlashMessage.success('Verified', 'Authenticator PIN verified');
-      navigation.navigate('Login');
     } catch (err: any) {
       FlashMessage.error('Verification Failed', err?.message || 'Invalid PIN');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -123,14 +125,38 @@ export default function AuthenticatorOTPScreen() {
                     keyboardType="number-pad"
                     maxLength={1}
                     selectTextOnFocus
+                    returnKeyType={i === 5 ? 'done' : 'next'}
+                    onSubmitEditing={i === 5 ? handleVerify : () => inputs.current[i+1]?.focus()}
                   />
                 ))}
               </View>
 
-              <CustomButton title="Verify PIN" onPress={handleVerify} loading={loading} />
+              <TouchableOpacity
+                onPress={() => setTrustDevice(!trustDevice)}
+                className="flex-row items-center mb-6"
+              >
+                <View
+                  className="w-5 h-5 rounded border items-center justify-center mr-2"
+                  style={{
+                    borderColor: trustDevice ? colors.primary.main : '#919EAB33',
+                    backgroundColor: trustDevice ? colors.primary.main : 'transparent',
+                  }}
+                >
+                  {trustDevice && <Icon name="checkmark" size={14} color="white" />}
+                </View>
+                <Text className="text-sm font-medium" style={{ color: colors.textSecondary }}>
+                  Trust this device for 7 days
+                </Text>
+              </TouchableOpacity>
+
+              <CustomButton 
+                title="Verify" 
+                onPress={handleVerify} 
+                loading={verifyOtpMutation.isPending} 
+              />
 
               <View className="mt-8 items-center">
-                <TouchableOpacity onPress={() => navigation.navigate('EmailOTP', { email })}>
+                <TouchableOpacity onPress={() => navigation.navigate('EmailOTP', { email, password })}>
                   <Text className="text-sm font-bold" style={{ color: colors.primary.main }}>
                     Try another way
                   </Text>

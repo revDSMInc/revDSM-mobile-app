@@ -8,6 +8,13 @@ import { logEvent } from '../services/api/LoggerService';
 export const useLeadCenterData = (initialLead: any, user: any) => {
   const queryClient = useQueryClient();
   const [lead, setLead] = useState<any>(initialLead);
+
+  // Sync state if navigation params change (e.g. on back navigation with updated lead)
+  useEffect(() => {
+    if (initialLead) {
+      setLead(initialLead);
+    }
+  }, [initialLead]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [outcomeForm, setOutcomeForm] = useState<any>({});
   const [calculatorData, setCalculatorData] = useState<any>({});

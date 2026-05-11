@@ -634,3 +634,76 @@ export const INSPECTION_ISSUES = {
     },
   ],
 };
+
+// Rev Render view groups (same structure as web app REV_RENDER_VIEW_GROUPS)
+export const REV_RENDER_VIEW_GROUPS = [
+  {
+    sectionLabel: 'FRONT VIEWS',
+    categoryId: 'Front View',
+    views: [
+      { id: 'front-image', label: 'Front of Home' },
+      { id: 'front-left', label: 'Front-Left' },
+      { id: 'front-right', label: 'Front-Right' },
+    ],
+  },
+  {
+    sectionLabel: 'SIDE VIEWS',
+    categoryId: 'Side Views',
+    views: [
+      { id: 'right-side', label: 'Right Side' },
+      { id: 'left-side', label: 'Left Side' },
+    ],
+  },
+  {
+    sectionLabel: 'BACK VIEWS',
+    categoryId: 'Back View',
+    views: [
+      { id: 'back-image', label: 'Back of Home' },
+      { id: 'back-left', label: 'Back-Left' },
+      { id: 'back-right', label: 'Back-Right' },
+    ],
+  },
+  {
+    sectionLabel: 'DETAIL SHOTS',
+    categoryId: 'Gutter System',
+    views: [
+      { id: 'inside-k-style-gutter-run', label: 'Inside K-Style Gutter run' },
+      { id: 'inside-box-gutter-run', label: 'Inside Box Gutter run' },
+      { id: 'inside-super-gutter', label: 'Inside Super gutter' },
+    ],
+  },
+  {
+    sectionLabel: 'MEASUREMENTS',
+    categoryId: 'Measurements',
+    views: [
+      { id: 'k-styler-gutter-width-measurement', label: 'K Style Gutter Width Measurement' },
+      { id: 'box-gutter-width-measurement', label: 'Box gutter width measurement' },
+      { id: 'super-gutter-width-measurement', label: 'Super gutter width measurement' },
+      { id: 'fascia-board-width', label: 'Fascia board width' },
+      { id: 'fascia-height', label: 'Fascia height' },
+      { id: 'soffit-width', label: 'Soffit width (house to edge)' },
+      { id: 'soffit-panel-measurement', label: 'Soffit panel measurement' },
+    ],
+  },
+  {
+    sectionLabel: 'MISCELLANEOUS',
+    categoryId: 'Miscellaneous',
+    views: [
+      { id: 'pool-screens', label: 'Pool screens' },
+      { id: 'misc-1', label: 'Miscellaneous 1' },
+      { id: 'misc-2', label: 'Miscellaneous 2' },
+      { id: 'misc-3', label: 'Miscellaneous 3' },
+      { id: 'misc-4', label: 'Miscellaneous 4' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOFLINE OBSERVATION',
+    categoryId: 'Roofline Observation',
+    views: [
+      { id: 'roof-edge-left-side', label: 'Roof Edge — Left Side' },
+      { id: 'roof-edge-right-side', label: 'Roof Edge — Right Side' },
+      { id: 'roof-penetration-vent-area', label: 'Roof Penetration / Vent Area' },
+      { id: 'general-roof-surface-condition', label: 'General Roof Surface Condition' },
+    ],
+  },
+];

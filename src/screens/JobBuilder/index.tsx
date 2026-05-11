@@ -25,6 +25,7 @@ import { validateStep } from '../../utils/job-builder-validation';
 import { useAuth } from '../../hooks/useAuth';
 import { useLeadQuery } from '../../hooks/useLeadQuery';
 import { Alert } from 'react-native';
+import { FlashMessage } from '../../config/message';
 
 const { width, height } = Dimensions.get('window');
 
@@ -62,7 +63,6 @@ export default function JobBuilderScreen() {
     }
   }, [availableStepsInfo]);
 
-  const [validationModal, setValidationModal] = useState({ visible: false, error: '' });
 
   const availableStepIds = useMemo(
     () => availableStepsInfo.map((s: any) => s.category),
@@ -202,7 +202,7 @@ export default function JobBuilderScreen() {
   }, [jobState, leadId, outcomeForm, calculatorData, user]);
 
   const onValidationError = useCallback((error: string) => {
-    setValidationModal({ visible: true, error });
+    FlashMessage.warning('Incomplete Section', error);
   }, []);
 
   const renderStepIcon = (step: any, index: number) => {
@@ -361,12 +361,17 @@ export default function JobBuilderScreen() {
         (jobState.orderSheets || []).some((doc: any) => (doc.files || []).length > 0) ||
         resolvedDocuments.orderSheets.length > 0;
 
-      if (!hasAgreement || !hasOrderSheet) {
-        let msg = 'Please ensure both an Agreement and an Order Sheet are attached.';
-        if (!hasAgreement && hasOrderSheet) msg = 'Please attach a signed Agreement.';
-        if (hasAgreement && !hasOrderSheet) msg = 'Please attach an Order Sheet.';
-        onValidationError(msg);
-        return;
+      const isDemo = outcomeForm?.result?.toLowerCase() === 'demo';
+      if (isDemo) {
+        if (!hasOrderSheet) {
+          onValidationError('Please attach an Order Sheet.');
+          return;
+        }
+      } else {
+        if (!hasAgreement) {
+          onValidationError('Please attach a signed Agreement.');
+          return;
+        }
       }
 
       setIsSaving(true);
@@ -432,8 +437,8 @@ export default function JobBuilderScreen() {
       const payload = {
         leadData: {
           ...outcomeForm,
-          result: outcomeForm?.result === 'sale' ? 'Sale' : 'Demo',
-          status: outcomeForm?.result === 'sale' ? 'Sale' : 'Demo',
+          result: outcomeForm?.result || 'Sale',
+          status: outcomeForm?.status || outcomeForm?.result || 'Sale',
           jobBuilder: finalJobState,
           LFCalculator: {
             ...calculatorData,
@@ -457,7 +462,8 @@ export default function JobBuilderScreen() {
       }
 
       // Navigate back to DealCenter and trigger a refresh to show updated state
-      navigation.navigate('DealCenter', {
+      // Replace current JobBuilder with DealCenter so back button skip JobBuilder
+      navigation.replace('DealCenter', {
         lead: { 
           ...(leadData || route.params?.lead), 
           jobBuilder: { status: 'submitted', calculatorId: calculatorData?._id } 
@@ -511,8 +517,8 @@ export default function JobBuilderScreen() {
 
         const payload = {
           ...outcomeForm,
-          result: 'Sale',
-          status: 'Sale',
+          result: outcomeForm?.result || 'Sale',
+          status: outcomeForm?.status || outcomeForm?.result || 'Sale',
           jobBuilder: finalJobState,
           LFCalculator: {
             ...calculatorData,
@@ -624,11 +630,6 @@ export default function JobBuilderScreen() {
             </View>
           </KeyboardAvoidingView>
 
-          <ValidationErrorModal
-            visible={validationModal.visible}
-            error={validationModal.error}
-            onClose={() => setValidationModal({ visible: false, error: '' })}
-          />
 
           <View
             style={{
@@ -671,13 +672,14 @@ export default function JobBuilderScreen() {
 
               {currentStepIndex === availableStepsInfo.length - 1 ? (
                 (() => {
+                  const isDemo = outcomeForm?.result?.toLowerCase() === 'demo';
                   const hasAgreement =
                     (jobState.agreements || []).some((doc: any) => (doc.files || []).length > 0) ||
                     (resolvedDocuments.agreements.length > 0);
                   const hasOrderSheet =
                     (jobState.orderSheets || []).some((doc: any) => (doc.files || []).length > 0) ||
                     (resolvedDocuments.orderSheets.length > 0);
-                  const canComplete = hasAgreement && hasOrderSheet;
+                  const canComplete = isDemo ? hasOrderSheet : hasAgreement;
 
                   return (
                     <Pressable
@@ -749,69 +751,3 @@ export default function JobBuilderScreen() {
  * Reusable validation alert modal moved outside main component to prevent
  * expensive re-renders and potential navigation context loss.
  */
-const ValidationErrorModal = ({
-  visible,
-  error,
-  onClose,
-}: {
-  visible: boolean;
-  error: string;
-  onClose: () => void;
-}) => {
-  const { colors, isDark } = useTheme();
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.4)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
-        <View
-          style={{ 
-            backgroundColor: colors.card,
-            borderRadius: 32,
-            width: '100%',
-            padding: 32,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 10 },
-            shadowOpacity: 0.25,
-            shadowRadius: 15,
-            elevation: 10
-          }}
-        >
-          <View style={{ width: 64, height: 64, backgroundColor: '#FFFBEB', borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 24, alignSelf: 'center', borderWidth: 1, borderColor: '#FEF3C7' }}>
-            <Icon name="alert-decagram" size={32} color="#D97706" />
-          </View>
-
-          <Text style={{ fontSize: 20, fontWeight: '900', textAlign: 'center', marginBottom: 8, color: colors.text }}>
-            Incomplete Section
-          </Text>
-
-          <Text
-            style={{ textAlign: 'center', marginBottom: 32, fontWeight: '500', lineHeight: 20, color: colors.textSecondary }}
-          >
-            {error || 'Please complete all required fields before moving to the next section.'}
-          </Text>
-
-          <Pressable
-            onPress={onClose}
-            style={{
-              height: 56,
-              borderRadius: 16,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: isDark ? '#FFFFFF' : '#0F172A',
-              shadowColor: isDark ? '#FFFFFF' : '#0F172A',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.2,
-              shadowRadius: 8,
-              elevation: 4
-            }}
-          >
-            <Text
-              style={{ fontWeight: '900', fontSize: 12, color: isDark ? '#000000' : '#FFFFFF', textTransform: 'uppercase' }}
-            >
-              Got it, thanks
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
-  );
-};

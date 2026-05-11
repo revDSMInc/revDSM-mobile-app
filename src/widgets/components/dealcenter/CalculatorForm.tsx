@@ -285,7 +285,7 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label={'7" & 5" Versa (1st Story)'}
+            label={'4" & 5" Versa (1st Story)'}
             value={inputs.filter45Ft1}
             keyName="filter45Ft1"
             price={pricing.filters.filter_4_5['1']}
@@ -307,7 +307,7 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label={'7" & 5" Versa (2nd Story)'}
+            label={'4" & 5" Versa (2nd Story)'}
             value={inputs.filter45Ft2}
             keyName="filter45Ft2"
             price={pricing.filters.filter_4_5['2']}
@@ -329,7 +329,7 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label={'7" & 5" Versa (3rd Story)'}
+            label={'4" & 5" Versa (3rd Story)'}
             value={inputs.filter45Ft3}
             keyName="filter45Ft3"
             price={pricing.filters.filter_4_5['3']}

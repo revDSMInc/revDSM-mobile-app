@@ -11,7 +11,7 @@ import {
   Modal,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -31,9 +31,7 @@ import { resolveS3Url } from '../../utils/s3-utils';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
 import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
-import { InspectionFormModal } from '../../widgets/modals/lead-center/InspectionFormModal';
 import { RiskReportModal } from '../../widgets/modals/lead-center/RiskReportModal';
-import { RevRenderModal } from '../../widgets/modals/lead-center/RevRenderModal';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { useAuth } from '../../hooks/useAuth';
 import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSection';
@@ -56,10 +54,12 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
 
 import { useLeadQuery } from '../../hooks/useLeadQuery';
+import RNFS from 'react-native-fs';
 
 import { useLeadCenterData } from '../../hooks/useLeadCenterData';
 import { useLeadReports } from '../../hooks/useLeadReports';
 import { useLeadCenterModals } from '../../hooks/useLeadCenterModals';
+import { InspectionFormModal } from '../../widgets/modals/lead-center/InspectionFormModal';
 
 const SubModalWrap = ({
   visible,
@@ -124,18 +124,17 @@ export default function LeadCenterPage() {
     riskJob,
     handleStartRiskReport,
     handleDownloadRiskReport,
+    handleDownloadReport,
     handleResetRiskReport,
   } = useLeadReports(lead, refetch);
 
   const {
-    showJobBuilder,
-    showInspectionGrid,
     showConsentModal,
-    showPaperFallback,
     showWaiverModal,
     showInspectionModal,
+    showInspectionGrid,
+    showPaperFallback,
     showRiskModal,
-    showRevRenderModal,
     showPdfModal,
     pdfPreviewData,
     toggleModal,
@@ -144,11 +143,32 @@ export default function LeadCenterPage() {
   } = useLeadCenterModals(lead, initialTool, secureUrls, riskJob, {
     handleStartRiskReport,
     handleDownloadRiskReport,
+    handleDownloadReport,
     handleResetRiskReport,
   });
 
-  const [activeTab, setActiveTab] = useState<TabType>('job_docs');
+  const finalizeUploadMutation = useFinalizeConsentUploadMutation();
+
+  const [activeTab, setActiveTab] = useState<TabType>(
+    route.params?.tab || (initialTool === 'tools' ? 'tools' : 'job_docs')
+  );
+
+  useEffect(() => {
+    if (route.params?.tab) {
+      setActiveTab(route.params.tab as TabType);
+    }
+  }, [route.params?.tab]);
+
   const [loading, setLoading] = useState(false);
+
+  // Auto-refresh RevRender runs when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      if (lead?._id) {
+        queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
+      }
+    }, [lead?._id, queryClient])
+  );
 
   // Auto-open Job Builder logic
   useEffect(() => {
@@ -283,7 +303,6 @@ export default function LeadCenterPage() {
   const consentMutation = useSubmitDigitalConsentMutation();
   const waiverMutation = useSubmitRoofWaiverMutation();
   const reportMutation = useUploadReportMutation();
-  const finalizeUploadMutation = useFinalizeConsentUploadMutation();
   const ocrMutation = useUploadPaperConsentOCRMutation();
   const revRenderMutation = useGenerateRevRenderMutation();
 
@@ -291,15 +310,6 @@ export default function LeadCenterPage() {
     const res = await consentMutation.mutateAsync(data);
     await refetch();
     return res;
-  };
-
-  const handleFinalizeReportUpload = async (
-    pdfPath: string,
-    reportType: string = 'consent_form'
-  ) => {
-    try {
-      await finalizeUploadMutation.mutateAsync({ leadId: lead?._id, pdfPath, reportType });
-    } catch (e) {}
   };
 
   const handleWaiverSubmit = async (data: any) => {
@@ -339,30 +349,74 @@ export default function LeadCenterPage() {
       const fileName = `Inspection_${lead.jobNumber || lead.leadId || 'Report'}.pdf`;
       const filePath = `${dirs.DocumentDir}/${fileName}`;
 
-      await ReactNativeBlobUtil.config({ fileCache: true, path: filePath }).fetch(
+      const formData: any[] = [];
+      
+      Object.keys(data).forEach((key) => {
+        const value = data[key];
+        if (!value && value !== 0) return;
+
+        if (key.includes('[image]') && typeof value === 'string' && (value.startsWith('file://') || value.startsWith('/'))) {
+          const cleanPath = value.replace('file://', '');
+          formData.push({
+            name: key,
+            filename: `inspection_${Date.now()}.jpg`,
+            type: 'image/jpeg',
+            data: ReactNativeBlobUtil.wrap(cleanPath),
+          });
+        } else {
+          formData.push({
+            name: key,
+            data: String(value),
+          });
+        }
+      });
+
+      const baseUrl = ENV.API_URL.endsWith('/') ? ENV.API_URL.slice(0, -1) : ENV.API_URL;
+      const genUrl = `${baseUrl}/pdf-reports/v1/inspection/${lead?._id}/generate`;
+
+      const res = await ReactNativeBlobUtil.config({
+        fileCache: true,
+        path: filePath,
+        timeout: 120000,
+      }).fetch(
         'POST',
-        `${ENV.API_URL}/pdf-reports/v1/inspection/${lead?._id}/generate`,
-        { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        JSON.stringify(data)
+        genUrl,
+        {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+          Accept: 'application/pdf',
+        },
+        formData
       );
 
-      handleOpenPdf(filePath, 'Inspection Report');
+      const pdfPath = res.path();
+      const content = await ReactNativeBlobUtil.fs.readFile(pdfPath, 'base64');
+      if (!content.startsWith('JVBERi')) {
+        await ReactNativeBlobUtil.fs.unlink(pdfPath);
+        throw new Error('Generated file is not a valid PDF.');
+      }
 
-      const formData = new FormData();
-      formData.append('leadId', lead?._id);
-      formData.append('reportType', 'inspection_report');
-      formData.append('file', {
-        uri: `file://${filePath}`,
+      handleOpenPdf(pdfPath, 'Inspection Report');
+
+      const uploadData = new FormData();
+      const finalLeadId = lead?._id || lead?.id || lead?.leadId;
+      uploadData.append('leadId', finalLeadId);
+      uploadData.append('reportType', 'inspection_report');
+      uploadData.append('reportName', fileName);
+      uploadData.append('file', {
+        uri: Platform.OS === 'android' ? `file://${filePath}` : filePath,
         type: 'application/pdf',
         name: fileName,
       } as any);
 
-      await reportMutation.mutateAsync(formData);
+      await reportMutation.mutateAsync(uploadData);
+      handleOpenPdf(pdfPath, 'Inspection Report');
       toggleModal('showInspectionModal', false);
-      FlashMessage.show('Inspection report generated and uploaded.', 'success');
-    } catch (e) {
+      FlashMessage.success('Success', 'Inspection report generated and uploaded.');
+      refetch();
+    } catch (e: any) {
       console.error('Inspection Submit Error:', e);
-      FlashMessage.show('Error generating inspection report', 'danger');
+      FlashMessage.show(e.message || 'Error generating inspection report', 'danger');
     }
   };
 
@@ -386,8 +440,6 @@ export default function LeadCenterPage() {
 
   if (!lead) return null;
 
-  // Sub-modal renders with specific status bar handling
-
   return (
     <>
       <SafeAreaView
@@ -395,7 +447,6 @@ export default function LeadCenterPage() {
       >
         <Header onNavigate={(route) => navigation.navigate(route)} />
 
-        {/* Logic-specific Modals */}
         <ImageGridModal
           visible={showInspectionGrid}
           onClose={() => toggleModal('showInspectionGrid', false)}
@@ -447,7 +498,6 @@ export default function LeadCenterPage() {
           stickyHeaderIndices={[1]}
           contentContainerStyle={{ paddingBottom: 20 }}
         >
-          {/* Lead Identity Card */}
           <View className="px-4">
             <View className="flex-row gap-[30%] mb-4">
               <View className="flex-col gap-3">
@@ -529,7 +579,6 @@ export default function LeadCenterPage() {
               </Text>
             </View>
           </View>
-          {/* Modern Tab System - Sticky */}
           <View
             className="flex-row px-4"
             style={{ backgroundColor: isDark ? colors.surface : colors.background }}
@@ -562,7 +611,6 @@ export default function LeadCenterPage() {
             </View>
           </View>
 
-          {/* Tab Content */}
           <View style={{ flex: 1 }}>
             {activeTab === 'job_docs' && (
               <JobDocsSection
@@ -570,6 +618,7 @@ export default function LeadCenterPage() {
                 sectionImages={sectionImages}
                 onSectionImagesChange={setSectionImages}
                 refetch={refetch}
+                onOpenPdf={handleOpenPdf}
               />
             )}
             {activeTab === 'tools' && (
@@ -577,7 +626,35 @@ export default function LeadCenterPage() {
                 lead={lead}
                 secureUrls={secureUrls}
                 riskJob={riskJob}
-                onAction={onToolAction}
+                onAction={(toolId: string, extra: any) => {
+                  if (toolId === 'revrender') {
+                    navigation.navigate('RevRender', {
+                      lead,
+                      sectionImages,
+                      onNavToDocs: () => setActiveTab('job_docs'),
+                      onGenerate: async (payload: any) => {
+                        try {
+                          const res = await revRenderMutation.mutateAsync(payload);
+                          const runData = res?.data?.data || res?.data;
+                          
+                          if (runData?.generatedUrl) {
+                            return {
+                              generatedUrl: runData.generatedUrl,
+                              originalUrl: runData.originalUrl || payload.houseImageUrl
+                            };
+                          }
+                          return null;
+                        } catch (error) {
+                          return null;
+                        }
+                      }
+                    });
+                  } else if (toolId === 'inspection-download') {
+                    onToolAction('inspection-download', extra);
+                  } else {
+                    onToolAction(toolId, extra);
+                  }
+                }}
                 onShowJobBuilder={handleShowJobBuilder}
                 onShowCalculator={() => {
                   navigation.navigate('DealCenter', { lead });
@@ -590,7 +667,6 @@ export default function LeadCenterPage() {
           </View>
         </ScrollView>
 
-        {/* Global Footer Actions */}
         <View
           className="px-5 py-4 flex-row gap-2"
           style={{
@@ -622,7 +698,44 @@ export default function LeadCenterPage() {
             toggleModal('showPaperFallback', true);
           }}
           onSubmit={handleConsentSubmit}
-          onFinalUpload={handleFinalizeReportUpload}
+          onFinalUpload={async (pdfPath) => {
+            try {
+              await finalizeUploadMutation.mutateAsync({
+                leadId: lead?._id,
+                pdfPath,
+                reportType: 'consent_form',
+              });
+            } catch (error) {
+              console.error('Consent auto-upload failed:', error);
+            }
+          }}
+          uploading={finalizeUploadMutation.isPending}
+          lead={lead}
+          type="consent"
+          loading={consentMutation.isPending}
+        />
+      )}
+
+      {showConsentModal && (
+        <ConsentFormModal
+          visible={showConsentModal}
+          onClose={() => toggleModal('showConsentModal', false)}
+          onPaperFallback={() => {
+            toggleModal('showConsentModal', false);
+            toggleModal('showPaperFallback', true);
+          }}
+          onSubmit={handleConsentSubmit}
+          onFinalUpload={async (pdfPath) => {
+            try {
+              await finalizeUploadMutation.mutateAsync({
+                leadId: lead?._id,
+                pdfPath,
+                reportType: 'consent_form',
+              });
+            } catch (error) {
+              console.error('Consent auto-upload failed:', error);
+            }
+          }}
           uploading={finalizeUploadMutation.isPending}
           lead={lead}
           type="consent"
@@ -639,7 +752,17 @@ export default function LeadCenterPage() {
             toggleModal('showPaperFallback', true);
           }}
           onSubmit={handleWaiverSubmit}
-          onFinalUpload={(pdfPath) => handleFinalizeReportUpload(pdfPath, 'waiver_form')}
+          onFinalUpload={async (pdfPath) => {
+            try {
+              await finalizeUploadMutation.mutateAsync({
+                leadId: lead?._id,
+                pdfPath,
+                reportType: 'waiver_form',
+              });
+            } catch (error) {
+              console.error('Waiver auto-upload failed:', error);
+            }
+          }}
           uploading={finalizeUploadMutation.isPending}
           lead={lead}
           loading={waiverMutation.isPending}
@@ -673,43 +796,6 @@ export default function LeadCenterPage() {
         />
       )}
 
-      {showRevRenderModal && (
-        <RevRenderModal
-          visible={showRevRenderModal}
-          onClose={() => toggleModal('showRevRenderModal', false)}
-          lead={lead}
-          sectionImages={sectionImages}
-          onNavToDocs={() => setActiveTab('job_docs')}
-          onGenerate={async (payload) => {
-            try {
-              const res = await revRenderMutation.mutateAsync(payload);
-              const rawUrl =
-                res?.data?.data?.generatedUrl ||
-                res?.data?.generatedUrl ||
-                (res as any)?.generatedUrl ||
-                null;
-
-              if (rawUrl) {
-                try {
-                  const secureRes = await LeadService.getSecureUrls([
-                    { bucketName: 'np-revdsm-staging', filePath: rawUrl },
-                  ]);
-                  const secureData = secureRes.data?.data || secureRes.data || [];
-                  if (secureData.length > 0 && secureData[0].secureUrl) {
-                    return secureData[0].secureUrl;
-                  }
-                } catch (e) {
-                  console.warn('Failed to secure generated URL, falling back', e);
-                }
-                return resolveS3Url(rawUrl);
-              }
-              return null;
-            } catch (error) {
-              return null;
-            }
-          }}
-        />
-      )}
     </>
   );
 }
