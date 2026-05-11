@@ -24,6 +24,7 @@ export const LeadEndpoints = {
   additionalSlots: (leadId: string) => `leads/${leadId}/additional-slots`,
   digitalConsent: 'consent/digital',
   secureUrls: 'url/v1/secure/multiple',
+  outcomeDocument: (documentId: string) => `lead/v1/outcome/document/${documentId}`,
   productBuilder: 'product-builder/v1/products',
   getJobs: {
     list: '/job/v1/find',
@@ -72,6 +73,8 @@ export const LeadService = {
     }),
   deleteImage: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.images(leadId), { data: payload }),
+  deleteOutcomeDocument: (documentId: string): Promise<AxiosResponse<any>> =>
+    api.delete(LeadEndpoints.outcomeDocument(documentId)),
   resetLead: (leadId: string): Promise<AxiosResponse<any>> => api.put(LeadEndpoints.reset(leadId)),
   getAdditionalSlots: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.additionalSlots(leadId)),

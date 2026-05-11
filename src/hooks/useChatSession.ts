@@ -108,6 +108,23 @@ export const useChatSession = (
     const joinEvent = isChannel ? 'join-team-channel' : 'join-chat';
     SocketManager.joinRoom(chatId, joinEvent, currentUserId);
 
+    // Auto-mark ALL currently loaded messages as read the instant user enters the chat
+    setMessages((prev) => {
+      const allIds = prev.map((m: any) => m._id?.toString()).filter(Boolean);
+      if (allIds.length > 0) {
+        if (isChannel) {
+          SocketManager.emit('mark-channel-message-seen', {
+            channelId: chatId,
+            messageIds: allIds,
+            userId: currentUserId,
+          });
+        } else {
+          SocketManager.emit('mark-message-seen', { chatId, messageIds: allIds });
+        }
+      }
+      return prev; // no mutation — purely a side-effect read
+    });
+
     // Request pinned messages immediately after joining to sync state
     SocketManager.emit(isChannel ? 'get-channel-pinned-messages' : 'get-pinned-messages', {
       chatId,
@@ -132,26 +149,40 @@ export const useChatSession = (
         if (prev.some((msg) => msg._id === normalized._id)) return prev;
 
         // Optimized replacement logic to avoid "double message" glitch
-        // Matches on sender + text OR sender + specific file path for media
+        // Matches on sender + text OR sender + media file (by filename, since URL changes local→S3)
+        const normFiles = (normalized as any).files || [];
+
         const optimisticIndex = prev.findIndex((msg) => {
           const isPending =
             !msg.sent || (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
           if (!isPending) return false;
 
           const sameUser = msg.user?._id === normalized.user?._id;
+          if (!sameUser) return false;
+
           const sameText = msg.text === normalized.text && !!msg.text;
 
-          // For media, check if any file path matches
           const msgFiles = (msg as any).files || [];
-          const normFiles = (normalized as any).files || [];
+          // Match by filename (server preserves original filename through S3 upload)
+          // Fallback: same user + same file count + sent within 60s window
           const sameFiles =
             msgFiles.length > 0 &&
             normFiles.length > 0 &&
-            msgFiles.some((f: any) =>
-              normFiles.some((nf: any) => nf.path === f.path || nf.url === f.url)
-            );
+            (msgFiles.some((f: any) =>
+              normFiles.some(
+                (nf: any) =>
+                  (nf.name && nf.name === f.name) ||
+                  nf.path === f.path ||
+                  nf.url === f.url
+              )
+            ) ||
+              (msgFiles.length === normFiles.length &&
+                Math.abs(
+                  new Date(normalized.createdAt as any).getTime() -
+                    new Date(msg.createdAt as any).getTime()
+                ) < 60_000));
 
-          return sameUser && (sameText || sameFiles);
+          return sameText || sameFiles;
         });
 
         if (optimisticIndex !== -1) {

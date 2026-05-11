@@ -106,7 +106,9 @@ export function ChatMessageBubble({
     const raw =
       primaryFile?.filePath || primaryFile?.path || primaryFile?.url || msg.image || msg.video;
     if (!raw || typeof raw !== 'string') return '';
-    if (raw.startsWith('http') || raw.startsWith('file://')) return raw;
+    // Direct URIs (http, file://, content://) are renderable without signing
+    if (raw.startsWith('http') || raw.startsWith('file://') || raw.startsWith('content://'))
+      return raw;
     return imageUrls[raw] || imageUrls[cleanFilePath(raw)] || '';
   }, [primaryFile, msg.image, msg.video, imageUrls]);
 

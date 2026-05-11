@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { COLORS } from './color-constant';
@@ -14,11 +14,23 @@ interface SoffitSectionProps {
   jobState: any;
   onUpdate: (section: string, field: string, value: any) => void;
   calculatorData: any;
+  onValidationError?: (error: string) => void;
 }
 
-export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSectionProps) => {
+export const SoffitSection = ({
+  jobState,
+  onUpdate,
+  calculatorData,
+  onValidationError,
+}: SoffitSectionProps) => {
   const { colors, isDark } = useTheme();
-  const { fetchProductImage, image, loading: imageLoading } = useProductImage('soffit');
+  const vinylImage = useProductImage('soffit');
+  const porchImage = useProductImage('soffit');
+
+  const [colorModal, setColorModal] = React.useState<{
+    visible: boolean;
+    sectionKey: string;
+  } | null>(null);
 
   const n = (v: any) => parseFloat(v) || 0;
   const getVal = (baseKey: string) => {
@@ -99,7 +111,7 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
   const renderWarning = (message: string) => (
     <View className="flex-row items-center bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
       <Icon name="alert" size={18} color="#D97706" />
-      <Text className="text-[11px] font-black text-amber-700 ml-2  tracking-tight">{message}</Text>
+      <Text className="text-[11px] font-black text-amber-700 ml-2">{message}</Text>
     </View>
   );
 
@@ -119,13 +131,13 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
     >
       {incomplete && renderWarning(warningMsg)}
       <Text
-        className={`text-[10px] font-black  tracking-widest mb-4 ${
+        className={`text-[10px] font-black mb-4 ${
           incomplete ? 'text-amber-600' : 'text-slate-400'
         }`}
       >
         {label}
       </Text>
-      <View className="flex-row flex-wrap gap-2">
+      <View className="flex-row flex-wrap justify-between gap-y-2">
         {options.map((opt) => {
           const selected = isMulti ? currentValue?.includes(opt) : currentValue === opt;
           return (
@@ -141,15 +153,12 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
                   onChange(opt);
                 }
               }}
-              className={`py-3 rounded-lg border-2 items-center justify-center flex-row ${
-                selected ? 'bg-emerald-500 border-emerald-500' : 'bg-white border-slate-100'
+              className={`py-3 rounded-xl border-2 items-center justify-center flex-row w-[48.5%] ${
+                selected ? 'bg-[#22C55E] border-[#22C55E]' : 'bg-white border-slate-100'
               }`}
-              style={{ width: '48%' }}
             >
               <Text
-                className={`text-[11px] font-black  tracking-widest ${
-                  selected ? 'text-white' : 'text-slate-900'
-                }`}
+                className={`text-[11px] font-black ${selected ? 'text-white' : 'text-slate-500'}`}
               >
                 {opt}
               </Text>
@@ -173,76 +182,87 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
     soffitType: string,
     selectedColor: string,
     onSelect: (c: string) => void,
+    sectionKey: string,
+    imageState: any,
+    fetchFunc: (hex: string, name?: string) => void,
     incomplete = false
   ) => {
     const list =
       soffitType === 'PINHOLE VINYL' ? COLORS['Soffit(Pinhole)'] : COLORS['Soffit(Hidden vent)'];
-    const selectedHex = list.find((c) => c.name === selectedColor)?.hex || '';
+    const upfrontColors = list.slice(0, 4);
+    const selectedHex = list.find((c) => c.name === selectedColor)?.hex?.toUpperCase() || '';
 
     return (
       <View
-        className={`p-4 rounded-lg mb-4 ${
+        className={`p-4 rounded-[24px] mb-4 ${
           incomplete
             ? 'border-2 border-amber-200 bg-amber-50/30'
             : 'bg-white border border-slate-100'
         }`}
       >
-        {incomplete && renderWarning('Incomplete-Color Required')}
-        <View className="flex-row justify-between items-center mb-3">
+        {incomplete && renderWarning('Incomplete - Color Required')}
+        <View className="flex-row justify-between items-center mb-4">
           <Text
-            className={`text-[10px] font-black tracking-widest ${
-              incomplete ? 'text-amber-600' : 'text-slate-400'
-            }`}
+            className={`text-[11px] font-black ${incomplete ? 'text-amber-600' : 'text-slate-800'}`}
           >
             {label}
           </Text>
-          {imageLoading && <ActivityIndicator size="small" color="#10B981" />}
+          <TouchableOpacity
+            onPress={() => setColorModal({ visible: true, sectionKey })}
+            className="flex-row items-center"
+          >
+            <Text className="text-[11px] font-black text-slate-800 mr-1">More Colors</Text>
+            <Icon name="arrow-right" size={14} color="#000" />
+          </TouchableOpacity>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View className="flex-row gap-3">
-            {list.map((c) => (
+
+        <View className="flex-row justify-between mb-4">
+          {upfrontColors.map((c) => {
+            const isSelected = selectedColor === c.name;
+            return (
               <TouchableOpacity
                 key={c.name}
                 onPress={() => {
                   onSelect(c.name);
-                  fetchProductImage(
-                    c.hex,
-                    soffitType === 'PINHOLE VINYL' ? 'soffit Pinhole' : 'soffit '
-                  );
+                  fetchFunc(c.hex, soffitType === 'PINHOLE VINYL' ? 'soffit Pinhole' : 'soffit ');
                 }}
+                className={`relative rounded-xl overflow-hidden border-2 h-14 w-[23%] ${
+                  isSelected ? 'border-emerald-500' : 'border-slate-100'
+                }`}
                 style={{
-                  width: 50,
-                  height: 40,
                   backgroundColor: c.hex,
-                  borderRadius: 8,
-                  borderWidth: 2,
-                  borderColor:
-                    selectedColor === c.name ? '#10B981' : isDark ? '#404040' : '#E2E8F0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
                 }}
               >
-                {selectedColor === c.name && <Icon name="check-circle" size={16} color="white" />}
+                {isSelected && (
+                  <View className="absolute top-1 right-1 bg-emerald-500 rounded-full p-0.5">
+                    <Icon name="check" size={10} color="white" />
+                  </View>
+                )}
               </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
+            );
+          })}
+        </View>
+
         {selectedColor && (
-          <View className="flex-row items-center mt-3 bg-emerald-50 self-start px-2 py-1 rounded-lg">
-            <Icon name="check" size={12} color="#10B981" />
-            <Text className="text-[10px] font-black text-emerald-600 ml-1">{selectedColor}</Text>
-          </View>
-        )}
-        {image.imageUrl && image.color === selectedHex && (
-          <View
-            className="mt-3 rounded-xl overflow-hidden border border-slate-100"
-            style={{ height: 120 }}
-          >
-            <Image
-              source={{ uri: image.imageUrl }}
-              style={{ width: '100%', height: '100%' }}
-              resizeMode="cover"
-            />
+          <View className="flex-row items-center mt-3 gap-2">
+            <View className="flex-row items-center bg-[#22C55E] rounded-full py-1 px-3 border border-emerald-600 shadow-sm">
+              <View
+                style={{ backgroundColor: selectedHex }}
+                className="w-4 h-4 rounded-[6px] mr-2 border border-white/20"
+              />
+              <Text className="text-[10px] font-black text-white">{selectedColor}</Text>
+            </View>
+
+            {imageState.imageUrl && imageState.color?.toUpperCase() === selectedHex && (
+              <View className="w-10 h-10 rounded-[6px] bg-slate-100 items-center justify-center overflow-hidden border-2 border-white shadow-sm">
+                <Image
+                  key={imageState.imageUrl}
+                  source={{ uri: imageState.imageUrl }}
+                  style={{ width: 40, height: 40 }}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -255,12 +275,10 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
     return (
       <View
         key={sectionKey}
-        className="mb-6 p-1 rounded-lg bg-emerald-50/20 border border-emerald-100/50"
+        className="mb-8 p-1 rounded-[24px] bg-white border border-slate-100 shadow-sm"
       >
         <View className="p-4">
-          <Text className="text-[12px] font-black text-emerald-700  mb-4 tracking-wider">
-            {title}
-          </Text>
+          <Text className="text-[11px] font-black text-emerald-700 mb-4">{title}</Text>
 
           {sectionKey === 'porch'
             ? renderOptionSelector(
@@ -282,14 +300,12 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
                 'Incomplete-Type Required'
               )}
 
-          <View className="p-4 rounded-lg bg-slate-50 border border-slate-100 mb-4 flex-row justify-between items-center">
+          <View className="p-4 rounded-xl bg-slate-50 border border-slate-100 mb-4 flex-row justify-between items-center">
             <View>
-              <Text className="text-[9px] font-black text-slate-400  tracking-widest mb-1">
-                {title} Footage
-              </Text>
-              <Text className="text-sm font-black text-slate-900">{footage} FT</Text>
+              <Text className="text-[8px] font-black text-slate-400 mb-1">{title} Footage</Text>
+              <Text className="text-sm font-black text-slate-900">{footage}</Text>
             </View>
-            <Icon name="lock" size={16} color="#919EAB" />
+            <Icon name="lock" size={16} color="#94A3B8" />
           </View>
 
           {sectionKey !== 'nailer' && (
@@ -308,6 +324,11 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
                 sectionData.soffitType,
                 sectionData.color,
                 (v) => handleSubUpdate(sectionKey, 'color', v),
+                sectionKey,
+                sectionKey === 'vinyl' ? vinylImage.image : porchImage.image,
+                sectionKey === 'vinyl'
+                  ? vinylImage.fetchProductImage
+                  : porchImage.fetchProductImage,
                 !sectionData.color
               )}
             </>
@@ -317,34 +338,125 @@ export const SoffitSection = ({ jobState, onUpdate, calculatorData }: SoffitSect
     );
   };
 
-  return (
-    <ScrollView
-      className="flex-1"
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View className="px-5 py-5 pb-24 bg-white">
-        {n(data.vinyl.footage) > 0 && renderSubSection('Vinyl Soffit', 'vinyl', data.vinyl)}
-        {n(data.porch.footage) > 0 && renderSubSection('Porch Ceiling SqFT', 'porch', data.porch)}
-        {n(data.nailer.footage) > 0 && renderSubSection('Nailer Build Out', 'nailer', data.nailer)}
+  React.useEffect(() => {
+    // Fetch images for existing colors independently
+    if (data.vinyl.color) {
+      const hex =
+        COLORS['Soffit(Hidden vent)'].find((c) => c.name === data.vinyl.color)?.hex ||
+        COLORS['Soffit(Pinhole)'].find((c) => c.name === data.vinyl.color)?.hex ||
+        '';
+      if (hex)
+        vinylImage.fetchProductImage(
+          hex,
+          data.vinyl.soffitType === 'PINHOLE VINYL' ? 'soffit Pinhole' : 'soffit '
+        );
+    }
+    if (data.porch.color) {
+      const hex =
+        COLORS['Soffit(Hidden vent)'].find((c) => c.name === data.porch.color)?.hex ||
+        COLORS['Soffit(Pinhole)'].find((c) => c.name === data.porch.color)?.hex ||
+        '';
+      if (hex)
+        porchImage.fetchProductImage(
+          hex,
+          data.porch.soffitType === 'PINHOLE VINYL' ? 'soffit Pinhole' : 'soffit '
+        );
+    }
+  }, []);
 
-        {n(data.vinyl.footage) === 0 &&
-          n(data.porch.footage) === 0 &&
-          n(data.nailer.footage) === 0 && (
-            <View className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30">
-              {renderWarning('INCOMPLETE - No valid footage found for Soffit section')}
-              <View className="p-4 mt-4 rounded-lg bg-white border border-amber-100 flex-row justify-between items-center">
-                <View>
-                  <Text className="text-[9px] font-black text-slate-400 tracking-widest mb-1">
-                    Total Footage
-                  </Text>
-                  <Text className="text-sm font-black text-slate-900">0 FT</Text>
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View className="px-5 py-5 pb-24 bg-white">
+          {n(data.vinyl.footage) > 0 && renderSubSection('Vinyl Soffit', 'vinyl', data.vinyl)}
+          {n(data.porch.footage) > 0 && renderSubSection('Porch Ceiling SqFT', 'porch', data.porch)}
+          {n(data.nailer.footage) > 0 &&
+            renderSubSection('Nailer Build Out', 'nailer', data.nailer)}
+
+          {n(data.vinyl.footage) === 0 &&
+            n(data.porch.footage) === 0 &&
+            n(data.nailer.footage) === 0 && (
+              <View className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30">
+                {renderWarning('INCOMPLETE - No valid footage found for Soffit section')}
+                <View className="p-4 mt-4 rounded-lg bg-white border border-amber-100 flex-row justify-between items-center">
+                  <View>
+                    <Text className="text-[9px] font-black text-slate-400 mb-1">Total Footage</Text>
+                    <Text className="text-sm font-black text-slate-900">0</Text>
+                  </View>
+                  <Icon name="lock" size={16} color="#919EAB" />
                 </View>
-                <Icon name="lock" size={16} color="#919EAB" />
               </View>
+            )}
+        </View>
+      </ScrollView>
+
+      {/* ── Color Picker Modal ── */}
+      <Modal visible={!!colorModal} transparent animationType="slide">
+        <View className="flex-1 bg-black/60 justify-end">
+          <View className="bg-white rounded-t-[32px] p-8 max-h-[80%] shadow-2xl">
+            <View className="flex-row justify-between items-center mb-8">
+              <View>
+                <Text className="text-xl font-black text-slate-800">Select Soffit Color</Text>
+                <Text className="text-[12px] font-medium text-slate-400 mt-1">
+                  {colorModal?.sectionKey} Colors
+                </Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => setColorModal(null)}
+                className="bg-slate-50 p-2 rounded-full border border-slate-100"
+              >
+                <Icon name="close" size={24} color="#000" />
+              </TouchableOpacity>
             </View>
-          )}
-      </View>
-    </ScrollView>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View className="flex-row flex-wrap gap-4 justify-between">
+                {(colorModal
+                  ? (data[colorModal.sectionKey as keyof typeof data] as any).soffitType ===
+                    'PINHOLE VINYL'
+                    ? COLORS['Soffit(Pinhole)']
+                    : COLORS['Soffit(Hidden vent)']
+                  : []
+                ).map((c) => (
+                  <TouchableOpacity
+                    key={c.name}
+                    onPress={() => {
+                      const sectionKey = colorModal!.sectionKey;
+                      const soffitType = (data[sectionKey as keyof typeof data] as any).soffitType;
+                      const fetchFunc =
+                        sectionKey === 'vinyl'
+                          ? vinylImage.fetchProductImage
+                          : porchImage.fetchProductImage;
+                      handleSubUpdate(sectionKey, 'color', c.name);
+                      fetchFunc(
+                        c.hex,
+                        soffitType === 'PINHOLE VINYL' ? 'soffit Pinhole' : 'soffit '
+                      );
+                      setColorModal(null);
+                    }}
+                    className="items-center w-[22%] mb-4"
+                  >
+                    <View
+                      style={{ backgroundColor: c.hex }}
+                      className="w-14 h-14 rounded-2xl border border-slate-100 shadow-sm mb-2"
+                    />
+                    <Text
+                      className="text-[9px] font-black text-center text-slate-600"
+                      numberOfLines={1}
+                    >
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };

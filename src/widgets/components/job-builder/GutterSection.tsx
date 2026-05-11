@@ -11,6 +11,8 @@ import {
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { COLORS } from './color-constant';
+import { useProductImage } from '../../../hooks/useProductImage';
+import { Image, ActivityIndicator } from 'react-native';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -26,11 +28,36 @@ const ALL_DOWNSPOUT_TYPES = [
   { name: '4 X 5', size: '7" K-Style' },
 ];
 
+const GutterProductImage = ({ colorHex }: { colorHex: string }) => {
+  const { image, loading, fetchProductImage } = useProductImage('gutter');
+
+  useEffect(() => {
+    if (colorHex) {
+      fetchProductImage(colorHex, 'gutter');
+    }
+  }, [colorHex, fetchProductImage]);
+
+  if (loading) {
+    return <ActivityIndicator size="small" color="#22C55E" className="ml-2" />;
+  }
+
+  if (!image.imageUrl || image.color?.toUpperCase() !== colorHex?.toUpperCase()) {
+    return null;
+  }
+
+  return (
+    <View className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center overflow-hidden border border-slate-100 ml-2">
+      <Image source={{ uri: image.imageUrl }} style={{ width: 36, height: 36 }} resizeMode="contain" />
+    </View>
+  );
+};
+
 interface GutterSectionProps {
   jobState: any;
   onUpdate: (section: string, field: string, value: any) => void;
   calculatorData: any;
   jobSummaryItems?: any[];
+  onValidationError?: (error: string) => void;
 }
 
 export const GutterSection = ({
@@ -38,6 +65,7 @@ export const GutterSection = ({
   onUpdate,
   calculatorData,
   jobSummaryItems,
+  onValidationError,
 }: GutterSectionProps) => {
   const { isDark } = useTheme();
   const [colorModal, setColorModal] = useState<{ visible: boolean; target: any } | null>(null);
@@ -62,11 +90,7 @@ export const GutterSection = ({
     (key: string) => {
       const inputs = calculatorData?.inputs || {};
       const extras = calculatorData?.extras || {};
-      return (
-        n(inputs[key]) ||
-        n(extras[key]) ||
-        n(calculatorData?.[key])
-      );
+      return n(inputs[key]) || n(extras[key]) || n(calculatorData?.[key]);
     },
     [calculatorData]
   );
@@ -300,11 +324,11 @@ export const GutterSection = ({
         <View className="flex-row justify-between px-1">
           <View className="items-center">
             <Text className="text-[6px] font-bold text-slate-400  mb-1">Avail</Text>
-            <Text className="text-sm font-black text-[#7DD3FC]">{totalAvailSize.toFixed(0)}ft</Text>
+            <Text className="text-sm font-black text-[#7DD3FC]">{totalAvailSize.toFixed(0)}</Text>
           </View>
           <View className="items-center">
             <Text className="text-[6px] font-bold text-slate-400  mb-1">Used</Text>
-            <Text className="text-sm font-black text-[#F59E0B]">{allocated.toFixed(0)}ft</Text>
+            <Text className="text-sm font-black text-[#F59E0B]">{allocated.toFixed(0)}</Text>
           </View>
           <View className="items-center">
             <Text className="text-[6px] font-bold text-slate-400  mb-1">Left</Text>
@@ -313,7 +337,7 @@ export const GutterSection = ({
                 remaining < -0.1 ? 'text-red-500' : isDark ? 'text-white' : 'text-slate-800'
               }`}
             >
-              {remaining.toFixed(0)}ft
+              {remaining.toFixed(0)}
             </Text>
           </View>
         </View>
@@ -361,7 +385,19 @@ export const GutterSection = ({
         keyboardShouldPersistTaps="handled"
       >
         <View className="px-4 py-6 pb-40">
-          <View className="rounded-[32px] p-1 mb-10 border-2 border-slate-200">
+          <View
+            className={`rounded-[32px] p-1 mb-10 border-2 ${
+              remainingTotal > 0.1 ? 'border-amber-400' : 'border-slate-200'
+            }`}
+          >
+            {remainingTotal > 0.1 && (
+              <View className="flex-row items-center px-4 pt-2 mb-1">
+                <Icon name="alert-circle" size={16} color="#FBBF24" />
+                <Text className="text-[#FBBF24] text-[10px] font-black ml-2">
+                  Important: Allocate {remainingTotal.toFixed(0)} Ft
+                </Text>
+              </View>
+            )}
 
             {(data.gutterColorsMulti || []).map((combo: any, idx: number) => {
               const hasMeas = (combo.measurements || []).some((m: any) => m !== '' && n(m) > 0);
@@ -443,7 +479,7 @@ export const GutterSection = ({
                     <View className="flex-row items-center mb-3">
                       <Text className="text-[11px] font-black text-slate-500">Gutter Partial?</Text>
                       {allocatedTotal > 0 && !data.partial && (
-                        <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                        <Text className="text-[8px] font-black text-amber-600 ml-2">
                           Selection Required
                         </Text>
                       )}
@@ -482,11 +518,11 @@ export const GutterSection = ({
                   >
                     <View className="flex-row justify-between items-center mb-3">
                       <View className="flex-row items-center">
-                        <Text className="text-[11px] font-black text-amber-500 uppercase tracking-tight">
+                        <Text className="text-[11px] font-black text-amber-500">
                           {combo.size} Color
                         </Text>
                         {colorMissing && (
-                          <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                          <Text className="text-[8px] font-black text-amber-600 ml-2">
                             Required
                           </Text>
                         )}
@@ -514,7 +550,7 @@ export const GutterSection = ({
                             onPress={() => updateCombo(idx, { color: c.name })}
                             style={{ backgroundColor: c.hex }}
                             className={`w-[23%] h-14 rounded-xl border-4 items-center justify-center ${
-                              isSelected ? 'border-emerald-500' : 'border-white'
+                              isSelected ? 'border-[#22C55E]' : 'border-white'
                             }`}
                           >
                             {isSelected && (
@@ -529,41 +565,38 @@ export const GutterSection = ({
                       })}
                     </View>
                     {combo.color && selectedColorObj && (
-                      <View className="bg-[#22C55E] rounded-full py-2 px-4 self-start flex-row items-center">
-                        <View
-                          style={{ backgroundColor: selectedColorObj.hex }}
-                          className="w-4 h-4 rounded-full border border-white/20 mr-2"
-                        />
-                        <Icon name="check" size={12} color="white" className="mr-1" />
-                        <Text className="text-white text-[10px] font-black">{combo.color}</Text>
+                      <View className="flex-row items-center mt-3">
+                        <View className="bg-[#22C55E] rounded-full py-2 px-4 self-start flex-row items-center">
+                          <View
+                            style={{ backgroundColor: selectedColorObj.hex }}
+                            className="w-4 h-4 rounded-full border border-white/20 mr-2"
+                          />
+                          <Icon name="check" size={12} color="white" className="mr-1" />
+                          <Text className="text-white text-[10px] font-black">{combo.color}</Text>
+                        </View>
+                        <GutterProductImage colorHex={selectedColorObj.hex} />
                       </View>
                     )}
                   </View>
 
                   <View className="mb-6">
-                    <Text className="text-[11px] font-black text-amber-500 uppercase tracking-tight mb-4">
+                    <Text className="text-[11px] font-black text-amber-500 mb-4">
                       {combo.size} Gutter Measurements
                     </Text>
                     <View className="flex-row items-center mb-2">
                       <View className="flex-[1.5] items-start pl-1">
-                        <Text className="text-[7px] font-black text-slate-400 uppercase">
-                          Locations
-                        </Text>
+                        <Text className="text-[7px] font-black text-slate-400">Locations</Text>
                       </View>
                       {STORIES.map((story) => (
                         <View key={story} className="flex-1 items-center">
-                          <Text className="text-[7px] font-black text-slate-400 uppercase">
-                            {story}
-                          </Text>
+                          <Text className="text-[7px] font-black text-slate-400">{story}</Text>
                         </View>
                       ))}
                     </View>
                     {LOCATIONS.map((loc, lIdx) => (
                       <View key={loc} className="flex-row items-center mb-2">
                         <View className="flex-[1.5]">
-                          <Text className="text-[9px] font-black text-slate-600 uppercase">
-                            {loc}
-                          </Text>
+                          <Text className="text-[9px] font-black text-slate-600">{loc}</Text>
                         </View>
                         {[0, 1, 2].map((sIdx) => (
                           <View key={sIdx} className="flex-1 px-1">
@@ -571,10 +604,10 @@ export const GutterSection = ({
                               value={String(combo.measurements[lIdx * 3 + sIdx] ?? '')}
                               onChangeText={(v) => {
                                 const next = [...combo.measurements];
-                                next[lIdx * 3 + sIdx] = v;
+                                next[lIdx * 3 + sIdx] = v.replace(/[^0-9]/g, '');
                                 updateCombo(idx, { measurements: next });
                               }}
-                              keyboardType="numeric"
+                              keyboardType="number-pad"
                               placeholder="0"
                               className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
                             />
@@ -585,7 +618,7 @@ export const GutterSection = ({
                     <TouchableOpacity
                       activeOpacity={1}
                       disabled
-                      className="mt-4 bg-[#63D88E] h-12 rounded-2xl items-center justify-center"
+                      className="mt-4 bg-[#22C55E] h-12 rounded-2xl items-center justify-center"
                     >
                       <Text className="text-white font-black text-[12px]">
                         Grand Total: {subtotal.toFixed(0)} ft
@@ -617,8 +650,10 @@ export const GutterSection = ({
                             </Text>
                             <TextInput
                               value={String(val ?? '')}
-                              onChangeText={(v) => updateCombo(idx, { [f.field]: v })}
-                              keyboardType="numeric"
+                              onChangeText={(v) =>
+                                updateCombo(idx, { [f.field]: v.replace(/[^0-9]/g, '') })
+                              }
+                              keyboardType="number-pad"
                               className={`h-12 rounded-2xl border-2 px-5 text-[12px] font-black text-black ${
                                 isError
                                   ? 'border-red-500 bg-red-50/10'
@@ -653,9 +688,7 @@ export const GutterSection = ({
               className="h-16 rounded-[24px] border-2 border-dashed border-indigo-200 items-center justify-center flex-row bg-white mt-2 mb-4 mx-1"
             >
               <Icon name="plus" size={16} color="#6366F1" />
-              <Text className="text-indigo-500 font-black text-[11px] ml-2 uppercase">
-                + Add Combination
-              </Text>
+              <Text className="text-indigo-500 font-black text-[11px] ml-2">Add Combination</Text>
             </TouchableOpacity>
           </View>
 
@@ -663,7 +696,7 @@ export const GutterSection = ({
           <View className="mb-10">
             <View className="flex-row items-center mb-8">
               <View className="flex-1 h-[1px] bg-slate-200" />
-              <Text className="mx-4 text-[11px] font-black text-slate-500 tracking-widest uppercase">
+              <Text className="mx-4 text-[11px] font-black text-slate-500">
                 DOWNSPOUTS & ACCESSORIES
               </Text>
               <View className="flex-1 h-[1px] bg-slate-200" />
@@ -688,7 +721,7 @@ export const GutterSection = ({
                     className="mb-4 bg-white rounded-[24px] border border-indigo-100 p-5 shadow-sm"
                   >
                     <View className="flex-row justify-between items-center mb-6">
-                      <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <Text className="text-[10px] font-black text-slate-400">
                         Downspout #{dsIdx + 1}
                       </Text>
                       {data.downspoutsMulti.length > 1 && (
@@ -738,11 +771,11 @@ export const GutterSection = ({
                     >
                       <View className="flex-row justify-between items-center mb-3">
                         <View className="flex-row items-center">
-                          <Text className="text-[11px] font-black text-indigo-500 uppercase tracking-tight">
+                          <Text className="text-[11px] font-black text-indigo-500">
                             Downspout Color
                           </Text>
                           {dsColorMissing && (
-                            <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                            <Text className="text-[8px] font-black text-amber-600 ml-2">
                               Required
                             </Text>
                           )}
@@ -785,13 +818,16 @@ export const GutterSection = ({
                         })}
                       </View>
                       {ds.color && dsColorObj && (
-                        <View className="bg-[#22C55E] rounded-full py-2 px-4 self-start flex-row items-center">
-                          <View
-                            style={{ backgroundColor: dsColorObj.hex }}
-                            className="w-4 h-4 rounded-full border border-white/20 mr-2"
-                          />
-                          <Icon name="check" size={12} color="white" className="mr-1" />
-                          <Text className="text-white text-[10px] font-black">{ds.color}</Text>
+                        <View className="flex-row items-center mt-3">
+                          <View className="bg-[#22C55E] rounded-full py-2 px-4 self-start flex-row items-center">
+                            <View
+                              style={{ backgroundColor: dsColorObj.hex }}
+                              className="w-4 h-4 rounded-full border border-white/20 mr-2"
+                            />
+                            <Icon name="check" size={12} color="white" className="mr-1" />
+                            <Text className="text-white text-[10px] font-black">{ds.color}</Text>
+                          </View>
+                          <GutterProductImage colorHex={dsColorObj.hex} />
                         </View>
                       )}
                     </View>
@@ -805,13 +841,15 @@ export const GutterSection = ({
                         { label: '# of Spout Savers', field: 'spoutSavers' },
                       ].map((f) => (
                         <View key={f.field} className="relative mb-1">
-                          <Text className="text-[9px] font-black absolute -top-1.5 left-4 bg-white px-1 z-10 text-slate-400 uppercase">
+                          <Text className="text-[9px] font-black absolute -top-1.5 left-4 bg-white px-1 z-10 text-slate-400">
                             {f.label}
                           </Text>
                           <TextInput
                             value={String(ds[f.field] ?? '')}
-                            onChangeText={(v) => updateDS(dsIdx, { [f.field]: v })}
-                            keyboardType="numeric"
+                            onChangeText={(v) =>
+                              updateDS(dsIdx, { [f.field]: v.replace(/[^0-9]/g, '') })
+                            }
+                            keyboardType="number-pad"
                             className="h-12 bg-white rounded-2xl border-2 border-slate-100 px-5 text-[12px] font-black text-black"
                           />
                         </View>
@@ -841,9 +879,7 @@ export const GutterSection = ({
                 className="h-14 rounded-[24px] border-2 border-dashed border-indigo-200 items-center justify-center flex-row bg-white mx-1 mb-2"
               >
                 <Icon name="plus" size={16} color="#6366F1" />
-                <Text className="text-indigo-500 font-black text-[11px] ml-2 uppercase">
-                  + Add Downspout
-                </Text>
+                <Text className="text-indigo-500 font-black text-[11px] ml-2">Add Downspout</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -851,7 +887,7 @@ export const GutterSection = ({
           {/* ── EXTRAS (LOCKED) ── */}
           <View className="bg-white rounded-[24px] border border-slate-100 overflow-hidden shadow-sm">
             <View className="px-5 py-4 flex-row justify-between items-center border-b border-slate-100">
-              <Text className="text-[14px] font-black text-[#22C55E] uppercase">Extras</Text>
+              <Text className="text-[14px] font-black text-[#22C55E]">Extras</Text>
               <View className="bg-black px-3 py-1.5 rounded-lg">
                 <Text className="text-[9px] font-black text-white">Locked from Job Summary</Text>
               </View>
@@ -867,9 +903,7 @@ export const GutterSection = ({
                   className="flex-row justify-between items-center border-b border-slate-50 pb-4"
                 >
                   <View>
-                    <Text className="text-[10px] font-black text-slate-400 uppercase mb-1">
-                      {it.label}
-                    </Text>
+                    <Text className="text-[10px] font-black text-slate-400 mb-1">{it.label}</Text>
                     <Text className="text-xs font-black text-slate-800">{it.val}</Text>
                   </View>
                   <Icon name="lock" size={18} color="#CBD5E1" />
@@ -886,12 +920,12 @@ export const GutterSection = ({
                 <View className="flex-row justify-between items-center mb-3">
                   <View>
                     <View className="flex-row items-center">
-                      <Text className="text-[10px] font-black text-slate-400 uppercase mb-1">
+                      <Text className="text-[10px] font-black text-slate-400 mb-1">
                         Modify Height/R&R
                       </Text>
                       {extrasValues.modifyHeight > 0 &&
                         (data.modifyHeightLocations || []).length === 0 && (
-                          <Text className="text-[8px] font-black text-amber-600 ml-2 uppercase">
+                          <Text className="text-[8px] font-black text-amber-600 ml-2">
                             Loc Required
                           </Text>
                         )}
@@ -911,7 +945,7 @@ export const GutterSection = ({
                           key={loc}
                           onPress={() => toggleModifyLoc(loc)}
                           className={`w-[48%] h-10 rounded-xl items-center justify-center border-2 ${
-                            isSel ? 'bg-emerald-500 border-emerald-500' : 'border-slate-200'
+                            isSel ? 'bg-[#22C55E] border-[#22C55E]' : 'border-slate-200'
                           }`}
                         >
                           <Text
@@ -931,9 +965,7 @@ export const GutterSection = ({
               <View className="flex-row border-b border-slate-50 pb-4">
                 <View className="flex-1 border-r border-slate-50 pr-4">
                   <View className="flex-row justify-between items-center mb-1">
-                    <Text className="text-[10px] font-black text-slate-400 uppercase">
-                      GroundSpout
-                    </Text>
+                    <Text className="text-[10px] font-black text-slate-400">GroundSpout</Text>
                     <Icon name="lock" size={14} color="#CBD5E1" />
                   </View>
                   <Text className="text-xs font-black text-slate-800">
@@ -942,7 +974,7 @@ export const GutterSection = ({
                 </View>
                 <View className="flex-1 pl-4">
                   <View className="flex-row justify-between items-center mb-1">
-                    <Text className="text-[10px] font-black text-slate-400 uppercase">Color</Text>
+                    <Text className="text-[10px] font-black text-slate-400">Color</Text>
                     <Icon name="lock" size={14} color="#CBD5E1" />
                   </View>
                   <Text
@@ -975,22 +1007,23 @@ export const GutterSection = ({
                 <View key={it.label} className="flex-row border-b border-slate-50 pb-4">
                   <View className="flex-1 border-r border-slate-50 pr-4">
                     <View className="flex-row justify-between items-center mb-1">
-                      <Text className="text-[10px] font-black text-slate-400 uppercase">
-                        {it.label}
-                      </Text>
+                      <Text className="text-[10px] font-black text-slate-400">{it.label}</Text>
                       <Icon name="lock" size={14} color="#CBD5E1" />
                     </View>
                     <Text className="text-xs font-black text-slate-800">{it.val}</Text>
                   </View>
                   <View className="flex-1 pl-4">
                     <View className="flex-row justify-between items-center mb-2">
-                      <Text className="text-[10px] font-black text-slate-400 uppercase">Color</Text>
+                      <Text className="text-[10px] font-black text-slate-400">Color</Text>
                     </View>
                     {it.val > 0 ? (
                       <TouchableOpacity
                         activeOpacity={1}
                         onPress={() =>
-                          setColorModal({ visible: true, target: { type: 'extras', field: it.field } })
+                          setColorModal({
+                            visible: true,
+                            target: { type: 'extras', field: it.field },
+                          })
                         }
                         className={`flex-row items-center p-2 rounded-xl border ${
                           !data.extrasColors?.[it.field]
@@ -1003,7 +1036,8 @@ export const GutterSection = ({
                             <View
                               style={{
                                 backgroundColor:
-                                  COLORS.Gutter.find((c) => c.name === data.extrasColors[it.field])?.hex || '#000',
+                                  COLORS.Gutter.find((c) => c.name === data.extrasColors[it.field])
+                                    ?.hex || '#000',
                               }}
                               className="w-4 h-4 rounded-full mr-2 border border-black/10"
                             />

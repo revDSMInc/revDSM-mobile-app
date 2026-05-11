@@ -7,7 +7,6 @@ type ValidationResult = { valid: boolean; error?: string };
 const n = (v: any) => parseFloat(v) || 0;
 
 export const validateGutter = (data: any, calculatorData: any): ValidationResult => {
-
   const getVal = (baseKey: string) => {
     if (!calculatorData) return 0;
     const lowerKey = baseKey.toLowerCase();
@@ -118,7 +117,14 @@ export const validateGutter = (data: any, calculatorData: any): ValidationResult
 export const validateLeafFilter = (data: any, calculatorData: any): ValidationResult => {
   const n = (v: any) => parseFloat(v) || 0;
 
-  // Helper for case-insensitive key lookup (Parity with web app)
+  const normalizeWidth = (width: string) => {
+    if (!width) return '';
+    const clean = width.replace(/\s+/g, '').toLowerCase();
+    if (clean.includes('4') && clean.includes('5')) return '4&5"';
+    if (clean === '4"' || clean === '5"') return '4&5"';
+    return clean;
+  };
+
   const getVal = (baseKey: string) => {
     if (!calculatorData) return 0;
     const lowerKey = baseKey.toLowerCase();
@@ -135,16 +141,16 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
   };
 
   const availableFootage = {
+    '4&5"': [getVal('filter45ft1'), getVal('filter45ft2'), getVal('filter45ft3')],
     '6"': [getVal('versa6ft1'), getVal('versa6ft2'), getVal('versa6ft3')],
     '7"': [getVal('versa7ft1'), getVal('versa7ft2'), getVal('versa7ft3')],
-    '4 & 5"': [getVal('filter45ft1'), getVal('filter45ft2'), getVal('filter45ft3')],
     'Versa Max': getVal('versaMaxFt1') || getVal('versaMax'),
   };
 
   const hasLFFootage =
     availableFootage['6"'].some((v) => v > 0) ||
     availableFootage['7"'].some((v) => v > 0) ||
-    availableFootage['4 & 5"'].some((v) => v > 0) ||
+    availableFootage['4&5"'].some((v) => v > 0) ||
     availableFootage['Versa Max'] > 0;
 
   if (!hasLFFootage) return { valid: true };
@@ -154,42 +160,65 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
     return { valid: false, error: 'At least one configuration required' };
 
   for (const combo of combinations) {
-    if (!combo.lfProfile || !combo.lfColor)
-      return { valid: false, error: 'Profile and Color required' };
-    if (combo.lfProfile === 'Versa' && !combo.gutterOpeningWidth)
-      return { valid: false, error: 'Gutter Opening Width required' };
+    const subtotal = (combo.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
+    if (subtotal > 0) {
+      if (!combo.lfProfile || !combo.lfColor || !combo.gutterProfile || !combo.gutterOpeningWidth)
+        return { valid: false, error: 'Profile, Color, Gutter Profile, and Width required' };
+
+      const comboW = normalizeWidth(combo.gutterOpeningWidth);
+      if (comboW === '4&5"' && !combo.exactSize)
+        return { valid: false, error: 'Exact Size (4" or 5") required' };
+    }
   }
 
   // Check allocations
   const used = {
+    '4&5"': [0, 0, 0],
     '6"': [0, 0, 0],
     '7"': [0, 0, 0],
-    '4 & 5"': [0, 0, 0],
     'Versa Max': 0,
   };
 
   combinations.forEach((combo: any) => {
-    const width = combo.gutterOpeningWidth;
-    if (combo.lfProfile === 'Versa Max') {
-      used['Versa Max'] += combo.measurements.reduce((sum: number, v: any) => sum + n(v), 0);
-    } else if (width && used[width as keyof typeof used]) {
-      for (let s = 0; s < 3; s++) {
-        for (let l = 0; l < 6; l++) {
-          (used[width as keyof typeof used] as number[])[s] += n(combo.measurements[l * 3 + s]);
+    const w = normalizeWidth(combo.gutterOpeningWidth);
+    const comboSubtotal = (combo.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
+
+    if (w && used[w as keyof typeof used] !== undefined) {
+      if (Array.isArray(used[w as keyof typeof used])) {
+        for (let s = 0; s < 3; s++) {
+          for (let l = 0; l < 6; l++) {
+            (used[w as keyof typeof used] as number[])[s] += n(combo.measurements[s * 6 + l]);
+          }
         }
       }
+    } else if (combo.lfProfile === 'Versa Max') {
+      used['Versa Max'] += comboSubtotal;
     }
   });
 
   // Verify matches
-  for (const width of ['6"', '7"', '4 & 5"'] as const) {
+  for (const width of ['4&5"', '6"', '7"'] as const) {
     for (let s = 0; s < 3; s++) {
       const avail = availableFootage[width][s];
-      const remaining = avail - used[width][s];
-      // Only validate if there is footage in this story OR if user entered something
-      if (avail > 0 || used[width][s] > 0) {
-        if (Math.abs(remaining) > 0.1)
-          return { valid: false, error: `${width} Story ${s + 1} allocation mismatch` };
+      const usedFt = used[width][s];
+      const remaining = avail - usedFt;
+      if (avail > 0 || usedFt > 0) {
+        if (Math.abs(remaining) > 0.1) {
+          if (avail === 0)
+            return {
+              valid: false,
+              error: `${width} Story ${
+                s + 1
+              } not assigned in calculator. Please remove allocated feet.`,
+            };
+          return {
+            valid: false,
+            error:
+              remaining > 0
+                ? `${width} Story ${s + 1}: ${remaining.toFixed(0)}ft remaining`
+                : `${width} Story ${s + 1}: Over-allocated by ${Math.abs(remaining).toFixed(0)}ft`,
+          };
+        }
       }
     }
   }
@@ -198,8 +227,20 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
   const vmUsed = used['Versa Max'];
   if (vmAvail > 0 || vmUsed > 0) {
     const vmRemaining = vmAvail - vmUsed;
-    if (Math.abs(vmRemaining) > 0.1)
-      return { valid: false, error: 'Versa Max allocation mismatch' };
+    if (Math.abs(vmRemaining) > 0.1) {
+      if (vmAvail === 0)
+        return {
+          valid: false,
+          error: `Versa Max not assigned in calculator. Please remove allocated feet.`,
+        };
+      return {
+        valid: false,
+        error:
+          vmRemaining > 0
+            ? `Versa Max: ${vmRemaining.toFixed(0)}ft remaining`
+            : `Versa Max: Over-allocated by ${Math.abs(vmRemaining).toFixed(0)}ft`,
+      };
+    }
   }
 
   return { valid: true };
@@ -293,12 +334,29 @@ export const validateFascia = (data: any, calculatorData: any): ValidationResult
   return { valid: true };
 };
 
-export const validateMisc = (_data: any, _calculatorData: any): ValidationResult => {
-  // Misc / Additional section has no mandatory fields — always valid
+export const validateMisc = (data: any, calculatorData: any): ValidationResult => {
+  const n = (v: any) => parseFloat(v) || 0;
+  
+  // Extract labor from various potential locations in calculatorData
+  const inputs = calculatorData?.inputs || {};
+  const extras = calculatorData?.extras || {};
+  const calcLabor = n(inputs.extraLabor) || n(extras.extraLabor) || n(calculatorData?.extraLabor) || 
+                    n(inputs.extra_labor) || n(calculatorData?.extra_labor);
+                    
+  const stateLabor = n(data?.extraLabor);
+  const totalLabor = Math.max(calcLabor, stateLabor);
+
+  if (totalLabor > 0 && !data?.extraLaborReason?.trim()) {
+    return { valid: false, error: 'Reason required for additional labor' };
+  }
   return { valid: true };
 };
 
-export const validateStep = (stepId: string, jobState: any, calculatorData: any): ValidationResult => {
+export const validateStep = (
+  stepId: string,
+  jobState: any,
+  calculatorData: any
+): ValidationResult => {
   if (stepId === 'gutter') return validateGutter(jobState.gutter || {}, calculatorData);
   if (stepId === 'leaffilter') return validateLeafFilter(jobState.leaffilter || {}, calculatorData);
   if (stepId === 'soffit') return validateSoffit(jobState.soffit || {}, calculatorData);
@@ -306,4 +364,3 @@ export const validateStep = (stepId: string, jobState: any, calculatorData: any)
   if (stepId === 'additional') return validateMisc(jobState.additional || {}, calculatorData);
   return { valid: true };
 };
-

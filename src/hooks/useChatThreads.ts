@@ -51,8 +51,24 @@ export const useChatThreads = (
           setChannelsLoading(false);
         });
 
-        socket.on('new-message', refreshData);
-        socket.on('new-channel-message', refreshData);
+        // Only refresh chat list when someone else sends — not own message echo
+        socket.on('new-message', (data: any) => {
+          const senderId =
+            data?.senderId ||
+            data?.message?.senderId ||
+            data?.message?.sender?._id ||
+            data?.message?.user?._id;
+          const currentId = user?._id || user?.id;
+          if (!senderId || senderId !== currentId) refreshData();
+        });
+        socket.on('new-channel-message', (data: any) => {
+          const senderId =
+            data?.senderId ||
+            data?.message?.senderId ||
+            data?.message?.sender?._id;
+          const currentId = user?._id || user?.id;
+          if (!senderId || senderId !== currentId) refreshData();
+        });
         socket.on('channel-read', refreshData);
       } catch (err) {
         setLoading(false);

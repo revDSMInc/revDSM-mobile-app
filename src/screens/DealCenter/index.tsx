@@ -105,6 +105,7 @@ export default function LFCalculator({ route }: any) {
     setOutcomeForm,
     handleStatusSelect: handleStatusSelectHook,
     handleFinishOutcome: handleFinishOutcomeHook,
+    refetchOutcome,
     loading: outcomeLoading,
     setLoading: setOutcomeLoading,
     loadingMessage,
@@ -174,9 +175,9 @@ export default function LFCalculator({ route }: any) {
           outcomeForm: outcomeForm,
           onGoBack: (updatedJobState: any) => {
             setJobState(updatedJobState);
+            setCurrentView('outcome');
           },
         });
-        setCurrentView('summary');
       }
     });
   };
@@ -204,6 +205,7 @@ export default function LFCalculator({ route }: any) {
   const refreshCalculators = () => {
     fetchCalculators();
     fetchTrackerJobs();
+    refetchOutcome(); // Re-fetch jobBuilder status so Reset Job Builder button syncs correctly
   };
 
   const handleManualSave = async () => {
@@ -382,6 +384,8 @@ export default function LFCalculator({ route }: any) {
           onClose={onClose}
           handleAddJobToTracker={handleAddJobToTracker}
           isAlreadyInTracker={isAlreadyInTracker}
+          lead={lead}
+          jobBuilderState={jobState}
         />
       )}
 

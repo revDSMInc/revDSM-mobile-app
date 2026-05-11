@@ -62,7 +62,7 @@ export const AgreementSignatureModal = ({
   const [activePad, setActivePad] = useState<'initials' | 'signature' | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pdfScale, setPdfScale] = useState(1);
-  const [pdfOffset, setPdfOffset] = useState({ x: 0, y: 0 });
+  const [containerLayout, setContainerLayout] = useState({ width: 0, height: 0 });
   const [padWidth, setPadWidth] = useState(0);
 
   const createPanResponder = (
@@ -182,15 +182,6 @@ export const AgreementSignatureModal = ({
 
           FlashMessage.success('Success', 'Agreement signed successfully');
 
-          // Open the signed PDF immediately
-          setTimeout(async () => {
-            try {
-              await FileViewer.open(filePath);
-            } catch (e) {
-              console.error('Failed to open PDF:', e);
-            }
-          }, 500);
-
           onSuccess(filePath);
           onClose();
         } catch (fileError) {
@@ -224,36 +215,36 @@ export const AgreementSignatureModal = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View className="flex-1 bg-black/60 justify-end">
-        <View
-          className="w-full bg-white rounded-t-[40px] overflow-hidden"
-          style={{ height: '94%' }}
-        >
+    <Modal visible={visible} animationType="slide" transparent={false}>
+      <View style={{ flex: 1, backgroundColor: 'white' }}>
+        <View style={{ width: '100%', height: '100%', backgroundColor: 'white' }}>
           {/* Header */}
-          <View className="px-6 py-4 flex-row justify-between items-center border-b border-slate-100">
+          <View style={{ paddingHorizontal: 24, paddingVertical: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
             <View>
-              <Text className="text-xs font-black text-slate-400 uppercase tracking-widest">
+              <Text style={{ fontSize: 10, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 2 }}>
                 Digital Agreement
               </Text>
-              <Text className="text-sm font-black text-slate-900">Sign to Finalize Order</Text>
+              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>Sign to Finalize Order</Text>
             </View>
             <TouchableOpacity
               onPress={onClose}
-              className="w-10 h-10 rounded-full bg-slate-50 items-center justify-center"
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' }}
             >
               <Icon name="close" size={20} color="#64748b" />
             </TouchableOpacity>
           </View>
 
           {/* Main Content Area */}
-          <View className="flex-1 relative bg-slate-200">
+          <View
+            style={{ flex: 1, position: 'relative', backgroundColor: '#1e293b' }}
+            onLayout={(e) => setContainerLayout(e.nativeEvent.layout)}
+          >
             {previewBase64.startsWith('JVBERi') ? (
-              <View className="flex-1">
+              <View style={{ flex: 1 }}>
                 <Pdf
                   source={{ uri: `data:application/pdf;base64,${previewBase64}` }}
-                  style={{ flex: 1, backgroundColor: '#f1f5f9' }}
-                  fitPolicy={0}
+                  style={{ flex: 1, backgroundColor: '#334155' }}
+                  fitPolicy={2}
                   enablePaging={true}
                   spacing={0}
                   minScale={1.0}
@@ -266,146 +257,214 @@ export const AgreementSignatureModal = ({
                   }}
                 />
 
-                {/* Absolute Signature/Initial Boxes */}
-                {signatureFields && (
-                  <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
-                    {/* Buyer Initials Box */}
-                    {signatureFields.buyerInitials &&
-                      currentPage === signatureFields.buyerInitials.page && (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setLiveInitials([...initialsPaths]);
-                            setActivePad('initials');
-                          }}
-                          style={{
-                            position: 'absolute',
-                            left: `${signatureFields.buyerInitials.xPercent}%`,
-                            top: `${Number(signatureFields.buyerInitials.yPercent) - 1}%`,
-                            width: `${signatureFields.buyerInitials.widthPercent}%`,
-                            height: `${signatureFields.buyerInitials.heightPercent}%`,
-                            backgroundColor:
-                              initialsPaths.length > 0
-                                ? 'rgba(34, 197, 94, 0.15)'
-                                : 'rgba(239, 68, 68, 0.1)',
-                            borderWidth: 2,
-                            borderColor: initialsPaths.length > 0 ? '#22c55e' : '#ef4444',
-                            borderStyle: initialsPaths.length > 0 ? 'solid' : 'dashed',
-                            borderRadius: 4,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transform: [{ scale: 1 / pdfScale }], // Counter-scale to keep border thin if zoomed
-                          }}
-                        >
-                          {initialsPaths.length === 0 ? (
-                            <Text
-                              style={{
-                                fontSize: 8,
-                                fontWeight: '900',
-                                color: '#ef4444',
-                                textTransform: 'uppercase',
-                              }}
-                            >
-                              Initial Here
-                            </Text>
-                          ) : (
-                            <Svg width="100%" height="100%" viewBox={`0 0 ${padWidth || 500} 300`}>
-                              {initialsPaths.map((p, i) => (
-                                <Path
-                                  key={i}
-                                  d={p}
-                                  stroke="#1e293b"
-                                  strokeWidth={3}
-                                  fill="none"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              ))}
-                            </Svg>
-                          )}
-                        </TouchableOpacity>
-                      )}
+                {/* Precision Signature/Initial Overlays */}
+                {signatureFields &&
+                  containerLayout.width > 0 &&
+                  (() => {
+                    const PDF_ASPECT_RATIO = 0.7727; // 8.5 / 11
+                    const containerAR = containerLayout.width / containerLayout.height;
 
-                    {/* Buyer Signature Box */}
-                    {signatureFields.buyerSignature &&
-                      currentPage === signatureFields.buyerSignature.page && (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setLiveSignature([...signaturePaths]);
-                            setActivePad('signature');
-                          }}
-                          style={{
-                            position: 'absolute',
-                            left: `${signatureFields.buyerSignature.xPercent}%`,
-                            top: `${Number(signatureFields.buyerSignature.yPercent) - 4}%`,
-                            width: `${signatureFields.buyerSignature.widthPercent}%`,
-                            height: `${signatureFields.buyerSignature.heightPercent}%`,
-                            backgroundColor:
-                              signaturePaths.length > 0
-                                ? 'rgba(34, 197, 94, 0.1)'
-                                : 'rgba(239, 68, 68, 0.1)',
-                            borderWidth: 2,
-                            borderColor: signaturePaths.length > 0 ? '#22c55e' : '#ef4444',
-                            borderStyle: signaturePaths.length > 0 ? 'solid' : 'dashed',
-                            borderRadius: 4,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {signaturePaths.length === 0 ? (
-                            <Text
+                    let renderedW, renderedH, offsetX, offsetY;
+                    if (containerAR > PDF_ASPECT_RATIO) {
+                      renderedH = containerLayout.height;
+                      renderedW = renderedH * PDF_ASPECT_RATIO;
+                      offsetX = (containerLayout.width - renderedW) / 2;
+                      offsetY = 0;
+                    } else {
+                      renderedW = containerLayout.width;
+                      renderedH = renderedW / PDF_ASPECT_RATIO;
+                      offsetX = 0;
+                      offsetY = (containerLayout.height - renderedH) / 2;
+                    }
+
+                    return (
+                      <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+                        {/* Buyer Initials Box */}
+                        {signatureFields.buyerInitials &&
+                          currentPage === signatureFields.buyerInitials.page && (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setLiveInitials([...initialsPaths]);
+                                setActivePad('initials');
+                              }}
                               style={{
-                                fontSize: 8,
-                                fontWeight: '900',
-                                color: '#ef4444',
-                                textTransform: 'uppercase',
+                                position: 'absolute',
+                                left:
+                                  offsetX +
+                                  (Number(signatureFields.buyerInitials.xPercent) / 100) *
+                                    renderedW,
+                                top:
+                                  offsetY +
+                                  (Number(signatureFields.buyerInitials.yPercent) / 100) *
+                                    renderedH,
+                                width: `${Math.max(
+                                  12,
+                                  Number(signatureFields.buyerInitials.widthPercent)
+                                )}%`,
+                                height: `${Math.max(
+                                  5,
+                                  Number(signatureFields.buyerInitials.heightPercent)
+                                )}%`,
+                                backgroundColor:
+                                  initialsPaths.length > 0
+                                    ? 'rgba(34, 197, 94, 0.15)'
+                                    : 'rgba(239, 68, 68, 0.08)',
+                                borderWidth: 2,
+                                borderColor: initialsPaths.length > 0 ? '#22C55E' : '#94A3B8',
+                                borderStyle: initialsPaths.length > 0 ? 'solid' : 'dashed',
+                                borderRadius: 12,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transform: [
+                                  { translateX: -renderedW * 0.02 },
+                                  { translateY: -renderedH * 0.01 },
+                                ], // Slight adjust for center-alignment
                               }}
                             >
-                              Sign Here
-                            </Text>
-                          ) : (
-                            <Svg width="100%" height="100%" viewBox={`0 0 ${padWidth || 500} 300`}>
-                              {signaturePaths.map((p, i) => (
-                                <Path
-                                  key={i}
-                                  d={p}
-                                  stroke="#1e293b"
-                                  strokeWidth={3}
-                                  fill="none"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              ))}
-                            </Svg>
+                              {initialsPaths.length === 0 ? (
+                                <View style={{ alignItems: 'center' }}>
+                                  <Text style={{ fontSize: 7, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: -0.5 }}>
+                                    Initial
+                                  </Text>
+                                  <Icon name="pencil-plus" size={12} color="#94A3B8" />
+                                </View>
+                              ) : (
+                                <Svg
+                                  width="100%"
+                                  height="100%"
+                                  viewBox={`0 0 ${padWidth || 500} 300`}
+                                >
+                                  {initialsPaths.map((p, i) => (
+                                    <Path
+                                      key={i}
+                                      d={p}
+                                      stroke="#1e293b"
+                                      strokeWidth={4}
+                                      fill="none"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  ))}
+                                </Svg>
+                              )}
+                            </TouchableOpacity>
                           )}
-                        </TouchableOpacity>
-                      )}
-                  </View>
-                )}
+
+                        {/* Buyer Signature Box */}
+                        {signatureFields.buyerSignature &&
+                          currentPage === signatureFields.buyerSignature.page && (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setLiveSignature([...signaturePaths]);
+                                setActivePad('signature');
+                              }}
+                              style={{
+                                position: 'absolute',
+                                left:
+                                  offsetX +
+                                  (Number(signatureFields.buyerSignature.xPercent) / 100) *
+                                    renderedW,
+                                top:
+                                  offsetY +
+                                  (Number(signatureFields.buyerSignature.yPercent) / 100) *
+                                    renderedH,
+                                width: `${Math.max(
+                                  25,
+                                  Number(signatureFields.buyerSignature.widthPercent)
+                                )}%`,
+                                height: `${Math.max(
+                                  8,
+                                  Number(signatureFields.buyerSignature.heightPercent)
+                                )}%`,
+                                backgroundColor:
+                                  signaturePaths.length > 0
+                                    ? 'rgba(34, 197, 94, 0.15)'
+                                    : 'rgba(239, 68, 68, 0.08)',
+                                borderWidth: 2,
+                                borderColor: signaturePaths.length > 0 ? '#22C55E' : '#94A3B8',
+                                borderStyle: signaturePaths.length > 0 ? 'solid' : 'dashed',
+                                borderRadius: 12,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transform: [
+                                  { translateX: -renderedW * 0.05 },
+                                  { translateY: -renderedH * 0.02 },
+                                ], // Slight adjust for center-alignment
+                              }}
+                            >
+                              {signaturePaths.length === 0 ? (
+                                <View style={{ alignItems: 'center' }}>
+                                  <Text style={{ fontSize: 8, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 }}>
+                                    Sign Here
+                                  </Text>
+                                  <Icon name="signature-freehand" size={16} color="#94A3B8" />
+                                </View>
+                              ) : (
+                                <Svg
+                                  width="100%"
+                                  height="100%"
+                                  viewBox={`0 0 ${padWidth || 500} 300`}
+                                >
+                                  {signaturePaths.map((p, i) => (
+                                    <Path
+                                      key={i}
+                                      d={p}
+                                      stroke="#1e293b"
+                                      strokeWidth={4}
+                                      fill="none"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  ))}
+                                </Svg>
+                              )}
+                            </TouchableOpacity>
+                          )}
+                      </View>
+                    );
+                  })()}
               </View>
             ) : (
-              <View className="flex-1 items-center justify-center bg-slate-100">
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9' }}>
                 <Icon name="file-document-outline" size={48} color="#cbd5e1" />
-                <Text className="text-slate-400 font-bold mt-4">Document preview unavailable</Text>
+                <Text style={{ color: '#94a3b8', fontWeight: 'bold', marginTop: 16 }}>Document preview unavailable</Text>
               </View>
             )}
           </View>
 
-          {/* Footer Submit Button */}
-          <View className="p-8 pb-10 border-t border-slate-100 bg-white">
+          {/* Compact Footer Actions */}
+          <View style={{ paddingHorizontal: 24, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: 'white', flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={{ flex: 1, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}
+            >
+              <Text style={{ color: '#64748b', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2, fontSize: 11 }}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={handleSubmit}
               disabled={loading || initialsPaths.length === 0 || signaturePaths.length === 0}
-              className={`h-16 rounded-3xl items-center justify-center shadow-lg ${
-                loading || initialsPaths.length === 0 || signaturePaths.length === 0
-                  ? 'bg-slate-200'
-                  : 'bg-green-600 shadow-green-600/30'
-              }`}
+              style={{ 
+                flex: 2, 
+                height: 48, 
+                borderRadius: 12, 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                backgroundColor: loading || initialsPaths.length === 0 || signaturePaths.length === 0 ? '#e2e8f0' : '#059669',
+                shadowColor: '#059669',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.1,
+                shadowRadius: 8,
+                elevation: 4
+              }}
             >
               {loading ? (
-                <ActivityIndicator color="white" />
+                <ActivityIndicator color="white" size="small" />
               ) : (
-                <Text className="text-white font-black uppercase tracking-widest text-xs">
-                  Authorize & Submit Order
+                <Text style={{ color: 'white', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2, fontSize: 11 }}>
+                  Submit Agreement
                 </Text>
               )}
             </TouchableOpacity>
@@ -414,11 +473,11 @@ export const AgreementSignatureModal = ({
 
         {/* Signature Drawing Overlay */}
         {activePad && (
-          <View style={styles.overlay} className="bg-black/95 items-center justify-center p-6">
-            <View className="bg-white w-full rounded-[40px] overflow-hidden">
-              <View className="p-6 flex-row justify-between items-center bg-slate-50">
+          <View style={[styles.overlay, { backgroundColor: 'rgba(0, 0, 0, 0.95)', alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
+            <View style={{ backgroundColor: 'white', width: '100%', borderRadius: 40, overflow: 'hidden' }}>
+              <View style={{ padding: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc' }}>
                 <View>
-                  <Text className="font-black text-slate-900 uppercase text-xs">
+                  <Text style={{ fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', fontSize: 12 }}>
                     {activePad === 'initials' ? 'Capture Initials' : 'Capture Signature'}
                   </Text>
                 </View>
@@ -427,11 +486,10 @@ export const AgreementSignatureModal = ({
                 </TouchableOpacity>
               </View>
 
-              <View className="p-6">
+              <View style={{ padding: 24 }}>
                 <View
-                  style={{ height: 300 }}
+                  style={{ height: 300, width: '100%', backgroundColor: '#f8fafc', borderWidth: 2, borderStyle: 'dashed', borderColor: '#e2e8f0', borderRadius: 24, overflow: 'hidden' }}
                   onLayout={(e) => setPadWidth(e.nativeEvent.layout.width)}
-                  className="w-full bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl overflow-hidden"
                   {...(activePad === 'initials'
                     ? initialsPanResponder.panHandlers
                     : signaturePanResponder.panHandlers)}
@@ -463,18 +521,18 @@ export const AgreementSignatureModal = ({
                 </View>
               </View>
 
-              <View className="p-6 flex-row gap-3">
+              <View style={{ padding: 24, flexDirection: 'row', gap: 12 }}>
                 <TouchableOpacity
                   onPress={() => clearPad(activePad)}
-                  className="flex-1 h-14 bg-slate-100 rounded-2xl items-center justify-center"
+                  style={{ flex: 1, height: 56, backgroundColor: '#f1f5f9', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <Text className="font-black text-slate-600 uppercase text-[10px]">Clear</Text>
+                  <Text style={{ fontWeight: '900', color: '#475569', textTransform: 'uppercase', fontSize: 10 }}>Clear</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={savePad}
-                  className="flex-[2] h-14 bg-slate-900 rounded-2xl items-center justify-center"
+                  style={{ flex: 2, height: 56, backgroundColor: '#0f172a', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <Text className="font-black text-white uppercase text-[10px]">Save Mark</Text>
+                  <Text style={{ fontWeight: '900', color: 'white', textTransform: 'uppercase', fontSize: 10 }}>Save Mark</Text>
                 </TouchableOpacity>
               </View>
             </View>

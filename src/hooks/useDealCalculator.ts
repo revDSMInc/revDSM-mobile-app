@@ -279,8 +279,8 @@ export const useDealCalculator = (lead: any) => {
 
   useEffect(() => {
     // Reset state when lead changes to prevent data leakage
-    const leadName = `${lead.customerDetails?.firstName || ''} ${
-      lead.customerDetails?.lastName || ''
+    const leadName = `${lead?.customerDetails?.firstName || ''} ${
+      lead?.customerDetails?.lastName || ''
     }`.trim();
 
     setCalculators([
@@ -479,15 +479,34 @@ export const useDealCalculator = (lead: any) => {
             try {
               setLoading(true);
               const duplicate = calculators[idx];
+
+              // Only copy calculator inputs/extras — NOT rollout data (price, dropPrice, isRolloutConfirmed)
+              // Mirrors web app: dataExcludingKeys.price = ''; and excludes _id/meta fields
               const res = await LeadService.createCalculator(apptId, {
                 title: `${duplicate.name} (Copy)`,
                 ...duplicate.inputs,
                 ...duplicate.extras,
                 paymentMethod: duplicate.inputs.paymentPlan,
                 pricemarkup: duplicate.inputs.markup,
+                price: 0, // explicitly reset rollout price
               });
               const newC = res.data?.data || res.data;
-              const newList = [...calculators, { ...duplicate, _id: newC._id, name: newC.title }];
+
+              const newList = [
+                ...calculators,
+                {
+                  // Copy calculator values only
+                  inputs: duplicate.inputs,
+                  extras: duplicate.extras,
+                  discounts: duplicate.discounts,
+                  // Reset all rollout / job-builder fields — fresh start
+                  _id: newC._id,
+                  name: newC.title,
+                  price: 0,
+                  dropPrice: [],
+                  isRolloutConfirmed: false,
+                },
+              ];
               setCalculators(newList);
               setActiveIdx(newList.length - 1);
             } catch (e) {

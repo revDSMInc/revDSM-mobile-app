@@ -20,42 +20,46 @@ export const AgreementDialogModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View className="flex-1 bg-black/60 items-center justify-center px-6">
+      <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
         <View
-          className="w-full bg-white rounded-[40px] overflow-hidden"
-          style={{ backgroundColor: isDark ? colors.surface : '#FFFFFF' }}
+          style={{ 
+            width: '100%', 
+            backgroundColor: isDark ? colors.surface : '#FFFFFF',
+            borderRadius: 40,
+            overflow: 'hidden'
+          }}
         >
           {/* Header */}
-          <View className="p-8 pb-4">
-            <View className="flex-row justify-between items-center mb-6">
-              <View className="w-12 h-12 rounded-2xl bg-slate-900 items-center justify-center">
+          <View style={{ padding: 32, paddingBottom: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center' }}>
                 <Icon name="file-document-edit" size={24} color="white" />
               </View>
               <TouchableOpacity
                 onPress={onClose}
-                className="w-10 h-10 rounded-full bg-slate-50 items-center justify-center"
+                style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' }}
               >
                 <Icon name="close" size={20} color="#64748b" />
               </TouchableOpacity>
             </View>
-            <Text className="text-2xl font-black text-slate-900 ">Agreement Method</Text>
-            <Text className="text-[10px] font-bold text-slate-400  tracking-widest mt-2 leading-4">
+            <Text style={{ fontSize: 24, fontWeight: '900', color: '#0f172a' }}>Agreement Method</Text>
+            <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#94a3b8', letterSpacing: 1, marginTop: 8, lineHeight: 16 }}>
               Choose how you want to provide the agreement document.
             </Text>
           </View>
 
           {/* Options */}
-          <View className="p-6 gap-4">
+          <View style={{ padding: 24, gap: 16 }}>
             <TouchableOpacity
               onPress={onGenerate}
-              className="p-6 rounded-3xl bg-slate-50 border border-slate-100 flex-row items-center"
+              style={{ padding: 24, borderRadius: 24, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center' }}
             >
-              <View className="w-12 h-12 rounded-full bg-blue-50 items-center justify-center mr-4">
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center', marginRight: 16 }}>
                 <Icon name="magic-staff" size={24} color="#3b82f6" />
               </View>
-              <View className="flex-1">
-                <Text className="font-black text-slate-900  text-xs">Generate Document</Text>
-                <Text className="text-[9px] font-bold text-slate-400  mt-1">
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '900', color: '#0f172a', fontSize: 12 }}>Generate Document</Text>
+                <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#94a3b8', marginTop: 4 }}>
                   Create a digital PDF from job data
                 </Text>
               </View>
@@ -64,14 +68,14 @@ export const AgreementDialogModal = ({
 
             <TouchableOpacity
               onPress={onScan}
-              className="p-6 rounded-3xl bg-slate-50 border border-slate-100 flex-row items-center"
+              style={{ padding: 24, borderRadius: 24, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center' }}
             >
-              <View className="w-12 h-12 rounded-full bg-green-50 items-center justify-center mr-4">
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center', marginRight: 16 }}>
                 <Icon name="camera" size={24} color="#22c55e" />
               </View>
-              <View className="flex-1">
-                <Text className="font-black text-slate-900  text-xs">Scan Paper Document</Text>
-                <Text className="text-[9px] font-bold text-slate-400  mt-1">
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '900', color: '#0f172a', fontSize: 12 }}>Scan Paper Document</Text>
+                <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#94a3b8', marginTop: 4 }}>
                   Use camera to capture physical form
                 </Text>
               </View>
@@ -79,12 +83,12 @@ export const AgreementDialogModal = ({
             </TouchableOpacity>
           </View>
 
-          <View className="p-8 pt-2">
+          <View style={{ padding: 32, paddingTop: 8 }}>
             <TouchableOpacity
               onPress={onClose}
-              className="h-14 rounded-2xl items-center justify-center border border-slate-100"
+              style={{ height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#f1f5f9' }}
             >
-              <Text className="font-black text-slate-500  text-[10px] tracking-widest">Cancel</Text>
+              <Text style={{ fontWeight: '900', color: '#64748b', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>

@@ -22,8 +22,8 @@ const EXACT_SIZE_OPTS = ['4"', '5"'];
 
 const LEAFFILTER_COLORS = [
   { name: 'White', hex: '#FFFFFF' },
-  { name: 'Bronze', hex: '#6F4E37' },
   { name: 'Clay', hex: '#D2B48C' },
+  { name: 'Bronze', hex: '#6F4E37' },
   { name: 'Cream', hex: '#FFFDD0' },
   { name: 'Grey', hex: '#808080' },
   { name: 'Silver', hex: '#C0C0C0' },
@@ -38,6 +38,7 @@ interface LeafFilterSectionProps {
   onUpdate: (section: string, field: string, value: any) => void;
   calculatorData: any;
   onFieldChange?: (data: any) => void;
+  onValidationError?: (error: string) => void;
 }
 
 export const LeafFilterSection = ({
@@ -45,6 +46,7 @@ export const LeafFilterSection = ({
   onUpdate,
   calculatorData,
   onFieldChange,
+  onValidationError,
 }: LeafFilterSectionProps) => {
   const { isDark } = useTheme();
   const [colorModal, setColorModal] = useState<{ visible: boolean; comboIdx: number } | null>(null);
@@ -55,7 +57,10 @@ export const LeafFilterSection = ({
 
   const normalizeWidth = useCallback((width: string) => {
     if (!width) return '';
-    return width.replace(/\s+/g, '').toLowerCase();
+    const clean = width.replace(/\s+/g, '').toLowerCase();
+    if (clean.includes('4') && clean.includes('5')) return '4&5"';
+    if (clean === '4"' || clean === '5"') return '4&5"';
+    return clean;
   }, []);
 
   const getVal = useCallback(
@@ -128,7 +133,6 @@ export const LeafFilterSection = ({
     (width: string, storyIdx: number) => {
       const targetW = normalizeWidth(width);
       return (leaffilterState.combinations || []).reduce((total: number, combo: any) => {
-        if (combo.lfProfile === 'Versa Max') return total;
         const comboW = normalizeWidth(combo.gutterOpeningWidth || '');
         if (comboW !== targetW) return total;
         if (!combo.stories?.includes(storyIdx + 1)) return total;
@@ -142,9 +146,12 @@ export const LeafFilterSection = ({
   const allocatedVersaMax = useMemo(() => {
     return (leaffilterState.combinations || []).reduce((total: number, combo: any) => {
       if (combo.lfProfile !== 'Versa Max') return total;
+      const w = normalizeWidth(combo.gutterOpeningWidth || '');
+      // If width is standard, it already counted in calculateAllocated
+      if (['4&5"', '6"', '7"'].includes(w)) return total;
       return total + combo.measurements.reduce((sum: number, val: any) => sum + n(val), 0);
     }, 0);
-  }, [leaffilterState.combinations]);
+  }, [leaffilterState.combinations, normalizeWidth]);
 
   const isComplete = useMemo(() => {
     const hasAnyLF = Object.values(storyFootageByWidth).some((v: any) =>
@@ -165,18 +172,16 @@ export const LeafFilterSection = ({
       return false;
 
     return (leaffilterState.combinations || []).every((c: any) => {
-      const subtotal = c.measurements.reduce((s: number, v: any) => s + n(v), 0);
+      const subtotal = (c.measurements || []).reduce((s: number, v: any) => s + n(v), 0);
       if (subtotal === 0) return true;
-      const is45 =
-        c.gutterOpeningWidth === '4 & 5"' ||
-        c.gutterOpeningWidth === '4"' ||
-        c.gutterOpeningWidth === '5"';
-      if (is45 && !c.exactSize) return false;
+      const comboW = normalizeWidth(c.gutterOpeningWidth || '');
+      const is45 = comboW === '4&5"';
       return (
         !!c.lfProfile &&
         !!c.lfColor &&
         !!c.gutterProfile &&
-        (c.lfProfile !== 'Versa Max' || !!c.gutterOpeningWidth)
+        !!c.gutterOpeningWidth &&
+        (!is45 || !!c.exactSize)
       );
     });
   }, [storyFootageByWidth, calculateAllocated, allocatedVersaMax, leaffilterState.combinations]);
@@ -190,14 +195,9 @@ export const LeafFilterSection = ({
     if (!calculatorData || Object.keys(calculatorData).length === 0) return;
     const current = leaffilterState.combinations || [];
     const lockedCombos = current.filter((c: any) => c.isLocked);
+    const manualCombos = current.filter((c: any) => !c.isLocked);
 
-    if (
-      lockedCombos.length === availableSizes.length &&
-      lockedCombos.every((c: any) => c.measurements?.length === 18)
-    )
-      return;
-
-    const initial = availableSizes.map((size, index) => {
+    const initialLocked = availableSizes.map((size: any, index: number) => {
       const existing = current.find(
         (c: any) =>
           c.isLocked &&
@@ -217,8 +217,39 @@ export const LeafFilterSection = ({
         exactSize: '',
       };
     });
-    onUpdate('leaffilter', 'combinations', initial);
-  }, [availableSizes, onUpdate]);
+
+    const nextCombinations = [...initialLocked, ...manualCombos];
+
+    // Only update if there's a structural change or story mapping change
+    const hasChanged =
+      nextCombinations.length !== current.length ||
+      initialLocked.some((c: any, i: number) => {
+        const oldC = lockedCombos[i];
+        if (!oldC) return true;
+        return JSON.stringify(c.stories) !== JSON.stringify(oldC.stories);
+      });
+
+    if (hasChanged) {
+      onUpdate('leaffilter', 'combinations', nextCombinations);
+    }
+  }, [availableSizes, onUpdate, leaffilterState.combinations]);
+
+  // Sync extras from calculatorData
+  useEffect(() => {
+    if (!calculatorData) return;
+    const extras = {
+      csr: getVal('csr'),
+      cornersFilter: getVal('cornersFilter'),
+      sawzallHanger: getVal('sawzallHanger'),
+      removeProtection: getVal('removeProtection'),
+      ribbedRoof: getVal('ribbedRoof'),
+    };
+
+    // Only update if changed to avoid loop
+    if (JSON.stringify(extras) !== JSON.stringify(leaffilterState.extras)) {
+      onUpdate('leaffilter', 'extras', extras);
+    }
+  }, [calculatorData, getVal, leaffilterState.extras, onUpdate]);
 
   const activeTrackerCards = useMemo(() => {
     const cards: any[] = [];
@@ -226,7 +257,7 @@ export const LeafFilterSection = ({
       STORIES.forEach((_, sIdx) => {
         if (storyFootageByWidth[w][sIdx] > 0) {
           cards.push({
-            title: `${sIdx + 1}st Story ${w}`,
+            title: `${sIdx + 1}${sIdx === 0 ? 'st' : sIdx === 1 ? 'nd' : 'rd'} Story ${w}`,
             avail: storyFootageByWidth[w][sIdx],
             used: calculateAllocated(w, sIdx),
           });
@@ -249,16 +280,22 @@ export const LeafFilterSection = ({
     onUpdate('leaffilter', 'combinations', next);
   };
 
-  const renderAllocationCard = (title: string, avail: number, used: number) => {
+  const renderAllocationCard = (
+    title: string,
+    avail: number,
+    used: number,
+    widthClass: string = 'w-[48%]'
+  ) => {
     if (avail === 0) return null;
     const remaining = avail - used;
     const isPerfect = Math.abs(remaining) <= 0.1;
     return (
-      <View key={title} className="bg-white border border-[#A5E1ED] rounded-xl p-2 w-[48%] mb-2">
-        <Text className="text-[9px] font-black text-sky-500 text-center mb-1 uppercase">
-          {title}
-        </Text>
-        <View className="flex-row justify-between">
+      <View
+        key={title}
+        className={`bg-white border border-[#A5E1ED] rounded-xl p-2 mb-2 ${widthClass}`}
+      >
+        <Text className="text-[9px] font-black text-sky-500 text-center mb-1">{title}</Text>
+        <View className="flex-row justify-between px-1">
           <View className="items-center">
             <Text className="text-[7px] text-slate-400 font-bold">AVAIL</Text>
             <Text className="text-[10px] font-black text-sky-500">{avail.toFixed(0)}ft</Text>
@@ -285,7 +322,9 @@ export const LeafFilterSection = ({
         )}
         {remaining < -0.1 && (
           <View className="mt-1 bg-red-500 rounded-lg py-0.5 items-center">
-            <Text className="text-[6px] font-black text-white">⚠ Over by {Math.abs(remaining).toFixed(0)}ft</Text>
+            <Text className="text-[6px] font-black text-white">
+              ⚠ Over by {Math.abs(remaining).toFixed(0)}ft
+            </Text>
           </View>
         )}
       </View>
@@ -298,18 +337,21 @@ export const LeafFilterSection = ({
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView className="flex-1 px-4 py-4" showsVerticalScrollIndicator={false}>
+      <View className="bg-white px-4 pt-2 pb-2 shadow-sm z-50 border-b border-slate-100">
         {/* ── Tracker ── */}
-        {activeTrackerCards.length > 0 && activeTrackerCards.length <= 2 && (
-          <View className="flex-row flex-wrap justify-between mb-4">
-            {activeTrackerCards.map((card) =>
-              renderAllocationCard(card.title, card.avail, card.used)
-            )}
+        {activeTrackerCards.length > 0 && activeTrackerCards.length <= 4 && (
+          <View className="flex-row flex-wrap justify-between">
+            {activeTrackerCards.map((card, idx) => {
+              const isLast = idx === activeTrackerCards.length - 1;
+              const isOdd = activeTrackerCards.length % 2 !== 0;
+              const width = isLast && isOdd ? 'w-[100%]' : 'w-[48%]';
+              return renderAllocationCard(card.title, card.avail, card.used, width);
+            })}
           </View>
         )}
 
-        {activeTrackerCards.length > 2 && (
-          <View className="bg-white border border-[#A5E1ED] rounded-2xl overflow-hidden mb-6 shadow-sm">
+        {activeTrackerCards.length > 4 && (
+          <View className="bg-white border border-[#A5E1ED] rounded-2xl overflow-hidden shadow-sm">
             <TouchableOpacity
               className="flex-row items-center justify-between p-3 bg-[#F0F9FF]"
               style={{ borderBottomWidth: trackerExpanded ? 1 : 0, borderBottomColor: '#A5E1ED' }}
@@ -335,34 +377,39 @@ export const LeafFilterSection = ({
 
             {trackerExpanded && (
               <View className="p-3 bg-white flex-row flex-wrap justify-between">
-                {activeTrackerCards.map((card) =>
-                  renderAllocationCard(card.title, card.avail, card.used)
-                )}
+                {activeTrackerCards.map((card, idx) => {
+                  const isLast = idx === activeTrackerCards.length - 1;
+                  const isOdd = activeTrackerCards.length % 2 !== 0;
+                  const width = isLast && isOdd ? 'w-[100%]' : 'w-[48%]';
+                  return renderAllocationCard(card.title, card.avail, card.used, width);
+                })}
               </View>
             )}
           </View>
         )}
+      </View>
+
+      <ScrollView className="flex-1 px-4 py-4" showsVerticalScrollIndicator={false}>
         {leaffilterState.combinations.map((combo: any, idx: number) => {
           const subtotal = combo.measurements.reduce((s: number, v: any) => s + n(v), 0);
           const isVersaMax = combo.lfProfile === 'Versa Max';
-          const is45 =
-            combo.gutterOpeningWidth === '4 & 5"' ||
-            combo.gutterOpeningWidth === '4"' ||
-            combo.gutterOpeningWidth === '5"';
-          const comboColor = COMBO_COLORS[idx % COMBO_COLORS.length];
+          const comboW = normalizeWidth(combo.gutterOpeningWidth || '');
+          const is45 = comboW === '4&5"';
           const isCompleteCombo =
             !!combo.lfProfile &&
             !!combo.lfColor &&
             !!combo.gutterProfile &&
-            (isVersaMax ? !!combo.gutterOpeningWidth : combo.gutterOpeningWidth !== '4 & 5"') &&
-            (!is45 || !!combo.exactSize) &&
-            Math.abs(subtotal) > 0;
+            !!combo.gutterOpeningWidth &&
+            (!is45 || !!combo.exactSize);
+
+          const showIncomplete = subtotal > 0 && !isCompleteCombo;
+          const comboColor = COMBO_COLORS[idx % COMBO_COLORS.length];
 
           return (
             <View
               key={combo.id}
               className={`mb-6 bg-white rounded-[24px] border-2 p-5 shadow-sm ${
-                !isCompleteCombo ? 'border-amber-400' : 'border-slate-100'
+                showIncomplete ? 'border-amber-400' : 'border-slate-100'
               }`}
             >
               <View className="flex-row justify-between items-center mb-4">
@@ -370,11 +417,11 @@ export const LeafFilterSection = ({
                   style={{ backgroundColor: comboColor + '15' }}
                   className="px-3 py-1 rounded-lg"
                 >
-                  <Text style={{ color: comboColor }} className="text-[10px] font-black uppercase">
+                  <Text style={{ color: comboColor }} className="text-[10px] font-black">
                     Combination #{idx + 1}
                   </Text>
                 </View>
-                {leaffilterState.combinations.length > 1 && (
+                {!combo.isLocked && (
                   <TouchableOpacity
                     onPress={() =>
                       onUpdate(
@@ -389,91 +436,132 @@ export const LeafFilterSection = ({
                 )}
               </View>
 
-              {!isCompleteCombo && (
-                <View className="flex-row items-center mb-4 bg-amber-50 p-2 rounded-xl border border-amber-100">
-                  <Icon name="alert" size={14} color="#F59E0B" />
-                  <Text className="text-[10px] font-black text-amber-600 ml-1 uppercase">
-                    INCOMPLETE -{' '}
-                    {is45 && !combo.exactSize
-                      ? 'Profile, Color, and Exact Size (4" or 5") Required'
-                      : 'Profile and Color Required'}
-                  </Text>
-                </View>
-              )}
-
               <View className="gap-3 mb-6">
                 <View className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                  <Text className="text-[9px] font-black text-slate-400 uppercase mb-2">
+                  <Text className="text-[9px] font-black text-slate-400 mb-2">
                     Gutter Opening Width {is45 ? '(4&5)' : ''}
                   </Text>
                   {isVersaMax ? (
-                    <View className="flex-row gap-2">
-                      {VERSA_MAX_WIDTH_OPTS.map((o) => (
-                        <TouchableOpacity
-                          key={o}
-                          onPress={() => updateCombo(idx, { gutterOpeningWidth: o })}
-                          className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
-                            combo.gutterOpeningWidth === o
-                              ? 'bg-indigo-500 border-indigo-500'
-                              : 'bg-white border-slate-100'
-                          }`}
-                        >
-                          <Text
-                            className={`text-[10px] font-black ${
-                              combo.gutterOpeningWidth === o ? 'text-white' : 'text-slate-500'
+                    <>
+                      <View className="flex-row gap-2">
+                        {VERSA_MAX_WIDTH_OPTS.map((o) => (
+                          <TouchableOpacity
+                            key={o}
+                            onPress={() => {
+                              updateCombo(idx, {
+                                gutterOpeningWidth: o,
+                                exactSize: '',
+                              });
+                            }}
+                            className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
+                              combo.gutterOpeningWidth === o
+                                ? 'bg-[#22C55E] border-[#22C55E]'
+                                : 'bg-white border-slate-100'
                             }`}
                           >
-                            {o}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  ) : is45 ? (
-                    <View className="flex-row gap-2">
-                      {EXACT_SIZE_OPTS.map((o) => (
-                        <TouchableOpacity
-                          key={o}
-                          onPress={() => updateCombo(idx, { exactSize: o })}
-                          className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
-                            combo.exactSize === o
-                              ? 'bg-indigo-500 border-indigo-500'
-                              : 'bg-white border-slate-100'
-                          }`}
-                        >
-                          <Text
-                            className={`text-[10px] font-black ${
-                              combo.exactSize === o ? 'text-white' : 'text-slate-500'
-                            }`}
-                          >
-                            {o}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  ) : (
+                            <Text
+                              className={`text-[10px] font-black ${
+                                combo.gutterOpeningWidth === o ? 'text-white' : 'text-slate-500'
+                              }`}
+                            >
+                              {o}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  ) : combo.isLocked && combo.gutterOpeningWidth !== '4 & 5"' ? (
                     <View className="flex-row items-center bg-slate-100 h-11 rounded-xl px-4 justify-between">
                       <Text className="text-[11px] font-black text-slate-400">
                         {combo.gutterOpeningWidth}
                       </Text>
                       <Icon name="lock" size={14} color="#94A3B8" />
                     </View>
+                  ) : (
+                    <View className="flex-row gap-2">
+                      {(combo.isLocked && combo.gutterOpeningWidth === '4 & 5"'
+                        ? ['4"', '5"']
+                        : combo.lfProfile === 'Versa'
+                        ? ['4"', '5"', '6"', '7"']
+                        : GUTTER_OPENING_WIDTH_OPTIONS
+                      ).map((o) => (
+                        <TouchableOpacity
+                          key={o}
+                          onPress={() =>
+                            updateCombo(idx, {
+                              gutterOpeningWidth: combo.isLocked ? combo.gutterOpeningWidth : o,
+                              exactSize: o === '4"' || o === '5"' ? o : '',
+                            })
+                          }
+                          className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
+                            (
+                              combo.isLocked && combo.gutterOpeningWidth === '4 & 5"'
+                                ? combo.exactSize === o
+                                : combo.gutterOpeningWidth === o
+                            )
+                              ? 'bg-[#22C55E] border-[#22C55E]'
+                              : 'bg-white border-slate-100'
+                          }`}
+                        >
+                          <Text
+                            className={`text-[10px] font-black ${
+                              (
+                                combo.isLocked && combo.gutterOpeningWidth === '4 & 5"'
+                                  ? combo.exactSize === o
+                                  : combo.gutterOpeningWidth === o
+                              )
+                                ? 'text-white'
+                                : 'text-slate-500'
+                            }`}
+                          >
+                            {o}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   )}
-                  <Text className="text-[8px] font-bold text-slate-400 mt-1 italic">
-                    Locked from Job Summary
-                  </Text>
                 </View>
 
                 <View className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                  <Text className="text-[9px] font-black text-slate-400 uppercase mb-2">
+                  <Text className="text-[9px] font-black text-slate-400 mb-2">
                     LeafFilter Profile
                   </Text>
-                  <View className="flex-row items-center bg-slate-100 h-11 rounded-xl px-4 justify-between">
-                    <Text className="text-[11px] font-black text-slate-400">{combo.lfProfile}</Text>
-                    <Icon name="lock" size={14} color="#94A3B8" />
-                  </View>
-                  <Text className="text-[8px] font-bold text-slate-400 mt-1 italic">
-                    Locked from Job Summary
-                  </Text>
+                  {combo.isLocked ? (
+                    <View className="flex-row items-center bg-slate-100 h-11 rounded-xl px-4 justify-between">
+                      <Text className="text-[11px] font-black text-slate-400">
+                        {combo.lfProfile}
+                      </Text>
+                      <Icon name="lock" size={14} color="#94A3B8" />
+                    </View>
+                  ) : (
+                    <View className="flex-row gap-2">
+                      {['Versa', 'Versa Max'].map((p) => (
+                        <TouchableOpacity
+                          key={p}
+                          onPress={() =>
+                            updateCombo(idx, {
+                              lfProfile: p,
+                              gutterOpeningWidth: '', // Reset width when profile changes
+                              exactSize: '',
+                            })
+                          }
+                          className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
+                            combo.lfProfile === p
+                              ? 'bg-[#22C55E] border-[#22C55E]'
+                              : 'bg-white border-slate-100'
+                          }`}
+                        >
+                          <Text
+                            className={`text-[10px] font-black ${
+                              combo.lfProfile === p ? 'text-white' : 'text-slate-500'
+                            }`}
+                          >
+                            {p}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
 
                 <View
@@ -483,7 +571,7 @@ export const LeafFilterSection = ({
                       : 'bg-white border border-slate-100'
                   }`}
                 >
-                  <Text className="text-[9px] font-black text-slate-500 uppercase mb-3">
+                  <Text className="text-[9px] font-black text-slate-500 mb-3">
                     Existing Gutter Profile{' '}
                     {!combo.gutterProfile && <Text className="text-amber-600">⚠ REQUIRED</Text>}
                   </Text>
@@ -494,13 +582,13 @@ export const LeafFilterSection = ({
                         onPress={() => updateCombo(idx, { gutterProfile: p })}
                         className={`flex-1 h-10 rounded-xl items-center justify-center border-2 ${
                           combo.gutterProfile === p
-                            ? 'bg-white border-amber-400'
+                            ? 'bg-[#22C55E] border-[#22C55E]'
                             : 'bg-white border-slate-100'
                         }`}
                       >
                         <Text
                           className={`text-[10px] font-black ${
-                            combo.gutterProfile === p ? 'text-black' : 'text-slate-500'
+                            combo.gutterProfile === p ? 'text-white' : 'text-slate-500'
                           }`}
                         >
                           {p}
@@ -520,7 +608,7 @@ export const LeafFilterSection = ({
                   {!combo.lfColor && (
                     <View className="flex-row items-center mb-3">
                       <Icon name="alert" size={12} color="#F59E0B" />
-                      <Text className="text-[9px] font-black text-amber-500 uppercase ml-1">
+                      <Text className="text-[9px] font-black text-amber-500 ml-1">
                         INCOMPLETE - Color Required
                       </Text>
                     </View>
@@ -535,13 +623,20 @@ export const LeafFilterSection = ({
                         onPress={() => updateCombo(idx, { lfColor: c.name })}
                         style={{ backgroundColor: c.hex }}
                         className={`w-[30%] h-14 rounded-xl border-2 ${
-                          combo.lfColor === c.name ? 'border-amber-500' : 'border-slate-100'
+                          combo.lfColor === c.name ? 'border-[#22C55E]' : 'border-slate-100'
                         }`}
                       />
                     ))}
                   </View>
                   {combo.lfColor && (
-                    <View className="bg-emerald-500 rounded-full py-1.5 px-3 self-start">
+                    <View className="flex-row items-center bg-[#22C55E] rounded-full py-1.5 px-3 self-start border border-emerald-600">
+                      <View
+                        style={{
+                          backgroundColor:
+                            LEAFFILTER_COLORS.find((c) => c.name === combo.lfColor)?.hex || '#000',
+                        }}
+                        className="w-3 h-3 rounded-full mr-2 border border-white/20"
+                      />
                       <Text className="text-white text-[10px] font-black">{combo.lfColor}</Text>
                     </View>
                   )}
@@ -550,7 +645,7 @@ export const LeafFilterSection = ({
 
               <View>
                 <View className="flex-row items-center mb-4">
-                  <Text className="text-[11px] font-black text-amber-500 uppercase tracking-tight">
+                  <Text className="text-[11px] font-black text-amber-500">
                     {isVersaMax ? 'Versa Max' : 'LeafFilter'} Measurements{' '}
                     {subtotal === 0 && (
                       <Text className="text-amber-600">⚠ ALLOCATE REMAINING FOOTAGE</Text>
@@ -559,43 +654,82 @@ export const LeafFilterSection = ({
                 </View>
                 <View className="flex-row mb-2">
                   <View className="flex-[1.2]">
-                    <Text className="text-[8px] font-black text-slate-400 uppercase">Location</Text>
+                    <Text className="text-[8px] font-black text-slate-400">Location</Text>
                   </View>
-                  {STORIES.map((s) => (
-                    <View key={s} className="flex-1">
-                      <Text className="text-[8px] font-black text-center text-slate-400">{s}</Text>
-                    </View>
-                  ))}
+                  {(() => {
+                    const maxStory = Math.max(...(combo.stories || [1]));
+                    return STORIES.map((s, sIdx) => {
+                      if (!isVersaMax && sIdx + 1 > maxStory) return null;
+                      return (
+                        <View key={s} className="flex-1">
+                          <Text className="text-[8px] font-black text-center text-slate-400">
+                            {s}
+                          </Text>
+                        </View>
+                      );
+                    });
+                  })()}
                 </View>
                 {LOCATIONS.map((loc) => (
                   <View key={loc} className="flex-row items-center mb-2">
                     <View className="flex-[1.2]">
-                      <Text className="text-[9px] font-black text-slate-600 uppercase">{loc}</Text>
+                      <Text className="text-[9px] font-black text-slate-600">{loc}</Text>
                     </View>
-                    {STORIES.map((_, sIdx) => (
-                      <View key={sIdx} className="flex-1 px-1">
-                        <TextInput
-                          value={String(
-                            combo.measurements[sIdx * 6 + LOCATIONS.indexOf(loc)] ?? ''
-                          )}
-                          onChangeText={(v) => {
-                            const next = [...combo.measurements];
-                            next[sIdx * 6 + LOCATIONS.indexOf(loc)] = v;
-                            updateCombo(idx, { measurements: next });
-                          }}
-                          keyboardType="numeric"
-                          placeholder="0"
-                          className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
-                        />
-                      </View>
-                    ))}
+                    {(() => {
+                      const maxStory = Math.max(...(combo.stories || [1]));
+                      return STORIES.map((_, sIdx) => {
+                        if (!isVersaMax && sIdx + 1 > maxStory) return null;
+                        return (
+                          <View key={sIdx} className="flex-1 px-1">
+                            <TextInput
+                              value={String(
+                                combo.measurements[sIdx * 6 + LOCATIONS.indexOf(loc)] ?? ''
+                              )}
+                              onChangeText={(v) => {
+                                const next = [...combo.measurements];
+                                next[sIdx * 6 + LOCATIONS.indexOf(loc)] = v.replace(/[^0-9]/g, '');
+                                updateCombo(idx, { measurements: next });
+                              }}
+                              onBlur={() => {
+                                const val = n(
+                                  combo.measurements[sIdx * 6 + LOCATIONS.indexOf(loc)]
+                                );
+                                if (val > 0) {
+                                  const comboW = normalizeWidth(combo.gutterOpeningWidth || '');
+                                  const avail =
+                                    storyFootageByWidth[comboW]?.[sIdx] ||
+                                    (combo.lfProfile === 'Versa Max'
+                                      ? storyFootageByWidth['Versa Max']
+                                      : 0);
+
+                                  if (avail === 0) {
+                                    const storyLabel =
+                                      sIdx === 0 ? '1st' : sIdx === 1 ? '2nd' : '3rd';
+                                    const typeLabel =
+                                      combo.lfProfile === 'Versa Max'
+                                        ? 'Versa Max'
+                                        : `${comboW} Story ${storyLabel}`;
+                                    onValidationError?.(
+                                      `${typeLabel} not assigned in calculator. Please remove the value from this column.`
+                                    );
+                                  }
+                                }
+                              }}
+                              keyboardType="number-pad"
+                              placeholder="0"
+                              className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
+                            />
+                          </View>
+                        );
+                      });
+                    })()}
                   </View>
                 ))}
                 <TouchableOpacity
-                  style={{ backgroundColor: comboColor }}
+                  style={{ backgroundColor: '#22C55E' }}
                   className="mt-4 h-10 rounded-full items-center justify-center self-end px-6 shadow-sm"
                 >
-                  <Text className="text-white font-black text-[10px] uppercase">
+                  <Text className="text-white font-black text-[10px]">
                     Combination Total: {subtotal.toFixed(0)} FT
                   </Text>
                 </TouchableOpacity>
@@ -624,13 +758,11 @@ export const LeafFilterSection = ({
           className="h-14 rounded-2xl border border-slate-200 items-center justify-center flex-row bg-white mb-8"
         >
           <Icon name="plus" size={16} color="#94A3B8" />
-          <Text className="text-slate-400 font-black text-[11px] ml-2 uppercase">
-            + Add Combination
-          </Text>
+          <Text className="text-slate-400 font-black text-[11px] ml-2">Add Combination</Text>
         </TouchableOpacity>
 
         <View className="bg-white rounded-[32px] p-6 border border-emerald-100 mb-10">
-          <Text className="text-[12px] font-black text-[#22C55E] uppercase mb-6 tracking-widest">
+          <Text className="text-[12px] font-black text-[#22C55E] mb-6">
             Grand Total - All Combinations
           </Text>
           {leaffilterState.combinations.map((c: any, i: number) => {
@@ -653,49 +785,40 @@ export const LeafFilterSection = ({
                 </View>
                 <View className="flex-row flex-wrap justify-between gap-y-3">
                   <View className="w-[45%]">
-                    <Text className="text-[8px] font-bold text-slate-400 uppercase">
-                      Gutter Profile
-                    </Text>
-                    <Text className="text-[10px] font-black text-red-400">
+                    <Text className="text-[8px] font-bold text-slate-400">Gutter Profile</Text>
+                    <Text className="text-[10px] font-black text-slate-800">
                       {c.gutterProfile || 'Not Selected'}
                     </Text>
                   </View>
                   <View className="w-[45%]">
-                    <Text className="text-[8px] font-bold text-slate-400 uppercase">
-                      LeafFilter Color
-                    </Text>
-                    <Text className="text-[10px] font-black text-red-400">
+                    <Text className="text-[8px] font-bold text-slate-400">LeafFilter Color</Text>
+                    <Text className="text-[10px] font-black text-slate-800">
                       {c.lfColor || 'Not Selected'}
                     </Text>
                   </View>
                   <View className="w-[45%]">
-                    <Text className="text-[8px] font-bold text-slate-400 uppercase">
-                      LeafFilter Profile
-                    </Text>
+                    <Text className="text-[8px] font-bold text-slate-400">LeafFilter Profile</Text>
                     <Text className="text-[10px] font-black text-black">{c.lfProfile}</Text>
                   </View>
                   <View className="w-[45%]">
-                    <Text className="text-[8px] font-bold text-slate-400 uppercase">
+                    <Text className="text-[8px] font-bold text-slate-400">
                       Gutter Opening Width
                     </Text>
                     <Text className="text-[10px] font-black text-black">
-                      {c.gutterOpeningWidth || 'Not Selected'}
+                      {(c.gutterOpeningWidth === '4 & 5"' ? c.exactSize : c.gutterOpeningWidth) ||
+                        'Not Selected'}
                     </Text>
                   </View>
                 </View>
                 <View className="mt-3 pt-3 border-t border-slate-100 flex-row justify-between items-center">
-                  <Text className="text-[10px] font-black text-slate-400 uppercase">
-                    Total Footage
-                  </Text>
+                  <Text className="text-[10px] font-black text-slate-400">Total Footage</Text>
                   <Text className="text-[12px] font-black text-[#22C55E]">{tot.toFixed(0)} FT</Text>
                 </View>
               </View>
             );
           })}
-          <View className="mt-4 pt-4 border-t-2 border-emerald-500 flex-row justify-between items-center px-2">
-            <Text className="text-[14px] font-black text-[#22C55E] uppercase">
-              Total LeafFilter:
-            </Text>
+          <View className="mt-4 pt-4 border-t-2 border-[#22C55E] flex-row justify-between items-center px-2">
+            <Text className="text-[14px] font-black text-[#22C55E]">Total LeafFilter:</Text>
             <Text className="text-[20px] font-black text-[#22C55E]">
               {leaffilterState.combinations
                 .reduce(
@@ -711,14 +834,12 @@ export const LeafFilterSection = ({
 
         <View className="bg-white rounded-[24px] border border-slate-100 shadow-sm overflow-hidden mb-40">
           <View className="px-5 py-4 flex-row justify-between items-center bg-slate-50 border-b border-slate-100">
-            <Text className="text-[14px] font-black text-slate-500 uppercase">Extras</Text>
+            <Text className="text-[14px] font-black text-slate-500">Extras</Text>
             <View className="bg-slate-800 px-3 py-1.5 rounded-lg">
-              <Text className="text-[9px] font-black text-white uppercase">
-                Locked from Job Summary
-              </Text>
+              <Text className="text-[9px] font-black text-white">Locked from Job Summary</Text>
             </View>
           </View>
-          <View className="p-5 gap-6">
+          <View className="p-5 gap-4">
             {[
               { l: 'C-S-R', v: getVal('csr') },
               { l: 'Corners (Filter)', v: getVal('cornersFilter') },
@@ -726,22 +847,21 @@ export const LeafFilterSection = ({
               { l: 'Remove Protection', v: getVal('removeProtection') },
               { l: 'Ribbed Roof', v: getVal('ribbedRoof') },
             ].map((it) => (
-              <View key={it.l} className="bg-white rounded-2xl p-4 border border-slate-100">
-                <View className="flex-row justify-between items-center mb-1">
-                  <Text className="text-[10px] font-black text-slate-400 uppercase tracking-tight">
-                    {it.l}
-                  </Text>
-                  <Icon name="lock" size={14} color="#CBD5E1" />
+              <View
+                key={it.l}
+                className="flex-row justify-between items-center border-b border-slate-50 pb-4"
+              >
+                <View>
+                  <Text className="text-[10px] font-black text-slate-400 mb-1">{it.l}</Text>
+                  <Text className="text-xs font-black text-slate-800">{it.v}</Text>
                 </View>
-                <Text className="text-[16px] font-black text-black">{it.v}</Text>
-                <Text className="text-[8px] font-bold text-slate-400 mt-1 italic">
-                  Locked from Job Summary
-                </Text>
+                <Icon name="lock" size={18} color="#CBD5E1" />
               </View>
             ))}
           </View>
         </View>
       </ScrollView>
+
     </View>
   );
 };

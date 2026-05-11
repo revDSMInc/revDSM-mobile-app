@@ -1,139 +1,307 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { format, addDays } from 'date-fns';
+import {
+  format,
+  addDays,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  getDay,
+  subMonths,
+  addMonths,
+  isSameDay,
+  startOfToday,
+} from 'date-fns';
 
 interface AppointmentSchedulerModalProps {
   visible: boolean;
   onClose: () => void;
   onConfirm: (data: any) => void;
+  onGenerate?: (data: any) => void;
+  onUpload?: (data: any) => void;
   customerName: string;
+  isEdit?: boolean;
 }
 
 export const AppointmentSchedulerModal = ({
   visible,
   onClose,
   onConfirm,
+  onGenerate,
+  onUpload,
   customerName,
+  isEdit = false,
 }: AppointmentSchedulerModalProps) => {
   const { colors, isDark } = useTheme();
-  const [selectedDate, setSelectedDate] = useState<Date | 'TBD'>(new Date());
-  const [selectedWindow, setSelectedWindow] = useState('AM (8-12)');
+
+  const [view, setView] = useState<'date' | 'time' | 'tbd' | 'success'>('date');
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    let d = addDays(new Date(), 1);
+    if (getDay(d) === 0) d = addDays(d, 1);
+    return d;
+  });
+  const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
+  const [timeSlotIdx, setTimeSlotIdx] = useState(0);
   const [tbdReason, setTbdReason] = useState('');
 
-  const windows = ['AM (8-12)', 'PM (12-4)', 'Evening (4-8)'];
+  const windows = [
+    { label: '8:00 AM - 12:00 PM', value: '8:00 AM - 12:00 PM' },
+    { label: '12:00 PM - 4:00 PM', value: '12:00 PM - 4:00 PM' },
+  ];
 
-  // Generate next 14 days
-  const dates = Array.from({ length: 14 }).map((_, i) => addDays(new Date(), i));
+  const handleDateSelect = (date: Date) => {
+    if (getDay(date) === 0) return; // Disable Sunday
+    setSelectedDate(date);
+    setTimeSlotIdx(0);
+    setView('time');
+  };
 
-  const handleConfirm = () => {
-    if (selectedDate === 'TBD') {
-      onConfirm({
-        date: 'TBD',
-        reason: tbdReason,
-        customerName,
-      });
+  const handleNoSlot = () => {
+    if (timeSlotIdx === windows.length - 1) {
+      let nextDay = addDays(selectedDate, 1);
+      while (getDay(nextDay) === 0) {
+        nextDay = addDays(nextDay, 1);
+      }
+      setSelectedDate(nextDay);
+      setTimeSlotIdx(0);
     } else {
-      onConfirm({
-        date: format(selectedDate, 'PP'),
-        timeWindow: selectedWindow,
-        customerName,
-      });
+      setTimeSlotIdx((prev) => prev + 1);
     }
+  };
+
+  const handleAcceptSlot = () => {
+    setView('success');
+  };
+
+  const handleFinalSave = () => {
+    handleModalClose();
+    onConfirm({
+      date: format(selectedDate, 'M/d/yyyy'),
+      timeWindow: windows[timeSlotIdx].value,
+      customerName,
+    });
+  };
+
+  const handleConfirmTBD = () => {
+    handleModalClose();
+    onConfirm({
+      date: 'TBD',
+      reason: tbdReason,
+      customerName,
+    });
+  };
+
+  const handleModalClose = () => {
     onClose();
+    // Reset views after modal closes
+    setTimeout(() => {
+      setView('date');
+      setTimeSlotIdx(0);
+      setTbdReason('');
+    }, 300);
+  };
+
+  // Calendar Logic
+  const startOfCurrentMonth = startOfMonth(currentMonth);
+  const endOfCurrentMonth = endOfMonth(currentMonth);
+  const daysInMonth = eachDayOfInterval({ start: startOfCurrentMonth, end: endOfCurrentMonth });
+  const startDay = getDay(startOfCurrentMonth);
+
+  const prevMonth = () => setCurrentMonth(subMonths(currentMonth, 1));
+  const nextMonth = () => setCurrentMonth(addMonths(currentMonth, 1));
+
+  const renderCalendar = () => {
+    const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const blanks = Array.from({ length: startDay }).map((_, i) => (
+      <View key={`blank-${i}`} style={{ width: '14.28%', height: 48 }} />
+    ));
+
+    return (
+      <View style={{ paddingHorizontal: 16 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 32, gap: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '900', color: '#334155' }}>
+            {format(currentMonth, 'MMMM yyyy')}
+          </Text>
+          <TouchableOpacity onPress={prevMonth} style={{ padding: 8 }}>
+            <View>
+              <Icon name="chevron-left" size={24} color="#94a3b8" />
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={nextMonth} style={{ padding: 8 }}>
+            <View>
+              <Icon name="chevron-right" size={24} color="#94a3b8" />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: 'row', marginBottom: 16 }}>
+          {days.map((d, i) => (
+            <Text key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, fontWeight: '900', color: '#94a3b8' }}>
+              {d}
+            </Text>
+          ))}
+        </View>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {blanks}
+          {daysInMonth.map((day, i) => {
+            const isSelected = isSameDay(day, selectedDate);
+            const isToday = isSameDay(day, new Date());
+            const isPast = day < startOfToday();
+            const isSunday = getDay(day) === 0;
+            const isDisabled = isPast || isSunday;
+
+            return (
+              <TouchableOpacity
+                key={i}
+                disabled={isDisabled}
+                onPress={() => handleDateSelect(day)}
+                style={{ width: '14.28%', height: 48, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: isSelected ? '#22C55E' : 'transparent',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: '900',
+                      color: isSelected ? 'white' : isDisabled ? '#e2e8f0' : '#475569',
+                    }}
+                  >
+                    {format(day, 'd')}
+                  </Text>
+                </View>
+                {isToday && !isSelected && (
+                  <View style={{ position: 'absolute', bottom: 4, width: 4, height: 4, borderRadius: 2, backgroundColor: '#22C55E' }} />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    );
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View className="flex-1 bg-black/60 justify-end">
-        <View
-          className="bg-white rounded-t-[40px] p-8 pb-12"
-          style={{ backgroundColor: isDark ? colors.surface : '#FFFFFF' }}
-        >
-          <View className="flex-row justify-between items-center mb-8">
-            <View>
-              <Text className="text-xl font-black text-slate-900 ">Schedule Appointment</Text>
-              <Text className="text-[10px] font-bold text-slate-400  tracking-widest mt-1">
-                Required for Agreement Generation
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.4)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 }}>
+        <View style={{ width: '100%', backgroundColor: 'white', borderRadius: 24, overflow: 'hidden', maxWidth: 400 }}>
+          {/* Header */}
+          <View style={{ backgroundColor: '#22C55E', paddingHorizontal: 24, paddingVertical: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: '900', letterSpacing: -0.3 }}>
+                First Available Date For Customer
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={onClose}
-              className="w-10 h-10 rounded-full bg-slate-50 items-center justify-center"
-            >
-              <Icon name="close" size={20} color="#64748b" />
+            <TouchableOpacity onPress={handleModalClose}>
+              <View
+                style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                  padding: 6,
+                  borderRadius: 999,
+                }}
+              >
+                <Icon name="close" size={20} color="white" />
+              </View>
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {/* Date Picker */}
-            <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-4 ml-1">
-              Select Install Date
-            </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-8">
-              <TouchableOpacity
-                onPress={() => setSelectedDate('TBD')}
-                className={`w-20 h-24 rounded-3xl items-center justify-center border mr-3 ${
-                  selectedDate === 'TBD'
-                    ? 'bg-slate-900 border-slate-900'
-                    : 'bg-white border-slate-100'
-                }`}
-              >
-                <Icon
-                  name="help-circle-outline"
-                  size={24}
-                  color={selectedDate === 'TBD' ? 'white' : '#64748b'}
-                />
-                <Text
-                  className={`text-[10px] font-black  mt-2 ${
-                    selectedDate === 'TBD' ? 'text-white' : 'text-slate-600'
-                  }`}
-                >
-                  TBD
-                </Text>
-              </TouchableOpacity>
-
-              {dates.map((date, i) => {
-                const isSelected =
-                  selectedDate !== 'TBD' && format(selectedDate, 'PP') === format(date, 'PP');
-                return (
+          <View style={{ padding: 32 }}>
+            {view === 'date' && (
+              <View>
+                {/* TBD Switch */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 48, gap: 16 }}>
                   <TouchableOpacity
-                    key={i}
-                    onPress={() => setSelectedDate(date)}
-                    className={`w-20 h-24 rounded-3xl items-center justify-center border mr-3 ${
-                      isSelected ? 'bg-slate-900 border-slate-900' : 'bg-white border-slate-100'
-                    }`}
+                    onPress={() => setView('tbd')}
                   >
-                    <Text
-                      className={`text-[10px] font-bold  ${
-                        isSelected ? 'text-slate-400' : 'text-slate-400'
-                      }`}
-                    >
-                      {format(date, 'EEE')}
-                    </Text>
-                    <Text
-                      className={`text-xl font-black mt-1 ${
-                        isSelected ? 'text-white' : 'text-slate-900'
-                      }`}
-                    >
-                      {format(date, 'd')}
-                    </Text>
-                    <Text
-                      className={`text-[10px] font-bold  mt-1 ${
-                        isSelected ? 'text-slate-300' : 'text-slate-500'
-                      }`}
-                    >
-                      {format(date, 'MMM')}
-                    </Text>
+                    <View style={{ width: 48, height: 24, borderRadius: 12, backgroundColor: '#e2e8f0', padding: 4 }}>
+                      <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: 'white' }} />
+                    </View>
                   </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                  <Text style={{ color: '#475569', fontWeight: '900', fontSize: 14 }}>TBD Install Date</Text>
+                </View>
 
-            {selectedDate === 'TBD' ? (
-              <View className="mb-8">
-                <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-4 ml-1">
+                {renderCalendar()}
+              </View>
+            )}
+
+            {view === 'time' && (
+              <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                <View style={{ width: 96, height: 96, borderRadius: 48, backgroundColor: '#ecfdf5', alignItems: 'center', justifyContent: 'center', marginBottom: 32, borderWidth: 4, borderColor: 'white' }}>
+                  <Icon name="calendar-clock" size={44} color="#22C55E" />
+                </View>
+
+                <Text style={{ fontSize: 24, fontWeight: '900', color: '#1e293b', textAlign: 'center', marginBottom: 8 }}>
+                  {format(selectedDate, 'M/d/yyyy')}
+                </Text>
+                <Text style={{ fontSize: 20, fontWeight: '900', color: '#334155', marginBottom: 40 }}>
+                  {windows[timeSlotIdx].label}
+                </Text>
+
+                <Text style={{ color: '#94a3b8', fontWeight: '700', textAlign: 'center', marginBottom: 40 }}>
+                  Does this time work for the customer?
+                </Text>
+
+                <View style={{ flexDirection: 'row', gap: 16, width: '100%' }}>
+                  <TouchableOpacity onPress={handleNoSlot} style={{ flex: 1 }}>
+                    <View
+                      style={{
+                        height: 56,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: '#e2e8f0',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: 'white',
+                      }}
+                    >
+                      <Text style={{ color: '#475569', fontWeight: '900', fontSize: 16 }}>No</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity onPress={handleAcceptSlot} style={{ flex: 1 }}>
+                    <View
+                      style={{
+                        height: 56,
+                        backgroundColor: '#22C55E',
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        shadowColor: '#10B981',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 8,
+                        elevation: 4,
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>Yes</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {view === 'tbd' && (
+              <View>
+                <TouchableOpacity
+                  onPress={() => setView('date')}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}>
+                    <Icon name="arrow-left" size={20} color="#94a3b8" />
+                    <Text style={{ marginLeft: 8, color: '#94a3b8', fontWeight: '900', fontSize: 12 }}>BACK TO CALENDAR</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <Text style={{ fontSize: 10, fontWeight: '900', color: '#94a3b8', letterSpacing: 2, marginBottom: 16, textTransform: 'uppercase' }}>
                   Reason for TBD
                 </Text>
                 <TextInput
@@ -141,66 +309,165 @@ export const AppointmentSchedulerModal = ({
                   onChangeText={setTbdReason}
                   multiline
                   placeholder="Explain why date is not set..."
-                  className="bg-slate-50 p-5 rounded-3xl font-bold text-slate-900 border border-slate-100"
-                  style={{ height: 120, textAlignVertical: 'top' }}
+                  style={{ height: 150, textAlignVertical: 'top', backgroundColor: '#f8fafc', padding: 20, borderRadius: 24, fontWeight: '700', color: '#0f172a', borderWidth: 1, borderColor: '#f1f5f9', marginBottom: 32 }}
                 />
-              </View>
-            ) : (
-              <View className="mb-8">
-                <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-4 ml-1">
-                  Time Window
-                </Text>
-                <View className="gap-3">
-                  {windows.map((w) => (
-                    <TouchableOpacity
-                      key={w}
-                      onPress={() => setSelectedWindow(w)}
-                      className={`h-16 px-6 rounded-2xl flex-row items-center border ${
-                        selectedWindow === w
-                          ? 'bg-slate-900 border-slate-900'
-                          : 'bg-white border-slate-100'
-                      }`}
+
+                <TouchableOpacity
+                  onPress={handleConfirmTBD}
+                  disabled={!tbdReason.trim()}
+                >
+                  <View
+                    style={{
+                      height: 64,
+                      borderRadius: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: !tbdReason.trim() ? '#f1f5f9' : '#22C55E',
+                      shadowColor: !tbdReason.trim() ? 'transparent' : '#10B981',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.2,
+                      shadowRadius: 8,
+                      elevation: 4,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight: '900',
+                        letterSpacing: 1.5,
+                        color: !tbdReason.trim() ? '#94a3b8' : 'white',
+                      }}
                     >
-                      <View
-                        className={`w-5 h-5 rounded-full border-2 items-center justify-center mr-4 ${
-                          selectedWindow === w ? 'border-white' : 'border-slate-200'
-                        }`}
-                      >
-                        {selectedWindow === w && (
-                          <View className="w-2.5 h-2.5 rounded-full bg-white" />
-                        )}
-                      </View>
-                      <Text
-                        className={`font-black  text-xs ${
-                          selectedWindow === w ? 'text-white' : 'text-slate-700'
-                        }`}
-                      >
-                        {w}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                      CONFIRM TBD
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               </View>
             )}
 
-            <TouchableOpacity
-              onPress={handleConfirm}
-              disabled={selectedDate === 'TBD' && !tbdReason.trim()}
-              className={`h-16 rounded-3xl items-center justify-center shadow-lg ${
-                selectedDate === 'TBD' && !tbdReason.trim()
-                  ? 'bg-slate-200 shadow-none'
-                  : 'bg-green-500 shadow-green-500/30'
-              }`}
-            >
-              <Text
-                className={`font-black  tracking-widest ${
-                  selectedDate === 'TBD' && !tbdReason.trim() ? 'text-slate-400' : 'text-white'
-                }`}
-              >
-                Confirm Schedule
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
+            {view === 'success' && (
+              <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#22C55E', alignItems: 'center', marginBottom: 24, justifyContent: 'center' }}>
+                  <Icon name="check" size={48} color="white" />
+                </View>
+                
+                <Text style={{ fontSize: 24, fontWeight: '900', color: '#1e293b', marginBottom: 32 }}>Job Booked!</Text>
+
+                <View style={{ width: '100%', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#f1f5f9', borderRadius: 24, padding: 24, marginBottom: 32 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(226, 232, 240, 0.5)' }}>
+                    <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Customer</Text>
+                    <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14, flex: 1, textAlign: 'right', marginLeft: 16 }}>{customerName}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(226, 232, 240, 0.5)' }}>
+                    <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Date</Text>
+                    <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{format(selectedDate, 'M/d/yyyy')}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Time Window</Text>
+                    <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{windows[timeSlotIdx].label}</Text>
+                  </View>
+                </View>
+
+                {!isEdit ? (
+                  <View style={{ width: '100%', gap: 12 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        onGenerate?.({
+                          date: format(selectedDate, 'M/d/yyyy'),
+                          timeWindow: windows[timeSlotIdx].value,
+                          customerName,
+                        });
+                        handleModalClose();
+                      }}
+                      style={{
+                        height: 64,
+                        backgroundColor: '#22C55E',
+                        borderRadius: 16,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        shadowColor: '#10B981',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 8,
+                        elevation: 4,
+                      }}
+                    >
+                      <Icon name="wand" size={24} color="white" style={{ marginRight: 12 }} />
+                      <Text
+                        style={{
+                          color: 'white',
+                          fontWeight: '900',
+                          fontSize: 16,
+                        }}
+                      >
+                        Generate Dynamic Agreement
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => {
+                        onUpload?.({
+                          date: format(selectedDate, 'M/d/yyyy'),
+                          timeWindow: windows[timeSlotIdx].value,
+                          customerName,
+                        });
+                        handleModalClose();
+                      }}
+                      style={{
+                        height: 64,
+                        backgroundColor: 'white',
+                        borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor: '#e2e8f0',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: '#1e293b',
+                          fontWeight: '900',
+                          fontSize: 16,
+                        }}
+                      >
+                        Upload Presigned Agreement
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <Pressable onPress={handleFinalSave} style={{ width: '100%' }}>
+                    <View
+                      style={{
+                        width: '100%',
+                        height: 64,
+                        backgroundColor: '#22C55E',
+                        borderRadius: 16,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        shadowColor: '#10B981',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 8,
+                        elevation: 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: 'white',
+                          fontWeight: '900',
+                          fontSize: 16,
+                          textTransform: 'uppercase',
+                          letterSpacing: 1.5,
+                        }}
+                      >
+                        Save Changes
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </Modal>

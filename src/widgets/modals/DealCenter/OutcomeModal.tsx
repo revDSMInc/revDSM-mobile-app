@@ -66,7 +66,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   const toggleExpand = (key: string) => {
     const isExpanding = expanded !== key;
     setExpanded(isExpanding ? key : null);
-    
+
     if (isExpanding) {
       // Small delay to allow the dropdown to render before scrolling
       setTimeout(() => {
@@ -406,37 +406,37 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                           'none',
                           81
                         )}
-                          {expanded === 'dpMethod' && (
-                            <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
-                              {downPaymentMethods.map((m) => (
-                                <TouchableOpacity
-                                  key={m.value}
-                                  className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                        {expanded === 'dpMethod' && (
+                          <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
+                            {downPaymentMethods.map((m) => (
+                              <TouchableOpacity
+                                key={m.value}
+                                className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                                  outcomeForm.downPaymentMethod === m.value
+                                    ? 'rounded-lg bg-[#F4F6F8]'
+                                    : ''
+                                }`}
+                                onPress={() => {
+                                  setOutcomeForm({ ...outcomeForm, downPaymentMethod: m.value });
+                                  setExpanded(null);
+                                }}
+                              >
+                                <Text
+                                  className={`text-[13px] font-semibold ${
                                     outcomeForm.downPaymentMethod === m.value
-                                      ? 'rounded-lg bg-[#F4F6F8]'
-                                      : ''
+                                      ? 'text-[#1C252E]'
+                                      : 'text-[#637381]'
                                   }`}
-                                  onPress={() => {
-                                    setOutcomeForm({ ...outcomeForm, downPaymentMethod: m.value });
-                                    setExpanded(null);
-                                  }}
                                 >
-                                  <Text
-                                    className={`text-[13px] font-semibold ${
-                                      outcomeForm.downPaymentMethod === m.value
-                                        ? 'text-[#1C252E]'
-                                        : 'text-[#637381]'
-                                    }`}
-                                  >
-                                    {m.label}
-                                  </Text>
-                                  {outcomeForm.downPaymentMethod === m.value && (
-                                    <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                  )}
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          )}
+                                  {m.label}
+                                </Text>
+                                {outcomeForm.downPaymentMethod === m.value && (
+                                  <Ionicons name="checkmark" size={16} color="#1C252E" />
+                                )}
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
                       </View>
                     </View>
 
@@ -493,7 +493,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                               })}
 
                               {/* GreenSky Plans */}
-                              <View className="bg-[#919EAB14] px-4 py-1.5">
+                              <View className="bg-[#d9ead3] px-4 py-1.5">
                                 <Text className="text-[11px] font-bold text-black uppercase">
                                   GreenSky Plans
                                 </Text>
@@ -536,7 +536,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                 ))}
 
                               {/* Wells Fargo Plans */}
-                              <View className="bg-[#919EAB14] px-4 py-1.5">
+                              <View className="bg-[#f4cccc] px-4 py-1.5">
                                 <Text className="text-[11px] font-bold text-black uppercase">
                                   Wells Fargo Plans
                                 </Text>
@@ -579,7 +579,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                 ))}
 
                               {/* Other Plans */}
-                              <View className="bg-[#919EAB14] px-4 py-1.5">
+                              <View className="bg-[#c9daf8] px-4 py-1.5">
                                 <Text className="text-[11px] font-bold text-black uppercase">
                                   Other Plans
                                 </Text>
@@ -728,7 +728,14 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
                   {/* Items List */}
                   <View className="gap-2">
-                    {(results?.items || []).map((item: any, idx: number) => (
+                    {(results?.items || [])
+                      .filter((item: any) => {
+                        if (outcomeStatus === 'demo') {
+                          return item.category !== 'Agreement' && !item.label?.toLowerCase().includes('agreement');
+                        }
+                        return true;
+                      })
+                      .map((item: any, idx: number) => (
                       <View key={idx} className="bg-white rounded-lg p-3 flex-row items-center">
                         <View
                           className="w-7 h-7 rounded-full items-center justify-center mr-3"
@@ -798,18 +805,16 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         ? '#919EAB33'
                         : outcomeStatus === 'sale'
                         ? '#22C55E'
-                        : '#1C252E',
+                        : '#1C252E', // demo = dark, both go to Job Builder
                     }}
                   >
                     <Text
                       className="font-bold text-[13px]"
                       style={{ color: !outcomeStatus ? '#919EABCC' : 'white' }}
                     >
-                      {outcomeStatus === 'sale'
-                        ? 'Build Job'
-                        : outcomeStatus === 'demo'
-                        ? 'Demo'
-                        : 'Select Result'}
+                      {!outcomeStatus
+                        ? 'Select Result'
+                        : 'Build Job'}{/* both demo and sale go to Job Builder */}
                     </Text>
                   </TouchableOpacity>
                 </View>

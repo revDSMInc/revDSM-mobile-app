@@ -31,6 +31,21 @@ export const useDealOutcome = (
   // Extract a reliable lead ID
   const leadId = lead?._id || lead?.leadId || lead?.id;
 
+  const fetchOutcomeData = async () => {
+    if (!leadId) return;
+    try {
+      const res = await LeadService.getLeadOutcome(leadId);
+      const data = res.data?.data || res.data;
+      if (data) {
+        if (data.status || data.result) setOutcomeStatus(data.status || data.result);
+        if (data.jobBuilder || data.leadData?.jobBuilder)
+          setJobState(data.jobBuilder || data.leadData.jobBuilder);
+        if (data.leadData || data)
+          setOutcomeForm((prev: any) => ({ ...prev, ...(data.leadData || data) }));
+      }
+    } catch (err) {}
+  };
+
   useEffect(() => {
     // Reset state when lead changes to prevent data leakage
     setOutcomeStatus(null);
@@ -49,21 +64,6 @@ export const useDealOutcome = (
     });
     setJobState({});
 
-    if (!leadId) return;
-
-    const fetchOutcomeData = async () => {
-      try {
-        const res = await LeadService.getLeadOutcome(leadId);
-        const data = res.data?.data || res.data;
-        if (data) {
-          if (data.status || data.result) setOutcomeStatus(data.status || data.result);
-          if (data.jobBuilder || data.leadData?.jobBuilder)
-            setJobState(data.jobBuilder || data.leadData.jobBuilder);
-          if (data.leadData || data)
-            setOutcomeForm((prev: any) => ({ ...prev, ...(data.leadData || data) }));
-        }
-      } catch (err) {}
-    };
     fetchOutcomeData();
   }, [leadId]);
 
@@ -247,13 +247,15 @@ export const useDealOutcome = (
       // Update Timeline
       await LeadService.updateLeadTimelineProgress(leadId, {
         leadResulted: 'completed',
-        jobBuild: outcomeStatus === 'sale' ? 'active' : 'completed',
+        jobBuild: 'active', // active for both demo and sale — user goes to Job Builder
         salesProcess: 'completed',
       });
 
       onRefresh?.();
 
-      if (outcomeStatus === 'sale') {
+      // Both sale and demo go to Job Builder
+      // (demo = didn't close today but still needs job details built)
+      if (outcomeStatus === 'sale' || outcomeStatus === 'demo') {
         setTimeout(() => {
           setLoading(false);
           setShowJobBuilder(true);
@@ -280,6 +282,7 @@ export const useDealOutcome = (
     setOutcomeForm,
     handleStatusSelect,
     handleFinishOutcome,
+    refetchOutcome: fetchOutcomeData,
     loading,
     setLoading,
     loadingMessage,

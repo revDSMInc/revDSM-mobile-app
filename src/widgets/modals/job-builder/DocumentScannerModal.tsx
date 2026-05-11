@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -18,179 +20,281 @@ interface DocumentScannerModalProps {
   visible: boolean;
   onClose: () => void;
   onSave: (images: any[]) => void;
+  onChange?: (images: any[]) => void;
   title: string;
   leadId: string;
   category: 'agreement' | 'orderSheet';
+  initialFiles?: any[];
 }
 
 export const DocumentScannerModal = ({
   visible,
   onClose,
   onSave,
+  onChange,
   title,
   leadId,
   category,
+  initialFiles = [],
 }: DocumentScannerModalProps) => {
-  const { colors, isDark } = useTheme();
-  const [scannedPages, setScannedPages] = useState<string[]>([]);
+  const { colors } = useTheme();
+  const { width } = useWindowDimensions();
+  const [files, setFiles] = useState<any[]>([]);
+  const [removedServerIds, setRemovedServerIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const columnWidth = (width - 48) / 2;
+
+  useEffect(() => {
+    if (visible) {
+      const initial = (initialFiles || []).map((f) => ({
+        uri: f.uri,
+        serverId: f.serverId || f._id,
+        isNew: false,
+        name: f.name,
+      }));
+      setFiles(initial);
+      setRemovedServerIds([]);
+    }
+  }, [visible, initialFiles]);
 
   const startScan = async () => {
     try {
-      const { scannedImages } = await DocumentScanner.scanDocument({
-        maxNumDocuments: 1,
+      const result = await DocumentScanner.scanDocument({
+        maxNumDocuments: 10 - files.length,
         letUserAdjustCrop: true,
       } as any);
 
-      if (scannedImages && scannedImages.length > 0) {
-        setScannedPages([...scannedPages, ...scannedImages]);
+      if (result && result.scannedImages && result.scannedImages.length > 0) {
+        const timestamp = Date.now();
+        const newScans = result.scannedImages.map((uri: string, index: number) => ({
+          uri,
+          isNew: true,
+          name: `scanned_${category}_${timestamp}_${index}.jpg`,
+        }));
+        const updatedFiles = [...files, ...newScans];
+        setFiles(updatedFiles);
+        if (onChange) onChange(updatedFiles);
       }
     } catch (error) {
       console.error('Scanning error:', error);
-      Alert.alert('Scanning Error', 'An error occurred while trying to scan the document.');
+      if (error instanceof Error && !error.message.includes('cancel')) {
+        Alert.alert('Scanning Error', 'An error occurred while trying to scan the document.');
+      }
     }
   };
 
-  const removePage = (index: number) => {
-    const newPages = [...scannedPages];
-    newPages.splice(index, 1);
-    setScannedPages(newPages);
+  const handleRemove = (index: number) => {
+    const itemToRemove = files[index];
+    if (itemToRemove.serverId) {
+      setRemovedServerIds((prev) => [...prev, itemToRemove.serverId!]);
+    }
+    const newFiles = [...files];
+    newFiles.splice(index, 1);
+    setFiles(newFiles);
+    if (onChange) onChange(newFiles);
   };
 
   const handleSave = async () => {
-    if (scannedPages.length === 0) return;
-
+    if (loading) return;
     setLoading(true);
     try {
-      const uploadedFiles = [];
-
-      for (let i = 0; i < scannedPages.length; i++) {
-        const uri = scannedPages[i];
-        const fileName = `scanned_${category}_${Date.now()}_${i}.jpg`;
-
-        const formData = new FormData();
-        formData.append('file', {
-          uri: uri,
-          name: fileName,
-          type: 'image/jpeg',
-        } as any);
-        formData.append('category', category);
-
-        const response = await LeadService.uploadImages(leadId, formData);
-        const result = response.data?.data || response.data;
-
-        if (result?.[0]?.url || result?.url) {
-          uploadedFiles.push({
-            uri: result?.[0]?.url || result?.url,
-            name: fileName,
-            serverId: result?.[0]?._id || result?._id,
-            isNew: true,
-          });
-        } else {
-          // Fallback to local URI if upload didn't return a URL (should not happen in prod)
-          uploadedFiles.push({ uri, name: fileName });
-        }
+      if (removedServerIds.length > 0) {
+        await Promise.allSettled(removedServerIds.map(id => LeadService.deleteOutcomeDocument(id)));
       }
-
-      onSave(uploadedFiles);
-      setScannedPages([]);
+      onSave(files);
       onClose();
     } catch (error) {
-      console.error('Upload error:', error);
-      Alert.alert('Upload Error', 'Failed to store documents in S3. Please check your connection.');
+      console.error('Error during document update:', error);
+      Alert.alert('Error', 'Failed to update documents. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
+  const DeleteButton = ({ onPress }: { onPress: () => void }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      style={styles.deleteButton}
+    >
+      <Icon name="close" size={14} color="white" />
+    </TouchableOpacity>
+  );
+
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View className="flex-1 bg-black/90">
-        {/* Header */}
-        <View className="flex-row justify-between items-center px-6 pt-14 pb-4 bg-slate-900">
-          <TouchableOpacity onPress={onClose} className="p-2">
-            <Icon name="close" size={24} color="white" />
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={onClose} disabled={loading}>
+            <Text style={{ color: colors.primary.main, fontSize: 16 }}>Cancel</Text>
           </TouchableOpacity>
-          <Text className="text-white font-black  text-sm tracking-widest">{title}</Text>
-          <TouchableOpacity
-            onPress={handleSave}
-            disabled={scannedPages.length === 0 || loading}
-            className={`px-4 py-2 rounded-full ${
-              scannedPages.length > 0 ? 'bg-green-500' : 'bg-slate-700'
-            }`}
-          >
+          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+          <TouchableOpacity onPress={handleSave} disabled={loading}>
             {loading ? (
-              <ActivityIndicator size="small" color="white" />
+              <ActivityIndicator size="small" color={colors.primary.main} />
             ) : (
-              <Text className="text-white font-black  text-[10px]">
-                Save ({scannedPages.length})
-              </Text>
+              <Text style={{ color: colors.primary.main, fontSize: 16, fontWeight: 'bold' }}>Update</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        {scannedPages.length === 0 ? (
-          <View className="flex-1 items-center justify-center px-10">
-            <View className="w-24 h-24 rounded-full bg-slate-800 items-center justify-center mb-6">
-              <Icon name="file-document-outline" size={48} color={colors.primary.main} />
-            </View>
-            <Text className="text-white text-xl font-black text-center  mb-2">Native Scanner</Text>
-            <Text className="text-slate-400 text-center text-xs font-medium leading-5 mb-10  tracking-widest">
-              Capture documents with automatic edge detection and corner highlighting
+        <ScrollView style={styles.content} contentContainerStyle={styles.scrollContainer}>
+          <View style={styles.infoBox}>
+            <Icon name="information" size={20} color="#0369a1" style={{ marginTop: 2 }} />
+            <Text style={styles.infoText}>
+              Scan documents via camera. You can remove existing or new pages and tap "Add More" to capture additional pages.
             </Text>
+          </View>
 
-            <TouchableOpacity
-              onPress={startScan}
-              className="w-full h-16 bg-white rounded-3xl items-center justify-center flex-row"
-            >
-              <Icon name="camera" size={24} color="black" />
-              <Text className="ml-3 font-black  text-sm">Open Native Scanner</Text>
+          {files.length === 0 ? (
+            <TouchableOpacity onPress={startScan} style={styles.emptyState}>
+              <Icon name="file-document-outline" size={64} color="#94a3b8" />
+              <Text style={styles.emptyStateTitle}>No documents captured</Text>
+              <Text style={styles.emptyStateSubtitle}>Tap here to start scanning</Text>
             </TouchableOpacity>
-          </View>
-        ) : (
-          <View className="flex-1">
-            <ScrollView className="flex-1 px-4 py-6">
-              <View className="flex-row flex-wrap justify-between">
-                {scannedPages.map((uri, idx) => (
-                  <View
-                    key={idx}
-                    className="w-[48%] aspect-[3/4] rounded-2xl overflow-hidden mb-4 bg-slate-800 border border-slate-700"
-                  >
-                    <Image source={{ uri }} className="w-full h-full" resizeMode="cover" />
-                    <View className="absolute top-2 left-2 px-2 py-1 bg-black/60 rounded-lg">
-                      <Text className="text-white text-[10px] font-black">PAGE {idx + 1}</Text>
+          ) : (
+            <View style={styles.grid}>
+              {files.map((item, idx) => (
+                <View key={idx} style={[styles.thumbnailContainer, { width: columnWidth }]}>
+                  <View style={styles.thumbnailWrapper}>
+                    <Image source={{ uri: item.uri }} style={styles.thumbnail} resizeMode="cover" />
+                    <DeleteButton onPress={() => handleRemove(idx)} />
+                    <View style={styles.pageBadge}>
+                      <Text style={styles.pageBadgeText}>{idx + 1}</Text>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => removePage(idx)}
-                      className="absolute top-2 right-2 w-8 h-8 rounded-full bg-red-500 items-center justify-center"
-                    >
-                      <Icon name="trash-can-outline" size={16} color="white" />
-                    </TouchableOpacity>
                   </View>
-                ))}
+                </View>
+              ))}
 
-                {/* Add More Button */}
-                <TouchableOpacity
-                  onPress={startScan}
-                  className="w-[48%] aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-700 items-center justify-center mb-4"
-                >
-                  <Icon name="plus-circle-outline" size={32} color="#475569" />
-                  <Text className="mt-2 text-slate-500 font-black  text-[10px]">Add Page</Text>
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        )}
+              {files.length < 10 && (
+                <View style={[styles.thumbnailContainer, { width: columnWidth }]}>
+                  <TouchableOpacity style={[styles.addTile, { borderColor: colors.border }]} onPress={startScan}>
+                    <Icon name="camera-plus-outline" size={32} color={colors.primary.main} />
+                    <Text style={{ color: colors.primary.main, marginTop: 8, fontWeight: 'bold', fontSize: 12 }}>Add More</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
 
-        {/* Bottom Tip */}
-        <View className="px-8 py-6 bg-slate-900 flex-row items-center">
-          <Icon name="shield-check" size={20} color="#22c55e" />
-          <Text className="ml-3 text-[10px] font-bold text-slate-400  leading-4 flex-1">
-            The native scanner will automatically detect borders. You can manually adjust corners if
-            needed.
+          {files.length > 0 && (
+            <Text style={{ textAlign: 'center', color: '#64748b', fontSize: 13, marginTop: 16, marginBottom: 40 }}>
+              {files.length} of 10 documents captured
+            </Text>
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+
+        <View style={[styles.footer, { borderTopColor: colors.border }]}>
+          <Text style={{ color: colors.text, opacity: 0.6, fontSize: 13 }}>
+            Review and press Update to sync changes
           </Text>
         </View>
       </View>
     </Modal>
   );
 };
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+  },
+  title: { fontSize: 18, fontWeight: 'bold' },
+  content: { flex: 1 },
+  scrollContainer: { padding: 16 },
+  infoBox: {
+    flexDirection: 'row',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#e0f2fe',
+  },
+  infoText: {
+    marginLeft: 12,
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#0369a1',
+    fontWeight: '500',
+  },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -8 },
+  thumbnailContainer: {
+    padding: 8,
+  },
+  thumbnailWrapper: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  thumbnail: { width: '100%', height: '100%' },
+  deleteButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 100,
+    backgroundColor: '#f43f5e',
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  pageBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pageBadgeText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
+  addTile: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#e2e8f0',
+    borderRadius: 20,
+    backgroundColor: 'white',
+    marginTop: 20,
+  },
+  emptyStateTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginTop: 16 },
+  emptyStateSubtitle: { fontSize: 14, color: '#64748b', marginTop: 8 },
+  footer: { padding: 20, alignItems: 'center', borderTopWidth: 1, paddingBottom: 40 },
+});

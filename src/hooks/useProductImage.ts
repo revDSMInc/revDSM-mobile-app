@@ -36,7 +36,7 @@ export const useProductImage = (defaultProductName = 'gutter') => {
           },
         ]);
 
-        const secureUrl = secureResponse?.data?.[0]?.secureUrl || '';
+        const secureUrl = secureResponse?.data?.data?.[0]?.secureUrl || '';
         setImage({ color: colorCode, imageUrl: secureUrl });
       } catch (err) {
         console.error('[useProductImage] Failed:', err);

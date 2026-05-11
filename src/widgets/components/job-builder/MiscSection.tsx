@@ -7,37 +7,48 @@ interface MiscSectionProps {
   jobState: any;
   onUpdate: (section: string, field: string, value: any) => void;
   calculatorData: any;
+  onValidationError?: (error: string) => void;
 }
 
-export const MiscSection = ({ jobState, onUpdate, calculatorData }: MiscSectionProps) => {
-  const { colors, isDark } = useTheme();
-  const data = jobState.additional || {
-    extraLabor: 0,
-    numberOfScreenPulls: 0,
+export const MiscSection = ({
+  jobState,
+  onUpdate,
+  calculatorData,
+  onValidationError,
+}: MiscSectionProps) => {
+  const n = (v: any) => parseFloat(v) || 0;
+  const getCalcVal = (key: string) => {
+    if (!calculatorData) return 0;
+    const lowerKey = key.toLowerCase();
+    
+    const findInObj = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return 0;
+      const k = Object.keys(obj).find(ok => ok.toLowerCase() === lowerKey || ok.toLowerCase() === key.toLowerCase().replace('labor', 'labour'));
+      return k ? n(obj[k]) : 0;
+    };
+
+    return findInObj(calculatorData.inputs) || 
+           findInObj(calculatorData.extras) || 
+           findInObj(calculatorData) || 
+           findInObj(calculatorData.additional) ||
+           0;
+  };
+
+  const extraLaborVal = getCalcVal('extraLabor');
+  const screenPullsVal = getCalcVal('screens');
+
+  const data = {
+    extraLabor: extraLaborVal,
+    numberOfScreenPulls: screenPullsVal,
     extraLaborReason: '',
     cutAndRemoveShingleOverhang: '',
     dripEdgeFlashingFootage: '',
     fortyFootLadderNeeded: '',
     requireHarnessWork: '',
     needWalkboards: '',
+    ...(jobState.additional || {}),
   };
 
-  // Sync from calculatorData
-  React.useEffect(() => {
-    const calcLabor = parseFloat(calculatorData?.extraLabor || 0);
-    const calcScreens = parseFloat(calculatorData?.screens || 0);
-
-    if (
-      calcLabor !== parseFloat(data.extraLabor) ||
-      calcScreens !== parseFloat(data.numberOfScreenPulls)
-    ) {
-      onUpdate('additional', '', {
-        ...data,
-        extraLabor: calcLabor,
-        numberOfScreenPulls: calcScreens,
-      });
-    }
-  }, [calculatorData?.extraLabor, calculatorData?.screens]);
 
   const handleUpdate = (field: string, value: any) => {
     onUpdate('additional', field, value);
@@ -104,10 +115,9 @@ export const MiscSection = ({ jobState, onUpdate, calculatorData }: MiscSectionP
             key={opt}
             onPress={() => handleUpdate(field, opt)}
             className={`flex-1 h-12 rounded-lg items-center justify-center border-2 ${
-              data[field] === opt
-                ? 'bg-emerald-500 border-emerald-500'
-                : 'bg-white border-slate-100'
+              data[field] === opt ? 'border-[#22C55E]' : 'bg-white border-slate-100'
             }`}
+            style={data[field] === opt ? { backgroundColor: '#22C55E' } : {}}
           >
             <Text
               className={`font-black uppercase text-[12px] tracking-widest ${
@@ -121,8 +131,8 @@ export const MiscSection = ({ jobState, onUpdate, calculatorData }: MiscSectionP
       </View>
       {data[field] && (
         <View className="flex-row items-center mt-3 ml-1">
-          <Icon name="check" size={14} color="#10B981" />
-          <Text className="text-[10px] font-black text-emerald-500 ml-1 uppercase">
+          <Icon name="check" size={14} color="#22C55E" />
+          <Text className="text-[10px] font-black ml-1 uppercase" style={{ color: '#22C55E' }}>
             {data[field]}
           </Text>
         </View>
@@ -138,66 +148,79 @@ export const MiscSection = ({ jobState, onUpdate, calculatorData }: MiscSectionP
     >
       <View className="px-5 py-5 pb-24 bg-white">
         {/* Sync'd Fields (Locked) */}
-        {renderLockedField('Extra labor', `${data.extraLabor} Extra Labors`)}
-        {renderLockedField('Number of Screen Pulls', `${data.numberOfScreenPulls} Screen Pulls`)}
+        {renderLockedField('Extra labor', `${extraLaborVal} Extra Labors`)}
+        {renderLockedField('Number of Screen Pulls', `${screenPullsVal} Screen Pulls`)}
 
-        {/* Reason Section */}
-        {parseFloat(data.extraLabor) > 0 && (
-          <View
-            className={`mb-6 p-6 rounded-xl border ${
-              !data.extraLaborReason ? 'border-amber-500' : 'border-slate-100'
-            } bg-white`}
-          >
-            {!data.extraLaborReason && (
-              <View className="flex-row items-center mb-2">
-                <Icon name="alert" size={16} color="#f59e0b" />
-                <Text className="text-[11px] font-black text-amber-600 ml-2 uppercase">
-                  Incomplete- Reason Required
-                </Text>
-              </View>
-            )}
-            <Text
-              className={`text-sm font-black mb-4 ${
-                !data.extraLaborReason ? 'text-amber-500' : 'text-slate-900'
-              }`}
-            >
-              Why is there additional labor?{' '}
-              {!data.extraLaborReason && <Icon name="alert" size={14} color="#f59e0b" />}{' '}
-              {!data.extraLaborReason && 'Required'}
+        {/* Reason Section - Always visible, amber if required but missing */}
+        {/* Separate Warning Area - Does not wrap the input to maintain structure */}
+        {extraLaborVal > 0 && !data.extraLaborReason?.trim() && (
+          <View className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex-row items-center">
+            <Icon name="alert-circle" size={18} color="#D97706" />
+            <Text className="text-[10px] font-black text-amber-700 ml-2 uppercase tracking-widest">
+              INCOMPLETE - Reason Required
             </Text>
-            <View className="bg-slate-50 border border-slate-100 rounded-lg p-3 min-h-[100px]">
-              <TextInput
-                value={data.extraLaborReason}
-                onChangeText={(v) => handleUpdate('extraLaborReason', v)}
-                placeholder="Enter reason for additional labor...."
-                multiline
-                className="text-xs font-medium text-slate-900"
-              />
-            </View>
           </View>
         )}
 
+        <View
+          className={`mb-6 p-6 rounded-2xl border ${
+            extraLaborVal > 0 && !data.extraLaborReason?.trim()
+              ? 'border-amber-400 bg-amber-50/20'
+              : 'border-slate-100 bg-white'
+          }`}
+        >
+          <Text
+            className={`text-[10px] font-black mb-4 uppercase tracking-widest ${
+              extraLaborVal > 0 && !data.extraLaborReason?.trim()
+                ? 'text-amber-600'
+                : 'text-slate-400'
+            }`}
+          >
+            Why is there additional labor?{' '}
+            {extraLaborVal > 0 && !data.extraLaborReason?.trim() && '⚠️ Required'}
+          </Text>
+          <View
+            className={`rounded-xl p-3 min-h-[100px] border ${
+              extraLaborVal > 0 && !data.extraLaborReason?.trim()
+                ? 'border-amber-200 bg-white'
+                : 'border-slate-50 bg-slate-50'
+            }`}
+          >
+            <TextInput
+              key="reason-input-stable"
+              value={data.extraLaborReason}
+              onChangeText={(v) => handleUpdate('extraLaborReason', v)}
+              placeholder="Enter reason for additional labor..."
+              placeholderTextColor={
+                extraLaborVal > 0 && !data.extraLaborReason?.trim() ? '#D97706' : '#94a3b8'
+              }
+              multiline
+              className="text-xs font-bold text-slate-900 leading-4"
+            />
+          </View>
+        </View>
+
         {/* Project Details */}
         {renderInput(
-          'Cut And Remove Shingle Oveernhang',
+          'Cut And Remove Shingle Overhang',
           'cutAndRemoveShingleOverhang',
           'Enter cut and remove shingle overhang...'
         )}
         {renderInput(
           'Footage Of Drip Edge/Flashing',
           'dripEdgeFlashingFootage',
-          'Footage Of Drip Edge/Flashing',
+          'Enter footage of drip edge/flashing...',
           true
         )}
         {renderInput(
-          'Is a Forty Foot Ladder Needed',
+          'Is A Forty Foot Ladder Needed',
           'fortyFootLadderNeeded',
-          'Enter is a Forty Foot Ladder Needed...'
+          'Enter if a forty foot ladder is needed...'
         )}
 
         {/* Yes/No Toggles */}
-        {renderYesNo('Does This install Require Harness Work', 'requireHarnessWork')}
-        {renderYesNo('Does This install Need Walkboards', 'needWalkboards')}
+        {renderYesNo('Does This Install Require Harness Work', 'requireHarnessWork')}
+        {renderYesNo('Does This Install Need Walkboards', 'needWalkboards')}
       </View>
     </ScrollView>
   );

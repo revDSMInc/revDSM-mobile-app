@@ -11,6 +11,7 @@ import {
   Platform,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -20,6 +21,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { PALETTE } from '../../../theme/theme';
 import Doc from '../../../assets/svgs/icons/doc';
 import JobService from '../../../services/api/JobService';
+import { LeadService } from '../../../services/api/leads';
 
 import { useCalculatorSummary } from '../../../hooks/useCalculatorSummary';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -56,6 +58,8 @@ export const CalculatorSummary = ({
   onClose,
   handleAddJobToTracker,
   isAlreadyInTracker,
+  lead,
+  jobBuilderState,
 }: any) => {
   const { colors } = useTheme();
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
@@ -99,6 +103,35 @@ export const CalculatorSummary = ({
   const isSaved = Number(activeCalc.price) > 0;
   const screensCount = Number(activeCalc.inputs.ckToInstallers) || 0;
   const endPrice = Number(activeCalc.price) || 0;
+
+  // Source of truth: jobBuilderState is freshly fetched from the API via useDealOutcome,
+  // matching the actual lead payload: lead.jobBuilder.status === 'submitted' && lead.jobBuilder.calculatorId
+  // We prioritize the API-fetched jobBuilderState to avoid stale data from the lead object.
+  const isJobBuilderSubmitted = jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted';
+
+  const handleResetJobBuilder = () => {
+    Alert.alert(
+      'Reset Job Builder',
+      'This will reset the job builder for this rollout. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const leadId = lead?._id || lead?.leadId || lead?.id;
+              if (leadId) await LeadService.resetLead(leadId);
+              refresh?.();
+            } catch (err) {
+              console.error('[DealCenter] Reset job builder failed:', err);
+              Alert.alert('Error', 'Could not reset job builder. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  };
   // If endPrice is 0, use results.total (Retail) as the base.
   // Note: results.total already includes screens, so we don't add them again in the fallback case.
   const activeDrop =
@@ -280,8 +313,8 @@ export const CalculatorSummary = ({
                   </View>
                 </View>
                 <TouchableOpacity
-                  onPress={() => !activeCalc.isRolloutConfirmed && setShowPaymentPicker(true)}
-                  disabled={activeCalc.isRolloutConfirmed}
+                  onPress={() => !activeCalc.isRolloutConfirmed && !isJobBuilderSubmitted && setShowPaymentPicker(true)}
+                  disabled={activeCalc.isRolloutConfirmed || isJobBuilderSubmitted}
                   className="min-h-[56px] bg-card border border-border rounded-2xl px-4 py-3 flex-row items-center justify-between shadow-sm"
                 >
                   <View className="flex-1 pr-4">
@@ -448,7 +481,7 @@ export const CalculatorSummary = ({
                     placeholder="Enter End Price"
                     placeholderTextColor="#919EAB"
                     keyboardType="numeric"
-                    editable={!activeCalc.isRolloutConfirmed && !activeDrop}
+                    editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
                     onChangeText={handlePriceChange}
                   />
                   {activeDrop || activeCalc.isRolloutConfirmed ? (
@@ -799,7 +832,9 @@ export const CalculatorSummary = ({
 
                 {/* Bottom Action Buttons per Screenshot */}
                 <View className="flex-row gap-4 mb-20">
+                  {/* Drop button — disabled when job builder has been submitted */}
                   <TouchableOpacity
+                    disabled={isJobBuilderSubmitted}
                     onPress={() => {
                       if (showDropInput) {
                         const num = Number(dropValue.replace(/[^0-9.]/g, ''));
@@ -835,28 +870,49 @@ export const CalculatorSummary = ({
                         if (error) setError(null);
                       }
                     }}
-                    className="flex-1 h-14 bg-white border-2 border-[#1976D2] rounded-2xl items-center justify-center"
+                    className="flex-1 h-14 rounded-2xl items-center justify-center border-2"
+                    style={{
+                      borderColor: isJobBuilderSubmitted ? '#CBD5E1' : '#1976D2',
+                      backgroundColor: isJobBuilderSubmitted ? '#F1F5F9' : 'white',
+                      opacity: isJobBuilderSubmitted ? 0.5 : 1,
+                    }}
                   >
-                    <Text className="text-[#1976D2] font-black text-xs">
+                    <Text
+                      style={{ color: isJobBuilderSubmitted ? '#94A3B8' : '#1976D2' }}
+                      className="font-black text-xs"
+                    >
                       {`+ ${getOrdinal((activeCalc.dropPrice?.length || 0) + 1)} Drop`}
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setShowResultModal(true)}
-                    className="flex-1 h-14 bg-white border-2 border-orange-500 rounded-2xl items-center justify-center"
-                  >
-                    <View className="flex-row items-center">
-                      <Ionicons name="document-text-outline" size={16} color="orange" />
-                      <Text className="text-orange-600 font-black  text-xs ml-2">Result Lead</Text>
-                    </View>
-                    <Text className="text-orange-600 font-black text-sm">
-                      {fCurrency(
-                        activeCalc.dropPrice && activeCalc.dropPrice.length > 0
-                          ? activeCalc.dropPrice[activeCalc.dropPrice.length - 1].dropedPrice
-                          : activeCalc.price
-                      )}
-                    </Text>
-                  </TouchableOpacity>
+
+                  {/* Result Lead / Reset Job Builder */}
+                  {isJobBuilderSubmitted ? (
+                    <TouchableOpacity
+                      onPress={handleResetJobBuilder}
+                      className="flex-1 h-14 rounded-2xl items-center justify-center flex-row"
+                      style={{ backgroundColor: '#EF4444' }}
+                    >
+                      <Ionicons name="refresh" size={16} color="white" />
+                      <Text className="text-white font-black text-xs ml-2">Reset Job Builder</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => setShowResultModal(true)}
+                      className="flex-1 h-14 bg-white border-2 border-orange-500 rounded-2xl items-center justify-center"
+                    >
+                      <View className="flex-row items-center">
+                        <Ionicons name="document-text-outline" size={16} color="orange" />
+                        <Text className="text-orange-600 font-black text-xs ml-2">Result Lead</Text>
+                      </View>
+                      <Text className="text-orange-600 font-black text-sm">
+                        {fCurrency(
+                          activeCalc.dropPrice && activeCalc.dropPrice.length > 0
+                            ? activeCalc.dropPrice[activeCalc.dropPrice.length - 1].dropedPrice
+                            : activeCalc.price
+                        )}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 <View className="mb-20" />
