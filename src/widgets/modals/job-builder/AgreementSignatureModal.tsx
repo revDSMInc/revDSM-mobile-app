@@ -298,12 +298,12 @@ export const AgreementSignatureModal = ({
                                   (Number(signatureFields.buyerInitials.yPercent) / 100) *
                                     renderedH,
                                 width: `${Math.max(
-                                  12,
-                                  Number(signatureFields.buyerInitials.widthPercent)
+                                  15,
+                                  Number(signatureFields.buyerInitials.widthPercent) * 1.2
                                 )}%`,
                                 height: `${Math.max(
-                                  5,
-                                  Number(signatureFields.buyerInitials.heightPercent)
+                                  3.5,
+                                  Number(signatureFields.buyerInitials.heightPercent) * 0.8
                                 )}%`,
                                 backgroundColor:
                                   initialsPaths.length > 0
@@ -312,13 +312,13 @@ export const AgreementSignatureModal = ({
                                 borderWidth: 2,
                                 borderColor: initialsPaths.length > 0 ? '#22C55E' : '#94A3B8',
                                 borderStyle: initialsPaths.length > 0 ? 'solid' : 'dashed',
-                                borderRadius: 12,
+                                borderRadius: 8,
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 transform: [
-                                  { translateX: -renderedW * 0.02 },
-                                  { translateY: -renderedH * 0.01 },
-                                ], // Slight adjust for center-alignment
+                                  { translateX: -renderedW * 0.01 },
+                                  { translateY: -renderedH * 0.005 },
+                                ], // Precision center-alignment
                               }}
                             >
                               {initialsPaths.length === 0 ? (
@@ -369,12 +369,12 @@ export const AgreementSignatureModal = ({
                                   (Number(signatureFields.buyerSignature.yPercent) / 100) *
                                     renderedH,
                                 width: `${Math.max(
-                                  25,
-                                  Number(signatureFields.buyerSignature.widthPercent)
+                                  16,
+                                  Number(signatureFields.buyerSignature.widthPercent) * 0.65
                                 )}%`,
                                 height: `${Math.max(
-                                  8,
-                                  Number(signatureFields.buyerSignature.heightPercent)
+                                  5,
+                                  Number(signatureFields.buyerSignature.heightPercent) * 0.65
                                 )}%`,
                                 backgroundColor:
                                   signaturePaths.length > 0
@@ -383,13 +383,13 @@ export const AgreementSignatureModal = ({
                                 borderWidth: 2,
                                 borderColor: signaturePaths.length > 0 ? '#22C55E' : '#94A3B8',
                                 borderStyle: signaturePaths.length > 0 ? 'solid' : 'dashed',
-                                borderRadius: 12,
+                                borderRadius: 8,
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 transform: [
-                                  { translateX: -renderedW * 0.05 },
-                                  { translateY: -renderedH * 0.02 },
-                                ], // Slight adjust for center-alignment
+                                  { translateX: -renderedW * 0.005 + 10 },
+                                  { translateY: 0.0 },
+                                ], // Precision center-alignment on line
                               }}
                             >
                               {signaturePaths.length === 0 ? (

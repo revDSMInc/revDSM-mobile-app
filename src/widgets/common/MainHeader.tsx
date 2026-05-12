@@ -32,8 +32,7 @@ export function Header({
   const initials = `${user?.firstName?.[0] || 'U'}${user?.lastName?.[0] || ''}`;
 
   return (
-    <SafeAreaView
-      edges={['top']}
+    <View
       style={{ backgroundColor: isDark ? colors.background : '#101828' }}
     >
       <View
@@ -58,7 +57,7 @@ export function Header({
           {onFilterPress && (
             <TouchableOpacity
               onPress={onFilterPress}
-              className="w-10 h-10 rounded-xl bg-[#2EDE56] items-center justify-center mr-2 shadow-sm"
+              className="w-9 h-9 rounded-full bg-[#4CBB17] items-center justify-center mr-3 shadow-sm"
             >
               <Icon name="filter-variant" size={22} color="white" />
             </TouchableOpacity>
@@ -67,7 +66,7 @@ export function Header({
           {onListPress && (
             <TouchableOpacity
               onPress={onListPress}
-              className="w-10 h-10 rounded-xl bg-[#2EDE56] items-center justify-center mr-2 shadow-sm"
+              className="w-9 h-9 rounded-full bg-[#4CBB17] items-center justify-center mr-3 shadow-sm"
             >
               <Icon name="format-list-bulleted" size={22} color="white" />
             </TouchableOpacity>
@@ -96,7 +95,7 @@ export function Header({
           onNavigate={onNavigate}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

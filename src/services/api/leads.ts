@@ -15,7 +15,7 @@ export const LeadEndpoints = {
   appointments: 'appointments',
   calculators: (appointmentId: string) => `appointments/${appointmentId}/lfcalculators`,
   updateCalculator: (id: string) => `lfcalculators/${id}`,
-  favourite: 'lead/v1/favourite',
+  favourite: 'job/v1/favorite',
   archive: (id: string) => `lead/v1/archive/${id}`,
   delete: (id: string) => `lead/v1/delete/${id}`,
   // Production documentation additions
@@ -106,8 +106,8 @@ export const LeadService = {
     api.post(LeadEndpoints.calculators(appointmentId), payload),
   updateCalculator: (id: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.updateCalculator(id), payload),
-  toggleFavourite: (leadId: string): Promise<AxiosResponse<any>> =>
-    api.patch(LeadEndpoints.favourite, { leadId }),
+  toggleFavourite: (leadId: string, isFavorite: boolean): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.favourite, { jobId: leadId, favorite: isFavorite }),
   archiveLead: (id: string, isArchive: boolean): Promise<AxiosResponse<any>> =>
     api.patch(LeadEndpoints.archive(id), { isArchive }),
   deleteLead: (id: string): Promise<AxiosResponse<any>> => api.delete(LeadEndpoints.delete(id)),

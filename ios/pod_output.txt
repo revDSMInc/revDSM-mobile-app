@@ -1,0 +1,33 @@
+    [33mWARNING: CocoaPods requires your terminal to be using UTF-8 encoding.
+    Consider adding the following to ~/.profile:
+
+    export LANG=en_US.UTF-8
+    [0m
+/usr/local/Cellar/ruby@3.3/3.3.10/lib/ruby/3.3.0/unicode_normalize/normalize.rb:141:in `normalize': Unicode Normalization not appropriate for ASCII-8BIT (Encoding::CompatibilityError)
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:167:in `unicode_normalize'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:167:in `installation_root'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:227:in `podfile_path'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/user_interface/error_report.rb:105:in `markdown_podfile'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/user_interface/error_report.rb:30:in `report'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/command.rb:66:in `report_error'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/claide-1.1.0/lib/claide/command.rb:396:in `handle_exception'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/claide-1.1.0/lib/claide/command.rb:337:in `rescue in run'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/claide-1.1.0/lib/claide/command.rb:324:in `run'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/command.rb:52:in `run'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/bin/pod:55:in `<top (required)>'
+	from /usr/local/Cellar/ruby@3.3/3.3.10/lib/ruby/3.3.0/rubygems.rb:319:in `load'
+	from /usr/local/Cellar/ruby@3.3/3.3.10/lib/ruby/3.3.0/rubygems.rb:319:in `activate_and_load_bin_path'
+	from /usr/local/lib/ruby/gems/3.3.0/bin/pod:25:in `<main>'
+/usr/local/Cellar/ruby@3.3/3.3.10/lib/ruby/3.3.0/unicode_normalize/normalize.rb:141:in `normalize': Unicode Normalization not appropriate for ASCII-8BIT (Encoding::CompatibilityError)
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:167:in `unicode_normalize'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:167:in `installation_root'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:227:in `podfile_path'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/config.rb:206:in `podfile'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/command.rb:160:in `verify_podfile_exists!'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/command/install.rb:46:in `run'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/claide-1.1.0/lib/claide/command.rb:334:in `run'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/lib/cocoapods/command.rb:52:in `run'
+	from /usr/local/lib/ruby/gems/3.3.0/gems/cocoapods-1.15.2/bin/pod:55:in `<top (required)>'
+	from /usr/local/Cellar/ruby@3.3/3.3.10/lib/ruby/3.3.0/rubygems.rb:319:in `load'
+	from /usr/local/Cellar/ruby@3.3/3.3.10/lib/ruby/3.3.0/rubygems.rb:319:in `activate_and_load_bin_path'
+	from /usr/local/lib/ruby/gems/3.3.0/bin/pod:25:in `<main>'

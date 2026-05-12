@@ -136,6 +136,14 @@ export const useDealCalculator = (lead: any) => {
       });
     }
 
+    if (n(inputs.ckToInstallers)) {
+      items.push({
+        label: 'Number of screens',
+        value: inputs.ckToInstallers,
+        category: 'Additional Services',
+      });
+    }
+
     return { price50, price65, price100, total: finalTotal, items };
   }, [active]);
 

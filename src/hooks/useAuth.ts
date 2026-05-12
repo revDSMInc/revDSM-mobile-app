@@ -16,12 +16,19 @@ export const useAuth = () => {
    * Universal Logout Utility
    */
   const logout = useCallback(async () => {
-    // 1. Clear session from persistent storage & headers
-    await setSessionHeader(null);
-    // 2. Disconnect the global socket before wiping auth state
-    SocketManager.disconnect();
-    // 3. Wipe memory / Redux state
-    dispatch(logoutAction());
+    try {
+      // 1. Clear session from persistent storage & headers
+      await setSessionHeader(null);
+      // 2. Disconnect the global socket before wiping auth state
+      SocketManager.disconnect();
+      // 3. Clear API cache (React Query)
+      const { queryClient } = require('../services/api/queryClient');
+      if (queryClient) queryClient.clear();
+      // 4. Wipe memory / Redux state
+      dispatch(logoutAction());
+    } catch (err) {
+      console.error('Logout failed', err);
+    }
   }, [dispatch]);
 
   /**

@@ -15,6 +15,7 @@ interface MapJobCardProps {
   onCameraPress?: (job: any) => void;
   onReferencePress?: (job: any) => void;
   onGalleryPress?: (job: any) => void;
+  onFavoritePress?: (job: any) => void;
 }
 
 export const MapJobCard = ({
@@ -24,6 +25,7 @@ export const MapJobCard = ({
   onGalleryPress,
   onCameraPress,
   onReferencePress,
+  onFavoritePress,
 }: MapJobCardProps) => {
   const { colors, isDark } = useTheme();
 
@@ -88,7 +90,7 @@ export const MapJobCard = ({
               Sales Rep
             </Text>
             <Text className="text-[14px] font-bold text-slate-700" numberOfLines={1}>
-              {job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
+              {job.userName || job.salesRepName || job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
             </Text>
           </View>
         </View>
@@ -117,6 +119,7 @@ export const MapJobCard = ({
         {/* Action Row */}
         <View className="flex-row items-center gap-3">
           <TouchableOpacity 
+            onPress={() => onFavoritePress?.(job)}
             className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
           >
             <Icon
@@ -126,33 +129,38 @@ export const MapJobCard = ({
             />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => onGalleryPress?.(job)}
-            className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-          >
-            <Icon name="image-multiple-outline" size={20} color="#94a3b8" />
-          </TouchableOpacity>
+          {/* Show Gallery only if images exist */}
+          {((job.images?.beforeImages?.length > 0) || (job.images?.afterImages?.length > 0)) && (
+            <TouchableOpacity
+              onPress={() => onGalleryPress?.(job)}
+              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+            >
+              <Icon name="image-multiple-outline" size={20} color="#10b981" />
+            </TouchableOpacity>
+          )}
 
+          {/* Upload: Only for Owner */}
           {isMyJob && (
-            <>
-              <TouchableOpacity
-                onPress={() => onCameraPress?.(job)}
-                className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-              >
-                <Icon name="camera-plus-outline" size={20} color="#94a3b8" />
-              </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onCameraPress?.(job)}
+              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+            >
+              <Icon name="cloud-upload-outline" size={20} color="#3b82f6" />
+            </TouchableOpacity>
+          )}
 
-              <TouchableOpacity
-                onPress={() => onReferencePress?.(job)}
-                className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-              >
-                <Icon
-                  name="account-group-outline"
-                  size={20}
-                  color={job.jobReferrals?.length > 0 ? '#10b981' : '#94a3b8'}
-                />
-              </TouchableOpacity>
-            </>
+          {/* Reference: Always for Owner, Only if exists for others */}
+          {(isMyJob || (job.jobReferrals && job.jobReferrals.length > 0)) && (
+            <TouchableOpacity
+              onPress={() => onReferencePress?.(job)}
+              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+            >
+              <Icon
+                name="account-group"
+                size={20}
+                color={job.jobReferrals?.length > 0 ? '#059669' : isMyJob ? '#94a3b8' : '#059669'}
+              />
+            </TouchableOpacity>
           )}
         </View>
       </View>

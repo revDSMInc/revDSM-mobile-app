@@ -482,9 +482,10 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label="Installer Check"
+            label="Number of screens $75"
             value={inputs.ckToInstallers}
             keyName="ckToInstallers"
+            price={75}
             onUpdate={onUpdate}
           />
         </Section>
@@ -524,6 +525,7 @@ export const CalculatorForm = ({
                 Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                 Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
                 'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+                Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
               };
               const style = categoryStyles[category] || {
                 color: '#637381',

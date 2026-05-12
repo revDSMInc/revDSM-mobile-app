@@ -877,7 +877,7 @@ export const SummarySection = ({
           installWindow: jobState.scheduleTime?.timeWindow || '',
         },
         jobScope: scope.length > 0 ? scope : ['Project completion per summary details'],
-        contractorName: `${userFullName} SIGN`,
+        contractorName: `${userFullName}`,
       };
 
       const response = await LeadService.previewAgreement(leadId, payload);
@@ -1261,86 +1261,88 @@ export const SummarySection = ({
         {summarySections.map(renderSection)}
 
         {/* Appointment Status Card */}
-        {!isAppointmentSet ? (
-          /* ── NOT SCHEDULED ─────────────────────────────────────── */
-          <View
-            style={{ marginBottom: 24, borderRadius: 16, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', padding: 20 }}
-          >
-            {/* Title row */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a', marginRight: 12 }}>
-                Schedule Appointment
-              </Text>
-              <View style={{ backgroundColor: '#ef4444', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
-                <Text style={{ color: 'white', fontSize: 8, fontWeight: '900', letterSpacing: 0.5 }}>Required</Text>
-              </View>
-            </View>
-
-            {/* Description */}
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#ef4444', marginBottom: 20 }}>
-              Appointment scheduling is required to complete the job
-            </Text>
-
-            {/* CTA button */}
-            <Pressable
-              onPress={() => setSchedulerOpen(true)}
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#10b981', height: 56, borderRadius: 12 }}
+        {outcomeForm?.result?.toLowerCase() !== 'demo' && (
+          !isAppointmentSet ? (
+            /* ── NOT SCHEDULED ─────────────────────────────────────── */
+            <View
+              style={{ marginBottom: 24, borderRadius: 16, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', padding: 20 }}
             >
-              <Icon name="calendar-clock" size={22} color="white" />
-              <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginLeft: 12 }}>Schedule Appointment</Text>
-            </Pressable>
-          </View>
-        ) : (
-          /* ── SCHEDULED ──────────────────────────────────────────── */
-          <View style={{ marginBottom: 24, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#f1f5f9', backgroundColor: 'white', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}>
-            {/* Green header */}
-            <View style={{ backgroundColor: '#10b981', paddingHorizontal: 20, paddingVertical: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Scheduled Appointment</Text>
-              <Pressable onPress={() => setSchedulerOpen(true)} hitSlop={10}>
-                <Icon name="pencil" size={20} color="white" />
+              {/* Title row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a', marginRight: 12 }}>
+                  Schedule Appointment
+                </Text>
+                <View style={{ backgroundColor: '#ef4444', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                  <Text style={{ color: 'white', fontSize: 8, fontWeight: '900', letterSpacing: 0.5 }}>Required</Text>
+                </View>
+              </View>
+
+              {/* Description */}
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#ef4444', marginBottom: 20 }}>
+                Appointment scheduling is required to complete the job
+              </Text>
+
+              {/* CTA button */}
+              <Pressable
+                onPress={() => setSchedulerOpen(true)}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#10b981', height: 56, borderRadius: 12 }}
+              >
+                <Icon name="calendar-clock" size={22} color="white" />
+                <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, marginLeft: 12 }}>Schedule Appointment</Text>
               </Pressable>
             </View>
+          ) : (
+            /* ── SCHEDULED ──────────────────────────────────────────── */
+            <View style={{ marginBottom: 24, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#f1f5f9', backgroundColor: 'white', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}>
+              {/* Green header */}
+              <View style={{ backgroundColor: '#10b981', paddingHorizontal: 20, paddingVertical: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Scheduled Appointment</Text>
+                <Pressable onPress={() => setSchedulerOpen(true)} hitSlop={10}>
+                  <Icon name="pencil" size={20} color="white" />
+                </Pressable>
+              </View>
 
-            {/* Body rows */}
-            <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 }}>
-              {/* Customer */}
-              <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>Customer</Text>
-              <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a', marginBottom: 16 }}>
-                {jobState.scheduleTime?.customerName || customerName || 'N/A'}
-              </Text>
-              <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 16 }} />
+              {/* Body rows */}
+              <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 }}>
+                {/* Customer */}
+                <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>Customer</Text>
+                <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a', marginBottom: 16 }}>
+                  {jobState.scheduleTime?.customerName || customerName || 'N/A'}
+                </Text>
+                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 16 }} />
 
-              {/* Date */}
-              <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>Date</Text>
-              <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a', marginBottom: 16 }}>
-                {jobState.scheduleTime?.date === 'TBD'
-                  ? 'TBD'
-                  : jobState.scheduleTime?.date || 'N/A'}
-              </Text>
-              <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 16 }} />
+                {/* Date */}
+                <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>Date</Text>
+                <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a', marginBottom: 16 }}>
+                  {jobState.scheduleTime?.date === 'TBD'
+                    ? 'TBD'
+                    : jobState.scheduleTime?.date || 'N/A'}
+                </Text>
+                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 16 }} />
 
-              {/* Time Window */}
-              {jobState.scheduleTime?.timeWindow ? (
-                <>
-                  <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>Time Window</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a', marginBottom: 16 }}>
-                    {jobState.scheduleTime.timeWindow}
-                  </Text>
-                </>
-              ) : null}
+                {/* Time Window */}
+                {jobState.scheduleTime?.timeWindow ? (
+                  <>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>Time Window</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a', marginBottom: 16 }}>
+                      {jobState.scheduleTime.timeWindow}
+                    </Text>
+                  </>
+                ) : null}
 
-              {/* TBD Reason */}
-              {jobState.scheduleTime?.reason ? (
-                <>
-                  <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 16 }} />
-                  <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>TBD Reason</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 16 }}>
-                    {jobState.scheduleTime.reason}
-                  </Text>
-                </>
-              ) : null}
+                {/* TBD Reason */}
+                {jobState.scheduleTime?.reason ? (
+                  <>
+                    <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 16 }} />
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', marginBottom: 4 }}>TBD Reason</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 16 }}>
+                      {jobState.scheduleTime.reason}
+                    </Text>
+                  </>
+                ) : null}
+              </View>
             </View>
-          </View>
+          )
         )}
 
         {/* Documents Section */}

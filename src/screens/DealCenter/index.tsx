@@ -65,11 +65,7 @@ export default function LFCalculator({ route }: any) {
   const lead = route.params?.lead;
   const onRefresh = route.params?.onRefresh;
   const onClose = () => {
-    if (lead) {
-      navigation.navigate('LeadCenter', { lead, tab: 'tools' });
-    } else {
-      navigation.goBack();
-    }
+    navigation.goBack();
   };
 
   const [currentView, setCurrentView] = useState<
@@ -178,7 +174,7 @@ export default function LFCalculator({ route }: any) {
           initialJobState: jobState,
           calculatorData: active,
           leadId: lead?._id || lead?.leadId || lead?.id,
-          outcomeForm: outcomeForm,
+          outcomeForm: { ...outcomeForm, result: outcomeStatus },
           onGoBack: (updatedJobState: any) => {
             setJobState(updatedJobState);
             setCurrentView('outcome');

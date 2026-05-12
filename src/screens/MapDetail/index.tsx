@@ -23,6 +23,7 @@ import { ReferralModal } from '../../widgets/modals/ReferralModal';
 import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { format } from 'date-fns';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
@@ -101,8 +102,7 @@ export default function MapDetailScreen() {
   }, [leads]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
-      <StatusBar barStyle="light-content" />
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
       
       {/* Global Common Header with Map Tools */}
       <Header 
@@ -280,7 +280,7 @@ export default function MapDetailScreen() {
           <ActivityIndicator size="large" color="#4CBB17" />
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 

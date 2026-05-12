@@ -138,14 +138,12 @@ function getLeadState(
   // ── Resulted (non-active) leads — dimmed card ────────────────────────────
   const isResulted = !NON_RESULTED_STATUSES.includes(lead.status || '');
   if (isResulted) {
-    const statusKey = lead.status || 'resulted';
-    const label = RESULTED_LABELS[statusKey] || statusKey;
-    const color = RESULTED_COLORS[statusKey] || RESULTED_COLORS.default;
+    const label = RESULTED_LABELS[lead.status || ''] || lead.status || 'Resulted';
     return {
       status: 'RESULTED',
-      color: color,
+      color: '#94a3b8',
       action: `Resulted — ${label}`,
-      label: label.toUpperCase(),
+      label: 'RESULTED',
       disabled: false,
       shouldPulse: false,
     };
@@ -517,10 +515,10 @@ export function LeadCard({
             {isResulted && (
               <View
                 className="px-3 py-1.5 rounded-lg"
-                style={{ backgroundColor: leadState.color }}
+                style={{ backgroundColor: '#94a3b8' }}
               >
                 <Text className="text-[10px] font-black text-white tracking-widest uppercase">
-                  {leadState.label}
+                  RESULTED
                 </Text>
               </View>
             )}
@@ -601,16 +599,20 @@ export function LeadCard({
             >
               {lead.fullAddress || 'Address Pending'}
             </Text>
-            {userLocation && lead.location?.coordinates && (
-              <Text className="text-[10px] font-bold mt-0.5" style={{ color: '#919EAB' }}>
-                {calculateDistance(
-                  userLocation.latitude,
-                  userLocation.longitude,
-                  lead.location.coordinates[1],
-                  lead.location.coordinates[0]
-                ).toFixed(1)} miles away
-              </Text>
-            )}
+            {userLocation && lead.location?.coordinates && (() => {
+              const dist = calculateDistance(
+                userLocation.latitude,
+                userLocation.longitude,
+                lead.location.coordinates[1],
+                lead.location.coordinates[0]
+              );
+              if (dist < 0.1) return null;
+              return (
+                <Text className="text-[10px] font-bold mt-0.5" style={{ color: '#919EAB' }}>
+                  {dist.toFixed(1)} miles away
+                </Text>
+              );
+            })()}
           </View>
         </View>
 

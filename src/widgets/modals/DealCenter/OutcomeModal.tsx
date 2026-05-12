@@ -788,38 +788,28 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                     </Text>
                   </TouchableOpacity>
                 </View>
-
-                <View className="flex-row justify-end gap-3 pb-1 mt-8">
-                  <TouchableOpacity
-                    onPress={onClose}
-                    className="px-4 py-2.5 rounded-lg border border-[#919EAB52]"
-                  >
-                    <Text className="text-[#1C252E] font-semibold text-[13px]">Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={handleFinishOutcome}
-                    disabled={!outcomeStatus}
-                    className="px-5 py-2.5 rounded-lg"
-                    style={{
-                      backgroundColor: !outcomeStatus
-                        ? '#919EAB33'
-                        : outcomeStatus === 'sale'
-                        ? '#22C55E'
-                        : '#1C252E', // demo = dark, both go to Job Builder
-                    }}
-                  >
-                    <Text
-                      className="font-bold text-[13px]"
-                      style={{ color: !outcomeStatus ? '#919EABCC' : 'white' }}
-                    >
-                      {!outcomeStatus
-                        ? 'Select Result'
-                        : 'Build Job'}{/* both demo and sale go to Job Builder */}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
               </View>
             </ScrollView>
+
+            {/* Fixed Bottom Button */}
+            <View className="px-5 pb-5 pt-2 border-t border-[#919EAB14]">
+              <TouchableOpacity
+                onPress={handleFinishOutcome}
+                disabled={!outcomeStatus}
+                className="h-12 rounded-xl items-center justify-center"
+                style={{
+                  backgroundColor: !outcomeStatus ? '#919EAB33' : colors.primary.main,
+                }}
+              >
+                <Text
+                  className="font-bold text-sm tracking-wide"
+                  style={{ color: !outcomeStatus ? '#919EABCC' : 'white' }}
+                >
+                  {!outcomeStatus ? 'Select Result' : 'Build Job'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <RNFlashMessage ref={flashRef} position="top" canRegisterAsDefault={false} />
           </View>
 

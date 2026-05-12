@@ -39,6 +39,7 @@ interface LeafFilterSectionProps {
   calculatorData: any;
   onFieldChange?: (data: any) => void;
   onValidationError?: (error: string) => void;
+  outcomeForm?: any;
 }
 
 export const LeafFilterSection = ({
@@ -47,6 +48,7 @@ export const LeafFilterSection = ({
   calculatorData,
   onFieldChange,
   onValidationError,
+  outcomeForm,
 }: LeafFilterSectionProps) => {
   const { isDark } = useTheme();
   const [colorModal, setColorModal] = useState<{ visible: boolean; comboIdx: number } | null>(null);
@@ -449,7 +451,7 @@ export const LeafFilterSection = ({
                           <TouchableOpacity
                             key={o}
                              onPress={() => {
-                               if (o === '< 2.5') {
+                               if (o === '< 2.5' && outcomeForm?.result?.toLowerCase() !== 'demo') {
                                  setNoticeModal(true);
                                }
                                updateCombo(idx, {

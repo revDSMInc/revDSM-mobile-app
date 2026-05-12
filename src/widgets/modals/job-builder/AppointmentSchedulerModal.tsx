@@ -75,29 +75,32 @@ export const AppointmentSchedulerModal = ({
 
   const handleAcceptSlot = () => {
     setIsTBD(false);
-    setView('success');
-  };
-
-  const handleFinalSave = () => {
-    handleModalClose();
-    if (isTBD) {
-      onConfirm({
-        date: 'TBD',
-        reason: tbdReason,
-        customerName,
-      });
+    const data = {
+      date: format(selectedDate, 'M/d/yyyy'),
+      timeWindow: windows[timeSlotIdx].value,
+      customerName,
+    };
+    onConfirm(data);
+    if (isEdit) {
+      onClose();
     } else {
-      onConfirm({
-        date: format(selectedDate, 'M/d/yyyy'),
-        timeWindow: windows[timeSlotIdx].value,
-        customerName,
-      });
+      setView('success');
     }
   };
 
   const handleConfirmTBDStep = () => {
     setIsTBD(true);
-    setView('success');
+    const data = {
+      date: 'TBD',
+      reason: tbdReason,
+      customerName,
+    };
+    onConfirm(data);
+    if (isEdit) {
+      onClose();
+    } else {
+      setView('success');
+    }
   };
 
   const handleModalClose = () => {
@@ -389,37 +392,7 @@ export const AppointmentSchedulerModal = ({
                   )}
                 </View>
 
-                {isEdit ? (
-                  <TouchableOpacity onPress={handleFinalSave} style={{ width: '100%' }}>
-                    <View
-                      style={{
-                        width: '100%',
-                        height: 64,
-                        backgroundColor: '#22C55E',
-                        borderRadius: 16,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        shadowColor: '#10B981',
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowOpacity: 0.2,
-                        shadowRadius: 8,
-                        elevation: 4,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: 'white',
-                          fontWeight: '900',
-                          fontSize: 16,
-                          textTransform: 'uppercase',
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Save Changes
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : (
+                {isEdit ? null : (
                   <View style={{ width: '100%', gap: 12 }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -486,9 +459,7 @@ export const AppointmentSchedulerModal = ({
                       </Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity onPress={handleFinalSave} style={{ marginTop: 8, alignItems: 'center' }}>
-                      <Text style={{ color: '#94a3b8', fontWeight: 'bold', fontSize: 12 }}>Just Save Appointment</Text>
-                    </TouchableOpacity>
+                    {/* Removed Just Save Appointment per request as it is now handled by Continue/Yes */}
                   </View>
                 )}
               </View>

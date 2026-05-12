@@ -11,7 +11,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import * as Mapbox from '@rnmapbox/maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Geolocation from 'react-native-geolocation-service';
 import { useNavigation } from '@react-navigation/native';
@@ -22,12 +22,11 @@ import { ENV } from '../../../config/env';
 import { MapJobCard } from './MapJobCard';
 import { useAuth } from '../../../hooks/useAuth';
 import { MapGalleryModal } from './MapGalleryModal';
+import { MapToggleSwitch } from '../../common/MapToggleSwitch';
+import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
+import { ReferralModal } from '../../modals/ReferralModal';
+
 const markerImg = require('../../../assets/images/map/marker.png');
-
-const MarkerView = (Mapbox as any).MarkerView;
-
-// Initialize Mapbox with access token
-Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
 
 const { width, height } = Dimensions.get('window');
 
@@ -54,51 +53,104 @@ export const LeadMap = ({
 }: LeadMapProps) => {
   const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
-  const { leads, refresh } = useLeadsData();
+  const [allLeads, setAllLeads] = useState<any[]>([]);
+  const [isFetching, setIsFetching] = useState(false);
   const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
-  const mapRef = useRef<Mapbox.MapView>(null);
-  const cameraRef = useRef<Mapbox.Camera>(null);
+  const mapRef = useRef<MapView>(null);
   const isInternalMove = useRef(false);
+
+  const fetchAllJobs = async () => {
+    try {
+      setIsFetching(true);
+      const res = await LeadService.findJobs({});
+      const jobs = res.data?.data || [];
+      setAllLeads(jobs);
+
+      // Refresh active selections to show new images/referrals immediately
+      if (selectedLead?._id) {
+        const updated = jobs.find((j: any) => j._id === selectedLead._id);
+        if (updated) setSelectedLead(updated);
+      }
+      if (galleryJob?._id) {
+        const updated = jobs.find((j: any) => j._id === galleryJob._id);
+        if (updated) setGalleryJob(updated);
+      }
+    } catch (error) {
+      console.error('Failed to fetch jobs for map', error);
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllJobs();
+  }, []);
 
   const [filteredLeads, setFilteredLeads] = useState<any[]>([]);
   const [userLocation, setUserLocation] = useState<any>(null);
+  const markerPressedRef = useRef(false);
   const [isHeatMap, setIsHeatMap] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
-  const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<any[]>([]);
   const [showGallery, setShowGallery] = useState(false);
   const [galleryJob, setGalleryJob] = useState<any>(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [showReferral, setShowReferral] = useState(false);
   const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-2']);
-  const [currentZoom, setCurrentZoom] = useState(10);
+  const [region, setRegion] = useState({
+    ...TAMPA_COORDS,
+    latitudeDelta: 0.0922,
+    longitudeDelta: 0.0421,
+  });
+  const currentRegion = useRef(region);
 
   useEffect(() => {
-    let result = [...leads];
+    let result = [...allLeads];
 
-    // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
+    const isHeatMapActive = activeFilters.includes('HT-0');
+    const isMyJobsOnly = activeFilters.includes('MJ-1');
+    const isReferralOnly = activeFilters.includes('RF-2');
+
+    // Sync heatmap state
+    if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
+
     result = result.filter((item: any) => {
-      // ALWAYS show the current lead if jumping from list
       if (currentLead && item._id === currentLead._id) return true;
 
+      // 1. TAM Range Filter (Excludes TAM30000-30032)
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
         const num = parseInt(jobNumber.substring(3), 10);
         if (num >= 30000 && num <= 30032) return false;
       }
 
-      // Status Filtering logic
-      const status = item.status?.toLowerCase();
-      const isAJActive = activeFilters.some(f => f.startsWith('AJ'));
-      const isDEFActive = activeFilters.some(f => f.startsWith('DEF'));
+      // 2. My Jobs Filter
+      if (isMyJobsOnly) {
+        const uid = (user as any)?._id || (user as any)?.id;
+        const isOwner = !!uid && (
+          item.salesRepId === uid || 
+          item.salesRep?._id === uid ||
+          item.userId === uid ||
+          item.salesRep === uid ||
+          item.salesRepName === (user as any)?.fullName ||
+          item.salesRepName === (user as any)?.firstName ||
+          item.salesRep === (user as any)?.userName ||
+          item.userName === (user as any)?.userName
+        );
+        if (!isOwner) return false;
+      }
 
-      if (!isAJActive && status === 'issued') return false;
-      if (!isDEFActive && status === 'deferred') return false;
+      // 3. Referral Filter
+      if (isReferralOnly) {
+        if (!item.jobReferrals || item.jobReferrals.length === 0) return false;
+      }
 
       return true;
     });
 
     setFilteredLeads(result);
-  }, [leads, activeFilters]);
+  }, [allLeads, activeFilters, user, isHeatMap, currentLead]);
 
   useEffect(() => {
     requestLocationPermission();
@@ -122,15 +174,16 @@ export const LeadMap = ({
     Geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
-        setUserLocation([longitude, latitude]);
+        setUserLocation({ latitude, longitude });
 
         if (currentLead?.location?.coordinates) {
           handleMarkerClick(currentLead);
         } else {
-          cameraRef.current?.setCamera({
-            centerCoordinate: [longitude, latitude],
-            zoomLevel: 12,
-            animationDuration: 1000,
+          mapRef.current?.animateToRegion({
+            latitude,
+            longitude,
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05,
           });
         }
       },
@@ -139,39 +192,51 @@ export const LeadMap = ({
     );
   };
 
-  const centerOnLead = (lead: any) => {
-    const coords = lead.location?.coordinates;
-    if (!coords) return;
-
-    cameraRef.current?.setCamera({
-      centerCoordinate: [coords[0], coords[1]],
-      zoomLevel: 15,
-      animationDuration: 1000,
-    });
+  const handleToggleFavorite = async (job: any) => {
+    const nextValue = !(job.isFavourite || job.isFavorite);
+    try {
+      await LeadService.toggleFavourite(job._id, nextValue);
+      // Optimistic update
+      setFilteredLeads((prev) =>
+        prev.map((l) =>
+          l._id === job._id ? { ...l, isFavourite: nextValue, isFavorite: nextValue } : l
+        )
+      );
+      if (selectedLead && selectedLead._id === job._id) {
+        setSelectedLead({
+          ...selectedLead,
+          isFavourite: nextValue,
+          isFavorite: nextValue,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to toggle favorite', error);
+    }
   };
 
-  const handleMarkerClick = (lead: any) => {
+  const handleMarkerClick = (lead: any, event?: any) => {
+    markerPressedRef.current = true;
+    if (event && event.stopPropagation) {
+      event.stopPropagation();
+    }
+    
     const coords = lead.location?.coordinates;
     if (!coords) return;
 
     setSelectedLead(lead);
 
-    isInternalMove.current = true;
-    cameraRef.current?.setCamera({
-      centerCoordinate: [coords[0], coords[1]],
-      zoomLevel: 15,
-      animationDuration: 800,
-    });
-
-    setTimeout(() => {
-      isInternalMove.current = false;
-    }, 1000);
+    mapRef.current?.animateToRegion({
+      latitude: coords[1],
+      longitude: coords[0],
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    }, 800);
   };
 
   const fetchRoute = async () => {
     if (!userLocation || !currentLead?.location?.coordinates) return;
 
-    const start = `${userLocation[0]},${userLocation[1]}`;
+    const start = `${userLocation.longitude},${userLocation.latitude}`;
     const end = `${currentLead.location.coordinates[0]},${currentLead.location.coordinates[1]}`;
     
     try {
@@ -180,7 +245,11 @@ export const LeadMap = ({
       const data = await response.json();
       
       if (data.routes && data.routes.length > 0) {
-        setRouteGeoJSON(data.routes[0].geometry);
+        const coords = data.routes[0].geometry.coordinates.map((c: any) => ({
+          longitude: c[0],
+          latitude: c[1],
+        }));
+        setRouteCoordinates(coords);
       }
     } catch (error) {
       console.error('Error fetching route:', error);
@@ -191,31 +260,18 @@ export const LeadMap = ({
     if (showRoute) {
       fetchRoute();
     } else {
-      setRouteGeoJSON(null);
+      setRouteCoordinates([]);
     }
   }, [showRoute, userLocation, currentLead]);
 
-  // Convert leads to GeoJSON for ShapeSource (Clustering & Heatmap)
-  const leadsGeoJSON = useMemo(() => {
-    return {
-      type: 'FeatureCollection' as const,
-      features: filteredLeads
-        .filter((l: any) => l.location?.coordinates)
-        .map((l: any) => ({
-          type: 'Feature' as const,
-          id: l._id,
-          properties: {
-            id: l._id,
-            price: l.price || 0,
-            isFavourite: l.isFavourite,
-            lead: l,
-          },
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [l.location.coordinates[0], l.location.coordinates[1]],
-          },
-        })),
-    };
+  const heatmapPoints = useMemo(() => {
+    return filteredLeads
+      .filter((l: any) => l.location?.coordinates)
+      .map((l: any) => ({
+        latitude: l.location.coordinates[1],
+        longitude: l.location.coordinates[0],
+        weight: (l.price || 0) / 1000 || 1,
+      }));
   }, [filteredLeads]);
 
   return (
@@ -228,221 +284,177 @@ export const LeadMap = ({
         backgroundColor: isDark ? '#121212' : '#f0f0f0',
       }}
     >
-      <Mapbox.MapView
+      <MapView
         ref={mapRef}
+        provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
-        styleURL={Mapbox.StyleURL.Street}
-        logoEnabled={false}
-        attributionEnabled={false}
-        onPress={() => setSelectedLead(null)}
+        initialRegion={region}
+        onRegionChangeComplete={(r) => {
+          currentRegion.current = r;
+        }}
+        onPress={() => {
+          if (markerPressedRef.current) {
+            markerPressedRef.current = false;
+            return;
+          }
+          setSelectedLead(null);
+        }}
+        customMapStyle={isDark ? darkMapStyle : []}
       >
-        <Mapbox.Camera
-          ref={cameraRef}
-          defaultSettings={{
-            centerCoordinate: [TAMPA_COORDS.longitude, TAMPA_COORDS.latitude],
-            zoomLevel: currentZoom,
-          }}
-        />
-
-        {/* Route Layer */}
-        {routeGeoJSON && (
-          <Mapbox.ShapeSource id="routeSource" shape={routeGeoJSON}>
-            <Mapbox.LineLayer
-              id="routeLayer"
-              style={{
-                lineColor: colors.primary.main,
-                lineWidth: 4,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
-            />
-          </Mapbox.ShapeSource>
+        {/* Route Polyline */}
+        {routeCoordinates.length > 0 && (
+          <Polyline
+            coordinates={routeCoordinates}
+            strokeColor={colors.primary.main}
+            strokeWidth={4}
+          />
         )}
 
         {/* Heatmap Layer */}
-        {isHeatMap && (
-          <Mapbox.ShapeSource id="heatmapSource" shape={leadsGeoJSON as any}>
-            <Mapbox.HeatmapLayer
-              id="heatmapLayer"
-              style={{
-                heatmapWeight: ['interpolate', ['linear'], ['get', 'price'], 0, 0, 10000, 1],
-                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
-                heatmapColor: [
-                  'interpolate',
-                  ['linear'],
-                  ['heatmap-density'],
-                  0, 'rgba(116, 192, 255, 0)',
-                  0.1, '#74c0ff',
-                  0.3, '#0072ff',
-                  0.5, '#00c853',
-                  0.7, '#ffab00',
-                  0.85, '#ff6d00',
-                  1, '#d50000'
-                ] as any,
-                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 2, 15, 20],
-                heatmapOpacity: 0.7,
-              }}
-            />
-          </Mapbox.ShapeSource>
+        {isHeatMap && heatmapPoints.length > 0 && (
+          <Heatmap
+            points={heatmapPoints}
+            radius={40}
+            opacity={0.7}
+            gradient={{
+              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
+              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
+              colorMapSize: 256,
+            }}
+          />
         )}
 
-
-        {/* Individual Markers (Unclustered) */}
-        {!isHeatMap && (
-          <>
-            <Mapbox.Images images={{ markerIcon: markerImg }} />
-            <Mapbox.ShapeSource
-              id="leadsSource"
-              shape={leadsGeoJSON as any}
-              onPress={(e: { features: any[]; }) => {
-                const feature = e.features[0];
-                if (feature?.properties?.lead) {
-                  handleMarkerClick(feature.properties.lead);
-                }
+        {/* Individual Markers */}
+        {!isHeatMap && filteredLeads.map((job) => {
+          if (!job.location?.coordinates) return null;
+          return (
+            <Marker
+              key={job._id}
+              coordinate={{
+                latitude: job.location.coordinates[1],
+                longitude: job.location.coordinates[0],
               }}
+              onPress={(e) => handleMarkerClick(job, e)}
+              tracksViewChanges={false}
+              anchor={{ x: 0.5, y: 1 }}
             >
-              <Mapbox.SymbolLayer
-                id="leadsSymbols"
-                style={{
-                  iconImage: 'markerIcon',
-                  iconSize: [
-                    'interpolate',
-                    ['linear'],
-                    ['zoom'],
-                    10, 0.4,
-                    15, 0.8
-                  ],
-                  iconAllowOverlap: true,
-                  iconAnchor: 'bottom',
-                }}
-              />
-            </Mapbox.ShapeSource>
-          </>
-        )}
+              <View>
+                <Image 
+                  source={markerImg} 
+                  style={{ 
+                    width: 30, 
+                    height: 35,
+                    tintColor: (job.isFavourite || job.isFavorite) ? '#F5B041' : undefined 
+                  }} 
+                  resizeMode="contain" 
+                />
+                {(job.isFavourite || job.isFavorite) && (
+                  <View className="absolute top-1 left-0 right-0 items-center justify-center">
+                    <Icon name="star" size={12} color="white" />
+                  </View>
+                )}
+              </View>
+            </Marker>
+          );
+        })}
 
         {/* User Location Marker */}
         {userLocation && (
-          <Mapbox.PointAnnotation 
-            id="userLocation" 
-            coordinate={[userLocation[0], userLocation[1]]}
+          <Marker
+            coordinate={userLocation}
+            anchor={{ x: 0.5, y: 0.5 }}
           >
             <View className="items-center justify-center">
               <View className="w-8 h-8 rounded-full bg-blue-500/20 border-2 border-white items-center justify-center shadow-lg">
                 <View className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
               </View>
             </View>
-          </Mapbox.PointAnnotation>
+          </Marker>
         )}
+      </MapView>
 
-        {/* Preload Marker Images (Optional if using layers) */}
-        {/* Selected Job Callout (Anchored to Marker) */}
-        {selectedLead && (
-          <MarkerView
-            key={`callout-${selectedLead._id}`}
-            id="selectedCallout"
-            coordinate={[
-              selectedLead.location.coordinates[0],
-              selectedLead.location.coordinates[1],
-            ]}
-            anchor={{ x: 0.5, y: 1 }}
+      {/* Selected Job Card (Floating Overlay instead of Callout for better UI control) */}
+      {selectedLead && (
+        <View style={styles.cardOverlay} pointerEvents="box-none">
+          <View
+            style={{
+              backgroundColor: isDark ? '#1E1E1E' : 'white',
+              borderRadius: 24,
+              overflow: 'hidden',
+              borderWidth: 1,
+              borderColor: isDark ? '#333' : '#f1f5f9',
+              width: 280,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.2,
+              shadowRadius: 20,
+              elevation: 20,
+            }}
           >
-            <View style={{ width: 280, marginBottom: 40, alignItems: 'center' }}>
-              <View
-                style={{
-                  backgroundColor: isDark ? '#1E1E1E' : 'white',
-                  borderRadius: 24,
-                  overflow: 'hidden',
-                  borderWidth: 1,
-                  borderColor: isDark ? '#333' : '#f1f5f9',
-                  width: '100%',
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 10 },
-                  shadowOpacity: 0.2,
-                  shadowRadius: 20,
-                  elevation: 20,
-                }}
-              >
-                <MapJobCard
-                  job={selectedLead}
-                  onClose={() => setSelectedLead(null)}
-                  isMyJob={
-                    selectedLead.salesRepId === (user as any)?._id || 
-                    selectedLead.salesRep?._id === (user as any)?._id
-                  }
-                  onReferencePress={() => {
-                    if (onReferencePress) onReferencePress(selectedLead);
-                    else navigation.push('LeadCenter', { lead: selectedLead, initialTool: 'referral' });
-                  }}
-                  onCameraPress={() => {
-                    if (onCameraPress) onCameraPress(selectedLead);
-                    else navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' });
-                  }}
-                  onGalleryPress={() => {
-                    if (onGalleryPress) onGalleryPress(selectedLead);
-                    else {
-                      setGalleryJob(selectedLead);
-                      setShowGallery(true);
-                    }
-                  }}
-                />
-              </View>
-
-              {/* Arrow Triangle */}
-              <View
-                style={{
-                  width: 0,
-                  height: 0,
-                  backgroundColor: 'transparent',
-                  borderStyle: 'solid',
-                  borderLeftWidth: 12,
-                  borderRightWidth: 12,
-                  borderTopWidth: 15,
-                  borderLeftColor: 'transparent',
-                  borderRightColor: 'transparent',
-                  borderTopColor: isDark ? '#1E1E1E' : 'white',
-                  marginTop: -1,
-                }}
-              />
-            </View>
-          </MarkerView>
-        )}
-      </Mapbox.MapView>
+            <MapJobCard
+              job={selectedLead}
+              onClose={() => setSelectedLead(null)}
+              isMyJob={
+                (() => {
+                  const uid = (user as any)?._id || (user as any)?.id;
+                  if (!uid) return false;
+                  return (
+                    selectedLead.salesRepId === uid ||
+                    selectedLead.salesRep?._id === uid ||
+                    selectedLead.userId === uid ||
+                    selectedLead.salesRep === uid ||
+                    selectedLead.salesRepName === (user as any)?.fullName ||
+                    selectedLead.salesRepName === (user as any)?.firstName ||
+                    selectedLead.salesRep === (user as any)?.userName ||
+                    selectedLead.userName === (user as any)?.userName
+                  );
+                })()
+              }
+              onReferencePress={() => {
+                setGalleryJob(selectedLead);
+                setShowReferral(true);
+              }}
+              onCameraPress={() => {
+                setGalleryJob(selectedLead);
+                setShowUpload(true);
+              }}
+              onGalleryPress={() => {
+                if (onGalleryPress) onGalleryPress(selectedLead);
+                else {
+                  setGalleryJob(selectedLead);
+                  setShowGallery(true);
+                }
+              }}
+              onFavoritePress={handleToggleFavorite}
+            />
+          </View>
+        </View>
+      )}
 
       {/* Floating Controls (Bottom Right) */}
       <View className="absolute bottom-10 right-6 gap-3 items-center" style={{ zIndex: 10 }}>
-        {/* Status Capsules */}
         <View className="gap-2">
-          {['DEF', 'AJ', 'DEF'].map((label, index) => {
-            const isFilterActive = activeFilters.includes(`${label}-${index}`);
+          {[
+            { label: 'HT', id: 'HT-0' },
+            { label: 'MJ', id: 'MJ-1' },
+            { label: 'RF', id: 'RF-2' }
+          ].map((btn) => {
+            const isFilterActive = activeFilters.includes(btn.id);
             return (
-              <TouchableOpacity
-                key={`${label}-${index}`}
-                onPress={() => {
-                  if (isFilterActive) setActiveFilters(activeFilters.filter(f => f !== `${label}-${index}`));
-                  else setActiveFilters([...activeFilters, `${label}-${index}`]);
+              <MapToggleSwitch
+                key={btn.id}
+                value={isFilterActive}
+                onValueChange={(val) => {
+                  if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
+                  else setActiveFilters([...activeFilters, btn.id]);
                 }}
-                className="w-12 h-20 rounded-full bg-white items-center py-2 shadow-lg border border-slate-100"
-                style={{
-                  borderColor: isFilterActive ? '#2EDE56' : '#e2e8f0',
-                  borderWidth: 1,
-                }}
-              >
-                <View 
-                  className="w-8 h-8 rounded-full bg-white border-2 items-center justify-center mb-1"
-                  style={{ borderColor: isFilterActive ? '#2EDE56' : '#e2e8f0' }}
-                >
-                  <View 
-                    className="w-4 h-4 rounded-full" 
-                    style={{ backgroundColor: isFilterActive ? '#2EDE56' : '#f1f5f9' }} 
-                  />
-                </View>
-                <Text className="text-[10px] font-black text-slate-800">{label}</Text>
-              </TouchableOpacity>
+                activeLabel={btn.label}
+                inactiveLabel={btn.label}
+              />
             );
           })}
         </View>
 
-        {/* Location & Zoom Group */}
         <View className="gap-3 items-center">
           <TouchableOpacity
             onPress={startTracking}
@@ -454,9 +466,12 @@ export const LeadMap = ({
           <View className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
             <TouchableOpacity
               onPress={() => {
-                const newZoom = currentZoom + 1;
-                setCurrentZoom(newZoom);
-                cameraRef.current?.setCamera({ zoomLevel: newZoom, animationDuration: 300 });
+                const r = currentRegion.current;
+                mapRef.current?.animateToRegion({
+                  ...r,
+                  latitudeDelta: r.latitudeDelta / 2,
+                  longitudeDelta: r.longitudeDelta / 2,
+                }, 300);
               }}
               className="w-12 h-12 items-center justify-center border-b border-slate-100"
             >
@@ -464,9 +479,12 @@ export const LeadMap = ({
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
-                const newZoom = currentZoom - 1;
-                setCurrentZoom(newZoom);
-                cameraRef.current?.setCamera({ zoomLevel: newZoom, animationDuration: 300 });
+                const r = currentRegion.current;
+                mapRef.current?.animateToRegion({
+                  ...r,
+                  latitudeDelta: r.latitudeDelta * 2,
+                  longitudeDelta: r.longitudeDelta * 2,
+                }, 300);
               }}
               className="w-12 h-12 items-center justify-center"
             >
@@ -476,7 +494,7 @@ export const LeadMap = ({
         </View>
       </View>
 
-      {/* Back Button (Stays Top Right) */}
+      {/* Back Button */}
       <View className="absolute top-6 right-6" style={{ zIndex: 10 }}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -486,31 +504,157 @@ export const LeadMap = ({
         </TouchableOpacity>
       </View>
 
-      {/* Heatmap Legend */}
-      {isHeatMap && (
-        <View className="absolute bottom-6 left-6 right-6 px-4 py-2 bg-white/90 dark:bg-black/80 rounded-full flex-row items-center justify-between">
-          <Text className="text-[10px] font-black tracking-widest text-gray-500">
-            Price Intensity
-          </Text>
-          <View className="flex-row items-center gap-4">
-            <View className="flex-row items-center">
-              <View className="w-2 h-2 rounded-full bg-blue-500 mr-1" />
-              <Text className="text-[9px] font-bold">Low</Text>
-            </View>
-            <View className="flex-row items-center">
-              <View className="w-2 h-2 rounded-full bg-red-500 mr-1" />
-              <Text className="text-[9px] font-bold">High</Text>
-            </View>
-          </View>
-        </View>
-      )}
-
       <MapGalleryModal
         visible={showGallery}
         job={galleryJob}
         onClose={() => setShowGallery(false)}
         onPresent={() => {}}
       />
+
+      <JobImageUploadModal
+        visible={showUpload}
+        onClose={() => setShowUpload(false)}
+        selectedJob={galleryJob}
+        onUploadSuccess={() => {
+          fetchAllJobs();
+        }}
+      />
+
+      <ReferralModal
+        visible={showReferral}
+        onClose={() => setShowReferral(false)}
+        selectedJob={galleryJob}
+        isMyJob={
+          (() => {
+            const uid = (user as any)?._id || (user as any)?.id;
+            if (!uid) return false;
+            return (
+              galleryJob?.salesRepId === uid ||
+              galleryJob?.salesRep?._id === uid ||
+              galleryJob?.userId === uid ||
+              galleryJob?.salesRep === uid ||
+              galleryJob?.salesRepName === (user as any)?.fullName ||
+              galleryJob?.salesRepName === (user as any)?.firstName ||
+              galleryJob?.salesRep === (user as any)?.userName ||
+              galleryJob?.userName === (user as any)?.userName
+            );
+          })()
+        }
+      />
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  cardOverlay: {
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 20,
+  }
+});
+
+const darkMapStyle = [
+  {
+    "elementType": "geometry",
+    "stylers": [{ "color": "#212121" }]
+  },
+  {
+    "elementType": "labels.icon",
+    "stylers": [{ "visibility": "off" }]
+  },
+  {
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "elementType": "labels.text.stroke",
+    "stylers": [{ "color": "#212121" }]
+  },
+  {
+    "featureType": "administrative",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "featureType": "administrative.country",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#9e9e9e" }]
+  },
+  {
+    "featureType": "administrative.land_parcel",
+    "stylers": [{ "visibility": "off" }]
+  },
+  {
+    "featureType": "administrative.locality",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#bdbdbd" }]
+  },
+  {
+    "featureType": "poi",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#181818" }]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#616161" }]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "labels.text.stroke",
+    "stylers": [{ "color": "#1b1b1b" }]
+  },
+  {
+    "featureType": "road",
+    "elementType": "geometry.fill",
+    "stylers": [{ "color": "#2c2c2c" }]
+  },
+  {
+    "featureType": "road",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#8a8a8a" }]
+  },
+  {
+    "featureType": "road.arterial",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#373737" }]
+  },
+  {
+    "featureType": "road.highway",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#3c3c3c" }]
+  },
+  {
+    "featureType": "road.highway.controlled_access",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#4e4e4e" }]
+  },
+  {
+    "featureType": "road.local",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#616161" }]
+  },
+  {
+    "featureType": "transit",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "featureType": "water",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#000000" }]
+  },
+  {
+    "featureType": "water",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#3d3d3d" }]
+  }
+];

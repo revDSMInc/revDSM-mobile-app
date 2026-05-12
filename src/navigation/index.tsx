@@ -15,6 +15,7 @@ import PitchbookScreen from '../screens/Pitchbook';
 import DealCenter from '../screens/DealCenter/index';
 import ForgotPasswordScreen from '../screens/auth/forgot-password';
 import EmailOTPScreen from '../screens/auth/email-otp';
+import ResetPasswordScreen from '../screens/auth/reset-password';
 import AuthenticatorOTPScreen from '../screens/auth/authenticator-otp';
 import JobBuilderScreen from '../screens/JobBuilder/index';
 import RevRenderScreen from '../screens/RevRender/index';
@@ -38,7 +39,17 @@ export type RootStackParamList = {
   Pitchbook: { lead: any };
   DealCenter: { lead: any };
   ForgotPassword: undefined;
-  EmailOTP: { email: string; password?: string };
+  EmailOTP: { 
+    email: string; 
+    password?: string;
+    companyId?: string;
+    companyName?: string;
+  };
+  ResetPassword: {
+    email: string;
+    companyId: string;
+    companyName: string;
+  };
   AuthenticatorOTP: { email: string; password?: string };
   JobBuilder: {
     initialJobState: any;
@@ -75,6 +86,7 @@ export default function RootNavigator() {
           <Stack.Screen name="Login" component={LoginPage} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
           <Stack.Screen name="EmailOTP" component={EmailOTPScreen} />
+          <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
           <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
         </>
       ) : (

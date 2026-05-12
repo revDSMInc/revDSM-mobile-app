@@ -54,11 +54,11 @@ export const useVerifyOtpMutation = () => {
 
   return useMutation({
     mutationFn: async (data: { email: string; code: string; password?: string; trustDevice?: boolean }) => {
-      // Verify OTP is just another login call with the code field and password
+      // Verify OTP is just another login call with the twoFactorCode field and password
       const loginRes = await AuthService.login({
         email: data.email,
         password: data.password,
-        code: data.code,
+        twoFactorCode: data.code,
         trustDevice: data.trustDevice,
       });
       const resData = loginRes.data?.data || loginRes.data;

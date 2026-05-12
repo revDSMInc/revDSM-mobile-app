@@ -302,6 +302,7 @@ export default function JobBuilderScreen() {
             onUpdate={handleUpdate}
             calculatorData={calculatorData}
             onValidationError={onValidationError}
+            outcomeForm={outcomeForm}
           />
         );
       case 'soffit':
