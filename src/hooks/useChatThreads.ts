@@ -100,13 +100,6 @@ export const useChatThreads = (
 
     if (filterUnread) result = result.filter((c) => c.unreadCount > 0);
 
-    // Sort by latest activity (lastMessageAt or updatedAt)
-    result.sort((a, b) => {
-      const dateA = a.lastMessageAt || a.updatedAt || a.leadDetails?.createdAt || 0;
-      const dateB = b.lastMessageAt || b.updatedAt || b.leadDetails?.createdAt || 0;
-      return new Date(dateB).getTime() - new Date(dateA).getTime();
-    });
-
     return result;
   }, [chats, searchQuery, statusFilter, filterUnread]);
 
@@ -118,12 +111,7 @@ export const useChatThreads = (
       result = result.filter((c) => (c.title || c.name || '').toLowerCase().includes(query));
     }
     
-    // Sort channels by activity (Newest first)
-    return result.sort((a, b) => {
-      const dateA = a.lastMessageAt || a.updatedAt || a.createdAt || 0;
-      const dateB = b.lastMessageAt || b.updatedAt || b.createdAt || 0;
-      return new Date(dateB).getTime() - new Date(dateA).getTime();
-    });
+    return result;
   }, [channels, searchQuery]);
 
   return {
