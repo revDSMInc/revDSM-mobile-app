@@ -1,7 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import io, { Socket } from 'socket.io-client';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ENV } from '../config/env';
+import { useState, useEffect, useMemo } from 'react';
+import SocketManager from '../services/SocketManager';
 
 export const useChatThreads = (
   user: any,
@@ -16,68 +14,64 @@ export const useChatThreads = (
   const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
-  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
     if (!user) return;
 
-    let socket: Socket;
-    const initSocket = async () => {
-      try {
-        const token = await AsyncStorage.getItem('accessToken');
-        socket = io(ENV.API_URL, {
-          auth: { token },
-          transports: ['websocket'],
-        });
-        socketRef.current = socket;
-
-        const refreshData = () => {
-          socket.emit('get-all-lead-chats', { page: 1, limit: 100 });
-          socket.emit('get-team-channels');
-        };
-
-        socket.on('connect', refreshData);
-        socket.on('all-lead-chats-response', (data: any) => {
-          if (data) {
-            setChats(data.chats || []);
-            setTotalUnread(data.totalUnreadCount || 0);
-            if (data.availableStatuses) setAvailableStatuses(data.availableStatuses);
-          }
-          setLoading(false);
-        });
-
-        socket.on('team-channels-response', (data: any) => {
-          setChannels(data.channels || []);
-          setChannelsLoading(false);
-        });
-
-        // Only refresh chat list when someone else sends — not own message echo
-        socket.on('new-message', (data: any) => {
-          const senderId =
-            data?.senderId ||
-            data?.message?.senderId ||
-            data?.message?.sender?._id ||
-            data?.message?.user?._id;
-          const currentId = user?._id || user?.id;
-          if (!senderId || senderId !== currentId) refreshData();
-        });
-        socket.on('new-channel-message', (data: any) => {
-          const senderId =
-            data?.senderId ||
-            data?.message?.senderId ||
-            data?.message?.sender?._id;
-          const currentId = user?._id || user?.id;
-          if (!senderId || senderId !== currentId) refreshData();
-        });
-        socket.on('channel-read', refreshData);
-      } catch (err) {
-        setLoading(false);
-      }
+    const refreshData = () => {
+      console.log('[Threads] Refreshing list data...');
+      SocketManager.emit('get-all-lead-chats', { page: 1, limit: 100 });
+      SocketManager.emit('get-team-channels');
     };
 
-    initSocket();
+    // Initial load and connection sync
+    if (SocketManager.isConnected()) refreshData();
+    const unsubConnect = SocketManager.on('connect', refreshData);
+
+    const unsubChats = SocketManager.on('all-lead-chats-response', (data: any) => {
+      if (data) {
+        setChats(data.chats || []);
+        setTotalUnread(data.totalUnreadCount || 0);
+        if (data.availableStatuses) setAvailableStatuses(data.availableStatuses);
+      }
+      setLoading(false);
+    });
+
+    const unsubChannels = SocketManager.on('team-channels-response', (data: any) => {
+      setChannels(data.channels || []);
+      setChannelsLoading(false);
+    });
+
+    // Refresh on new messages from others
+    const handleNewMsg = (data: any) => {
+      const senderId =
+        data?.senderId ||
+        data?.message?.senderId ||
+        data?.message?.sender?._id ||
+        data?.message?.user?._id;
+      const currentId = user?._id || user?.id;
+      if (!senderId || String(senderId) !== String(currentId)) refreshData();
+    };
+
+    const unsubNewMsg = SocketManager.on('new-message', handleNewMsg);
+    const unsubNewChanMsg = SocketManager.on('new-channel-message', handleNewMsg);
+
+    // CRITICAL: Refresh list when messages are marked as read
+    const unsubChanRead = SocketManager.on('channel-read', refreshData);
+    const unsubMsgSeen = SocketManager.on('message-seen', refreshData);
+    const unsubLeadRead = SocketManager.on('lead-chat-read', refreshData);
+    const unsubAllRead = SocketManager.on('mark-as-read-response', refreshData);
+
     return () => {
-      if (socketRef.current) socketRef.current.disconnect();
+      unsubConnect();
+      unsubChats();
+      unsubChannels();
+      unsubNewMsg();
+      unsubNewChanMsg();
+      unsubChanRead();
+      unsubMsgSeen();
+      unsubLeadRead();
+      unsubAllRead();
     };
   }, [user]);
 
@@ -105,13 +99,31 @@ export const useChatThreads = (
     }
 
     if (filterUnread) result = result.filter((c) => c.unreadCount > 0);
+
+    // Sort by latest activity (lastMessageAt or updatedAt)
+    result.sort((a, b) => {
+      const dateA = a.lastMessageAt || a.updatedAt || a.leadDetails?.createdAt || 0;
+      const dateB = b.lastMessageAt || b.updatedAt || b.leadDetails?.createdAt || 0;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    });
+
     return result;
   }, [chats, searchQuery, statusFilter, filterUnread]);
 
   const filteredChannels = useMemo(() => {
-    if (!searchQuery) return channels;
+    let result = [...channels];
     const query = searchQuery.toLowerCase();
-    return channels.filter((c) => (c.title || c.name || '').toLowerCase().includes(query));
+    
+    if (query) {
+      result = result.filter((c) => (c.title || c.name || '').toLowerCase().includes(query));
+    }
+    
+    // Sort channels by activity (Newest first)
+    return result.sort((a, b) => {
+      const dateA = a.lastMessageAt || a.updatedAt || a.createdAt || 0;
+      const dateB = b.lastMessageAt || b.updatedAt || b.createdAt || 0;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    });
   }, [channels, searchQuery]);
 
   return {

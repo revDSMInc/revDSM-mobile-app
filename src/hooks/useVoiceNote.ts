@@ -144,41 +144,25 @@ export function useVoiceNote(): VoiceNoteHookResult {
     try {
       setPlaybackState('loading');
 
-      let playUri = uri;
-      // If it's just a filename, resolve to Cache dir
-      if (!uri.includes('/') && !uri.startsWith('http')) {
-        playUri = `${RNFS.CachesDirectoryPath}/${uri}`;
+      // Normalize: nitro-sound on iOS requires a plain absolute path (no file:// prefix)
+      let finalPath = uri;
+
+      // Strip file:// prefix if present
+      if (finalPath.startsWith('file://')) {
+        finalPath = decodeURIComponent(finalPath.replace('file://', ''));
+        // Ensure leading slash
+        if (!finalPath.startsWith('/')) {
+          finalPath = '/' + finalPath;
+        }
       }
 
-      // Handle the iOS cache path correctly
-      if (
-        Platform.OS === 'ios' &&
-        playUri.includes('Library/Caches') &&
-        !playUri.startsWith('file://')
-      ) {
-        playUri = `file://${playUri}`;
-      } else if (
-        Platform.OS === 'ios' &&
-        playUri.startsWith('/') &&
-        !playUri.startsWith('file://')
-      ) {
-        playUri = `file://${playUri}`;
+      // If it's a bare filename (no slashes), resolve to CacheDir
+      if (!finalPath.includes('/')) {
+        finalPath = `${RNFS.CachesDirectoryPath}/${finalPath}`;
       }
 
-      // Encode/Decode URI properly: local files need literal paths
-      let playUriToPass = playUri;
-      if (playUri.startsWith('file://')) {
-        playUriToPass = decodeURI(playUri);
-      } else if (playUri.startsWith('http')) {
-        // DO NOT use encodeURI on http/https URLs!
-        // S3 pre-signed URLs might already contain URL-encoded characters (like %20).
-        // Running encodeURI doubly encodes them (e.g. %2520) and breaks the AWS signature.
-        playUriToPass = playUri;
-      } else {
-        playUriToPass = encodeURI(playUri);
-      }
-
-      await player.startPlayer(playUriToPass);
+      console.log('[useVoiceNote] Playing local path:', finalPath);
+      await player.startPlayer(finalPath);
       setPlaybackState('playing');
 
       player.addPlayBackListener((e: PlayBackType) => {

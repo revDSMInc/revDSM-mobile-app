@@ -39,7 +39,7 @@ export default function Chat({ onClose, lead }: Props) {
   const [replyingTo, setReplyingTo] = useState<any>(null);
   const [editingMessage, setEditingMessage] = useState<any>(null);
   const [participants, setParticipants] = useState<any[]>([]);
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(30);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [showMentions, setShowMentions] = useState(false);
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
@@ -94,9 +94,16 @@ export default function Chat({ onClose, lead }: Props) {
     try {
       const raw = await ChatService.getMessages(id, lim);
       setHasMore(raw.length >= lim);
-      const normalized = raw.reverse();
-      setMessages(normalized);
-      fetchSecureUrls(normalized);
+      
+      // Stable sort: newest-first (b - a) for bottom-to-top flow
+      const sorted = [...raw].sort((a, b) => {
+        const dA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+        const dB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+        return dB.getTime() - dA.getTime();
+      });
+
+      setMessages(sorted);
+      fetchSecureUrls(sorted);
     } catch (e) {
       console.error('Load messages:', e);
     }
@@ -134,7 +141,7 @@ export default function Chat({ onClose, lead }: Props) {
         setMessages((prev) => {
           if (prev.some((m) => m._id === normalized._id)) return prev;
           fetchSecureUrls([normalized]);
-          return GiftedChat.append(prev, [normalized]);
+          return [normalized, ...prev];
         });
       });
 
@@ -193,7 +200,9 @@ export default function Chat({ onClose, lead }: Props) {
           if (mounted) setChatId(activeId);
         }
         if (activeId && mounted) {
-          await loadMessages(activeId, 20);
+          // Clear previous messages to ensure a fresh, correctly ordered load
+          setMessages([]);
+          await loadMessages(activeId, 30);
 
           // Participant Logic (Auto-join sync)
           const parts = await ChatService.getLeadParticipants(activeId);
@@ -236,10 +245,27 @@ export default function Chat({ onClose, lead }: Props) {
 
       try {
         if (editingMessage) {
-          await ChatService.editMessage(editingMessage._id, raw.text);
+          // Optimistic Edit
+          const oldText = editingMessage.text;
+          setMessages(prev => prev.map(m => m._id === editingMessage._id ? { ...m, text: raw.text, isEdited: true } : m));
+          await ChatService.editMessage(editingMessage._id, raw.text).catch(err => {
+            // Revert on failure
+            setMessages(prev => prev.map(m => m._id === editingMessage._id ? { ...m, text: oldText } : m));
+            throw err;
+          });
           setEditingMessage(null);
         } else {
-          // Send via REST as requested for reliability parity with Media
+          // Optimistic Send
+          const tempId = `temp_${Date.now()}`;
+          const optimisticMsg = {
+            ...raw,
+            _id: tempId,
+            createdAt: new Date(),
+            user: { _id: currentUserId, name: user?.firstName || 'Me' },
+            pending: true
+          };
+          setMessages(prev => [optimisticMsg, ...prev]);
+
           await ChatService.sendMessageREST({
             chatId,
             message: raw.text,
@@ -259,7 +285,7 @@ export default function Chat({ onClose, lead }: Props) {
   const handleLoadEarlier = async () => {
     if (loadingMore || !hasMore || !chatId) return;
     setLoadingMore(true);
-    const newLimit = limit + 20;
+    const newLimit = limit + 30;
     setLimit(newLimit);
     await loadMessages(chatId, newLimit);
     setLoadingMore(false);
@@ -447,17 +473,31 @@ export default function Chat({ onClose, lead }: Props) {
       />
 
       {loading ? (
-        <View className="flex-1 items-center justify-center bg-white dark:bg-[#111B21]">
-          <ActivityIndicator size="large" color="#00A884" />
+        <View className="flex-1 items-center justify-center" style={{ backgroundColor: wallpaperColor }}>
+          <View className="bg-white/10 dark:bg-black/20 p-8 rounded-3xl items-center shadow-xl">
+            <ActivityIndicator size="large" color="#00A884" />
+            <Text 
+              className="mt-4 text-[13px] font-bold tracking-widest uppercase opacity-60"
+              style={{ color: isDark ? '#fff' : '#000' }}
+            >
+              Loading History...
+            </Text>
+          </View>
         </View>
       ) : (
         <View className="flex-1 overflow-hidden" style={{ backgroundColor: wallpaperColor }}>
           <GiftedChat
+            key={chatId || 'loading'}
+            messages={messages}
+            onSend={onSend}
+            user={{ _id: currentUserId, name: user?.firstName || 'Me' }}
+            inverted={true}
             {...({
-              messages,
-              onSend,
+              listProps: {
+                extraData: { imageUrls, messages },
+                contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
+              },
               onInputTextChanged: handleInputTextChanged,
-              user: { _id: currentUserId, name: user?.firstName || 'Me' },
               renderBubble,
               renderSend,
               renderActions,

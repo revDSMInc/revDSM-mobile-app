@@ -343,17 +343,32 @@ export default function ChatDetailScreen() {
       };
 
       const handleReact = async (m: any, e: string) => {
-        const existing = m.reactions?.find((r: any) => r.emoji === e);
-        const alreadyReacted = existing?.users?.some((u: any) => u.userId === currentUserId);
-        const action = alreadyReacted ? 'remove' : 'add';
+        if (!chatId) return;
+
+        // Find if I have ANY existing reaction on this message
+        const myPrevReaction = m.reactions?.find((r: any) =>
+          r.users?.some((u: any) => String(u.userId) === String(currentUserId))
+        );
+
+        const alreadyReactedSameEmoji = myPrevReaction?.emoji === e;
 
         try {
-          // Optimistic update for reactions
+          // Optimistic update
           setMessages((prev) =>
             prev.map((msgItem: ICustomMessage) => {
               if (msgItem._id !== m._id) return msgItem;
               let newReactions = [...(msgItem.reactions || [])];
-              if (action === 'add') {
+
+              // 1. Remove my existing reaction from ANY emoji group
+              newReactions = newReactions
+                .map((r) => ({
+                  ...r,
+                  users: r.users.filter((u: any) => String(u.userId) !== String(currentUserId)),
+                }))
+                .filter((r) => r.users.length > 0);
+
+              // 2. If it was a different emoji (or no emoji), add the new one
+              if (!alreadyReactedSameEmoji) {
                 const rIdx = newReactions.findIndex((r) => r.emoji === e);
                 if (rIdx !== -1) {
                   newReactions[rIdx] = {
@@ -363,23 +378,18 @@ export default function ChatDetailScreen() {
                 } else {
                   newReactions.push({ emoji: e, users: [{ userId: currentUserId }] });
                 }
-              } else {
-                newReactions = newReactions
-                  .map((r) =>
-                    r.emoji === e
-                      ? { ...r, users: r.users.filter((u: any) => u.userId !== currentUserId) }
-                      : r
-                  )
-                  .filter((r) => r.users.length > 0);
               }
+
               return { ...msgItem, reactions: newReactions };
             })
           );
 
-          if (action === 'add') {
-            ChatService.addReaction(chatId!, m._id, e);
-          } else {
-            ChatService.removeReaction(chatId!, m._id, e);
+          // 3. Socket emits
+          if (myPrevReaction) {
+            ChatService.removeReaction(chatId, m._id, myPrevReaction.emoji);
+          }
+          if (!alreadyReactedSameEmoji) {
+            ChatService.addReaction(chatId, m._id, e);
           }
         } catch (err) {
           console.error('Reaction failed:', err);
@@ -425,7 +435,7 @@ export default function ChatDetailScreen() {
               <Icon name="trash-outline" size={24} color="#EF4444" />
             </TouchableOpacity>
             <View
-              className="flex-1 flex-row items-center rounded-full px-4 h-12"
+              className="flex-1 flex-row items-center rounded-full px-6 h-12"
               style={{ backgroundColor: colors.surface }}
             >
               <View className="w-2 h-2 rounded-full bg-red-500 mr-2" />
@@ -550,7 +560,6 @@ export default function ChatDetailScreen() {
           isChannel={isChannel}
           colors={colors}
           isDark={isDark}
-          navigation={navigation}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           pinnedMessages={pinnedMessages}
@@ -573,9 +582,11 @@ export default function ChatDetailScreen() {
             renderInputToolbar={renderInputToolbar}
             onInputTextChanged={handleComposerChange}
             extraData={{ filteredMessages, imageUrls }}
+            inverted={true}
             listViewProps={{
               ref: flatListRef,
               keyboardShouldPersistTaps: 'never',
+              contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
               keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
               onScrollToIndexFailed: (info: any) => {
                 flatListRef.current?.scrollToIndex({
@@ -606,9 +617,11 @@ export default function ChatDetailScreen() {
             extraData={{ filteredMessages, imageUrls }}
             isKeyboardInternallyHandled={false}
             bottomOffset={0}
+            inverted={true}
             listViewProps={{
               ref: flatListRef,
               keyboardShouldPersistTaps: 'handled',
+              contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
               keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
               onScrollToIndexFailed: (info: any) => {
                 flatListRef.current?.scrollToIndex({
