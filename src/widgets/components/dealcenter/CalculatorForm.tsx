@@ -285,7 +285,7 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label={'7" & 5" Versa (1st Story)'}
+            label={'4" & 5" Versa (1st Story)'}
             value={inputs.filter45Ft1}
             keyName="filter45Ft1"
             price={pricing.filters.filter_4_5['1']}
@@ -307,7 +307,7 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label={'7" & 5" Versa (2nd Story)'}
+            label={'4" & 5" Versa (2nd Story)'}
             value={inputs.filter45Ft2}
             keyName="filter45Ft2"
             price={pricing.filters.filter_4_5['2']}
@@ -329,7 +329,7 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label={'7" & 5" Versa (3rd Story)'}
+            label={'4" & 5" Versa (3rd Story)'}
             value={inputs.filter45Ft3}
             keyName="filter45Ft3"
             price={pricing.filters.filter_4_5['3']}
@@ -482,9 +482,10 @@ export const CalculatorForm = ({
             onUpdate={onUpdate}
           />
           <InputField
-            label="Installer Check"
+            label="Number of screens $75"
             value={inputs.ckToInstallers}
             keyName="ckToInstallers"
+            price={75}
             onUpdate={onUpdate}
           />
         </Section>
@@ -524,6 +525,7 @@ export const CalculatorForm = ({
                 Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                 Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
                 'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+                Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
               };
               const style = categoryStyles[category] || {
                 color: '#637381',

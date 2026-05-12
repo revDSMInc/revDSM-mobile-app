@@ -14,7 +14,14 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { calculateDistance, getScheduledDateTime } from '../../utils/location-util';
+import {
+  calculateDistance,
+  getScheduledDateTime,
+  isSelfGeneratedLead,
+  canCheckIn,
+  isResumeAppointment,
+  GEOFENCE_RADIUS_MILES,
+} from '../../utils/location-util';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useLeadsData } from '../../hooks/useLeadsData';
@@ -183,64 +190,85 @@ export default function LeadsPage() {
     }
 
     try {
-      const workflow = item.workflowState;
       let targetLead = item;
 
-      // Determine log module type based on current state (Web Parity)
+      // ── Web Parity: job-card.js handleImageButtonClick() ─────────────────
+      // Determine geofence (1 mile — matches web rangeMiles = 1)
       const isInRange =
         userLocation && item.location?.coordinates
           ? calculateDistance(
               userLocation.latitude,
               userLocation.longitude,
-              item.location.coordinates[1],
-              item.location.coordinates[0]
-            ) <= 0.15 // Web Parity: 0.15 miles for address-level accuracy
+              item.location.coordinates[1], // lat (GeoJSON: [lng, lat])
+              item.location.coordinates[0]  // lng
+            ) <= GEOFENCE_RADIUS_MILES
           : false;
+
+      const isSelfGen = isSelfGeneratedLead(item);
+      const canCheckInLead = canCheckIn(item);
+      const isResumeLead = isResumeAppointment(item);
 
       const scheduledTime = getScheduledDateTime(item);
       const now = new Date();
-      const fifteenMinutesBefore = scheduledTime ? scheduledTime.getTime() - 15 * 60 * 1000 : 0;
-      const isUpcoming = scheduledTime ? now.getTime() < fifteenMinutesBefore : false;
+      const nowTime = now.getTime();
+      const fifteenMinBefore = scheduledTime ? scheduledTime.getTime() - 15 * 60 * 1000 : null;
+      const oneHourAfter = scheduledTime ? scheduledTime.getTime() + 60 * 60 * 1000 : null;
+      const isBeforeWindow = fifteenMinBefore !== null ? nowTime < fifteenMinBefore : false;
+      const isWithinWindow =
+        fifteenMinBefore !== null && oneHourAfter !== null
+          ? nowTime >= fifteenMinBefore && nowTime <= oneHourAfter
+          : false;
 
+      // ── Determine which log module to fire (mirrors web's per-state logging)
       let logModule = '';
-      if (workflow === 'preview' || !workflow) {
-        if (isInRange && !isUpcoming) logModule = 'lead_check_in';
-      } else if (workflow === 'resume') {
-        logModule = isInRange ? 'lead_resume' : 'lead_review';
+
+      if (isResumeLead) {
+        // resume state: RESUME if in range + in window, REVIEW otherwise
+        const shouldResume = isSelfGen ? isInRange : isInRange && isWithinWindow;
+        logModule = shouldResume ? 'lead_resume' : 'lead_review';
+      } else {
+        // preview / first-check-in state: log check_in only when we actually trigger work
+        const shouldCheckIn = isSelfGen
+          ? isInRange && !isBeforeWindow
+          : isInRange && (isWithinWindow || (!isBeforeWindow && !isWithinWindow)); // expired onsite → still allow
+        if (shouldCheckIn) logModule = 'lead_check_in';
       }
 
-      if (workflow === 'preview' || workflow === 'resume' || !workflow) {
-        if (user?._id) {
-          const res = await workMutation.mutateAsync({ leadId: item._id, userId: user._id });
+      // ── Only call work API for actionable states (not UPCOMING / resulted)
+      const isResulted = !['lfLead', 'selfGenerated', 'scheduled'].includes(item.status || '');
+      const shouldCallWork = !isResulted && !isBeforeWindow;
 
-          // 2. Log Action Click if work API succeeds
-          if (logModule) {
-            logEvent('click', {
-              user_id: user._id,
-              module_type: logModule,
-              action: `${logModule}_clicked`,
-              created_by: user._id,
-              meta: {
-                leadId: item._id,
-                hasExistingImages: (item.salesPhotos || []).length > 0,
-                isSelfGenerated: item.status === 'selfGenerated',
-              },
-            });
+      if (shouldCallWork && user?._id) {
+        const res = await workMutation.mutateAsync({ leadId: item._id, userId: user._id });
 
-            // 3. Create Chat if becoming ACTIVE (Web Parity)
-            if (logModule === 'lead_check_in' && item._id) {
-              ChatService.createChatForLead(item._id).catch((e) =>
-                console.warn('[Chat] Auto-creation failed:', e)
-              );
-            }
-          }
+        // Fire action log after successful work API call
+        if (logModule) {
+          logEvent('click', {
+            user_id: user._id,
+            module_type: logModule,
+            action: `${logModule}_clicked`,
+            created_by: user._id,
+            meta: {
+              leadId: item._id,
+              hasExistingImages: (item.salesPhotos || []).length > 0,
+              isSelfGenerated: isSelfGen,
+            },
+          });
 
-          const workData = res.data?.data || res.data;
-          if (workData) {
-            targetLead = { ...item, ...workData };
+          // Create Chat on first check-in (web parity: CreateChat in handleImageButtonClick)
+          if (logModule === 'lead_check_in' && item._id) {
+            ChatService.createChatForLead(item._id).catch((e) =>
+              console.warn('[Chat] Auto-creation failed:', e)
+            );
           }
         }
+
+        const workData = res.data?.data || res.data;
+        if (workData) {
+          targetLead = { ...item, ...workData };
+        }
       }
+
       navigation.navigate('LeadCenter', { lead: targetLead });
     } catch (err) {
       console.log('Action Error:', err);
@@ -378,6 +406,23 @@ export default function LeadsPage() {
           <View className="h-6" /> // Placeholder for rehash which has no subtabs
         )}
       </View>
+
+      {/* Self Gen Archival Note (Web Parity) */}
+      {currentTab === 'selfGen' && (
+        <View className="px-4 mb-2">
+          <View
+            className="pl-2 border-l-[3px]"
+            style={{ borderLeftColor: colors.success.main }}
+          >
+            <Text
+              className="text-[10px] italic"
+              style={{ color: colors.textSecondary }}
+            >
+              All Self Gen Leads will be archived end of day unless deleted
+            </Text>
+          </View>
+        </View>
+      )}
 
       {loading ? (
         <View className="flex-1 items-center justify-center">

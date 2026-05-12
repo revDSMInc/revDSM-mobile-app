@@ -120,8 +120,8 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
   const normalizeWidth = (width: string) => {
     if (!width) return '';
     const clean = width.replace(/\s+/g, '').toLowerCase();
-    if (clean.includes('4') && clean.includes('5')) return '4&5"';
-    if (clean === '4"' || clean === '5"') return '4&5"';
+    if (clean === '4&5"' || (clean.includes('4') && clean.includes('5') && !clean.includes('.'))) return '4 & 5"';
+    if (clean === '4"' || clean === '5"') return '4 & 5"';
     return clean;
   };
 
@@ -141,7 +141,7 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
   };
 
   const availableFootage = {
-    '4&5"': [getVal('filter45ft1'), getVal('filter45ft2'), getVal('filter45ft3')],
+    '4 & 5"': [getVal('filter45ft1'), getVal('filter45ft2'), getVal('filter45ft3')],
     '6"': [getVal('versa6ft1'), getVal('versa6ft2'), getVal('versa6ft3')],
     '7"': [getVal('versa7ft1'), getVal('versa7ft2'), getVal('versa7ft3')],
     'Versa Max': getVal('versaMaxFt1') || getVal('versaMax'),
@@ -150,7 +150,7 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
   const hasLFFootage =
     availableFootage['6"'].some((v) => v > 0) ||
     availableFootage['7"'].some((v) => v > 0) ||
-    availableFootage['4&5"'].some((v) => v > 0) ||
+    availableFootage['4 & 5"'].some((v) => v > 0) ||
     availableFootage['Versa Max'] > 0;
 
   if (!hasLFFootage) return { valid: true };
@@ -166,14 +166,14 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
         return { valid: false, error: 'Profile, Color, Gutter Profile, and Width required' };
 
       const comboW = normalizeWidth(combo.gutterOpeningWidth);
-      if (comboW === '4&5"' && !combo.exactSize)
+      if (comboW === '4 & 5"' && !combo.exactSize)
         return { valid: false, error: 'Exact Size (4" or 5") required' };
     }
   }
 
   // Check allocations
   const used = {
-    '4&5"': [0, 0, 0],
+    '4 & 5"': [0, 0, 0],
     '6"': [0, 0, 0],
     '7"': [0, 0, 0],
     'Versa Max': 0,
@@ -197,7 +197,7 @@ export const validateLeafFilter = (data: any, calculatorData: any): ValidationRe
   });
 
   // Verify matches
-  for (const width of ['4&5"', '6"', '7"'] as const) {
+  for (const width of ['4 & 5"', '6"', '7"'] as const) {
     for (let s = 0; s < 3; s++) {
       const avail = availableFootage[width][s];
       const usedFt = used[width][s];

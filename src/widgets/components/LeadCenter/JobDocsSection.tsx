@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,11 @@ import { ResultLeadModal } from '../../modals/lead-center/ResultLeadModal';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 import { JobDocsThumbnails } from '../../../assets/images/jobdocs';
 import Geolocation from 'react-native-geolocation-service';
+import { LeadService } from '../../../services/api/leads';
+import { useNavigation } from '@react-navigation/native';
+import { useEffect } from 'react';
+import Feather from 'react-native-vector-icons/Feather';
+import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
 
 interface SectionImage {
   uri: string;
@@ -32,6 +37,7 @@ interface SectionImage {
   s3url?: string;
   id?: string;
   subcategory?: string;
+  isOptimistic?: boolean;
 }
 
 interface JobDocsSectionProps {
@@ -39,6 +45,7 @@ interface JobDocsSectionProps {
   sectionImages: { [key: string]: SectionImage[] };
   onSectionImagesChange: (images: { [key: string]: SectionImage[] }) => void;
   refetch: () => Promise<void>;
+  onOpenPdf?: (url: string, title?: string) => void;
 }
 
 export const JobDocsSection = ({
@@ -46,6 +53,7 @@ export const JobDocsSection = ({
   sectionImages,
   onSectionImagesChange,
   refetch,
+  onOpenPdf,
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
 
@@ -59,6 +67,95 @@ export const JobDocsSection = ({
   const [pendingResult, setPendingResult] = useState<string>('noDemo');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [uploadingSlots, setUploadingSlots] = useState<{ [key: string]: boolean }>({});
+  
+  const navigation = useNavigation<any>();
+  const [outcomeData, setOutcomeData] = useState<any>(null);
+  const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
+    agreements: [],
+    orderSheets: [],
+  });
+  const [expandedDocs, setExpandedDocs] = useState<{ agreements: boolean; orderSheets: boolean }>({
+    agreements: true,
+    orderSheets: true,
+  });
+
+  const isResulted = useMemo(() => {
+    const status = lead?.status?.toLowerCase();
+    const outcomeStatus = outcomeData?.status?.toLowerCase() || outcomeData?.result?.toLowerCase();
+    const validStatuses = ['sale', 'demo', 'nodemo', 'nothit', 'reset', 'demonosale', 'nothome', 'cancelled', 'rescheduled'];
+    
+    // Normalize status (remove spaces/dashes)
+    const normalize = (s: string) => s?.toLowerCase().replace(/[^a-z]/g, '') || '';
+    
+    return validStatuses.includes(normalize(status)) || validStatuses.includes(normalize(outcomeStatus));
+  }, [lead?.status, outcomeData]);
+
+  const hasContract = useMemo(() => {
+    const status = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase();
+    return status === 'sale' || status === 'demo';
+  }, [lead?.status, outcomeData]);
+
+  const getStatusLabel = () => {
+    const status = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
+    const labels: Record<string, string> = {
+      sale: 'Sale',
+      demo: 'Demo',
+      nodemo: 'No Demo',
+      demonosale: 'Demo No Sale',
+      nothit: 'Not Hit',
+      nothome: 'Not Home',
+      reset: 'Reset',
+      cancelled: 'Cancelled',
+      rescheduled: 'Rescheduled'
+    };
+    return labels[status] || lead?.status || 'Resulted';
+  };
+
+  const fetchOutcome = useCallback(async () => {
+    if (!lead?._id) return;
+    try {
+      const response = await LeadService.getLeadOutcome(lead._id);
+      const data = response.data?.data || response.data;
+      setOutcomeData(data);
+
+      // Resolve documents if any
+      const docs = data?.leadOutcomeDocuments;
+      if (docs) {
+        const { agreements = [], orderSheets = [] } = docs;
+        const allPaths = [...agreements, ...orderSheets].map((doc: any) => ({
+          filePath: doc.filePath,
+          bucketName: doc.bucketName,
+        }));
+
+        if (allPaths.length > 0) {
+          const res = await LeadService.getSecureUrls(allPaths);
+          const urls = res.data?.data || res.data;
+
+          const mapDocs = (list: any[]) =>
+            list.map((doc: any) => {
+              const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
+              return {
+                uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
+                name: doc.name || (doc.documentType === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: doc._id,
+                size: doc.size,
+              };
+            });
+
+          setResolvedDocuments({
+            agreements: mapDocs(agreements),
+            orderSheets: mapDocs(orderSheets),
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch outcome', error);
+    }
+  }, [lead?._id]);
+
+  useEffect(() => {
+    fetchOutcome();
+  }, [fetchOutcome]);
 
   // ── Progress ──────────────────────────────────────────────────────────────
   const totalRequired = IMAGE_CATEGORIES.reduce((acc, section) => {
@@ -71,7 +168,31 @@ export const JobDocsSection = ({
   }, 0);
 
   const totalUploaded = Object.values(sectionImages).reduce((acc, imgs) => acc + imgs.length, 0);
-  const progressPercent = totalRequired > 0 ? (totalUploaded / totalRequired) * 100 : 0;
+
+  // Calculate empty required slots to make the total dynamic
+  const emptyRequiredCount = IMAGE_CATEGORIES.reduce((acc, section) => {
+    let empty = 0;
+    
+    const checkSubs = (subs: any[] = [], sectionName: string) => {
+      const sectionImgs = sectionImages[sectionName] || [];
+      subs.forEach(sub => {
+        const hasImg = sectionImgs.some(img => img.subcategory === sub.name);
+        if (!hasImg) empty += (sub.required || 1);
+      });
+    };
+
+    if (section.subCategories) checkSubs(section.subCategories, section.name);
+    if (section.cardGroups) {
+      section.cardGroups.forEach(group => {
+        if (group.subCategories) checkSubs(group.subCategories, section.name);
+      });
+    }
+    
+    return acc + empty;
+  }, 0);
+
+  const displayTotal = totalUploaded + emptyRequiredCount;
+  const progressPercent = displayTotal > 0 ? (totalUploaded / displayTotal) * 100 : 0;
 
   const onResultPress = (res: string) => {
     setPendingResult(res);
@@ -265,14 +386,152 @@ export const JobDocsSection = ({
       </Modal>
 
       {/* Status Banner */}
-      <View className="items-center justify-center py-4 mb-3 mt-3">
-        <Icon name="file-document-edit-outline" size={32} color={colors.textSecondary} />
-        <Text className="text-sm mt-2" style={{ color: colors.textSecondary }}>
-          {lead?.status
-            ? `Current Status: ${lead.status.toUpperCase()}`
-            : 'No contract details available'}
-        </Text>
-      </View>
+      {!isResulted ? (
+        <View className="items-center justify-center py-4 mb-3 mt-3">
+          <Icon name="file-document-edit-outline" size={32} color={colors.textSecondary} />
+          <Text className="text-sm mt-2" style={{ color: colors.textSecondary }}>
+            {lead?.status
+              ? `Current Status: ${lead.status.toUpperCase()}`
+              : 'No contract details available'}
+          </Text>
+        </View>
+      ) : (
+        <>
+          {/* Resulted Status Header (Removed from top, moved to bottom per user request) */}
+
+          {/* Contract Details Card */}
+          {hasContract && (
+            <View 
+              className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 overflow-hidden"
+              style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
+            >
+              <View className="bg-[#4CBB17] py-2.5 flex-row items-center justify-center">
+                <Icon name="check" size={16} color="white" />
+                <Text className="text-white font-black text-xs ml-2 tracking-widest uppercase">
+                  {getStatusLabel().toUpperCase()} - LEAD RESULTED
+                </Text>
+              </View>
+
+              <View className="p-5">
+                <View className="flex-row justify-between items-center mb-6">
+                  <Text className="text-lg font-black text-[#1C252E]" style={{ color: colors.text }}>
+                    Contract Details
+                  </Text>
+                  <TouchableOpacity 
+                    onPress={() => navigation.navigate('JobBuilder', { lead })}
+                    className="p-1"
+                  >
+                    <Icon name="pencil" size={20} color="#637381" />
+                  </TouchableOpacity>
+                </View>
+
+                <View className="gap-4 mb-8">
+                  <DetailRow 
+                    label="Original Contract Price" 
+                    value={`$${(Number(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+                    color="#4CBB17"
+                    isDark={isDark}
+                  />
+                  <DetailRow 
+                    label="Down Payment" 
+                    value={(outcomeData?.downPayment || outcomeData?.leadData?.downPayment) ? `$${Number(outcomeData?.downPayment || outcomeData?.leadData?.downPayment).toLocaleString()}` : '-'} 
+                    isDark={isDark}
+                  />
+                  <DetailRow 
+                    label="Remaining Balance" 
+                    value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+                    showCheck
+                    isDark={isDark}
+                  />
+                  <DetailRow 
+                    label="Install Date" 
+                    value={(outcomeData?.installDate || outcomeData?.leadData?.installDate) ? new Date(outcomeData?.installDate || outcomeData?.leadData?.installDate).toLocaleDateString('en-US', { weekday: 'long', month: 'numeric', day: 'numeric', year: '2-digit' }) + ' • 8:00 AM - 12:00 PM' : 'Not Scheduled'} 
+                    isDark={isDark}
+                  />
+                </View>
+
+                <View className="h-[1px] bg-gray-100 mb-6" />
+
+                {/* Agreement Documents Section */}
+                <View className="mb-6">
+                  <TouchableOpacity 
+                    onPress={() => setExpandedDocs(prev => ({ ...prev, agreements: !prev.agreements }))}
+                    className="flex-row items-center justify-between mb-4"
+                  >
+                    <Text className="text-sm font-bold text-[#1C252E]" style={{ color: colors.text }}>Agreement Documents</Text>
+                    <View className="flex-row items-center gap-2">
+                      <View className="bg-[#1C252E] px-2 py-0.5 rounded-md">
+                        <Text className="text-[10px] font-black text-white">{resolvedDocuments.agreements.length} Files</Text>
+                      </View>
+                      <Icon name={expandedDocs.agreements ? "chevron-up" : "chevron-down"} size={20} color="#637381" />
+                    </View>
+                  </TouchableOpacity>
+
+                  {expandedDocs.agreements && (
+                    <View className="gap-3">
+                      {resolvedDocuments.agreements.map((doc, idx) => (
+                        <DocumentItem 
+                          key={idx} 
+                          doc={doc} 
+                          isDark={isDark} 
+                          colors={colors} 
+                          onOpen={onOpenPdf} 
+                          onImagePreview={setPreviewImage} 
+                        />
+                      ))}
+                      <TouchableOpacity 
+                        onPress={() => navigation.navigate('JobBuilder', { lead, initialTab: 'Summary' })}
+                        className="border-2 border-dashed border-gray-200 rounded-xl py-4 items-center justify-center flex-row gap-2"
+                      >
+                        <Icon name="plus" size={20} color="#637381" />
+                        <Text className="text-sm font-bold text-[#637381]">Add Document</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {/* Order Sheets Section */}
+                <View>
+                  <TouchableOpacity 
+                    onPress={() => setExpandedDocs(prev => ({ ...prev, orderSheets: !prev.orderSheets }))}
+                    className="flex-row items-center justify-between mb-4"
+                  >
+                    <Text className="text-sm font-bold text-[#1C252E]" style={{ color: colors.text }}>Order Sheets</Text>
+                    <View className="flex-row items-center gap-2">
+                      <View className="bg-[#1C252E] px-2 py-0.5 rounded-md">
+                        <Text className="text-[10px] font-black text-white">{resolvedDocuments.orderSheets.length} Files</Text>
+                      </View>
+                      <Icon name={expandedDocs.orderSheets ? "chevron-up" : "chevron-down"} size={20} color="#637381" />
+                    </View>
+                  </TouchableOpacity>
+
+                  {expandedDocs.orderSheets && (
+                    <View className="gap-3">
+                      {resolvedDocuments.orderSheets.map((doc, idx) => (
+                        <DocumentItem 
+                          key={idx} 
+                          doc={doc} 
+                          isDark={isDark} 
+                          colors={colors} 
+                          onOpen={onOpenPdf} 
+                          onImagePreview={setPreviewImage} 
+                        />
+                      ))}
+                      <TouchableOpacity 
+                        onPress={() => navigation.navigate('JobBuilder', { lead, initialTab: 'Summary' })}
+                        className="border-2 border-dashed border-gray-200 rounded-xl py-4 items-center justify-center flex-row gap-2"
+                      >
+                        <Icon name="plus" size={20} color="#637381" />
+                        <Text className="text-sm font-bold text-[#637381]">Add Document</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+          )}
+        </>
+      )}
 
       {/* Progress Bar */}
       <View className="mb-6 px-1">
@@ -280,7 +539,7 @@ export const JobDocsSection = ({
           <Text className="text-sm font-semibold text-text-primary">Progress</Text>
           <View className="flex-row gap-4">
             <Text className="text-[13px] font-semibold" style={{ color: colors.primary.main }}>
-              {totalUploaded}/{totalRequired} Images
+              {totalUploaded}/{displayTotal} Images
             </Text>
             <TouchableOpacity
               onPress={() => setExpandedAll(!expandedAll)}
@@ -349,32 +608,50 @@ export const JobDocsSection = ({
       </View>
 
       {/* Result Buttons */}
-      <View
-        className="py-4 flex-row gap-3"
-        style={{ backgroundColor: isDark ? colors.surface : colors.background }}
-      >
-        <TouchableOpacity
-          onPress={() => onResultPress('noDemo')}
-          className="flex-1 h-12 rounded-xl items-center justify-center"
-          style={{ backgroundColor: '#FF5630' }}
+      {isResulted ? (
+        <View 
+          className="flex-row items-center justify-between px-4 py-3 rounded-xl mb-4 mt-2"
+          style={{ backgroundColor: isDark ? '#FFFFFF08' : '#F4F6F8' }}
         >
-          <Text className="text-white text-sm font-bold">No Demo</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => onResultPress('reset')}
-          className="flex-1 h-12 rounded-xl items-center justify-center"
-          style={{ backgroundColor: '#F59E0B' }}
+          <Text className="text-sm font-bold text-gray-400" style={{ opacity: 0.8 }}>
+            Resulted - {getStatusLabel()}
+          </Text>
+          <TouchableOpacity 
+            onPress={() => onResultPress('reset')}
+            className="w-10 h-10 items-center justify-center rounded-lg"
+            style={{ backgroundColor: isDark ? colors.surface : '#919EAB1F' }}
+          >
+            <Icon name="refresh" size={20} color={isDark ? '#919EAB' : '#637381'} />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View
+          className="py-4 flex-row gap-3"
+          style={{ backgroundColor: isDark ? colors.surface : colors.background }}
         >
-          <Text className="text-white text-sm font-bold">Reset</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => onResultPress('notHit')}
-          className="flex-1 h-12 rounded-xl items-center justify-center"
-          style={{ backgroundColor: '#212B36' }}
-        >
-          <Text className="text-white text-sm font-bold">Not Hit</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            onPress={() => onResultPress('noDemo')}
+            className="flex-1 h-12 rounded-xl items-center justify-center"
+            style={{ backgroundColor: '#FF5630' }}
+          >
+            <Text className="text-white text-sm font-bold">No Demo</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => onResultPress('reset')}
+            className="flex-1 h-12 rounded-xl items-center justify-center"
+            style={{ backgroundColor: '#F59E0B' }}
+          >
+            <Text className="text-white text-sm font-bold">Reset</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => onResultPress('notHit')}
+            className="flex-1 h-12 rounded-xl items-center justify-center"
+            style={{ backgroundColor: '#212B36' }}
+          >
+            <Text className="text-white text-sm font-bold">Not Hit</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={{ height: 1, overflow: 'hidden' }}>
         <View
@@ -594,9 +871,20 @@ const AccordionItem = ({
     </>
   );
 
-  const displayTotal = cardGroups
-    ? cardGroups.reduce((acc, g) => acc + (g.subCategories?.length || 0), 0)
-    : subCategories?.length || 0;
+  const emptyRequiredCount = useMemo(() => {
+    let empty = 0;
+    const checkSubs = (subs: any[] = []) => {
+      subs.forEach((sub) => {
+        const hasImg = images.some((img) => img.subcategory === sub.name);
+        if (!hasImg) empty += (sub.required || 1);
+      });
+    };
+    if (cardGroups) cardGroups.forEach((g) => checkSubs(g.subCategories));
+    else checkSubs(subCategories);
+    return empty;
+  }, [images, cardGroups, subCategories]);
+
+  const displayTotal = images.length + emptyRequiredCount;
 
   return (
     <View className="mb-3">
@@ -718,3 +1006,50 @@ const LoadingImage = React.memo(({ uri, className, style, resizeMode }: any) => 
     </View>
   );
 });
+
+const DetailRow = ({ label, value, color, showCheck, isDark }: any) => (
+  <View className="flex-row justify-between items-center">
+    <Text className="text-[13px] text-gray-500 font-medium">{label}</Text>
+    <View className="flex-row items-center gap-2">
+      <Text 
+        className="text-[13px] font-black" 
+        style={{ color: color || (isDark ? '#FFFFFF' : '#1C252E') }}
+      >
+        {value}
+      </Text>
+      {showCheck && (
+        <View className="bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
+          <Text className="text-[10px] font-black text-gray-600">CHECK</Text>
+        </View>
+      )}
+    </View>
+  </View>
+);
+
+const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: any) => {
+  const isImage = doc.uri?.toLowerCase().match(/\.(jpg|jpeg|png|webp|heic)$/) || !doc.uri?.toLowerCase().includes('.pdf');
+
+  return (
+    <TouchableOpacity 
+      onPress={() => isImage ? onImagePreview?.(doc.uri) : onOpen?.(doc.uri, doc.name)}
+      className="flex-row items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100"
+      style={{ backgroundColor: isDark ? '#FFFFFF08' : '#F9FAFB' }}
+    >
+      <View className="flex-row items-center gap-3">
+        <View className={`p-2 rounded-lg ${isImage ? 'bg-blue-50' : 'bg-red-50'}`}>
+          <Icon 
+            name={isImage ? "image-outline" : "file-pdf-box"} 
+            size={24} 
+            color={isImage ? "#2196F3" : "#FF5630"} 
+          />
+        </View>
+        <View>
+          <Text className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+            {isImage ? 'IMAGE' : 'PDF'} • {doc.size ? (doc.size / 1024).toFixed(0) + ' KB' : 'Size N/A'}
+          </Text>
+        </View>
+      </View>
+      <Icon name="eye-outline" size={20} color="#637381" />
+    </TouchableOpacity>
+  );
+};

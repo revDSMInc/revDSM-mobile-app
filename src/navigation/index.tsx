@@ -15,8 +15,10 @@ import PitchbookScreen from '../screens/Pitchbook';
 import DealCenter from '../screens/DealCenter/index';
 import ForgotPasswordScreen from '../screens/auth/forgot-password';
 import EmailOTPScreen from '../screens/auth/email-otp';
+import ResetPasswordScreen from '../screens/auth/reset-password';
 import AuthenticatorOTPScreen from '../screens/auth/authenticator-otp';
 import JobBuilderScreen from '../screens/JobBuilder/index';
+import RevRenderScreen from '../screens/RevRender/index';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -37,14 +39,30 @@ export type RootStackParamList = {
   Pitchbook: { lead: any };
   DealCenter: { lead: any };
   ForgotPassword: undefined;
-  EmailOTP: { email: string };
-  AuthenticatorOTP: { email: string };
+  EmailOTP: { 
+    email: string; 
+    password?: string;
+    companyId?: string;
+    companyName?: string;
+  };
+  ResetPassword: {
+    email: string;
+    companyId: string;
+    companyName: string;
+  };
+  AuthenticatorOTP: { email: string; password?: string };
   JobBuilder: {
     initialJobState: any;
     calculatorData: any;
     leadId: string;
     outcomeForm: any;
     onGoBack?: (jobState: any) => void;
+  };
+  RevRender: {
+    lead: any;
+    sectionImages: { [key: string]: any[] };
+    onNavToDocs: () => void;
+    onGenerate: (payload: any) => Promise<string | null>;
   };
 };
 
@@ -68,6 +86,7 @@ export default function RootNavigator() {
           <Stack.Screen name="Login" component={LoginPage} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
           <Stack.Screen name="EmailOTP" component={EmailOTPScreen} />
+          <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
           <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
         </>
       ) : (
@@ -83,6 +102,7 @@ export default function RootNavigator() {
           <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
           <Stack.Screen name="DealCenter" component={DealCenter} />
           <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
+          <Stack.Screen name="RevRender" component={RevRenderScreen} />
         </>
       )}
     </Stack.Navigator>

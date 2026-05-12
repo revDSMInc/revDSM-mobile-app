@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { format } from 'date-fns';
@@ -15,6 +15,7 @@ interface MapJobCardProps {
   onCameraPress?: (job: any) => void;
   onReferencePress?: (job: any) => void;
   onGalleryPress?: (job: any) => void;
+  onFavoritePress?: (job: any) => void;
 }
 
 export const MapJobCard = ({
@@ -24,130 +25,140 @@ export const MapJobCard = ({
   onGalleryPress,
   onCameraPress,
   onReferencePress,
+  onFavoritePress,
 }: MapJobCardProps) => {
   const { colors, isDark } = useTheme();
 
   if (!job) return null;
 
+  const formatAddress = (addr: any) => {
+    if (typeof addr === 'string') return addr;
+    if (!addr || typeof addr !== 'object') return 'Address not provided';
+    const { houseNumber, streetName, city, state, zip } = addr;
+    return [houseNumber, streetName, city, state, zip].filter(Boolean).join(', ');
+  };
+
   const formattedDate = job.installationDate
     ? format(new Date(job.installationDate), 'MM/dd/yyyy')
-    : 'N/A';
+    : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
 
   return (
     <View
-      className="bg-white rounded-[20px] overflow-hidden"
+      className="bg-white rounded-[24px] overflow-hidden"
       style={{
-        width: 260,
+        width: 280,
         backgroundColor: 'white',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.15,
         shadowRadius: 20,
         elevation: 10,
       }}
     >
       {/* Top Accent Bar */}
-      <View className="h-1 bg-green-500 w-full" />
+      <View className="h-[5px] bg-[#4CBB17] w-full" />
 
-      <View className="p-3">
+      <View className="p-4">
         {/* Header */}
-        <View className="flex-row justify-between items-start mb-2">
+        <View className="flex-row justify-between items-start mb-1">
           <View>
-            <Text className="text-[15px] font-black text-green-600">
+            <Text className="text-[17px] font-black text-[#4CBB17]">
               Job#{job.jobNumber || 'N/A'}
             </Text>
-            <View className="flex-row items-center mt-0.5">
-              <Icon name="calendar-blank" size={14} color="#4CBB17" />
-              <Text className="text-[11px] text-slate-400 ml-1 font-bold">{formattedDate}</Text>
+            <View className="flex-row items-center mt-1">
+              <Icon name="calendar-blank" size={16} color="#4CBB17" />
+              <Text className="text-[13px] text-slate-500 ml-1 font-bold">{formattedDate}</Text>
             </View>
           </View>
           <TouchableOpacity onPress={onClose} className="p-1">
-            <Icon name="close" size={18} color="#64748b" />
+            <Icon name="close" size={24} color="#000" />
           </TouchableOpacity>
         </View>
 
-        {/* Price & Sales Rep Row */}
-        <View className="flex-row gap-2 mb-3">
-          <View className="flex-1 bg-slate-50 rounded-lg p-2.5">
-            <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-0.5">
+        {/* Price & Rep Row */}
+        <View className="flex-row gap-2 mt-3 mb-4">
+          <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
+            <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
               Price
             </Text>
-            <Text className="text-[16px] font-black text-green-600">
+            <Text className="text-[16px] font-black text-[#4CBB17]">
               ${(job.price || 0).toLocaleString()}
             </Text>
           </View>
-          {isMyJob && (
-            <View className="flex-1 bg-slate-50 rounded-lg p-2.5">
-              <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-0.5">
-                Sales Rep
-              </Text>
-              <Text className="text-[12px] font-black text-green-600" numberOfLines={1}>
-                {job.salesRepName || job.salesRep?.name || 'Me'}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Address Section */}
-        <View className="mb-3">
-          <Text className="text-[10px] text-slate-400 font-bold tracking-wider mb-1.5">
-            Property Address
-          </Text>
-          <View className="flex-row items-center">
-            <View className="w-7 h-7 rounded-full bg-slate-200 items-center justify-center mr-2 overflow-hidden">
-              <Icon name="map-marker-radius" size={16} color="#94a3b8" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-[11px] font-bold text-slate-700 leading-4" numberOfLines={2}>
-                <Text style={{ backgroundColor: '#e2e8f0', color: 'transparent', borderRadius: 2 }}>
-                  {job.fullAddress?.substring(0, 5) || '12345'}
-                </Text>
-                {job.fullAddress?.substring(5) || job.address?.streetName || 'Address Pending'}
-              </Text>
-            </View>
+          <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
+            <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
+              Sales Rep
+            </Text>
+            <Text className="text-[14px] font-bold text-slate-700" numberOfLines={1}>
+              {job.userName || job.salesRepName || job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
+            </Text>
           </View>
         </View>
 
-        <View className="flex-row items-center mb-3">
-          <Text className="text-[10px] text-slate-400 font-bold tracking-wider">Product:</Text>
-          <Text className="text-[11px] font-black text-slate-700 ml-2">{job.product || 'N/A'}</Text>
+        {/* Property Address */}
+        <View className="mb-4">
+          <Text className="text-[10px] text-slate-400 font-bold mb-2 uppercase tracking-wider">
+            Property Address
+          </Text>
+          <View className="flex-row">
+            <View className="w-8 h-8 rounded-full bg-slate-100 items-center justify-center mr-2">
+              <Icon name="map-marker-radius" size={18} color="#94a3b8" />
+            </View>
+            <Text className="flex-1 text-[12px] font-bold text-slate-700 leading-5">
+              {job.fullAddress || formatAddress(job.address)}
+            </Text>
+          </View>
+        </View>
+
+        {/* Product Row */}
+        <View className="flex-row items-center mb-5">
+          <Text className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Product:</Text>
+          <Text className="text-[12px] font-black text-slate-700 ml-2">{job.product || 'N/A'}</Text>
         </View>
 
         {/* Action Row */}
-        <View className="flex-row pt-3 border-t border-slate-50">
-          <TouchableOpacity className="w-8 h-8 rounded-lg bg-slate-50 items-center justify-center border border-slate-100">
+        <View className="flex-row items-center gap-3">
+          <TouchableOpacity 
+            onPress={() => onFavoritePress?.(job)}
+            className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+          >
             <Icon
               name={job.isFavourite || job.isFavorite ? 'star' : 'star-outline'}
-              size={16}
+              size={20}
               color={job.isFavourite || job.isFavorite ? '#f59e0b' : '#94a3b8'}
             />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => onGalleryPress?.(job)}
-            className="w-8 h-8 rounded-lg bg-slate-50 items-center justify-center border border-slate-100 ml-2"
-          >
-            <Icon name="image-multiple-outline" size={16} color="#94a3b8" />
-          </TouchableOpacity>
-
-          {isMyJob && (
+          {/* Show Gallery only if images exist */}
+          {((job.images?.beforeImages?.length > 0) || (job.images?.afterImages?.length > 0)) && (
             <TouchableOpacity
-              onPress={() => onCameraPress?.(job)}
-              className="w-8 h-8 rounded-lg bg-slate-50 items-center justify-center border border-slate-100 ml-2"
+              onPress={() => onGalleryPress?.(job)}
+              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
             >
-              <Icon name="camera-plus-outline" size={16} color="#94a3b8" />
+              <Icon name="image-multiple-outline" size={20} color="#10b981" />
             </TouchableOpacity>
           )}
 
-          {(isMyJob || (job.jobReferrals?.length > 0 && job.jobReferrals[0]?.referralToggle)) && (
+          {/* Upload: Only for Owner */}
+          {isMyJob && (
+            <TouchableOpacity
+              onPress={() => onCameraPress?.(job)}
+              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+            >
+              <Icon name="cloud-upload-outline" size={20} color="#3b82f6" />
+            </TouchableOpacity>
+          )}
+
+          {/* Reference: Always for Owner, Only if exists for others */}
+          {(isMyJob || (job.jobReferrals && job.jobReferrals.length > 0)) && (
             <TouchableOpacity
               onPress={() => onReferencePress?.(job)}
-              className="w-8 h-8 rounded-lg bg-slate-50 items-center justify-center border border-slate-100 ml-2"
+              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
             >
               <Icon
-                name="account-group-outline"
-                size={16}
-                color={job.jobReferrals?.length > 0 ? '#10b981' : '#94a3b8'}
+                name="account-group"
+                size={20}
+                color={job.jobReferrals?.length > 0 ? '#059669' : isMyJob ? '#94a3b8' : '#059669'}
               />
             </TouchableOpacity>
           )}

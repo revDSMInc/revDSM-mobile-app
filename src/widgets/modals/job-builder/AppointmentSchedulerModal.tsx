@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
@@ -45,6 +45,7 @@ export const AppointmentSchedulerModal = ({
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
   const [timeSlotIdx, setTimeSlotIdx] = useState(0);
   const [tbdReason, setTbdReason] = useState('');
+  const [isTBD, setIsTBD] = useState(false);
 
   const windows = [
     { label: '8:00 AM - 12:00 PM', value: '8:00 AM - 12:00 PM' },
@@ -55,6 +56,7 @@ export const AppointmentSchedulerModal = ({
     if (getDay(date) === 0) return; // Disable Sunday
     setSelectedDate(date);
     setTimeSlotIdx(0);
+    setIsTBD(false);
     setView('time');
   };
 
@@ -72,25 +74,33 @@ export const AppointmentSchedulerModal = ({
   };
 
   const handleAcceptSlot = () => {
-    setView('success');
-  };
-
-  const handleFinalSave = () => {
-    handleModalClose();
-    onConfirm({
+    setIsTBD(false);
+    const data = {
       date: format(selectedDate, 'M/d/yyyy'),
       timeWindow: windows[timeSlotIdx].value,
       customerName,
-    });
+    };
+    onConfirm(data);
+    if (isEdit) {
+      onClose();
+    } else {
+      setView('success');
+    }
   };
 
-  const handleConfirmTBD = () => {
-    handleModalClose();
-    onConfirm({
+  const handleConfirmTBDStep = () => {
+    setIsTBD(true);
+    const data = {
       date: 'TBD',
       reason: tbdReason,
       customerName,
-    });
+    };
+    onConfirm(data);
+    if (isEdit) {
+      onClose();
+    } else {
+      setView('success');
+    }
   };
 
   const handleModalClose = () => {
@@ -100,6 +110,7 @@ export const AppointmentSchedulerModal = ({
       setView('date');
       setTimeSlotIdx(0);
       setTbdReason('');
+      setIsTBD(false);
     }, 300);
   };
 
@@ -292,55 +303,62 @@ export const AppointmentSchedulerModal = ({
 
             {view === 'tbd' && (
               <View>
-                <TouchableOpacity
-                  onPress={() => setView('date')}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}>
-                    <Icon name="arrow-left" size={20} color="#94a3b8" />
-                    <Text style={{ marginLeft: 8, color: '#94a3b8', fontWeight: '900', fontSize: 12 }}>BACK TO CALENDAR</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <Text style={{ fontSize: 10, fontWeight: '900', color: '#94a3b8', letterSpacing: 2, marginBottom: 16, textTransform: 'uppercase' }}>
-                  Reason for TBD
+                <Text style={{ fontSize: 18, fontWeight: '900', color: '#1e293b', marginBottom: 24 }}>
+                  Why is the install date TBD?
                 </Text>
-                <TextInput
-                  value={tbdReason}
-                  onChangeText={setTbdReason}
-                  multiline
-                  placeholder="Explain why date is not set..."
-                  style={{ height: 150, textAlignVertical: 'top', backgroundColor: '#f8fafc', padding: 20, borderRadius: 24, fontWeight: '700', color: '#0f172a', borderWidth: 1, borderColor: '#f1f5f9', marginBottom: 32 }}
-                />
 
-                <TouchableOpacity
-                  onPress={handleConfirmTBD}
-                  disabled={!tbdReason.trim()}
-                >
-                  <View
-                    style={{
-                      height: 64,
-                      borderRadius: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: !tbdReason.trim() ? '#f1f5f9' : '#22C55E',
-                      shadowColor: !tbdReason.trim() ? 'transparent' : '#10B981',
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowOpacity: 0.2,
-                      shadowRadius: 8,
-                      elevation: 4,
-                    }}
+                <View style={{ height: 180, backgroundColor: 'white', borderRadius: 16, borderWidth: 2, borderColor: '#1e293b', padding: 12, marginBottom: 32 }}>
+                  <TextInput
+                    value={tbdReason}
+                    onChangeText={setTbdReason}
+                    multiline
+                    placeholder={"Please explain why the installation date cannot be determined at this time...\nExamples: \u2022 Waiting for material delivery \u2022 Customer needs to confirm schedule \u2022 Weather-dependent installation \u2022 Pending"}
+                    placeholderTextColor="#94a3b8"
+                    style={{ flex: 1, textAlignVertical: 'top', fontSize: 14, fontWeight: '700', color: '#0f172a' }}
+                  />
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <TouchableOpacity
+                    onPress={() => setView('date')}
+                    style={{ flex: 1 }}
                   >
-                    <Text
+                    <View style={{ height: 56, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white' }}>
+                      <Text style={{ color: '#1e293b', fontWeight: '900', fontSize: 14 }}>Back to Calendar</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={handleConfirmTBDStep}
+                    disabled={!tbdReason.trim()}
+                    style={{ flex: 1 }}
+                  >
+                    <View
                       style={{
-                        fontWeight: '900',
-                        letterSpacing: 1.5,
-                        color: !tbdReason.trim() ? '#94a3b8' : 'white',
+                        height: 56,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: !tbdReason.trim() ? '#f1f5f9' : '#22C55E',
+                        shadowColor: !tbdReason.trim() ? 'transparent' : '#10B981',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 8,
+                        elevation: !tbdReason.trim() ? 0 : 4,
                       }}
                     >
-                      CONFIRM TBD
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                      <Text
+                        style={{
+                          fontWeight: '900',
+                          fontSize: 16,
+                          color: !tbdReason.trim() ? '#94a3b8' : 'white',
+                        }}
+                      >
+                        Continue
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
@@ -359,23 +377,30 @@ export const AppointmentSchedulerModal = ({
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(226, 232, 240, 0.5)' }}>
                     <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Date</Text>
-                    <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{format(selectedDate, 'M/d/yyyy')}</Text>
+                    <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{isTBD ? 'TBD' : format(selectedDate, 'M/d/yyyy')}</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Time Window</Text>
-                    <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{windows[timeSlotIdx].label}</Text>
-                  </View>
+                  {isTBD ? (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>TBD Reason</Text>
+                      <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14, flex: 1, textAlign: 'right', marginLeft: 16 }}>{tbdReason || 'none'}</Text>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: '#94a3b8', fontWeight: '900', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Time Window</Text>
+                      <Text style={{ color: '#334155', fontWeight: '700', fontSize: 14 }}>{windows[timeSlotIdx].label}</Text>
+                    </View>
+                  )}
                 </View>
 
-                {!isEdit ? (
+                {isEdit ? null : (
                   <View style={{ width: '100%', gap: 12 }}>
                     <TouchableOpacity
                       onPress={() => {
-                        onGenerate?.({
-                          date: format(selectedDate, 'M/d/yyyy'),
-                          timeWindow: windows[timeSlotIdx].value,
-                          customerName,
-                        });
+                        onGenerate?.(
+                          isTBD 
+                            ? { date: 'TBD', reason: tbdReason, customerName }
+                            : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName }
+                        );
                         handleModalClose();
                       }}
                       style={{
@@ -406,11 +431,11 @@ export const AppointmentSchedulerModal = ({
 
                     <TouchableOpacity
                       onPress={() => {
-                        onUpload?.({
-                          date: format(selectedDate, 'M/d/yyyy'),
-                          timeWindow: windows[timeSlotIdx].value,
-                          customerName,
-                        });
+                        onUpload?.(
+                          isTBD 
+                            ? { date: 'TBD', reason: tbdReason, customerName }
+                            : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName }
+                        );
                         handleModalClose();
                       }}
                       style={{
@@ -430,40 +455,12 @@ export const AppointmentSchedulerModal = ({
                           fontSize: 16,
                         }}
                       >
-                        Upload Presigned Agreement
+                        Add Presigned Agreement
                       </Text>
                     </TouchableOpacity>
+
+                    {/* Removed Just Save Appointment per request as it is now handled by Continue/Yes */}
                   </View>
-                ) : (
-                  <Pressable onPress={handleFinalSave} style={{ width: '100%' }}>
-                    <View
-                      style={{
-                        width: '100%',
-                        height: 64,
-                        backgroundColor: '#22C55E',
-                        borderRadius: 16,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        shadowColor: '#10B981',
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowOpacity: 0.2,
-                        shadowRadius: 8,
-                        elevation: 4,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: 'white',
-                          fontWeight: '900',
-                          fontSize: 16,
-                          textTransform: 'uppercase',
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Save Changes
-                      </Text>
-                    </View>
-                  </Pressable>
                 )}
               </View>
             )}

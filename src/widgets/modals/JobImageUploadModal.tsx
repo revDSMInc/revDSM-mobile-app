@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -32,17 +32,43 @@ export const JobImageUploadModal = ({
   const [type, setType] = useState<'before' | 'after' | null>(null);
   const [images, setImages] = useState<Asset[]>([]);
 
+  // Reset state when modal opens
+  useEffect(() => {
+    if (visible) {
+      resetState();
+    }
+  }, [visible]);
+
+  const resetState = () => {
+    setType(null);
+    setImages([]);
+    setLoading(false);
+  };
+
   const handlePickImage = async (useCamera: boolean) => {
     const options = {
       mediaType: 'photo' as const,
       quality: 0.7 as PhotoQuality,
       selectionLimit: 0, // Allow multiple
+      saveToPhotos: true,
+      includeExtra: true,
     };
 
-    const result = useCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    try {
+      const result = useCamera ? await launchCamera(options) : await launchImageLibrary(options);
 
-    if (result.assets) {
-      setImages((prev) => [...prev, ...result.assets!]);
+      if (result.didCancel) return;
+      if (result.errorMessage) {
+        Alert.alert('Camera Error', result.errorMessage);
+        return;
+      }
+
+      if (result.assets) {
+        setImages((prev) => [...prev, ...result.assets!]);
+      }
+    } catch (error) {
+      console.error('Image Picker Error:', error);
+      Alert.alert('Error', 'Failed to open camera or gallery');
     }
   };
 
@@ -80,6 +106,10 @@ export const JobImageUploadModal = ({
       if (response.data) {
         Alert.alert('Success', 'Images uploaded successfully');
         onUploadSuccess?.();
+        // Return to selection screen instead of just closing if preferred, 
+        // but typically we close and let parent handle refresh.
+        // Based on user request: "again intialized to the before and after screen"
+        resetState();
         onClose();
       }
     } catch (error) {
@@ -130,7 +160,7 @@ export const JobImageUploadModal = ({
               <View className="flex-row gap-3 mb-6">
                 <TouchableOpacity
                   onPress={() => handlePickImage(true)}
-                  className="flex-1 flex-row bg-green-600 p-4 rounded-2xl items-center justify-center"
+                  className="flex-1 flex-row bg-[#2EDE56] p-4 rounded-2xl items-center justify-center"
                 >
                   <Icon name="camera" size={20} color="white" />
                   <Text className="ml-2 text-white font-bold">Camera</Text>
@@ -179,7 +209,7 @@ export const JobImageUploadModal = ({
                 <TouchableOpacity
                   onPress={handleUpload}
                   disabled={loading || images.length === 0}
-                  className="flex-[2] bg-green-600 h-14 rounded-2xl items-center justify-center shadow-lg shadow-green-200"
+                  className="flex-[2] bg-[#2EDE56] h-14 rounded-2xl items-center justify-center shadow-lg shadow-green-100"
                 >
                   {loading ? (
                     <ActivityIndicator color="white" />

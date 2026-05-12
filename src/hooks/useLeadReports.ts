@@ -4,6 +4,7 @@ import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
+import { downloadPdfToDevice } from '../utils/download-utils';
 
 export interface RiskJob {
   jobId: string;
@@ -134,20 +135,17 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
 
   const handleDownloadRiskReport = async (url: string) => {
     try {
-      FlashMessage.info('Downloading report...', 'Downloading');
-      const { dirs } = ReactNativeBlobUtil.fs;
-      const fileName = `RiskReport_${lead?.leadId || 'lead'}.pdf`;
-      const filePath = `${dirs.DocumentDir}/${fileName}`;
-
-      await ReactNativeBlobUtil.config({
-        fileCache: true,
-        path: filePath,
-      }).fetch('GET', url);
-
-      FlashMessage.success('Success', 'Report downloaded successfully');
-      await FileViewer.open(filePath);
+      await downloadPdfToDevice(url, `RiskReport_${lead?.leadId || 'lead'}`);
     } catch (err) {
-      FlashMessage.error('Error', 'Failed to download report');
+      // Error handled in utility
+    }
+  };
+
+  const handleDownloadReport = async (url: string, type: string) => {
+    try {
+      await downloadPdfToDevice(url, `${type}_${lead?.leadId || 'lead'}`);
+    } catch (err) {
+      // Error handled in utility
     }
   };
 
@@ -169,6 +167,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     riskJob,
     handleStartRiskReport,
     handleDownloadRiskReport,
+    handleDownloadReport,
     handleResetRiskReport,
   };
 };

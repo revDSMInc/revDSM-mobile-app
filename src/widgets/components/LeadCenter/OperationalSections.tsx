@@ -227,12 +227,36 @@ export const ToolsSection = ({
           </Text>
         )}
       </View>
-      <ToolCard
-        title="Inspection Report"
-        desc="Detailed inspection logs"
-        icon="clipboard-text"
-        onPress={() => onAction('inspection')}
-      />
+      <View
+        className="p-3 rounded-lg flex-col mb-4 border"
+        style={{
+          borderColor: '#919EAB33',
+          backgroundColor: colors.background,
+        }}
+      >
+        <View className="flex-row justify-between items-center">
+          <View
+            className="w-8 h-8 rounded-full items-center justify-center"
+            style={{ backgroundColor: '#919EAB1F' }}
+          >
+            <Icon name="clipboard-text" size={16} color={'#637381'} />
+          </View>
+          <View className="flex-1 ml-4">
+            <Text className="text-sm font-semibold" style={{ color: '#1C252E' }}>
+              Inspection Report
+            </Text>
+          </View>
+          <View className="flex-row items-center gap-3">
+            <TouchableOpacity
+              onPress={() => onAction('inspection')}
+              className="w-8 h-8 rounded-full items-center justify-center"
+              style={{ backgroundColor: colors.primary.main }}
+            >
+              <Icon name="plus" size={16} color={'#ffffff'} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
       <ToolCard
         title="Roof Waiver"
         desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
@@ -276,37 +300,47 @@ export const ToolsSection = ({
   );
 };
 
-const ToolCard = ({ title, blur, icon, onPress, isGenerated }: any) => {
+const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated }: any) => {
   const { colors, isDark } = useTheme();
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      className="p-3 rounded-lg flex-row items-center mb-4 border"
+    <View
+      className="mb-4 flex-row items-center p-3 rounded-lg border"
       style={{
         borderColor: '#919EAB33',
         backgroundColor: isDark ? colors.surface : colors.background,
       }}
     >
-      <View
-        className="w-8 h-8 rounded-full items-center justify-center"
-        style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
-      >
-        <Icon name={icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
-      </View>
-      <View className="flex-1 ml-4">
-        <Text
-          className="text-sm font-semibold"
-          style={{ color: isGenerated ? colors.primary.main : '#1C252E' }}
+      <TouchableOpacity onPress={onPress} className="flex-1 flex-row items-center">
+        <View
+          className="w-8 h-8 rounded-full items-center justify-center"
+          style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
         >
-          {title}
-        </Text>
-      </View>
-      {isGenerated && (
-        <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm">
-          <Text className="text-[10px] font-semibold text-violet-700">Already Generated</Text>
+          <Icon name={icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
         </View>
+        <View className="flex-1 ml-4">
+          <Text
+            className="text-sm font-semibold"
+            style={{ color: isGenerated ? colors.primary.main : '#1C252E' }}
+          >
+            {title}
+          </Text>
+        </View>
+        {isGenerated && (
+          <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2">
+            <Text className="text-[10px] font-semibold text-violet-700">Already Generated</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+
+      {onDownload && (
+        <TouchableOpacity
+          onPress={onDownload}
+          className="w-8 h-8 rounded-full items-center justify-center bg-emerald-500"
+        >
+          <Icon name="download" size={16} color="white" />
+        </TouchableOpacity>
       )}
-    </TouchableOpacity>
+    </View>
   );
 };
 

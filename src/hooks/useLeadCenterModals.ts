@@ -11,7 +11,6 @@ interface ModalState {
   showWaiverModal: boolean;
   showInspectionModal: boolean;
   showRiskModal: boolean;
-  showRevRenderModal: boolean;
   showPdfModal: boolean;
 }
 
@@ -32,7 +31,6 @@ export const useLeadCenterModals = (
     showWaiverModal: false,
     showInspectionModal: false,
     showRiskModal: false,
-    showRevRenderModal: false,
     showPdfModal: false,
   });
 
@@ -81,8 +79,17 @@ export const useLeadCenterModals = (
         } else {
           toggleModal('showWaiverModal', true);
         }
+      } else if (toolId === 'consent-download') {
+        handlers.handleDownloadReport?.(extra, 'ConsentForm');
+      } else if (toolId === 'waiver-download') {
+        handlers.handleDownloadReport?.(extra, 'RoofWaiver');
       } else if (toolId === 'inspection') {
         toggleModal('showInspectionModal', true);
+      } else if (toolId === 'inspection-preview') {
+        handleOpenPdf(extra, 'Inspection Report');
+      } else if (toolId === 'inspection-download') {
+        // We'll open preview for now, but we could also add a direct download handler
+        handleOpenPdf(extra, 'Inspection Report');
       } else if (toolId === 'risk') {
         toggleModal('showRiskModal', true);
       } else if (toolId === 'risk-generate') {
@@ -106,7 +113,7 @@ export const useLeadCenterModals = (
       } else if (toolId === 'risk-reset') {
         handlers.handleResetRiskReport?.(extra);
       } else if (toolId === 'revrender') {
-        toggleModal('showRevRenderModal', true);
+        // Handled in screen directly via navigation for better stability
       } else if (toolId === 'pitchbook') {
         navigation.navigate('Pitchbook', { lead });
       }

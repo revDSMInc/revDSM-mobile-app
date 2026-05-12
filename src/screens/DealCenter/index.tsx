@@ -64,7 +64,9 @@ export default function LFCalculator({ route }: any) {
   const { user } = useAuth();
   const lead = route.params?.lead;
   const onRefresh = route.params?.onRefresh;
-  const onClose = () => navigation.goBack();
+  const onClose = () => {
+    navigation.goBack();
+  };
 
   const [currentView, setCurrentView] = useState<
     'form' | 'summary' | 'picker' | 'result' | 'outcome'
@@ -172,7 +174,7 @@ export default function LFCalculator({ route }: any) {
           initialJobState: jobState,
           calculatorData: active,
           leadId: lead?._id || lead?.leadId || lead?.id,
-          outcomeForm: outcomeForm,
+          outcomeForm: { ...outcomeForm, result: outcomeStatus },
           onGoBack: (updatedJobState: any) => {
             setJobState(updatedJobState);
             setCurrentView('outcome');

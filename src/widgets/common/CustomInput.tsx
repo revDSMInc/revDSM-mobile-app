@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, forwardRef, memo } from 'react';
-import { View, Text, TextInput, TextInputProps, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TextInputProps, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -8,11 +8,13 @@ interface Props extends TextInputProps {
   error?: string;
   rightIcon?: string;
   onRightIconPress?: () => void;
+  containerStyle?: ViewStyle;
+  inputContainerStyle?: ViewStyle;
 }
 
 export const CustomInput = memo(
   forwardRef<TextInput, Props>(
-    ({ label, error, style, rightIcon, onRightIconPress, secureTextEntry, ...props }, ref) => {
+    ({ label, error, style, rightIcon, onRightIconPress, secureTextEntry, containerStyle, inputContainerStyle, ...props }, ref) => {
       const { colors, isDark } = useTheme();
       const internalRef = useRef<TextInput>(null);
       const inputRef = (ref as React.RefObject<TextInput>) ?? internalRef;
@@ -37,10 +39,14 @@ export const CustomInput = memo(
           )}
           <View
             className="h-[50px] rounded-xl border flex-row items-center overflow-hidden"
-            style={{
-              backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#F5F5F5',
-              borderColor: error ? colors.error.main : isDark ? colors.border : '#919EAB33',
-            }}
+            style={[
+              {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#F5F5F5',
+                borderColor: error ? colors.error.main : isDark ? colors.border : '#919EAB33',
+              },
+              containerStyle,
+              inputContainerStyle,
+            ]}
           >
             <TextInput
               ref={inputRef}

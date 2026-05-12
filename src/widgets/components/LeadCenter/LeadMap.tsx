@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,11 @@ import {
   Platform,
   PermissionsAndroid,
   Alert,
+  Image,
 } from 'react-native';
-import MapView, { Marker, Callout, Heatmap, PROVIDER_GOOGLE } from 'react-native-maps';
-import MapViewDirections from 'react-native-maps-directions';
-import Icon from 'react-native-vector-icons/Ionicons';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout } from 'react-native-maps';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Geolocation from 'react-native-geolocation-service';
-import { launchCamera, launchImageLibrary, MediaType } from 'react-native-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useLeadsData } from '../../../hooks/useLeadsData';
@@ -22,10 +21,14 @@ import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
 import { MapJobCard } from './MapJobCard';
 import { useAuth } from '../../../hooks/useAuth';
+import { MapGalleryModal } from './MapGalleryModal';
+import { MapToggleSwitch } from '../../common/MapToggleSwitch';
+import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
+import { ReferralModal } from '../../modals/ReferralModal';
+
+const markerImg = require('../../../assets/images/map/marker.png');
 
 const { width, height } = Dimensions.get('window');
-
-const GOOGLE_MAPS_API_KEY = ENV.GOOGLE_MAPS_API_KEY;
 
 // STATIC TAMPA DATA
 const TAMPA_COORDS = {
@@ -36,47 +39,118 @@ const TAMPA_COORDS = {
 interface LeadMapProps {
   currentLead?: any;
   fullScreen?: boolean;
+  onGalleryPress?: (job: any) => void;
+  onCameraPress?: (job: any) => void;
+  onReferencePress?: (job: any) => void;
 }
 
-export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
+export const LeadMap = ({
+  currentLead,
+  fullScreen = false,
+  onGalleryPress,
+  onCameraPress,
+  onReferencePress,
+}: LeadMapProps) => {
   const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
-  const { leads, refresh } = useLeadsData();
+  const [allLeads, setAllLeads] = useState<any[]>([]);
+  const [isFetching, setIsFetching] = useState(false);
   const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
   const mapRef = useRef<MapView>(null);
   const isInternalMove = useRef(false);
 
-  const [filteredLeads, setFilteredLeads] = useState<any[]>([]);
+  const fetchAllJobs = async () => {
+    try {
+      setIsFetching(true);
+      const res = await LeadService.findJobs({});
+      const jobs = res.data?.data || [];
+      setAllLeads(jobs);
+
+      // Refresh active selections to show new images/referrals immediately
+      if (selectedLead?._id) {
+        const updated = jobs.find((j: any) => j._id === selectedLead._id);
+        if (updated) setSelectedLead(updated);
+      }
+      if (galleryJob?._id) {
+        const updated = jobs.find((j: any) => j._id === galleryJob._id);
+        if (updated) setGalleryJob(updated);
+      }
+    } catch (error) {
+      console.error('Failed to fetch jobs for map', error);
+    } finally {
+      setIsFetching(false);
+    }
+  };
 
   useEffect(() => {
-    let result = [...leads];
+    fetchAllJobs();
+  }, []);
 
-    // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
-    result = result.filter((item) => {
+  const [filteredLeads, setFilteredLeads] = useState<any[]>([]);
+  const [userLocation, setUserLocation] = useState<any>(null);
+  const markerPressedRef = useRef(false);
+  const [isHeatMap, setIsHeatMap] = useState(false);
+  const [showRoute, setShowRoute] = useState(false);
+  const [selectedLead, setSelectedLead] = useState<any>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<any[]>([]);
+  const [showGallery, setShowGallery] = useState(false);
+  const [galleryJob, setGalleryJob] = useState<any>(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [showReferral, setShowReferral] = useState(false);
+  const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-2']);
+  const [region, setRegion] = useState({
+    ...TAMPA_COORDS,
+    latitudeDelta: 0.0922,
+    longitudeDelta: 0.0421,
+  });
+  const currentRegion = useRef(region);
+
+  useEffect(() => {
+    let result = [...allLeads];
+
+    const isHeatMapActive = activeFilters.includes('HT-0');
+    const isMyJobsOnly = activeFilters.includes('MJ-1');
+    const isReferralOnly = activeFilters.includes('RF-2');
+
+    // Sync heatmap state
+    if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
+
+    result = result.filter((item: any) => {
+      if (currentLead && item._id === currentLead._id) return true;
+
+      // 1. TAM Range Filter (Excludes TAM30000-30032)
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
-        const number = parseInt(jobNumber.replace('TAM', ''), 10);
-        if (!isNaN(number) && number >= 30000 && number <= 30032) {
-          return false;
-        }
+        const num = parseInt(jobNumber.substring(3), 10);
+        if (num >= 30000 && num <= 30032) return false;
       }
+
+      // 2. My Jobs Filter
+      if (isMyJobsOnly) {
+        const uid = (user as any)?._id || (user as any)?.id;
+        const isOwner = !!uid && (
+          item.salesRepId === uid || 
+          item.salesRep?._id === uid ||
+          item.userId === uid ||
+          item.salesRep === uid ||
+          item.salesRepName === (user as any)?.fullName ||
+          item.salesRepName === (user as any)?.firstName ||
+          item.salesRep === (user as any)?.userName ||
+          item.userName === (user as any)?.userName
+        );
+        if (!isOwner) return false;
+      }
+
+      // 3. Referral Filter
+      if (isReferralOnly) {
+        if (!item.jobReferrals || item.jobReferrals.length === 0) return false;
+      }
+
       return true;
     });
 
     setFilteredLeads(result);
-  }, [leads]);
-
-  const [region, setRegion] = useState({
-    ...TAMPA_COORDS,
-    latitudeDelta: 0.1,
-    longitudeDelta: 0.1,
-  });
-
-  const [userLocation, setUserLocation] = useState<any>(null);
-  const [isHeatMap, setIsHeatMap] = useState(false);
-  const [showRoute, setShowRoute] = useState(false);
-  const [selectedLead, setSelectedLead] = useState<any>(null);
+  }, [allLeads, activeFilters, user, isHeatMap, currentLead]);
 
   useEffect(() => {
     requestLocationPermission();
@@ -102,18 +176,15 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
         const { latitude, longitude } = position.coords;
         setUserLocation({ latitude, longitude });
 
-        // If we have a current lead, center on it. Otherwise center on user.
         if (currentLead?.location?.coordinates) {
-          centerOnLead(currentLead);
+          handleMarkerClick(currentLead);
         } else {
-          const newReg = {
+          mapRef.current?.animateToRegion({
             latitude,
             longitude,
             latitudeDelta: 0.05,
             longitudeDelta: 0.05,
-          };
-          setRegion(newReg);
-          mapRef.current?.animateToRegion(newReg, 1000);
+          });
         }
       },
       (error) => console.log(error),
@@ -121,122 +192,94 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
     );
   };
 
-  const centerOnLead = (lead: any) => {
-    const coords = lead.location?.coordinates;
-    if (!coords) return;
-
-    // Web logic: center and offset slightly upwards (approx 0.005 deg for zoom 16)
-    const newReg = {
-      latitude: coords[1] - 0.002,
-      longitude: coords[0],
-      latitudeDelta: 0.012,
-      longitudeDelta: 0.012,
-    };
-    setRegion(newReg);
-    mapRef.current?.animateToRegion(newReg, 1000);
+  const handleToggleFavorite = async (job: any) => {
+    const nextValue = !(job.isFavourite || job.isFavorite);
+    try {
+      await LeadService.toggleFavourite(job._id, nextValue);
+      // Optimistic update
+      setFilteredLeads((prev) =>
+        prev.map((l) =>
+          l._id === job._id ? { ...l, isFavourite: nextValue, isFavorite: nextValue } : l
+        )
+      );
+      if (selectedLead && selectedLead._id === job._id) {
+        setSelectedLead({
+          ...selectedLead,
+          isFavourite: nextValue,
+          isFavorite: nextValue,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to toggle favorite', error);
+    }
   };
 
-  const handleMarkerClick = (lead: any) => {
+  const handleMarkerClick = (lead: any, event?: any) => {
+    markerPressedRef.current = true;
+    if (event && event.stopPropagation) {
+      event.stopPropagation();
+    }
+    
     const coords = lead.location?.coordinates;
     if (!coords) return;
 
     setSelectedLead(lead);
 
-    isInternalMove.current = true;
-    mapRef.current?.animateCamera(
-      {
-        center: {
-          latitude: coords[1] + 0.0055, // Larger offset to center the modal, not the marker
-          longitude: coords[0],
-        },
-        zoom: 16,
-        pitch: 0,
-        heading: 0,
-      },
-      { duration: 800 }
-    );
-    // Reset flag after animation
-    setTimeout(() => {
-      isInternalMove.current = false;
-    }, 1000);
+    mapRef.current?.animateToRegion({
+      latitude: coords[1],
+      longitude: coords[0],
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    }, 800);
   };
 
-  const handleToggleFavorite = async (leadId: string) => {
+  const fetchRoute = async () => {
+    if (!userLocation || !currentLead?.location?.coordinates) return;
+
+    const start = `${userLocation.longitude},${userLocation.latitude}`;
+    const end = `${currentLead.location.coordinates[0]},${currentLead.location.coordinates[1]}`;
+    
     try {
-      await LeadService.toggleFavourite(leadId);
-      refresh();
-      // Optional: Add haptic feedback here
-    } catch (e) {
-      Alert.alert('Error', 'Could not update favorite status.');
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start};${end}?geometries=geojson&access_token=${ENV.MAPBOX_ACCESS_TOKEN}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.routes && data.routes.length > 0) {
+        const coords = data.routes[0].geometry.coordinates.map((c: any) => ({
+          longitude: c[0],
+          latitude: c[1],
+        }));
+        setRouteCoordinates(coords);
+      }
+    } catch (error) {
+      console.error('Error fetching route:', error);
     }
   };
 
-  const handleOpenCamera = () => {
-    launchCamera(
-      { mediaType: 'photo' as MediaType, quality: 0.8, saveToPhotos: true },
-      (response) => {
-        if (response.didCancel) return;
-        if (response.assets?.[0]?.uri) {
-          Alert.alert(
-            'Photo Captured',
-            'Would you like to sync this photo to Job Docs immediately?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Sync Now',
-                onPress: () => Alert.alert('Sync', 'Image added to background upload queue.'),
-              },
-            ]
-          );
-        }
-      }
-    );
-  };
+  useEffect(() => {
+    if (showRoute) {
+      fetchRoute();
+    } else {
+      setRouteCoordinates([]);
+    }
+  }, [showRoute, userLocation, currentLead]);
 
-  const handleOpenGallery = () => {
-    launchImageLibrary({ mediaType: 'photo' as MediaType, quality: 0.8 }, (response) => {
-      if (response.didCancel) return;
-      if (response.assets?.[0]?.uri) {
-        Alert.alert(
-          'Media Ready',
-          'Image selected for Lead Gallery. Tap "Job Docs" to view your saved assets.'
-        );
-      }
-    });
-  };
-
-  const handleOpenReferral = () => {
-    Alert.alert(
-      'Lead Referral',
-      'Referral modules are currently being synchronized with the web console. Please use the Lead Details screen to manage referrals for now.',
-      [{ text: 'Acknowledged' }]
-    );
-  };
-
-  // Convert leads to heatmap data
-  const heatmapData = leads
-    .filter((l) => l.location?.coordinates && l.price)
-    .map((l) => ({
-      latitude: l.location!.coordinates[1],
-      longitude: l.location!.coordinates[0],
-      weight: Math.min((l.price || 0) / 10000, 1) || 0.5,
-    }));
-
-  const userCoords = userLocation || region;
-
-  const destination = currentLead?.location?.coordinates
-    ? {
-        latitude: currentLead.location.coordinates[1],
-        longitude: currentLead.location.coordinates[0],
-      }
-    : null;
+  const heatmapPoints = useMemo(() => {
+    return filteredLeads
+      .filter((l: any) => l.location?.coordinates)
+      .map((l: any) => ({
+        latitude: l.location.coordinates[1],
+        longitude: l.location.coordinates[0],
+        weight: (l.price || 0) / 1000 || 1,
+      }));
+  }, [filteredLeads]);
 
   return (
     <View
       className={fullScreen ? 'flex-1' : 'rounded-[32px] overflow-hidden border-2 shadow-2xl mt-4'}
       style={{
         borderColor: colors.border,
-        height: fullScreen ? undefined : 420,
+        height: fullScreen ? '100%' : 420,
         width: '100%',
         backgroundColor: isDark ? '#121212' : '#f0f0f0',
       }}
@@ -245,233 +288,373 @@ export const LeadMap = ({ currentLead, fullScreen = false }: LeadMapProps) => {
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
-        customMapStyle={isDark ? darkMapStyle : []}
         initialRegion={region}
-        showsUserLocation={false}
-        showsMyLocationButton={false}
-        onRegionChangeStart={() => {
-          if (!isInternalMove.current) {
-            setSelectedLead(null);
-          }
+        onRegionChangeComplete={(r) => {
+          currentRegion.current = r;
         }}
-        onPress={() => setSelectedLead(null)}
+        onPress={() => {
+          if (markerPressedRef.current) {
+            markerPressedRef.current = false;
+            return;
+          }
+          setSelectedLead(null);
+        }}
+        customMapStyle={isDark ? darkMapStyle : []}
       >
-        {showRoute && userLocation && destination && GOOGLE_MAPS_API_KEY ? (
-          <MapViewDirections
-            origin={userLocation}
-            destination={destination}
-            apikey={GOOGLE_MAPS_API_KEY}
-            strokeWidth={4}
+        {/* Route Polyline */}
+        {routeCoordinates.length > 0 && (
+          <Polyline
+            coordinates={routeCoordinates}
             strokeColor={colors.primary.main}
-            optimizeWaypoints={true}
-            onReady={(result) => {
-              mapRef.current?.fitToCoordinates(result.coordinates, {
-                edgePadding: { right: 50, bottom: 50, left: 50, top: 50 },
-              });
-            }}
+            strokeWidth={4}
           />
-        ) : null}
+        )}
 
-        {!isHeatMap &&
-          leads.map((lead: any) => {
-            const coords = lead.location?.coordinates;
-            if (!coords) return null;
-            const isActive = selectedLead?._id === lead._id || currentLead?._id === lead._id;
-
-            return (
-              <Marker
-                key={lead._id}
-                coordinate={{ latitude: coords[1], longitude: coords[0] }}
-                onPress={() => handleMarkerClick(lead)}
-                onSelect={() => handleMarkerClick(lead)}
-                anchor={{ x: 0.5, y: 1 }}
-                tracksViewChanges={true}
-                zIndex={isActive ? 999 : 1}
-              >
-                <View className="items-center justify-center" collapsable={false}>
-                  <View className="shadow-2xl">
-                    <Icon
-                      name="location"
-                      size={isActive ? 42 : 36}
-                      color={
-                        lead.isFavourite ? '#FFD700' : isActive ? colors.primary.main : '#FF5630'
-                      }
-                    />
-                  </View>
-                  {isActive && (
-                    <View
-                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg"
-                      style={{ elevation: 5 }}
-                    />
-                  )}
-                  {lead.isFavourite && !isActive && (
-                    <View className="absolute -top-1 -right-1">
-                      <Icon name="star" size={12} color="#FFD700" />
-                    </View>
-                  )}
-                </View>
-              </Marker>
-            );
-          })}
-
-        {isHeatMap && heatmapData.length > 0 && (
+        {/* Heatmap Layer */}
+        {isHeatMap && heatmapPoints.length > 0 && (
           <Heatmap
-            points={heatmapData}
-            radius={Platform.OS === 'ios' ? 40 : 50}
-            opacity={0.6}
+            points={heatmapPoints}
+            radius={40}
+            opacity={0.7}
             gradient={{
               colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
               startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
-              colorMapSize: 2048,
+              colorMapSize: 256,
             }}
           />
         )}
 
-        {/* User Current Position Marker */}
+        {/* Individual Markers */}
+        {!isHeatMap && filteredLeads.map((job) => {
+          if (!job.location?.coordinates) return null;
+          return (
+            <Marker
+              key={job._id}
+              coordinate={{
+                latitude: job.location.coordinates[1],
+                longitude: job.location.coordinates[0],
+              }}
+              onPress={(e) => handleMarkerClick(job, e)}
+              tracksViewChanges={false}
+              anchor={{ x: 0.5, y: 1 }}
+            >
+              <View>
+                <Image 
+                  source={markerImg} 
+                  style={{ 
+                    width: 30, 
+                    height: 35,
+                    tintColor: (job.isFavourite || job.isFavorite) ? '#F5B041' : undefined 
+                  }} 
+                  resizeMode="contain" 
+                />
+                {(job.isFavourite || job.isFavorite) && (
+                  <View className="absolute top-1 left-0 right-0 items-center justify-center">
+                    <Icon name="star" size={12} color="white" />
+                  </View>
+                )}
+              </View>
+            </Marker>
+          );
+        })}
+
+        {/* User Location Marker */}
         {userLocation && (
-          <Marker coordinate={userLocation} title="My Position" zIndex={100}>
+          <Marker
+            coordinate={userLocation}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
             <View className="items-center justify-center">
               <View className="w-8 h-8 rounded-full bg-blue-500/20 border-2 border-white items-center justify-center shadow-lg">
                 <View className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
               </View>
-              <View
-                className="absolute -bottom-1 w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-transparent"
-                style={{ borderTopColor: colors.primary.main }}
-              />
             </View>
           </Marker>
         )}
       </MapView>
 
-      {/* High-Fidelity Floating UI */}
-      <View className="absolute top-6 right-6 gap-3">
-        <TouchableOpacity
-          onPress={() => setIsHeatMap(!isHeatMap)}
-          className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 shadow-2xl items-center justify-center border border-gray-100 dark:border-zinc-700"
-        >
-          <Icon name="flame" size={24} color={isHeatMap ? '#EF4444' : '#94A3B8'} />
-        </TouchableOpacity>
-
-        {destination && (
-          <TouchableOpacity
-            onPress={() => {
-              if (!GOOGLE_MAPS_API_KEY) {
-                Alert.alert(
-                  'API Key Required',
-                  'Google Maps Directions API key is missing in config.'
-                );
-                return;
-              }
-              setShowRoute(!showRoute);
+      {/* Selected Job Card (Floating Overlay instead of Callout for better UI control) */}
+      {selectedLead && (
+        <View style={styles.cardOverlay} pointerEvents="box-none">
+          <View
+            style={{
+              backgroundColor: isDark ? '#1E1E1E' : 'white',
+              borderRadius: 24,
+              overflow: 'hidden',
+              borderWidth: 1,
+              borderColor: isDark ? '#333' : '#f1f5f9',
+              width: 280,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.2,
+              shadowRadius: 20,
+              elevation: 20,
             }}
-            className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 shadow-2xl items-center justify-center border border-gray-100 dark:border-zinc-700"
           >
-            <Icon
-              name="navigate-circle"
-              size={24}
-              color={showRoute ? colors.primary.main : '#94A3B8'}
+            <MapJobCard
+              job={selectedLead}
+              onClose={() => setSelectedLead(null)}
+              isMyJob={
+                (() => {
+                  const uid = (user as any)?._id || (user as any)?.id;
+                  if (!uid) return false;
+                  return (
+                    selectedLead.salesRepId === uid ||
+                    selectedLead.salesRep?._id === uid ||
+                    selectedLead.userId === uid ||
+                    selectedLead.salesRep === uid ||
+                    selectedLead.salesRepName === (user as any)?.fullName ||
+                    selectedLead.salesRepName === (user as any)?.firstName ||
+                    selectedLead.salesRep === (user as any)?.userName ||
+                    selectedLead.userName === (user as any)?.userName
+                  );
+                })()
+              }
+              onReferencePress={() => {
+                setGalleryJob(selectedLead);
+                setShowReferral(true);
+              }}
+              onCameraPress={() => {
+                setGalleryJob(selectedLead);
+                setShowUpload(true);
+              }}
+              onGalleryPress={() => {
+                if (onGalleryPress) onGalleryPress(selectedLead);
+                else {
+                  setGalleryJob(selectedLead);
+                  setShowGallery(true);
+                }
+              }}
+              onFavoritePress={handleToggleFavorite}
             />
-          </TouchableOpacity>
-        )}
+          </View>
+        </View>
+      )}
 
+      {/* Floating Controls (Bottom Right) */}
+      <View className="absolute bottom-10 right-6 gap-3 items-center" style={{ zIndex: 10 }}>
+        <View className="gap-2">
+          {[
+            { label: 'HT', id: 'HT-0' },
+            { label: 'MJ', id: 'MJ-1' },
+            { label: 'RF', id: 'RF-2' }
+          ].map((btn) => {
+            const isFilterActive = activeFilters.includes(btn.id);
+            return (
+              <MapToggleSwitch
+                key={btn.id}
+                value={isFilterActive}
+                onValueChange={(val) => {
+                  if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
+                  else setActiveFilters([...activeFilters, btn.id]);
+                }}
+                activeLabel={btn.label}
+                inactiveLabel={btn.label}
+              />
+            );
+          })}
+        </View>
+
+        <View className="gap-3 items-center">
+          <TouchableOpacity
+            onPress={startTracking}
+            className="w-14 h-14 rounded-full bg-[#2EDE56] items-center justify-center shadow-xl"
+          >
+            <Icon name="crosshairs-gps" size={32} color="white" />
+          </TouchableOpacity>
+
+          <View className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
+            <TouchableOpacity
+              onPress={() => {
+                const r = currentRegion.current;
+                mapRef.current?.animateToRegion({
+                  ...r,
+                  latitudeDelta: r.latitudeDelta / 2,
+                  longitudeDelta: r.longitudeDelta / 2,
+                }, 300);
+              }}
+              className="w-12 h-12 items-center justify-center border-b border-slate-100"
+            >
+              <Icon name="plus" size={24} color="#64748b" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                const r = currentRegion.current;
+                mapRef.current?.animateToRegion({
+                  ...r,
+                  latitudeDelta: r.latitudeDelta * 2,
+                  longitudeDelta: r.longitudeDelta * 2,
+                }, 300);
+              }}
+              className="w-12 h-12 items-center justify-center"
+            >
+              <Icon name="minus" size={24} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* Back Button */}
+      <View className="absolute top-6 right-6" style={{ zIndex: 10 }}>
         <TouchableOpacity
-          onPress={startTracking}
-          className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 shadow-2xl items-center justify-center border border-gray-100 dark:border-zinc-700"
+          onPress={() => navigation.goBack()}
+          className="w-14 h-14 rounded-full bg-[#2EDE56] items-center justify-center shadow-xl"
         >
-          <Icon name="locate" size={22} color={colors.primary.main} />
+          <Icon name="arrow-left" size={32} color="white" />
         </TouchableOpacity>
       </View>
 
-      {/* Heatmap Legend */}
-      {isHeatMap && (
-        <View className="absolute bottom-6 left-6 right-6 px-4 py-2 bg-white/90 dark:bg-black/80 rounded-full flex-row items-center justify-between">
-          <Text className="text-[10px] font-black  tracking-widest text-gray-500">
-            Price Intensity
-          </Text>
-          <View className="flex-row items-center gap-4">
-            <View className="flex-row items-center">
-              <View className="w-2 h-2 rounded-full bg-blue-500 mr-1" />
-              <Text className="text-[9px] font-bold">Low</Text>
-            </View>
-            <View className="flex-row items-center">
-              <View className="w-2 h-2 rounded-full bg-red-500 mr-1" />
-              <Text className="text-[9px] font-bold">High</Text>
-            </View>
-          </View>
-        </View>
-      )}
+      <MapGalleryModal
+        visible={showGallery}
+        job={galleryJob}
+        onClose={() => setShowGallery(false)}
+        onPresent={() => {}}
+      />
 
-      {/* Custom High-Fidelity Overlay Modal */}
-      {selectedLead && (
-        <View
-          className="absolute top-0 left-0 right-0 bottom-0 pointer-events-box-none items-center justify-center"
-          pointerEvents="box-none"
-          style={{ zIndex: 1000 }}
-        >
-          <View style={{ width: 260, height: 360, marginTop: -60 }}>
-            <View
-              style={{
-                backgroundColor: 'white',
-                borderRadius: 24,
-                overflow: 'hidden',
-                borderWidth: 1,
-                borderColor: '#f1f5f9',
-                height: 320,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 10 },
-                shadowOpacity: 0.2,
-                shadowRadius: 20,
-                elevation: 20,
-              }}
-            >
-              <MapJobCard
-                job={selectedLead}
-                onClose={() => setSelectedLead(null)}
-                isMyJob={selectedLead.salesRepId === (user as any)?._id}
-                onReferencePress={() =>
-                  navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'referral' })
-                }
-                onCameraPress={() =>
-                  navigation.navigate('LeadCenter', { lead: selectedLead, initialTool: 'camera' })
-                }
-                onGalleryPress={() => {
-                  setSelectedLead(null);
-                  navigation.navigate('LeadCenter', { lead: selectedLead });
-                }}
-              />
-            </View>
+      <JobImageUploadModal
+        visible={showUpload}
+        onClose={() => setShowUpload(false)}
+        selectedJob={galleryJob}
+        onUploadSuccess={() => {
+          fetchAllJobs();
+        }}
+      />
 
-            {/* Arrow Triangle */}
-            <View className="items-center">
-              <View
-                style={{
-                  width: 0,
-                  height: 0,
-                  backgroundColor: 'transparent',
-                  borderStyle: 'solid',
-                  borderLeftWidth: 12,
-                  borderRightWidth: 12,
-                  borderTopWidth: 15,
-                  borderLeftColor: 'transparent',
-                  borderRightColor: 'transparent',
-                  borderTopColor: 'white',
-                  marginTop: -1,
-                }}
-              />
-            </View>
-          </View>
-        </View>
-      )}
+      <ReferralModal
+        visible={showReferral}
+        onClose={() => setShowReferral(false)}
+        selectedJob={galleryJob}
+        isMyJob={
+          (() => {
+            const uid = (user as any)?._id || (user as any)?.id;
+            if (!uid) return false;
+            return (
+              galleryJob?.salesRepId === uid ||
+              galleryJob?.salesRep?._id === uid ||
+              galleryJob?.userId === uid ||
+              galleryJob?.salesRep === uid ||
+              galleryJob?.salesRepName === (user as any)?.fullName ||
+              galleryJob?.salesRepName === (user as any)?.firstName ||
+              galleryJob?.salesRep === (user as any)?.userName ||
+              galleryJob?.userName === (user as any)?.userName
+            );
+          })()
+        }
+      />
     </View>
   );
 };
 
+const styles = StyleSheet.create({
+  cardOverlay: {
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 20,
+  }
+});
+
 const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#121212' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#212121' }] },
-  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#757575' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#181818' }] },
-  { featureType: 'road', elementType: 'geometry.fill', stylers: [{ color: '#2c2c2c' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#000000' }] },
+  {
+    "elementType": "geometry",
+    "stylers": [{ "color": "#212121" }]
+  },
+  {
+    "elementType": "labels.icon",
+    "stylers": [{ "visibility": "off" }]
+  },
+  {
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "elementType": "labels.text.stroke",
+    "stylers": [{ "color": "#212121" }]
+  },
+  {
+    "featureType": "administrative",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "featureType": "administrative.country",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#9e9e9e" }]
+  },
+  {
+    "featureType": "administrative.land_parcel",
+    "stylers": [{ "visibility": "off" }]
+  },
+  {
+    "featureType": "administrative.locality",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#bdbdbd" }]
+  },
+  {
+    "featureType": "poi",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#181818" }]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#616161" }]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "labels.text.stroke",
+    "stylers": [{ "color": "#1b1b1b" }]
+  },
+  {
+    "featureType": "road",
+    "elementType": "geometry.fill",
+    "stylers": [{ "color": "#2c2c2c" }]
+  },
+  {
+    "featureType": "road",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#8a8a8a" }]
+  },
+  {
+    "featureType": "road.arterial",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#373737" }]
+  },
+  {
+    "featureType": "road.highway",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#3c3c3c" }]
+  },
+  {
+    "featureType": "road.highway.controlled_access",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#4e4e4e" }]
+  },
+  {
+    "featureType": "road.local",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#616161" }]
+  },
+  {
+    "featureType": "transit",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#757575" }]
+  },
+  {
+    "featureType": "water",
+    "elementType": "geometry",
+    "stylers": [{ "color": "#000000" }]
+  },
+  {
+    "featureType": "water",
+    "elementType": "labels.text.fill",
+    "stylers": [{ "color": "#3d3d3d" }]
+  }
 ];

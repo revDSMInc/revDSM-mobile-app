@@ -122,6 +122,15 @@ export const ConsentFormModal = ({
   };
 
   const handleFinalSubmit = async () => {
+    if (!formData.email || !formData.email.includes('@')) {
+      FlashMessage.error('Validation Error', 'A valid email address is required.');
+      return;
+    }
+    if (savedPaths.length === 0) {
+      FlashMessage.error('Validation Error', 'Customer signature is required.');
+      return;
+    }
+
     try {
       const signaturePaths = savedPaths.join(' ');
 
@@ -159,11 +168,11 @@ export const ConsentFormModal = ({
       });
 
       if (typeof res === 'string') {
-        setGeneratedPdf(res);
-        // Automatically trigger final upload to S3
+        // Automatically trigger final upload to S3 and close
         if (onFinalUpload) {
           await onFinalUpload(res);
         }
+        onClose();
       }
     } catch (error: any) {
       console.log('Failed to prepare signature file:', error);
@@ -179,11 +188,11 @@ export const ConsentFormModal = ({
     try {
       if (Platform.OS === 'android') {
         const downloadDir = ReactNativeBlobUtil.fs.dirs.DownloadDir;
-        const newPath = `${downloadDir}/consent_${Date.now()}.pdf`;
+        const newPath = `${downloadDir}/${type === 'consent' ? 'Consent' : 'Waiver'}_${Date.now()}.pdf`;
         await ReactNativeBlobUtil.fs.cp(generatedPdf, newPath);
         await ReactNativeBlobUtil.MediaCollection.copyToMediaStore(
           {
-            name: `Consent_${Date.now()}`,
+            name: `${type === 'consent' ? 'Consent' : 'Waiver'}_${Date.now()}`,
             parentFolder: '',
             mimeType: 'application/pdf',
           },

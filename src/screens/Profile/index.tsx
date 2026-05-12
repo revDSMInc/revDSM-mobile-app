@@ -9,11 +9,15 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
 import { SettingsService } from '../../services/api/SettingsService';
 import { AuthService } from '../../services/api/auth';
+import { LeadService } from '../../services/api/leads';
+import Clipboard from '@react-native-clipboard/clipboard';
+import RNFS from 'react-native-fs';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../../widgets/common/MainHeader';
 import { CustomInput } from '../../widgets/common/CustomInput';
@@ -34,6 +38,7 @@ export default function ProfilePage() {
   const navigation = useNavigation<any>();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
   const [loading, setLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
 
   // Profile Form State
   const [formData, setFormData] = useState({
@@ -49,6 +54,26 @@ export default function ProfilePage() {
     avatarUrl: '',
   });
 
+  const { refreshUser } = useAuth();
+
+  // Sync formData with user from auth hook
+  useEffect(() => {
+    if (user) {
+      setFormData((prev) => ({
+        ...prev,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        userName: user.userName || user.username || '',
+        phoneNumber: user.phoneNo || user.phoneNumber || '',
+        city: user.city || '',
+        street: user.address || user.street || '',
+        zipCode: user.zipCode || '',
+        email: user.email || '',
+        avatarUrl: user.profilePicture || '',
+      }));
+    }
+  }, [user]);
+
   // 2FA State from API
   const [tfaSettings, setTfaSettings] = useState({
     enabled: false,
@@ -62,6 +87,32 @@ export default function ProfilePage() {
   // Local state for choosing method before enabling
   const [selectionMethod, setSelectionMethod] = useState<'email' | 'authenticator'>('email');
   const [showPassword, setShowPassword] = useState(false);
+
+  // New Modal States
+  const [emailModalVisible, setEmailModalVisible] = useState(false);
+  const [backupCodesModalVisible, setBackupCodesModalVisible] = useState(false);
+  const [disableModalVisible, setDisableModalVisible] = useState(false);
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+
+  const fetchSecureAvatarUrl = useCallback(async (pic: any) => {
+    if (!pic || typeof pic !== 'object' || !pic.filePath) return;
+    
+    setImageLoading(true);
+    try {
+      const res = await LeadService.getSecureUrls([{
+        bucketName: pic.bucketName || 'np-revdsm-staging',
+        filePath: pic.filePath
+      }]);
+      const secureData = res.data?.data || res.data || [];
+      if (secureData[0]?.secureUrl) {
+        setFormData(prev => ({ ...prev, avatarUrl: secureData[0].secureUrl }));
+      }
+    } catch (err) {
+      console.error('Fetch Secure Avatar Error:', err);
+    } finally {
+      setImageLoading(false);
+    }
+  }, []);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -78,13 +129,20 @@ export default function ProfilePage() {
           street: u.address || u.street || '',
           zipCode: u.zipCode || '',
           email: u.email || '',
-          avatarUrl: u.profilePicture || '',
         }));
+
+        if (u.profilePicture) {
+          if (typeof u.profilePicture === 'string' && u.profilePicture.startsWith('http')) {
+            setFormData(prev => ({ ...prev, avatarUrl: u.profilePicture }));
+          } else {
+            fetchSecureAvatarUrl(u.profilePicture);
+          }
+        }
       }
     } catch (err) {
       console.error('Fetch Profile Error:', err);
     }
-  }, []);
+  }, [fetchSecureAvatarUrl]);
 
   const fetchTfaSettings = useCallback(async () => {
     try {
@@ -111,8 +169,49 @@ export default function ProfilePage() {
   const handleUpdateProfile = async () => {
     setLoading(true);
     try {
-      await SettingsService.updateProfile(formData);
-      Alert.alert('Success', 'Profile updated successfully');
+      const data = new FormData();
+      
+      // Append fields similar to web app logic
+      data.append('firstName', formData.firstName);
+      data.append('lastName', formData.lastName);
+      data.append('phoneNo', formData.phoneNumber);
+      data.append('city', formData.city);
+      data.append('street', formData.street);
+      data.append('zipCode', formData.zipCode);
+      
+      if (formData.password) {
+        data.append('password', formData.password);
+      }
+
+      // Handle Avatar Upload
+      if (formData.avatarUrl && formData.avatarUrl.startsWith('file://')) {
+        const uriParts = formData.avatarUrl.split('.');
+        const fileExtension = uriParts[uriParts.length - 1];
+        
+        data.append('file', {
+          uri: formData.avatarUrl,
+          name: `profile.${fileExtension}`,
+          type: `image/${fileExtension}`,
+        } as any);
+      }
+
+      const res = await SettingsService.updateProfile(data);
+      const updatedUser = res.data?.data?.data || res.data?.data || res.data;
+
+      // If response has new profile picture, fetch its secure URL
+      if (updatedUser?.profilePicture) {
+        await fetchSecureAvatarUrl(updatedUser.profilePicture);
+      }
+      
+      // Refresh global user state to sync across app
+      await refreshUser();
+      
+      Alert.alert('Success', 'Profile updated successfully', [
+        {
+          text: 'OK',
+          onPress: () => navigation.navigate('Leads')
+        }
+      ]);
     } catch (error: any) {
       Alert.alert('Error', error?.response?.data?.message || 'Update failed');
     } finally {
@@ -138,12 +237,10 @@ export default function ProfilePage() {
     setLoading(true);
     try {
       if (tfaSettings.enabled) {
-        await SettingsService.disableTfa();
-        Alert.alert('Disabled', 'Two-Factor Authentication has been disabled.');
+        setDisableModalVisible(true);
       } else {
         if (selectionMethod === 'email') {
-          await SettingsService.setupEmail();
-          Alert.alert('Enabled', 'Email OTP Authentication is now active.');
+          setEmailModalVisible(true);
         } else {
           const setupRes = await SettingsService.setupAuthenticator();
           const { secret } = setupRes.data?.data || {};
@@ -188,6 +285,86 @@ export default function ProfilePage() {
       Alert.alert('Error', error?.response?.data?.message || '2FA operation failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmEnableEmail = async () => {
+    setLoading(true);
+    try {
+      const res = await SettingsService.setupEmail();
+      setEmailModalVisible(false);
+      
+      const setupData = res.data?.data;
+      
+      if (setupData?.backupCodes) {
+        setBackupCodes(setupData.backupCodes);
+        setBackupCodesModalVisible(true);
+        fetchTfaSettings();
+      } else {
+        // Fallback if setup didn't return codes
+        const backupRes = await SettingsService.regenerateBackupCodes();
+        if (backupRes.data?.data) {
+          setBackupCodes(backupRes.data.data);
+          setBackupCodesModalVisible(true);
+        } else {
+          Alert.alert('Enabled', 'Email OTP Authentication is now active.');
+        }
+        fetchTfaSettings();
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to enable Email OTP');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmDisable = async () => {
+    setLoading(true);
+    try {
+      await SettingsService.disableTfa();
+      setDisableModalVisible(false);
+      Alert.alert('Disabled', 'Two-Factor Authentication has been disabled.');
+      fetchTfaSettings();
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to disable 2FA');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegenerateBackupCodes = async () => {
+    setLoading(true);
+    try {
+      const res = await SettingsService.regenerateBackupCodes();
+      const codes = res.data?.data?.backupCodes || res.data?.data;
+      
+      if (Array.isArray(codes)) {
+        setBackupCodes(codes);
+        setBackupCodesModalVisible(true);
+      } else {
+        Alert.alert('Success', 'Backup codes regenerated successfully.');
+      }
+      fetchTfaSettings();
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to regenerate codes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopyBackupCodes = () => {
+    const text = backupCodes.join('\n');
+    Clipboard.setString(text);
+    Alert.alert('Copied', 'Backup codes copied to clipboard');
+  };
+
+  const handleDownloadBackupCodes = async () => {
+    try {
+      const path = `${RNFS.DocumentDirectoryPath}/revdsm_backup_codes.txt`;
+      await RNFS.writeFile(path, backupCodes.join('\n'), 'utf8');
+      Alert.alert('Downloaded', `Backup codes saved to: ${path}`);
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save codes to file');
     }
   };
 
@@ -299,7 +476,9 @@ export default function ProfilePage() {
                   className="w-24 h-24 rounded-full items-center justify-center overflow-hidden border-2 border-dashed border-gray-300"
                   style={{ backgroundColor: isDark ? colors.background : '#F8FAFC' }}
                 >
-                  {formData.avatarUrl ? (
+                  {imageLoading ? (
+                    <ActivityIndicator color={colors.primary.main} />
+                  ) : formData.avatarUrl ? (
                     <Image source={{ uri: formData.avatarUrl }} className="w-full h-full" />
                   ) : (
                     <View className="items-center">
@@ -345,6 +524,7 @@ export default function ProfilePage() {
                   label="User Name"
                   placeholder="Enter User Name"
                   value={formData.userName}
+                  editable={false}
                   onChangeText={(t) => setFormData({ ...formData, userName: t })}
                 />
                 <CustomInput
@@ -379,6 +559,7 @@ export default function ProfilePage() {
                   label="Email"
                   placeholder="Enter Email"
                   value={formData.email}
+                  editable={false}
                   onChangeText={(t) => setFormData({ ...formData, email: t })}
                 />
                 <CustomInput
@@ -505,6 +686,34 @@ export default function ProfilePage() {
                   colors={colors}
                 />
 
+                {tfaSettings.enabled && (
+                  <View className="mt-4 p-4 rounded-2xl bg-slate-50 border border-slate-100 mb-4">
+                    <View className="flex-row items-center justify-between mb-3">
+                      <View className="flex-row items-center">
+                        <Icon name="key-outline" size={16} color={colors.textSecondary} />
+                        <Text className="ml-2 text-[11px] font-black text-slate-600">Backup Codes</Text>
+                      </View>
+                      <View className="px-2 py-0.5 bg-slate-200 rounded-md">
+                        <Text className="text-[9px] font-black text-slate-500">
+                          {tfaSettings.unusedBackupCodesCount || 0} REMAINING
+                        </Text>
+                      </View>
+                    </View>
+                    <Text className="text-[10px] text-slate-400 font-bold mb-4 leading-4">
+                      Regenerating backup codes will invalidate your current codes. Use them if you've lost your codes or they've been compromised.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={handleRegenerateBackupCodes}
+                      className="flex-row items-center justify-center py-3 bg-white border border-slate-200 rounded-xl"
+                    >
+                      <Icon name="refresh" size={14} color="#6366f1" />
+                      <Text className="ml-2 font-black text-[10px] text-[#6366f1] tracking-widest uppercase">
+                        Regenerate Codes
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 <TouchableOpacity
                   onPress={handleToggle2FA}
                   disabled={loading}
@@ -529,6 +738,197 @@ export default function ProfilePage() {
           )}
           <View className="h-20" />
         </ScrollView>
+
+        {/* 1. Setup Email OTP Modal */}
+        <Modal visible={emailModalVisible} transparent animationType="fade">
+          <View className="flex-1 bg-black/60 items-center justify-center px-6">
+            <View className="bg-white w-full rounded-[32px] overflow-hidden shadow-2xl">
+              <View className="p-8 pb-4">
+                <View className="flex-row items-center mb-6">
+                  <View className="w-10 h-10 rounded-xl bg-slate-900 items-center justify-center mr-4">
+                    <Icon name="mail-unread" size={20} color="white" />
+                  </View>
+                  <Text className="text-xl font-black text-slate-900 tracking-tighter">Setup Email OTP</Text>
+                </View>
+
+                {/* Info Alert */}
+                <View className="bg-[#E6FFFA] p-4 rounded-2xl flex-row items-center mb-6 border border-[#B2F5EA]">
+                  <Icon name="information-circle" size={20} color="#319795" />
+                  <Text className="ml-3 flex-1 text-[11px] font-bold text-[#285E61] leading-4">
+                    When Email OTP is enabled, you'll receive a one-time password via email whenever you sign in.
+                  </Text>
+                </View>
+
+                {/* Email Display */}
+                <View className="bg-slate-50 p-6 rounded-3xl border border-slate-100 items-center mb-6 border-dashed">
+                  <View className="w-12 h-12 rounded-2xl bg-emerald-500 items-center justify-center mb-4">
+                    <Icon name="mail" size={24} color="white" />
+                  </View>
+                  <View className="items-center">
+                    <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Email Address</Text>
+                    <Text className="text-sm font-black text-slate-900">{formData.email}</Text>
+                  </View>
+                  <Text className="mt-4 text-[11px] text-center text-slate-400 font-bold leading-4">
+                    A verification code will be sent to this email address each time you sign in.
+                  </Text>
+                </View>
+
+                {/* Warning Alert */}
+                <View className="bg-[#FFF9E6] p-4 rounded-2xl flex-row items-center border border-[#FEF3C7]">
+                  <Icon name="warning" size={20} color="#D97706" />
+                  <Text className="ml-3 flex-1 text-[11px] font-bold text-[#92400E]">
+                    Make sure you have access to this email address. You'll need it to sign in.
+                  </Text>
+                </View>
+              </View>
+
+              <View className="p-6 flex-row gap-4">
+                <TouchableOpacity 
+                  onPress={() => setEmailModalVisible(false)}
+                  className="flex-1 py-4 items-center"
+                >
+                  <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={handleConfirmEnableEmail}
+                  disabled={loading}
+                  className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
+                >
+                  {loading ? (
+                    <ActivityIndicator color="white" size="small" />
+                  ) : (
+                    <Text className="font-black text-[11px] text-white tracking-widest">ENABLE EMAIL OTP</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 2. Backup Codes Modal */}
+        <Modal visible={backupCodesModalVisible} transparent animationType="fade">
+          <View className="flex-1 bg-black/60 items-center justify-center px-6">
+            <View className="bg-white w-full rounded-[32px] overflow-hidden shadow-2xl">
+              <View className="p-8">
+                <View className="flex-row items-center mb-6">
+                  <View className="w-10 h-10 rounded-xl bg-slate-900 items-center justify-center mr-4">
+                    <Icon name="shield-half" size={20} color="white" />
+                  </View>
+                  <Text className="text-xl font-black text-slate-900 tracking-tighter">Backup Codes</Text>
+                </View>
+
+                <View className="bg-[#FFF9E6] p-4 rounded-2xl flex-row border border-[#FEF3C7] mb-6">
+                  <Icon name="warning" size={20} color="#D97706" />
+                  <View className="ml-3 flex-1">
+                    <Text className="text-[11px] font-bold text-[#92400E] leading-4">
+                      <Text className="font-black">Important:</Text> Save these backup codes in a safe place. Each code can only be used once. If you lose access to your authenticator, you can use these codes to sign in.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Codes Grid */}
+                <View className="bg-slate-50 p-4 rounded-3xl border border-slate-100">
+                  <View className="flex-row flex-wrap justify-between">
+                    {backupCodes.map((code, idx) => (
+                      <View key={idx} className="w-[48%] bg-white p-3 mb-2 rounded-xl border border-slate-100 items-center">
+                        <Text className="text-[11px] font-black text-slate-900 tracking-widest">{code}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+
+                <View className="flex-row gap-3 mt-6">
+                  <TouchableOpacity 
+                    onPress={handleCopyBackupCodes}
+                    className="flex-1 flex-row items-center justify-center py-4 bg-white border border-slate-200 rounded-2xl"
+                  >
+                    <Icon name="copy-outline" size={16} color="#475569" />
+                    <Text className="ml-2 font-black text-[10px] text-slate-600 tracking-widest">COPY CODES</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    onPress={handleDownloadBackupCodes}
+                    className="flex-1 flex-row items-center justify-center py-4 bg-white border border-slate-200 rounded-2xl"
+                  >
+                    <Icon name="download-outline" size={16} color="#475569" />
+                    <Text className="ml-2 font-black text-[10px] text-slate-600 tracking-widest">DOWNLOAD</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View className="p-6 bg-slate-50 items-center">
+                <TouchableOpacity 
+                  onPress={() => {
+                    setBackupCodesModalVisible(false);
+                    fetchTfaSettings();
+                  }}
+                  className="w-full bg-slate-900 py-4 rounded-2xl items-center"
+                >
+                  <Text className="font-black text-[11px] text-white tracking-widest">I'VE SAVED MY CODES</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 3. Disable 2FA Modal */}
+        <Modal visible={disableModalVisible} transparent animationType="fade">
+          <View className="flex-1 bg-black/60 items-center justify-center px-6">
+            <View className="bg-white w-full rounded-[32px] overflow-hidden shadow-2xl">
+              <View className="p-8">
+                <View className="flex-row items-center mb-6">
+                  <View className="w-10 h-10 rounded-xl bg-red-100 items-center justify-center mr-4">
+                    <Icon name="alert-circle" size={24} color="#EF4444" />
+                  </View>
+                  <Text className="text-xl font-black text-slate-900 tracking-tighter">Disable 2FA?</Text>
+                </View>
+
+                <View className="bg-red-50 p-6 rounded-3xl border border-red-100 mb-2">
+                  <View className="flex-row items-center mb-4">
+                    <Icon name="warning" size={20} color="#EF4444" />
+                    <Text className="ml-3 font-black text-[13px] text-red-700">Are you sure?</Text>
+                  </View>
+                  <Text className="text-[11px] font-bold text-red-600 mb-4 leading-4">
+                    Disabling two-factor authentication will:
+                  </Text>
+                  <View className="gap-y-2 ml-1">
+                    <View className="flex-row items-center">
+                      <View className="w-1.5 h-1.5 rounded-full bg-red-400 mr-3" />
+                      <Text className="text-[11px] font-bold text-red-600">Remove the extra security layer</Text>
+                    </View>
+                    <View className="flex-row items-center">
+                      <View className="w-1.5 h-1.5 rounded-full bg-red-400 mr-3" />
+                      <Text className="text-[11px] font-bold text-red-600">Revoke all trusted devices</Text>
+                    </View>
+                    <View className="flex-row items-center">
+                      <View className="w-1.5 h-1.5 rounded-full bg-red-400 mr-3" />
+                      <Text className="text-[11px] font-bold text-red-600">Invalidate all backup codes</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              <View className="p-6 flex-row gap-4">
+                <TouchableOpacity 
+                  onPress={() => setDisableModalVisible(false)}
+                  className="flex-1 py-4 items-center"
+                >
+                  <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={handleConfirmDisable}
+                  disabled={loading}
+                  className="flex-[1.5] bg-red-600 py-4 rounded-2xl items-center shadow-lg shadow-red-100"
+                >
+                  {loading ? (
+                    <ActivityIndicator color="white" size="small" />
+                  ) : (
+                    <Text className="font-black text-[11px] text-white tracking-widest">DISABLE 2FA</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     </SafeAreaView>
   );

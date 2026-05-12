@@ -350,11 +350,8 @@ export const CalculatorSummary = ({
                       LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
                       Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                       Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
-                      'Additional Services': {
-                        color: '#FFAB00',
-                        icon: 'add-circle',
-                        bg: '#FFF8E6',
-                      },
+                      'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+                      Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
                     };
                     const style = categoryStyles[category] || {
                       color: '#637381',
@@ -390,11 +387,8 @@ export const CalculatorSummary = ({
                       LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
                       Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                       Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
-                      'Additional Services': {
-                        color: '#FFAB00',
-                        icon: 'add-circle',
-                        bg: '#FFF8E6',
-                      },
+                      'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+                      Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
                     };
                     const style = categoryStyles[item.category] || {
                       color: '#637381',
@@ -672,7 +666,7 @@ export const CalculatorSummary = ({
                 {/* Installers Check */}
                 <View className="bg-green-500/10 rounded-2xl p-4 flex-row justify-between items-center border border-green-500/20 mb-10">
                   <Text className="text-xs font-bold text-green-800">
-                    Check to installers (screens)
+                    Number of screens $75
                   </Text>
                   <Text className="text-lg font-black text-green-600">
                     {fCurrency(screensCount * 75)}

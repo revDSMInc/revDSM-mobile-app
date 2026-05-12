@@ -11,18 +11,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
-  override init() {
-    super.init()
-    GMSServices.provideAPIKey("AIzaSyBT3b_a8aWTuI0l9wqjhiT7lSgV_36pkUg")
-    GMSServices.setMetalRendererEnabled(true)
-  }
-
   func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
+    GMSServices.provideAPIKey("AIzaSyBT3b_a8aWTuI0l9wqjhiT7lSgV_36pkUg")
+    GMSServices.setMetalRendererEnabled(true)
     delegate.dependencyProvider = RCTAppDependencyProvider()
 
     reactNativeDelegate = delegate

@@ -77,7 +77,21 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         }).fetch('GET', uri);
 
         const downloadedPath = res.path();
+        
+        // VALIDATION: Check if it's actually a PDF (starts with %PDF- which is JVBERi in base64)
+        const firstChunk = await ReactNativeBlobUtil.fs.readFile(downloadedPath, 'base64');
+        const isPDF = firstChunk.startsWith('JVBERi');
+
+        if (!isPDF) {
+          console.error('[PdfPreviewModal] Validation failed. Not a PDF.');
+          await ReactNativeBlobUtil.fs.unlink(downloadedPath);
+          setError('The document appears to be corrupted or invalid.');
+          setDownloading(false);
+          return;
+        }
+
         const finalPath = Platform.OS === 'android' ? `file://${downloadedPath}` : downloadedPath;
+        console.log('[PdfPreviewModal] PDF Validated and loaded:', finalPath);
         setLocalUri(finalPath);
       } catch (err: any) {
         console.error('[PdfPreviewModal] Download error:', err);
@@ -98,23 +112,38 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       const fileName = uri.split('?')[0].split('/').pop() || `revdsm_${Date.now()}.pdf`;
       const publicPath = `${dirs.DownloadDir}/${fileName}`;
 
-      if (Platform.OS === 'android') {
-        await ReactNativeBlobUtil.config({
-          addAndroidDownloads: {
-            useDownloadManager: true,
-            notification: true,
-            path: publicPath,
-            description: 'Downloading PDF document',
-            mime: 'application/pdf',
-          },
-        }).fetch('GET', uri);
+      // 1. Handle Local vs Remote files
+      if (uri.startsWith('file://') || uri.startsWith('/')) {
+        const cleanSourcePath = uri.replace('file://', '');
+        await ReactNativeBlobUtil.fs.cp(cleanSourcePath, publicPath);
+        
+        if (Platform.OS === 'android') {
+          // Add to DownloadManager and scan so it appears in 'Downloads' app
+          ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: 'application/pdf' }]);
+        } else {
+          ReactNativeBlobUtil.ios.openDocument(publicPath);
+        }
       } else {
-        await ReactNativeBlobUtil.config({
-          path: publicPath,
-          fileCache: true,
-        }).fetch('GET', uri);
-        ReactNativeBlobUtil.ios.openDocument(publicPath);
+        // Remote URL - Use DownloadManager for Android
+        if (Platform.OS === 'android') {
+          await ReactNativeBlobUtil.config({
+            addAndroidDownloads: {
+              useDownloadManager: true,
+              notification: true,
+              path: publicPath,
+              description: 'Downloading PDF document',
+              mime: 'application/pdf',
+            },
+          }).fetch('GET', uri);
+        } else {
+          await ReactNativeBlobUtil.config({
+            path: publicPath,
+            fileCache: true,
+          }).fetch('GET', uri);
+          ReactNativeBlobUtil.ios.openDocument(publicPath);
+        }
       }
+      
       FlashMessage.success('Success', 'Document saved to Downloads');
     } catch (err) {
       console.error('[PdfPreviewModal] Public download error:', err);
@@ -165,7 +194,8 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
             </View>
           ) : localUri ? (
             <Pdf
-              source={{ uri: localUri, cache: false }}
+              key={localUri}
+              source={{ uri: localUri }}
               trustAllCerts={false}
               style={[styles.pdf, { backgroundColor: isDark ? colors.surface : '#f8fafc' }]}
               onLoadComplete={(numberOfPages) => {

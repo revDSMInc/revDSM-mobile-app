@@ -62,7 +62,7 @@ export const RoofWaiverModal = ({
     currentPath,
     panResponder,
     handleFinalSubmit,
-  } = useRoofWaiver(lead, onSubmit, onFinalUpload);
+  } = useRoofWaiver(lead, onSubmit, onFinalUpload, onClose);
 
   const openSigPad = () => {
     setLivePaths([...savedPaths]);
