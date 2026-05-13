@@ -88,7 +88,7 @@ export const useChatLogic = (
             ...raw,
             _id: tempId,
             createdAt: new Date(),
-            user: { _id: currentUserId, name: user?.firstName || 'Me' },
+            user: { _id: String(currentUserId), name: user?.firstName || 'Me' },
             pending: true,
             sent: false,
             replyTo: replyingTo?._id,
@@ -115,17 +115,20 @@ export const useChatLogic = (
   const handleAttach = () => {
     launchImageLibrary({ mediaType: 'mixed', selectionLimit: 5 }, async (response) => {
       if (response.assets && chatId) {
+        console.log('[Media] Selected attachments:', response.assets.length);
         for (const f of response.assets) {
+          console.log('[Media] Preparing file:', f.fileName, f.uri);
           const isImg = f.type?.startsWith('image');
           const optimistic = {
             _id: `temp_${Date.now()}`,
             text: isImg ? '' : f.fileName,
             image: isImg ? f.uri : undefined,
             createdAt: new Date(),
-            user: { _id: currentUserId },
+            user: { _id: String(currentUserId) },
             files: [
               { url: f.uri, name: f.fileName, mimeType: f.type, type: isImg ? 'image' : 'file' },
             ],
+            pending: true,
             sent: false,
             received: false,
           };
@@ -142,17 +145,19 @@ export const useChatLogic = (
 
   const handleSendVoiceNote = async (uri: string) => {
     if (!uri || !chatId) return;
+    console.log('[Media] Sending voice note:', uri);
     try {
       const fileName = uri.split('/').pop() || `voice_${Date.now()}.m4a`;
       const optimistic = {
         _id: `temp_${Date.now()}`,
         text: '🎤 Voice Note',
         createdAt: new Date(),
-        user: { _id: currentUserId },
+        user: { _id: String(currentUserId) },
         voice: uri,
         audio: uri,
         isVoiceNote: true,
         files: [{ url: uri, name: fileName, mimeType: 'audio/m4a', type: 'audio' }],
+        pending: true,
         sent: false,
         received: false,
       };

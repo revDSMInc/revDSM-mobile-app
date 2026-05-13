@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, Pressable } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
 import Pin from '../../../assets/svgs/icons/pin';
 
 const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
@@ -18,7 +19,6 @@ export const ChatHeader = ({
   isChannel,
   colors,
   isDark,
-  navigation,
   isSearching,
   setIsSearching,
   searchQuery,
@@ -28,22 +28,29 @@ export const ChatHeader = ({
   participants,
   setParticipantModalVisible,
 }: any) => {
+  const navigation = useNavigation<any>();
+
   return (
     <View
       className="px-4 pt-3 pb-4 border-b"
       style={{ backgroundColor: isDark ? '#1A1A1A' : '#fff', borderBottomColor: colors.border }}
     >
-      <TouchableOpacity onPress={() => navigation.goBack()} className="flex-row items-center mb-4">
+      <Pressable
+        onPress={() => navigation.goBack()}
+        className="flex-row items-center mb-4"
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+        style={{ zIndex: 9999 }}
+      >
         <View
           className="w-8 h-8 rounded-full items-center justify-center mr-2"
           style={{ backgroundColor: isDark ? '#242424' : '#F1F5F9' }}
         >
           <Icon name="arrow-back" size={18} color={colors.text} />
         </View>
-        <Text className="font-bold text-sm" style={{ color: '#84cc16' }}>
+        <Text className="font-bold text-sm" style={{ color: isDark ? '#A3E635' : '#65A30D' }}>
           Back to {isChannel ? 'Channels' : 'Leads'}
         </Text>
-      </TouchableOpacity>
+      </Pressable>
 
       <View className="flex-row items-center justify-between mb-4">
         <View className="flex-row items-center flex-1">

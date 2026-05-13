@@ -49,6 +49,7 @@ export const useChatSession = (
       const cleaned = Array.from(new Set(paths)).filter(Boolean);
       if (cleaned.length === 0) return;
       const links = await ChatService.getSecureFileUrls(cleaned).catch(() => ({}));
+      console.log('[useChatSession] Fetched Secure URLs:', JSON.stringify(links, null, 2));
       setImageUrls((prev) => ({ ...prev, ...links }));
     } catch (error) {
       console.error('Fetch secure URLs error:', error);
@@ -60,7 +61,11 @@ export const useChatSession = (
     try {
       const raw = await ChatService.getMessages(id, lim);
       setHasMore(raw.length >= lim);
-      const normalized = raw.map((m) => ChatService.normalizeMessage(m)).reverse();
+      const normalized = raw.map((m) => ChatService.normalizeMessage(m)).sort((a, b) => {
+        const dA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+        const dB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+        return dB.getTime() - dA.getTime();
+      });
       setMessages(normalized);
       fetchSecureUrls(normalized);
 
@@ -113,6 +118,10 @@ export const useChatSession = (
       const allIds = prev.map((m: any) => m._id?.toString()).filter(Boolean);
       if (allIds.length > 0) {
         if (isChannel) {
+          SocketManager.emit('mark-channel-as-read', {
+            channelId: chatId,
+            userId: currentUserId,
+          });
           SocketManager.emit('mark-channel-message-seen', {
             channelId: chatId,
             messageIds: allIds,
@@ -120,6 +129,7 @@ export const useChatSession = (
           });
         } else {
           SocketManager.emit('mark-message-seen', { chatId, messageIds: allIds });
+          SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
         }
       }
       return prev; // no mutation — purely a side-effect read
@@ -139,26 +149,51 @@ export const useChatSession = (
 
     // ── New messages ─────────────────────────────────────────────────────────
     const handleNewMessage = (m: any) => {
+      console.log('[Socket] handleNewMessage Raw Payload:', JSON.stringify(m, null, 2));
       const normalized = ChatService.normalizeMessage(m);
+      if (normalized.audio || normalized.voice || normalized.isVoiceNote) {
+        console.log('[Socket] Incoming Voice Note Detected:', normalized);
+      }
 
-      // Always fetch secure URLs for new incoming messages — do this OUTSIDE setState
-      // to ensure it always fires reliably regardless of React's batch strategy
-      fetchSecureUrls([normalized]);
+      // Delay fetching secure URLs to ensure backend has finished processing the file
+      setTimeout(() => {
+        fetchSecureUrls([normalized]);
+      }, 150);
 
       setMessages((prev) => {
-        if (prev.some((msg) => msg._id === normalized._id)) return prev;
+        const existingIndex = prev.findIndex((msg) => msg._id === normalized._id);
+        if (existingIndex !== -1) {
+          const existing = prev[existingIndex];
+          const hasNewMedia = normalized.image || normalized.video || (normalized as any).files?.length > 0;
+          const hasOldMedia = existing?.image || existing?.video || (existing as any).files?.length > 0;
+
+          if (hasNewMedia && !hasOldMedia) {
+            console.log('[Socket] Updating existing message with media:', normalized._id);
+            const updated = [...prev];
+            updated[existingIndex] = { ...existing, ...normalized };
+            fetchSecureUrls([normalized]); // Re-fetch URLs for the new media
+            return updated;
+          }
+          return prev;
+        }
 
         // Optimized replacement logic to avoid "double message" glitch
-        // Matches on sender + text OR sender + media file (by filename, since URL changes local→S3)
         const normFiles = (normalized as any).files || [];
 
         const optimisticIndex = prev.findIndex((msg) => {
           const isPending =
-            !msg.sent || (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
+            msg.pending === true ||
+            (typeof msg._id === 'string' && msg._id.startsWith('temp_'));
           if (!isPending) return false;
 
-          const sameUser = msg.user?._id === normalized.user?._id;
-          if (!sameUser) return false;
+          // Use string comparison for IDs to be safe
+          const msgUserId = String(msg.user?._id || '');
+          const normUserId = String(normalized.user?._id || '');
+          const sameUser = msgUserId === normUserId;
+
+          if (!sameUser && msgUserId !== 'ghost' && normUserId !== 'ghost') {
+            return false;
+          }
 
           const sameText = msg.text === normalized.text && !!msg.text;
 
@@ -182,13 +217,39 @@ export const useChatSession = (
                     new Date(msg.createdAt as any).getTime()
                 ) < 60_000));
 
+          if (isPending) {
+            console.log(`[Socket] Checking pending msg: ${msg._id} against incoming: ${normalized._id}`);
+          }
           return sameText || sameFiles;
         });
 
         if (optimisticIndex !== -1) {
+          console.log('[Socket] Replacing optimistic message:', normalized._id);
           const updated = [...prev];
-          updated[optimisticIndex] = normalized;
+          const localMsg = updated[optimisticIndex] as any;
+          updated[optimisticIndex] = {
+            ...normalized,
+            user: localMsg.user, // Inherit local "Me" identity
+            // Preserve local media URIs to prevent flicker
+            image: localMsg.image || normalized.image,
+            video: localMsg.video || normalized.video,
+            voice: localMsg.voice || normalized.voice,
+            audio: localMsg.audio || normalized.audio,
+            files: normalized.files?.map((nf: any, i: number) => ({
+              ...nf,
+              url: localMsg.files?.[i]?.url || nf.url, // Keep local file:// or content://
+            })),
+          };
           return updated;
+        }
+
+        // If it's from "Me" but we didn't find an optimistic message, check ID mismatch
+        const isFromMe = String(normalized.user?._id) === String(currentUserId);
+        if (!isFromMe && normalized.text && prev.some(m => m.text === normalized.text && (!m.sent || m._id.toString().startsWith('temp_')))) {
+           console.warn('[Socket] Possible duplicate detected but matching failed. ID mismatch?', {
+             serverUserId: normalized.user?._id,
+             localUserId: currentUserId
+           });
         }
 
         return [normalized, ...prev];

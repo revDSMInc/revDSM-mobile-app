@@ -54,13 +54,10 @@ class SocketManager {
 
     console.log('[SocketManager] Creating persistent socket...');
 
-    this.socket = io(HOST_API, {
+    this.socket = io(HOST_API.replace(/\/$/, ''), {
       auth: { token },
-      // WebSocket only — polling gets killed by iOS/Android OS when the app
-      // is briefly backgrounded or the network type changes (WiFi → LTE).
-      // WebSocket is a persistent TCP connection the OS respects.
-      transports: ['websocket'],
-      upgrade: false,
+      transports: ['polling', 'websocket'],
+      upgrade: true,
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
@@ -187,6 +184,10 @@ class SocketManager {
 
   isConnected(): boolean {
     return this.socket?.connected === true;
+  }
+
+  get connected(): boolean {
+    return this.isConnected();
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────

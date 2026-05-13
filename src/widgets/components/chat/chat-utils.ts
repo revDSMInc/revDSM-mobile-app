@@ -58,7 +58,13 @@ export const getNativeModules = () => {
 export const cleanFilePath = (p: string) => {
   if (!p) return '';
   let cleaned = p.replace(/^(file:\/\/|content:\/\/|data:)/, '');
-  const roots = ['chat/', 'leads/', 'files/', 'customer/', 'revdsm/'];
+
+  // Extract path from S3 URL if present
+  if (cleaned.includes('amazonaws.com/')) {
+    cleaned = cleaned.substring(cleaned.indexOf('amazonaws.com/') + 14);
+  }
+
+  const roots = ['chat/', 'leads/', 'files/', 'customer/', 'revdsm/', 'voice-notes/'];
   for (const r of roots) {
     if (cleaned.includes(r)) return cleaned.substring(cleaned.indexOf(r));
   }
