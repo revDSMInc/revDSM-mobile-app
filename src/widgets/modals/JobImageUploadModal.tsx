@@ -18,26 +18,29 @@ interface JobImageUploadModalProps {
   visible: boolean;
   onClose: () => void;
   selectedJob: any;
-  onUploadSuccess?: () => void;
+  type?: 'before' | 'after';
+  onUploadSuccess?: (updatedJob?: any) => void;
 }
 
 export const JobImageUploadModal = ({
   visible,
   onClose,
   selectedJob,
+  type: initialType,
   onUploadSuccess,
 }: JobImageUploadModalProps) => {
   const { colors, isDark } = useTheme();
   const [loading, setLoading] = useState(false);
-  const [type, setType] = useState<'before' | 'after' | null>(null);
+  const [type, setType] = useState<'before' | 'after' | null>(initialType || null);
   const [images, setImages] = useState<Asset[]>([]);
 
   // Reset state when modal opens
   useEffect(() => {
     if (visible) {
       resetState();
+      if (initialType) setType(initialType);
     }
-  }, [visible]);
+  }, [visible, initialType]);
 
   const resetState = () => {
     setType(null);
@@ -105,7 +108,7 @@ export const JobImageUploadModal = ({
 
       if (response.data) {
         Alert.alert('Success', 'Images uploaded successfully');
-        onUploadSuccess?.();
+        onUploadSuccess?.(response.data?.data || response.data);
         // Return to selection screen instead of just closing if preferred, 
         // but typically we close and let parent handle refresh.
         // Based on user request: "again intialized to the before and after screen"

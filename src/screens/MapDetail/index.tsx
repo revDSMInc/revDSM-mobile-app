@@ -9,7 +9,9 @@ import {
   Platform,
   StatusBar,
   Dimensions,
+  Modal,
 } from 'react-native';
+
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
@@ -45,18 +47,28 @@ export default function MapDetailScreen() {
   const [filters, setFilters] = useState<FilterState>({
     jobNumber: '',
     sortOrder: 'date-desc',
-    radius: 50,
+    radius: 0,
     minPrice: '',
     maxPrice: '',
     startDate: null,
     endDate: null,
     myJobsOnly: false,
+    isFavoriteOnly: false,
     isHeatMap: false,
     showRoute: false,
   });
 
   const [isListView, setIsListView] = useState(false);
   const [jumpLead, setJumpLead] = useState<any>(null);
+  const [sortOption, setSortOption] = useState<'price_asc' | 'price_desc' | 'date_asc' | 'date_desc'>('date_desc');
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
+
+  const sortLabels = {
+    price_asc: 'Price Ascending',
+    price_desc: 'Price Descending',
+    date_asc: 'Date Ascending',
+    date_desc: 'Date Descending',
+  };
 
   useEffect(() => {
     fetchLeads();
@@ -70,7 +82,7 @@ export default function MapDetailScreen() {
       // Default to Tampa coordinates if user is elsewhere (web parity)
       const payload: any = {
         radiusInMiles: filters.radius,
-        isFavorite: false,
+        isFavorite: filters.isFavoriteOnly,
         latitude: 27.9506, 
         longitude: -82.4572,
       };
@@ -87,7 +99,7 @@ export default function MapDetailScreen() {
 
   const filteredLeads = useMemo(() => {
     let result = [...leads];
-    // Filter out jobs starting from TAM30000 - TAM30032 (Web parity)
+    // 1. Filter out specific job number range (Web parity)
     result = result.filter((item) => {
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
@@ -98,8 +110,56 @@ export default function MapDetailScreen() {
       }
       return true;
     });
-    return result;
-  }, [leads]);
+
+    // 2. Local Filtering based on UI filters (for strictness)
+    result = result.filter((item) => {
+      // Job Number / Search Text
+      if (filters.jobNumber) {
+        const search = filters.jobNumber.toLowerCase();
+        const matchesJob = item.jobNumber?.toLowerCase().includes(search);
+        const matchesAddress = item.fullAddress?.toLowerCase().includes(search);
+        if (!matchesJob && !matchesAddress) return false;
+      }
+
+      // Favorites
+      if (filters.isFavoriteOnly && !(item.isFavorite || item.isFavourite)) return false;
+
+      // My Jobs Only
+      if (filters.myJobsOnly) {
+        const uid = user?._id || user?.id;
+        const isMine = item.salesRepId === uid || item.userId === uid || item.salesRep?._id === uid;
+        if (!isMine) return false;
+      }
+
+      // Price Range
+      if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
+      if (filters.maxPrice && (item.price || 0) > parseFloat(filters.maxPrice)) return false;
+
+      // Date Range
+      if (filters.startDate) {
+        const itemDate = new Date(item.installationDate || item.createdAt || 0);
+        if (itemDate < new Date(filters.startDate)) return false;
+      }
+      if (filters.endDate) {
+        const itemDate = new Date(item.installationDate || item.createdAt || 0);
+        if (itemDate > new Date(filters.endDate)) return false;
+      }
+
+      return true;
+    });
+
+    // Apply Sorting
+    return result.sort((a, b) => {
+      if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
+      if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
+      
+      const timeA = new Date(a.installationDate || a.createdAt || 0).getTime();
+      const timeB = new Date(b.installationDate || b.createdAt || 0).getTime();
+      
+      if (sortOption === 'date_asc') return timeA - timeB;
+      return timeB - timeA; // date_desc
+    });
+  }, [leads, filters, sortOption]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
@@ -115,22 +175,50 @@ export default function MapDetailScreen() {
         {isListView ? (
           <View style={{ flex: 1 }}>
             {/* List Toolbar */}
-            <View className="px-5 py-4 flex-row items-center justify-between bg-white dark:bg-black/20 border-b border-slate-100 dark:border-zinc-800">
+            <View className="px-5 py-4 flex-row items-center justify-between bg-white dark:bg-black/20 border-b border-slate-100 dark:border-zinc-800 z-50">
               <View className="flex-1 mr-4">
                 <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
                   Order By
                 </Text>
-                <TouchableOpacity 
-                  className="flex-row items-center justify-between bg-slate-50 dark:bg-zinc-800 px-4 py-2.5 rounded-xl border border-slate-100 dark:border-zinc-700"
-                >
-                  <Text className="text-[13px] font-bold text-slate-700 dark:text-zinc-300">
-                    Price Ascending
-                  </Text>
-                  <Icon name="chevron-down" size={20} color="#94a3b8" />
-                </TouchableOpacity>
+                <View className="relative">
+                  <TouchableOpacity 
+                    onPress={() => setShowSortDropdown(!showSortDropdown)}
+                    className="flex-row items-center justify-between bg-slate-50 dark:bg-zinc-800 px-4 py-2.5 rounded-xl border border-slate-100 dark:border-zinc-700"
+                  >
+                    <Text className="text-[13px] font-bold text-slate-700 dark:text-zinc-300">
+                      {sortLabels[sortOption]}
+                    </Text>
+                    <Icon name={showSortDropdown ? "chevron-up" : "chevron-down"} size={20} color="#94a3b8" />
+                  </TouchableOpacity>
+
+                  {showSortDropdown && (
+                    <View 
+                      className="absolute top-12 left-0 right-0 bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-zinc-800 p-2 z-[1000]"
+                      style={{ elevation: 20 }}
+                    >
+                      {Object.entries(sortLabels).map(([key, label]) => (
+                        <TouchableOpacity
+                          key={key}
+                          onPress={() => {
+                            setSortOption(key as any);
+                            setShowSortDropdown(false);
+                          }}
+                          className={`px-4 py-3 rounded-xl mb-1 ${sortOption === key ? 'bg-slate-50 dark:bg-zinc-800' : ''}`}
+                        >
+                          <Text className={`text-[13px] ${sortOption === key ? 'font-black text-slate-900 dark:text-white' : 'font-bold text-slate-500'}`}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
               </View>
               <View className="flex-row gap-2 mt-4">
-                <TouchableOpacity className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 items-center justify-center border border-slate-100 dark:border-zinc-700 shadow-sm">
+                <TouchableOpacity 
+                  onPress={() => setIsListView(false)}
+                  className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 items-center justify-center border border-slate-100 dark:border-zinc-700 shadow-sm"
+                >
                    <Icon name="map-marker-outline" size={22} color="#94a3b8" />
                 </TouchableOpacity>
                 <TouchableOpacity className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 items-center justify-center border border-slate-100 dark:border-zinc-700 shadow-sm">
@@ -139,10 +227,12 @@ export default function MapDetailScreen() {
               </View>
             </View>
 
+
             <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
               {filteredLeads.map((job) => {
                 const dateStr = job.installationDate 
                   ? format(new Date(job.installationDate), 'MM/dd/yyyy')
+                  : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
                   : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
                 
                 const addressStr = typeof job.fullAddress === 'string' ? job.fullAddress : 
@@ -173,9 +263,19 @@ export default function MapDetailScreen() {
                         <View className="bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg border border-green-100 dark:border-green-900/30">
                           <Text className="text-[13px] font-black text-[#2EDE56]">#{job.jobNumber}</Text>
                         </View>
-                        <TouchableOpacity className="p-1">
-                          <Icon name="image-multiple-outline" size={22} color="#94a3b8" />
-                        </TouchableOpacity>
+                        {(job.images?.beforeImages?.length > 0 || job.images?.afterImages?.length > 0) && (
+                          <TouchableOpacity 
+                            onPress={() => {
+                              setSelectedJob(job);
+                              setShowGalleryModal(true);
+                            }}
+                            className="p-1"
+                          >
+                            <Icon name="image-multiple-outline" size={22} color="#2EDE56" />
+                          </TouchableOpacity>
+                        )}
+
+
                       </View>
 
                       {/* Card Body - Grid Layout */}
@@ -193,7 +293,7 @@ export default function MapDetailScreen() {
                           <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Date</Text>
                           <View className="flex-row items-center">
                             <Icon name="calendar-check-outline" size={16} color="#2EDE56" />
-                            <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
+                            <Text className="text-[14px] font-bold text-[#2EDE56] ml-1">
                               {dateStr}
                             </Text>
                           </View>
@@ -206,8 +306,9 @@ export default function MapDetailScreen() {
                         <View className="flex-row items-center">
                           <Icon name="account-circle-outline" size={18} color="#2EDE56" />
                           <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
-                            {job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
+                            {job.salesRep?.fullName || job.salesRep?.firstName || job.salesRepName || job.salesRep || job.userName || 'Unknown'}
                           </Text>
+
                         </View>
                       </View>
                     </View>
@@ -220,6 +321,7 @@ export default function MapDetailScreen() {
           <LeadMap 
             currentLead={jumpLead || currentLead} 
             fullScreen 
+            leads={filteredLeads}
             onGalleryPress={(job) => {
               setSelectedJob(job);
               setShowGalleryModal(true);
@@ -233,6 +335,7 @@ export default function MapDetailScreen() {
               setShowReferralModal(true);
             }}
           />
+
         )}
       </View>
 
@@ -244,12 +347,13 @@ export default function MapDetailScreen() {
         onReset={() => setFilters({
           jobNumber: '',
           sortOrder: 'date-desc',
-          radius: 50,
+          radius: 0,
           minPrice: '',
           maxPrice: '',
           startDate: null,
           endDate: null,
           myJobsOnly: false,
+          isFavoriteOnly: false,
           isHeatMap: false,
           showRoute: false,
         })}
@@ -259,14 +363,32 @@ export default function MapDetailScreen() {
         visible={showGalleryModal}
         job={selectedJob}
         onClose={() => setShowGalleryModal(false)}
-        onPresent={() => {}}
+        onCameraPress={(job) => {
+          setSelectedJob(job);
+          setShowCameraModal(true);
+        }}
       />
+
+
+
 
       <ReferralModal
         visible={showReferralModal}
         onClose={() => setShowReferralModal(false)}
         selectedJob={selectedJob}
+        onSuccess={fetchLeads}
+        isMyJob={
+          selectedJob && user && (
+            selectedJob.salesRepId === user._id ||
+            selectedJob.userId === user._id ||
+            selectedJob.salesRep?._id === user._id ||
+            selectedJob.salesRepName === user.fullName ||
+            selectedJob.salesRep === user.userName
+          )
+        }
       />
+
+
 
       <BeforeAfterModal
         visible={showCameraModal}

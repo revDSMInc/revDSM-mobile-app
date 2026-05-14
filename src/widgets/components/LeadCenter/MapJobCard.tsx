@@ -34,12 +34,14 @@ export const MapJobCard = ({
   const formatAddress = (addr: any) => {
     if (typeof addr === 'string') return addr;
     if (!addr || typeof addr !== 'object') return 'Address not provided';
-    const { houseNumber, streetName, city, state, zip } = addr;
-    return [houseNumber, streetName, city, state, zip].filter(Boolean).join(', ');
+    const { streetName, city, state, zip } = addr;
+    const cityStateZip = [city, state, zip].filter(Boolean).join(', ');
+    return [streetName, cityStateZip].filter(Boolean).join(', ');
   };
 
   const formattedDate = job.installationDate
     ? format(new Date(job.installationDate), 'MM/dd/yyyy')
+    : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
     : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
 
   return (
@@ -67,7 +69,7 @@ export const MapJobCard = ({
             </Text>
             <View className="flex-row items-center mt-1">
               <Icon name="calendar-blank" size={16} color="#4CBB17" />
-              <Text className="text-[13px] text-slate-500 ml-1 font-bold">{formattedDate}</Text>
+              <Text className="text-[13px] text-[#4CBB17] ml-1 font-bold">{formattedDate}</Text>
             </View>
           </View>
           <TouchableOpacity onPress={onClose} className="p-1">
@@ -79,18 +81,18 @@ export const MapJobCard = ({
         <View className="flex-row gap-2 mt-3 mb-4">
           <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
             <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
-              Price
-            </Text>
-            <Text className="text-[16px] font-black text-[#4CBB17]">
-              ${(job.price || 0).toLocaleString()}
-            </Text>
-          </View>
-          <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
-            <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
               Sales Rep
             </Text>
             <Text className="text-[14px] font-bold text-slate-700" numberOfLines={1}>
               {job.userName || job.salesRepName || job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
+            </Text>
+          </View>
+          <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
+            <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
+              Price
+            </Text>
+            <Text className="text-[16px] font-black text-[#4CBB17]">
+              ${(job.price || 0).toLocaleString()}
             </Text>
           </View>
         </View>
@@ -100,14 +102,25 @@ export const MapJobCard = ({
           <Text className="text-[10px] text-slate-400 font-bold mb-2 uppercase tracking-wider">
             Property Address
           </Text>
-          <View className="flex-row">
-            <View className="w-8 h-8 rounded-full bg-slate-100 items-center justify-center mr-2">
-              <Icon name="map-marker-radius" size={18} color="#94a3b8" />
-            </View>
-            <Text className="flex-1 text-[12px] font-bold text-slate-700 leading-5">
-              {job.fullAddress || formatAddress(job.address)}
-            </Text>
-          </View>
+          <Text className="text-[14px] font-black text-slate-700 leading-5 mt-1">
+            {/* Inline Privacy Blur Placeholder */}
+            <View 
+              style={{ 
+                width: 45, 
+                height: 14, 
+                backgroundColor: '#E2E8F0', 
+                borderRadius: 4, 
+                marginRight: 6,
+                transform: [{ translateY: 2 }]
+              }} 
+            />
+            {' '}
+            {(() => {
+              const fullAddr = formatAddress(job.address || job);
+              const parts = fullAddr.split(' ');
+              return parts.slice(1).join(' ');
+            })()}
+          </Text>
         </View>
 
         {/* Product Row */}
@@ -139,8 +152,10 @@ export const MapJobCard = ({
             </TouchableOpacity>
           )}
 
-          {/* Upload: Only for Owner */}
-          {isMyJob && (
+          {/* Upload: Only for Owner and if no images yet */}
+          {isMyJob && 
+           !(job.images?.beforeImages?.length > 0) && 
+           !(job.images?.afterImages?.length > 0) && (
             <TouchableOpacity
               onPress={() => onCameraPress?.(job)}
               className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
@@ -148,6 +163,7 @@ export const MapJobCard = ({
               <Icon name="cloud-upload-outline" size={20} color="#3b82f6" />
             </TouchableOpacity>
           )}
+
 
           {/* Reference: Always for Owner, Only if exists for others */}
           {(isMyJob || (job.jobReferrals && job.jobReferrals.length > 0)) && (

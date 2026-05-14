@@ -118,6 +118,8 @@ export const LeadService = {
     api.post('lead/v1/event-logs', { action, ...payload }).catch(() => {
       // Fail silently as logging is a non-critical background task
     }),
+  logUserActivity: (payload: any): Promise<AxiosResponse<any>> =>
+    api.post('/user-activity-log/v1/create', payload),
   updateLeadTimelineProgress: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.patch(`lead/v1/${leadId}/timeline-progress`, payload),
   deleteCalculator: (id: string): Promise<AxiosResponse<any>> => api.delete(`lfcalculators/${id}`),
@@ -141,6 +143,9 @@ export const LeadService = {
   // Referrals
   createReferral: (payload: any): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.referral.create, payload),
+
+  updateReferral: (id: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.referral.update(id), payload),
 
   findJobs: (payload: any): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.getJobs.list, payload),
