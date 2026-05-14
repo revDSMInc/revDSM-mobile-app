@@ -39,8 +39,8 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(monthStart);
-  const startDate = startOfWeek(monthStart);
-  const endDate = endOfWeek(monthEnd);
+  const startDate = startOfWeek(monthStart, { weekStartsOn: 0 });
+  const endDate = endOfWeek(monthEnd, { weekStartsOn: 0 });
 
   const calendarDays = eachDayOfInterval({
     start: startDate,
@@ -76,7 +76,11 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
 
                 {view === 'calendar' && (
                   <View className="flex-row items-center gap-6">
-                    <TouchableOpacity onPress={prevMonth}>
+                    <TouchableOpacity 
+                      onPress={prevMonth}
+                      disabled={isSameMonth(currentMonth, new Date())}
+                      style={{ opacity: isSameMonth(currentMonth, new Date()) ? 0.3 : 1 }}
+                    >
                       <Feather name="chevron-left" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
                     <TouchableOpacity onPress={nextMonth}>
@@ -89,19 +93,23 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
               {view === 'calendar' ? (
                 <>
                   {/* Week Days */}
-                  <View className="flex-row justify-between mb-4">
+                  <View className="flex-row mb-4">
                     {weekDays.map((day) => (
-                      <View key={day} className="w-10 items-center">
+                      <View key={day} className="flex-1 items-center">
                         <Text className="text-[13px] font-bold text-text-secondary">{day}</Text>
                       </View>
                     ))}
                   </View>
 
                   {/* Days Grid */}
-                  <View className="flex-row flex-wrap justify-between">
+                  <View className="flex-row flex-wrap">
                     {calendarDays.map((day, i) => {
                       const isCurrentMonth = isSameMonth(day, monthStart);
                       const isSelected = isSameDay(day, selectedDate);
+
+                      if (!isCurrentMonth) {
+                        return <View key={i} className="w-[14.28%] h-10 mb-2" />;
+                      }
 
                       return (
                         <TouchableOpacity
@@ -110,21 +118,19 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
                             onSelect(format(day, 'yyyy-MM-dd'));
                             onClose();
                           }}
-                          className={`w-10 h-10 items-center justify-center mb-2 rounded-full ${
-                            isSelected ? 'bg-[#72BD00]' : ''
-                          }`}
+                          className={`w-[14.28%] h-10 items-center justify-center mb-2 rounded-full`}
                         >
-                          <Text
-                            className={`text-[13px] font-medium ${
-                              !isCurrentMonth
-                                ? 'text-text-secondary/30'
-                                : isSelected
-                                ? 'text-white'
-                                : 'text-text-primary'
-                            }`}
-                          >
-                            {format(day, 'd')}
-                          </Text>
+                          <View className={`w-10 h-10 items-center justify-center rounded-full ${
+                            isSelected ? 'bg-[#72BD00]' : ''
+                          }`}>
+                            <Text
+                              className={`text-[13px] font-medium ${
+                                isSelected ? 'text-white' : 'text-text-primary'
+                              }`}
+                            >
+                              {format(day, 'd')}
+                            </Text>
+                          </View>
                         </TouchableOpacity>
                       );
                     })}

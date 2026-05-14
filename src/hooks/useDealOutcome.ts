@@ -31,10 +31,12 @@ export const useDealOutcome = (
   // Extract a reliable lead ID
   const leadId = lead?._id || lead?.leadId || lead?.id;
 
-  const fetchOutcomeData = async () => {
-    if (!leadId) return;
+  const fetchOutcomeData = async (leadIdOverride?: string) => {
+    const activeLeadId = leadIdOverride || leadId;
+    if (!activeLeadId) return;
     try {
-      const res = await LeadService.getLeadOutcome(leadId);
+      setLoading(true);
+      const res = await LeadService.getLeadOutcome(activeLeadId);
       const data = res.data?.data || res.data;
       if (data) {
         if (data.status || data.result) setOutcomeStatus(data.status || data.result);
@@ -43,27 +45,13 @@ export const useDealOutcome = (
         if (data.leadData || data)
           setOutcomeForm((prev: any) => ({ ...prev, ...(data.leadData || data) }));
       }
-    } catch (err) {}
+    } catch (err) {
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    // Reset state when lead changes to prevent data leakage
-    setOutcomeStatus(null);
-    setOutcomeForm({
-      oneLeg: 'No',
-      reason: '',
-      reasonExplanation: '',
-      downPayment: '',
-      balance: '',
-      originalContractPrice: '',
-      lastPriceQuoted: '',
-      downPaymentMethod: 'check',
-      balancePaymentMethod: 'check',
-      versatile: false,
-      pineapple: false,
-    });
-    setJobState({});
-
     fetchOutcomeData();
   }, [leadId]);
 
@@ -109,6 +97,18 @@ export const useDealOutcome = (
     if (!leadId) {
       Alert.alert('Error', 'Lead ID not found. Please try again.');
       return;
+    }
+
+    // Validation for Demo status
+    if (outcomeStatus === 'demo') {
+      if (!outcomeForm.reason) {
+        Alert.alert('Required Field', 'Please select a reason for the demo.');
+        return;
+      }
+      if (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim()) {
+        Alert.alert('Required Field', 'Please explain the reason for the demo.');
+        return;
+      }
     }
 
     try {

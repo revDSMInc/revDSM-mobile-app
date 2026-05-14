@@ -23,7 +23,11 @@ export const MiscSection = ({
     
     const findInObj = (obj: any) => {
       if (!obj || typeof obj !== 'object') return 0;
-      const k = Object.keys(obj).find(ok => ok.toLowerCase() === lowerKey || ok.toLowerCase() === key.toLowerCase().replace('labor', 'labour'));
+      const k = Object.keys(obj).find(ok => {
+        const lowerOk = ok.toLowerCase();
+        const target = lowerKey === 'screens' ? 'cktoinstallers' : lowerKey;
+        return lowerOk === target || lowerOk === target.replace('labor', 'labour');
+      });
       return k ? n(obj[k]) : 0;
     };
 

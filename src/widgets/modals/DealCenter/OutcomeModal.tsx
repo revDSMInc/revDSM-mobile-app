@@ -31,7 +31,9 @@ interface OutcomeModalProps {
   results: any;
   handleFinishOutcome: () => void;
   onReset?: () => void;
+  onResetJobBuilder?: () => void;
   loading?: boolean;
+  isJobBuilderSubmitted?: boolean;
 }
 
 const oneLegOptions = ['No', 'MR', 'MRS'];
@@ -56,7 +58,9 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   results,
   handleFinishOutcome,
   onReset,
+  onResetJobBuilder,
   loading,
+  isJobBuilderSubmitted,
 }) => {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -795,19 +799,37 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
             <View className="px-5 pb-5 pt-2 border-t border-[#919EAB14]">
               <TouchableOpacity
                 onPress={handleFinishOutcome}
-                disabled={!outcomeStatus}
+                disabled={
+                  !outcomeStatus || 
+                  (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim())))
+                }
                 className="h-12 rounded-xl items-center justify-center"
                 style={{
-                  backgroundColor: !outcomeStatus ? '#919EAB33' : colors.primary.main,
+                  backgroundColor: !outcomeStatus || (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim()))) 
+                    ? '#919EAB' 
+                    : colors.primary.main,
+                  opacity: loading ? 0.7 : 1,
                 }}
               >
-                <Text
-                  className="font-bold text-sm tracking-wide"
-                  style={{ color: !outcomeStatus ? '#919EABCC' : 'white' }}
-                >
-                  {!outcomeStatus ? 'Select Result' : 'Build Job'}
-                </Text>
+                {loading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text className="text-white font-bold text-sm tracking-[0.5px]">
+                    {outcomeStatus === 'sale' ? (isJobBuilderSubmitted ? 'Finish Outcome' : 'Build Job') : 'Finish Outcome'}
+                  </Text>
+                )}
               </TouchableOpacity>
+
+              {outcomeStatus === 'sale' && isJobBuilderSubmitted && (
+                <TouchableOpacity
+                  onPress={onResetJobBuilder}
+                  className="h-12 mt-3 rounded-xl items-center justify-center border border-[#EF4444]"
+                >
+                  <Text className="text-[#EF4444] font-bold text-sm tracking-[0.5px]">
+                    Reset Job Builder
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             <RNFlashMessage ref={flashRef} position="top" canRegisterAsDefault={false} />

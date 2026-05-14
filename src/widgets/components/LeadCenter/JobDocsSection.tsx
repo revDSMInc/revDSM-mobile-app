@@ -30,6 +30,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect } from 'react';
 import Feather from 'react-native-vector-icons/Feather';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
+import { paymentPlans } from '../../../utils/calculator/payment-plans';
+import { EditContractDetailsModal } from '../../modals/lead-center/EditContractDetailsModal';
 
 interface SectionImage {
   uri: string;
@@ -66,6 +68,7 @@ export const JobDocsSection = ({
   const [showResultModal, setShowResultModal] = useState(false);
   const [pendingResult, setPendingResult] = useState<string>('noDemo');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [uploadingSlots, setUploadingSlots] = useState<{ [key: string]: boolean }>({});
   
   const navigation = useNavigation<any>();
@@ -96,17 +99,19 @@ export const JobDocsSection = ({
   }, [lead?.status, outcomeData]);
 
   const getStatusLabel = () => {
-    const status = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
+    const status = (lead?.status || outcomeData?.status || outcomeData?.result || '')
+      .toLowerCase()
+      .replace(/[^a-z]/g, '');
     const labels: Record<string, string> = {
       sale: 'Sale',
       demo: 'Demo',
-      nodemo: 'No Demo',
+      nodemo: 'No demo',
       demonosale: 'Demo No Sale',
-      nothit: 'Not Hit',
+      nothit: 'Not hit',
       nothome: 'Not Home',
       reset: 'Reset',
       cancelled: 'Cancelled',
-      rescheduled: 'Rescheduled'
+      rescheduled: 'Rescheduled',
     };
     return labels[status] || lead?.status || 'Resulted';
   };
@@ -134,11 +139,12 @@ export const JobDocsSection = ({
           const mapDocs = (list: any[]) =>
             list.map((doc: any) => {
               const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
+              const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
               return {
                 uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
                 name: doc.name || (doc.documentType === 'agreement' ? 'Agreement' : 'Order Sheet'),
                 serverId: doc._id,
-                size: doc.size,
+                size: size,
               };
             });
 
@@ -154,8 +160,11 @@ export const JobDocsSection = ({
   }, [lead?._id]);
 
   useEffect(() => {
-    fetchOutcome();
-  }, [fetchOutcome]);
+    const result = String(lead?.result || lead?.status || '').toLowerCase();
+    if (result === 'sale' || result === 'demo') {
+      fetchOutcome();
+    }
+  }, [fetchOutcome, lead?.result, lead?.status]);
 
   // ── Progress ──────────────────────────────────────────────────────────────
   const totalRequired = IMAGE_CATEGORIES.reduce((acc, section) => {
@@ -199,22 +208,71 @@ export const JobDocsSection = ({
     setShowResultModal(true);
   };
 
+  const handleReset = () => {
+    onResultPress('reset');
+  };
+
+  const handleQuickReset = () => {
+    Alert.alert(
+      'Reset Lead',
+      'Are you sure you want to reset this lead? This will clear current work state.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (lead?._id) {
+                await resetLeadMutation.mutateAsync(lead._id);
+                onSectionImagesChange({});
+                await refetch();
+                await fetchOutcome();
+              }
+            } catch (error) {
+              console.error('Reset failed', error);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleResultSubmit = async (resultData: any) => {
     try {
-      if (resultData.result === 'reset') {
-        await resetLeadMutation.mutateAsync(lead?._id);
-        onSectionImagesChange({});
-      } else {
-        await submitJobMutation.mutateAsync({
-          leadId: lead?._id,
-          payload: { leadData: resultData, jobState: {} },
-        });
-      }
+      // Map result to status explicitly for backend consistency
+      const result = resultData.result;
+      const leadData = {
+        ...resultData,
+        status: result === 'noDemo' ? 'noDemo' : result === 'notHit' ? 'notHit' : result,
+      };
+
+      await submitJobMutation.mutateAsync({
+        leadId: lead?._id,
+        payload: { leadData, jobState: {} },
+      });
+
       setShowResultModal(false);
+
+      // Refresh all local data in background/sequence to reflect resulted state
+      await refetch();
+      await fetchOutcome();
     } catch (error) {
+      setShowResultModal(false);
       console.error('Submit result failed', error);
     }
   };
+
+  const handleUpdateContract = async (payload: any) => {
+    try {
+      await LeadService.updateLeadOutcome(lead._id, payload);
+      await fetchOutcome();
+      await refetch();
+    } catch (error) {
+      console.error('Update contract failed', error);
+    }
+  };
+
 
   const handleUpload = async (catName: string, idx: number, asset: any, groupName?: string) => {
     if (!lead?._id) return;
@@ -385,20 +443,9 @@ export const JobDocsSection = ({
         </View>
       </Modal>
 
-      {/* Status Banner */}
-      {!isResulted ? (
-        <View className="items-center justify-center py-4 mb-3 mt-3">
-          <Icon name="file-document-edit-outline" size={32} color={colors.textSecondary} />
-          <Text className="text-sm mt-2" style={{ color: colors.textSecondary }}>
-            {lead?.status
-              ? `Current Status: ${lead.status.toUpperCase()}`
-              : 'No contract details available'}
-          </Text>
-        </View>
-      ) : (
+      {/* Status Banner removed per user request */}
+      {isResulted && (
         <>
-          {/* Resulted Status Header (Removed from top, moved to bottom per user request) */}
-
           {/* Contract Details Card */}
           {hasContract && (
             <View 
@@ -418,7 +465,7 @@ export const JobDocsSection = ({
                     Contract Details
                   </Text>
                   <TouchableOpacity 
-                    onPress={() => navigation.navigate('JobBuilder', { lead })}
+                    onPress={() => setShowEditModal(true)}
                     className="p-1"
                   >
                     <Icon name="pencil" size={20} color="#637381" />
@@ -440,12 +487,40 @@ export const JobDocsSection = ({
                   <DetailRow 
                     label="Remaining Balance" 
                     value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                    showCheck
+                    method={paymentPlans[outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod]?.label?.split(' (')[0]}
                     isDark={isDark}
                   />
                   <DetailRow 
                     label="Install Date" 
-                    value={(outcomeData?.installDate || outcomeData?.leadData?.installDate) ? new Date(outcomeData?.installDate || outcomeData?.leadData?.installDate).toLocaleDateString('en-US', { weekday: 'long', month: 'numeric', day: 'numeric', year: '2-digit' }) + ' • 8:00 AM - 12:00 PM' : 'Not Scheduled'} 
+                    value={(() => {
+                      const schedule = outcomeData?.jobBuilder?.scheduleTime || outcomeData?.jobBuilderData?.scheduleTime || outcomeData?.jobState?.scheduleTime || outcomeData?.leadData?.scheduleTime;
+                      const date = schedule?.date || outcomeData?.installDate || outcomeData?.leadData?.installDate || lead?.leadDate;
+                      const timeWindow = schedule?.timeWindow || outcomeData?.timeWindow || outcomeData?.leadData?.timeWindow || 'N/A';
+
+                      if (!date || date === 'Not Scheduled') return 'Not Scheduled';
+                      if (date === 'TBD') return 'TBD';
+
+                      let dateObj = new Date(date);
+                      
+                      // Robust parsing for M/d/yyyy format if native Date fails
+                      if (isNaN(dateObj.getTime()) && typeof date === 'string') {
+                        const parts = date.split('/');
+                        if (parts.length === 3) {
+                          const m = parseInt(parts[0]) - 1;
+                          const d = parseInt(parts[1]);
+                          const y = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
+                          dateObj = new Date(y, m, d);
+                        }
+                      }
+
+                      if (!isNaN(dateObj.getTime())) {
+                        const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                        const weekday = weekdays[dateObj.getDay()];
+                        const formatted = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+                        return `${weekday}, ${formatted} • ${timeWindow}`;
+                      }
+                      return `${date} • ${timeWindow}`;
+                    })()} 
                     isDark={isDark}
                   />
                 </View>
@@ -609,19 +684,26 @@ export const JobDocsSection = ({
 
       {/* Result Buttons */}
       {isResulted ? (
-        <View 
-          className="flex-row items-center justify-between px-4 py-3 rounded-xl mb-4 mt-2"
-          style={{ backgroundColor: isDark ? '#FFFFFF08' : '#F4F6F8' }}
-        >
-          <Text className="text-sm font-bold text-gray-400" style={{ opacity: 0.8 }}>
-            Resulted - {getStatusLabel()}
-          </Text>
-          <TouchableOpacity 
-            onPress={() => onResultPress('reset')}
-            className="w-10 h-10 items-center justify-center rounded-lg"
-            style={{ backgroundColor: isDark ? colors.surface : '#919EAB1F' }}
+        <View className="flex-row gap-2 mt-2 mb-4">
+          <View
+            className="flex-[3] h-12 rounded-xl items-center justify-center"
+            style={{ backgroundColor: '#94a3b8' }}
           >
-            <Icon name="refresh" size={20} color={isDark ? '#919EAB' : '#637381'} />
+            <Text className="text-white font-bold text-sm tracking-tight">
+              Resulted — {getStatusLabel()}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={handleQuickReset}
+            disabled={resetLeadMutation.isPending}
+            className="flex-1 h-12 rounded-xl items-center justify-center"
+            style={{ backgroundColor: '#94a3b8' }}
+          >
+            {resetLeadMutation.isPending ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Icon name="refresh" size={22} color="white" />
+            )}
           </TouchableOpacity>
         </View>
       ) : (
@@ -634,10 +716,10 @@ export const JobDocsSection = ({
             className="flex-1 h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: '#FF5630' }}
           >
-            <Text className="text-white text-sm font-bold">No Demo</Text>
+            <Text className="text-white text-sm font-bold">No demo</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => onResultPress('reset')}
+            onPress={handleReset}
             className="flex-1 h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: '#F59E0B' }}
           >
@@ -648,7 +730,7 @@ export const JobDocsSection = ({
             className="flex-1 h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: '#212B36' }}
           >
-            <Text className="text-white text-sm font-bold">Not Hit</Text>
+            <Text className="text-white text-sm font-bold">Not hit</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -664,6 +746,13 @@ export const JobDocsSection = ({
           }}
         />
       </View>
+      <EditContractDetailsModal 
+        visible={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        outcomeData={outcomeData}
+        lead={lead}
+        onUpdate={handleUpdateContract}
+      />
     </View>
   );
 };
@@ -939,7 +1028,11 @@ const AccordionItem = ({
         <View className="flex-row items-center">
           <View
             className="px-3 py-1 rounded-md mr-3"
-            style={{ backgroundColor: isDark ? colors.surface : colors.text }}
+            style={{ 
+              backgroundColor: images.length === displayTotal && displayTotal > 0 
+                ? '#4CBB17' 
+                : (isDark ? colors.surface : colors.text) 
+            }}
           >
             <Text className="text-sm text-white font-semibold">
               {images.length} of {displayTotal} complete
@@ -1007,19 +1100,29 @@ const LoadingImage = React.memo(({ uri, className, style, resizeMode }: any) => 
   );
 });
 
-const DetailRow = ({ label, value, color, showCheck, isDark }: any) => (
-  <View className="flex-row justify-between items-center">
-    <Text className="text-[13px] text-gray-500 font-medium">{label}</Text>
-    <View className="flex-row items-center gap-2">
+const DetailRow = ({ label, value, color, method, isDark }: any) => (
+  <View className="flex-row justify-between items-center py-1">
+    <Text className="text-[12px] text-gray-500 font-medium">{label}</Text>
+    <View className="flex-row items-center">
       <Text 
-        className="text-[13px] font-black" 
+        className="text-[10px] font-black mr-2" 
         style={{ color: color || (isDark ? '#FFFFFF' : '#1C252E') }}
       >
         {value}
       </Text>
-      {showCheck && (
-        <View className="bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
-          <Text className="text-[10px] font-black text-gray-600">CHECK</Text>
+      {method && (
+        <View 
+          className="px-2 py-1 rounded-md border border-gray-100 shadow-sm"
+          style={{ 
+            backgroundColor: isDark ? '#1C252E' : '#FFFFFF', 
+            borderColor: isDark ? '#FFFFFF20' : '#E2E8F0',
+            paddingHorizontal: 6,
+            paddingVertical: 4,
+          }}
+        >
+          <Text className="text-[10px] font-black text-gray-500 uppercase tracking-tighter">
+            {method}
+          </Text>
         </View>
       )}
     </View>
@@ -1045,7 +1148,7 @@ const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: any) => {
         </View>
         <View>
           <Text className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-            {isImage ? 'IMAGE' : 'PDF'} • {doc.size ? (doc.size / 1024).toFixed(0) + ' KB' : 'Size N/A'}
+            {isImage ? 'IMAGE' : 'PDF'} • {(doc.size !== undefined && doc.size !== null) ? (doc.size / 1024).toFixed(0) + ' KB' : 'Size N/A'}
           </Text>
         </View>
       </View>

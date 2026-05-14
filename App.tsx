@@ -33,16 +33,11 @@ import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import RootNavigator from './src/navigation';
 import { useAppInitialization } from './src/hooks/useAppInitialization';
 import { useSocketManager } from './src/hooks/useSocketManager';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import FlashMessage from 'react-native-flash-message';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { queryClient } from './src/services/api/queryClient';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: 1, refetchOnWindowFocus: false },
-    mutations: { retry: 0 },
-  },
-});
 
 function AppContent() {
   useAppInitialization();

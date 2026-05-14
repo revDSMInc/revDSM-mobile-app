@@ -44,13 +44,21 @@ export type RootStackParamList = {
     password?: string;
     companyId?: string;
     companyName?: string;
+    lat?: number;
+    long?: number;
   };
   ResetPassword: {
     email: string;
     companyId: string;
     companyName: string;
   };
-  AuthenticatorOTP: { email: string; password?: string };
+  AuthenticatorOTP: { 
+    email: string; 
+    password?: string; 
+    lat?: number; 
+    long?: number 
+  };
+
   JobBuilder: {
     initialJobState: any;
     calculatorData: any;
@@ -63,6 +71,7 @@ export type RootStackParamList = {
     sectionImages: { [key: string]: any[] };
     onNavToDocs: () => void;
     onGenerate: (payload: any) => Promise<string | null>;
+    onGenerateAll?: (payloads: any[]) => void;
   };
 };
 

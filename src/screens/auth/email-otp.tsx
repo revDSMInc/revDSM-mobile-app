@@ -23,7 +23,8 @@ import Icon from 'react-native-vector-icons/Ionicons';
 export default function EmailOTPScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute<RouteProp<RootStackParamList, 'EmailOTP'>>();
-  const { email, password } = route.params;
+  const { email, password, lat, long } = route.params;
+
   const { colors } = useTheme();
 
   const [code, setCode] = useState(['', '', '', '', '', '']);
@@ -81,7 +82,15 @@ export default function EmailOTPScreen() {
     Keyboard.dismiss();
 
     try {
-      await verifyOtpMutation.mutateAsync({ email, code: fullCode, password, trustDevice });
+      await verifyOtpMutation.mutateAsync({ 
+        email, 
+        code: fullCode, 
+        password, 
+        trustDevice,
+        lat,
+        long
+      });
+
       FlashMessage.success('Verified', 'Email verified successfully');
     } catch (err: any) {
       FlashMessage.error('Verification Failed', err?.message || 'Invalid code');
@@ -108,7 +117,7 @@ export default function EmailOTPScreen() {
       imageStyle={{ opacity: 0.1 }}
     >
       <View style={{ flex: 1 }}>
-        <View className="items-center" style={{ marginTop: '25%', height: 60 }}>
+        <View className="items-center" style={{ marginTop: '15%', height: 60 }}>
           <Logo className="h-12 object-contain" />
         </View>
 
@@ -117,26 +126,24 @@ export default function EmailOTPScreen() {
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            <View className="flex-1 justify-center px-6">
-              <TouchableOpacity
-                onPress={() => navigation.goBack()}
-                className="flex-row items-center mb-6"
-              >
-                <Icon name="chevron-back" size={20} color={colors.text} />
-                <Text className="text-sm font-medium ml-1" style={{ color: colors.text }}>
-                  Back
+            <View className="flex-1 px-6">
+              <Text className="text-2xl font-bold mb-3" style={{ color: colors.text }}>
+                Two-Factor Authentication
+              </Text>
+              <Text className="text-sm text-[#637381] mb-6 leading-5">
+                We've sent a 6-digit verification code to {'\n'}
+                <Text className="font-bold text-slate-800">{email}</Text>.
+              </Text>
+
+              {/* Green Banner */}
+              <View className="bg-[#D1FAE5] p-4 rounded-xl flex-row items-center mb-10 border border-[#A7F3D0]">
+                <Icon name="mail-outline" size={20} color="#059669" />
+                <Text className="ml-3 text-[13px] font-bold text-[#059669]">
+                  Check your inbox for the verification code
                 </Text>
-              </TouchableOpacity>
+              </View>
 
-              <Text className="text-2xl font-semibold mb-2" style={{ color: colors.text }}>
-                Please check your email!
-              </Text>
-              <Text className="text-sm text-[#637381] mb-8">
-                We have emailed a 6-digit confirmation code to {email}, please enter the code below
-                to verify your email.
-              </Text>
-
-              <View className="flex-row justify-between mb-8">
+              <View className="flex-row justify-between mb-10">
                 {code.map((digit, i) => (
                   <TextInput
                     key={i}
@@ -168,49 +175,76 @@ export default function EmailOTPScreen() {
               </View>
 
               <TouchableOpacity
+                onPress={() => {/* TODO: Implement backup code flow */}}
+                className="flex-row items-center mb-8"
+              >
+                <Icon name="shield-outline" size={20} color={colors.text} />
+                <Text className="ml-2 text-sm font-bold" style={{ color: colors.text }}>
+                  Use backup code
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 onPress={() => setTrustDevice(!trustDevice)}
-                className="flex-row items-center mb-6"
+                className="flex-row items-center mb-10"
               >
                 <View
-                  className="w-5 h-5 rounded border items-center justify-center mr-2"
+                  className="w-5 h-5 rounded-md border items-center justify-center mr-3"
                   style={{
-                    borderColor: trustDevice ? colors.primary.main : '#919EAB33',
+                    borderColor: trustDevice ? colors.primary.main : '#919EAB4D',
                     backgroundColor: trustDevice ? colors.primary.main : 'transparent',
                   }}
                 >
                   {trustDevice && <Icon name="checkmark" size={14} color="white" />}
                 </View>
-                <Text className="text-sm font-medium" style={{ color: colors.textSecondary }}>
-                  Trust this device for 7 days
+                <Text className="text-sm font-bold text-[#637381]">
+                  Trust this device for 10 days
                 </Text>
               </TouchableOpacity>
 
               <CustomButton 
-                title="Verify" 
+                title="Verify Code" 
                 onPress={handleVerify} 
+                disabled={code.join('').length !== 6}
                 loading={verifyOtpMutation.isPending} 
               />
 
               <View className="mt-8 items-center">
-                <Text className="text-sm text-[#637381]">
-                  Don't have a code?{' '}
+                <Text className="text-sm font-bold text-[#637381]">
+                  Didn't receive the code?
+                </Text>
+                <TouchableOpacity 
+                  onPress={handleResend}
+                  disabled={countdown > 0}
+                  className="mt-4"
+                >
                   <Text
-                    className="font-bold"
+                    className="font-black text-sm"
                     style={{ 
                       color: countdown > 0 ? '#919EAB' : colors.primary.main,
                     }}
-                    onPress={handleResend}
                   >
                     Resend code {countdown > 0 ? `(${countdown}s)` : ''}
                   </Text>
-                </Text>
+                </TouchableOpacity>
               </View>
+
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                className="mt-8 flex-row items-center justify-center"
+              >
+                <Icon name="chevron-back" size={16} color={colors.text} />
+                <Text className="ml-1 text-sm font-bold" style={{ color: colors.text }}>
+                  Back to login
+                </Text>
+              </TouchableOpacity>
             </View>
           </ScrollView>
         </GlobalKeyboardAvoidingView>
       </View>
     </ImageBackground>
   );
+
 }
 
 const styles = StyleSheet.create({

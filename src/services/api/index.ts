@@ -9,6 +9,9 @@ import { ENV } from '../../config/env';
 import { FlashMessage } from '../../config/message';
 import { store } from '../../redux/store';
 import { logout } from '../../redux/reducer/auth.reducer';
+import { queryClient } from './queryClient';
+import SocketManager from '../SocketManager';
+
 
 /**
  * Generic API Service Wrapper
@@ -19,9 +22,9 @@ const axiosInstance: AxiosInstance = axios.create({
   headers: {
     Accept: 'application/json, text/plain, */*',
     'Accept-Language': 'en-US,en;q=0.9',
-    Referer: 'https://dev-sales.revdsm.com/',
   },
 });
+
 
 // Request Interceptor: Attach Auth Token
 axiosInstance.interceptors.request.use(
@@ -59,7 +62,10 @@ axiosInstance.interceptors.response.use(
 
           // Handle Logout Workflow
           await clearSession();
+          queryClient.clear();
+          SocketManager.disconnect();
           store.dispatch(logout());
+
         }
       }
     }

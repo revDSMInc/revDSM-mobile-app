@@ -127,6 +127,8 @@ export default function LeadCenterPage() {
     handleDownloadRiskReport,
     handleDownloadReport,
     handleResetRiskReport,
+    revRenderJobs,
+    handleStartRevRenders,
   } = useLeadReports(lead, refetch);
 
   const {
@@ -162,13 +164,14 @@ export default function LeadCenterPage() {
 
   const [loading, setLoading] = useState(false);
 
-  // Auto-refresh RevRender runs when screen is focused
+  // Auto-refresh Lead data when screen is focused
   useFocusEffect(
     useCallback(() => {
       if (lead?._id) {
         queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
+        refetch(); // Ensure lead data is fresh when returning from other screens
       }
-    }, [lead?._id, queryClient])
+    }, [lead?._id, queryClient, refetch])
   );
 
   // Auto-open Job Builder logic
@@ -633,6 +636,7 @@ export default function LeadCenterPage() {
                 lead={lead}
                 secureUrls={secureUrls}
                 riskJob={riskJob}
+                revRenderJobs={revRenderJobs}
                 onAction={(toolId: string, extra: any) => {
                   if (toolId === 'revrender') {
                     navigation.navigate('RevRender', {
@@ -640,20 +644,11 @@ export default function LeadCenterPage() {
                       sectionImages,
                       onNavToDocs: () => setActiveTab('job_docs'),
                       onGenerate: async (payload: any) => {
-                        try {
-                          const res = await revRenderMutation.mutateAsync(payload);
-                          const runData = res?.data?.data || res?.data;
-                          
-                          if (runData?.generatedUrl) {
-                            return {
-                              generatedUrl: runData.generatedUrl,
-                              originalUrl: runData.originalUrl || payload.houseImageUrl
-                            };
-                          }
-                          return null;
-                        } catch (error) {
-                          return null;
-                        }
+                        handleStartRevRenders([payload]);
+                        return null;
+                      },
+                      onGenerateAll: (payloads: any[]) => {
+                        handleStartRevRenders(payloads);
                       }
                     });
                   } else if (toolId === 'inspection-download') {
@@ -712,33 +707,8 @@ export default function LeadCenterPage() {
                 pdfPath,
                 reportType: 'consent_form',
               });
-            } catch (error) {
-              console.error('Consent auto-upload failed:', error);
-            }
-          }}
-          uploading={finalizeUploadMutation.isPending}
-          lead={lead}
-          type="consent"
-          loading={consentMutation.isPending}
-        />
-      )}
-
-      {showConsentModal && (
-        <ConsentFormModal
-          visible={showConsentModal}
-          onClose={() => toggleModal('showConsentModal', false)}
-          onPaperFallback={() => {
-            toggleModal('showConsentModal', false);
-            toggleModal('showPaperFallback', true);
-          }}
-          onSubmit={handleConsentSubmit}
-          onFinalUpload={async (pdfPath) => {
-            try {
-              await finalizeUploadMutation.mutateAsync({
-                leadId: lead?._id,
-                pdfPath,
-                reportType: 'consent_form',
-              });
+              setTimeout(() => refetch(), 1000);
+              setTimeout(() => refetch(), 3000);
             } catch (error) {
               console.error('Consent auto-upload failed:', error);
             }
@@ -766,6 +736,8 @@ export default function LeadCenterPage() {
                 pdfPath,
                 reportType: 'waiver_form',
               });
+              setTimeout(() => refetch(), 1000);
+              setTimeout(() => refetch(), 3000);
             } catch (error) {
               console.error('Waiver auto-upload failed:', error);
             }

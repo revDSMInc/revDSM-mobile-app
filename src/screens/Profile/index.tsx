@@ -10,7 +10,9 @@ import {
   Platform,
   ActivityIndicator,
   Modal,
+  Share,
 } from 'react-native';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
 import { SettingsService } from '../../services/api/SettingsService';
@@ -18,15 +20,21 @@ import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
 import Clipboard from '@react-native-clipboard/clipboard';
 import RNFS from 'react-native-fs';
+import ReactNativeBlobUtil from 'react-native-blob-util';
+
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../../widgets/common/MainHeader';
 import { CustomInput } from '../../widgets/common/CustomInput';
 import { CustomButton } from '../../widgets/common/CustomButton';
 import { useNavigation } from '@react-navigation/native';
+import { GlobalKeyboardAvoidingView } from '../../widgets/common/keyboard/GlobalKeyboard';
+
 import Icon from 'react-native-vector-icons/Ionicons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { launchImageLibrary } from 'react-native-image-picker';
 import FlashMessage from 'react-native-flash-message';
-import { formatUSPhoneNumber } from '../../utils/phone-util';
+import { formatUSPhoneNumber, getRawPhoneNumber } from '../../utils/phone-util';
+
 
 import { AxiosResponse } from 'axios';
 
@@ -69,7 +77,7 @@ export default function ProfilePage() {
         street: user.address || user.street || '',
         zipCode: user.zipCode || '',
         email: user.email || '',
-        avatarUrl: user.profilePicture || '',
+        avatarUrl: typeof user.profilePicture === 'string' ? user.profilePicture : '',
       }));
     }
   }, [user]);
@@ -93,6 +101,18 @@ export default function ProfilePage() {
   const [backupCodesModalVisible, setBackupCodesModalVisible] = useState(false);
   const [disableModalVisible, setDisableModalVisible] = useState(false);
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
+
+  // Authenticator Setup State
+  const [authModalVisible, setAuthModalVisible] = useState(false);
+  const [authStep, setAuthStep] = useState(0); // 0: Scan, 1: Verify
+  const [authQrCode, setAuthQrCode] = useState('');
+  const [authSecret, setAuthSecret] = useState('');
+  const [authCode, setAuthCode] = useState('');
+
+  // Trusted Devices State
+  const [trustedDevicesModalVisible, setTrustedDevicesModalVisible] = useState(false);
+  const [trustedDevices, setTrustedDevices] = useState<any[]>([]);
+  const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
 
   const fetchSecureAvatarUrl = useCallback(async (pic: any) => {
     if (!pic || typeof pic !== 'object' || !pic.filePath) return;
@@ -169,33 +189,62 @@ export default function ProfilePage() {
   const handleUpdateProfile = async () => {
     setLoading(true);
     try {
-      const data = new FormData();
+      const isUploadingImage = formData.avatarUrl && (formData.avatarUrl.startsWith('file://') || formData.avatarUrl.startsWith('content://'));
       
-      // Append fields similar to web app logic
-      data.append('firstName', formData.firstName);
-      data.append('lastName', formData.lastName);
-      data.append('phoneNo', formData.phoneNumber);
-      data.append('city', formData.city);
-      data.append('street', formData.street);
-      data.append('zipCode', formData.zipCode);
-      
-      if (formData.password) {
-        data.append('password', formData.password);
-      }
+      let payload: any;
+      const headers: any = {};
 
-      // Handle Avatar Upload
-      if (formData.avatarUrl && formData.avatarUrl.startsWith('file://')) {
+      if (isUploadingImage) {
+        // Use FormData for image upload
+        const data = new FormData();
+        data.append('firstName', formData.firstName);
+        data.append('lastName', formData.lastName);
+        data.append('userName', formData.userName);
+        data.append('phoneNo', getRawPhoneNumber(formData.phoneNumber));
+        data.append('city', formData.city);
+        data.append('street', formData.street);
+        data.append('zipCode', formData.zipCode);
+        
+        if (formData.password && formData.password.trim() !== '') {
+          data.append('password', formData.password);
+        }
+
         const uriParts = formData.avatarUrl.split('.');
-        const fileExtension = uriParts[uriParts.length - 1];
+        const fileExtension = uriParts[uriParts.length - 1] || 'jpg';
         
         data.append('file', {
           uri: formData.avatarUrl,
           name: `profile.${fileExtension}`,
-          type: `image/${fileExtension}`,
+          type: `image/${fileExtension === 'jpg' ? 'jpeg' : fileExtension}`,
         } as any);
+        
+        payload = data;
+        // Don't set Content-Type, let Axios/RN handle it for FormData
+      } else {
+        // Use JSON for simple field updates (more reliable on some Android environments)
+        payload = {
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          userName: formData.userName,
+          phoneNo: getRawPhoneNumber(formData.phoneNumber),
+          city: formData.city,
+          street: formData.street,
+          zipCode: formData.zipCode,
+        };
+        
+        if (formData.password && formData.password.trim() !== '') {
+          payload.password = formData.password;
+        }
       }
 
-      const res = await SettingsService.updateProfile(data);
+      const res = await SettingsService.updateProfile(payload);
+
+      
+      // Check for backend-specific success code if returned as 200 OK body
+      if (res.data?.code && res.data.code !== 200) {
+        throw res.data;
+      }
+
       const updatedUser = res.data?.data?.data || res.data?.data || res.data;
 
       // If response has new profile picture, fetch its secure URL
@@ -213,7 +262,10 @@ export default function ProfilePage() {
         }
       ]);
     } catch (error: any) {
-      Alert.alert('Error', error?.response?.data?.message || 'Update failed');
+      console.error('Update Profile Error:', error);
+      // The interceptor rejects error.response.data, so 'error' is the payload
+      const errorMessage = error?.message || error?.error || 'Update failed';
+      Alert.alert('Error', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -243,41 +295,11 @@ export default function ProfilePage() {
           setEmailModalVisible(true);
         } else {
           const setupRes = await SettingsService.setupAuthenticator();
-          const { secret } = setupRes.data?.data || {};
-
-          if (Platform.OS === 'ios') {
-            Alert.prompt(
-              'Setup Authenticator',
-              `Copy this key to your app: ${secret}\n\nEnter the 6-digit code from your app:`,
-              async (token) => {
-                if (token) {
-                  try {
-                    await SettingsService.verifyAuthenticator(token, secret);
-                    Alert.alert('Success', 'Authenticator App enabled successfully!');
-                    fetchTfaSettings();
-                  } catch (e) {
-                    Alert.alert('Error', 'Invalid token. Please try again.');
-                  }
-                }
-              }
-            );
-          } else {
-            // Android Prompt fallback
-            Alert.alert(
-              'Setup Authenticator',
-              `Step 1: Copy this key to your app:\n\n${secret}\n\nStep 2: Enter the 6-digit code in the next pop-up.`,
-              [
-                {
-                  text: 'Submit Code',
-                  onPress: () => {
-                    // In a production app, we would use a proper Modal for Android
-                    // For now continuing with the document's logic
-                    console.log('Authenticator Secret shown to user');
-                  },
-                },
-              ]
-            );
-          }
+          const { secret, qrCode } = setupRes.data?.data || {};
+          setAuthSecret(secret);
+          setAuthQrCode(qrCode);
+          setAuthStep(0);
+          setAuthModalVisible(true);
         }
       }
       fetchTfaSettings();
@@ -360,12 +382,94 @@ export default function ProfilePage() {
 
   const handleDownloadBackupCodes = async () => {
     try {
-      const path = `${RNFS.DocumentDirectoryPath}/revdsm_backup_codes.txt`;
-      await RNFS.writeFile(path, backupCodes.join('\n'), 'utf8');
-      Alert.alert('Downloaded', `Backup codes saved to: ${path}`);
+      const fileName = 'revdsm_backup_codes.txt';
+      const content = backupCodes.join('\n');
+      
+      if (Platform.OS === 'android') {
+        const path = `${ReactNativeBlobUtil.fs.dirs.DownloadDir}/${fileName}`;
+        
+        // Write the file first
+        await ReactNativeBlobUtil.fs.writeFile(path, content, 'utf8');
+        
+        // Add to Download Manager to make it appear in the Downloads app and notifications
+        ReactNativeBlobUtil.android.addCompleteDownload({
+          title: fileName,
+          description: 'RevDSM Backup Codes',
+          mime: 'text/plain',
+          path: path,
+          showNotification: true,
+        });
+        
+        // No alert as requested
+      } else {
+
+        // On iOS, we write to a temp file and share it so user can "Save to Files"
+        const path = `${RNFS.TemporaryDirectoryPath}/${fileName}`;
+        await RNFS.writeFile(path, content, 'utf8');
+        
+        await Share.share({
+          url: `file://${path}`,
+          title: 'Save Backup Codes',
+        });
+      }
     } catch (err) {
-      Alert.alert('Error', 'Failed to save codes to file');
+      console.error('Download error:', err);
+      Alert.alert('Error', 'Failed to save or share backup codes');
     }
+  };
+
+
+
+  const handleVerifyAuthenticator = async () => {
+    if (authCode.length !== 6) {
+      Alert.alert('Error', 'Please enter a valid 6-digit code');
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await SettingsService.verifyAuthenticator(authCode, authSecret);
+      if (response.data?.data?.backupCodes) {
+        setBackupCodes(response.data.data.backupCodes);
+        setAuthModalVisible(false);
+        setBackupCodesModalVisible(true);
+        Alert.alert('Success', 'Google Authenticator enabled successfully!');
+      }
+      fetchTfaSettings();
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTrustedDevices = async () => {
+    setLoading(true);
+    try {
+      const res = await SettingsService.getTrustedDevices();
+      setTrustedDevices(res.data?.data?.devices || res.data?.data || []);
+      setTrustedDevicesModalVisible(true);
+    } catch (err) {
+      console.error('Fetch Devices Error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRevokeDevice = async (deviceId: string) => {
+    setRevokingDeviceId(deviceId);
+    try {
+      await SettingsService.revokeDevice(deviceId);
+      setTrustedDevices(prev => prev.filter(d => d.deviceId !== deviceId));
+    } catch (err) {
+      Alert.alert('Error', 'Failed to revoke device');
+    } finally {
+      setRevokingDeviceId(null);
+    }
+  };
+
+  const handleCopySecret = () => {
+    Clipboard.setString(authSecret);
+    Alert.alert('Copied', 'Secret key copied to clipboard');
   };
 
   return (
@@ -597,7 +701,7 @@ export default function ProfilePage() {
             </View>
           ) : (
             <View className="px-5 pb-10">
-              {/* 2FA Header Information */}
+              {/* 2FA Card Container */}
               <View
                 className="p-6 rounded-[32px] border mb-6"
                 style={{
@@ -605,137 +709,163 @@ export default function ProfilePage() {
                   borderColor: colors.border,
                 }}
               >
-                <View className="flex-row items-center mb-4">
+                <View className="flex-row items-center mb-6">
                   <View
-                    className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                    className="w-10 h-10 rounded-xl items-center justify-center mr-4"
                     style={{ backgroundColor: isDark ? colors.background : '#F8FAFC' }}
                   >
                     <Icon name="shield-checkmark" size={20} color={colors.text} />
                   </View>
                   <View className="flex-1">
-                    <Text className="text-sm font-black" style={{ color: colors.text }}>
+                    <Text className="text-xl font-black tracking-tight" style={{ color: colors.text }}>
                       Two-Factor Authentication
                     </Text>
-                    <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
+                    <Text className="text-[11px] font-bold mt-0.5" style={{ color: colors.textSecondary }}>
                       Add an extra layer of security to your account
                     </Text>
                   </View>
                 </View>
 
-                {/* Status Box */}
-                <View
-                  className="p-4 rounded-2xl flex-row items-center justify-between mt-2"
-                  style={{
-                    backgroundColor: isDark ? colors.background : '#FFF9F5',
-                    borderWidth: 1,
-                    borderColor: '#FFAB0040',
-                  }}
-                >
-                  <View className="flex-row items-center">
-                    <Icon name="alert-circle" size={20} color="#FFAB00" />
-                    <Text className="ml-3 text-[11px] font-black text-[#FFAB00]  tracking-wider">
-                      2FA is {tfaSettings.enabled ? 'Active' : 'Disabled'}
-                    </Text>
-                  </View>
-                  <View
-                    className={`px-3 py-1.5 rounded-lg ${
-                      tfaSettings.enabled ? 'bg-[#72BD00]' : 'bg-[#FF5630]'
-                    }`}
-                  >
-                    <Text className="text-[9px] font-black text-white ">
-                      {tfaSettings.enabled ? 'Active' : 'Inactive'}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Info Alert */}
-                <View
-                  className="mt-6 p-4 rounded-2xl flex-row bg-[#CAFDF5]"
-                  style={{ backgroundColor: isDark ? '#1C3D38' : '#CAFDF5' }}
-                >
-                  <Icon name="information-circle" size={20} color="#00B8D9" />
-                  <Text
-                    className="ml-3 flex-1 text-[11px] leading-4 font-bold"
-                    style={{ color: isDark ? '#00B8D9' : '#006C7F' }}
-                  >
-                    Enable two-factor authentication to add an extra layer of security to your
-                    account. You'll need to verify your identity with a code in addition to your
-                    password.
-                  </Text>
-                </View>
-
-                <Text
-                  className="mt-8 mb-4 text-[11px] font-black "
-                  style={{ color: colors.textSecondary }}
-                >
-                  Choose 2FA Method
-                </Text>
-
-                <MethodRadio
-                  label="Email OTP"
-                  sub="Receive verification codes via email"
-                  selected={selectionMethod === 'email'}
-                  onPress={() => setSelectionMethod('email')}
-                  colors={colors}
-                />
-                <MethodRadio
-                  label="Google Authenticator"
-                  sub="Use Google Authenticator or similar app"
-                  selected={selectionMethod === 'authenticator'}
-                  onPress={() => setSelectionMethod('authenticator')}
-                  colors={colors}
-                />
-
-                {tfaSettings.enabled && (
-                  <View className="mt-4 p-4 rounded-2xl bg-slate-50 border border-slate-100 mb-4">
-                    <View className="flex-row items-center justify-between mb-3">
-                      <View className="flex-row items-center">
-                        <Icon name="key-outline" size={16} color={colors.textSecondary} />
-                        <Text className="ml-2 text-[11px] font-black text-slate-600">Backup Codes</Text>
+                {/* Status Card */}
+                {tfaSettings.enabled ? (
+                  <View className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex-row items-center justify-between mb-6">
+                    <View className="flex-row items-center">
+                      <View className="w-10 h-10 bg-emerald-500 rounded-full items-center justify-center">
+                        <Icon name="checkmark-circle" size={24} color="white" />
                       </View>
-                      <View className="px-2 py-0.5 bg-slate-200 rounded-md">
-                        <Text className="text-[9px] font-black text-slate-500">
-                          {tfaSettings.unusedBackupCodesCount || 0} REMAINING
+                      <View className="ml-3">
+                        <Text className="text-sm font-black text-emerald-900">2FA is Enabled</Text>
+                        <Text className="text-[10px] font-bold text-emerald-600">
+                          Method: {tfaSettings.method === 'email' ? 'Email OTP' : 'Authenticator App'}
                         </Text>
                       </View>
                     </View>
-                    <Text className="text-[10px] text-slate-400 font-bold mb-4 leading-4">
-                      Regenerating backup codes will invalidate your current codes. Use them if you've lost your codes or they've been compromised.
-                    </Text>
-                    <TouchableOpacity
-                      onPress={handleRegenerateBackupCodes}
-                      className="flex-row items-center justify-center py-3 bg-white border border-slate-200 rounded-xl"
-                    >
-                      <Icon name="refresh" size={14} color="#6366f1" />
-                      <Text className="ml-2 font-black text-[10px] text-[#6366f1] tracking-widest uppercase">
-                        Regenerate Codes
-                      </Text>
-                    </TouchableOpacity>
+                    <View className="bg-emerald-500 px-3 py-1 rounded-lg">
+                      <Text className="text-[9px] font-black text-white uppercase">Active</Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex-row items-center justify-between mb-6">
+                    <View className="flex-row items-center">
+                      <View className="w-10 h-10 bg-orange-500 rounded-full items-center justify-center">
+                        <Icon name="alert-circle" size={24} color="white" />
+                      </View>
+                      <View className="ml-3">
+                        <Text className="text-sm font-black text-orange-900">2FA is Disabled</Text>
+                        <Text className="text-[10px] font-bold text-orange-600">Protect your account with 2FA</Text>
+                      </View>
+                    </View>
+                    <View className="bg-orange-500 px-3 py-1 rounded-lg">
+                      <Text className="text-[9px] font-black text-white uppercase">Inactive</Text>
+                    </View>
                   </View>
                 )}
 
-                <TouchableOpacity
-                  onPress={handleToggle2FA}
-                  disabled={loading}
-                  className="bg-grey-900 py-4 rounded-xl items-center mt-6 flex-row justify-center"
-                >
-                  <Icon
-                    name="shield-checkmark"
-                    size={18}
-                    color={isDark ? colors.background : '#fff'}
-                    className="mr-2"
-                  />
-                  {loading ? (
-                    <ActivityIndicator color={colors.background} />
-                  ) : (
-                    <Text className="text-grey-0 font-black  text-[11px] tracking-widest">
-                      {tfaSettings.enabled ? 'Disable 2FA' : 'Enable Two-Factor Authentication'}
+                {/* Conditional Content */}
+                {tfaSettings.enabled ? (
+                  <View className="gap-y-4">
+                    {/* Backup Codes Section */}
+                    <View className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                      <View className="flex-row items-center justify-between mb-4">
+                        <View className="flex-row items-center">
+                          <Icon name="key-outline" size={20} color="#1E293B" />
+                          <Text className="ml-3 text-sm font-black text-slate-900">Backup Codes</Text>
+                        </View>
+                        <View className="bg-slate-900 px-2 py-1 rounded-lg">
+                          <Text className="text-[10px] font-black text-white">
+                            {tfaSettings.unusedBackupCodesCount || 0} remaining
+                          </Text>
+                        </View>
+                      </View>
+                      <Text className="text-[11px] font-bold text-slate-400 mb-6 leading-4">
+                        Use backup codes to sign in if you lose access to your 2FA method
+                      </Text>
+                      <TouchableOpacity 
+                        onPress={handleRegenerateBackupCodes}
+                        className="bg-slate-50 py-3 px-4 rounded-xl items-center border border-slate-100"
+                      >
+                        <Text className="text-[11px] font-black text-slate-900 uppercase tracking-widest">Regenerate Codes</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Trusted Devices Section */}
+                    <View className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                      <View className="flex-row items-center mb-4">
+                        <Icon name="phone-portrait-outline" size={20} color="#1E293B" />
+                        <Text className="ml-3 text-sm font-black text-slate-900">Trusted Devices</Text>
+                      </View>
+                      <Text className="text-[11px] font-bold text-slate-400 mb-6 leading-4">
+                        Manage devices that can skip 2FA verification for 10 days
+                      </Text>
+                      <TouchableOpacity 
+                        onPress={fetchTrustedDevices}
+                        className="bg-slate-50 py-3 px-4 rounded-xl items-center border border-slate-100"
+                      >
+                        <Text className="text-[11px] font-black text-slate-900 uppercase tracking-widest">Manage Devices</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Warning/Disable Section */}
+                    <View className="bg-amber-50 border border-amber-100 p-5 rounded-2xl mt-4">
+                      <View className="flex-row items-center mb-3">
+                        <Icon name="warning" size={20} color="#D97706" />
+                        <Text className="ml-3 text-[11px] font-black text-amber-900 leading-4 flex-1">
+                          Disabling 2FA will make your account less secure. All trusted devices will also be revoked.
+                        </Text>
+                      </View>
+                      <TouchableOpacity 
+                        onPress={handleToggle2FA}
+                        disabled={loading}
+                        className="bg-white border border-amber-200 py-3 px-6 rounded-xl items-center mt-2"
+                      >
+                        {loading ? (
+                          <ActivityIndicator color="#D97706" />
+                        ) : (
+                          <Text className="text-[11px] font-black text-amber-600 uppercase tracking-widest">Disable 2FA</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <View>
+                    <Text className="mb-4 text-[11px] font-black text-slate-400 uppercase tracking-widest">
+                      Choose 2FA Method
                     </Text>
-                  )}
-                </TouchableOpacity>
+
+                    <MethodRadio
+                      label="Email OTP"
+                      sub="Receive verification codes via email"
+                      selected={selectionMethod === 'email'}
+                      onPress={() => setSelectionMethod('email')}
+                      colors={colors}
+                    />
+                    <MethodRadio
+                      label="Google Authenticator"
+                      sub="Use Google Authenticator or similar app"
+                      selected={selectionMethod === 'authenticator'}
+                      onPress={() => setSelectionMethod('authenticator')}
+                      colors={colors}
+                    />
+
+                    <TouchableOpacity
+                      onPress={handleToggle2FA}
+                      disabled={loading}
+                      className="bg-slate-900 py-4 rounded-2xl items-center mt-8 shadow-lg shadow-slate-200"
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="white" />
+                      ) : (
+                        <Text className="text-white font-black text-[11px] tracking-widest uppercase">
+                          Enable Two-Factor
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             </View>
           )}
+
           <View className="h-20" />
         </ScrollView>
 
@@ -929,6 +1059,219 @@ export default function ProfilePage() {
             </View>
           </View>
         </Modal>
+        {/* 4. Authenticator Setup Modal */}
+        <Modal visible={authModalVisible} transparent animationType="fade">
+          <View className="flex-1 bg-black/60 px-6">
+            <GlobalKeyboardAvoidingView isModal style={{ justifyContent: 'center' }}>
+
+              <View className="bg-white rounded-[32px] p-8 shadow-2xl overflow-hidden">
+                <View className="flex-row items-center mb-6">
+                  <View className="w-10 h-10 rounded-xl bg-slate-900 items-center justify-center mr-4">
+                    <Icon name="shield-checkmark" size={20} color="white" />
+                  </View>
+                  <Text className="text-xl font-black text-slate-900 tracking-tighter">Setup Authenticator</Text>
+                </View>
+
+              {/* Stepper Header */}
+              <View className="flex-row items-center mb-8 px-2">
+                <View className="flex-row items-center">
+                  <View className={`w-6 h-6 rounded-full items-center justify-center ${authStep >= 0 ? 'bg-slate-900' : 'bg-slate-200'}`}>
+                    <Text className="text-[10px] font-black text-white">1</Text>
+                  </View>
+                  <Text className={`ml-2 text-[11px] font-black ${authStep === 0 ? 'text-slate-900' : 'text-slate-400'}`}>Scan QR Code</Text>
+                </View>
+                <View className="flex-1 h-[1px] bg-slate-100 mx-4" />
+                <View className="flex-row items-center">
+                  <View className={`w-6 h-6 rounded-full items-center justify-center ${authStep >= 1 ? 'bg-slate-900' : 'bg-slate-200'}`}>
+                    <Text className="text-[10px] font-black text-white">2</Text>
+                  </View>
+                  <Text className={`ml-2 text-[11px] font-black ${authStep === 1 ? 'text-slate-900' : 'text-slate-400'}`}>Verify Code</Text>
+                </View>
+              </View>
+
+              {authStep === 0 ? (
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <View className="bg-[#E0F2FE] p-4 rounded-2xl flex-row items-center mb-6 border border-[#BAE6FD]">
+                    <Icon name="information-circle" size={20} color="#0284C7" />
+                    <View className="ml-3 flex-1">
+                      <Text className="text-[11px] font-bold text-[#0369A1] leading-4">
+                        1. Download Google Authenticator or similar app{'\n'}
+                        2. Scan the QR code below or enter the key manually{'\n'}
+                        3. Click "Next" to verify the code
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View className="items-center mb-6">
+                    <View className="p-4 bg-white border border-slate-100 rounded-3xl shadow-sm">
+                      {authQrCode ? (
+                        <Image source={{ uri: authQrCode }} style={{ width: 180, height: 180 }} />
+                      ) : (
+                        <ActivityIndicator color="#000" />
+                      )}
+                    </View>
+                  </View>
+
+                  <View className="mb-8">
+                    <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Can't scan? Enter key manually:</Text>
+                    <View className="flex-row gap-2">
+                      <View className="flex-1 bg-slate-50 border border-slate-100 px-4 py-3 rounded-xl justify-center">
+                        <Text className="text-[12px] font-black text-slate-700 tracking-wider" numberOfLines={1}>{authSecret}</Text>
+                      </View>
+                      <TouchableOpacity 
+                        onPress={handleCopySecret}
+                        className="bg-slate-900 px-4 py-3 rounded-xl items-center justify-center"
+                      >
+                        <Icon name="copy" size={18} color="white" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View className="flex-row gap-4">
+                    <TouchableOpacity 
+                      onPress={() => setAuthModalVisible(false)}
+                      className="flex-1 py-4 items-center"
+                    >
+                      <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => setAuthStep(1)}
+                      className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
+                    >
+                      <Text className="font-black text-[11px] text-white tracking-widest">NEXT</Text>
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+              ) : (
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <View className="bg-[#E0F2FE] p-4 rounded-2xl flex-row items-center mb-8 border border-[#BAE6FD]">
+                    <Icon name="information-circle" size={20} color="#0284C7" />
+                    <Text className="ml-3 flex-1 text-[11px] font-bold text-[#0369A1] leading-4">
+                      Enter the 6-digit code from your authenticator app to verify the setup.
+                    </Text>
+                  </View>
+
+                  <CustomInput
+                    label="Verification Code"
+                    placeholder="000 000"
+                    value={authCode}
+                    onChangeText={(t) => setAuthCode(t.replace(/[^0-9]/g, ''))}
+                    keyboardType="numeric"
+                    maxLength={6}
+                  />
+
+                  <View className="flex-row gap-4 mt-8">
+                    <TouchableOpacity 
+                      onPress={() => setAuthStep(0)}
+                      className="flex-1 py-4 items-center"
+                    >
+                      <Text className="font-black text-[11px] text-slate-500 tracking-widest">BACK</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={handleVerifyAuthenticator}
+                      disabled={loading || authCode.length !== 6}
+                      className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
+                      style={{ opacity: loading || authCode.length !== 6 ? 0.6 : 1 }}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="white" size="small" />
+                      ) : (
+                        <Text className="font-black text-[11px] text-white tracking-widest">VERIFY & ENABLE</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+              )}
+            </View>
+          </GlobalKeyboardAvoidingView>
+        </View>
+      </Modal>
+
+
+        {/* 5. Trusted Devices Modal */}
+        <Modal visible={trustedDevicesModalVisible} transparent animationType="fade">
+          <View className="flex-1 bg-black/60 items-center justify-center px-6">
+            <View className="bg-white w-full rounded-[32px] overflow-hidden shadow-2xl max-h-[80%]">
+              <View className="p-8 pb-4">
+                <View className="flex-row items-center justify-between mb-6">
+                  <View className="flex-row items-center">
+                    <View className="w-10 h-10 rounded-xl bg-indigo-900 items-center justify-center mr-4">
+                      <MaterialCommunityIcons name="devices" size={20} color="white" />
+                    </View>
+                    <Text className="text-xl font-black text-slate-900 tracking-tighter">Trusted Devices</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setTrustedDevicesModalVisible(false)} className="p-2">
+                    <Icon name="close" size={24} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+
+                <View className="bg-indigo-50 p-4 rounded-2xl flex-row items-center mb-6 border border-indigo-100">
+                  <Icon name="information-circle" size={20} color="#4F46E5" />
+                  <Text className="ml-3 flex-1 text-[11px] font-bold text-indigo-700 leading-4">
+                    Trusted devices skip 2FA verification for 10 days. You can revoke access at any time.
+                  </Text>
+                </View>
+
+                <ScrollView showsVerticalScrollIndicator={false} className="mb-4">
+                  {trustedDevices.length === 0 ? (
+                    <View className="items-center py-10">
+                      <Icon name="devices-outline" size={64} color="#e2e8f0" />
+                      <Text className="mt-4 text-sm font-black text-slate-400">No Trusted Devices</Text>
+                    </View>
+                  ) : (
+                    <View className="gap-y-4">
+                      {trustedDevices.map((device: any) => (
+                        <View key={device.id || device._id || device.deviceId} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex-row items-center">
+                          <View className="w-10 h-10 rounded-xl bg-white items-center justify-center border border-slate-100">
+                            <Icon 
+                              name={device.userAgent?.toLowerCase().includes('mobile') || device.browser?.toLowerCase().includes('mobile') ? 'phone-portrait' : 'desktop'} 
+                              size={20} 
+                              color="#4F46E5" 
+                            />
+                          </View>
+                          <View className="ml-4 flex-1">
+                            <View className="flex-row items-center">
+                              <Text className="text-[13px] font-black text-slate-900" numberOfLines={1}>
+                                {device.deviceName || device.browser || 'Unknown Device'}
+                              </Text>
+                              {device.isActive && (
+                                <View className="ml-2 bg-emerald-100 px-1.5 py-0.5 rounded-md">
+                                  <Text className="text-[8px] font-black text-emerald-700 uppercase">Active</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text className="text-[10px] font-bold text-slate-400 mt-0.5">IP: {device.ipAddress || 'Unknown IP'}</Text>
+                          </View>
+                          <TouchableOpacity 
+                            onPress={() => handleRevokeDevice(device.deviceId || device.id || device._id)}
+                            disabled={revokingDeviceId === (device.deviceId || device.id || device._id)}
+                            className="p-2 ml-2"
+                          >
+                            {revokingDeviceId === (device.deviceId || device.id || device._id) ? (
+                              <ActivityIndicator color="#EF4444" size="small" />
+                            ) : (
+                              <Icon name="trash-outline" size={18} color="#EF4444" />
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </ScrollView>
+              </View>
+
+              <View className="p-6 bg-slate-50">
+                <TouchableOpacity 
+                  onPress={() => setTrustedDevicesModalVisible(false)}
+                  className="w-full bg-slate-900 py-4 rounded-2xl items-center"
+                >
+                  <Text className="font-black text-[11px] text-white tracking-widest uppercase">Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
       </View>
     </SafeAreaView>
   );

@@ -48,6 +48,57 @@ export default function JobTrackerPage() {
   const [selectedJobForMenu, setSelectedJobForMenu] = useState<JobEntry | null>(null);
   const [menuPosition, setMenuPosition] = useState(0);
   const [showStatusUpdateModal, setShowStatusUpdateModal] = useState(false);
+
+  const getStatusColors = (status?: string) => {
+    switch (status?.toLowerCase()) {
+      case 'paid':
+        return { bg: '#C8FACD', text: '#007B55' };
+      case 'cancelled':
+      case 'bank decline':
+        return { bg: '#FFE9D5', text: '#B71D18' };
+      case 'unpaid':
+      default:
+        return { bg: '#FFF5CC', text: '#B76E00' };
+    }
+  };
+
+  const getRowBackgroundColor = (status?: string) => {
+    switch (status?.toLowerCase()) {
+      case 'paid':
+        return isDark ? 'rgba(34, 197, 94, 0.16)' : 'rgba(34, 197, 94, 0.08)';
+      case 'cancelled':
+      case 'bank decline':
+        return isDark ? 'rgba(255, 86, 48, 0.16)' : 'rgba(255, 86, 48, 0.08)';
+      default:
+        return 'transparent';
+    }
+  };
+
+  const getDateChipStyle = (date: string | null | undefined, type: 'install' | 'expectedPayout') => {
+    if (!date) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let compareDate: Date;
+    if (type === 'expectedPayout') {
+      const parts = date.split('/');
+      if (parts.length !== 3) return null;
+      compareDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+    } else {
+      compareDate = parseISO(date);
+    }
+
+    if (!isValid(compareDate)) return null;
+    compareDate.setHours(0, 0, 0, 0);
+
+    if (type === 'expectedPayout') {
+      if (today >= compareDate) return { bg: '#C8FACD', text: '#007B55' };
+    } else if (type === 'install') {
+      if (today.getTime() === compareDate.getTime()) return { bg: '#FFF5CC', text: '#B76E00' };
+      if (today > compareDate) return { bg: '#C8FACD', text: '#007B55' };
+    }
+    return null;
+  };
   const [jobToUpdateStatus, setJobToUpdateStatus] = useState<JobEntry | null>(null);
 
   const {
@@ -579,6 +630,7 @@ export default function JobTrackerPage() {
                               <View
                                 key={job.id || job._id || idx}
                                 className="flex-row items-center py-6 px-5 border-b border-border"
+                                style={{ backgroundColor: getRowBackgroundColor(job.status) }}
                               >
                                 <Text className="w-24 text-[13px] font-medium text-text-primary">
                                   {job.jobNumber}
@@ -589,46 +641,66 @@ export default function JobTrackerPage() {
                                 <Text className="w-28 text-[13px] font-medium text-text-primary">
                                   ${job.commission.toLocaleString()}
                                 </Text>
-                                <Text className="w-28 text-[13px] font-medium text-text-primary">
-                                  {job.installDate
-                                    ? format(parseISO(job.installDate), 'MM/dd/yyyy')
-                                    : 'TBD'}
-                                </Text>
+                                <View className="w-28">
+                                  {(() => {
+                                    const style = getDateChipStyle(job.installDate, 'install');
+                                    const dateStr = job.installDate ? format(parseISO(job.installDate), 'MM/dd/yyyy') : 'TBD';
+                                    if (style) {
+                                      return (
+                                        <View className="px-2 py-0.5 rounded-full self-start" style={{ backgroundColor: style.bg }}>
+                                          <Text className="text-[11px] font-bold" style={{ color: style.text }}>{dateStr}</Text>
+                                        </View>
+                                      );
+                                    }
+                                    return <Text className="text-[13px] font-medium text-text-primary">{dateStr}</Text>;
+                                  })()}
+                                </View>
                                 <Text className="w-28 text-[13px] font-medium text-text-primary">
                                   {format(parseISO(job.soldDate), 'MM/dd/yyyy')}
                                 </Text>
-                                <Text className="w-36 text-[13px] font-medium text-text-primary">
-                                  {calculateExpectedPayout(job.installDate)}
-                                </Text>
+                                <View className="w-36">
+                                  {(() => {
+                                    const payoutStr = calculateExpectedPayout(job.installDate);
+                                    const style = getDateChipStyle(payoutStr, 'expectedPayout');
+                                    if (style && payoutStr !== 'TBD' && payoutStr !== 'N/A') {
+                                      return (
+                                        <View className="px-2 py-0.5 rounded-full self-start" style={{ backgroundColor: style.bg }}>
+                                          <Text className="text-[11px] font-bold" style={{ color: style.text }}>{payoutStr}</Text>
+                                        </View>
+                                      );
+                                    }
+                                    return <Text className="text-[13px] font-medium text-text-primary">{payoutStr}</Text>;
+                                  })()}
+                                </View>
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
                                   {job.paymentMethod}
                                 </Text>
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
-                                  {job.customerName}
+                                  {(job as any).appointment?.title || job.customerName || 'N/A'}
                                 </Text>
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
-                                  {(job as any).calculator?.name || 'N/A'}
+                                  {job.title || (job as any).calculator?.title || (job as any).calculator?.name || 'N/A'}
                                 </Text>
                                 <TouchableOpacity
                                   onPress={() => toggleStatus(job)}
                                   className="w-24 items-center"
                                 >
-                                  <View
-                                    className="px-3 py-1 rounded-full"
-                                    style={{
-                                      backgroundColor:
-                                        job.status === 'paid' ? '#C8FACD' : '#FFE4D0',
-                                    }}
-                                  >
-                                    <Text
-                                      className="text-[12px] font-bold capitalize"
-                                      style={{
-                                        color: job.status === 'paid' ? '#007B55' : '#B76E00',
-                                      }}
-                                    >
-                                      {job.status || 'Unpaid'}
-                                    </Text>
-                                  </View>
+                                  {(() => {
+                                    const colors = getStatusColors(job.status);
+                                    return (
+                                      <View
+                                        className="px-3 py-1 rounded-full"
+                                        style={{ backgroundColor: colors.bg }}
+                                      >
+                                        <Text
+                                          className="text-[12px] font-bold capitalize"
+                                          style={{ color: colors.text }}
+                                        >
+                                          {job.status || 'Unpaid'}
+                                        </Text>
+                                      </View>
+                                    );
+                                  })()}
                                 </TouchableOpacity>
 
                                 <View className="w-12 flex-row justify-end">

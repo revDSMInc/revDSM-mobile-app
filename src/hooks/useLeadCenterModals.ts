@@ -55,8 +55,15 @@ export const useLeadCenterModals = (
   const onToolAction = useCallback(
     (toolId: string, extra?: any) => {
       const findReport = (type: string) => {
-        const keyword = type.split('_')[0]; // 'consent', 'waiver', 'risk'
-        return lead?.generatedReports?.find(
+        const keyword = type.split('_')[0].toLowerCase(); // 'consent', 'waiver', 'risk'
+        const reports = [
+          ...(lead?.generatedReports || []),
+          ...(lead?.outcomeData?.generatedReports || []),
+          ...(lead?.leadData?.generatedReports || []),
+          ...(lead?.outcome?.generatedReports || []),
+        ];
+
+        return reports.find(
           (r: any) =>
             (r.reportType === type ||
               r.reportName?.toLowerCase().includes(keyword) ||

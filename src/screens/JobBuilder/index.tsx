@@ -7,9 +7,11 @@ import {
   Dimensions,
   Platform,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import RNFS from 'react-native-fs';
@@ -41,7 +43,8 @@ const STEPS = [
 export default function JobBuilderScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { initialJobState, calculatorData, leadId, outcomeForm, onGoBack } = route.params || {};
+  const queryClient = useQueryClient();
+  const { initialJobState, calculatorData, leadId, outcomeForm, onGoBack, onComplete } = route.params || {};
 
   const [jobState, setJobState] = useState(initialJobState || {});
   const { colors, isDark } = useTheme();
@@ -451,6 +454,14 @@ export default function JobBuilderScreen() {
           selectedCalculatorId: calculatorData?._id,
           selectedAppointmentId: calculatorData?.appointmentId || leadId,
           appointmentId: calculatorData?.appointmentId || leadId,
+          installDate: jobState.scheduleTime?.date,
+          timeWindow: jobState.scheduleTime?.timeWindow,
+          // Sync financial outcome fields if they exist in outcomeForm
+          originalContractPrice: outcomeForm?.originalContractPrice,
+          downPayment: outcomeForm?.downPayment,
+          balance: outcomeForm?.balance,
+          balancePaymentMethod: outcomeForm?.balancePaymentMethod,
+          downPaymentMethod: outcomeForm?.downPaymentMethod,
         },
         jobState: finalJobState,
       };
@@ -460,17 +471,16 @@ export default function JobBuilderScreen() {
           LeadService.submitJobBuilder(leadId, payload),
           LeadService.updateLeadTimelineProgress(leadId, { jobBuild: 'complete' }),
         ]);
-      }
 
-      // Navigate back to DealCenter and trigger a refresh to show updated state
-      // Replace current JobBuilder with DealCenter so back button skip JobBuilder
-      navigation.replace('DealCenter', {
-        lead: { 
-          ...(leadData || route.params?.lead), 
-          jobBuilder: { status: 'submitted', calculatorId: calculatorData?._id } 
-        },
-        onRefresh: route.params?.onRefresh,
-      });
+        // Invalidate queries to update Leads page and Lead Center data
+        queryClient.invalidateQueries({ queryKey: ['leads'] });
+        queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
+
+        FlashMessage.success('Job Complete', 'Job builder submitted successfully');
+        // Signal DealCenter to close OutcomeModal and switch to Rollout (Summary) view
+        if (onComplete) onComplete(finalJobState);
+        navigation.goBack();
+      }
     } catch (error) {
       console.error('[JobBuilder] Completion failed:', error);
       Alert.alert('Error', 'Failed to complete the job. Please check your connection.');
@@ -480,50 +490,31 @@ export default function JobBuilderScreen() {
   };
 
   const handleClose = async () => {
+    // Lightweight draft save — no loader, no timeline update
+    // Just persist the current job state and return to the OutcomeModal
     try {
-      setIsSaving(true);
-      const gutterExtras: any[] = [];
-      const extraKeys = [
-        'wedges',
-        'straps',
-        'modifyHeight',
-        'groundSpout',
-        'replaceCorner',
-        'extendedSplashGuard',
-        'extendedSplashGuard032',
-      ];
-
-      extraKeys.forEach((key) => {
-        if (calculatorData?.[key] && parseFloat(calculatorData[key]) > 0) {
-          const extraItem: any = {
-            [key]: parseFloat(calculatorData[key]),
-          };
-          if (jobState.gutter?.extrasColors?.[key]) {
-            extraItem.color = jobState.gutter.extrasColors[key];
-          }
-          gutterExtras.push(extraItem);
-        }
-      });
-
-      const finalJobState = {
-        ...jobState,
-        gutter: {
-          ...jobState.gutter,
-          extras: gutterExtras,
-        },
-      };
-
       if (leadId) {
-        // Documents are handled via S3 in SummarySection
+        const gutterExtras: any[] = [];
+        const extraKeys = [
+          'wedges', 'straps', 'modifyHeight', 'groundSpout',
+          'replaceCorner', 'extendedSplashGuard', 'extendedSplashGuard032',
+        ];
+        extraKeys.forEach((key) => {
+          if (calculatorData?.[key] && parseFloat(calculatorData[key]) > 0) {
+            const extraItem: any = { [key]: parseFloat(calculatorData[key]) };
+            if (jobState.gutter?.extrasColors?.[key]) extraItem.color = jobState.gutter.extrasColors[key];
+            gutterExtras.push(extraItem);
+          }
+        });
 
-        const payload = {
+        const draftPayload = {
           ...outcomeForm,
-          result: outcomeForm?.result || 'Sale',
-          status: outcomeForm?.status || outcomeForm?.result || 'Sale',
-          jobBuilder: finalJobState,
+          jobBuilder: {
+            ...jobState,
+            gutter: { ...jobState.gutter, extras: gutterExtras },
+          },
           LFCalculator: {
             ...calculatorData,
-            title: calculatorData?.title || 'Job Builder Estimate',
             createdBy: user?._id || user?.id || calculatorData?.createdBy,
             appointmentId: calculatorData?.appointmentId || leadId,
           },
@@ -531,22 +522,15 @@ export default function JobBuilderScreen() {
           appointmentId: calculatorData?.appointmentId || leadId,
         };
 
-        await Promise.all([
-          LeadService.updateLeadOutcome(leadId, payload),
-          LeadService.updateLeadTimelineProgress(leadId, { jobBuild: 'complete' }),
-        ]);
+        // Fire-and-forget draft save — don't await, don't block navigation
+        LeadService.updateLeadOutcome(leadId, draftPayload).catch((e) =>
+          console.warn('[JobBuilder] Draft save failed silently:', e)
+        );
       }
+    } catch (_) { /* silent */ }
 
-      if (onGoBack) {
-        onGoBack(jobState);
-      }
-      navigation.goBack();
-    } catch (error) {
-      console.error('[JobBuilder] Finish failed:', error);
-      Alert.alert('Error', 'Failed to complete the job. Please check your connection.');
-    } finally {
-      setIsSaving(false);
-    }
+    if (onGoBack) onGoBack(jobState);
+    navigation.goBack();
   };
 
   return (
@@ -685,6 +669,7 @@ export default function JobBuilderScreen() {
                   return (
                     <Pressable
                       onPress={handleCompleteJob}
+                      disabled={!canComplete || isSaving}
                       style={{
                         paddingHorizontal: 24,
                         paddingVertical: 10,
@@ -693,11 +678,16 @@ export default function JobBuilderScreen() {
                         justifyContent: 'center',
                         flexDirection: 'row',
                         backgroundColor: canComplete ? '#22C55E' : '#CBD5E1',
+                        opacity: isSaving ? 0.7 : 1,
                       }}
                     >
-                      <Icon name="check-all" size={18} color="white" style={{ marginRight: 8 }} />
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />
+                      ) : (
+                        <Icon name="check-all" size={18} color="white" style={{ marginRight: 8 }} />
+                      )}
                       <Text style={{ fontWeight: '900', fontSize: 12, color: 'white', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                        Complete Job
+                        {isSaving ? 'Completing...' : 'Complete Job'}
                       </Text>
                     </Pressable>
                   );

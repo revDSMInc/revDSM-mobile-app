@@ -83,6 +83,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
   const [formData, setFormData] = useState<Partial<JobEntry>>({
     jobNumber: '',
     customerName: '',
+    title: '',
     salesPrice: 0,
     paymentMethod: 'check',
     commission: 0,
@@ -105,6 +106,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
         ...job,
         jobNumber: job.jobNumber || '',
         customerName: job.customerName || '',
+        title: job.title || '',
         salesPrice: job.salesPrice || 0,
         paymentMethod: job.paymentMethod || 'check',
         commission: job.commission || 0,
@@ -123,6 +125,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
     try {
       const payload = {
         jobNumber: formData.jobNumber?.trim() || '',
+        customerName: formData.customerName?.trim() || '',
+        title: formData.title || '',
         salesPrice: formData.salesPrice || 0,
         paymentMethod: formData.paymentMethod || 'check',
         installDate: formData.toBeDetermined
@@ -135,8 +139,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
           : new Date().toISOString(),
         toBeDetermined: formData.toBeDetermined || false,
         commission: formData.commission || 0,
-        appointmentId: formData.appointmentId,
-        calculatorId: formData.calculatorId,
+        appointmentId: formData.appointmentId || '',
+        calculatorId: formData.calculatorId || '',
         isManual: formData.isManual || false,
       };
 

@@ -11,6 +11,7 @@ export interface JobEntry {
   toBeDetermined: boolean;
   commission: number;
   customerName: string;
+  title?: string;
   isManual: boolean;
   appointmentId?: string;
   calculatorId?: string;

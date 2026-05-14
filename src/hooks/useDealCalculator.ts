@@ -150,31 +150,32 @@ export const useDealCalculator = (lead: any) => {
   const latestActiveRef = useRef<any>(null);
   const isAutoSavingRef = useRef(false);
 
-  const fetchCalculators = async () => {
-    if (!lead?._id) return;
+  const fetchCalculators = async (leadOverride?: any) => {
+    const activeLead = leadOverride || lead;
+    if (!activeLead?._id) return;
     try {
       setLoading(true);
       const dateStr =
-        lead.leadDate || lead.appointmentDate || lead.date || new Date().toISOString();
-      const finalLeadDate = lead.leadDate
-        ? lead.leadDate
+        activeLead.leadDate || activeLead.appointmentDate || activeLead.date || new Date().toISOString();
+      const finalLeadDate = activeLead.leadDate
+        ? activeLead.leadDate
         : dateStr.split('T')[0] + 'T00:00:00+05:00';
-      console.log('finalLeadDate', finalLeadDate, lead.leadDate);
+      console.log('finalLeadDate', finalLeadDate, activeLead.leadDate);
 
       let res = await LeadService.getAppointments({ lead_date: finalLeadDate });
       let appointments = res.data?.data || res.data || [];
       const targetTitle =
-        lead.title ||
-        `${lead.customerDetails?.firstName || ''} ${lead.customerDetails?.lastName || ''}`.trim() ||
+        activeLead.title ||
+        `${activeLead.customerDetails?.firstName || ''} ${activeLead.customerDetails?.lastName || ''}`.trim() ||
         'test user';
 
       const findMyAppt = (list: any[]) =>
         list.find(
           (a: any) =>
-            a.selfGenLeadId === lead._id ||
-            a.leadId === lead._id ||
-            a._id === lead.appointmentId ||
-            a.id === lead.appointmentId ||
+            a.selfGenLeadId === activeLead._id ||
+            a.leadId === activeLead._id ||
+            a._id === activeLead.appointmentId ||
+            a.id === activeLead.appointmentId ||
             a.title?.trim().toLowerCase() === targetTitle.trim().toLowerCase()
         );
       let myAppt = findMyAppt(appointments);
@@ -183,9 +184,9 @@ export const useDealCalculator = (lead: any) => {
         try {
           await LeadService.createAppointment({
             title: targetTitle,
-            address: lead.customerDetails?.address || 'N/A',
-            leadId: lead.leadId || 'N/A',
-            selfGenLeadId: lead._id,
+            address: activeLead.customerDetails?.address || 'N/A',
+            leadId: activeLead.leadId || 'N/A',
+            selfGenLeadId: activeLead._id,
           });
           res = await LeadService.getAppointments({ lead_date: finalLeadDate });
           appointments = res.data?.data || res.data || [];
@@ -202,8 +203,8 @@ export const useDealCalculator = (lead: any) => {
       let calculatorsData = calcRes.data?.data || calcRes.data || [];
 
       if (calculatorsData.length === 0) {
-        const leadName = `${lead.customerDetails?.firstName || ''} ${
-          lead.customerDetails?.lastName || ''
+        const leadName = `${activeLead.customerDetails?.firstName || ''} ${
+          activeLead.customerDetails?.lastName || ''
         }`.trim();
         const fullPayload = {
           title: leadName || '.',
@@ -286,27 +287,6 @@ export const useDealCalculator = (lead: any) => {
   };
 
   useEffect(() => {
-    // Reset state when lead changes to prevent data leakage
-    const leadName = `${lead?.customerDetails?.firstName || ''} ${
-      lead?.customerDetails?.lastName || ''
-    }`.trim();
-
-    setCalculators([
-      {
-        _id: null,
-        name: leadName || '.',
-        inputs: INITIAL_INPUTS,
-        extras: INITIAL_EXTRAS,
-        discounts: { seniorVet: false, preOrder: false },
-        price: 0,
-      },
-    ]);
-    setActiveIdx(0);
-    setAppointmentId(null);
-    setLastUpdatedAt(null);
-    isPendingSave.current = false;
-    latestActiveRef.current = null;
-
     if (lead?._id) {
       fetchCalculators();
     }
