@@ -212,7 +212,7 @@ export const ParticipantsModal = ({ visible, onClose, chatId, isChannel }: any) 
                               className="text-[10px] font-black opacity-40 tracking-widest"
                               style={{ color: colors.text }}
                             >
-                              {u.role || (u.isAdmin ? 'Admin' : 'Member')}
+                              {u.email || u.role || (u.isAdmin ? 'Admin' : 'Member')}
                             </Text>
                           </View>
                         </View>
@@ -300,34 +300,60 @@ export const MentionSuggestions = ({ participants, onSelect, colors, isDark }: a
   );
 };
 
-export const SearchBar = ({ onSearch, onClose, value }: any) => {
+export const SearchBar = ({ onSearch, onClose, value, searchIndex, totalResults, onPrev, onNext }: any) => {
   const { colors, isDark } = useTheme();
 
   return (
     <View
-      className="flex-row items-center px-6 py-4 border-b"
+      className="flex-row items-center px-4 py-3 border-b"
       style={{
         borderBottomColor: isDark ? '#2A2A2A' : '#F4F6F8',
         backgroundColor: isDark ? colors.surface : '#fff',
       }}
     >
-      <TouchableOpacity onPress={onClose} className="mr-4">
-        <Icon name="chevron-back" size={20} color={colors.text} />
+      <TouchableOpacity onPress={onClose} className="mr-3 p-1">
+        <Icon name="chevron-back" size={24} color={colors.text} />
       </TouchableOpacity>
-      <TextInput
-        autoFocus
-        className="flex-1 h-10 text-sm font-bold"
-        placeholder="Search Messages..."
-        placeholderTextColor={colors.textSecondary}
-        value={value}
-        onChangeText={onSearch}
-        style={{ color: colors.text }}
-      />
-      {value.length > 0 && (
-        <TouchableOpacity onPress={() => onSearch('')} className="ml-2">
-          <Icon name="close-circle" size={18} color={colors.textSecondary} />
-        </TouchableOpacity>
-      )}
+      
+      <View 
+        className="flex-1 flex-row items-center rounded-full px-4 h-10 border"
+        style={{ 
+          backgroundColor: isDark ? colors.card : '#F9FAFB',
+          borderColor: isDark ? '#2A2A2A' : '#E5E7EB'
+        }}
+      >
+        <Icon name="search-outline" size={18} color={colors.textSecondary} className="mr-2" />
+        <TextInput
+          autoFocus
+          className="flex-1 h-full text-sm font-bold ml-2"
+          placeholder="Search Messages..."
+          placeholderTextColor={colors.textSecondary}
+          value={value}
+          onChangeText={onSearch}
+          style={{ color: colors.text }}
+        />
+        
+        {value.length > 0 && (
+          <View className="flex-row items-center">
+            <Text className="text-[11px] font-bold opacity-50 mr-2" style={{ color: colors.text }}>
+              {totalResults > 0 ? `${searchIndex + 1}/${totalResults}` : '0/0'}
+            </Text>
+            
+            <View className="flex-row items-center gap-1 border-l pl-2 border-gray-200 dark:border-zinc-800">
+              <TouchableOpacity onPress={onPrev} className="p-1" disabled={totalResults === 0}>
+                <Icon name="chevron-up" size={20} color={totalResults > 0 ? colors.text : colors.textSecondary + '40'} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onNext} className="p-1" disabled={totalResults === 0}>
+                <Icon name="chevron-down" size={20} color={totalResults > 0 ? colors.text : colors.textSecondary + '40'} />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={() => onSearch('')} className="ml-2 p-1">
+              <Icon name="close-circle" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 };

@@ -21,6 +21,8 @@ export const useChatLogic = (
   const [composerText, setComposerText] = useState('');
   const composerTextRef = useRef('');
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [searchResults, setSearchResults] = useState<string[]>([]);
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -37,7 +39,7 @@ export const useChatLogic = (
     };
   }, []);
 
-  const filteredMessages = useMemo(() => {
+  const allMessagesWithSystem = useMemo(() => {
     const systemMsgs = participants.map((p: any, idx: number) => ({
       _id: `sys-${p._id || idx}`,
       text: `${p.firstName || p.name || 'Member'} added to the chat`,
@@ -45,10 +47,23 @@ export const useChatLogic = (
       system: true,
       user: { _id: p._id || p.id || `p-${idx}`, name: p.firstName || p.name || 'Member' },
     }));
-    const fullList = [...messages, ...systemMsgs];
-    if (!searchQuery) return fullList;
-    return fullList.filter((m: any) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [messages, searchQuery, participants]);
+    return [...messages, ...systemMsgs];
+  }, [messages, participants]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setSearchIndex(0);
+      return;
+    }
+    const matches = allMessagesWithSystem
+      .filter((m: any) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
+      .map((m: any) => m._id);
+    setSearchResults(matches);
+    setSearchIndex(0);
+  }, [searchQuery, allMessagesWithSystem]);
+
+  const filteredMessages = allMessagesWithSystem;
 
   const {
     recordingState,
@@ -192,5 +207,8 @@ export const useChatLogic = (
     stopRecording,
     cancelRecording,
     reset,
+    searchIndex,
+    setSearchIndex,
+    searchResults,
   };
 };
