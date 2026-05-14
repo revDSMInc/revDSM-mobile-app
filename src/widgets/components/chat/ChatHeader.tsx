@@ -27,6 +27,10 @@ export const ChatHeader = ({
   setShowPinned,
   participants,
   setParticipantModalVisible,
+  searchIndex,
+  totalResults,
+  onPrev,
+  onNext,
 }: any) => {
   const navigation = useNavigation<any>();
 
@@ -54,31 +58,25 @@ export const ChatHeader = ({
 
       <View className="flex-row items-center justify-between mb-4">
         <View className="flex-row items-center flex-1">
-          <View
-            className="w-10 h-10 rounded-xl items-center justify-center mr-3"
-            style={{
-              backgroundColor: isChannel
-                ? (CHANNEL_SCHEMES[customerName]?.color || '#748FFC') + '33'
-                : colors.primary.main + '20',
-            }}
-          >
-            {isChannel ? (
+          {isChannel && (
+            <View
+              className="w-10 h-10 rounded-xl items-center justify-center mr-3"
+              style={{
+                backgroundColor: (CHANNEL_SCHEMES[customerName]?.color || '#748FFC') + '33',
+              }}
+            >
               <Text className="text-md">{CHANNEL_SCHEMES[customerName]?.icon || '💬'}</Text>
-            ) : (
-              <Icon name="person" size={24} color={colors.primary.main} />
-            )}
-          </View>
+            </View>
+          )}
           <View className="flex-1">
             <Text
-              className="text-xs font-semibold pb-1"
+              className="text-base font-bold pb-1"
               style={{ color: '#1C252E' }}
               numberOfLines={1}
             >
               {customerName || (isChannel ? 'Announcements' : 'Lead Conversation')}
             </Text>
-            <Text className="text-xs" style={{ color: '#637381' }}>
-              {isChannel ? 'Management announcements (View only)' : 'Standard Lead Conversation'}
-            </Text>
+
           </View>
         </View>
 
@@ -116,6 +114,34 @@ export const ChatHeader = ({
           onChangeText={setSearchQuery}
           style={{ color: colors.text }}
         />
+        {searchQuery.length > 0 && (
+          <View className="flex-row items-center">
+            <Text className="text-[11px] font-bold opacity-50 mr-2" style={{ color: colors.text }}>
+              {totalResults > 0 ? `${searchIndex + 1}/${totalResults}` : '0/0'}
+            </Text>
+
+            <View className="flex-row items-center gap-1 border-l pl-2 border-gray-200 dark:border-zinc-800">
+              <TouchableOpacity onPress={onPrev} className="p-1" disabled={totalResults === 0}>
+                <Icon
+                  name="chevron-up"
+                  size={20}
+                  color={totalResults > 0 ? colors.text : colors.textSecondary + '40'}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onNext} className="p-1" disabled={totalResults === 0}>
+                <Icon
+                  name="chevron-down"
+                  size={20}
+                  color={totalResults > 0 ? colors.text : colors.textSecondary + '40'}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={() => setSearchQuery('')} className="ml-2 p-1">
+              <Icon name="close-circle" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );

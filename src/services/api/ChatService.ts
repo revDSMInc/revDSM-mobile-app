@@ -166,23 +166,16 @@ class ChatService {
     const lastName = sender.lastName || '';
     const fullName = sender.fullName || `${firstName} ${lastName}`.trim() || 'User';
 
-    return {
+    const result = {
       ...m,
-      _id: (
-        m._id ||
-        m.id ||
-        `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      ).toString(),
-      id: (
-        m.id ||
-        m._id ||
-        `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      ).toString(),
+      _id: (m._id || m.id || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`).toString(),
+      id: (m.id || m._id || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`).toString(),
       text: (() => {
         if (!m) return null;
         if (m.messageType === 'voice' || m.contentType === 'audio') {
           console.log('[ChatService] Normalizing Voice Note Raw Payload:', JSON.stringify(m, null, 2));
         }
+        // Server uses `message` field; GiftedChat uses `text`
         const raw = m.text || m.message || m.content || m.body || '';
         if (typeof raw === 'string') return raw;
         if (raw && typeof raw === 'object') return raw.body || raw.message || raw.text || '';
@@ -192,21 +185,25 @@ class ChatService {
       user: {
         _id: senderId,
         name: fullName,
-        avatar: sender.profilePicture || sender.image || undefined,
+        avatar: (() => {
+          const pic = sender.profilePicture || sender.image;
+          if (!pic || typeof pic !== 'object') return pic || undefined;
+          // profilePicture is an object { bucketName, filePath } - return undefined for now; URL fetched separately
+          return undefined;
+        })(),
       },
+      // Normalize files — server uses fileName/fileType/filePath/mimeType
       files: (m.files || m.messageFiles || []).map((f: any) => ({
         ...f,
         id: f._id || f.id,
-        url: f.url || f.path || f.s3url || f.preview,
+        name: f.fileName || f.originalname || f.original_name || f.name || f.display_name || f.filePath?.split('/').pop() || 'File',
+        type: f.fileType || f.mimeType || f.type || f.contentType || 'application/octet-stream',
+        mimeType: f.mimeType || f.fileType || f.type || 'application/octet-stream',
         size: this.normalizeFileSize(f),
-        name:
-          f.originalname ||
-          f.original_name ||
-          f.fileName ||
-          f.name ||
-          f.display_name ||
-          f.filePath?.split('/').pop() ||
-          'File',
+        // filePath is the S3 key; url will be fetched securely separately
+        url: f.url || f.path || f.s3url || f.preview || undefined,
+        filePath: f.filePath || f.path || undefined,
+        bucketName: f.bucketName || undefined,
       })),
       reactions: m.reactions || [],
       isPinned: m.isPinned || false,
@@ -214,6 +211,24 @@ class ChatService {
       editHistory: m.editHistory || [],
       received: !!m.seenBy?.length,
       sent: true,
+      // Preserve reply linkage from server
+      replyTo: m.replyTo || null,
+      replyToDetails: (() => {
+        const rd = m.replyToDetails;
+        if (!rd) return null;
+        const rdSender = rd.senderDetails || {};
+        return {
+          _id: rd._id || rd.id,
+          text: rd.message || rd.text || '',
+          createdAt: rd.createdAt ? new Date(rd.createdAt) : undefined,
+          files: rd.files || [],
+          user: {
+            _id: rdSender._id || rdSender.id || rd.senderId,
+            name: rdSender.fullName || `${rdSender.firstName || ''} ${rdSender.lastName || ''}`.trim() || 'User',
+          },
+          authorName: rdSender.fullName || `${rdSender.firstName || ''} ${rdSender.lastName || ''}`.trim() || 'User',
+        };
+      })(),
       image: (() => {
         if (m.image) return m.image;
         if (m.imageUrl) return m.imageUrl;
@@ -221,9 +236,7 @@ class ChatService {
         const files = m.files || m.messageFiles || [];
         const imgFile = files.find(
           (f: any) =>
-            f.type?.startsWith('image') ||
-            f.mimeType?.startsWith('image') ||
-            f.contentType?.startsWith('image') ||
+            (f.fileType || f.mimeType || f.type || '').startsWith('image') ||
             f.imageUrl
         );
         return imgFile?.imageUrl || imgFile?.path || imgFile?.url || undefined;
@@ -235,9 +248,7 @@ class ChatService {
         const files = m.files || m.messageFiles || [];
         const vidFile = files.find(
           (f: any) =>
-            f.type?.startsWith('video') ||
-            f.mimeType?.startsWith('video') ||
-            f.contentType?.startsWith('video') ||
+            (f.fileType || f.mimeType || f.type || '').startsWith('video') ||
             f.videoUrl
         );
         return vidFile?.videoUrl || vidFile?.path || vidFile?.url || undefined;
@@ -248,45 +259,18 @@ class ChatService {
         if (m.voice) return m.voice;
         if (m.voiceUrl) return m.voiceUrl;
         if (m.mediaUrl) return m.mediaUrl;
-        if (m.path) return m.path;
-        if (m.s3Path) return m.s3Path;
-        if (m.s3_path) return m.s3_path;
-        if (
-          (m.messageType === 'voice' || m.contentType === 'audio') &&
-          typeof m.content === 'string'
-        )
-          return m.content;
+        if ((m.messageType === 'voice' || m.contentType === 'audio') && typeof m.content === 'string') return m.content;
         const files = m.files || m.messageFiles || m.attachments || [];
         const audFile = files.find(
           (f: any) =>
-            f.type?.startsWith('audio') ||
-            f.mimeType?.startsWith('audio') ||
-            f.contentType?.startsWith('audio') ||
-            f.audioUrl ||
-            f.voiceUrl ||
-            f.mediaUrl ||
-            (f.name && f.name.endsWith('.m4a'))
+            (f.fileType || f.mimeType || f.type || '').startsWith('audio') ||
+            f.audioUrl || f.voiceUrl || (f.name || f.fileName || '').endsWith('.m4a')
         );
-        return (
-          audFile?.audioUrl ||
-          audFile?.voiceUrl ||
-          audFile?.mediaUrl ||
-          audFile?.path ||
-          audFile?.url ||
-          audFile?.s3Path ||
-          audFile?.s3_path ||
-          undefined
-        );
+        return audFile?.audioUrl || audFile?.voiceUrl || audFile?.mediaUrl || audFile?.path || audFile?.url || undefined;
       })(),
       isVoiceNote:
-        m.isVoiceNote ||
-        m.messageType === 'voice' ||
-        m.contentType === 'audio' ||
-        !!m.voiceUrl ||
-        !!m.audioUrl ||
-        !!m.audio ||
-        !!m.voice ||
-        false,
+        m.isVoiceNote || m.messageType === 'voice' || m.contentType === 'audio' ||
+        !!m.voiceUrl || !!m.audioUrl || !!m.audio || !!m.voice || false,
     };
 
     // Verbose logging for debug

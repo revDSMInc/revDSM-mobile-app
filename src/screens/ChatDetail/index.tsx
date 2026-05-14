@@ -170,6 +170,9 @@ export default function ChatDetailScreen() {
     stopRecording,
     cancelRecording,
     reset,
+    searchIndex,
+    setSearchIndex,
+    searchResults,
   } = useChatLogic(
     chatId,
     messages,
@@ -197,13 +200,27 @@ export default function ChatDetailScreen() {
   const handleNavigateToMessage = (msg: any) => {
     const index = filteredMessages.findIndex((m: any) => m._id === msg._id);
     if (index !== -1 && flatListRef.current) {
-      flatListRef.current.scrollToIndex({
-        index,
-        animated: true,
-        viewPosition: 0.5,
-      });
+      try {
+        flatListRef.current.scrollToIndex({
+          index,
+          animated: false,
+          viewPosition: 0.5,
+        });
+      } catch (e) {
+        console.log('Scroll to index failed:', e);
+      }
     }
   };
+
+  useEffect(() => {
+    if (searchResults.length > 0) {
+      const matchId = searchResults[searchIndex];
+      const match = filteredMessages.find((m: any) => m._id === matchId);
+      if (match) {
+        setTimeout(() => handleNavigateToMessage(match), 100);
+      }
+    }
+  }, [searchIndex, searchResults]);
 
   const handleMentionSelect = (u: any) => {
     const name = u.firstName || u.name;
@@ -400,18 +417,28 @@ export default function ChatDetailScreen() {
         <ChatMessageBubble
           bubbleProps={props}
           currentUserId={currentUserId || ''}
+          participants={participants}
           onReply={setReplyingTo}
           onEdit={handleEdit}
           onReact={handleReact}
           onPin={handlePin}
           onViewHistory={handleViewHistory}
-          onDelete={(id: string) => ChatService.deleteMessage(id)}
+          onNavigateToMessage={handleNavigateToMessage}
+          onDelete={(id: string) => {
+            // Optimistic UI: remove immediately from local state
+            setMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
+            setPinnedMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
+            // Emit to server
+            ChatService.deleteMessage(id);
+          }}
           imageUrls={imageUrls}
           isViewOnly={isViewOnly}
+          searchQuery={searchQuery}
+          activeMatchId={searchResults[searchIndex]}
         />
       );
     },
-    [chatId, currentUserId, isChannel, imageUrls, isViewOnly]
+    [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex]
   );
 
   const renderInputToolbar = useCallback(
@@ -475,22 +502,27 @@ export default function ChatDetailScreen() {
             borderTopColor: colors.border,
             paddingHorizontal: 4,
             paddingVertical: 4,
+            overflow: 'visible',
           }}
+          primaryStyle={{ overflow: 'visible' }}
           renderAccessory={() => (
-            <View>
+            <View style={{ overflow: 'visible' }}>
               {showMentions && (
-                <MentionSuggestions
-                  participants={participants.filter((u) => {
-                    const query = (composerTextRef.current.split(' ').pop() || '')
-                      .slice(1)
-                      .toLowerCase();
-                    const fullName = `${u.firstName || u.name} ${u.lastName || ''}`.toLowerCase();
-                    return fullName.includes(query) || u.userName?.toLowerCase().includes(query);
-                  })}
-                  onSelect={handleMentionSelect}
-                  colors={colors}
-                  isDark={isDark}
-                />
+                <View style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 9999, elevation: 10 }}>
+                  <MentionSuggestions
+                    participants={(participants || []).filter((u) => {
+                      if (!u) return false;
+                      const query = (composerTextRef.current.split(' ').pop() || '')
+                        .slice(1)
+                        .toLowerCase();
+                      const fullName = `${u.firstName || u.name || ''} ${u.lastName || ''}`.toLowerCase();
+                      return fullName.includes(query) || (u.userName || '').toLowerCase().includes(query);
+                    })}
+                    onSelect={handleMentionSelect}
+                    colors={colors}
+                    isDark={isDark}
+                  />
+                </View>
               )}
               <ChatReplyBar replyingTo={replyingTo} onCancel={() => setReplyingTo(null)} />
               <ChatEditBar
@@ -545,29 +577,22 @@ export default function ChatDetailScreen() {
       className="flex-1"
       style={{ backgroundColor: colors.background }}
     >
-      {isSearching ? (
-        <SearchBar
-          value={searchQuery}
-          onChange={setSearchQuery}
-          onClose={() => {
-            setIsSearching(false);
-            setSearchQuery('');
-          }}
-        />
-      ) : (
-        <ChatHeader
-          customerName={customerName}
-          isChannel={isChannel}
-          colors={colors}
-          isDark={isDark}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          pinnedMessages={pinnedMessages}
-          setShowPinned={setShowPinned}
-          participants={participants}
-          setParticipantModalVisible={setParticipantModalVisible}
-        />
-      )}
+      <ChatHeader
+        customerName={customerName}
+        isChannel={isChannel}
+        colors={colors}
+        isDark={isDark}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        pinnedMessages={pinnedMessages}
+        setShowPinned={setShowPinned}
+        participants={participants}
+        setParticipantModalVisible={setParticipantModalVisible}
+        searchIndex={searchIndex}
+        totalResults={searchResults.length}
+        onPrev={() => setSearchIndex((prev: number) => Math.min(searchResults.length - 1, prev + 1))}
+        onNext={() => setSearchIndex((prev: number) => Math.max(0, prev - 1))}
+      />
 
       {Platform.OS === 'ios' ? (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={64}>
@@ -581,19 +606,36 @@ export default function ChatDetailScreen() {
             renderDay={renderDay}
             renderInputToolbar={renderInputToolbar}
             onInputTextChanged={handleComposerChange}
-            extraData={{ filteredMessages, imageUrls }}
+            extraData={{ filteredMessages, imageUrls, showMentions, composerText }}
             inverted={true}
             listViewProps={{
-              ref: flatListRef,
+              ref: (r: any) => {
+                if (r) flatListRef.current = r;
+              },
               keyboardShouldPersistTaps: 'never',
               contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
               keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+              getItemLayout: (data: any, index: number) => ({
+                length: 100,
+                offset: 100 * index,
+                index,
+              }),
               onScrollToIndexFailed: (info: any) => {
-                flatListRef.current?.scrollToIndex({
-                  index: info.index,
-                  animated: true,
-                  viewPosition: 0.5,
+                flatListRef.current?.scrollToOffset({
+                  offset: info.averageItemLength * info.index,
+                  animated: false,
                 });
+                setTimeout(() => {
+                  try {
+                    flatListRef.current?.scrollToIndex({
+                      index: info.index,
+                      animated: false,
+                      viewPosition: 0.5,
+                    });
+                  } catch (e) {
+                    console.log('Fallback scroll failed', e);
+                  }
+                }, 100);
               },
             }}
           />
@@ -614,21 +656,38 @@ export default function ChatDetailScreen() {
             renderDay={renderDay}
             renderInputToolbar={renderInputToolbar}
             onInputTextChanged={handleComposerChange}
-            extraData={{ filteredMessages, imageUrls }}
+            extraData={{ filteredMessages, imageUrls, showMentions, composerText }}
             isKeyboardInternallyHandled={false}
             bottomOffset={0}
             inverted={true}
             listViewProps={{
-              ref: flatListRef,
+              ref: (r: any) => {
+                if (r) flatListRef.current = r;
+              },
               keyboardShouldPersistTaps: 'handled',
               contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
               keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+              getItemLayout: (data: any, index: number) => ({
+                length: 100,
+                offset: 100 * index,
+                index,
+              }),
               onScrollToIndexFailed: (info: any) => {
-                flatListRef.current?.scrollToIndex({
-                  index: info.index,
-                  animated: true,
-                  viewPosition: 0.5,
+                flatListRef.current?.scrollToOffset({
+                  offset: info.averageItemLength * info.index,
+                  animated: false,
                 });
+                setTimeout(() => {
+                  try {
+                    flatListRef.current?.scrollToIndex({
+                      index: info.index,
+                      animated: false,
+                      viewPosition: 0.5,
+                    });
+                  } catch (e) {
+                    console.log('Fallback scroll failed', e);
+                  }
+                }, 100);
               },
             }}
           />

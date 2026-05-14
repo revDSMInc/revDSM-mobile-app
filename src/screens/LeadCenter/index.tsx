@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { format } from 'date-fns';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   View,
@@ -234,7 +235,13 @@ export default function LeadCenterPage() {
     navigation.navigate('ChatDetail', {
       leadId: lead._id,
       chatId: lead.chatId || '',
-      customerName: `${lead?.customerDetails?.firstName} ${lead?.customerDetails?.lastName}`,
+      customerName: (() => {
+        const isSale = lead.status === 'sale';
+        const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
+        return `${lead.office || ''} ${
+          isSale ? lead.leadId : `Lead ${dateStr} - ${lead.leadId || 'N/A'}`
+        }`.trim() || 'Discussion';
+      })(),
     });
   };
 
