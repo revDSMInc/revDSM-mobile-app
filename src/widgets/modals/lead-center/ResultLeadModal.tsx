@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, Platform, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -160,7 +160,7 @@ export const ResultLeadModal = ({
           <TouchableOpacity
             disabled={!reason || loading}
             onPress={handleConfirm}
-            className="w-full h-14 rounded-2xl items-center justify-center shadow-lg"
+            className="w-full h-14 rounded-2xl items-center justify-center shadow-lg flex-row"
             style={{
               backgroundColor: !reason ? (isDark ? '#FFFFFF1F' : '#919EAB33') : colors.primary.main,
               shadowColor: colors.primary.main,
@@ -169,6 +169,7 @@ export const ResultLeadModal = ({
               elevation: !reason ? 0 : 4,
             }}
           >
+            {loading && <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 10 }} />}
             <Text
               className="text-base font-bold"
               style={{ color: !reason ? colors.textSecondary : '#FFFFFF' }}

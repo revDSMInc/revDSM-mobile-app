@@ -157,7 +157,7 @@ export const ConsentFormModal = ({
         fullName: `${formData.firstName} ${formData.lastName}`.trim(),
         email: String(formData.email),
         phoneNumber: String(formData.phoneNumber),
-        leadId: String(lead?._id || ''),
+        leadId: String(lead?.leadId || ''),
         type: 'digital',
         file: signatureFile, // Reverting to signature key
         repName: String(formData.repName),

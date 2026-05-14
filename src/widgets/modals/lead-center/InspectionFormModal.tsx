@@ -10,6 +10,8 @@ import {
   StyleSheet,
   Alert,
   Pressable,
+  Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -116,22 +118,67 @@ export const InspectionFormModal = ({
         [
           {
             text: 'Camera',
-            onPress: () => {
-              launchCamera({ mediaType: 'photo', quality: 0.5, maxWidth: 1200, maxHeight: 1200 }, (res) => {
-                if (res.assets && res.assets[0]?.uri) {
-                  updateItem(sectionId, index, 'photo', res.assets[0].uri);
+            onPress: async () => {
+              if (Platform.OS === 'android') {
+                const granted = await PermissionsAndroid.request(
+                  PermissionsAndroid.PERMISSIONS.CAMERA,
+                  {
+                    title: 'Camera Permission',
+                    message: 'App needs access to your camera to take photos.',
+                    buttonNeutral: 'Ask Me Later',
+                    buttonNegative: 'Cancel',
+                    buttonPositive: 'OK',
+                  }
+                );
+                if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                  Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+                  return;
                 }
-              });
+              }
+
+              launchCamera(
+                {
+                  mediaType: 'photo',
+                  quality: 0.5,
+                  maxWidth: 1200,
+                  maxHeight: 1200,
+                  saveToPhotos: true,
+                },
+                (res) => {
+                  if (res.didCancel) return;
+                  if (res.errorCode) {
+                    Alert.alert('Error', res.errorMessage || 'Could not open camera');
+                    return;
+                  }
+                  if (res.assets && res.assets[0]?.uri) {
+                    updateItem(sectionId, index, 'photo', res.assets[0].uri);
+                  }
+                }
+              );
             },
           },
           {
             text: 'Gallery',
             onPress: () => {
-              launchImageLibrary({ mediaType: 'photo', quality: 0.5, maxWidth: 1200, maxHeight: 1200 }, (res) => {
-                if (res.assets && res.assets[0]?.uri) {
-                  updateItem(sectionId, index, 'photo', res.assets[0].uri);
+              launchImageLibrary(
+                {
+                  mediaType: 'photo',
+                  quality: 0.5,
+                  maxWidth: 1200,
+                  maxHeight: 1200,
+                  selectionLimit: 1,
+                },
+                (res) => {
+                  if (res.didCancel) return;
+                  if (res.errorCode) {
+                    Alert.alert('Error', res.errorMessage || 'Could not open gallery');
+                    return;
+                  }
+                  if (res.assets && res.assets[0]?.uri) {
+                    updateItem(sectionId, index, 'photo', res.assets[0].uri);
+                  }
                 }
-              });
+              );
             },
           },
           {

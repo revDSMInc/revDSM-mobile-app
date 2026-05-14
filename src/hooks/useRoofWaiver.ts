@@ -87,7 +87,7 @@ export const useRoofWaiver = (
         fullName: `${formData.firstName} ${formData.lastName}`.trim(),
         phoneNumber: String(formData.phoneNumber),
         email: String(formData.email),
-        leadId: String(lead?._id || ''),
+        leadId: String(lead?.leadId || ''),
         repName: String(formData.repName),
         officeCode: String(formData.officeCode),
         time: String(formData.time),

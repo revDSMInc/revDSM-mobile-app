@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -40,24 +42,50 @@ export const BeforeAfterModal = ({
   const afterImages = selectedJob?.images?.afterImages || [];
 
   const handleAddImage = async (useCamera: boolean) => {
+    if (useCamera && Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        {
+          title: 'Camera Permission',
+          message: 'App needs access to your camera to take photos.',
+          buttonNeutral: 'Ask Me Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'OK',
+        }
+      );
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+    }
+
     const options = {
       mediaType: 'photo' as const,
       quality: 0.7 as const,
-      selectionLimit: 0,
+      selectionLimit: useCamera ? 1 : 0, // 0 means multi-select for gallery
+      saveToPhotos: true,
     };
 
-    const result = useCamera
-      ? await launchCamera(options as any)
-      : await launchImageLibrary(options as any);
+    try {
+      const result = useCamera
+        ? await launchCamera(options as any)
+        : await launchImageLibrary(options as any);
 
-    if (result.assets && result.assets.length > 0) {
-      setLoading(true);
-      try {
+      if (result.didCancel) return;
+      if (result.errorCode) {
+        Alert.alert('Error', result.errorMessage || 'Failed to open camera/gallery');
+        return;
+      }
+
+      if (result.assets && result.assets.length > 0) {
+        setLoading(true);
         const formData = new FormData();
         formData.append('jobNumber', selectedJob.jobNumber);
         formData.append('companyId', selectedJob.companyId);
 
         result.assets.forEach((img, index) => {
+          // On Android, the uri might need 'file://' prefix if not present, 
+          // but image-picker usually provides it correctly.
           formData.append('files', {
             uri: img.uri,
             type: img.type || 'image/jpeg',
@@ -73,12 +101,12 @@ export const BeforeAfterModal = ({
 
         Alert.alert('Success', 'Images uploaded successfully');
         onUploadSuccess?.();
-      } catch (error) {
-        console.error('Upload error:', error);
-        Alert.alert('Error', 'Failed to upload images');
-      } finally {
-        setLoading(false);
       }
+    } catch (error) {
+      console.error('Photo action error:', error);
+      Alert.alert('Error', 'An unexpected error occurred while accessing the camera/gallery');
+    } finally {
+      setLoading(false);
     }
   };
 

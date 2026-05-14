@@ -137,11 +137,14 @@ export default function PitchbookScreen() {
     if (lead?.salesPhotos) {
       fetchSecureImages(lead.salesPhotos);
     }
-    refetch();
+    const result = String(lead?.result || lead?.status || '').toLowerCase();
+    if (result === 'sale' || result === 'demo') {
+      refetch();
+    }
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
     };
-  }, [lead?.id]);
+  }, [lead?.id, lead?.result, lead?.status]);
 
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
@@ -159,7 +162,7 @@ export default function PitchbookScreen() {
       : [];
   }, [fullLeadData, lead]);
 
-  const handleDownloadReport = async (report: any, index: number) => {
+  const handleDownloadReport = async (report: any, index: number, isDownload: boolean = false) => {
     try {
       let url = '';
       if (report?.bucketName && report?.reportPath) {
@@ -174,8 +177,8 @@ export default function PitchbookScreen() {
 
       if (url) {
         if (
-          url.toLowerCase().includes('.pdf') ||
-          report?.reportName?.toLowerCase().includes('.pdf')
+          !isDownload &&
+          (url.toLowerCase().includes('.pdf') || report?.reportName?.toLowerCase().includes('.pdf'))
         ) {
           setPdfPreviewData({ url, title: report.reportName || 'Report Preview' });
           setShowPdfModal(true);
@@ -487,18 +490,16 @@ export default function PitchbookScreen() {
                     <Text className="text-text-primary font-bold text-base mb-4">
                       Property Inspection Photos
                     </Text>
-                    {IMAGE_CATEGORIES.map((section) => {
-                      const categoryPhotos = secureImages[section.name] || [];
-                      const sectionTotal =
-                        section.subCategories?.reduce(
-                          (s: number, sub: any) => s + (sub.required || 1),
-                          0
-                        ) || 0;
+                    {IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0).map(
+                      (section) => {
+                        const categoryPhotos = secureImages[section.name] || [];
+                        const sectionTotal =
+                          section.subCategories?.reduce(
+                            (s: number, sub: any) => s + (sub.required || 1),
+                            0
+                          ) || 0;
 
-                      // If no photos in this category, don't show it unless we want to show empty ones?
-                      // The user said "list of images be having exact UI", so we'll show them all like in JobDocs.
-
-                      return (
+                        return (
                         <View key={section.id} className="mb-4">
                           <TouchableOpacity
                             onPress={() =>
@@ -721,7 +722,7 @@ const RiskContent = ({ lead, refetch, reports, onDownload }: any) => {
                     <Icon name="eye" size={16} color={'#ffffff'} />
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => onDownload(riskReport, 0)}
+                    onPress={() => onDownload(riskReport, 0, true)}
                     className="w-8 h-8 rounded-full items-center justify-center bg-emerald-500"
                   >
                     <Icon name="download" size={16} color={'#ffffff'} />

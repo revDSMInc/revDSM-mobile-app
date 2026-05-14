@@ -62,11 +62,9 @@ export default function LFCalculator({ route }: any) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const { user } = useAuth();
-  const lead = route.params?.lead;
+  const [currentLead, setCurrentLead] = useState(route.params?.lead);
   const onRefresh = route.params?.onRefresh;
-  const onClose = () => {
-    navigation.goBack();
-  };
+  const onClose = () => navigation.goBack();
 
   const [currentView, setCurrentView] = useState<
     'form' | 'summary' | 'picker' | 'result' | 'outcome'
@@ -98,7 +96,7 @@ export default function LFCalculator({ route }: any) {
     fetchCalculators,
     handleDuplicateCalculator,
     handleDeleteCalculator,
-  } = useDealCalculator(lead);
+  } = useDealCalculator(currentLead);
 
   const {
     outcomeStatus,
@@ -113,7 +111,7 @@ export default function LFCalculator({ route }: any) {
     loadingMessage,
     jobState,
     setJobState,
-  } = useDealOutcome(lead, active, results, appointmentId, onRefresh, onClose);
+  } = useDealOutcome(currentLead, active, results, appointmentId, onRefresh, onClose);
 
   const fetchTrackerJobs = useCallback(async () => {
     try {
@@ -147,25 +145,27 @@ export default function LFCalculator({ route }: any) {
   };
 
   const prefilledJob = useMemo(() => {
-    if (!lead || !active) return null;
+    if (!currentLead || !active) return null;
 
-    const customerName = lead.customerDetails
-      ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
-      : lead.title || '';
+    const customerName = currentLead.customerDetails
+      ? `${currentLead.customerDetails.firstName} ${currentLead.customerDetails.lastName}`
+      : currentLead.title || '';
 
     // Map calculator payment plan to JobTracker payment method
     const paymentMethod = active.inputs?.paymentPlan || 'check';
 
     return {
       customerName,
+      title: active.name || '',
       salesPrice: results.total || 0,
       paymentMethod,
       soldDate: format(new Date(), 'yyyy-MM-dd'),
-      appointmentId: appointmentId || undefined,
-      calculatorId: active._id || undefined,
+      appointmentId: String(appointmentId || ''),
+      calculatorId: String(active._id || ''),
       isManual: false,
     };
-  }, [lead, active, results.total, appointmentId]);
+  }, [currentLead, active, results.total, appointmentId]);
+
 
   const handleFinishOutcome = () => {
     handleFinishOutcomeHook((showJB: boolean) => {
@@ -173,11 +173,25 @@ export default function LFCalculator({ route }: any) {
         navigation.navigate('JobBuilder', {
           initialJobState: jobState,
           calculatorData: active,
-          leadId: lead?._id || lead?.leadId || lead?.id,
+          leadId: currentLead?._id || currentLead?.leadId || currentLead?.id,
           outcomeForm: { ...outcomeForm, result: outcomeStatus },
+          // Called when user closes JobBuilder WITHOUT completing
           onGoBack: (updatedJobState: any) => {
             setJobState(updatedJobState);
             setCurrentView('outcome');
+          },
+          // Called when user COMPLETES the job — close modal, go to Rollout view, and refresh data
+          onComplete: (updatedJobState: any) => {
+            if (updatedJobState) {
+              setJobState(updatedJobState);
+              // Update local lead state immediately to reflect submission
+              setCurrentLead((prev: any) => ({
+                ...prev,
+                jobBuilder: updatedJobState,
+              }));
+            }
+            setCurrentView('summary');
+            refreshCalculators();
           },
         });
       }
@@ -198,17 +212,71 @@ export default function LFCalculator({ route }: any) {
   });
 
   const loading = calcLoading || outcomeLoading;
+  const isJobBuilderSubmitted = jobState?.status === 'submitted' || currentLead?.jobBuilder?.status === 'submitted';
 
   const openPicker = () => {
     setPrevView(currentView as 'form' | 'summary');
     setCurrentView('picker');
   };
 
-  const refreshCalculators = () => {
-    fetchCalculators();
-    fetchTrackerJobs();
-    refetchOutcome(); // Re-fetch jobBuilder status so Reset Job Builder button syncs correctly
+  const fetchFreshLead = useCallback(async () => {
+    const leadId = currentLead?._id || currentLead?.leadId || currentLead?.id;
+    if (!leadId || !user?._id) return null;
+    try {
+      // Mirror the 'entry' logic by using workLead API
+      const res = await LeadService.workLead(leadId, user._id);
+      const freshLead = res.data?.data || res.data;
+      if (freshLead) {
+        setCurrentLead(freshLead);
+        return freshLead;
+      }
+    } catch (error) {
+      console.error('[DealCenter] Failed to fetch fresh lead:', error);
+    }
+    return null;
+  }, [currentLead, user?._id]);
+
+  const refreshCalculators = useCallback(async () => {
+    try {
+      setCalcLoading(true);
+      const freshLead = await fetchFreshLead();
+      await Promise.all([
+        fetchCalculators(freshLead),
+        fetchTrackerJobs(),
+        refetchOutcome(freshLead?._id || freshLead?.id || freshLead?.leadId),
+      ]);
+    } catch (e) {
+      console.error('[DealCenter] Full refresh failed:', e);
+    } finally {
+      setCalcLoading(false);
+    }
+  }, [fetchFreshLead, fetchCalculators, fetchTrackerJobs, refetchOutcome, setCalcLoading]);
+  
+  const handleResetJobBuilder = () => {
+    Alert.alert(
+      'Reset Job Builder',
+      'This will reset the job builder for this rollout. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const leadId = currentLead?._id || currentLead?.leadId || currentLead?.id;
+              if (leadId) await LeadService.resetLead(leadId);
+              refreshCalculators();
+            } catch (err) {
+              console.error('[DealCenter] Reset job builder failed:', err);
+              Alert.alert('Error', 'Could not reset job builder. Please try again.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
+
 
   const handleManualSave = async () => {
     if (!active?._id) return;
@@ -256,13 +324,13 @@ export default function LFCalculator({ route }: any) {
     }
   };
 
-  if (!lead) return null;
+  if (!currentLead) return null;
 
   const handleResetOutcome = async () => {
     try {
       setLoading(true);
-      if (!lead?._id) return;
-      const res = await LeadService.getLeadOutcome(lead._id);
+      if (!currentLead?._id) return;
+      const res = await LeadService.getLeadOutcome(currentLead._id);
       const data = res.data?.data || res.data;
       if (data) {
         setOutcomeStatus(data.status);
@@ -301,7 +369,7 @@ export default function LFCalculator({ route }: any) {
             isAlreadyInTracker={isAlreadyInTracker}
             refresh={refreshCalculators}
             active={active}
-            lead={lead}
+            lead={currentLead}
             isDark={isDark}
             colors={colors}
             isAutoSaving={isAutoSaving}
@@ -386,7 +454,7 @@ export default function LFCalculator({ route }: any) {
           onClose={onClose}
           handleAddJobToTracker={handleAddJobToTracker}
           isAlreadyInTracker={isAlreadyInTracker}
-          lead={lead}
+          lead={currentLead}
           jobBuilderState={jobState}
         />
       )}
@@ -414,7 +482,9 @@ export default function LFCalculator({ route }: any) {
         results={results}
         handleFinishOutcome={handleFinishOutcome}
         onReset={handleResetOutcome}
+        onResetJobBuilder={handleResetJobBuilder}
         loading={loading}
+        isJobBuilderSubmitted={isJobBuilderSubmitted}
       />
 
       <Modal visible={currentView === 'picker'} transparent animationType="slide">

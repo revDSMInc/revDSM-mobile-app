@@ -66,6 +66,9 @@ export const SummarySection = ({
   const [previewImage, setPreviewImage] = useState<{ uri: string; name: string } | null>(null);
   const [pdfPreview, setPdfPreview] = useState({ visible: false, uri: '', title: '' });
 
+  const isAppointmentSet = !!jobState.scheduleTime?.date;
+  const stableIsEdit = useMemo(() => isAppointmentSet, [schedulerOpen]);
+
   const fetchOutcome = async () => {
     if (!leadId) return;
     try {
@@ -79,8 +82,11 @@ export const SummarySection = ({
 
   // Fetch lead outcome specifically for documents
   React.useEffect(() => {
-    fetchOutcome();
-  }, [leadId]);
+    const result = String(leadData?.result || leadData?.status || '').toLowerCase();
+    if (result === 'sale' || result === 'demo') {
+      fetchOutcome();
+    }
+  }, [leadId, leadData?.result, leadData?.status]);
 
   // Resolve secure URLs for leadOutcomeDocuments
   React.useEffect(() => {
@@ -141,22 +147,18 @@ export const SummarySection = ({
       if (!calculatorData) return 0;
       const n = (v: any) => parseFloat(v) || 0;
       const lowerKey = key.toLowerCase();
+      const target = lowerKey === 'screens' || lowerKey === 'numberofscreenpulls' ? 'cktoinstallers' : lowerKey;
 
-      // Check root
-      const rootKey = Object.keys(calculatorData).find((k) => k.toLowerCase() === lowerKey);
-      if (rootKey && n(calculatorData[rootKey]) > 0) return n(calculatorData[rootKey]);
+      const findInObj = (obj: any) => {
+        if (!obj || typeof obj !== 'object') return 0;
+        const k = Object.keys(obj).find((ok) => {
+          const lOk = ok.toLowerCase();
+          return lOk === target || lOk === target.replace('labor', 'labour');
+        });
+        return k ? n(obj[k]) : 0;
+      };
 
-      // Check extras
-      const extras = calculatorData.extras || {};
-      const extrasKey = Object.keys(extras).find((k) => k.toLowerCase() === lowerKey);
-      if (extrasKey && n(extras[extrasKey]) > 0) return n(extras[extrasKey]);
-
-      // Check inputs
-      const inputs = calculatorData.inputs || {};
-      const inputKey = Object.keys(inputs).find((k) => k.toLowerCase() === lowerKey);
-      if (inputKey && n(inputs[inputKey]) > 0) return n(inputs[inputKey]);
-
-      return 0;
+      return findInObj(calculatorData.inputs) || findInObj(calculatorData.extras) || findInObj(calculatorData) || 0;
     };
 
     // 1. Gutter Section
@@ -483,17 +485,20 @@ export const SummarySection = ({
 
     // 5. Misc Section
     if (jobState.additional && hasValue(jobState.additional)) {
-      const misc = jobState.additional;
+      const misc = jobState.additional || {};
       const fields: any[] = [];
-      if (parseFloat(misc.extraLabor) > 0)
+      const laborVal = parseFloat(misc.extraLabor) || getVal('extraLabor');
+      const screensVal = parseFloat(misc.numberOfScreenPulls) || getVal('screens');
+
+      if (laborVal > 0)
         fields.push({
           label: 'Extra Labor',
-          value: `${misc.extraLabor} Extra Labor${parseFloat(misc.extraLabor) > 1 ? 's' : ''}`,
+          value: `${laborVal} Extra Labor${laborVal > 1 ? 's' : ''}`,
         });
       if (misc.extraLaborReason)
         fields.push({ label: 'Extra Labor Reason', value: misc.extraLaborReason });
-      if (parseFloat(misc.numberOfScreenPulls) > 0)
-        fields.push({ label: 'Number of Screen Pulls', value: String(misc.numberOfScreenPulls) });
+      if (screensVal > 0)
+        fields.push({ label: 'Number of Screen Pulls', value: String(screensVal) });
       if (misc.cutAndRemoveShingleOverhang)
         fields.push({
           label: 'Cut and Remove Shingle Overhang',
@@ -1244,7 +1249,6 @@ export const SummarySection = ({
     );
   };
 
-  const isAppointmentSet = !!jobState.scheduleTime?.date;
   const isDateScheduled = isAppointmentSet && jobState.scheduleTime?.date !== 'TBD';
 
   return (
@@ -1370,7 +1374,9 @@ export const SummarySection = ({
             leadData?.customerDetails?.lastName || ''
           }`.trim() || customerName || 'Customer'
         }
-        isEdit={isAppointmentSet}
+        isEdit={stableIsEdit}
+        initialDate={jobState.scheduleTime?.date}
+        initialTimeWindow={jobState.scheduleTime?.timeWindow}
       />
 
       <DocumentScannerModal

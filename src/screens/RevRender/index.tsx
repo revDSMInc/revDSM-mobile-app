@@ -5,8 +5,6 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
-  PanResponder,
-  Animated,
   Dimensions,
   ActivityIndicator,
   BackHandler,
@@ -16,60 +14,37 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { REV_RENDER_VIEW_GROUPS } from '../../constants/lead-center';
+import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS } from '../../constants/lead-center';
 import { RootStackParamList } from '../../navigation';
 
 type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const COLORS_LIST = [
-  // Row 1
-  { name: 'White', hex: '#FFFFFF' },
-  { name: 'Linen', hex: '#F0EAD6' },
-  { name: 'Eggshell', hex: '#F0EAD6' },
-  { name: 'Wicker', hex: '#C9AE9C' },
-  { name: 'Sand', hex: '#C2B280' },
-  { name: 'Clay', hex: '#A0785A' },
-  { name: 'Gray', hex: '#808080' },
-  // Row 2
-  { name: 'Beige', hex: '#F5F5DC' },
-  { name: 'Almond', hex: '#EFDECD' },
-  { name: 'Heather', hex: '#9AA7B0' },
-  { name: 'Tan', hex: '#D2B48C' },
-  { name: 'Champagne', hex: '#F7E7CE' },
-  { name: 'Pebble', hex: '#A9A9A9' },
-  { name: 'Fawn', hex: '#E5D3BF' },
-  // Row 3
-  { name: 'Slate', hex: '#708090' },
-  { name: 'Evergreen', hex: '#2E473B' },
-  { name: 'Copper', hex: '#B87333' },
-  { name: 'Bronze', hex: '#6D5D44' },
-  { name: 'Royal Brown', hex: '#4B3621' },
-  { name: 'Musket Brown', hex: '#3B3131' },
-  { name: 'Black', hex: '#1A1A1B' },
-];
-
 const MATERIAL_SECTIONS = [
-  {
-    key: 'soffit',
-    label: 'Soffit',
+  { 
+    key: 'soffit', 
+    label: 'Soffit', 
     types: ['Pinhole Soffit', 'Hidden Vent Soffit'],
+    getColors: (type?: string) => type === 'Pinhole Soffit' ? REV_RENDER_COLORS.pinholeSoffit : REV_RENDER_COLORS.hiddenVentSoffit
   },
-  {
-    key: 'fascia',
-    label: 'Fascia Wrap',
+  { 
+    key: 'fascia', 
+    label: 'Fascia Wrap', 
     types: [],
+    getColors: () => REV_RENDER_COLORS.fascia
   },
-  {
-    key: 'gutter',
-    label: 'Gutter',
+  { 
+    key: 'gutter', 
+    label: 'Gutter', 
     types: ['K-Style'],
+    getColors: () => REV_RENDER_COLORS.gutter
   },
-  {
-    key: 'downspout',
-    label: 'Downspout',
+  { 
+    key: 'downspout', 
+    label: 'Downspout', 
     types: ['3x4 Rectangular'],
+    getColors: () => REV_RENDER_COLORS.gutter
   },
 ];
 
@@ -82,120 +57,100 @@ export default function RevRenderScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
-  const { lead, sectionImages, onNavToDocs, onGenerate } = route.params;
+  const { lead, sectionImages, onNavToDocs, onGenerate, onGenerateAll } = route.params;
 
   // ── Status & State ─────────────────────────────────────────────────────────
-  const [status, setStatus] = useState<'grid' | 'config' | 'generating' | 'result'>('grid');
+  const [status, setStatus] = useState<'grid' | 'config' | 'queue'>('grid');
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
-
-  // Flatten sectionImages for the grid
-  const allPhotos = React.useMemo(() => {
-    return Object.values(sectionImages || {}).flat();
-  }, [sectionImages]);
+  const [renderQueue, setRenderQueue] = useState<any[]>([]);
 
   const [config, setConfig] = useState<any>({
+    sameColor: true,
+    selectedCommonColor: REV_RENDER_COLORS.common[0],
     soffit: 'Hidden Vent Soffit',
-    soffitColor: COLORS_LIST[0],
+    soffitColor: REV_RENDER_COLORS.hiddenVentSoffit[0],
     soffitChecked: false,
     fascia: null,
-    fasciaColor: COLORS_LIST[0],
+    fasciaColor: REV_RENDER_COLORS.fascia[0],
     fasciaChecked: false,
     gutter: 'K-Style',
-    gutterColor: COLORS_LIST[0],
+    gutterColor: REV_RENDER_COLORS.gutter[0],
     gutterChecked: false,
     downspout: '3x4 Rectangular',
-    downspoutColor: COLORS_LIST[0],
+    downspoutColor: REV_RENDER_COLORS.gutter[0],
     downspoutChecked: false,
   });
-  const [sameColorForAll, setSameColorForAll] = useState(true);
+
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
-  const [generatedImg, setGeneratedImg] = useState<string | null>(null);
-  const [comparisonOriginalImg, setComparisonOriginalImg] = useState<string | null>(null);
-
-  // Before/After slider
-  const screenWidth = Dimensions.get('window').width;
-  const imageWidth = screenWidth - 32;
-  const imageHeight = 240;
-  const sliderPosition = useRef(new Animated.Value(imageWidth / 2)).current;
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: Animated.event([null, { dx: sliderPosition }], {
-        useNativeDriver: false,
-      }),
-      onPanResponderRelease: (_e, gestureState) => {
-        const currentX = (sliderPosition as any)._value;
-        if (currentX < 0) {
-          Animated.spring(sliderPosition, { toValue: 0, useNativeDriver: false }).start();
-        } else if (currentX > imageWidth) {
-          Animated.spring(sliderPosition, { toValue: imageWidth, useNativeDriver: false }).start();
-        } else {
-          sliderPosition.setOffset(currentX);
-          sliderPosition.setValue(0);
-        }
-      },
-    })
-  ).current;
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  const handleGenerate = async () => {
-    setStatus('generating');
+  const handleAddToQueue = () => {
+    const selections: any = {};
+    const textureImageUrls: any = {};
+
+    MATERIAL_SECTIONS.forEach(s => {
+      if (config[`${s.key}Checked`]) {
+        const type = config[s.key];
+        const color = config[`${s.key}Color`];
+        selections[s.key] = type ? `${type}-${color?.name}` : color?.name;
+        selections[`${s.key}Type`] = type;
+        textureImageUrls[s.key] = color?.hex || null;
+      }
+    });
+
+    const newRender = {
+      id: Date.now(),
+      photo: selectedPhoto,
+      selections,
+      textureImageUrls,
+      summary: MATERIAL_SECTIONS.filter(s => config[`${s.key}Checked`]).map(s => ({
+        label: s.label,
+        type: config[s.key],
+        colorName: config[`${s.key}Color`]?.name,
+        colorHex: config[`${s.key}Color`]?.hex
+      }))
+    };
+
+    setRenderQueue([...renderQueue, newRender]);
+    setStatus('queue');
+  };
+
+  const handleGenerateAll = async () => {
     try {
-      const selections: any = {};
-      const textureImageUrls: any = {};
-
-      MATERIAL_SECTIONS.forEach(s => {
-        if (config[`${s.key}Checked`]) {
-          const type = config[s.key];
-          const color = config[`${s.key}Color`];
-          selections[s.key] = type ? `${type}-${color?.name}` : color?.name;
-          selections[`${s.key}Type`] = type;
-          textureImageUrls[s.key] = color?.hex || null;
-        }
-      });
-
-      const payload = {
-        houseImageUrl: selectedPhoto?.uri || selectedPhoto?.s3url,
+      const payloads = renderQueue.map(item => ({
+        houseImageUrl: item.photo?.uri || item.photo?.s3url,
         houseMimeType: 'image/jpeg',
         leadId: lead?._id || lead?.leadId,
-        selections,
-        textureImageUrls,
-      };
+        selections: item.selections,
+        textureImageUrls: item.textureImageUrls,
+      }));
 
-      const result = await onGenerate(payload);
-      sliderPosition.setValue(imageWidth / 2);
-      sliderPosition.setOffset(0);
-      
-      if (result && typeof result === 'object') {
-        const data = result as any;
-        setGeneratedImg(data.generatedUrl);
-        setComparisonOriginalImg(data.originalUrl);
+      if (onGenerateAll) {
+        onGenerateAll(payloads);
       } else {
-        setGeneratedImg((result as string) || selectedPhoto?.uri || selectedPhoto?.s3url);
+        payloads.forEach(p => onGenerate(p));
       }
-      
-      // Invalidate runs query so Lead Center updates
-      queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead?._id || lead?.leadId] });
-      
-      setStatus('result');
-    } catch {
-      setStatus('config');
+      navigation.goBack();
+    } catch (err) {
+      console.error('Generate All Error:', err);
     }
+  };
+
+  const removeFromQueue = (id: number) => {
+    setRenderQueue(prev => prev.filter(item => item.id !== id));
   };
 
   const handleBack = () => {
     if (status === 'config') {
       setStatus('grid');
       setSelectedPhoto(null);
-    } else if (status === 'result') {
-      setStatus('config');
+    } else if (status === 'queue') {
+      setStatus('grid');
     } else {
       navigation.goBack();
     }
-    return true; // For BackHandler
+    return true;
   };
 
   useEffect(() => {
@@ -203,8 +158,6 @@ export default function RevRenderScreen() {
     return () => backHandler.remove();
   }, [status]);
 
-  // ── Helper Components ──────────────────────────────────────────────────────
-  
   const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
     const [loading, setLoading] = useState(true);
     return (
@@ -338,23 +291,27 @@ export default function RevRenderScreen() {
   const renderConfig = () => {
     const isAnyChecked = MATERIAL_SECTIONS.some(s => config[`${s.key}Checked`]);
 
-    const handleGlobalColorSelect = (color: any) => {
-      const newConfig = { ...config };
-      if (sameColorForAll) {
+    const handleCommonColorSelect = (color: any) => {
+      setConfig((prev: any) => {
+        const next = { ...prev, selectedCommonColor: color };
         MATERIAL_SECTIONS.forEach(s => {
-          newConfig[`${s.key}Color`] = color;
+          const compColors = s.getColors(prev[s.key]);
+          const match = compColors.find((c: any) => c.name === color.name || c.hex === color.hex);
+          if (match) {
+            next[`${s.key}Color`] = match;
+          } else {
+            next[`${s.key}Color`] = compColors[0];
+          }
         });
-      } else {
-        newConfig.soffitColor = color;
-      }
-      setConfig(newConfig);
+        return next;
+      });
     };
 
     const toggleChecked = (key: string) => {
       const newChecked = !config[`${key}Checked`];
       const newConfig = { ...config, [`${key}Checked`]: newChecked };
-      if (newChecked && sameColorForAll) {
-        newConfig[`${key}Color`] = config.soffitColor;
+      if (newChecked && config.sameColor) {
+        newConfig[`${key}Color`] = config.selectedCommonColor;
       }
       setConfig(newConfig);
     };
@@ -382,11 +339,6 @@ export default function RevRenderScreen() {
             style={{ 
               backgroundColor: isDark ? '#1E1E1E' : '#fff',
               borderColor: '#2EDE56',
-              shadowColor: '#2EDE56',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.1,
-              shadowRadius: 10,
-              elevation: 4
             }}
           >
             <View className="flex-row justify-between items-center mb-1">
@@ -394,13 +346,13 @@ export default function RevRenderScreen() {
                 Same Color for All
               </Text>
               <TouchableOpacity 
-                onPress={() => setSameColorForAll(!sameColorForAll)}
+                onPress={() => setConfig({...config, sameColor: !config.sameColor})}
                 className="w-12 h-6 rounded-full px-1 justify-center"
-                style={{ backgroundColor: sameColorForAll ? '#2EDE56' : '#919EAB' }}
+                style={{ backgroundColor: config.sameColor ? '#2EDE56' : '#919EAB' }}
               >
                 <View 
                   className="w-4 h-4 rounded-full bg-white" 
-                  style={{ alignSelf: sameColorForAll ? 'flex-end' : 'flex-start' }}
+                  style={{ alignSelf: config.sameColor ? 'flex-end' : 'flex-start' }}
                 />
               </TouchableOpacity>
             </View>
@@ -408,18 +360,18 @@ export default function RevRenderScreen() {
               Apply one color to all checked components
             </Text>
 
-            {sameColorForAll && (
+            {config.sameColor && (
               <>
                 <Text className="text-[15px] font-black mb-3" style={{ color: '#2EDE56' }}>
-                  {config.soffitColor?.name || 'White'}
+                  {config.selectedCommonColor?.name || 'White'}
                 </Text>
                 <View className="flex-row flex-wrap gap-2">
-                  {COLORS_LIST.map((color) => {
-                    const isSelected = config.soffitColor?.name === color.name;
+                  {REV_RENDER_COLORS.common.map((color, i) => {
+                    const isSelected = config.selectedCommonColor?.hex === color.hex;
                     return (
                       <TouchableOpacity
-                        key={color.name}
-                        onPress={() => handleGlobalColorSelect(color)}
+                        key={i}
+                        onPress={() => handleCommonColorSelect(color)}
                         className="w-10 h-10 rounded-lg border-2"
                         style={{ 
                           backgroundColor: color.hex,
@@ -506,15 +458,15 @@ export default function RevRenderScreen() {
                         </View>
                       </>
                     )}
-                    {!sameColorForAll && (
+                    {!config.sameColor && (
                       <View className="mt-5">
-                         <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>TEXTURE</Text>
+                         <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>COLOR</Text>
                         <View className="flex-row flex-wrap gap-2">
-                          {COLORS_LIST.map((color) => {
-                            const isSelected = selectedColor?.name === color.name;
+                          {section.getColors(selectedType).map((color: any, i: number) => {
+                            const isSelected = selectedColor?.hex === color.hex;
                             return (
                               <TouchableOpacity
-                                key={color.name}
+                                key={i}
                                 onPress={() => setConfig({ ...config, [`${section.key}Color`]: color })}
                                 className="w-10 h-10 rounded-lg border-2"
                                 style={{ backgroundColor: color.hex, borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0') }}
@@ -531,7 +483,7 @@ export default function RevRenderScreen() {
           })}
 
           <TouchableOpacity
-            onPress={handleGenerate}
+            onPress={handleAddToQueue}
             disabled={!isAnyChecked}
             className="w-full h-14 items-center justify-center rounded-[24px] mt-6 flex-row"
             style={{ backgroundColor: isAnyChecked ? '#2EDE56' : '#E0E0E0' }}
@@ -543,132 +495,137 @@ export default function RevRenderScreen() {
     );
   };
 
-  const renderGenerating = () => (
-    <View className="flex-1 items-center justify-center px-8">
-      <View className="w-28 h-28 rounded-full items-center justify-center mb-8" style={{ backgroundColor: colors.primary.main + '15' }}>
-        <ActivityIndicator size="large" color={colors.primary.main} />
-      </View>
-      <Text className="text-xl font-bold text-center mb-2" style={{ color: colors.text }}>Applying AI Generation...</Text>
-      <Text className="text-center" style={{ color: colors.textSecondary }}>This usually takes 10–30 seconds. The AI is painting your home with the selected materials.</Text>
-    </View>
-  );
-
-  const renderResult = () => {
-    const maskWidth = sliderPosition.interpolate({
-      inputRange: [0, imageWidth],
-      outputRange: [0, imageWidth],
-      extrapolate: 'clamp',
-    });
-    const beforeImage = comparisonOriginalImg || selectedPhoto?.uri || selectedPhoto?.s3url;
-    const afterImage = generatedImg || beforeImage;
-
+  const renderQueueView = () => {
     return (
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-        <View className="px-4 pt-6 pb-4">
-          <Text className="text-lg font-bold mb-1" style={{ color: colors.text }}>revRender Result</Text>
-          <Text className="text-xs mb-5" style={{ color: colors.textSecondary }}>Drag the handle to compare before and after.</Text>
-        </View>
-
-        <View style={{ marginHorizontal: 16, width: imageWidth, height: imageHeight, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000' }}>
-          {/* AFTER (Base) */}
-          <Image 
-            source={{ uri: afterImage }} 
-            style={{ position: 'absolute', width: imageWidth, height: imageHeight }} 
-            resizeMode="cover" 
-          />
-          
-          {/* BEFORE (Masked Layer - Left side) */}
-          <Animated.View style={{ 
-            position: 'absolute', 
-            top: 0, 
-            left: 0, 
-            height: imageHeight, 
-            width: maskWidth, 
-            overflow: 'hidden',
-            borderRightWidth: 1,
-            borderRightColor: 'white'
-          }}>
-            <Image 
-              source={{ uri: beforeImage }} 
-              style={{ width: imageWidth, height: imageHeight }} 
-              resizeMode="cover" 
-            />
-          </Animated.View>
-
-          <View className="absolute bottom-2 left-3 px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}><Text className="text-white text-[10px] font-bold">BEFORE</Text></View>
-          <View className="absolute bottom-2 right-3 px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}><Text className="text-white text-[10px] font-bold">AFTER</Text></View>
-          
-          <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, width: 40, marginLeft: -20, alignItems: 'center', justifyContent: 'center', transform: [{ translateX: sliderPosition }], zIndex: 20 }} {...panResponder.panHandlers}>
-            <View style={{ width: 2, height: '100%', backgroundColor: 'white', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 4, elevation: 8 }} />
-            <View className="w-10 h-10 rounded-full absolute items-center justify-center" style={{ backgroundColor: 'white', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 10 }}>
-              <Icon name="compare-horizontal" size={24} color="#1C252E" />
+      <View className="flex-1" style={{ backgroundColor: isDark ? '#121212' : '#FFFFFF' }}>
+        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+          <View className="px-4 py-6">
+            <View className="flex-row items-center mb-8">
+              <TouchableOpacity 
+                onPress={() => setStatus('grid')} 
+                className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
+              >
+                <Icon name="arrow-left" size={24} color="#637381" />
+              </TouchableOpacity>
+              <View>
+                <Text className="text-xl font-bold" style={{ color: colors.text }}>Render Queue</Text>
+                <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
+                  {renderQueue.length} {renderQueue.length === 1 ? 'render' : 'renders'} configured
+                </Text>
+              </View>
             </View>
-          </Animated.View>
-        </View>
 
-        <View className="mx-4 mt-5 p-4 rounded-2xl border" style={{ borderColor: colors.border, backgroundColor: isDark ? '#1E1E1E' : '#F8FAFB' }}>
-          <Text className="text-[10px] font-black  tracking-widest mb-3" style={{ color: colors.textSecondary }}>Applied Configuration</Text>
-          <View className="flex-row flex-wrap gap-2">
-            {MATERIAL_SECTIONS.map((section) => {
-              const type = config[section.key];
-              const color = config[`${section.key}Color`];
-              if (!config[`${section.key}Checked`]) return null;
-              return (
-                <View key={section.key} className="flex-row items-center px-3 py-1.5 rounded-full border" style={{ borderColor: colors.primary.main + '40', backgroundColor: colors.primary.main + '10' }}>
-                  {color && <View className="w-3 h-3 rounded-full mr-1.5 border" style={{ backgroundColor: color.hex, borderColor: '#D0D5DD' }} />}
-                  <Text className="text-[10px] font-bold" style={{ color: colors.primary.main }}>{section.label}{type ? `: ${type}` : ''}{color ? ` · ${color.name}` : ''}</Text>
+            <View className="gap-y-6">
+              {renderQueue.map((item, index) => (
+                <View 
+                  key={item.id}
+                  className="rounded-[24px] border p-5 shadow-sm"
+                  style={{ 
+                    backgroundColor: isDark ? '#1E1E1E' : '#fff',
+                    borderColor: isDark ? '#2A2A2A' : '#F4F6F8'
+                  }}
+                >
+                  <View className="flex-row justify-between items-center mb-5">
+                    <View className="flex-row items-center">
+                      <View className="w-8 h-8 rounded-full bg-[#2EDE56] items-center justify-center mr-3">
+                        <Text className="text-white font-black text-sm">{index + 1}</Text>
+                      </View>
+                      <Text className="text-[17px] font-black" style={{ color: colors.text }}>
+                        {item.photo?.label || 'Selected Photo'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => removeFromQueue(item.id)}>
+                      <Icon name="delete-outline" size={22} color="#FF5630" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View className="gap-y-3">
+                    {item.summary.map((s: any, idx: number) => (
+                      <View 
+                        key={idx}
+                        className="p-3.5 rounded-xl flex-row items-center"
+                        style={{ backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
+                      >
+                        <View 
+                          className="w-5 h-5 rounded-[4px] mr-3 border border-gray-200"
+                          style={{ backgroundColor: s.colorHex }}
+                        />
+                        <Text className="text-[13px] font-bold flex-1" style={{ color: colors.text }}>
+                          {s.label}: {s.colorName} {s.type ? `· ${s.type}` : ''}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
-              );
-            })}
-          </View>
-        </View>
+              ))}
+            </View>
 
-        <View className="px-4 mt-6 mb-8 gap-3">
-          <TouchableOpacity onPress={() => { setStatus('config'); setExpandedSection('gutter'); }} className="w-full h-12 items-center justify-center rounded-xl border flex-row" style={{ borderColor: colors.border }}>
-            <Icon name="tune-variant" size={18} color={colors.text} style={{ marginRight: 6 }} /><Text className="font-bold text-sm" style={{ color: colors.text }}>Adjust Configuration</Text>
+            <View className="mt-10">
+              <Text className="text-[11px] font-black tracking-widest mb-4 uppercase ml-2" style={{ color: '#637381' }}>
+                CUSTOM
+              </Text>
+              <TouchableOpacity
+                onPress={() => setStatus('grid')}
+                className="w-full h-16 rounded-[20px] border-2 border-dashed border-[#2EDE56] items-center justify-center flex-row"
+                style={{ backgroundColor: 'transparent' }}
+              >
+                <Icon name="plus" size={20} color="#2EDE56" style={{ marginRight: 8 }} />
+                <Text className="text-[#2EDE56] font-black text-sm">Add Custom Render</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+
+        <View 
+          className="px-6 pt-6 pb-10 border-t" 
+          style={{ 
+            backgroundColor: isDark ? '#1A1A1A' : '#fff',
+            borderTopColor: isDark ? '#2A2A2A' : '#F4F6F8',
+          }}
+        >
+          <TouchableOpacity
+            onPress={handleGenerateAll}
+            disabled={renderQueue.length === 0}
+            className="w-full h-14 bg-[#2EDE56] rounded-[24px] items-center justify-center flex-row shadow-lg shadow-[#2EDE5633]"
+            style={{ opacity: renderQueue.length === 0 ? 0.6 : 1 }}
+          >
+            <Icon name="send" size={20} color="white" style={{ marginRight: 10 }} />
+            <Text className="text-white font-black text-base">
+              Generate {renderQueue.length} {renderQueue.length === 1 ? 'Render' : 'Renders'}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.goBack()} className="w-full h-12 items-center justify-center rounded-xl flex-row" style={{ backgroundColor: colors.primary.main }}>
-            <Icon name="check-circle" size={18} color="white" style={{ marginRight: 6 }} /><Text className="text-white font-bold text-sm">Done</Text>
-          </TouchableOpacity>
+          <Text className="text-center mt-6 text-[13px] font-medium" style={{ color: '#919EAB' }}>
+            AI-powered visualization · Results in ~30 seconds per render
+          </Text>
         </View>
-      </ScrollView>
+      </View>
     );
   };
 
-  const hasPhotos = allPhotos.length > 0;
+  const hasPhotos = Object.values(sectionImages || {}).flat().length > 0;
 
   return (
-    <View className="flex-1" style={{ backgroundColor: isDark ? '#121212' : '#F9FAFB' }}>
-      <View
-        className="flex-row items-center px-4 py-3"
-        style={{
-          backgroundColor: isDark ? '#1A1A1A' : '#F9FAFB',
-          borderBottomWidth: 1,
-          borderBottomColor: isDark ? '#2A2A2A' : '#F4F6F8',
-          paddingTop: insets.top + 10,
-          zIndex: 1000,
+    <View className="flex-1" style={{ backgroundColor: isDark ? colors.background : '#fff' }}>
+      <View 
+        className="flex-row items-center px-4 justify-between border-b"
+        style={{ 
+          paddingTop: insets.top, 
+          height: insets.top + 60,
+          backgroundColor: isDark ? colors.surface : '#fff',
+          borderBottomColor: isDark ? '#3A3A3A' : '#F4F6F8'
         }}
       >
-        <TouchableOpacity
-          onPress={handleBack}
-          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-          activeOpacity={0.6}
-          className="w-10 h-10 rounded-full items-center justify-center mr-3"
-          style={{ backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
-        >
-          <Icon name="arrow-left" size={24} color="#919EAB" />
+        <TouchableOpacity onPress={handleBack}>
+          <Icon name="close" size={24} color={colors.text} />
         </TouchableOpacity>
-
-        <View className="flex-1">
-          <Text className="text-[17px] font-black" style={{ color: colors.text }}>
-            {status === 'config' ? 'Configure Render' : 'revRender'}
-          </Text>
-          <Text className="text-xs" style={{ color: colors.textSecondary }} numberOfLines={1}>
-            {status === 'config' 
-              ? (selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' '))
-              : 'Select a photo to render (from Job Docs)'}
-          </Text>
+        <View className="items-center">
+          <Text className="text-lg font-black" style={{ color: colors.text }}>revRender</Text>
+          <View className="flex-row items-center">
+             <View className="w-1.5 h-1.5 rounded-full bg-[#2EDE56] mr-1.5" />
+             <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">AI Engine Active</Text>
+          </View>
         </View>
+        <View className="w-10" />
       </View>
 
       <View className="flex-1" style={{ zIndex: 1 }}>
@@ -678,9 +635,7 @@ export default function RevRenderScreen() {
           ? renderGrid()
           : status === 'config'
           ? renderConfig()
-          : status === 'generating'
-          ? renderGenerating()
-          : renderResult()}
+          : renderQueueView()}
       </View>
     </View>
   );

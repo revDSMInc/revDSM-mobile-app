@@ -4,6 +4,8 @@ import { AuthService, LoginData } from '../services/api/auth';
 import { login as loginAction } from '../redux/reducer/auth.reducer';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
+import { Platform } from 'react-native';
+
 
 export const useLoginMutation = () => {
   const dispatch = useDispatch();
@@ -11,7 +13,11 @@ export const useLoginMutation = () => {
   return useMutation({
     mutationFn: async (data: LoginData) => {
       // 1. Perform Login
-      const loginRes = await AuthService.login(data);
+      const loginRes = await AuthService.login({
+        ...data,
+        deviceId: data.deviceId || `mobile-${Platform.OS}-${data.email}`,
+      });
+
       const resData = loginRes.data?.data || loginRes.data;
 
       // Check if 2FA is required (New structure support)
@@ -19,7 +25,9 @@ export const useLoginMutation = () => {
         return { 
           twoFactorRequired: true, 
           method: resData.twoFactorMethod || resData.method, 
-          email: data.email 
+          email: data.email,
+          lat: data.lat,
+          long: data.long,
         };
       }
 
@@ -53,15 +61,26 @@ export const useVerifyOtpMutation = () => {
   const dispatch = useDispatch();
 
   return useMutation({
-    mutationFn: async (data: { email: string; code: string; password?: string; trustDevice?: boolean }) => {
+    mutationFn: async (data: { 
+      email: string; 
+      code: string; 
+      password?: string; 
+      trustDevice?: boolean;
+      lat?: number;
+      long?: number;
+    }) => {
       // Verify OTP is just another login call with the twoFactorCode field and password
       const loginRes = await AuthService.login({
         email: data.email,
         password: data.password,
         twoFactorCode: data.code,
         trustDevice: data.trustDevice,
+        deviceId: `mobile-${Platform.OS}-${data.email}`,
+        lat: data.lat,
+        long: data.long,
       });
       const resData = loginRes.data?.data || loginRes.data;
+
 
       const token = resData?.token;
       if (!token) {

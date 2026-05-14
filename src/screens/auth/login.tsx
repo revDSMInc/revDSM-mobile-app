@@ -20,7 +20,9 @@ import { validateEmail } from '../../utils/validation';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation';
-import { TouchableOpacity } from 'react-native';
+import { TouchableOpacity, Platform, PermissionsAndroid } from 'react-native';
+import Geolocation from 'react-native-geolocation-service';
+
 
 export default function LoginScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -29,7 +31,44 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [location, setLocation] = useState<{ lat: number; long: number } | null>(null);
   const passwordRef = useRef<TextInput>(null);
+
+  React.useEffect(() => {
+    const requestLocationPermission = async () => {
+      if (Platform.OS === 'ios') {
+        const auth = await Geolocation.requestAuthorization('whenInUse');
+        if (auth === 'granted') {
+          getCurrentLocation();
+        }
+      } else {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+          getCurrentLocation();
+        }
+      }
+    };
+
+    requestLocationPermission();
+  }, []);
+
+  const getCurrentLocation = () => {
+    Geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          long: position.coords.longitude,
+        });
+      },
+      (error) => {
+        console.log('Location error:', error.code, error.message);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+    );
+  };
+
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -43,19 +82,36 @@ export default function LoginScreen() {
     }
 
     try {
-      const res: any = await loginMutation.mutateAsync({ email: email.trim(), password });
+      const res: any = await loginMutation.mutateAsync({ 
+        email: email.trim(), 
+        password,
+        lat: location?.lat,
+        long: location?.long
+      });
+
       
       if (res?.twoFactorRequired) {
         if (res.method === 'authenticator') {
-          navigation.navigate('AuthenticatorOTP', { email: email.trim(), password });
+          navigation.navigate('AuthenticatorOTP', { 
+            email: email.trim(), 
+            password,
+            lat: location?.lat,
+            long: location?.long
+          });
         } else {
-          navigation.navigate('EmailOTP', { email: email.trim(), password });
+          navigation.navigate('EmailOTP', { 
+            email: email.trim(), 
+            password,
+            lat: location?.lat,
+            long: location?.long
+          });
         }
       }
     } catch (err: any) {
       FlashMessage.error('Login Failed', err?.message || 'Invalid credentials');
     }
   };
+
 
   return (
     <ImageBackground

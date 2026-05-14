@@ -15,6 +15,7 @@ export const ToolsSection = ({
   onShowJobBuilder,
   onShowCalculator,
   onShowPitchbook,
+  revRenderJobs = [],
 }: any) => {
   const { colors, isDark } = useTheme();
   const { data: runs, isLoading } = useRevRenderRunsQuery(lead?._id || '');
@@ -24,8 +25,16 @@ export const ToolsSection = ({
   const [resetView, setResetView] = useState(false);
 
   const findReport = (type: string) => {
-    const keyword = type.split('_')[0]; // 'consent', 'waiver', 'risk'
-    return lead?.generatedReports?.find(
+    const keyword = type.split('_')[0].toLowerCase(); // 'consent', 'waiver', 'risk'
+    // Search in lead top-level, and common nested outcome paths
+    const reports = [
+      ...(lead?.generatedReports || []),
+      ...(lead?.outcomeData?.generatedReports || []),
+      ...(lead?.leadData?.generatedReports || []),
+      ...(lead?.outcome?.generatedReports || []),
+    ];
+
+    return reports.find(
       (r: any) =>
         (r.reportType === type ||
           r.reportName?.toLowerCase().includes(keyword) ||
@@ -99,6 +108,29 @@ export const ToolsSection = ({
             </View>
           </View>
         </View>
+
+        {/* Progress Bar for RevRender */}
+        {revRenderJobs.length > 0 && (
+          <View className="mb-4">
+            <View className="flex-row justify-between items-center mb-1.5">
+              <Text className="text-[10px] font-black text-[#2EDE56] uppercase tracking-widest">
+                AI Processing ({revRenderJobs.filter((j: any) => j.status === 'completed').length}/{revRenderJobs.length})
+              </Text>
+              <Text className="text-[10px] font-black text-slate-400">
+                {Math.round((revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100)}%
+              </Text>
+            </View>
+            <View className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+              <View 
+                className="h-full bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]" 
+                style={{ width: `${(revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100}%` }} 
+              />
+            </View>
+            <Text className="text-[10px] text-slate-400 mt-1 italic">
+              {revRenderJobs.find((j: any) => j.status === 'running')?.payload?.selections?.soffit || 'Generating visualizations...'}
+            </Text>
+          </View>
+        )}
 
         {isLoading ? (
           <ActivityIndicator size="small" color={colors.primary.main} />

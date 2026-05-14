@@ -23,6 +23,8 @@ interface AppointmentSchedulerModalProps {
   onUpload?: (data: any) => void;
   customerName: string;
   isEdit?: boolean;
+  initialDate?: string;
+  initialTimeWindow?: string;
 }
 
 export const AppointmentSchedulerModal = ({
@@ -33,24 +35,59 @@ export const AppointmentSchedulerModal = ({
   onUpload,
   customerName,
   isEdit = false,
+  initialDate,
+  initialTimeWindow,
 }: AppointmentSchedulerModalProps) => {
   const { colors, isDark } = useTheme();
 
   const [view, setView] = useState<'date' | 'time' | 'tbd' | 'success'>('date');
-  const [selectedDate, setSelectedDate] = useState<Date>(() => {
-    let d = addDays(new Date(), 1);
-    if (getDay(d) === 0) d = addDays(d, 1);
-    return d;
-  });
-  const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
-  const [timeSlotIdx, setTimeSlotIdx] = useState(0);
-  const [tbdReason, setTbdReason] = useState('');
-  const [isTBD, setIsTBD] = useState(false);
-
+  
   const windows = [
     { label: '8:00 AM - 12:00 PM', value: '8:00 AM - 12:00 PM' },
     { label: '12:00 PM - 4:00 PM', value: '12:00 PM - 4:00 PM' },
   ];
+
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    if (initialDate && initialDate !== 'TBD') {
+      const parsed = new Date(initialDate);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    let d = new Date();
+    if (getDay(d) === 0) d = addDays(d, 1);
+    return d;
+  });
+  const [currentMonth, setCurrentMonth] = useState<Date>(() => {
+    if (initialDate && initialDate !== 'TBD') {
+      const parsed = new Date(initialDate);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date();
+  });
+  const [timeSlotIdx, setTimeSlotIdx] = useState(0);
+  const [tbdReason, setTbdReason] = useState('');
+  const [isTBD, setIsTBD] = useState(false);
+
+  // Sync state when props change and modal becomes visible
+  React.useEffect(() => {
+    if (visible) {
+      if (initialDate && initialDate !== 'TBD') {
+        const parsed = new Date(initialDate);
+        if (!isNaN(parsed.getTime())) {
+          setSelectedDate(parsed);
+          setCurrentMonth(parsed);
+        }
+        setIsTBD(false);
+      } else if (initialDate === 'TBD') {
+        setIsTBD(true);
+        setView('tbd');
+      }
+
+      if (initialTimeWindow) {
+        const idx = windows.findIndex(w => w.value === initialTimeWindow);
+        if (idx !== -1) setTimeSlotIdx(idx);
+      }
+    }
+  }, [visible, initialDate, initialTimeWindow]);
 
   const handleDateSelect = (date: Date) => {
     if (getDay(date) === 0) return; // Disable Sunday
@@ -81,11 +118,7 @@ export const AppointmentSchedulerModal = ({
       customerName,
     };
     onConfirm(data);
-    if (isEdit) {
-      onClose();
-    } else {
-      setView('success');
-    }
+    setView('success');
   };
 
   const handleConfirmTBDStep = () => {
@@ -96,11 +129,7 @@ export const AppointmentSchedulerModal = ({
       customerName,
     };
     onConfirm(data);
-    if (isEdit) {
-      onClose();
-    } else {
-      setView('success');
-    }
+    setView('success');
   };
 
   const handleModalClose = () => {
@@ -392,7 +421,27 @@ export const AppointmentSchedulerModal = ({
                   )}
                 </View>
 
-                {isEdit ? null : (
+                {isEdit ? (
+                  <TouchableOpacity onPress={handleModalClose} style={{ width: '100%' }}>
+                    <View 
+                      style={{ 
+                        height: 64, 
+                        width: '100%', 
+                        backgroundColor: '#22C55E', 
+                        borderRadius: 16, 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        shadowColor: colors.primary.main,
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 8,
+                        elevation: 4,
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 16, textTransform: 'uppercase', letterSpacing: 1 }}>Save Changes</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : (
                   <View style={{ width: '100%', gap: 12 }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -417,7 +466,7 @@ export const AppointmentSchedulerModal = ({
                         elevation: 4,
                       }}
                     >
-                      <Icon name="wand" size={24} color="white" style={{ marginRight: 12 }} />
+                      <Icon name="magic-staff" size={24} color="white" style={{ marginRight: 12 }} />
                       <Text
                         style={{
                           color: 'white',
@@ -458,8 +507,6 @@ export const AppointmentSchedulerModal = ({
                         Add Presigned Agreement
                       </Text>
                     </TouchableOpacity>
-
-                    {/* Removed Just Save Appointment per request as it is now handled by Continue/Yes */}
                   </View>
                 )}
               </View>

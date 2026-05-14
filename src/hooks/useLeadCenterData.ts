@@ -37,24 +37,50 @@ export const useLeadCenterData = (initialLead: any, user: any) => {
   });
 
   const refetch = useCallback(async () => {
-    if (!user?._id) return;
+    if (!user?._id || !lead?._id) return;
     try {
       setIsRefreshing(true);
-      const res = await LeadService.getSalesLeads(user._id);
-      const allLeads = res.data?.data?.leads || res.data?.data;
-      if (Array.isArray(allLeads)) {
-        const updated = allLeads.find((l: any) => l._id === initialLead?._id);
-        if (updated) setLead(updated);
+      // Fetch fresh data from the Sales Portal API as it contains the updated generatedReports
+      const repId = lead.assignedRepId || user._id;
+      const res = await LeadService.getSalesLeads(repId, { leadId: lead._id });
+      
+      const leadsList = res.data?.data?.leads || res.data?.leads || [];
+      const updated = leadsList.find((l: any) => l._id === lead._id || l.id === lead._id);
+
+      if (updated) {
+        setLead((prev: any) => ({
+          ...prev,
+          ...updated,
+          // Explicitly prioritize the reports from the Sales Portal response
+          generatedReports: updated.generatedReports || prev?.generatedReports || []
+        }));
+      } else {
+        // Fallback to workLead if sales-portal didn't find the specific lead
+        const workRes = await LeadService.workLead(lead._id, user._id);
+        const workData = workRes.data?.data || workRes.data;
+        if (workData) {
+          setLead((prev: any) => ({ ...prev, ...workData }));
+        }
       }
     } catch (err) {
       console.error('[LeadCenter] Refresh failed:', err);
     } finally {
       setIsRefreshing(false);
     }
-  }, [user?._id, initialLead?._id]);
+  }, [user?._id, lead?._id, lead?.assignedRepId]);
 
   useEffect(() => {
     if (!lead?._id) return;
+
+    // Only fetch outcome data if the lead has been resulted (Sale or Demo)
+    const result = String(lead?.result || lead?.status || '').toLowerCase();
+    const isResulted = result === 'demo' || result === 'sale';
+
+    if (!isResulted) {
+      setIsOutcomeLoading(false);
+      return;
+    }
+
     const fetchOutcomeData = async () => {
       try {
         setIsOutcomeLoading(true);
@@ -73,7 +99,7 @@ export const useLeadCenterData = (initialLead: any, user: any) => {
       }
     };
     fetchOutcomeData();
-  }, [lead?._id]);
+  }, [lead?._id, lead?.result, lead?.status]);
 
   const [sectionImages, setSectionImages] = useState<Record<string, any[]>>({});
 

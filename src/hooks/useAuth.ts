@@ -5,6 +5,8 @@ import { logout as logoutAction, setInitial } from '../redux/reducer/auth.reduce
 import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
+import { queryClient } from '../services/api/queryClient';
+
 
 export const useAuth = () => {
   const dispatch = useDispatch();
@@ -22,8 +24,8 @@ export const useAuth = () => {
       // 2. Disconnect the global socket before wiping auth state
       SocketManager.disconnect();
       // 3. Clear API cache (React Query)
-      const { queryClient } = require('../services/api/queryClient');
       if (queryClient) queryClient.clear();
+
       // 4. Wipe memory / Redux state
       dispatch(logoutAction());
     } catch (err) {
