@@ -48,6 +48,8 @@ interface Props {
   onDelete: (msgId: string) => void;
   imageUrls: Record<string, string>;
   isViewOnly?: boolean;
+  searchQuery?: string;
+  activeMatchId?: string | null;
 }
 
 export function ChatMessageBubble({
@@ -313,6 +315,27 @@ export function ChatMessageBubble({
 
   const renderReplyPreview = (replyTo: any) => {
     if (!replyTo) return null;
+    
+    // If replyTo is just a string (ID), we can't render the full preview
+    if (typeof replyTo === 'string') {
+      return (
+        <TouchableOpacity
+          onPress={() => onNavigateToMessage && onNavigateToMessage(replyTo)}
+          activeOpacity={0.7}
+          className="mb-2 px-3 py-2 rounded-lg border-l-4 overflow-hidden"
+          style={{
+            backgroundColor: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)',
+            borderLeftColor: colors.primary.main,
+            maxWidth: MAX_BUBBLE_WIDTH - 20,
+          }}
+        >
+          <Text className="text-[12px] opacity-70" style={{ color: isMe ? '#fff' : colors.text }}>
+            Replying to message...
+          </Text>
+        </TouchableOpacity>
+      );
+    }
+
     const author = replyTo.user?.name || replyTo.authorName || 'Member';
     const text = replyTo.text || replyTo.message || 'Media Message';
     return (

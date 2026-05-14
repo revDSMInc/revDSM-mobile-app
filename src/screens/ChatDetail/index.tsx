@@ -424,7 +424,13 @@ export default function ChatDetailScreen() {
           onPin={handlePin}
           onViewHistory={handleViewHistory}
           onNavigateToMessage={handleNavigateToMessage}
-          onDelete={(id: string) => ChatService.deleteMessage(id)}
+          onDelete={(id: string) => {
+            // Optimistic UI: remove immediately from local state
+            setMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
+            setPinnedMessages((prev: any[]) => prev.filter((m: any) => m._id?.toString() !== id?.toString()));
+            // Emit to server
+            ChatService.deleteMessage(id);
+          }}
           imageUrls={imageUrls}
           isViewOnly={isViewOnly}
           searchQuery={searchQuery}
@@ -432,7 +438,7 @@ export default function ChatDetailScreen() {
         />
       );
     },
-    [chatId, currentUserId, isChannel, imageUrls, isViewOnly]
+    [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex]
   );
 
   const renderInputToolbar = useCallback(
