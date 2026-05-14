@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,9 @@ import {
   Vibration,
   ActivityIndicator,
   Pressable,
+  ToastAndroid,
 } from 'react-native';
-import { Gesture } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -37,11 +38,13 @@ const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
 interface Props {
   bubbleProps: any;
   currentUserId: string;
+  participants?: any[];
   onReply: (msg: any) => void;
   onEdit: (msg: any) => void;
   onReact: (msg: any, emoji: string) => void;
   onPin: (msg: any) => void;
   onViewHistory: (msg: any) => void;
+  onNavigateToMessage?: (msg: any) => void;
   onDelete: (msgId: string) => void;
   imageUrls: Record<string, string>;
   isViewOnly?: boolean;
@@ -50,14 +53,18 @@ interface Props {
 export function ChatMessageBubble({
   bubbleProps,
   currentUserId,
+  participants = [],
   onReply,
   onEdit,
   onReact,
   onPin,
   onViewHistory,
+  onNavigateToMessage,
   onDelete,
   imageUrls,
   isViewOnly = false,
+  searchQuery,
+  activeMatchId,
 }: Props) {
   const { colors, isDark } = useTheme();
   const { currentMessage, previousMessage } = bubbleProps;
@@ -269,17 +276,49 @@ export function ChatMessageBubble({
   const handleCopy = () => {
     if (msg.text) {
       Clipboard.setString(msg.text);
-      Alert.alert('Copied', 'Message copied.');
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Message copied to clipboard', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Copied', 'Message copied to clipboard');
+      }
       setShowReactionBar(false);
     }
   };
+  // === Swipe to Reply Logic ===
+  const msgRef = useRef(msg);
+  msgRef.current = msg;
+  const triggerReply = useCallback(() => {
+    onReply(msgRef.current);
+  }, [onReply]);
+  const translateX = useSharedValue(0);
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-10, 10])
+    .onUpdate((e) => {
+      if (isMe) {
+        translateX.value = Math.max(-60, Math.min(0, e.translationX));
+      } else {
+        translateX.value = Math.min(60, Math.max(0, e.translationX));
+      }
+    })
+    .onEnd(() => {
+      if (Math.abs(translateX.value) > 40) {
+        runOnJS(triggerReply)();
+      }
+      translateX.value = withSpring(0);
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
   const renderReplyPreview = (replyTo: any) => {
     if (!replyTo) return null;
     const author = replyTo.user?.name || replyTo.authorName || 'Member';
     const text = replyTo.text || replyTo.message || 'Media Message';
     return (
-      <View
+      <TouchableOpacity
+        onPress={() => onNavigateToMessage && onNavigateToMessage(replyTo)}
+        activeOpacity={0.7}
         className="mb-2 px-3 py-2 rounded-lg border-l-4 overflow-hidden"
         style={{
           backgroundColor: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)',
@@ -301,7 +340,7 @@ export function ChatMessageBubble({
         >
           {text}
         </Text>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -372,14 +411,23 @@ export function ChatMessageBubble({
     if (reactions.length === 0) return null;
 
     const uniqueEmojis = Array.from(new Set(reactions.map((r: any) =>
-      typeof r === 'string' ? r : (r.emoji || r.reaction)
-    ).filter(Boolean)));
+      (typeof r === 'string' ? r : (r.emoji || r.reaction)) as string
+    ).filter(Boolean))) as string[];
 
-    const tabs = ['All', ...uniqueEmojis];
+    const tabs: string[] = ['All', ...uniqueEmojis];
 
-    const filteredReactions = reactions.filter((r: any) => {
-      const emoji = typeof r === 'string' ? r : (r.emoji || r.reaction);
-      return selectedEmojiTab === 'All' || emoji === selectedEmojiTab;
+    const allReactions = reactions.flatMap((emojiGroup: any) => {
+      const emoji = typeof emojiGroup === 'string' ? emojiGroup : (emojiGroup.emoji || emojiGroup.reaction);
+      const users = emojiGroup.users || [];
+      if (users.length > 0) {
+        return users.map((u: any) => ({ ...u, emoji }));
+      }
+      // Fallback for old/simple format
+      return [{ ...emojiGroup, emoji }];
+    });
+
+    const filteredReactions = allReactions.filter((r: any) => {
+      return selectedEmojiTab === 'All' || r.emoji === selectedEmojiTab;
     });
 
     return (
@@ -448,12 +496,15 @@ export function ChatMessageBubble({
                         backgroundColor: isActive ? (isDark ? '#2C2C2E' : '#F2F2F7') : 'transparent'
                       }}
                     >
-                      <Text style={{ fontSize: 18 }}>{tab === 'All' ? '🙌' : tab}</Text>
+                      {tab !== 'All' && <Text style={{ fontSize: 18 }}>{tab}</Text>}
                       <Text
-                        className="ml-2 text-sm font-bold"
-                        style={{ color: isActive ? colors.primary.main : colors.textSecondary }}
+                        className="text-sm font-bold"
+                        style={{
+                          color: isActive ? colors.primary.main : colors.textSecondary,
+                          marginLeft: tab === 'All' ? 0 : 8,
+                        }}
                       >
-                        {tab === 'All' ? 'All' : ''} {count}
+                        {tab === 'All' ? `All ${count}` : `${count}`}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -464,9 +515,11 @@ export function ChatMessageBubble({
             {/* User List */}
             <ScrollView className="px-6" showsVerticalScrollIndicator={false}>
               {filteredReactions.map((r: any, idx: number) => {
-                const userObj = r.user || { name: 'Member', firstName: 'Member', lastName: '' };
-                const emoji = typeof r === 'string' ? r : (r.emoji || r.reaction);
-                const avatar = getAvatarProps(userObj, false);
+                const reactorId = r.userId || r._id || r.id;
+                const isYou = reactorId && String(reactorId) === String(currentUserId);
+                const displayName = isYou ? 'You' : (r.fullName || r.name || `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Member');
+                const emoji = r.emoji;
+                const avatar = getAvatarProps({ ...r, name: displayName, _id: reactorId }, isYou);
                 return (
                   <View
                     key={idx}
@@ -482,7 +535,7 @@ export function ChatMessageBubble({
                       </View>
                       <View>
                         <Text className="font-bold text-[15px]" style={{ color: colors.text }}>
-                          {userObj.name || `${userObj.firstName || ''} ${userObj.lastName || ''}`.trim() || 'Team Member'}
+                          {displayName}
                         </Text>
                         <Text className="text-[11px] opacity-50" style={{ color: colors.text }}>
                           Reacted to this message
@@ -570,7 +623,9 @@ export function ChatMessageBubble({
               )}
             </View>
           )}
-          <TouchableOpacity
+          <GestureDetector gesture={panGesture}>
+            <Animated.View style={animatedStyle}>
+              <TouchableOpacity
             onLongPress={() => {
               Vibration.vibrate(50);
               setShowReactionBar(true);
@@ -590,8 +645,13 @@ export function ChatMessageBubble({
                       : '#FFFFFF',
                 borderLeftWidth: isPinned ? 6 : 0,
                 borderLeftColor: isPinned ? '#FBC02B' : 'transparent',
-                borderWidth: !isPinned && !isMe ? 1 : 0,
-                borderColor: '#919EAB33',
+                borderWidth: msg._id === activeMatchId ? 2.5 : (!isPinned && !isMe ? 1 : 0),
+                borderColor: msg._id === activeMatchId ? '#FFD700' : '#919EAB33',
+                shadowColor: msg._id === activeMatchId ? '#FFD700' : 'transparent',
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: msg._id === activeMatchId ? 0.8 : 0,
+                shadowRadius: 10,
+                elevation: msg._id === activeMatchId ? 8 : 0,
                 borderBottomRightRadius: isMe ? 2 : 18,
                 borderBottomLeftRadius: isMe ? 18 : 2,
                 padding: 2,
@@ -718,18 +778,19 @@ export function ChatMessageBubble({
               )}
 
               {msg.text && !isMsgVoice && (
-                <View className="px-3 py-2">
+                <View className="px-3 pt-1.5 pb-0">
                   <ChatMessageText
                     text={msg.text}
                     isMe={isMe}
                     colors={colors}
                     isPinned={isPinned}
+                    searchQuery={searchQuery}
                   />
                 </View>
               )}
 
               {/* Unified Bottom Timestamp */}
-              <View className="flex-row justify-end items-center px-2 pb-1.5 mt-0.5">
+              <View className="flex-row justify-end items-center px-2 pb-1 mt-0">
                 {msg.isEdited && (
                   <TouchableOpacity
                     onPress={() => isMe && setShowHistory(!showHistory)}
@@ -771,6 +832,8 @@ export function ChatMessageBubble({
             </View>
             {renderReactions()}
           </TouchableOpacity>
+            </Animated.View>
+          </GestureDetector>
         </View>
       </View>
 
@@ -940,7 +1003,7 @@ export function ChatMessageBubble({
                   </Text>
                   <Icon name="arrow-undo-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                 </TouchableOpacity>
-                {!!msg.text && (
+                {fileType === 'text' && !isMsgVoice && !!msg.text && (
                   <TouchableOpacity
                     onPress={handleCopy}
                     className="flex-row items-center justify-between px-5 py-3.5 border-b"
@@ -1009,24 +1072,36 @@ export function ChatMessageBubble({
                     <Icon name="time-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                   </TouchableOpacity>
                 )}
-                {isMe && !files.length && !isMsgVoice && (
+                {isMe && (
                   <>
-                    <TouchableOpacity
-                      onPress={() => {
-                        onEdit(msg);
-                        setShowReactionBar(false);
-                      }}
-                      className="flex-row items-center justify-between px-5 py-3.5 border-b"
-                      style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
-                    >
-                      <Text
-                        className="font-semibold text-[15px]"
-                        style={{ color: isDark ? '#fff' : '#000' }}
-                      >
-                        Edit
-                      </Text>
-                      <Icon name="create-outline" size={20} color={isDark ? '#aaa' : '#555'} />
-                    </TouchableOpacity>
+                    {(() => {
+                      const now = new Date();
+                      const created = new Date(msg.createdAt);
+                      const diffInMinutes = (now.getTime() - created.getTime()) / (1000 * 60);
+                      const isUnder15Mins = diffInMinutes <= 15;
+
+                      if (fileType === 'text' && !isMsgVoice && isUnder15Mins) {
+                        return (
+                          <TouchableOpacity
+                            onPress={() => {
+                              onEdit(msg);
+                              setShowReactionBar(false);
+                            }}
+                            className="flex-row items-center justify-between px-5 py-3.5 border-b"
+                            style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                          >
+                            <Text
+                              className="font-semibold text-[15px]"
+                              style={{ color: isDark ? '#fff' : '#000' }}
+                            >
+                              Edit
+                            </Text>
+                            <Icon name="create-outline" size={20} color={isDark ? '#aaa' : '#555'} />
+                          </TouchableOpacity>
+                        );
+                      }
+                      return null;
+                    })()}
                     <TouchableOpacity
                       onPress={() => {
                         Alert.alert(

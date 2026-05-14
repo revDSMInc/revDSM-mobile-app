@@ -6,23 +6,44 @@ export const ChatMessageText = ({
   isMe,
   colors,
   isPinned,
+  searchQuery,
 }: {
   text: string;
   isMe: boolean;
   colors: any;
   isPinned: boolean;
+  searchQuery?: string;
 }) => {
   if (!text) return null;
-  const parts = text.split(/(@\w+(?:\s\w+)?)/g);
+
+  const renderHighlightedText = (content: string, keyPrefix: string) => {
+    if (!searchQuery?.trim()) return content;
+
+    const regex = new RegExp(`(${searchQuery})`, 'gi');
+    const parts = content.split(regex);
+
+    return parts.map((part, j) => {
+      if (part.toLowerCase() === searchQuery.toLowerCase()) {
+        return (
+          <Text key={`${keyPrefix}-${j}`} style={{ backgroundColor: '#FFD700', color: '#000' }}>
+            {part}
+          </Text>
+        );
+      }
+      return part;
+    });
+  };
+
+  const mentionParts = text.split(/(@\w+(?:\s\w+)?)/g);
   return (
     <Text
       style={{
         color: isPinned ? '#000' : isMe ? '#fff' : colors.text,
-        fontSize: 14.5,
-        lineHeight: 21,
+        fontSize: 13,
+        lineHeight: 15,
       }}
     >
-      {parts.map((part, i) => {
+      {mentionParts.map((part, i) => {
         if (part.startsWith('@')) {
           const mentionStyle = isMe
             ? { color: '#FFFFFF', backgroundColor: 'rgba(255,255,255,0.2)' }
@@ -30,11 +51,11 @@ export const ChatMessageText = ({
 
           return (
             <Text key={i} className="px-1 rounded font-bold" style={mentionStyle}>
-              {part}
+              {renderHighlightedText(part, `m-${i}`)}
             </Text>
           );
         }
-        return part;
+        return renderHighlightedText(part, `t-${i}`);
       })}
     </Text>
   );

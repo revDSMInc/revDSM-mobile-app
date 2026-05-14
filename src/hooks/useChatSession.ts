@@ -214,7 +214,7 @@ export const useChatSession = (
               (msgFiles.length === normFiles.length &&
                 Math.abs(
                   new Date(normalized.createdAt as any).getTime() -
-                    new Date(msg.createdAt as any).getTime()
+                  new Date(msg.createdAt as any).getTime()
                 ) < 60_000));
 
           if (isPending) {
@@ -246,10 +246,10 @@ export const useChatSession = (
         // If it's from "Me" but we didn't find an optimistic message, check ID mismatch
         const isFromMe = String(normalized.user?._id) === String(currentUserId);
         if (!isFromMe && normalized.text && prev.some(m => m.text === normalized.text && (!m.sent || m._id.toString().startsWith('temp_')))) {
-           console.warn('[Socket] Possible duplicate detected but matching failed. ID mismatch?', {
-             serverUserId: normalized.user?._id,
-             localUserId: currentUserId
-           });
+          console.warn('[Socket] Possible duplicate detected but matching failed. ID mismatch?', {
+            serverUserId: normalized.user?._id,
+            localUserId: currentUserId
+          });
         }
 
         return [normalized, ...prev];

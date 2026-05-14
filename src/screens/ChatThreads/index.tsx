@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { format } from 'date-fns';
 import {
   View,
   Text,
@@ -60,7 +61,13 @@ export default function ChatThreadsScreen({ navigation }: any) {
           navigation.navigate('ChatDetail', {
             leadId: item.leadDetails?._id,
             chatId: item._id || item.id,
-            customerName: `${item.leadDetails?.customerDetails?.firstName} ${item.leadDetails?.customerDetails?.lastName}`,
+            customerName: (() => {
+              const isSale = item.leadDetails?.status === 'sale';
+              const dateStr = item.leadDetails?.leadDate ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy') : '';
+              return `${item.leadDetails?.office || ''} ${
+                isSale ? item.leadDetails?.leadId : `Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`
+              }`.trim() || 'Discussion';
+            })(),
             chatType: 'lead',
           })
         }
