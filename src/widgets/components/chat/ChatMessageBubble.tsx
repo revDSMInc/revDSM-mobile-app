@@ -47,10 +47,11 @@ interface Props {
   onNavigateToMessage?: (msg: any) => void;
   onDelete: (msgId: string) => void;
   imageUrls: Record<string, string>;
-  isViewOnly?: boolean;
-  searchQuery?: string;
-  activeMatchId?: string | null;
-}
+   isViewOnly?: boolean;
+   searchQuery?: string;
+   activeMatchId?: string | null;
+   onLayout?: (event: any) => void;
+ }
 
 export function ChatMessageBubble({
   bubbleProps,
@@ -61,17 +62,18 @@ export function ChatMessageBubble({
   onReact,
   onPin,
   onViewHistory,
-  onNavigateToMessage,
-  onDelete,
-  imageUrls,
-  isViewOnly = false,
-  searchQuery,
-  activeMatchId,
-}: Props) {
-  const { colors, isDark } = useTheme();
-  const { currentMessage, previousMessage } = bubbleProps;
-  const msg = currentMessage as any;
-  const position = bubbleProps.position || (String(msg.user?._id) === String(currentUserId) ? 'right' : 'left');
+   onNavigateToMessage,
+   onDelete,
+   onLayout,
+   imageUrls,
+   isViewOnly = false,
+   searchQuery,
+   activeMatchId,
+ }: Props) {
+   const { colors, isDark } = useTheme();
+   const { currentMessage, previousMessage } = bubbleProps;
+   const msg = currentMessage as any;
+   const position = bubbleProps.position || (String(msg.user?._id) === String(currentUserId) ? 'right' : 'left');
   const isMe = position === 'right';
   const isPinned = msg.isPinned || false;
 
@@ -158,6 +160,15 @@ export function ChatMessageBubble({
   const [localFilePath, setLocalFilePath] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [imageAspectRatio, setImageAspectRatio] = useState(1);
+
+  useEffect(() => {
+    if (fileType === 'image' && mediaUri) {
+      Image.getSize(mediaUri, (w, h) => {
+        if (w && h) setImageAspectRatio(w / h);
+      }, () => {});
+    }
+  }, [mediaUri, fileType]);
 
   useEffect(() => {
     const checkFile = async () => {
@@ -315,7 +326,7 @@ export function ChatMessageBubble({
 
   const renderReplyPreview = (replyTo: any) => {
     if (!replyTo) return null;
-    
+
     // If replyTo is just a string (ID), we can't render the full preview
     if (typeof replyTo === 'string') {
       return (
@@ -337,7 +348,35 @@ export function ChatMessageBubble({
     }
 
     const author = replyTo.user?.name || replyTo.authorName || 'Member';
-    const text = replyTo.text || replyTo.message || 'Media Message';
+    const text = replyTo.text || replyTo.message || '';
+
+    const replyFiles = replyTo.files || [];
+    const replyPrimaryFile = replyFiles[0];
+    const replyFileType = getFileType(replyPrimaryFile);
+    const isReplyVoice = !!(
+      replyTo.audio ||
+      replyTo.voice ||
+      replyTo.isVoiceNote ||
+      replyFileType === 'audio'
+    );
+
+    let replyIcon = null;
+    let replyLabel = text;
+
+    if (isReplyVoice) {
+      replyIcon = 'mic';
+      replyLabel = `Voice Message ${replyTo.duration ? `(${replyTo.duration})` : ''}`;
+    } else if (replyFileType === 'image' || replyTo.image) {
+      replyIcon = 'image';
+      replyLabel = text || 'Photo';
+    } else if (replyFileType === 'video' || replyTo.video) {
+      replyIcon = 'videocam';
+      replyLabel = text || 'Video';
+    } else if (replyPrimaryFile || ['file', 'pdf', 'doc'].includes(replyFileType)) {
+      replyIcon = 'document';
+      replyLabel = text || replyPrimaryFile?.name || 'Document';
+    }
+
     return (
       <TouchableOpacity
         onPress={() => onNavigateToMessage && onNavigateToMessage(replyTo)}
@@ -356,13 +395,24 @@ export function ChatMessageBubble({
         >
           {author}
         </Text>
-        <Text
-          className="text-[12px] opacity-70"
-          style={{ color: isMe ? '#fff' : colors.text }}
-          numberOfLines={2}
-        >
-          {text}
-        </Text>
+        <View className="flex-row items-center">
+          {replyIcon && (
+            <Icon
+              name={replyIcon}
+              size={12}
+              color={isMe ? '#fff' : colors.text}
+              style={{ marginRight: 4, opacity: 0.7 }}
+            />
+          )}
+          <Text
+            className="text-[12px] opacity-70"
+            style={{ color: isMe ? '#fff' : colors.text, flex: 1 }}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {replyLabel}
+          </Text>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -588,9 +638,9 @@ export function ChatMessageBubble({
     </View>
   );
 
-  return (
-    <View style={{ zIndex: showReactionBar || showFullEmojiPicker ? 9999 : 1 }}>
-      <MediaViewerModal
+   return (
+     <View onLayout={onLayout} style={{ zIndex: showReactionBar || showFullEmojiPicker ? 9999 : 1 }}>
+       <MediaViewerModal
         isVisible={viewerVisible}
         onClose={() => setViewerVisible(false)}
         mediaUri={viewerUri}
@@ -603,6 +653,9 @@ export function ChatMessageBubble({
           marginHorizontal: 16,
           marginVertical: 6,
           maxWidth: MAX_BUBBLE_WIDTH,
+          paddingHorizontal: 2,
+          paddingLeft: !isMe ? 2 : 2,
+          overflow: 'visible',
         }}
       >
         {!isMe && !isSameUser(currentMessage, previousMessage) && (
@@ -647,7 +700,7 @@ export function ChatMessageBubble({
             </View>
           )}
           <GestureDetector gesture={panGesture}>
-            <Animated.View style={animatedStyle}>
+            <Animated.View style={[animatedStyle, { padding: 4, overflow: 'visible' }]}>
               <TouchableOpacity
             onLongPress={() => {
               Vibration.vibrate(50);
@@ -678,6 +731,9 @@ export function ChatMessageBubble({
                 borderBottomRightRadius: isMe ? 2 : 18,
                 borderBottomLeftRadius: isMe ? 18 : 2,
                 padding: 2,
+                margin: 2,
+                marginHorizontal: !isMe ? 2 : 2,
+                overflow: 'visible',
               }}
             >
               {isPinned && (
@@ -731,8 +787,9 @@ export function ChatMessageBubble({
                     style={{ 
                       borderRadius: 12, 
                       overflow: 'hidden',
-                      width: SCREEN_WIDTH * 0.6,
-                      height: SCREEN_WIDTH * 0.6,
+                      width: SCREEN_WIDTH * 0.65,
+                      aspectRatio: imageAspectRatio > 0 ? imageAspectRatio : 1,
+                      maxHeight: SCREEN_WIDTH * 1.2,
                       backgroundColor: isDark ? '#1B2B34' : '#F2F2F7',
                     }}
                   >
@@ -740,7 +797,7 @@ export function ChatMessageBubble({
                       <Image
                         source={{ uri: mediaUri }}
                         style={{ width: '100%', height: '100%' }}
-                        resizeMode="cover"
+                        resizeMode="contain"
                       />
                     ) : (
                       <View className="flex-1 items-center justify-center">

@@ -16,7 +16,9 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 
 export const ChatHeader = ({
   customerName,
+  description,
   isChannel,
+  isViewOnly,
   colors,
   isDark,
   isSearching,
@@ -70,13 +72,19 @@ export const ChatHeader = ({
           )}
           <View className="flex-1">
             <Text
-              className="text-base font-bold pb-1"
+              className="text-base font-bold"
               style={{ color: '#1C252E' }}
               numberOfLines={1}
             >
               {customerName || (isChannel ? 'Announcements' : 'Lead Conversation')}
             </Text>
-
+            {isChannel && (
+              <Text className="text-[11px] font-medium" style={{ color: '#637381' }}>
+                {customerName?.toLowerCase().includes('announcement')
+                  ? 'Management Announcements (View only)'
+                  : description || 'Team Communication Channel'}
+              </Text>
+            )}
           </View>
         </View>
 

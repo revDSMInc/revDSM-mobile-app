@@ -28,7 +28,9 @@ export const useChatSession = (
   const [isConnected, setIsConnected] = useState(SocketManager.isConnected());
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const [hasMore, setHasMore] = useState(true);
-  const [limit, setLimit] = useState(30);
+  const [limit, setLimit] = useState(100);
+  const [typingUsers, setTypingUsers] = useState<any[]>([]);
+  const typingTimers = useRef<Map<string, any>>(new Map());
 
   const currentUserId = user?._id || user?.id || 'ghost';
 
@@ -62,9 +64,9 @@ export const useChatSession = (
       const raw = await ChatService.getMessages(id, lim);
       setHasMore(raw.length >= lim);
       const normalized = raw.map((m) => ChatService.normalizeMessage(m)).sort((a, b) => {
-        const dA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
-        const dB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
-        return dB.getTime() - dA.getTime();
+        const dA = new Date(a.createdAt).getTime();
+        const dB = new Date(b.createdAt).getTime();
+        return dB - dA;
       });
       setMessages(normalized);
       fetchSecureUrls(normalized);
@@ -105,6 +107,17 @@ export const useChatSession = (
     init();
   }, [chatId, leadId, isChannel, limit, loadMessages]);
 
+  // Mark messages read when they are loaded
+  useEffect(() => {
+    if (messages.length > 0 && chatId) {
+      if (isChannel) {
+        SocketManager.emit('mark-channel-as-read', { channelId: chatId, userId: currentUserId });
+      } else {
+        SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
+      }
+    }
+  }, [messages.length, chatId, isChannel, currentUserId]);
+
   // ─── Room join/leave + socket event subscriptions ───────────────────────────
   useEffect(() => {
     if (!chatId) return;
@@ -113,33 +126,32 @@ export const useChatSession = (
     const joinEvent = isChannel ? 'join-team-channel' : 'join-chat';
     SocketManager.joinRoom(chatId, joinEvent, currentUserId);
 
-    // Auto-mark ALL currently loaded messages as read the instant user enters the chat
-    setMessages((prev) => {
-      const allIds = prev.map((m: any) => m._id?.toString()).filter(Boolean);
-      if (allIds.length > 0) {
-        if (isChannel) {
-          SocketManager.emit('mark-channel-as-read', {
-            channelId: chatId,
-            userId: currentUserId,
-          });
-          SocketManager.emit('mark-channel-message-seen', {
-            channelId: chatId,
-            messageIds: allIds,
-            userId: currentUserId,
-          });
-        } else {
-          SocketManager.emit('mark-message-seen', { chatId, messageIds: allIds });
-          SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
-        }
-      }
-      return prev; // no mutation — purely a side-effect read
-    });
-
     // Request pinned messages immediately after joining to sync state
     SocketManager.emit(isChannel ? 'get-channel-pinned-messages' : 'get-pinned-messages', {
       chatId,
       channelId: chatId,
     });
+
+    // ── Mark as Read ─────────────────────────────────────────────────────────
+    const markAllRead = (msgs: any[]) => {
+      const allIds = msgs.map((m: any) => m._id?.toString()).filter(Boolean);
+      if (allIds.length === 0) return;
+      
+      if (isChannel) {
+        SocketManager.emit('mark-channel-as-read', { channelId: chatId, userId: currentUserId });
+        SocketManager.emit('mark-channel-message-seen', {
+          channelId: chatId,
+          messageIds: allIds,
+          userId: currentUserId,
+        });
+      } else {
+        SocketManager.emit('mark-message-seen', { chatId, messageIds: allIds });
+        SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
+      }
+    };
+
+    // Mark current messages as read
+    markAllRead(messages);
 
     // Track socket connection state
     const onConnect = () => setIsConnected(true);
@@ -345,6 +357,30 @@ export const useChatSession = (
       setPinnedMessages(normalized);
     });
 
+    // ── Typing ───────────────────────────────────────────────────────────────
+    const handleTyping = (data: any) => {
+      if (data.userId === currentUserId) return;
+      if (data.isTyping) {
+        setTypingUsers((prev) =>
+          prev.find((u) => u.id === data.userId)
+            ? prev
+            : [...prev, { id: data.userId, name: data.userName || 'User' }]
+        );
+        if (typingTimers.current.has(data.userId)) {
+          clearTimeout(typingTimers.current.get(data.userId));
+        }
+        typingTimers.current.set(
+          data.userId,
+          setTimeout(() => setTypingUsers((p) => p.filter((u) => u.id !== data.userId)), 3000)
+        );
+      } else {
+        setTypingUsers((prev) => prev.filter((u) => u.id !== data.userId));
+      }
+    };
+
+    const unsubTyping = SocketManager.on('user-typing', handleTyping);
+    const unsubChanTyping = SocketManager.on('channel-typing', handleTyping);
+
     return () => {
       // Leave the room but DO NOT disconnect the global socket
       SocketManager.leaveRoom(chatId);
@@ -361,6 +397,9 @@ export const useChatSession = (
       unsubPinned();
       unsubUnpinned();
       unsubPinnedResponse();
+      unsubTyping();
+      unsubChanTyping();
+      typingTimers.current.forEach(clearTimeout);
     };
   }, [chatId, isChannel, currentUserId]);
 
@@ -377,5 +416,6 @@ export const useChatSession = (
     imageUrls,
     hasMore,
     setLimit,
+    typingUsers,
   };
 };

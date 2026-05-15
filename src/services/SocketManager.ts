@@ -30,7 +30,7 @@ class SocketManager {
   private joinedRooms: Map<string, RoomEvent> = new Map();
 
   // Pending queue: emits that arrived while socket was reconnecting
-  private pendingQueue: Array<{ event: string; payload: any }> = [];
+  private pendingQueue: Array<{ event: string; payload?: any }> = [];
 
   // AppState subscription
   private appStateSub: any = null;
@@ -147,7 +147,7 @@ class SocketManager {
   // ─── Event emitters ────────────────────────────────────────────────────────
 
   /** Emit an event. Queues if temporarily disconnected (e.g., brief network blip). */
-  emit(event: string, payload: any): void {
+  emit(event: string, payload?: any): void {
     if (this.socket?.connected) {
       this.socket.emit(event, payload);
     } else {

@@ -79,6 +79,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
           navigation.navigate('ChatDetail', {
             chatId: item._id || item.id,
             customerName: item.title || item.name,
+            description: item.channelConfig?.description,
             chatType: 'channel',
           })
         }
