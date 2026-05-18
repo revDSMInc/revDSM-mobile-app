@@ -77,10 +77,13 @@ export const useChatLogic = (
   } = useVoiceNote();
 
   const handleComposerChange = (text: string) => {
+    console.log('[Mentions Debug] Input changed. Text:', JSON.stringify(text));
     setComposerText(text);
     composerTextRef.current = text;
     const lastWord = text.split(/\s/).pop() || '';
-    setShowMentions(lastWord.startsWith('@'));
+    const startsWithAt = lastWord.startsWith('@');
+    console.log('[Mentions Debug] Last word:', JSON.stringify(lastWord), 'Starts with @:', startsWithAt);
+    setShowMentions(startsWithAt);
     if (chatId) ChatService.emitTyping(chatId, text.length > 0);
   };
 

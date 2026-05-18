@@ -207,7 +207,8 @@ export function VoiceNotePlayer({
           : isMe
           ? 'rgba(255,255,255,0.1)'
           : 'rgba(0,0,0,0.05)',
-        width: maxBubbleWidth,
+        width: 240,
+        maxWidth: '100%',
       }}
     >
       <View style={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}>
