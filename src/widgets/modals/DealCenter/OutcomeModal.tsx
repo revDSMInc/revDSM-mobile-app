@@ -9,11 +9,14 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { demoReasons } from '../../components/dealcenter/ResultViews';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
+import { CustomDatePicker } from '../../../screens/JobTracker/components/CustomDatePicker';
+import { format, parseISO } from 'date-fns';
 import RNFlashMessage from 'react-native-flash-message';
 import { useRef } from 'react';
 
@@ -64,6 +67,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 }) => {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const flashRef = useRef<any>(null);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -99,15 +103,16 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     isExpanded: boolean = false,
     textTransform?: 'capitalize' | 'none',
     zIndex: number = 0,
-    disabled: boolean = false
+    disabled: boolean = false,
+    isError: boolean = false
   ) => (
     <View className="mb-5 relative" style={{ zIndex }}>
       <View className="absolute -top-2 left-3 z-10 px-1 bg-white">
-        <Text className="text-[10px] font-semibold text-black  tracking-[0.5px]">{label}</Text>
+        <Text className={`text-[10px] font-semibold ${isError ? 'text-[#EF4444]' : 'text-black'}  tracking-[0.5px]`}>{label}</Text>
       </View>
       <TouchableOpacity
         className={`flex-row items-center border rounded-lg px-[14px] py-3 min-h-[48px] ${
-          isExpanded ? 'border-[#1C252E]' : 'border-[#919EAB33]'
+          isError ? 'border-[#EF4444]' : isExpanded ? 'border-[#1C252E]' : 'border-[#919EAB33]'
         } ${disabled ? 'bg-[#F4F6F8]' : 'bg-white'}`}
         onPress={disabled ? undefined : onPress}
         activeOpacity={disabled ? 1 : 0.7}
@@ -629,6 +634,47 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         )}
                       </View>
                     </View>
+ 
+                    {/* Install Date scheduling */}
+                    <View className="mb-4">
+                      <View className="flex-row items-center justify-between mb-3 px-1">
+                        <Text className="text-[13px] font-bold text-[#1C252E]">
+                          Schedule Installation {!outcomeForm.toBeDetermined && !outcomeForm.installDate && (
+                            <Text className="text-[#EF4444]">*</Text>
+                          )}
+                        </Text>
+                        <View className="flex-row items-center">
+                          <Switch
+                            value={outcomeForm.toBeDetermined}
+                            onValueChange={(v) =>
+                              setOutcomeForm({
+                                ...outcomeForm,
+                                toBeDetermined: v,
+                                installDate: v ? null : outcomeForm.installDate,
+                              })
+                            }
+                            trackColor={{ true: colors.primary.main, false: '#F4F6F8' }}
+                            thumbColor="#fff"
+                            style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                          />
+                          <Text className="text-[11px] font-bold ml-1 text-[#637381]">TBD</Text>
+                        </View>
+                      </View>
+ 
+                      {renderField(
+                        'Install Date',
+                        outcomeForm.installDate
+                          ? format(parseISO(outcomeForm.installDate), 'MM/dd/yyyy')
+                          : '',
+                        () => setShowDatePicker(true),
+                        'calendar-outline',
+                        false,
+                        'none',
+                        55,
+                        outcomeForm.toBeDetermined,
+                        !outcomeForm.toBeDetermined && !outcomeForm.installDate // isError
+                      )}
+                    </View>
                   </>
                 )}
 
@@ -801,11 +847,14 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                 onPress={handleFinishOutcome}
                 disabled={
                   !outcomeStatus || 
-                  (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim())))
+                  (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim()))) ||
+                  (outcomeStatus === 'sale' && !outcomeForm.toBeDetermined && !outcomeForm.installDate)
                 }
                 className="h-12 rounded-xl items-center justify-center"
                 style={{
-                  backgroundColor: !outcomeStatus || (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim()))) 
+                  backgroundColor: !outcomeStatus || 
+                    (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim()))) ||
+                    (outcomeStatus === 'sale' && !outcomeForm.toBeDetermined && !outcomeForm.installDate)
                     ? '#919EAB' 
                     : colors.primary.main,
                   opacity: loading ? 0.7 : 1,
@@ -815,7 +864,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                   <ActivityIndicator color="white" />
                 ) : (
                   <Text className="text-white font-bold text-sm tracking-[0.5px]">
-                    {outcomeStatus === 'sale' ? (isJobBuilderSubmitted ? 'Finish Outcome' : 'Build Job') : 'Finish Outcome'}
+                    {outcomeStatus === 'sale' ? (isJobBuilderSubmitted ? 'Build Job' : 'Build Job') : 'Build Job'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -856,11 +905,19 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                   </Text>
                 </View>
               </View>
-              <Text className="absolute bottom-12 text-[#919EAB] text-[10px] font-black  tracking-[2px]">
-                Almost there • revDSM Mobile
-              </Text>
+              {/* ... (loading text) */}
             </View>
           )}
+
+          <CustomDatePicker
+            visible={showDatePicker}
+            onClose={() => setShowDatePicker(false)}
+            onSelect={(date) => {
+              setOutcomeForm({ ...outcomeForm, installDate: date });
+              setShowDatePicker(false);
+            }}
+            initialDate={outcomeForm.installDate || undefined}
+          />
         </View>
       </KeyboardAvoidingView>
     </Modal>

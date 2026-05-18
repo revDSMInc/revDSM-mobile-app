@@ -120,24 +120,24 @@ export const PinnedMessagesArea = ({
   );
 };
 
-export const ParticipantsModal = ({ visible, onClose, chatId, isChannel }: any) => {
+export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel }: any) => {
   const { colors, isDark } = useTheme();
   const [participants, setParticipants] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (visible && chatId) {
+    if (visible && (chatId || leadId)) {
       setLoading(true);
       const fetchAction = isChannel
         ? ChatService.getChannelParticipants(chatId)
-        : ChatService.getLeadParticipants(chatId);
+        : ChatService.getLeadParticipants(chatId, leadId);
 
       fetchAction
         .then((res: any) => setParticipants(res || []))
         .catch((err: any) => console.error('Fetch participants error:', err))
         .finally(() => setLoading(false));
     }
-  }, [visible, chatId, isChannel]);
+  }, [visible, chatId, leadId, isChannel]);
 
   const getInitials = (u: any) => {
     return `${(u.firstName || u.name || '?')[0]}${(u.lastName || '')[0] || ''}`.toUpperCase();

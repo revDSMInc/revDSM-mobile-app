@@ -49,6 +49,8 @@ export default function JobTrackerPage() {
   const [menuPosition, setMenuPosition] = useState(0);
   const [showStatusUpdateModal, setShowStatusUpdateModal] = useState(false);
 
+  const [jobToUpdateStatus, setJobToUpdateStatus] = useState<JobEntry | null>(null);
+
   const getStatusColors = (status?: string) => {
     switch (status?.toLowerCase()) {
       case 'paid':
@@ -99,7 +101,32 @@ export default function JobTrackerPage() {
     }
     return null;
   };
-  const [jobToUpdateStatus, setJobToUpdateStatus] = useState<JobEntry | null>(null);
+
+  const formatPaymentMethod = (paymentMethod: string) => {
+    if (!paymentMethod) return 'N/A';
+    
+    // Basic Options
+    const basic: Record<string, string> = {
+      check: 'Check (0% Fee)',
+      mcVisaDscvr: 'MC/VISA/DSCVR (3.00% Fee)',
+      amex: 'AMEX (5.00% Fee)',
+    };
+    if (basic[paymentMethod]) return basic[paymentMethod];
+
+    if (paymentMethod === 'concora') return 'Concora (19.9% APR)';
+
+    // Financing Plans
+    let planName = '';
+    if (paymentMethod.startsWith('greensky')) planName = 'GreenSky';
+    else if (paymentMethod.startsWith('wf')) planName = 'Wells Fargo';
+
+    const numberMatch = paymentMethod.match(/\d+/);
+    if (numberMatch && planName) {
+      return `${planName} ${numberMatch[0]}`;
+    }
+
+    return paymentMethod;
+  };
 
   const {
     monthlyStats,
@@ -380,7 +407,7 @@ export default function JobTrackerPage() {
             <View className="flex-row justify-end mb-6">
               <TouchableOpacity
                 onPress={() => {
-                  setEditingJob(null);
+                  setEditingJob({ isManual: true } as any);
                   setModalVisible(true);
                 }}
                 className="flex-row items-center px-3 py-1.5 rounded-lg"
@@ -391,151 +418,165 @@ export default function JobTrackerPage() {
               </TouchableOpacity>
             </View>
 
-            <View className="gap-4">
-              <TouchableOpacity
-                onPress={() => {
-                  setDatePickerTarget('sold');
-                  setShowDatePicker(true);
-                }}
-                className="flex-row items-center justify-between"
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 8,
-                }}
-              >
-                <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-text-secondary">Date Sold</Text>
-                  <Text
-                    className={`text-sm font-medium ${
-                      soldDateFilter ? 'text-text-primary' : 'text-text-secondary'
-                    }`}
-                  >
-                    {soldDateFilter ? format(parseISO(soldDateFilter), 'MM/dd/yyyy') : 'MM/DD/YYYY'}
-                  </Text>
-                </View>
-                {soldDateFilter ? (
-                  <TouchableOpacity onPress={() => setSoldDateFilter('')}>
-                    <Feather name="x" size={14} color="#FF4842" />
-                  </TouchableOpacity>
-                ) : (
-                  <Feather name="calendar" size={16} color={colors.textSecondary} />
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => {
-                  setDatePickerTarget('payout');
-                  setShowDatePicker(true);
-                }}
-                className="flex-row items-center justify-between"
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 8,
-                }}
-              >
-                <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-text-secondary">
-                    Expected Payout Date
-                  </Text>
-                  <Text
-                    className={`text-sm font-medium ${
-                      payoutDateFilter ? 'text-text-primary' : 'text-text-secondary'
-                    }`}
-                  >
-                    {payoutDateFilter
-                      ? format(parseISO(payoutDateFilter), 'MM/dd/yyyy')
-                      : 'MM/DD/YYYY'}
-                  </Text>
-                </View>
-                {payoutDateFilter ? (
-                  <TouchableOpacity onPress={() => setPayoutDateFilter('')}>
-                    <Feather name="x" size={14} color="#FF4842" />
-                  </TouchableOpacity>
-                ) : (
-                  <Feather name="calendar" size={16} color={colors.textSecondary} />
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setShowStatusFilterPicker(true)}
-                className="flex-row items-center justify-between"
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 8,
-                }}
-              >
-                <Text
-                  className="text-sm font-medium"
+            <View className="gap-3 mb-6">
+              <View className="flex-row items-center gap-3">
+                <TouchableOpacity
+                  onPress={() => {
+                    setDatePickerTarget('sold');
+                    setShowDatePicker(true);
+                  }}
+                  className="flex-row items-center justify-between flex-1"
                   style={{
-                    color: statusFilter ? colors.text : colors.textSecondary,
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 12,
                   }}
                 >
-                  {statusFilter
-                    ? statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)
-                    : 'Status'}
-                </Text>
-                {statusFilter ? (
-                  <TouchableOpacity onPress={() => setStatusFilter('')}>
-                    <Feather name="x" size={14} color="#FF4842" />
-                  </TouchableOpacity>
-                ) : (
-                  <Feather name="chevron-down" size={20} color={colors.textSecondary} />
-                )}
-              </TouchableOpacity>
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-bold text-text-secondary">Date Sold</Text>
+                    <Text
+                      className={`text-sm font-medium ${
+                        soldDateFilter ? 'text-text-primary' : 'text-text-secondary'
+                      }`}
+                    >
+                      {soldDateFilter
+                        ? format(parseISO(soldDateFilter), 'MM/dd/yyyy')
+                        : 'MM/DD/YYYY'}
+                    </Text>
+                  </View>
+                  {soldDateFilter ? (
+                    <TouchableOpacity onPress={() => setSoldDateFilter('')}>
+                      <Feather name="x" size={14} color="#FF4842" />
+                    </TouchableOpacity>
+                  ) : (
+                    <Feather name="calendar" size={16} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={() => setShowPaymentPicker(true)}
-                className="flex-row items-center justify-between"
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 8,
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  className="text-sm font-medium flex-1 mr-2"
+                <TouchableOpacity
+                  onPress={() => {
+                    setDatePickerTarget('payout');
+                    setShowDatePicker(true);
+                  }}
+                  className="flex-row items-center justify-between flex-1"
                   style={{
-                    color: paymentMethodFilter ? colors.text : colors.textSecondary,
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 12,
                   }}
                 >
-                  {paymentMethodFilter
-                    ? paymentPlans[paymentMethodFilter]?.label || paymentMethodFilter
-                    : 'Payment Method'}
-                </Text>
-                {paymentMethodFilter ? (
-                  <TouchableOpacity onPress={() => setPaymentMethodFilter('')}>
-                    <Feather name="x" size={14} color="#FF4842" />
-                  </TouchableOpacity>
-                ) : (
-                  <Feather name="chevron-down" size={20} color="#637381" />
-                )}
-              </TouchableOpacity>
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-bold text-text-secondary">
+                      Expected Payout Date
+                    </Text>
+                    <Text
+                      className={`text-sm font-medium ${
+                        payoutDateFilter ? 'text-text-primary' : 'text-text-secondary'
+                      }`}
+                    >
+                      {payoutDateFilter
+                        ? format(parseISO(payoutDateFilter), 'MM/dd/yyyy')
+                        : 'MM/DD/YYYY'}
+                    </Text>
+                  </View>
+                  {payoutDateFilter ? (
+                    <TouchableOpacity onPress={() => setPayoutDateFilter('')}>
+                      <Feather name="x" size={14} color="#FF4842" />
+                    </TouchableOpacity>
+                  ) : (
+                    <Feather name="calendar" size={16} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-row items-center gap-3">
+                <TouchableOpacity
+                  onPress={() => setShowStatusFilterPicker(true)}
+                  className="flex-row items-center justify-between flex-1"
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 12,
+                  }}
+                >
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-bold text-text-secondary">Status</Text>
+                    <Text
+                      className="text-sm font-medium"
+                      style={{
+                        color: statusFilter ? colors.text : colors.textSecondary,
+                      }}
+                    >
+                      {statusFilter
+                        ? statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)
+                        : 'Select Status'}
+                    </Text>
+                  </View>
+                  {statusFilter ? (
+                    <TouchableOpacity onPress={() => setStatusFilter('')}>
+                      <Feather name="x" size={14} color="#FF4842" />
+                    </TouchableOpacity>
+                  ) : (
+                    <Feather name="chevron-down" size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setShowPaymentPicker(true)}
+                  className="flex-row items-center justify-between flex-1"
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 12,
+                  }}
+                >
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-bold text-text-secondary">Payment</Text>
+                    <Text
+                      numberOfLines={1}
+                      className="text-sm font-medium"
+                      style={{
+                        color: paymentMethodFilter ? colors.text : colors.textSecondary,
+                      }}
+                    >
+                      {paymentMethodFilter
+                        ? paymentPlans[paymentMethodFilter]?.label || paymentMethodFilter
+                        : 'Select Plan'}
+                    </Text>
+                  </View>
+                  {paymentMethodFilter ? (
+                    <TouchableOpacity onPress={() => setPaymentMethodFilter('')}>
+                      <Feather name="x" size={14} color="#FF4842" />
+                    </TouchableOpacity>
+                  ) : (
+                    <Feather name="chevron-down" size={20} color="#637381" />
+                  )}
+                </TouchableOpacity>
+              </View>
+
               <View
                 className="flex-row items-center"
                 style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
                   borderWidth: 1,
                   borderColor: '#919EAB33',
-                  borderRadius: 8,
+                  borderRadius: 12,
                 }}
               >
-                <Icon name="search" size={18} color={colors.textSecondary} className="mr-1" />
+                <Icon name="search" size={20} color={colors.textSecondary} className="mr-2" />
                 <TextInput
-                  placeholder="Search job number or customer..."
+                  placeholder="Search job or customer..."
                   placeholderTextColor={colors.textSecondary}
-                  className="flex-1 text-[10px]"
+                  className="flex-1 text-[14px]"
                   style={{ color: colors.text }}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
@@ -673,7 +714,7 @@ export default function JobTrackerPage() {
                                   })()}
                                 </View>
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
-                                  {job.paymentMethod}
+                                  {formatPaymentMethod(job.paymentMethod)}
                                 </Text>
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
                                   {(job as any).appointment?.title || job.customerName || 'N/A'}

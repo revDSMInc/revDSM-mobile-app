@@ -18,12 +18,13 @@ export const useChatSession = (
   initialChatId: string | null,
   leadId: string | undefined,
   isChannel: boolean = false,
-  user: any
+  user: any,
+  initialParticipants: any[] = []
 ) => {
   const [chatId, setChatId] = useState<string | null>(initialChatId);
   const [messages, setMessages] = useState<IMessage[]>([]);
   const [pinnedMessages, setPinnedMessages] = useState<any[]>([]);
-  const [participants, setParticipants] = useState<any[]>([]);
+  const [participants, setParticipants] = useState<any[]>(initialParticipants);
   const [loading, setLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(SocketManager.isConnected());
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
@@ -97,7 +98,7 @@ export const useChatSession = (
           await loadMessages(activeId, limit);
           const fetchAction = isChannel
             ? ChatService.getChannelParticipants(activeId)
-            : ChatService.getLeadParticipants(activeId);
+            : ChatService.getLeadParticipants(activeId, leadId);
           fetchAction.then(setParticipants).catch(console.error);
         }
       } finally {

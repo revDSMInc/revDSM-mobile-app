@@ -95,7 +95,8 @@ export const JobDocsSection = ({
 
   const hasContract = useMemo(() => {
     const status = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase();
-    return status === 'sale' || status === 'demo';
+    const normalized = status.replace(/[^a-z]/g, '');
+    return normalized === 'sale' || normalized === 'demo' || normalized === 'demonosale';
   }, [lead?.status, outcomeData]);
 
   const getStatusLabel = () => {
@@ -473,56 +474,75 @@ export const JobDocsSection = ({
                 </View>
 
                 <View className="gap-4 mb-8">
-                  <DetailRow 
-                    label="Original Contract Price" 
-                    value={`$${(Number(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                    color="#4CBB17"
-                    isDark={isDark}
-                  />
-                  <DetailRow 
-                    label="Down Payment" 
-                    value={(outcomeData?.downPayment || outcomeData?.leadData?.downPayment) ? `$${Number(outcomeData?.downPayment || outcomeData?.leadData?.downPayment).toLocaleString()}` : '-'} 
-                    isDark={isDark}
-                  />
-                  <DetailRow 
-                    label="Remaining Balance" 
-                    value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                    method={paymentPlans[outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod]?.label?.split(' (')[0]}
-                    isDark={isDark}
-                  />
-                  <DetailRow 
-                    label="Install Date" 
-                    value={(() => {
-                      const schedule = outcomeData?.jobBuilder?.scheduleTime || outcomeData?.jobBuilderData?.scheduleTime || outcomeData?.jobState?.scheduleTime || outcomeData?.leadData?.scheduleTime;
-                      const date = schedule?.date || outcomeData?.installDate || outcomeData?.leadData?.installDate || lead?.leadDate;
-                      const timeWindow = schedule?.timeWindow || outcomeData?.timeWindow || outcomeData?.leadData?.timeWindow || 'N/A';
+                  {(String(lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '') === 'demo' || 
+                    String(lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '') === 'demonosale') ? (
+                    <>
+                      <DetailRow 
+                        label="Last Price Quoted" 
+                        value={`$${(Number(outcomeData?.lastPriceQuoted || outcomeData?.leadData?.lastPriceQuoted) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+                        color="#4CBB17"
+                        isDark={isDark}
+                      />
+                      <DetailRow 
+                        label="Reason" 
+                        value={outcomeData?.reason || outcomeData?.leadData?.reason || outcomeData?.explain || outcomeData?.leadData?.explain || '-'} 
+                        isDark={isDark}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <DetailRow 
+                        label="Original Contract Price" 
+                        value={`$${(Number(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+                        color="#4CBB17"
+                        isDark={isDark}
+                      />
+                      <DetailRow 
+                        label="Down Payment" 
+                        value={(outcomeData?.downPayment || outcomeData?.leadData?.downPayment) ? `$${Number(outcomeData?.downPayment || outcomeData?.leadData?.downPayment).toLocaleString()}` : '-'} 
+                        isDark={isDark}
+                      />
+                      <DetailRow 
+                        label="Remaining Balance" 
+                        value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+                        method={paymentPlans[outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod]?.label?.split(' (')[0]}
+                        isDark={isDark}
+                      />
+                      <DetailRow 
+                        label="Install Date" 
+                        value={(() => {
+                          const schedule = outcomeData?.jobBuilder?.scheduleTime || outcomeData?.jobBuilderData?.scheduleTime || outcomeData?.jobState?.scheduleTime || outcomeData?.leadData?.scheduleTime;
+                          const date = schedule?.date || outcomeData?.installDate || outcomeData?.leadData?.installDate || lead?.leadDate;
+                          const timeWindow = schedule?.timeWindow || outcomeData?.timeWindow || outcomeData?.leadData?.timeWindow || 'N/A';
 
-                      if (!date || date === 'Not Scheduled') return 'Not Scheduled';
-                      if (date === 'TBD') return 'TBD';
+                          if (!date || date === 'Not Scheduled') return 'Not Scheduled';
+                          if (date === 'TBD') return 'TBD';
 
-                      let dateObj = new Date(date);
-                      
-                      // Robust parsing for M/d/yyyy format if native Date fails
-                      if (isNaN(dateObj.getTime()) && typeof date === 'string') {
-                        const parts = date.split('/');
-                        if (parts.length === 3) {
-                          const m = parseInt(parts[0]) - 1;
-                          const d = parseInt(parts[1]);
-                          const y = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
-                          dateObj = new Date(y, m, d);
-                        }
-                      }
+                          let dateObj = new Date(date);
+                          
+                          // Robust parsing for M/d/yyyy format if native Date fails
+                          if (isNaN(dateObj.getTime()) && typeof date === 'string') {
+                            const parts = date.split('/');
+                            if (parts.length === 3) {
+                              const m = parseInt(parts[0]) - 1;
+                              const d = parseInt(parts[1]);
+                              const y = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
+                              dateObj = new Date(y, m, d);
+                            }
+                          }
 
-                      if (!isNaN(dateObj.getTime())) {
-                        const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                        const weekday = weekdays[dateObj.getDay()];
-                        const formatted = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
-                        return `${weekday}, ${formatted} • ${timeWindow}`;
-                      }
-                      return `${date} • ${timeWindow}`;
-                    })()} 
-                    isDark={isDark}
-                  />
+                          if (!isNaN(dateObj.getTime())) {
+                            const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                            const weekday = weekdays[dateObj.getDay()];
+                            const formatted = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+                            return `${weekday}, ${formatted} • ${timeWindow}`;
+                          }
+                          return `${date} • ${timeWindow}`;
+                        })()} 
+                        isDark={isDark}
+                      />
+                    </>
+                  )}
                 </View>
 
                 <View className="h-[1px] bg-gray-100 mb-6" />

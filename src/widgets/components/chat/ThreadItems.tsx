@@ -118,7 +118,7 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
           unreadCount > 0
             ? isDark
               ? 'rgba(37,99,235,0.1)'
-              : 'rgba(239,246,255,0.2)'
+              : '#ffffff'
             : isDark
             ? '#0f172a'
             : '#ffffff',
@@ -168,7 +168,12 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
             numberOfLines={2}
           >
             <Text style={{ color: colors.primary.main }}>
-              {lastMsg?.senderDetails?.firstName + ' ' + lastMsg?.senderDetails?.lastName || 'User'}
+              {(() => {
+                const fn = lastMsg?.senderDetails?.firstName;
+                const ln = lastMsg?.senderDetails?.lastName;
+                if (!fn && !ln) return 'User';
+                return `${fn || ''} ${ln || ''}`.trim();
+              })()}
               :{' '}
             </Text>
           </Text>
@@ -185,7 +190,12 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
             numberOfLines={2}
           >
             <Text style={{ color: colors.primary.main }}>
-              {lastMsg?.senderDetails?.firstName + ' ' + lastMsg?.senderDetails?.lastName || 'User'}
+              {(() => {
+                const fn = lastMsg?.senderDetails?.firstName;
+                const ln = lastMsg?.senderDetails?.lastName;
+                if (!fn && !ln) return 'User';
+                return `${fn || ''} ${ln || ''}`.trim();
+              })()}
               :{' '}
             </Text>
             {lastMsg?.message || 'Started a new discussion.'}

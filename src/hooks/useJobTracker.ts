@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Alert } from 'react-native';
-import { format, parseISO, isValid, addDays } from 'date-fns';
+import { format, parseISO, isValid, addDays, parse } from 'date-fns';
 import JobService, { JobEntry } from '../services/api/JobService';
 
 export const useJobTracker = (selectedYear: number) => {
@@ -66,18 +66,44 @@ export const useJobTracker = (selectedYear: number) => {
       const matchSearch =
         j.jobNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         j.customerName?.toLowerCase().includes(searchQuery.toLowerCase());
-      const date = parseISO(j.soldDate);
-      const matchYear = isValid(date) && date.getFullYear() === selectedYear;
-      const matchSoldDate =
-        !soldDateFilter ||
-        (j.soldDate && format(parseISO(j.soldDate), 'MM/dd/yyyy').includes(soldDateFilter));
-      const expectedPayout = calculateExpectedPayout(j.installDate);
-      const matchPayoutDate = !payoutDateFilter || expectedPayout.includes(payoutDateFilter);
+
+      const jobDate = parseISO(j.soldDate);
+      const isJobDateValid = isValid(jobDate);
+
+      // 1. Year Filter: Only applies if no specific Sold Date filter is selected
+      const matchYear = !soldDateFilter && isJobDateValid && jobDate.getFullYear() === selectedYear;
+
+      // 2. Sold Date Filter: Exact day match
+      let matchSoldDate = true;
+      if (soldDateFilter) {
+        // soldDateFilter is in 'yyyy-MM-dd' format from the CustomDatePicker
+        const filterDate = parseISO(soldDateFilter);
+        if (isValid(filterDate) && isJobDateValid) {
+          matchSoldDate =
+            jobDate.getFullYear() === filterDate.getFullYear() &&
+            jobDate.getMonth() === filterDate.getMonth() &&
+            jobDate.getDate() === filterDate.getDate();
+        } else {
+          // Fallback to string includes if dates aren't fully valid for some reason
+          matchSoldDate = format(jobDate, 'MM/dd/yyyy').includes(soldDateFilter);
+        }
+      }
+
+      // 3. Payout Date Filter: Exact day match on calculated expected payout
+      let matchPayoutDate = true;
+      if (payoutDateFilter) {
+        const expectedPayoutStr = calculateExpectedPayout(j.installDate);
+        const filterDateStr = format(parseISO(payoutDateFilter), 'MM/dd/yyyy');
+        matchPayoutDate = expectedPayoutStr === filterDateStr;
+      }
+
       const matchStatus = !statusFilter || j.status === statusFilter;
       const matchPayment = !paymentMethodFilter || j.paymentMethod === paymentMethodFilter;
-      return (
-        matchSearch && matchYear && matchSoldDate && matchPayoutDate && matchStatus && matchPayment
-      );
+
+      // If a specific sold date filter is active, we prioritize it over the year selector
+      const finalMatchDate = soldDateFilter ? matchSoldDate : matchYear;
+
+      return matchSearch && finalMatchDate && matchPayoutDate && matchStatus && matchPayment;
     });
   }, [
     jobs,
@@ -92,7 +118,15 @@ export const useJobTracker = (selectedYear: number) => {
   const { groupedJobs, totalEarnings } = useMemo(() => {
     const groups: Record<string, JobEntry[]> = {};
     let earnings = 0;
-    filteredJobs.forEach((job) => {
+
+    // Sort filteredJobs by soldDate descending (latest first)
+    const sortedJobs = [...filteredJobs].sort((a, b) => {
+      const dateA = new Date(a.soldDate).getTime();
+      const dateB = new Date(b.soldDate).getTime();
+      return dateB - dateA;
+    });
+
+    sortedJobs.forEach((job) => {
       earnings += job.commission || 0;
       const date = parseISO(job.soldDate);
       if (isValid(date)) {

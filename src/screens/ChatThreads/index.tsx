@@ -38,7 +38,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
 
   const [mainTab, setMainTab] = useState<'myleads' | 'channels'>('myleads');
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('unresultedleads');
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('Unresulted Leads');
@@ -69,6 +69,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
               }`.trim() || 'Discussion';
             })(),
             chatType: 'lead',
+            initialParticipants: item.participants || [],
           })
         }
       />
@@ -81,6 +82,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
             customerName: item.title || item.name,
             description: item.channelConfig?.description,
             chatType: 'channel',
+            initialParticipants: item.participants || [],
           })
         }
       />

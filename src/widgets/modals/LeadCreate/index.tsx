@@ -644,7 +644,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                       showsHorizontalScrollIndicator={false}
                       contentContainerStyle={{ paddingRight: 16 }}
                     >
-                      {['9am', '11am', '1pm', '3pm', '5pm', '7pm', '9pm'].map((time) => (
+                      {['9am', '11am', '1pm', '3pm', '5pm', '7pm'].map((time) => (
                         <TouchableOpacity
                           key={time}
                           onPress={() => setForm({ ...form, lfLeadTime: time })}

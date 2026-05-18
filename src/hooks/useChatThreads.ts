@@ -76,7 +76,11 @@ export const useChatThreads = (
   }, [user]);
 
   const filteredChats = useMemo(() => {
-    let result = [...chats];
+    let result = chats.filter((c) => 
+      c.leadDetails && 
+      (c.leadDetails.leadId || c.leadDetails._id) && 
+      c.leadDetails.leadId !== 'N/A'
+    );
     const query = searchQuery.toLowerCase();
 
     if (query) {
@@ -94,6 +98,31 @@ export const useChatThreads = (
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       result = result.filter((c) => new Date(c.leadDetails?.createdAt) >= today);
+    } else if (statusFilter === 'unresultedleads') {
+      const nonResulted = ['lfLead', 'selfGenerated', 'scheduled', 'issued', 'confirmed', 'confirmedIssued'];
+      result = result.filter((c) => nonResulted.includes(c.leadDetails?.status || ''));
+    } else if (statusFilter === 'pendinginstall') {
+      const now = new Date();
+      result = result.filter((c) => 
+        c.leadDetails?.status === 'sale' && 
+        c.leadDetails?.installationDate && 
+        new Date(c.leadDetails.installationDate) > now
+      );
+    } else if (statusFilter === 'installingtoday') {
+      const todayStr = new Date().toISOString().split('T')[0];
+      result = result.filter((c) => 
+        c.leadDetails?.installationDate?.startsWith(todayStr)
+      );
+    } else if (statusFilter === 'alreadyinstalled') {
+      const now = new Date();
+      result = result.filter((c) => 
+        c.leadDetails?.status === 'sale' && 
+        c.leadDetails?.installationDate && 
+        new Date(c.leadDetails.installationDate) < now
+      );
+    } else if (statusFilter === 'nosales') {
+      const noSaleStatuses = ['noSale', 'demoNoSale', 'noDemo', 'notHome', 'cancelled', 'notHit'];
+      result = result.filter((c) => noSaleStatuses.includes(c.leadDetails?.status || ''));
     } else if (statusFilter !== 'all') {
       result = result.filter((c) => c.leadDetails?.status === statusFilter);
     }

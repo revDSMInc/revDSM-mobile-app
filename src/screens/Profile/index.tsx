@@ -60,6 +60,7 @@ export default function ProfilePage() {
     email: '',
     password: '',
     avatarUrl: '',
+    avatarAsset: null as any,
   });
 
   const { refreshUser } = useAuth();
@@ -209,17 +210,18 @@ export default function ProfilePage() {
           data.append('password', formData.password);
         }
 
-        const uriParts = formData.avatarUrl.split('.');
-        const fileExtension = uriParts[uriParts.length - 1] || 'jpg';
-        
+        const fileExtension = formData.avatarAsset?.type?.split('/')[1] || 'jpg';
+        const fileName = formData.avatarAsset?.fileName || `profile.${fileExtension}`;
+        const fileType = formData.avatarAsset?.type || `image/${fileExtension === 'jpg' ? 'jpeg' : fileExtension}`;
+
         data.append('file', {
-          uri: formData.avatarUrl,
-          name: `profile.${fileExtension}`,
-          type: `image/${fileExtension === 'jpg' ? 'jpeg' : fileExtension}`,
+          uri: Platform.OS === 'android' ? formData.avatarUrl : formData.avatarUrl.replace('file://', ''),
+          name: fileName,
+          type: fileType,
         } as any);
         
         payload = data;
-        // Don't set Content-Type, let Axios/RN handle it for FormData
+        headers['Content-Type'] = 'multipart/form-data';
       } else {
         // Use JSON for simple field updates (more reliable on some Android environments)
         payload = {
@@ -237,7 +239,7 @@ export default function ProfilePage() {
         }
       }
 
-      const res = await SettingsService.updateProfile(payload);
+      const res = await SettingsService.updateProfile(payload, headers);
 
       
       // Check for backend-specific success code if returned as 200 OK body
@@ -280,8 +282,12 @@ export default function ProfilePage() {
     });
 
     if (result.assets && result.assets.length > 0) {
-      setFormData({ ...formData, avatarUrl: result.assets[0].uri || '' });
-      // In real scenario, you'd upload this to S3 and then update profile
+      const asset = result.assets[0];
+      setFormData({ 
+        ...formData, 
+        avatarUrl: asset.uri || '',
+        avatarAsset: asset
+      });
     }
   };
 
@@ -1240,7 +1246,25 @@ export default function ProfilePage() {
                                 </View>
                               )}
                             </View>
-                            <Text className="text-[10px] font-bold text-slate-400 mt-0.5">IP: {device.ipAddress || 'Unknown IP'}</Text>
+                            
+                            <View className="mt-1 gap-y-0.5">
+                              {device.trustedAt && (
+                                <Text className="text-[9px] font-bold text-slate-400">
+                                  Trusted on: {new Date(device.trustedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                                </Text>
+                              )}
+                              {device.expiresAt && (
+                                <Text className="text-[9px] font-bold text-slate-400">
+                                  Expires on: {new Date(device.expiresAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                                </Text>
+                              )}
+                              {device.lastUsedAt && (
+                                <Text className="text-[9px] font-bold text-slate-400">
+                                  Last used: {new Date(device.lastUsedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                                </Text>
+                              )}
+                              <Text className="text-[9px] font-bold text-slate-400">IP: {device.ipAddress || 'Unknown IP'}</Text>
+                            </View>
                           </View>
                           <TouchableOpacity 
                             onPress={() => handleRevokeDevice(device.deviceId || device.id || device._id)}

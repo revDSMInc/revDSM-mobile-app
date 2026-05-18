@@ -316,8 +316,9 @@ export const useDealCalculator = (lead: any) => {
           return res.baseRetailTotal;
         };
         const titles = getUpdatedCalculatorTitles(next, getRetailPrice);
-        next.forEach((c) => {
-          if (c._id && titles[c._id]) c.name = titles[c._id];
+        next.forEach((c, idx) => {
+          const key = c._id || `temp-${idx}`;
+          if (titles[key]) c.name = titles[key];
         });
 
         isPendingSave.current = true;
@@ -456,56 +457,54 @@ export const useDealCalculator = (lead: any) => {
     const apptId = appointmentId || lead.appointmentId || lead.latestAppointment?._id || lead._id;
     if (!apptId) return;
 
-    Alert.alert(
-      'Duplicate Calculator',
-      'Are you sure you want to create a copy of this pricing scenario?',
-      [
-        { text: 'Cancel', style: 'cancel' },
+    try {
+      setLoading(true);
+      const duplicate = calculators[idx];
+
+      const res = await LeadService.createCalculator(apptId, {
+        title: `${duplicate.name} (Copy)`,
+        ...duplicate.inputs,
+        ...duplicate.extras,
+        paymentMethod: duplicate.inputs.paymentPlan,
+        pricemarkup: duplicate.inputs.markup,
+        price: 0,
+      });
+      const newC = res.data?.data || res.data;
+
+      const newList = [
+        ...calculators,
         {
-          text: 'Duplicate',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              const duplicate = calculators[idx];
-
-              // Only copy calculator inputs/extras — NOT rollout data (price, dropPrice, isRolloutConfirmed)
-              // Mirrors web app: dataExcludingKeys.price = ''; and excludes _id/meta fields
-              const res = await LeadService.createCalculator(apptId, {
-                title: `${duplicate.name} (Copy)`,
-                ...duplicate.inputs,
-                ...duplicate.extras,
-                paymentMethod: duplicate.inputs.paymentPlan,
-                pricemarkup: duplicate.inputs.markup,
-                price: 0, // explicitly reset rollout price
-              });
-              const newC = res.data?.data || res.data;
-
-              const newList = [
-                ...calculators,
-                {
-                  // Copy calculator values only
-                  inputs: duplicate.inputs,
-                  extras: duplicate.extras,
-                  discounts: duplicate.discounts,
-                  // Reset all rollout / job-builder fields — fresh start
-                  _id: newC._id,
-                  name: newC.title,
-                  price: 0,
-                  dropPrice: [],
-                  isRolloutConfirmed: false,
-                },
-              ];
-              setCalculators(newList);
-              setActiveIdx(newList.length - 1);
-            } catch (e) {
-              console.warn('Failed to duplicate', e);
-            } finally {
-              setLoading(false);
-            }
-          },
+          inputs: duplicate.inputs,
+          extras: duplicate.extras,
+          discounts: duplicate.discounts,
+          _id: newC._id,
+          name: newC.title,
+          price: 0,
+          dropPrice: [],
+          isRolloutConfirmed: false,
         },
-      ]
-    );
+      ];
+
+      const getRetailPrice = (calc: any) => {
+        const r = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
+          seniorVet: false,
+          preOrder: false,
+        });
+        return r.baseRetailTotal;
+      };
+      const titles = getUpdatedCalculatorTitles(newList, getRetailPrice);
+      newList.forEach((c, idx) => {
+        const key = c._id || `temp-${idx}`;
+        if (titles[key]) c.name = titles[key];
+      });
+
+      setCalculators(newList);
+      setActiveIdx(newList.length - 1);
+    } catch (e) {
+      console.warn('Failed to duplicate', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDeleteCalculator = async (idx: number) => {

@@ -48,6 +48,23 @@ const MATERIAL_SECTIONS = [
   },
 ];
 
+const INITIAL_CONFIG = {
+  sameColor: true,
+  selectedCommonColor: REV_RENDER_COLORS.common[0],
+  soffit: 'Hidden Vent Soffit',
+  soffitColor: REV_RENDER_COLORS.hiddenVentSoffit[0],
+  soffitChecked: false,
+  fascia: null,
+  fasciaColor: REV_RENDER_COLORS.fascia[0],
+  fasciaChecked: false,
+  gutter: 'K-Style',
+  gutterColor: REV_RENDER_COLORS.gutter[0],
+  gutterChecked: false,
+  downspout: '3x4 Rectangular',
+  downspoutColor: REV_RENDER_COLORS.gutter[0],
+  downspoutChecked: false,
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function RevRenderScreen() {
@@ -64,22 +81,7 @@ export default function RevRenderScreen() {
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
   const [renderQueue, setRenderQueue] = useState<any[]>([]);
 
-  const [config, setConfig] = useState<any>({
-    sameColor: true,
-    selectedCommonColor: REV_RENDER_COLORS.common[0],
-    soffit: 'Hidden Vent Soffit',
-    soffitColor: REV_RENDER_COLORS.hiddenVentSoffit[0],
-    soffitChecked: false,
-    fascia: null,
-    fasciaColor: REV_RENDER_COLORS.fascia[0],
-    fasciaChecked: false,
-    gutter: 'K-Style',
-    gutterColor: REV_RENDER_COLORS.gutter[0],
-    gutterChecked: false,
-    downspout: '3x4 Rectangular',
-    downspoutColor: REV_RENDER_COLORS.gutter[0],
-    downspoutChecked: false,
-  });
+  const [config, setConfig] = useState<any>(INITIAL_CONFIG);
 
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
@@ -242,6 +244,20 @@ export default function RevRenderScreen() {
     return (
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         <View className="px-4 py-4">
+          <View className="flex-row items-center mb-8">
+              <TouchableOpacity 
+                onPress={() => navigation.goBack()} 
+                className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
+              >
+                <Icon name="arrow-left" size={24} color="#637381" />
+              </TouchableOpacity>
+              <View>
+                <Text className="text-xl font-bold" style={{ color: colors.text }}>revRender</Text>
+                <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
+                  Select a photo to render
+                </Text>
+              </View>
+            </View>
           <View
             className="rounded-3xl border shadow-sm mb-10 overflow-hidden"
             style={{
@@ -262,6 +278,7 @@ export default function RevRenderScreen() {
                     <TouchableOpacity
                       key={index}
                       onPress={() => {
+                        setConfig(INITIAL_CONFIG);
                         setSelectedPhoto(photo);
                         setStatus('config');
                       }}
@@ -319,6 +336,20 @@ export default function RevRenderScreen() {
     return (
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
         <View className="px-4 py-4">
+          <View className="flex-row items-center mb-8">
+              <TouchableOpacity 
+                onPress={() => setStatus('grid')} 
+                className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
+              >
+                <Icon name="arrow-left" size={24} color="#637381" />
+              </TouchableOpacity>
+              <View>
+                <Text className="text-xl font-bold" style={{ color: colors.text }}>Configure Render</Text>
+                <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
+                  {selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}
+                </Text>
+              </View>
+            </View>
           <View 
             className="rounded-[20px] border mb-6 overflow-hidden"
             style={{ 
@@ -606,27 +637,7 @@ export default function RevRenderScreen() {
 
   return (
     <View className="flex-1" style={{ backgroundColor: isDark ? colors.background : '#fff' }}>
-      <View 
-        className="flex-row items-center px-4 justify-between border-b"
-        style={{ 
-          paddingTop: insets.top, 
-          height: insets.top + 60,
-          backgroundColor: isDark ? colors.surface : '#fff',
-          borderBottomColor: isDark ? '#3A3A3A' : '#F4F6F8'
-        }}
-      >
-        <TouchableOpacity onPress={handleBack}>
-          <Icon name="close" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View className="items-center">
-          <Text className="text-lg font-black" style={{ color: colors.text }}>revRender</Text>
-          <View className="flex-row items-center">
-             <View className="w-1.5 h-1.5 rounded-full bg-[#2EDE56] mr-1.5" />
-             <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">AI Engine Active</Text>
-          </View>
-        </View>
-        <View className="w-10" />
-      </View>
+
 
       <View className="flex-1" style={{ zIndex: 1 }}>
         {!hasPhotos

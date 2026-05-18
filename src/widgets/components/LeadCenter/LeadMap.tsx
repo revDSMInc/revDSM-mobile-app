@@ -47,6 +47,8 @@ interface LeadMapProps {
   onCameraPress?: (job: any) => void;
   onReferencePress?: (job: any) => void;
   leads?: any[];
+  isFavoriteFilter?: boolean;
+  isReferralFilter?: boolean;
 }
 
 export const LeadMap = ({
@@ -56,22 +58,34 @@ export const LeadMap = ({
   onCameraPress,
   onReferencePress,
   leads: externalLeads,
+  isFavoriteFilter,
+  isReferralFilter,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
-  const [allLeads, setAllLeads] = useState<any[]>([]);
   const [isFetching, setIsFetching] = useState(false);
   const { user } = useAuth();
   const mapRef = useRef<MapView>(null);
   const isInternalMove = useRef(false);
+
+  // ─── Data source ─────────────────────────────────────────────────────────
+  // `internalLeads` is only used when no externalLeads prop is provided
+  // (standalone LeadMap without MapDetail). When MapDetail passes `leads`,
+  // we use that directly — synchronously — with NO intermediate setState.
+  // This eliminates the async render gap that caused phantom duplicate markers.
+  const [internalLeads, setInternalLeads] = useState<any[]>([]);
+  const [dataVersion, setDataVersion] = useState(0); // increments on every data refresh
+
+  const allLeads: any[] = externalLeads ?? internalLeads;
 
   const fetchAllJobs = async () => {
     try {
       setIsFetching(true);
       const res = await LeadService.findJobs({});
       const jobs = res.data?.data || [];
-      setAllLeads(jobs);
+      setInternalLeads(jobs);
+      setDataVersion((v) => v + 1); // force marker remount after data refresh
 
       // Refresh active selections to show new images/referrals immediately
       if (selectedLead?._id) {
@@ -89,16 +103,18 @@ export const LeadMap = ({
     }
   };
 
+  // When externalLeads change (MapDetail refreshed data after referral/gallery action),
+  // bump the version so markers remount fresh and tintColors update.
   useEffect(() => {
-    if (!externalLeads) {
-      fetchAllJobs();
+    if (externalLeads) {
+      setDataVersion((v) => v + 1);
     } else {
-      setAllLeads(externalLeads);
+      // Standalone mode — fetch our own data
+      fetchAllJobs();
     }
   }, [externalLeads]);
 
 
-  const [filteredLeads, setFilteredLeads] = useState<any[]>([]);
   const [userLocation, setUserLocation] = useState<any>(null);
   const markerPressedRef = useRef(false);
   const [isHeatMap, setIsHeatMap] = useState(false);
@@ -109,7 +125,7 @@ export const LeadMap = ({
   const [galleryJob, setGalleryJob] = useState<any>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [showReferral, setShowReferral] = useState(false);
-  const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-2']);
+  const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-3']);
 
   const [region, setRegion] = useState({
     ...TAMPA_COORDS,
@@ -118,19 +134,22 @@ export const LeadMap = ({
   });
   const currentRegion = useRef(region);
 
-  useEffect(() => {
+  const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => ({
+    isHeatMapActive: activeFilters.includes('HT-0'),
+    isMyJobsOnly: activeFilters.includes('MJ-1'),
+    // Respect both the internal map toggle (RF-2) AND the external filter prop from MapFiltersModal
+    isReferralOnly: activeFilters.includes('RF-2') || !!isReferralFilter,
+    isFavoriteOnly: activeFilters.includes('FV-3') || !!isFavoriteFilter,
+  }), [activeFilters, isFavoriteFilter, isReferralFilter]);
+
+  // ─── filteredLeads is synchronous (useMemo) ───────────────────────────────
+  // CRITICAL: Do NOT use useState + useEffect here. Two async state updates
+  // (allLeads → filteredLeads) cause React Native Maps to render markers in two
+  // passes, creating phantom duplicate markers that can't be tapped.
+  const filteredLeads = useMemo(() => {
     let result = [...allLeads];
 
-    const isHeatMapActive = activeFilters.includes('HT-0');
-    const isMyJobsOnly = activeFilters.includes('MJ-1');
-    const isReferralOnly = activeFilters.includes('RF-2');
-
-    // Sync heatmap state
-    if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
-
     result = result.filter((item: any) => {
-      if (currentLead && item._id === currentLead._id) return true;
-
       // 1. TAM Range Filter (Excludes TAM30000-30032)
       const jobNumber = item?.jobNumber;
       if (typeof jobNumber === 'string' && jobNumber.startsWith('TAM')) {
@@ -138,11 +157,14 @@ export const LeadMap = ({
         if (num >= 30000 && num <= 30032) return false;
       }
 
-      // 2. My Jobs Filter
-      if (isMyJobsOnly) {
+      // 2. Favorite Filter
+      if (isFavoriteOnly && !(item.isFavorite || item.isFavourite)) return false;
+
+      // 3. My Jobs Filter (map toggle only — skip if external leads already filtered by MapDetail)
+      if (isMyJobsOnly && !externalLeads) {
         const uid = (user as any)?._id || (user as any)?.id;
         const isOwner = !!uid && (
-          item.salesRepId === uid || 
+          item.salesRepId === uid ||
           item.salesRep?._id === uid ||
           item.userId === uid ||
           item.salesRep === uid ||
@@ -154,7 +176,7 @@ export const LeadMap = ({
         if (!isOwner) return false;
       }
 
-      // 3. Reference Filter (Strict web parity: must have a referral with referralToggle === true)
+      // 4. Reference Filter
       if (isReferralOnly) {
         const hasReference = item.jobReferrals?.some((r: any) => r.referralToggle === true);
         if (!hasReference) return false;
@@ -163,8 +185,20 @@ export const LeadMap = ({
       return true;
     });
 
-    setFilteredLeads(result);
-  }, [allLeads, activeFilters, user, isHeatMap, currentLead]);
+    return result;
+  }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads]);
+
+  // Sync heatmap state when toggle changes
+  useEffect(() => {
+    if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
+  }, [isHeatMapActive]);
+
+  // filterKey changes on every filter toggle OR data refresh.
+  // This forces a clean remount of ALL markers, which:
+  //   (a) eliminates stale tintColor (yellow staying after filter off)
+  //   (b) prevents phantom duplicates from prior async renders
+  const filterKey = `${isFavoriteOnly}-${isReferralOnly}-${isMyJobsOnly}-${isHeatMapActive}-${dataVersion}`;
+
 
   useEffect(() => {
     requestLocationPermission();
@@ -172,8 +206,13 @@ export const LeadMap = ({
 
   const requestLocationPermission = async () => {
     if (Platform.OS === 'ios') {
-      Geolocation.requestAuthorization('whenInUse');
-      startTracking();
+      try {
+        const auth = await Geolocation.requestAuthorization('whenInUse');
+        startTracking();
+      } catch (err) {
+        console.log('Error requesting iOS location permission:', err);
+        startTracking();
+      }
     } else {
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
@@ -184,32 +223,53 @@ export const LeadMap = ({
     }
   };
 
+  useEffect(() => {
+    if (currentLead?.location?.coordinates) {
+      const coords = currentLead.location.coordinates;
+      mapRef.current?.animateToRegion({
+        latitude: coords[1],
+        longitude: coords[0],
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 1000);
+    } else if (currentLead?.latitude && currentLead?.longitude) {
+      // Handle direct coordinate objects — used for location search navigation from MapFiltersModal
+      mapRef.current?.animateToRegion({
+        latitude: currentLead.latitude,
+        longitude: currentLead.longitude,
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.05,
+      }, 800);
+    }
+  }, [currentLead]);
+
   const startTracking = () => {
+    const successCallback = (position: any) => {
+      const { latitude, longitude } = position.coords;
+      setUserLocation({ latitude, longitude });
+
+      mapRef.current?.animateToRegion({
+        latitude,
+        longitude,
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.05,
+      });
+    };
+
+    const errorCallback = (error: any) => {
+      console.log('High accuracy location failed, falling back to low accuracy:', error);
+      Geolocation.getCurrentPosition(
+        successCallback,
+        (err) => console.log('Low accuracy location failed:', err),
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 10000 }
+      );
+    };
+
+    // Try high accuracy first, but timeout after 5 seconds to fallback to low accuracy
     Geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        setUserLocation({ latitude, longitude });
-
-        if (currentLead?.location?.coordinates) {
-          const coords = currentLead.location.coordinates;
-          mapRef.current?.animateToRegion({
-            latitude: coords[1],
-            longitude: coords[0],
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          });
-        } else {
-          mapRef.current?.animateToRegion({
-            latitude,
-            longitude,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          });
-        }
-
-      },
-      (error) => console.log(error),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      successCallback,
+      errorCallback,
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
     );
   };
 
@@ -232,19 +292,30 @@ export const LeadMap = ({
   };
 
   useEffect(() => {
+    // Initial update
     updateSelectedPoint();
+    // Retry after animation stabilization
+    const timer = setTimeout(updateSelectedPoint, 500);
+    return () => clearTimeout(timer);
   }, [selectedLead]);
 
   const handleToggleFavorite = async (job: any) => {
     const nextValue = !(job.isFavourite || job.isFavorite);
     try {
       await LeadService.toggleFavourite(job._id, nextValue);
-      // Optimistic update
-      setFilteredLeads((prev) =>
-        prev.map((l) =>
-          l._id === job._id ? { ...l, isFavourite: nextValue, isFavorite: nextValue } : l
-        )
-      );
+
+      // Optimistic update: mutate internalLeads if we own the data,
+      // or bump dataVersion to force a remount when using externalLeads.
+      if (!externalLeads) {
+        setInternalLeads((prev: any[]) =>
+          prev.map((l) =>
+            l._id === job._id ? { ...l, isFavourite: nextValue, isFavorite: nextValue } : l
+          )
+        );
+      }
+      // Always bump version so filterKey changes → markers remount → tintColor resets
+      setDataVersion((v) => v + 1);
+
       if (selectedLead && selectedLead._id === job._id) {
         setSelectedLead({
           ...selectedLead,
@@ -256,6 +327,8 @@ export const LeadMap = ({
       console.error('Failed to toggle favorite', error);
     }
   };
+
+
 
   const handleMarkerClick = (lead: any, event?: any) => {
     markerPressedRef.current = true;
@@ -335,6 +408,10 @@ export const LeadMap = ({
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
         initialRegion={region}
+        onRegionChange={(r) => {
+          currentRegion.current = r;
+          updateSelectedPoint();
+        }}
         onRegionChangeComplete={(r) => {
           currentRegion.current = r;
           updateSelectedPoint();
@@ -358,44 +435,80 @@ export const LeadMap = ({
           />
         )}
 
+        {/* Heatmap Layer - Rendered before markers to avoid blocking touch events */}
+        {isHeatMap && heatmapPoints.length > 0 && (
+          <Heatmap
+            points={heatmapPoints}
+            radius={40}
+            opacity={0.7}
+            gradient={{
+              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
+              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
+              colorMapSize: 256,
+            }}
+          />
+        )}
+
         {/* Individual Markers */}
         {filteredLeads.map((job) => {
           if (!job.location?.coordinates) return null;
           const isSelected = selectedLead?._id === job._id;
-          
+          const uid = (user as any)?._id || (user as any)?.id;
+          const isOwner = uid && (
+            job.salesRepId === uid ||
+            job.salesRep?._id === uid ||
+            job.userId === uid ||
+            job.salesRepName === (user as any)?.fullName ||
+            job.userName === (user as any)?.userName
+          );
+          const hasActiveReferral = job.jobReferrals?.some((r: any) => r.referralToggle === true);
+          const isFavJob = job.isFavorite || job.isFavourite;
+
+          // Tint only for special states; default uses the PNG as-is
+          const tintColor = (isFavoriteOnly && isFavJob)
+            ? '#F59E0B'   // amber for favorite filter
+            : undefined;  // no tint — use original green PNG
+
           return (
             <Marker
-              key={job._id}
+              key={`${job._id}-${filterKey}`}
               coordinate={{
                 latitude: job.location.coordinates[1],
                 longitude: job.location.coordinates[0],
               }}
               onPress={(e) => handleMarkerClick(job, e)}
-              tracksViewChanges={true}
+              tracksViewChanges={isSelected}
               anchor={{ x: 0.5, y: 1 }}
               zIndex={isSelected ? 100 : 1}
               opacity={isHeatMap ? 0 : 1}
             >
-              <View>
-                <Image 
-                  source={markerImg} 
-                  style={{ 
-                    width: 30, 
-                    height: 35,
-                    tintColor: (job.isFavourite || job.isFavorite) ? '#F5B041' : undefined 
-                  }} 
-                  resizeMode="contain" 
+              <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                <Image
+                  source={markerImg}
+                  style={{
+                    width: 36,
+                    height: 44,
+                    ...(tintColor ? { tintColor } : {}),
+                  }}
+                  resizeMode="contain"
                 />
-                {(job.isFavourite || job.isFavorite) && (
-                  <View className="absolute top-1 left-0 right-0 items-center justify-center">
-                    <Icon name="star" size={12} color="white" />
-                  </View>
+                {/* Selected ring */}
+                {isSelected && (
+                  <View style={{
+                    position: 'absolute',
+                    top: -4,
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    borderWidth: 2.5,
+                    borderColor: '#4CBB17',
+                    backgroundColor: 'transparent',
+                  }} />
                 )}
               </View>
             </Marker>
           );
         })}
-
         {/* User Location Marker */}
         {userLocation && (
           <Marker
@@ -409,29 +522,16 @@ export const LeadMap = ({
             </View>
           </Marker>
         )}
-
-        {/* Heatmap Layer - Rendered last to avoid marker casting errors on Android */}
-        {isHeatMap && heatmapPoints.length > 0 && (
-          <Heatmap
-            points={heatmapPoints}
-            radius={40}
-            opacity={0.7}
-            gradient={{
-              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
-              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
-              colorMapSize: 256,
-            }}
-          />
-        )}
       </MapView>
 
+      {/* Anchored Interactive Job Card (InfoWindow Style but fully interactive) */}
       {/* Anchored Interactive Job Card (InfoWindow Style but fully interactive) */}
       {selectedLead && selectedLeadPoint && (
         <View 
           style={{
             position: 'absolute',
             left: selectedLeadPoint.x - 140, // Centered horizontally (280 / 2)
-            top: selectedLeadPoint.y - 320, // Positioned above the marker
+            top: selectedLeadPoint.y - 325, // Positioned above the marker
             zIndex: 1000,
           }}
           pointerEvents="auto"
@@ -471,8 +571,16 @@ export const LeadMap = ({
                 })()
               }
               onReferencePress={() => {
-                setGalleryJob(selectedLead);
-                setShowReferral(true);
+                // If a parent handler exists (e.g. MapDetail), use it.
+                // MapDetail's handler opens a ReferralModal with onSuccess={fetchLeads},
+                // which refreshes externalLeads → allLeads → instant fresh data.
+                // Only fall back to internal modal in standalone (no parent) mode.
+                if (onReferencePress) {
+                  onReferencePress(selectedLead);
+                } else {
+                  setGalleryJob(selectedLead);
+                  setShowReferral(true);
+                }
               }}
               onCameraPress={() => {
                 setGalleryJob(selectedLead);
@@ -524,7 +632,8 @@ export const LeadMap = ({
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0' },
             { active: 'MJ', inactive: 'AJ', id: 'MJ-1' },
-            { active: 'RF', inactive: 'DEF', id: 'RF-2' }
+            { active: 'RF', inactive: 'DEF', id: 'RF-2' },
+            { active: 'FV', inactive: 'DEF', id: 'FV-3' }
           ].map((btn) => {
             const isFilterActive = activeFilters.includes(btn.id);
             return (
@@ -609,6 +718,16 @@ export const LeadMap = ({
         visible={showReferral}
         onClose={() => setShowReferral(false)}
         selectedJob={galleryJob}
+        onSuccess={() => {
+          // Refresh data so jobReferrals / referralToggle state is up-to-date.
+          // In standalone mode this fetches fresh data.
+          // In external-leads mode, bump dataVersion so markers remount.
+          if (!externalLeads) {
+            fetchAllJobs();
+          } else {
+            setDataVersion((v) => v + 1);
+          }
+        }}
         isMyJob={
           (() => {
             const uid = (user as any)?._id || (user as any)?.id;

@@ -23,6 +23,8 @@ export const useDealOutcome = (
     balancePaymentMethod: 'check',
     versatile: false,
     pineapple: false,
+    installDate: null,
+    toBeDetermined: false,
   });
   const [jobState, setJobState] = useState<any>({});
   const [loading, setLoading] = useState(false);
@@ -107,6 +109,14 @@ export const useDealOutcome = (
       }
       if (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim()) {
         Alert.alert('Required Field', 'Please explain the reason for the demo.');
+        return;
+      }
+    }
+
+    // Validation for Sale status (Install Date)
+    if (outcomeStatus === 'sale') {
+      if (!outcomeForm.toBeDetermined && !outcomeForm.installDate) {
+        Alert.alert('Required Field', 'Please select an Install Date or mark it as TBD.');
         return;
       }
     }

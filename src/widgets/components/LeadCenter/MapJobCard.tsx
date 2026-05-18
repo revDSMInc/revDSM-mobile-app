@@ -32,11 +32,25 @@ export const MapJobCard = ({
   if (!job) return null;
 
   const formatAddress = (addr: any) => {
-    if (typeof addr === 'string') return addr;
-    if (!addr || typeof addr !== 'object') return 'Address not provided';
-    const { streetName, city, state, zip } = addr;
-    const cityStateZip = [city, state, zip].filter(Boolean).join(', ');
-    return [streetName, cityStateZip].filter(Boolean).join(', ');
+    let street = '';
+    let cityStateZip = '';
+    
+    if (typeof addr === 'string') {
+      const parts = addr.split(', ');
+      street = parts[0] || '';
+      cityStateZip = parts.slice(1).join(', ');
+    } else if (addr && typeof addr === 'object') {
+      street = addr.streetName || '';
+      cityStateZip = [addr.city, addr.state, addr.zip].filter(Boolean).join(', ');
+    } else {
+      return 'Address not provided';
+    }
+
+    // Hide the first word (house number)
+    const streetParts = street.split(' ');
+    const maskedStreet = streetParts.length > 1 ? streetParts.slice(1).join(' ') : street;
+
+    return [maskedStreet, cityStateZip].filter(Boolean).join(', ');
   };
 
   const formattedDate = job.installationDate
@@ -102,25 +116,11 @@ export const MapJobCard = ({
           <Text className="text-[10px] text-slate-400 font-bold mb-2 uppercase tracking-wider">
             Property Address
           </Text>
-          <Text className="text-[14px] font-black text-slate-700 leading-5 mt-1">
-            {/* Inline Privacy Blur Placeholder */}
-            <View 
-              style={{ 
-                width: 45, 
-                height: 14, 
-                backgroundColor: '#E2E8F0', 
-                borderRadius: 4, 
-                marginRight: 6,
-                transform: [{ translateY: 2 }]
-              }} 
-            />
-            {' '}
-            {(() => {
-              const fullAddr = formatAddress(job.address || job);
-              const parts = fullAddr.split(' ');
-              return parts.slice(1).join(' ');
-            })()}
-          </Text>
+          <View className="mt-1">
+            <Text className="text-[14px] font-black text-slate-700">
+              {formatAddress(job.address || job)}
+            </Text>
+          </View>
         </View>
 
         {/* Product Row */}
@@ -166,18 +166,48 @@ export const MapJobCard = ({
 
 
           {/* Reference: Always for Owner, Only if exists for others */}
-          {(isMyJob || (job.jobReferrals && job.jobReferrals.length > 0)) && (
-            <TouchableOpacity
-              onPress={() => onReferencePress?.(job)}
-              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-            >
-              <Icon
-                name="account-group"
-                size={20}
-                color={job.jobReferrals?.length > 0 ? '#059669' : isMyJob ? '#94a3b8' : '#059669'}
-              />
-            </TouchableOpacity>
-          )}
+          {(isMyJob || job.jobReferrals?.some((r: any) => r.referralToggle)) && (() => {
+            const hasReferral = job.jobReferrals?.some((r: any) => r.referralToggle);
+            const isLocked = !isMyJob && hasReferral;
+            return (
+              <TouchableOpacity
+                onPress={() => onReferencePress?.(job)}
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  backgroundColor: '#f8fafc',
+                  borderWidth: 1,
+                  borderColor: '#f1f5f9',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: isLocked ? 0.8 : 1,
+                }}
+              >
+                <Icon
+                  name="account-group"
+                  size={20}
+                  color={hasReferral ? '#4CBB17' : '#94a3b8'}
+                />
+                {/* Lock badge for non-owner jobs */}
+                {isLocked && (
+                  <View style={{
+                    position: 'absolute',
+                    top: -3,
+                    right: -3,
+                    backgroundColor: '#64748b',
+                    borderRadius: 8,
+                    width: 14,
+                    height: 14,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <Icon name="lock" size={8} color="white" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })()}
         </View>
       </View>
     </View>

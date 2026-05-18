@@ -426,9 +426,14 @@ class ChatService {
     SocketManager.emit('channel-typing', { channelId, isTyping });
   }
 
-  async getLeadParticipants(chatId: string): Promise<any[]> {
+  async getLeadParticipants(chatId: string, leadId?: string): Promise<any[]> {
     try {
-      const res = await api.get<any>(`/chat/v1/${chatId}`);
+      let res;
+      if (leadId) {
+        res = await api.get<any>(`/chat/v1/lead/${leadId}`);
+      } else {
+        res = await api.get<any>(`/chat/v1/${chatId}`);
+      }
       const chat = res.data?.data?.chat || res.data?.data || res.data;
       return chat?.participants || [];
     } catch {

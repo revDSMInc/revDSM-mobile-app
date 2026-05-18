@@ -10,7 +10,9 @@ import {
   StatusBar,
   Dimensions,
   Modal,
+  PermissionsAndroid,
 } from 'react-native';
+import Geolocation from 'react-native-geolocation-service';
 
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -43,6 +45,7 @@ export default function MapDetailScreen() {
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ latitude: number, longitude: number } | null>(null);
 
   const [filters, setFilters] = useState<FilterState>({
     jobNumber: '',
@@ -54,12 +57,14 @@ export default function MapDetailScreen() {
     endDate: null,
     myJobsOnly: false,
     isFavoriteOnly: false,
+    isReferralOnly: false,
     isHeatMap: false,
     showRoute: false,
   });
 
   const [isListView, setIsListView] = useState(false);
   const [jumpLead, setJumpLead] = useState<any>(null);
+  const [centerCoords, setCenterCoords] = useState<{ latitude: number, longitude: number } | null>(null);
   const [sortOption, setSortOption] = useState<'price_asc' | 'price_desc' | 'date_asc' | 'date_desc'>('date_desc');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
@@ -71,8 +76,29 @@ export default function MapDetailScreen() {
   };
 
   useEffect(() => {
+    // Get initial location for API call
+    const requestLocation = async () => {
+      if (Platform.OS === 'ios') {
+        Geolocation.requestAuthorization('whenInUse');
+      } else {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+      }
+
+      Geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLocation(pos.coords);
+        },
+        (err) => console.log('Location error:', err),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      );
+    };
+
+    requestLocation();
+  }, []);
+
+  useEffect(() => {
     fetchLeads();
-  }, [filters]);
+  }, [filters, userLocation]);
 
   const fetchLeads = async () => {
     if (!user?._id) return;
@@ -81,10 +107,10 @@ export default function MapDetailScreen() {
       
       // Default to Tampa coordinates if user is elsewhere (web parity)
       const payload: any = {
-        radiusInMiles: filters.radius,
+        radiusInMiles: filters.radius || 50,
         isFavorite: filters.isFavoriteOnly,
-        latitude: 27.9506, 
-        longitude: -82.4572,
+        latitude: userLocation?.latitude || 27.9506, 
+        longitude: userLocation?.longitude || -82.4572,
       };
       
       const res = await LeadService.findJobs(payload);
@@ -160,6 +186,22 @@ export default function MapDetailScreen() {
       return timeB - timeA; // date_desc
     });
   }, [leads, filters, sortOption]);
+
+  // Automatic navigation to searched job or location (Web Parity)
+  useEffect(() => {
+    if (filters.centerCoords) {
+      setCenterCoords(filters.centerCoords);
+      setJumpLead(null); // Clear selected lead if we are jumping to a general area
+    } else if (filters.jobNumber && filteredLeads.length > 0) {
+      const search = filters.jobNumber.toLowerCase();
+      const exactMatch = filteredLeads.find(l => l.jobNumber?.toLowerCase() === search);
+      if (exactMatch) {
+        setJumpLead(exactMatch);
+      } else if (filteredLeads.length === 1) {
+        setJumpLead(filteredLeads[0]);
+      }
+    }
+  }, [filters.jobNumber, filteredLeads, filters.centerCoords]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
@@ -319,9 +361,11 @@ export default function MapDetailScreen() {
           </View>
         ) : (
           <LeadMap 
-            currentLead={jumpLead || currentLead} 
+            currentLead={centerCoords ?? jumpLead ?? currentLead} 
             fullScreen 
             leads={filteredLeads}
+            isFavoriteFilter={filters.isFavoriteOnly}
+            isReferralFilter={filters.isReferralOnly}
             onGalleryPress={(job) => {
               setSelectedJob(job);
               setShowGalleryModal(true);
@@ -354,8 +398,10 @@ export default function MapDetailScreen() {
           endDate: null,
           myJobsOnly: false,
           isFavoriteOnly: false,
+          isReferralOnly: false,
           isHeatMap: false,
           showRoute: false,
+          centerCoords: undefined,
         })}
       />
 

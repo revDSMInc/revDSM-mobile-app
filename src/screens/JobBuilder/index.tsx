@@ -478,8 +478,11 @@ export default function JobBuilderScreen() {
 
         FlashMessage.success('Job Complete', 'Job builder submitted successfully');
         // Signal DealCenter to close OutcomeModal and switch to Rollout (Summary) view
-        if (onComplete) onComplete(finalJobState);
-        navigation.goBack();
+        if (onComplete) {
+          onComplete(finalJobState);
+        } else {
+          navigation.goBack();
+        }
       }
     } catch (error) {
       console.error('[JobBuilder] Completion failed:', error);

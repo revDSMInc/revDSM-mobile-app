@@ -70,7 +70,6 @@ export default function LFCalculator({ route }: any) {
     'form' | 'summary' | 'picker' | 'result' | 'outcome'
   >('form');
   const [prevView, setPrevView] = useState<'form' | 'summary'>('form');
-  const [showTrackerModal, setShowTrackerModal] = useState(false);
   const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [showJobBuilder, setShowJobBuilder] = useState(false);
   const [menuVisible, setMenuVisible] = useState<number | null>(null);
@@ -135,17 +134,15 @@ export default function LFCalculator({ route }: any) {
   };
 
   const handleAddJobToTracker = () => {
-    if (isAlreadyInTracker) {
-      navigation.navigate('JobTracker');
-    } else if (results.items.length > 0) {
-      setShowAddJobModal(true);
-    } else {
-      navigation.navigate('JobTracker');
-    }
+    setShowAddJobModal(true);
   };
 
   const prefilledJob = useMemo(() => {
     if (!currentLead || !active) return null;
+
+    // If it's already in the tracker, return the existing job so we can edit it
+    const existing = trackerJobs.find((j) => j.calculatorId === active._id);
+    if (existing) return existing;
 
     const customerName = currentLead.customerDetails
       ? `${currentLead.customerDetails.firstName} ${currentLead.customerDetails.lastName}`
@@ -164,7 +161,7 @@ export default function LFCalculator({ route }: any) {
       calculatorId: String(active._id || ''),
       isManual: false,
     };
-  }, [currentLead, active, results.total, appointmentId]);
+  }, [currentLead, active, results.total, appointmentId, trackerJobs]);
 
 
   const handleFinishOutcome = () => {
@@ -183,15 +180,30 @@ export default function LFCalculator({ route }: any) {
           // Called when user COMPLETES the job — close modal, go to Rollout view, and refresh data
           onComplete: (updatedJobState: any) => {
             if (updatedJobState) {
-              setJobState(updatedJobState);
-              // Update local lead state immediately to reflect submission
+              // Update local lead state with the completed job builder data
               setCurrentLead((prev: any) => ({
                 ...prev,
                 jobBuilder: updatedJobState,
               }));
             }
-            setCurrentView('summary');
-            refreshCalculators();
+            // Clear jobState so we don't show "Reset Job Builder" if we ever come back
+            setJobState({});
+            
+            // Reset the navigation stack to LeadCenter (with Job Docs tab) and Leads list
+            // This properly removes JobBuilder and DealCenter from the history
+            navigation.reset({
+              index: 1,
+              routes: [
+                { name: 'Leads' },
+                { 
+                  name: 'LeadCenter', 
+                  params: { 
+                    lead: currentLead, 
+                    tab: 'job_docs' 
+                  } 
+                },
+              ],
+            });
           },
         });
       }
@@ -265,6 +277,13 @@ export default function LFCalculator({ route }: any) {
             try {
               const leadId = currentLead?._id || currentLead?.leadId || currentLead?.id;
               if (leadId) await LeadService.resetLead(leadId);
+              // Immediately clear local jobState so the UI reflects the reset
+              // without waiting for the async re-fetch to complete
+              setJobState({});
+              setCurrentLead((prev: any) => ({
+                ...prev,
+                jobBuilder: {},
+              }));
               refreshCalculators();
             } catch (err) {
               console.error('[DealCenter] Reset job builder failed:', err);
@@ -366,6 +385,7 @@ export default function LFCalculator({ route }: any) {
             results={results}
             onClose={onClose}
             handleAddJobToTracker={handleAddJobToTracker}
+            onGoToTracker={() => navigation.navigate('JobTracker')}
             isAlreadyInTracker={isAlreadyInTracker}
             refresh={refreshCalculators}
             active={active}
@@ -453,9 +473,11 @@ export default function LFCalculator({ route }: any) {
           refresh={refreshCalculators}
           onClose={onClose}
           handleAddJobToTracker={handleAddJobToTracker}
+          onGoToTracker={() => navigation.navigate('JobTracker')}
           isAlreadyInTracker={isAlreadyInTracker}
           lead={currentLead}
           jobBuilderState={jobState}
+          handleResetJobBuilder={handleResetJobBuilder}
         />
       )}
 
@@ -722,36 +744,7 @@ export default function LFCalculator({ route }: any) {
         </Pressable>
       </Modal>
 
-      {showTrackerModal && (
-        <View className="absolute inset-0 bg-black/60 z-[100] items-center justify-center p-6">
-          <View className="bg-card w-full rounded-[40px] p-8">
-            <View className="w-16 h-16 rounded-2xl bg-green-50 items-center justify-center mb-6">
-              <Ionicons name="checkmark-circle" size={32} color="#4CBB17" />
-            </View>
-            <Text className="text-2xl font-black text-text-primary leading-tight">
-              Added to Job Tracker
-            </Text>
-            <Text className="text-sm font-medium text-text-secondary mt-3 leading-relaxed">
-              This rollout has been saved and is now visible in the job tracker for operational
-              review.
-            </Text>
-            <View className="flex-row gap-3 mt-10">
-              <TouchableOpacity
-                onPress={() => setShowTrackerModal(false)}
-                className="flex-1 h-16 bg-surface rounded-3xl items-center justify-center"
-              >
-                <Text className="text-text-secondary font-black  text-xs">Dismiss</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setShowTrackerModal(false)}
-                className="flex-[1.5] h-16 bg-[#4CBB17] rounded-3xl items-center justify-center shadow-lg shadow-green-600/30"
-              >
-                <Text className="text-white font-black  text-xs">View Tracker</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+
 
       {menuVisible !== null && (
         <Modal
@@ -826,7 +819,6 @@ export default function LFCalculator({ route }: any) {
         onSuccess={() => {
           setShowAddJobModal(false);
           fetchTrackerJobs(); // Refresh the list
-          setShowTrackerModal(true);
         }}
         job={prefilledJob as any}
       />

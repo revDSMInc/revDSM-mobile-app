@@ -20,7 +20,8 @@ export const SettingsService = {
     api.delete('/two-factor-auth/v1/trusted-devices', { data: { deviceId } }),
 
   // Profile & Company
-  updateProfile: (data: any): Promise<AxiosResponse<any>> => api.put('/user/update', data),
+  updateProfile: (data: any, headers?: any): Promise<AxiosResponse<any>> => 
+    api.put('/user/update', data, { headers }),
   updateCompanyProfile: (data: any): Promise<AxiosResponse<any>> =>
     api.put('/company/update/profile', data),
 };

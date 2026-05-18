@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, Image, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, TouchableOpacity, Image, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import YearDropdown from '../../components/YearDropdown';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -113,9 +113,6 @@ export const ToolsSection = ({
         {revRenderJobs.length > 0 && (
           <View className="mb-4">
             <View className="flex-row justify-between items-center mb-1.5">
-              <Text className="text-[10px] font-black text-[#2EDE56] uppercase tracking-widest">
-                AI Processing ({revRenderJobs.filter((j: any) => j.status === 'completed').length}/{revRenderJobs.length})
-              </Text>
               <Text className="text-[10px] font-black text-slate-400">
                 {Math.round((revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100)}%
               </Text>
@@ -127,34 +124,49 @@ export const ToolsSection = ({
               />
             </View>
             <Text className="text-[10px] text-slate-400 mt-1 italic">
-              {revRenderJobs.find((j: any) => j.status === 'running')?.payload?.selections?.soffit || 'Generating visualizations...'}
+              {revRenderJobs.find((j: any) => j.status === 'running')?.payload?.selections?.soffit || 'Rendering Photos...'}
             </Text>
           </View>
         )}
 
         {isLoading ? (
-          <ActivityIndicator size="small" color={colors.primary.main} />
-        ) : runs && runs.length > 0 ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row">
-            {runs.map((run: any, idx: number) => (
-              <TouchableOpacity
-                key={idx}
-                onPress={() => setHistoryModal({ visible: true, index: idx })}
-                className="mr-3 items-center"
-              >
-                <Image
-                  source={{ uri: run.generatedUrl || run.s3UrlGenerated }}
-                  className="w-20 h-16 rounded-xl border-2"
-                  style={{ borderColor: colors.border }}
-                  resizeMode="cover"
-                />
-              </TouchableOpacity>
+          <View className="flex-row">
+            {[1, 2, 3].map((i) => (
+              <View 
+                key={i} 
+                className="w-20 h-16 rounded-xl mr-3 bg-slate-200 animate-pulse" 
+                style={{ backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }}
+              />
             ))}
-          </ScrollView>
+          </View>
         ) : (
-          <Text className="text-xs font-light mt-2" style={{ color: '#637381' }}>
-            No generated images found in revRender runs.
-          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row">
+            {/* Show Skeletons for active RevRender jobs */}
+            {revRenderJobs.filter((j: any) => j.status !== 'completed' && j.status !== 'failed').map((job: any, idx: number) => (
+              <PulsingSkeleton key={`skeleton-${idx}`} isDark={isDark} />
+            ))}
+
+            {runs && runs.length > 0 ? (
+              runs.map((run: any, idx: number) => (
+                <TouchableOpacity
+                  key={idx}
+                  onPress={() => setHistoryModal({ visible: true, index: idx })}
+                  className="mr-3 items-center"
+                >
+                  <View className="w-20 h-16 rounded-xl overflow-hidden border-2" style={{ borderColor: colors.border }}>
+                    <ImageWithLoader
+                      uri={run.generatedUrl || run.s3UrlGenerated}
+                      colors={colors}
+                    />
+                  </View>
+                </TouchableOpacity>
+              ))
+            ) : revRenderJobs.length === 0 ? (
+              <Text className="text-xs font-light mt-2" style={{ color: '#637381' }}>
+                No generated images found in revRender runs.
+              </Text>
+            ) : null}
+          </ScrollView>
         )}
       </TouchableOpacity>
       <ToolCard
@@ -303,34 +315,67 @@ export const ToolsSection = ({
         runs={runs || []}
         initialIndex={historyModal.index}
       />
-
-      <TouchableOpacity
-        className="p-3 rounded-lg flex-row items-center mb-4 border"
-        style={{
-          borderColor: '#919EAB33',
-          backgroundColor: colors.background,
-        }}
-      >
-        <View
-          className="w-8 h-8 rounded-full items-center justify-center opacity-40"
-          style={{ backgroundColor: '#919EAB1F' }}
-        >
-          <Icon name="home-roof" size={16} color={'#637381'} />
-        </View>
-        <View className="flex-1 ml-4 opacity-40">
-          <Text className="text-sm font-semibold" style={{ color: '#1C252E' }}>
-            Hover
-          </Text>
-        </View>
-        <View className="p-1 rounded-md" style={{ backgroundColor: '#C684FF66' }}>
-          <Text className="text-[10px] font-medium" style={{ color: '#ffffff' }}>
-            Coming soon
-          </Text>
-        </View>
-      </TouchableOpacity>
     </View>
   );
 };
+
+const PulsingSkeleton = ({ isDark }: { isDark: boolean }) => {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.7,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.3,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <Animated.View 
+      className="w-20 h-16 rounded-xl mr-3 items-center justify-center"
+      style={{ 
+        backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+        opacity: opacity
+      }}
+    >
+      <Text className="text-[8px] font-black text-slate-400 uppercase tracking-tighter text-center">AI{"\n"}Rendering</Text>
+    </Animated.View>
+  );
+};
+
+const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
+  const [loading, setLoading] = useState(true);
+
+  return (
+    <View style={{ width: '100%', height: '100%', backgroundColor: '#f1f5f9' }}>
+      <Image
+        source={{ uri }}
+        className="w-full h-full"
+        resizeMode="cover"
+        onLoadStart={() => setLoading(true)}
+        onLoadEnd={() => setLoading(false)}
+      />
+      {loading && (
+        <View 
+          className="absolute inset-0 items-center justify-center bg-slate-100/50"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        >
+          <ActivityIndicator size="small" color={colors.primary.main} />
+        </View>
+      )}
+    </View>
+  );
+};
+
 
 const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated }: any) => {
   const { colors, isDark } = useTheme();

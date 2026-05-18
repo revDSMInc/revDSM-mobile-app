@@ -166,6 +166,7 @@ export const ConsentFormModal = ({
         time: String(formData.time),
         date: String(formData.date),
       });
+      console.log(res, 'resssss');
 
       if (typeof res === 'string') {
         // Automatically trigger final upload to S3 and close

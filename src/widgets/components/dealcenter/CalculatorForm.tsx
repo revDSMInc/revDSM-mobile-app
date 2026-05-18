@@ -17,6 +17,7 @@ export const CalculatorForm = ({
   setShowTrackerModal,
   isAlreadyInTracker,
   handleAddJobToTracker,
+  onGoToTracker,
   refresh,
   active,
   lead,
@@ -600,7 +601,7 @@ export const CalculatorForm = ({
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={handleAddJobToTracker}
+                onPress={onGoToTracker}
                 className="w-full h-12 bg-[#4CBB17] rounded-xl flex-row items-center justify-center"
               >
                 <Text className="text-white font-black text-sm mr-2">Go to Job Tracker</Text>

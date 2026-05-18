@@ -133,7 +133,7 @@ export default function ChatDetailScreen() {
   const { user } = useAuth();
   const route = useRoute<RouteProp<RootStackParamList, 'ChatDetail'>>();
   const navigation = useNavigation<any>();
-  const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead' } = route.params;
+  const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [] } = route.params;
   const isChannel = chatType === 'channel';
 
   const {
@@ -147,7 +147,7 @@ export default function ChatDetailScreen() {
     currentUserId,
     imageUrls,
     typingUsers,
-  } = useChatSession(initialChatId || null, leadId, isChannel, user);
+  } = useChatSession(initialChatId || null, leadId, isChannel, user, initialParticipants);
 
   const {
     filteredMessages,
@@ -196,6 +196,7 @@ export default function ChatDetailScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
   const [showPinned, setShowPinned] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
   const flatListRef = useRef<any>(null);
@@ -206,44 +207,59 @@ export default function ChatDetailScreen() {
    const chatRef = useRef<any>(null);
    const listRef = useRef<any>(null);
  
-   const handleNavigateToMessage = (msg: any) => {
+      const handleNavigateToMessage = (msg: any) => {
      Vibration.vibrate(70);
-     const targetId = String(msg._id || msg.id || '');
-     
-     const index = filteredMessages.findIndex((m: any) => 
-       String(m._id) === targetId || String(m.id) === targetId
+     const targetId = String(msg._id || msg.id || "");
+     if (!targetId) return;
+
+     const index = filteredMessages.findIndex(
+       (m: any) => String(m._id) === targetId || String(m.id) === targetId
      );
- 
+
+     console.log('[Navigate] targetId:', targetId);
+     console.log('[Navigate] Calculated index:', index);
+     console.log('[Navigate] listRef current exists:', !!listRef.current);
+     console.log('[Navigate] chatRef current exists:', !!chatRef.current);
+
      if (index !== -1) {
        setShowPinned(false);
-       
-       // Discovery Loop: Ensures scroll happens even if engine is briefly busy
+       setHighlightedMessageId(targetId);
+       setTimeout(() => setHighlightedMessageId(null), 2500);
+
        let attempts = 0;
        const scrollInterval = setInterval(() => {
          const engine = listRef.current || chatRef.current?._messageContainerRef?.current;
          if (engine) {
            try {
-             engine.scrollToOffset({
-               offset: index * 130, // Precise pixel target
-               animated: true,
-             });
-             engine.scrollToIndex({
-               index,
-               animated: true,
-               viewPosition: 0.2,
-             });
-           } catch (e) {}
-           clearInterval(scrollInterval);
+             console.log('[Navigate] Scrolling to index:', index);
+             engine.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+             clearInterval(scrollInterval);
+           } catch (e) {
+             console.log('[Navigate] ScrollToIndex failed, attempting offset fallback:', e);
+             try {
+               engine.scrollToOffset({ offset: index * 180, animated: true });
+               clearInterval(scrollInterval);
+             } catch (err) {
+               console.log('[Navigate] Fallback offset scroll failed:', err);
+             }
+           }
          }
          attempts++;
          if (attempts > 10) clearInterval(scrollInterval);
        }, 100);
      } else {
-       listRef.current?.scrollToEnd({ animated: true });
+       const engine = listRef.current || chatRef.current?._messageContainerRef?.current;
+       if (engine) {
+         try {
+           engine.scrollToEnd({ animated: true });
+         } catch (e) {
+           console.log('[Navigate] ScrollToEnd failed:', e);
+         }
+       }
      }
    };
- 
-   useEffect(() => {
+
+  useEffect(() => {
     if (searchResults.length > 0) {
       const matchId = searchResults[searchIndex];
       const match = filteredMessages.find((m: any) => m._id === matchId);
@@ -484,11 +500,11 @@ export default function ChatDetailScreen() {
           imageUrls={imageUrls}
           isViewOnly={isViewOnly}
           searchQuery={searchQuery}
-          activeMatchId={searchResults[searchIndex]}
+          activeMatchId={highlightedMessageId || searchResults[searchIndex]}
         />
       );
     },
-    [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex]
+    [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex, highlightedMessageId]
   );
 
   const renderInputToolbar = useCallback(
@@ -655,83 +671,102 @@ export default function ChatDetailScreen() {
         onNext={() => setSearchIndex((prev: number) => Math.max(0, prev - 1))}
       />
 
-      {Platform.OS === 'ios' ? (
+      {loading && filteredMessages.length === 0 ? (
+        <View className="flex-1 items-center justify-center" style={{ backgroundColor: colors.background }}>
+          <ActivityIndicator size="large" color={colors.primary.main} />
+          <Text className="mt-4 font-bold opacity-40 tracking-widest text-[10px]" style={{ color: colors.text }}>
+            Syncing Secure Room...
+          </Text>
+        </View>
+      ) : Platform.OS === 'ios' ? (
          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={64}>
-           <GiftedChatAny
-             ref={chatRef}
-             messages={filteredMessages}
-             onSend={onSend}
-             user={{ _id: currentUserId || '' }}
-             renderAvatar={null}
-             renderBubble={renderBubble}
-             renderSystemMessage={renderSystemMessage}
-             renderDay={renderDay}
-             renderInputToolbar={renderInputToolbar}
-             onInputTextChanged={handleComposerChange}
-             extraData={{ filteredMessages, imageUrls, showMentions, composerText }}
-             renderChatFooter={renderFooter}
-             inverted={true}
-             flatListProps={{
-               ref: listRef,
-               keyboardShouldPersistTaps: 'never',
-               contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
-               keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
-               getItemLayout: (data: any, index: number) => ({
-                 length: 120,
-                 offset: 120 * index,
-                 index,
-               }),
-               onScrollToIndexFailed: (info: any) => {
-                 listRef.current?.scrollToOffset({
-                   offset: info.averageItemLength * info.index,
-                   animated: false,
-                 });
-               },
-             }}
-           />
+            <GiftedChatAny
+              ref={chatRef}
+              messageContainerRef={(ref: any) => { if (ref) listRef.current = ref; }}
+              messages={filteredMessages}
+              onSend={onSend}
+              user={{ _id: currentUserId || '' }}
+              renderAvatar={null}
+              renderBubble={renderBubble}
+              renderSystemMessage={renderSystemMessage}
+              renderDay={renderDay}
+              renderInputToolbar={renderInputToolbar}
+              onInputTextChanged={handleComposerChange}
+              extraData={{ filteredMessages, imageUrls, showMentions, composerText }}
+              renderChatFooter={renderFooter}
+              inverted={true}
+              flatListProps={{
+                keyboardShouldPersistTaps: 'never',
+                contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
+                keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+                getItemLayout: (data: any, index: number) => ({
+                  length: 180,
+                  offset: 180 * index,
+                  index,
+                }),
+                onScrollToIndexFailed: (info: any) => {
+                   const engine = listRef.current || chatRef.current?._messageContainerRef?.current;
+                   try {
+                     console.log('[FlatList] iOS onScrollToIndexFailed index:', info.index);
+                     engine?.scrollToOffset({
+                       offset: info.highestMeasuredFrameIndex * 180 + (info.index - info.highestMeasuredFrameIndex) * 180,
+                       animated: true,
+                     });
+                   } catch (err) {
+                     console.log('onScrollToIndexFailed iOS fallback failed:', err);
+                   }
+                 },
+              }}
+            />
+          </KeyboardAvoidingView>
+        ) : (
+          <KeyboardAvoidingView
+            behavior="padding"
+            style={{ flex: 1 }}
+            keyboardVerticalOffset={isKeyboardVisible ? -insets.bottom : 0}
+          >
+            <GiftedChatAny
+              ref={chatRef}
+              messageContainerRef={(ref: any) => { if (ref) listRef.current = ref; }}
+              messages={filteredMessages}
+              onSend={onSend}
+              user={{ _id: currentUserId || '' }}
+              renderAvatar={null}
+              renderBubble={renderBubble}
+              renderSystemMessage={renderSystemMessage}
+              renderDay={renderDay}
+              renderInputToolbar={renderInputToolbar}
+              onInputTextChanged={handleComposerChange}
+              extraData={{ filteredMessages, imageUrls, showMentions, composerText }}
+              renderChatFooter={renderFooter}
+              isKeyboardInternallyHandled={false}
+              bottomOffset={0}
+              inverted={true}
+              flatListProps={{
+                keyboardShouldPersistTaps: 'handled',
+                contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
+                keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
+                getItemLayout: (data: any, index: number) => ({
+                  length: 180,
+                  offset: 180 * index,
+                  index,
+                }),
+                onScrollToIndexFailed: (info: any) => {
+                   const engine = listRef.current || chatRef.current?._messageContainerRef?.current;
+                   try {
+                     console.log('[FlatList] Android onScrollToIndexFailed index:', info.index);
+                     engine?.scrollToOffset({
+                       offset: info.highestMeasuredFrameIndex * 180 + (info.index - info.highestMeasuredFrameIndex) * 180,
+                       animated: true,
+                     });
+                   } catch (err) {
+                     console.log('onScrollToIndexFailed Android fallback failed:', err);
+                   }
+                 },
+              }}
+            />
          </KeyboardAvoidingView>
-       ) : (
-         <KeyboardAvoidingView
-           behavior="padding"
-           style={{ flex: 1 }}
-           keyboardVerticalOffset={isKeyboardVisible ? -insets.bottom : 0}
-         >
-           <GiftedChatAny
-             ref={chatRef}
-             messages={filteredMessages}
-             onSend={onSend}
-             user={{ _id: currentUserId || '' }}
-             renderAvatar={null}
-             renderBubble={renderBubble}
-             renderSystemMessage={renderSystemMessage}
-             renderDay={renderDay}
-             renderInputToolbar={renderInputToolbar}
-             onInputTextChanged={handleComposerChange}
-             extraData={{ filteredMessages, imageUrls, showMentions, composerText }}
-             renderChatFooter={renderFooter}
-             isKeyboardInternallyHandled={false}
-             bottomOffset={0}
-             inverted={true}
-             flatListProps={{
-               ref: listRef,
-               keyboardShouldPersistTaps: 'handled',
-               contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
-               keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
-               getItemLayout: (data: any, index: number) => ({
-                 length: 120,
-                 offset: 120 * index,
-                 index,
-               }),
-               onScrollToIndexFailed: (info: any) => {
-                 listRef.current?.scrollToOffset({
-                   offset: info.averageItemLength * info.index,
-                   animated: false,
-                 });
-               },
-             }}
-           />
-        </KeyboardAvoidingView>
-      )}
+       )}
 
       <ParticipantsModal
         visible={participantModalVisible}
@@ -756,15 +791,15 @@ export default function ChatDetailScreen() {
               maxHeight: '60%',
             }}
           >
-            <PinnedMessagesArea
-              pinnedMessages={pinnedMessages}
-              imageUrls={imageUrls}
-              onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id, isChannel)}
-              onNavigate={(msg: any) => {
-                handleNavigateToMessage(msg);
-                setShowPinned(false);
-              }}
-            />
+             <PinnedMessagesArea
+               pinnedMessages={pinnedMessages}
+               imageUrls={imageUrls}
+               onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id, isChannel)}
+               onNavigate={(msg: any) => {
+                 handleNavigateToMessage(msg);
+                 setShowPinned(false);
+               }}
+             />
           </View>
         </TouchableOpacity>
       </Modal>

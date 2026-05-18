@@ -109,6 +109,20 @@ const getLastCheckInTime = (actionlogs: any[]) => {
 
 const RESULTED_LABELS: Record<string, string> = {
   resulted: 'Resulted',
+  sale: 'Sale',
+  demo: 'Demo',
+  noDemo: 'No Demo',
+  nodemo: 'No Demo',
+  demonosale: 'Demo No Sale',
+  demoNoSale: 'Demo No Sale',
+  nothit: 'Not Hit',
+  notHit: 'Not Hit',
+  notHome: 'Not Home',
+  nothome: 'Not Home',
+  cancelled: 'Cancelled',
+  rescheduled: 'Rescheduled',
+  reset: 'Reset',
+  pitchbook: 'Pitchbook',
 };
 
 const RESULTED_COLORS: Record<string, string> = {
@@ -444,7 +458,7 @@ export function LeadCard({
           text: 'Reset',
           style: 'destructive',
           onPress: () => {
-            if (lead._id) resetMutation.mutate(lead._id, { onSuccess: () => onPress() });
+            if (lead._id) resetMutation.mutate(lead._id);
           },
         },
       ]

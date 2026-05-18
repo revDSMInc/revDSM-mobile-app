@@ -57,9 +57,11 @@ export const CalculatorSummary = ({
   refresh,
   onClose,
   handleAddJobToTracker,
+  onGoToTracker,
   isAlreadyInTracker,
   lead,
   jobBuilderState,
+  handleResetJobBuilder,
 }: any) => {
   const { colors } = useTheme();
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
@@ -109,29 +111,6 @@ export const CalculatorSummary = ({
   // We prioritize the API-fetched jobBuilderState to avoid stale data from the lead object.
   const isJobBuilderSubmitted = jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted';
 
-  const handleResetJobBuilder = () => {
-    Alert.alert(
-      'Reset Job Builder',
-      'This will reset the job builder for this rollout. Are you sure?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const leadId = lead?._id || lead?.leadId || lead?.id;
-              if (leadId) await LeadService.resetLead(leadId);
-              refresh?.();
-            } catch (err) {
-              console.error('[DealCenter] Reset job builder failed:', err);
-              Alert.alert('Error', 'Could not reset job builder. Please try again.');
-            }
-          },
-        },
-      ],
-    );
-  };
   // If endPrice is 0, use results.total (Retail) as the base.
   // Note: results.total already includes screens, so we don't add them again in the fallback case.
   const activeDrop =
@@ -490,22 +469,9 @@ export const CalculatorSummary = ({
                 {error && !showDropInput && (
                   <Text className="text-[10px] font-bold text-red-500 mt-2 ml-1 ">{error}</Text>
                 )}
-                {isDuplicate && (
-                  <View className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-2xl flex-row items-center">
-                    <Feather name="alert-triangle" size={20} color="#CA8A04" />
-                    <View className="ml-3 flex-1">
-                      <Text className="text-xs font-black text-yellow-700  tracking-tight">
-                        Duplicate Calculator detected
-                      </Text>
-                      <Text className="text-[10px] text-yellow-600 font-medium mt-0.5">
-                        This calculator has the same measurements and plan as another one.
-                      </Text>
-                    </View>
-                  </View>
-                )}
               </View>
 
-              {/* Target Price Card and MSRP are above this */}
+
             </View>
 
             {/* New Result Section - Only show when price is entered and NOT confirmed */}

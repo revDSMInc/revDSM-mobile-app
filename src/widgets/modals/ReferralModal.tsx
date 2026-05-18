@@ -25,6 +25,48 @@ interface ReferralModalProps {
   onSuccess?: () => void;
 }
 
+const InputField = ({ label, value, onChangeText, onPress, placeholder, keyboardType = 'default', multiline = false, dropdown = false, required = false, isDark, editable = true }: any) => (
+  <View className="mb-5 relative">
+    <View className="absolute -top-2.5 left-3 bg-white px-1 z-10">
+      <Text className="text-[11px] font-bold text-slate-400">
+        {label}{required && <Text className="text-red-500">*</Text>}
+      </Text>
+    </View>
+    <TouchableOpacity 
+      activeOpacity={dropdown ? 0.7 : 1}
+      onPress={onPress}
+      className={`flex-row items-center border border-slate-200 rounded-xl px-4 ${multiline ? 'py-2' : 'h-[52px]'}`}
+    >
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#94a3b8"
+        keyboardType={keyboardType}
+        multiline={multiline}
+        editable={!dropdown && editable}
+        pointerEvents={dropdown ? 'none' : 'auto'}
+        className={`flex-1 font-bold text-[13px] ${isDark ? 'text-white' : 'text-slate-700'}`}
+        style={{ textAlignVertical: multiline ? 'top' : 'center' }}
+      />
+      {dropdown && <Icon name="chevron-down" size={20} color="#94a3b8" />}
+    </TouchableOpacity>
+  </View>
+);
+
+const Checkbox = ({ label, checked, onPress }: any) => (
+  <TouchableOpacity 
+    onPress={onPress}
+    className="flex-row items-center w-[48%] mb-3"
+    activeOpacity={0.7}
+  >
+    <View className={`w-5 h-5 rounded border items-center justify-center ${checked ? 'bg-[#4CBB17] border-[#4CBB17]' : 'bg-white border-slate-300'}`}>
+      {checked && <Icon name="check" size={14} color="white" />}
+    </View>
+    <Text className="ml-3 text-[13px] font-bold text-slate-700 dark:text-zinc-300">{label}</Text>
+  </TouchableOpacity>
+);
+
 export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSuccess }: ReferralModalProps) => {
 
   const { colors, isDark } = useTheme();
@@ -46,7 +88,21 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
     referralToggle: false,
   });
 
+  const [showMethodDropdown, setShowMethodDropdown] = useState(false);
+  const [showTimeDropdown, setShowTimeDropdown] = useState(false);
+
   const products = ['Fascia Wrap', 'Soffit', 'Gutter', 'Leaf Filter'];
+  const contactMethods = [
+    { label: 'Phone Call', value: 'call' },
+    { label: 'SMS / Text', value: 'text' },
+    { label: 'Email', value: 'email' },
+  ];
+
+  const timeOptions = [
+    { label: 'Morning', value: 'morning' },
+    { label: 'Afternoon', value: 'afternoon' },
+    { label: 'Evening', value: 'evening' },
+  ];
 
   useEffect(() => {
     if (visible && existingReferral) {
@@ -59,17 +115,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
         note: existingReferral.notes || '',
         items: existingReferral.items || [],
         referralToggle: existingReferral.referralToggle || false,
-      });
-    } else if (visible && !existingReferral) {
-      setForm({
-        firstName: '',
-        phoneNumber: '+1 ',
-        preferredContactMethod: 'call',
-        bestTimeToContact: 'morning',
-        zipCode: '',
-        note: '',
-        items: [],
-        referralToggle: false,
       });
     }
   }, [visible, existingReferral]);
@@ -106,7 +151,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
         payload.jobId = selectedJob?.jobNumber;
       }
 
-      // 1. Log Activity (Web Parity)
       const activityPayload = {
         user_id: user?._id || user?.id,
         action_type: mode === 'ADD' ? 'create' : 'update',
@@ -120,10 +164,8 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
         }
       };
 
-      // Call activity log in background
       LeadService.logUserActivity(activityPayload).catch(e => console.log('Activity Log Error:', e));
 
-      // 2. Main API Call
       if (mode === 'EDIT' && existingReferral?._id) {
         await LeadService.updateReferral(existingReferral._id, payload);
       } else {
@@ -142,57 +184,22 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
     }
   };
 
-  const InputField = ({ label, value, onChangeText, placeholder, keyboardType = 'default', multiline = false, dropdown = false, required = false }: any) => (
-    <View className="mb-5 relative">
-      <View className="absolute -top-2.5 left-3 bg-white px-1 z-10">
-        <Text className="text-[11px] font-bold text-slate-400">
-          {label}{required && <Text className="text-red-500">*</Text>}
-        </Text>
-      </View>
-      <View className={`flex-row items-center border border-slate-200 rounded-xl px-4 ${multiline ? 'py-2' : 'h-[52px]'}`}>
-        <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor="#94a3b8"
-          keyboardType={keyboardType}
-          multiline={multiline}
-          editable={mode !== 'VIEW'}
-          className={`flex-1 font-bold text-[13px] ${isDark ? 'text-white' : 'text-slate-700'}`}
-          style={{ textAlignVertical: multiline ? 'top' : 'center' }}
-        />
-        {dropdown && <Icon name="chevron-down" size={20} color="#94a3b8" />}
-      </View>
-    </View>
-  );
-
-  const Checkbox = ({ label, checked, onPress }: any) => (
-    <TouchableOpacity 
-      onPress={onPress}
-      className="flex-row items-center w-[48%] mb-3"
-      activeOpacity={0.7}
-    >
-      <View className={`w-5 h-5 rounded border items-center justify-center ${checked ? 'bg-[#4CBB17] border-[#4CBB17]' : 'bg-white border-slate-300'}`}>
-        {checked && <Icon name="check" size={14} color="white" />}
-      </View>
-      <Text className="ml-3 text-[13px] font-bold text-slate-700 dark:text-zinc-300">{label}</Text>
-    </TouchableOpacity>
-  );
-
   const getTitle = () => {
     if (mode === 'ADD') return 'Add Reference';
     if (mode === 'EDIT') return 'Update Reference';
     return 'Reference';
   };
 
+  const isViewMode = mode === 'VIEW';
+
   return (
     <Modal visible={visible} animationType="fade" transparent>
       <View className="flex-1 justify-center items-center bg-black/50 px-6">
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          className="bg-white rounded-[32px] w-full max-h-[90%] overflow-hidden"
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          style={{ width: '100%', alignItems: 'center', justifyContent: 'center' }}
         >
-          {/* Header */}
+          <View className="bg-white rounded-[32px] w-full max-h-[85%]">
           <View className="p-6 pb-2 flex-row justify-between items-center">
             <Text className="text-[20px] font-black text-slate-800">{getTitle()}</Text>
             <TouchableOpacity onPress={onClose}>
@@ -200,13 +207,19 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
             </TouchableOpacity>
           </View>
 
-          <ScrollView className="px-6 pb-6" showsVerticalScrollIndicator={false}>
+          <ScrollView 
+            className="px-6" 
+            contentContainerStyle={{ paddingBottom: 30 }}
+            showsVerticalScrollIndicator={false}
+          >
             <View className="mt-4">
               <InputField 
                 label="Full Name" 
                 value={form.firstName} 
                 onChangeText={(t: string) => setForm({...form, firstName: t})}
                 placeholder="Full Name"
+                isDark={isDark}
+                editable={!isViewMode}
               />
               <InputField 
                 label="Phone Number" 
@@ -215,34 +228,112 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                 placeholder="Phone Number"
                 keyboardType="phone-pad"
                 required
+                isDark={isDark}
+                editable={!isViewMode}
               />
               
-              <View className="flex-row gap-4">
-                <View className="flex-1">
+              <View className="flex-row gap-4" style={{ zIndex: 100 }}>
+                <View className="flex-1" style={{ zIndex: 100 }}>
                   <InputField 
                     label="Method" 
-                    value={form.preferredContactMethod} 
+                    value={contactMethods.find(m => m.value === form.preferredContactMethod)?.label || form.preferredContactMethod} 
                     dropdown
                     required
+                    isDark={isDark}
+                    editable={!isViewMode}
+                    onPress={() => !isViewMode && setShowMethodDropdown(!showMethodDropdown)}
                   />
+                  {showMethodDropdown && (
+                    <View 
+                      style={{
+                        position: 'absolute',
+                        top: 55,
+                        left: 0,
+                        right: 0,
+                        backgroundColor: 'white',
+                        borderWidth: 1,
+                        borderColor: '#f1f5f9',
+                        borderRadius: 12,
+                        elevation: 20,
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.15,
+                        shadowRadius: 8,
+                        zIndex: 9999,
+                      }}
+                    >
+                      {contactMethods.map(m => (
+                        <TouchableOpacity 
+                          key={m.value}
+                          style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}
+                          onPress={() => {
+                            setForm({...form, preferredContactMethod: m.value});
+                            setShowMethodDropdown(false);
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>{m.label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
-                <View className="flex-1">
+                <View className="flex-1" style={{ zIndex: 90 }}>
                   <InputField 
                     label="Zip Code" 
                     value={form.zipCode} 
                     onChangeText={(t: string) => setForm({...form, zipCode: t})}
                     placeholder="Zip Code"
                     keyboardType="numeric"
+                    isDark={isDark}
+                    editable={!isViewMode}
                   />
                 </View>
               </View>
 
-              <InputField 
-                label="Best Time to Contact" 
-                value={form.bestTimeToContact} 
-                dropdown
-                required
-              />
+              <View style={{ zIndex: 80 }}>
+                <InputField 
+                  label="Best Time to Contact" 
+                  value={timeOptions.find(o => o.value === form.bestTimeToContact)?.label || form.bestTimeToContact} 
+                  dropdown
+                  required
+                  isDark={isDark}
+                  editable={!isViewMode}
+                  onPress={() => !isViewMode && setShowTimeDropdown(!showTimeDropdown)}
+                />
+                {showTimeDropdown && (
+                  <View 
+                    style={{
+                      position: 'absolute',
+                      top: 55,
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'white',
+                      borderWidth: 1,
+                      borderColor: '#f1f5f9',
+                      borderRadius: 12,
+                      elevation: 20,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.15,
+                      shadowRadius: 8,
+                      zIndex: 9999,
+                    }}
+                  >
+                    {timeOptions.map(o => (
+                      <TouchableOpacity 
+                        key={o.value}
+                        style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}
+                        onPress={() => {
+                          setForm({...form, bestTimeToContact: o.value});
+                          setShowTimeDropdown(false);
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>{o.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
               
               <InputField 
                 label="Note" 
@@ -250,6 +341,8 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                 onChangeText={(t: string) => setForm({...form, note: t})}
                 placeholder="Note"
                 multiline
+                isDark={isDark}
+                editable={!isViewMode}
               />
 
               <View className="mt-2 mb-6">
@@ -280,7 +373,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
             </View>
           </ScrollView>
 
-          {/* Footer */}
           <View className="p-6 pt-0 flex-row justify-end gap-3">
             <TouchableOpacity 
               onPress={onClose}
@@ -303,7 +395,8 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
               </TouchableOpacity>
             )}
           </View>
-        </KeyboardAvoidingView>
+        </View>
+      </KeyboardAvoidingView>
       </View>
     </Modal>
   );

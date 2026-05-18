@@ -13,8 +13,9 @@ import {
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import JobService, { JobEntry } from '../../../services/api/JobService';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import { CustomDatePicker } from './CustomDatePicker';
+import { calculateCommission } from '../../../utils/calculator/commission-utils';
 
 interface Props {
   visible: boolean;
@@ -26,6 +27,7 @@ interface Props {
 const PAYMENT_GROUPS = [
   {
     title: 'Basic Options',
+    bg: '#F8FAFC',
     options: [
       { label: 'Check (0% Fee)', value: 'check' },
       { label: 'MC/VISA/DSCVR (3.00% Fee)', value: 'mcVisaDscvr' },
@@ -34,6 +36,7 @@ const PAYMENT_GROUPS = [
   },
   {
     title: 'GreenSky Plans',
+    bg: '#d9ead3',
     options: [
       { label: '2511 (6 Months 0% Interest)', value: 'greensky2511' },
       { label: '2521 (12 Months 0% Interest)', value: 'greensky2521' },
@@ -43,6 +46,7 @@ const PAYMENT_GROUPS = [
   },
   {
     title: 'Wells Fargo Plans',
+    bg: '#f4cccc',
     options: [
       { label: '1148 (6 Months no interest)', value: 'wf1148' },
       { label: '1019 (12 Months no interest)', value: 'wf1019' },
@@ -60,6 +64,7 @@ const PAYMENT_GROUPS = [
   },
   {
     title: 'Wells Fargo Plans (Jobs over $7,500)',
+    bg: '#f4cccc',
     options: [
       { label: '3672 (7.99% APR, 96 payments)', value: 'wf3672' },
       { label: '3667 (7.99% APR, 108 payments)', value: 'wf3667' },
@@ -71,6 +76,7 @@ const PAYMENT_GROUPS = [
   },
   {
     title: 'Concora Credit',
+    bg: '#c9daf8',
     options: [{ label: 'Concora (19.9% APR)', value: 'concora' }],
   },
 ];
@@ -88,7 +94,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
     paymentMethod: 'check',
     commission: 0,
     installDate: null,
-    soldDate: format(new Date(), 'yyyy-MM-dd'),
+    soldDate: '',
     toBeDetermined: false,
     isManual: false,
     appointmentId: '',
@@ -98,35 +104,65 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
   const [loading, setLoading] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [datePickerType, setDatePickerType] = useState<'install' | 'sold'>('install');
+
+  // Auto-calculate commission whenever salesPrice or paymentMethod changes
+  useEffect(() => {
+    // Only auto-calculate commission for calculator-originated jobs (non-manual)
+    if (!formData.isManual && formData.salesPrice !== undefined && formData.paymentMethod) {
+      const comm = calculateCommission(formData.salesPrice, formData.paymentMethod);
+      setFormData(prev => ({
+        ...prev,
+        commission: Math.round(comm.amount * 100) / 100
+      }));
+    }
+  }, [formData.salesPrice, formData.paymentMethod, formData.isManual]);
 
   useEffect(() => {
-    if (job) {
-      setFormData({
-        ...formData,
-        ...job,
-        jobNumber: job.jobNumber || '',
-        customerName: job.customerName || '',
-        title: job.title || '',
-        salesPrice: job.salesPrice || 0,
-        paymentMethod: job.paymentMethod || 'check',
-        commission: job.commission || 0,
-        installDate: job.installDate || null,
-        soldDate: job.soldDate || format(new Date(), 'yyyy-MM-dd'),
-        toBeDetermined: job.toBeDetermined ?? false,
-        isManual: job.isManual ?? false,
-        appointmentId: job.appointmentId || '',
-        calculatorId: job.calculatorId || '',
-      });
+    if (visible) {
+      if (job && (job.id || job._id)) {
+        // Edit mode - load existing data
+        setFormData({
+          ...job,
+          jobNumber: job.jobNumber || '',
+          customerName: job.customerName || '',
+          title: job.title || '',
+          salesPrice: job.salesPrice || 0,
+          paymentMethod: job.paymentMethod || 'check',
+          commission: job.commission || 0,
+          installDate: job.installDate || null,
+          soldDate: job.soldDate || format(new Date(), 'yyyy-MM-dd'),
+          toBeDetermined: job.toBeDetermined ?? false,
+          isManual: job.isManual ?? false,
+          appointmentId: job.appointmentId || '',
+          calculatorId: job.calculatorId || '',
+        });
+      } else {
+        // New job mode - "nothing pre-added" rule
+        setFormData({
+          jobNumber: '',
+          customerName: job?.customerName || '',
+          title: job?.title || '',
+          salesPrice: 0,
+          paymentMethod: job?.paymentMethod || 'check',
+          commission: 0,
+          installDate: null,
+          soldDate: '',
+          toBeDetermined: false,
+          isManual: job?.isManual ?? false,
+          appointmentId: job?.appointmentId || '',
+          calculatorId: job?.calculatorId || '',
+        });
+      }
     }
   }, [job, visible]);
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      const payload = {
+      const payload: any = {
         jobNumber: formData.jobNumber?.trim() || '',
         customerName: formData.customerName?.trim() || '',
-        title: formData.title || '',
         salesPrice: formData.salesPrice || 0,
         paymentMethod: formData.paymentMethod || 'check',
         installDate: formData.toBeDetermined
@@ -139,10 +175,12 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
           : new Date().toISOString(),
         toBeDetermined: formData.toBeDetermined || false,
         commission: formData.commission || 0,
-        appointmentId: formData.appointmentId || '',
-        calculatorId: formData.calculatorId || '',
         isManual: formData.isManual || false,
       };
+
+      if (formData.title) payload.title = formData.title;
+      if (formData.appointmentId) payload.appointmentId = formData.appointmentId;
+      if (formData.calculatorId) payload.calculatorId = formData.calculatorId;
 
       if (job?.id || job?._id) {
         await JobService.updateJob((job.id || job._id)!, payload);
@@ -164,12 +202,17 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
         <View style={[styles.content, { backgroundColor: colors.card }]}>
           <ScrollView className="px-8 py-8" showsVerticalScrollIndicator={false}>
             <Text className="text-[22px] font-black text-[#1C252E] mb-10 mt-2">
-              Add This Job to Job Tracker
+              {job?.id || job?._id ? 'Edit Job' : 'Add This Job to Job Tracker'}
             </Text>
 
             {/* Job Number */}
             <View style={styles.fieldWrap}>
-              <View style={[styles.fieldBox, { borderColor: colors.border }]}>
+              <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
+                <Text style={[styles.floatingLabelText, { color: !formData.jobNumber ? '#EF4444' : '#919EAB' }]}>
+                  Job Number {!formData.jobNumber && '*'}
+                </Text>
+              </View>
+              <View style={[styles.fieldBox, { borderColor: !formData.jobNumber ? '#EF4444' : colors.border }]}>
                 <TextInput
                   value={formData.jobNumber}
                   onChangeText={(t) => setFormData({ ...formData, jobNumber: t })}
@@ -180,14 +223,36 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               </View>
             </View>
 
+            {/* Customer Name (Manual Entry only) */}
+            {formData.isManual && (
+              <View style={styles.fieldWrap}>
+                <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.floatingLabelText, { color: !formData.customerName ? '#EF4444' : '#919EAB' }]}>
+                    Customer Name {!formData.customerName && '*'}
+                  </Text>
+                </View>
+                <View style={[styles.fieldBox, { borderColor: !formData.customerName ? '#EF4444' : colors.border }]}>
+                  <TextInput
+                    value={formData.customerName}
+                    onChangeText={(t) => setFormData({ ...formData, customerName: t })}
+                    style={[styles.fieldInput, { color: colors.text }]}
+                    placeholder="Customer Name"
+                    placeholderTextColor="#919EAB"
+                  />
+                </View>
+              </View>
+            )}
+
             {/* Sales Price */}
             <View style={styles.fieldWrap}>
               <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
-                <Text style={[styles.floatingLabelText, { color: '#919EAB' }]}>Sales Price</Text>
+                <Text style={[styles.floatingLabelText, { color: !formData.salesPrice ? '#EF4444' : '#919EAB' }]}>
+                  Sales Price {!formData.salesPrice && '*'}
+                </Text>
               </View>
-              <View style={[styles.fieldBox, { borderColor: colors.border }]}>
+              <View style={[styles.fieldBox, { borderColor: !formData.salesPrice ? '#EF4444' : colors.border }]}>
                 <TextInput
-                  value={formData.salesPrice === 0 ? '' : formData.salesPrice?.toString()}
+                  value={formData.salesPrice === 0 ? '0' : formData.salesPrice?.toString()}
                   keyboardType="numeric"
                   onChangeText={(t) => setFormData({ ...formData, salesPrice: parseFloat(t) || 0 })}
                   style={[styles.fieldInput, { color: colors.text }]}
@@ -223,13 +288,17 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                     { backgroundColor: colors.card, borderColor: colors.border },
                   ]}
                 >
-                  <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={true}>
+                  <ScrollView 
+                    style={{ maxHeight: 300 }} 
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                  >
                     {PAYMENT_GROUPS.map((group) => (
                       <View key={group.title}>
                         <View
                           style={[
                             styles.pickerHeader,
-                            { backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa' },
+                            { backgroundColor: group.bg },
                           ]}
                         >
                           <Text style={[styles.pickerHeaderText, { color: '#919EAB' }]}>
@@ -270,18 +339,46 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               )}
             </View>
 
+            {/* Commission (Manual only) */}
+            {formData.isManual && (
+              <View style={styles.fieldWrap}>
+                <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.floatingLabelText, { color: '#919EAB' }]}>Commission</Text>
+                </View>
+                <View style={[styles.fieldBox, { borderColor: colors.border }]}>
+                  <TextInput
+                    value={formData.commission?.toString() || '0'}
+                    keyboardType="numeric"
+                    onChangeText={(t) => setFormData({ ...formData, commission: parseFloat(t) || 0 })}
+                    style={[styles.fieldInput, { color: colors.text }]}
+                    placeholder="0"
+                    placeholderTextColor="#919EAB"
+                  />
+                </View>
+              </View>
+            )}
+
             {/* Install Date */}
             <View style={styles.fieldWrap}>
+              <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
+                <Text style={[styles.floatingLabelText, { color: (!formData.toBeDetermined && !formData.installDate) ? '#EF4444' : '#919EAB' }]}>
+                  Install Date {!formData.toBeDetermined && !formData.installDate && '*'}
+                </Text>
+              </View>
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => {
                   if (!formData.toBeDetermined) {
+                    setDatePickerType('install');
                     setShowDatePicker(true);
                   }
                 }}
                 style={[
                   styles.fieldBox,
-                  { borderColor: colors.border, opacity: formData.toBeDetermined ? 0.5 : 1 },
+                  { 
+                    borderColor: (!formData.toBeDetermined && !formData.installDate) ? '#EF4444' : colors.border, 
+                    opacity: formData.toBeDetermined ? 0.5 : 1 
+                  },
                 ]}
               >
                 <TextInput
@@ -317,6 +414,36 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               </Text>
             </View>
 
+            {/* Date Sold (Manual only) */}
+            {formData.isManual && (
+              <View style={styles.fieldWrap}>
+                <View style={[styles.floatingLabel, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.floatingLabelText, { color: !formData.soldDate ? '#EF4444' : '#919EAB' }]}>
+                    Date Sold {!formData.soldDate && '*'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setDatePickerType('sold');
+                    setShowDatePicker(true);
+                  }}
+                  style={[styles.fieldBox, { borderColor: !formData.soldDate ? '#EF4444' : colors.border }]}
+                >
+                  <TextInput
+                    value={
+                      formData.soldDate ? format(parseISO(formData.soldDate), 'MM/dd/yyyy') : ''
+                    }
+                    editable={false}
+                    pointerEvents="none"
+                    style={[styles.fieldInput, { color: colors.text }]}
+                    placeholder="Date Sold"
+                    placeholderTextColor="#919EAB"
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Action Buttons */}
             <View className="flex-row gap-3 mb-10 justify-end items-center">
               <TouchableOpacity
@@ -331,7 +458,11 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                 className="flex-[1.5] h-12 items-center justify-center rounded-xl bg-[#4CBB17] shadow-lg shadow-green-600/20"
               >
                 <Text className="font-bold text-white text-[15px]">
-                  {loading ? '...' : job ? 'Update' : 'Add to Job Tracker'}
+                  {loading
+                    ? '...'
+                    : job?.id || job?._id
+                    ? 'Update Job'
+                    : 'Add to Job Tracker'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -342,9 +473,17 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
       <CustomDatePicker
         visible={showDatePicker}
         onClose={() => setShowDatePicker(false)}
-        initialDate={formData.installDate || undefined}
+        initialDate={
+          datePickerType === 'install'
+            ? formData.installDate || undefined
+            : formData.soldDate || undefined
+        }
         onSelect={(date) => {
-          setFormData({ ...formData, installDate: date });
+          if (datePickerType === 'install') {
+            setFormData({ ...formData, installDate: date });
+          } else {
+            setFormData({ ...formData, soldDate: date });
+          }
         }}
       />
     </Modal>

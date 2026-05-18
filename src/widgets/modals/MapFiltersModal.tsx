@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, TextInput, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, TextInput, Platform, ActivityIndicator, Keyboard } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -16,8 +16,10 @@ export interface FilterState {
   endDate: string | null;
   myJobsOnly: boolean;
   isFavoriteOnly: boolean;
+  isReferralOnly: boolean;
   isHeatMap: boolean;
   showRoute: boolean;
+  centerCoords?: { latitude: number; longitude: number };
 }
 
 interface MapFiltersModalProps {
@@ -28,12 +30,11 @@ interface MapFiltersModalProps {
   onReset: () => void;
 }
 
-const FilterInput = ({ icon, children, isGreen = true }: any) => (
+const FilterInput = ({ icon, children, isGreen = true, primaryColor }: any) => (
   <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
     <View
-      className={`w-[50px] h-full ${
-        isGreen ? 'bg-green-600' : 'bg-slate-100'
-      } items-center justify-center`}
+      className="w-[50px] h-full items-center justify-center"
+      style={{ backgroundColor: isGreen ? primaryColor : '#f1f5f9' }}
     >
       <Icon name={icon} size={20} color={isGreen ? 'white' : '#64748b'} />
     </View>
@@ -59,12 +60,22 @@ export const MapFiltersModal = ({
   const [searchText, setSearchText] = useState(filters.jobNumber || '');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [showRadiusDropdown, setShowRadiusDropdown] = useState(false);
+  const [showDateRangeDropdown, setShowDateRangeDropdown] = useState(false);
+  const [dateRangeLabel, setDateRangeLabel] = useState('Select Date Range');
   const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     setLocalFilters(filters);
     setSearchText(filters.jobNumber || '');
   }, [filters, visible]);
+
+  // Keyboard listener to hide results
+  useEffect(() => {
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setSearchResults([]);
+    });
+    return () => hideSubscription.remove();
+  }, []);
 
   // Debounced search for Places (Only for 'location' type)
   useEffect(() => {
@@ -100,6 +111,7 @@ export const MapFiltersModal = ({
 
   const handleApply = () => {
     onApply({ ...localFilters, jobNumber: searchText });
+    setSearchResults([]);
     onClose();
   };
 
@@ -107,7 +119,34 @@ export const MapFiltersModal = ({
     setSearchText('');
     setSearchResults([]);
     setSearchType('location');
+    setDateRangeLabel('Select Date Range');
     onReset();
+  };
+
+  const handleDateRangeSelect = (option: string) => {
+    const now = new Date();
+    let start: Date | null = null;
+    let end: Date | null = now;
+    let label = option;
+
+    if (option === 'Past 30 Days') {
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    } else if (option === 'Past Year') {
+      start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    } else if (option === 'Past 5 Years') {
+      start = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate());
+    } else if (option === 'Custom') {
+      start = localFilters.startDate ? new Date(localFilters.startDate) : null;
+      end = localFilters.endDate ? new Date(localFilters.endDate) : now;
+    }
+
+    setLocalFilters({
+      ...localFilters,
+      startDate: start ? start.toISOString() : null,
+      endDate: end ? end.toISOString() : null,
+    });
+    setDateRangeLabel(label);
+    if (option !== 'Custom') setShowDateRangeDropdown(false);
   };
 
   return (
@@ -123,7 +162,7 @@ export const MapFiltersModal = ({
 
           <View className="mt-8">
             {/* Search Input with Type Toggle */}
-            <View className="z-50 mb-3">
+            <View className="mb-3" style={{ zIndex: 200 }}>
               <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
                 {/* Type Toggle Dropdown Trigger */}
                 <TouchableOpacity 
@@ -131,7 +170,8 @@ export const MapFiltersModal = ({
                     setShowTypeDropdown(!showTypeDropdown);
                     setShowRadiusDropdown(false);
                   }}
-                  className="w-[85px] h-full bg-[#65C216] items-center justify-center flex-row px-2"
+                  className="w-[85px] h-full items-center justify-center flex-row px-2"
+                  style={{ backgroundColor: colors.primary.main }}
                 >
                   <Icon name={searchType === 'location' ? "map-marker" : "pound"} size={18} color="white" />
                   <Text className="text-white font-bold text-[12px] ml-1 uppercase">
@@ -149,6 +189,18 @@ export const MapFiltersModal = ({
                       value={searchText}
                       onChangeText={setSearchText}
                     />
+                    {searchText.length > 0 && (
+                      <TouchableOpacity 
+                        onPress={() => {
+                          setSearchText('');
+                          setSearchResults([]);
+                          setLocalFilters({ ...localFilters, centerCoords: undefined });
+                        }}
+                        className="p-1"
+                      >
+                        <Icon name="close-circle" size={18} color="#94a3b8" />
+                      </TouchableOpacity>
+                    )}
                     {isSearching && <ActivityIndicator size="small" color="#059669" />}
                   </View>
                 </View>
@@ -200,9 +252,24 @@ export const MapFiltersModal = ({
                       <TouchableOpacity
                         key={idx}
                         className="p-4 border-b border-slate-50 flex-row items-center"
-                        onPress={() => {
+                        onPress={async () => {
                           setSearchText(item.description);
                           setSearchResults([]);
+                          
+                          // Geocode to get coordinates for map navigation
+                          try {
+                            const url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.place_id}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
+                            const res = await axios.get(url);
+                            if (res.data?.results?.[0]?.geometry?.location) {
+                              const { lat, lng } = res.data.results[0].geometry.location;
+                              setLocalFilters({
+                                ...localFilters,
+                                centerCoords: { latitude: lat, longitude: lng }
+                              });
+                            }
+                          } catch (e) {
+                            console.log('Geocoding error:', e);
+                          }
                         }}
                       >
                         <Icon name="map-marker" size={16} color="#94a3b8" />
@@ -217,8 +284,8 @@ export const MapFiltersModal = ({
             </View>
 
             {/* Distance */}
-            <View className="z-[60] mb-3">
-              <FilterInput icon="radius-outline">
+            <View className="mb-3" style={{ zIndex: 150 }}>
+              <FilterInput icon="radius-outline" primaryColor={colors.primary.main}>
                 <TouchableOpacity 
                   onPress={() => {
                     setShowRadiusDropdown(!showRadiusDropdown);
@@ -235,16 +302,16 @@ export const MapFiltersModal = ({
 
               {showRadiusDropdown && (
                 <View 
-                  className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120]"
+                  className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120] overflow-hidden"
                   style={{ 
                     elevation: 10,
-                    height: 200, // Explicit height to ensure scrolling
+                    height: 180, 
                   }}
                 >
                   <ScrollView 
                     nestedScrollEnabled={true}
-                    keyboardShouldPersistTaps="handled"
-                    contentContainerStyle={{ flexGrow: 1 }}
+                    keyboardShouldPersistTaps="always"
+                    showsVerticalScrollIndicator={true}
                   >
                     <TouchableOpacity 
                       className="p-4 border-b border-slate-50"
@@ -277,7 +344,7 @@ export const MapFiltersModal = ({
 
             {/* Price Inputs with labels */}
             <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-              <View className="w-[50px] h-full bg-[#65C216] items-center justify-center">
+              <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
                 <Text className="text-white font-black text-[12px]">Min</Text>
               </View>
               <View className="flex-1 px-3 justify-center">
@@ -293,7 +360,7 @@ export const MapFiltersModal = ({
             </View>
 
             <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-              <View className="w-[50px] h-full bg-[#65C216] items-center justify-center">
+              <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
                 <Text className="text-white font-black text-[12px]">Max</Text>
               </View>
               <View className="flex-1 px-3 justify-center">
@@ -308,23 +375,73 @@ export const MapFiltersModal = ({
               </View>
             </View>
 
-            {/* Date Range */}
-            <View className="flex-row items-center mb-6 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-              <View className="w-[50px] h-full bg-[#65C216] items-center justify-center">
-                <Icon name="calendar-month" size={22} color="white" />
+            {/* Date Range Dropdown */}
+            <View className="z-[80] mb-3">
+              <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
+                  <Icon name="calendar-month" size={22} color="white" />
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
+                  className="flex-1 px-3 flex-row items-center justify-between"
+                >
+                  <Text className={`font-bold text-[13px] ${dateRangeLabel !== 'Select Date Range' ? 'text-slate-700' : 'text-slate-400'}`}>
+                    {dateRangeLabel}
+                  </Text>
+                  <Icon name={showDateRangeDropdown ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                onPress={() => setShowStartDate(true)}
-                className="flex-1 px-3 flex-row items-center justify-between"
-              >
-                <Text className="font-bold text-slate-400 text-[13px]">
-                  {localFilters.startDate
-                    ? new Date(localFilters.startDate).toLocaleDateString()
-                    : 'Select Date Range'}
-                </Text>
-                <Icon name="chevron-down" size={18} color="#94a3b8" />
-              </TouchableOpacity>
+
+              {showDateRangeDropdown && (
+                <View 
+                  className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120]"
+                  style={{ elevation: 10 }}
+                >
+                  {['Past 30 Days', 'Past Year', 'Past 5 Years', 'Custom'].map((opt) => (
+                    <TouchableOpacity 
+                      key={opt}
+                      className="p-4 border-b border-slate-50"
+                      onPress={() => handleDateRangeSelect(opt)}
+                    >
+                      <Text className="font-bold text-[13px] text-slate-700">{opt}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
+
+            {/* Custom Date Inputs */}
+            {dateRangeLabel === 'Custom' && (
+              <View className="mb-3">
+                <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                  <View className="w-[50px] h-full bg-slate-100 items-center justify-center">
+                    <Icon name="calendar-start" size={20} color="#64748b" />
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setShowStartDate(true)}
+                    className="flex-1 px-3 justify-center"
+                  >
+                    <Text className={`font-bold text-[13px] ${localFilters.startDate ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {localFilters.startDate ? new Date(localFilters.startDate).toLocaleDateString() : 'Start date'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                  <View className="w-[50px] h-full bg-slate-100 items-center justify-center">
+                    <Icon name="calendar-end" size={20} color="#64748b" />
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setShowEndDate(true)}
+                    className="flex-1 px-3 justify-center"
+                  >
+                    <Text className={`font-bold text-[13px] ${localFilters.endDate ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {localFilters.endDate ? new Date(localFilters.endDate).toLocaleDateString() : 'End date'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             {/* Toggles Row */}
             <View className="flex-row items-center justify-between mb-8 px-1">
@@ -332,7 +449,8 @@ export const MapFiltersModal = ({
                 <Icon name="format-list-checks" size={24} color="#000" />
                 <TouchableOpacity 
                   onPress={() => setLocalFilters({ ...localFilters, myJobsOnly: !localFilters.myJobsOnly })}
-                  className={`w-11 h-6 rounded-full px-1 justify-center ${localFilters.myJobsOnly ? 'bg-[#65C216]' : 'bg-slate-300'}`}
+                  className="w-11 h-6 rounded-full px-1 justify-center"
+                  style={{ backgroundColor: localFilters.myJobsOnly ? colors.primary.main : '#e2e8f0' }}
                 >
                   <View className={`w-4 h-4 bg-white rounded-full ${localFilters.myJobsOnly ? 'self-end' : 'self-start'}`} />
                 </TouchableOpacity>
@@ -340,24 +458,26 @@ export const MapFiltersModal = ({
                 <Icon name="star" size={24} color="#FFA500" />
                 <TouchableOpacity 
                   onPress={() => setLocalFilters({ ...localFilters, isFavoriteOnly: !localFilters.isFavoriteOnly })}
-                  className={`w-11 h-6 rounded-full px-1 justify-center ${localFilters.isFavoriteOnly ? 'bg-[#65C216]' : 'bg-slate-300'}`}
+                  className="w-11 h-6 rounded-full px-1 justify-center"
+                  style={{ backgroundColor: localFilters.isFavoriteOnly ? colors.primary.main : '#e2e8f0' }}
                 >
                   <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isFavoriteOnly ? 'self-end' : 'self-start'}`} />
                 </TouchableOpacity>
 
-                <Icon name="fire" size={24} color="#FF5630" />
+                <Icon name="account-group" size={24} color="#4CBB17" />
                 <TouchableOpacity 
-                  onPress={() => setLocalFilters({ ...localFilters, isHeatMap: !localFilters.isHeatMap })}
-                  className={`w-11 h-6 rounded-full px-1 justify-center ${localFilters.isHeatMap ? 'bg-[#65C216]' : 'bg-slate-300'}`}
+                  onPress={() => setLocalFilters({ ...localFilters, isReferralOnly: !localFilters.isReferralOnly })}
+                  className="w-11 h-6 rounded-full px-1 justify-center"
+                  style={{ backgroundColor: localFilters.isReferralOnly ? colors.primary.main : '#e2e8f0' }}
                 >
-                  <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isHeatMap ? 'self-end' : 'self-start'}`} />
+                  <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isReferralOnly ? 'self-end' : 'self-start'}`} />
                 </TouchableOpacity>
-
               </View>
 
               <TouchableOpacity
                 onPress={handleReset}
-                className="w-12 h-10 bg-[#65C216] rounded-xl items-center justify-center"
+                className="w-12 h-10 rounded-xl items-center justify-center"
+                style={{ backgroundColor: colors.primary.main }}
               >
                 <Icon name="refresh" size={24} color="white" />
               </TouchableOpacity>
@@ -366,7 +486,8 @@ export const MapFiltersModal = ({
             {/* Search Button */}
             <TouchableOpacity
               onPress={handleApply}
-              className="w-full h-14 bg-[#65C216] rounded-2xl flex-row items-center justify-center shadow-xl shadow-green-100"
+              className="w-full h-14 rounded-2xl flex-row items-center justify-center shadow-xl"
+              style={{ backgroundColor: colors.primary.main, shadowColor: colors.primary.main }}
             >
               <Icon name="magnify" size={26} color="white" />
               <Text className="text-white font-black text-lg ml-2 uppercase">Search</Text>
@@ -384,6 +505,17 @@ export const MapFiltersModal = ({
           onChange={(event, date) => {
             setShowStartDate(false);
             if (date) setLocalFilters({ ...localFilters, startDate: date.toISOString() });
+          }}
+        />
+      )}
+      {showEndDate && (
+        <DateTimePicker
+          value={localFilters.endDate ? new Date(localFilters.endDate) : new Date()}
+          mode="date"
+          display="default"
+          onChange={(event, date) => {
+            setShowEndDate(false);
+            if (date) setLocalFilters({ ...localFilters, endDate: date.toISOString() });
           }}
         />
       )}

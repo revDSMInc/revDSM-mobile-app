@@ -664,7 +664,7 @@ export const REV_RENDER_VIEW_GROUPS = [
     ],
   },
   {
-    sectionLabel: 'DETAIL SHOTS',
+    sectionLabel: 'Gutter system',
     categoryId: 'Gutter System',
     views: [
       { id: 'inside-k-style-gutter-run', label: 'Inside K-Style Gutter run' },

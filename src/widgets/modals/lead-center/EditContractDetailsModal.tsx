@@ -13,6 +13,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { AppointmentSchedulerModal } from '../../modals/job-builder/AppointmentSchedulerModal';
+import { demoReasons } from '../../components/dealcenter/ResultViews';
 
 interface EditContractDetailsModalProps {
   visible: boolean;
@@ -40,6 +41,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const status = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
 
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -48,6 +50,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     downPaymentMethod: 'check',
     balance: '0',
     balancePaymentMethod: 'check',
+    lastPriceQuoted: '0',
+    reason: '',
   });
 
   // Sync with current data whenever modal opens
@@ -58,6 +62,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       const dpMethod = outcomeData?.paymentMethod || outcomeData?.leadData?.paymentMethod || lead?.paymentMethod || 'check';
       const bal = outcomeData?.balance || outcomeData?.leadData?.balance || lead?.balance || 0;
       const balMethod = outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod || lead?.balancePaymentMethod || 'check';
+      const lastPrice = outcomeData?.lastPriceQuoted || outcomeData?.leadData?.lastPriceQuoted || lead?.lastPriceQuoted || price || 0;
+      const reason = outcomeData?.reason || outcomeData?.leadData?.reason || lead?.reason || '';
 
       setFormData({
         originalContractPrice: String(price),
@@ -65,6 +71,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         downPaymentMethod: dpMethod,
         balance: String(bal),
         balancePaymentMethod: balMethod,
+        lastPriceQuoted: String(lastPrice),
+        reason: reason,
       });
     }
   }, [visible, outcomeData, lead]);
@@ -86,9 +94,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       await onUpdate({
         oneLeg: outcomeData?.oneLeg || lead?.oneLeg || 'No',
         result: outcomeData?.result || lead?.result || outcomeData?.status || lead?.status || '',
-        reason: outcomeData?.reason || lead?.reason || '',
+        reason: formData.reason || outcomeData?.reason || lead?.reason || '',
         explain: outcomeData?.explain || lead?.explain || '',
-        lastPriceQuoted: String(formData.originalContractPrice),
+        lastPriceQuoted: String(status.includes('demo') ? formData.lastPriceQuoted : formData.originalContractPrice),
         originalContractPrice: String(formData.originalContractPrice),
         downPayment: String(formData.downPayment),
         paymentMethod: formData.downPaymentMethod,
@@ -367,58 +375,83 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                 <Text className="text-xl font-black text-[#1C252E]" style={{ color: colors.text }}>Edit Contract Pricing</Text>
                 <TouchableOpacity onPress={() => setView('menu')}>
                   <Icon name="close" size={24} color="#637381" />
-                </TouchableOpacity>
+                  </TouchableOpacity>
               </View>
               <Text className="text-sm text-gray-400 font-medium mb-8">All financial terms</Text>
 
-              {/* Original Contract Price */}
-              <View className="mb-6">
-                <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Original Contract Price</Text>
-                <View className="flex-row items-center bg-gray-50 rounded-2xl border border-gray-100 px-4 h-14" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB' }}>
-                  <Text className="text-gray-400 mr-2 text-lg">$</Text>
-                  <TextInput 
-                    value={formData.originalContractPrice}
-                    onChangeText={(t) => setFormData({ ...formData, originalContractPrice: t })}
-                    keyboardType="numeric"
-                    className="flex-1 font-bold text-base"
-                    style={{ color: colors.text }}
-                  />
-                </View>
-              </View>
-
-              {/* Down Payment Group Box */}
-              <View className="border border-[#919EAB33] rounded-2xl p-4 mb-6" style={{ backgroundColor: isDark ? '#FFFFFF02' : '#FFFFFF' }}>
-                <View className="mb-4">
-                  <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Down Payment</Text>
-                  <View className="flex-row items-center bg-gray-50 rounded-lg border border-[#919EAB33] px-3 h-12" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB' }}>
-                    <Text className="text-gray-400 mr-2">$</Text>
-                    <TextInput 
-                      value={formData.downPayment}
-                      onChangeText={(t) => setFormData({ ...formData, downPayment: t })}
-                      keyboardType="numeric"
-                      className="flex-1 font-bold text-sm"
-                      style={{ color: colors.text }}
-                    />
+              {/* Pricing Section */}
+              {status.includes('demo') ? (
+                <>
+                  <View className="mb-6">
+                    <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Last Price Quoted</Text>
+                    <View className="flex-row items-center bg-gray-50 rounded-2xl border border-gray-100 px-4 h-14" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB' }}>
+                      <Text className="text-gray-400 mr-2 text-lg">$</Text>
+                      <TextInput 
+                        value={formData.lastPriceQuoted}
+                        onChangeText={(t) => setFormData({ ...formData, lastPriceQuoted: t })}
+                        keyboardType="numeric"
+                        className="flex-1 font-bold text-base"
+                        style={{ color: colors.text }}
+                      />
+                    </View>
                   </View>
-                </View>
-                {renderDropdown('Payment Method', downPaymentMethods.find(m => m.value === formData.downPaymentMethod)?.label || 'Select', downPaymentMethods, 'downPaymentMethod', 90)}
-              </View>
 
-              {/* Balance Group Box */}
-              <View className="border border-[#919EAB33] rounded-2xl p-4 mb-6" style={{ backgroundColor: isDark ? '#FFFFFF02' : '#FFFFFF' }}>
-                <View className="mb-4">
-                  <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Balance</Text>
-                  <View className="flex-row items-center bg-gray-100 rounded-lg border border-[#919EAB33] px-3 h-12" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F4F6F8' }}>
-                    <Text className="text-gray-400 mr-2">$</Text>
-                    <TextInput 
-                      value={formData.balance}
-                      editable={false}
-                      className="flex-1 font-bold text-sm text-gray-400"
-                    />
+                  <View className="mb-6 z-[100]">
+                    {renderDropdown('Reason', formData.reason || 'Select Reason', demoReasons.map(r => ({ label: r, value: r })), 'reason', 100)}
                   </View>
-                </View>
-                {renderBalanceDropdown(80)}
-              </View>
+                </>
+              ) : (
+                <>
+                  {/* Original Contract Price */}
+                  <View className="mb-6">
+                    <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Original Contract Price</Text>
+                    <View className="flex-row items-center bg-gray-50 rounded-2xl border border-gray-100 px-4 h-14" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB' }}>
+                      <Text className="text-gray-400 mr-2 text-lg">$</Text>
+                      <TextInput 
+                        value={formData.originalContractPrice}
+                        onChangeText={(t) => setFormData({ ...formData, originalContractPrice: t })}
+                        keyboardType="numeric"
+                        className="flex-1 font-bold text-base"
+                        style={{ color: colors.text }}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Down Payment Group Box */}
+                  <View className="border border-[#919EAB33] rounded-2xl p-4 mb-6" style={{ backgroundColor: isDark ? '#FFFFFF02' : '#FFFFFF' }}>
+                    <View className="mb-4">
+                      <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Down Payment</Text>
+                      <View className="flex-row items-center bg-gray-50 rounded-lg border border-[#919EAB33] px-3 h-12" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB' }}>
+                        <Text className="text-gray-400 mr-2">$</Text>
+                        <TextInput 
+                          value={formData.downPayment}
+                          onChangeText={(t) => setFormData({ ...formData, downPayment: t })}
+                          keyboardType="numeric"
+                          className="flex-1 font-bold text-sm"
+                          style={{ color: colors.text }}
+                        />
+                      </View>
+                    </View>
+                    {renderDropdown('Payment Method', downPaymentMethods.find(m => m.value === formData.downPaymentMethod)?.label || 'Select', downPaymentMethods, 'downPaymentMethod', 90)}
+                  </View>
+
+                  {/* Balance Group Box */}
+                  <View className="border border-[#919EAB33] rounded-2xl p-4 mb-6" style={{ backgroundColor: isDark ? '#FFFFFF02' : '#FFFFFF' }}>
+                    <View className="mb-4">
+                      <Text className="text-[11px] font-black text-gray-500 mb-2 uppercase tracking-widest">Balance</Text>
+                      <View className="flex-row items-center bg-gray-100 rounded-lg border border-[#919EAB33] px-3 h-12" style={{ backgroundColor: isDark ? '#FFFFFF05' : '#F4F6F8' }}>
+                        <Text className="text-gray-400 mr-2">$</Text>
+                        <TextInput 
+                          value={formData.balance}
+                          editable={false}
+                          className="flex-1 font-bold text-sm text-gray-400"
+                        />
+                      </View>
+                    </View>
+                    {renderBalanceDropdown(80)}
+                  </View>
+                </>
+              )}
 
               <View className="flex-row gap-3 mb-8">
                 <TouchableOpacity 

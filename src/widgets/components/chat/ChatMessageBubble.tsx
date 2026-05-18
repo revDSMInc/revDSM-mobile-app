@@ -1118,8 +1118,7 @@ export function ChatMessageBubble({
                     onPin(msg);
                     setShowReactionBar(false);
                   }}
-                  className={`flex-row items-center justify-between px-5 py-3.5 ${isMe ? 'border-b' : ''
-                    }`}
+                  className="flex-row items-center justify-between px-5 py-3.5 border-b"
                   style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
                 >
                   <Text
@@ -1140,7 +1139,7 @@ export function ChatMessageBubble({
                       onViewHistory(msg);
                       setShowReactionBar(false);
                     }}
-                    className="flex-row items-center justify-between px-5 py-3.5 border-b"
+                    className="flex-row items-center justify-between px-5 py-3.5"
                     style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
                   >
                     <Text
@@ -1167,7 +1166,7 @@ export function ChatMessageBubble({
                               onEdit(msg);
                               setShowReactionBar(false);
                             }}
-                            className="flex-row items-center justify-between px-5 py-3.5 border-b"
+                            className="flex-row items-center justify-between px-5 py-3.5"
                             style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
                           >
                             <Text
@@ -1182,29 +1181,6 @@ export function ChatMessageBubble({
                       }
                       return null;
                     })()}
-                    <TouchableOpacity
-                      onPress={() => {
-                        Alert.alert(
-                          'Delete Message',
-                          'This will permanently delete your message.',
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                              text: 'Delete',
-                              style: 'destructive',
-                              onPress: () => {
-                                onDelete(msg._id);
-                                setShowReactionBar(false);
-                              },
-                            },
-                          ]
-                        );
-                      }}
-                      className="flex-row items-center justify-between px-5 py-3.5"
-                    >
-                      <Text className="font-semibold text-[15px] text-red-500">Delete</Text>
-                      <Icon name="trash-outline" size={20} color="#EF4444" />
-                    </TouchableOpacity>
                   </>
                 )}
               </View>
