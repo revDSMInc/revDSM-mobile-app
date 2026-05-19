@@ -5,20 +5,68 @@ import { useTheme } from '../../../theme/ThemeProvider';
 
 interface ReplyBarProps {
   replyingTo: any;
+  currentUserId?: string;
   onCancel: () => void;
 }
 
 // Shown above the input when the user is replying — matches web ReplyPreview
-export function ChatReplyBar({ replyingTo, onCancel }: ReplyBarProps) {
+export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarProps) {
   const { colors, isDark } = useTheme();
   if (!replyingTo) return null;
 
-  const senderName =
-    replyingTo.senderDetails?.name ||
-    [replyingTo.senderDetails?.firstName, replyingTo.senderDetails?.lastName]
-      .filter(Boolean)
-      .join(' ') ||
-    'User';
+  const isMeReply = String(replyingTo.user?._id || replyingTo.senderDetails?._id || replyingTo.senderDetails?.id || replyingTo.userId || '') === String(currentUserId || '');
+  const senderName = isMeReply
+    ? 'You'
+    : (
+        replyingTo.senderDetails?.name ||
+        [replyingTo.senderDetails?.firstName, replyingTo.senderDetails?.lastName]
+          .filter(Boolean)
+          .join(' ') ||
+        replyingTo.user?.name ||
+        replyingTo.authorName ||
+        'User'
+      );
+
+  const getFileType = (file: any) => {
+    if (!file) return null;
+    if (file.type) {
+      if (file.type.includes('image')) return 'image';
+      if (file.type.includes('video')) return 'video';
+      if (file.type.includes('audio')) return 'audio';
+    }
+    const name = (file.name || '').toLowerCase();
+    if (name.match(/\.(jpeg|jpg|gif|png|webp)$/)) return 'image';
+    if (name.match(/\.(mp4|mov|avi|wmv)$/)) return 'video';
+    if (name.match(/\.(mp3|wav|m4a|aac)$/)) return 'audio';
+    return 'file';
+  };
+
+  const replyFiles = replyingTo.files || [];
+  const replyPrimaryFile = replyFiles[0];
+  const replyFileType = getFileType(replyPrimaryFile);
+  const isReplyVoice = !!(
+    replyingTo.audio ||
+    replyingTo.voice ||
+    replyingTo.isVoiceNote ||
+    replyFileType === 'audio'
+  );
+
+  let replyIcon = null;
+  let replyLabel = replyingTo.text || replyingTo.message || '';
+
+  if (isReplyVoice) {
+    replyIcon = 'mic';
+    replyLabel = `Voice Message ${replyingTo.duration ? `(${replyingTo.duration})` : ''}`;
+  } else if (replyFileType === 'image' || replyingTo.image) {
+    replyIcon = 'image';
+    replyLabel = replyLabel || 'Photo';
+  } else if (replyFileType === 'video' || replyingTo.video) {
+    replyIcon = 'videocam';
+    replyLabel = replyLabel || 'Video';
+  } else if (replyPrimaryFile || ['file', 'pdf', 'doc'].includes(replyFileType || '')) {
+    replyIcon = 'document';
+    replyLabel = replyLabel || replyPrimaryFile?.name || 'Document';
+  }
 
   return (
     <View
@@ -36,13 +84,18 @@ export function ChatReplyBar({ replyingTo, onCancel }: ReplyBarProps) {
         <Text className="text-[10px] font-black  tracking-widest text-blue-500 mb-0.5">
           Replying to {senderName}
         </Text>
-        <Text
-          className="text-[12px] font-semibold opacity-60"
-          style={{ color: colors.text }}
-          numberOfLines={1}
-        >
-          {replyingTo.message || replyingTo.text || '📎 Attachment'}
-        </Text>
+        <View className="flex-row items-center">
+          {replyIcon && (
+            <Icon name={replyIcon} size={14} color={colors.text} style={{ marginRight: 4, opacity: 0.6 }} />
+          )}
+          <Text
+            className="text-[12px] font-semibold opacity-60 flex-1"
+            style={{ color: colors.text }}
+            numberOfLines={1}
+          >
+            {replyLabel || 'Attachment'}
+          </Text>
+        </View>
       </View>
       <TouchableOpacity onPress={onCancel} className="ml-3 p-1">
         <Icon name="close-circle" size={20} color={colors.textSecondary} />

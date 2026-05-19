@@ -133,7 +133,13 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
         : ChatService.getLeadParticipants(chatId, leadId);
 
       fetchAction
-        .then((res: any) => setParticipants(res || []))
+        .then((res: any) => {
+          const filtered = (res || []).filter((u: any) => {
+            const perms = u.dashboardPermissions || [];
+            return !perms.includes('vp_sales_dashboard');
+          });
+          setParticipants(filtered);
+        })
         .catch((err: any) => console.error('Fetch participants error:', err))
         .finally(() => setLoading(false));
     }
@@ -145,13 +151,12 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
 
   return (
     <Modal visible={visible} animationType="fade" transparent statusBarTranslucent>
-      <TouchableOpacity className="flex-1 bg-black/60" activeOpacity={1} onPress={onClose}>
-        <View className="flex-1 justify-end">
-          <TouchableOpacity
-            activeOpacity={1}
-            className="rounded-t-[40px] pt-2 px-6 pb-12"
-            style={{ backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', maxHeight: '85%' }}
-          >
+      <View className="flex-1 bg-black/60 justify-end">
+        <TouchableOpacity style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }} activeOpacity={1} onPress={onClose} />
+        <View
+          className="rounded-t-[40px] pt-2 px-6 pb-12"
+          style={{ backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', maxHeight: '85%' }}
+        >
             {/* Drag Handle */}
             <View className="items-center mb-6">
               <View className="w-12 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
@@ -237,9 +242,8 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
                 )}
               </ScrollView>
             )}
-          </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
     </Modal>
   );
 };
@@ -253,45 +257,49 @@ export const MentionSuggestions = ({ participants, onSelect, colors, isDark }: a
 
   return (
     <View
-      className="border-t shadow-2xl"
       style={{
         backgroundColor: isDark ? '#1C1C1E' : '#fff',
-        borderTopColor: colors.border,
-        maxHeight: 200,
+        maxHeight: 220,
+        minHeight: 50,
+        borderRadius: 16,
       }}
     >
-      <View className="px-4 py-2 border-b border-zinc-100 dark:border-zinc-800">
-        <Text className="text-[10px] font-black text-slate-400 tracking-widest">
-          Mention Member
-        </Text>
-      </View>
-      <ScrollView showsVerticalScrollIndicator={true}>
+      <ScrollView 
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ flexGrow: 1, paddingVertical: 8 }}
+      >
         {participants.map((u: any) => {
           const name = `${u.firstName || u.name || 'User'} ${u.lastName || ''}`.trim();
-          const color = stringToColor(name);
           return (
             <TouchableOpacity
               key={u._id || u.id}
               onPress={() => onSelect(u)}
-              className="flex-row items-center px-4 py-3 border-b border-zinc-50 dark:border-zinc-900/50"
+              className="flex-row items-center px-4 py-2.5"
             >
               <View
-                className="w-9 h-9 rounded-xl items-center justify-center mr-3 shadow-sm"
-                style={{ backgroundColor: color + '20' }}
+                className="w-10 h-10 rounded-full items-center justify-center mr-4"
+                style={{ backgroundColor: isDark ? '#3A3A3C' : '#CBD5E1' }}
               >
-                <Text className="text-xs font-black" style={{ color }}>
+                <Text className="text-sm text-white font-black opacity-80">
                   {getInitials(u)}
                 </Text>
               </View>
               <View className="flex-1">
-                <Text className="text-sm font-bold" style={{ color: colors.text }}>
+                <Text 
+                  className="text-[15px] font-semibold mb-0.5" 
+                  style={{ color: isDark ? '#F8FAFC' : '#1E293B' }}
+                >
                   {name}
                 </Text>
-                <Text className="text-[10px] text-slate-400 font-medium">
-                  @{u.userName || name.toLowerCase().replace(' ', '')}
+                <Text 
+                  className="text-[13px]" 
+                  style={{ color: isDark ? '#94A3B8' : '#64748B' }}
+                  numberOfLines={1}
+                >
+                  {u.email || `@${u.username || u.userName || name.toLowerCase().replace(' ', '')}`}
                 </Text>
               </View>
-              <Icon name="add-circle-outline" size={20} color={colors.primary.main} />
             </TouchableOpacity>
           );
         })}
