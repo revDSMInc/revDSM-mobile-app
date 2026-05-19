@@ -35,6 +35,7 @@ import Pin from '../../assets/svgs/icons/pin';
 import SafeBottomSpacer from '../../widgets/common/SafeBottomSpacer';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useVoiceNote, formatTime, formatMs } from '../../hooks/useVoiceNote';
+import { useTeamChannelPermission } from '../../hooks/useTeamChannelPermission';
 
 const GiftedChatAny = GiftedChat as any;
 // ─── Custom Message Type ──────────────────────────────────────────────────────
@@ -148,6 +149,7 @@ export default function ChatDetailScreen() {
     imageUrls,
     typingUsers,
     setLimit,
+    channel,
   } = useChatSession(initialChatId || null, leadId, isChannel, user, initialParticipants);
 
   const filteredParticipants = useMemo(() => {
@@ -196,10 +198,28 @@ export default function ChatDetailScreen() {
     filteredParticipants
   );
 
-  const isAnnouncement = isChannel && customerName?.toLowerCase().includes('announcement');
-  const isCommissionSheets = isChannel && (customerName === 'Commission Sheets' || customerName === 'Commission');
+  // Dynamically resolve channel details and permissions
+  const channelObj = useMemo(() => {
+    return channel || {
+      _id: chatId,
+      id: chatId,
+      channelType: description?.toLowerCase().includes('announcement') || customerName?.toLowerCase().includes('announcement')
+        ? 'announcements' 
+        : description?.toLowerCase().includes('commission') || customerName?.toLowerCase().includes('commission')
+          ? 'commission-sheets'
+          : description?.toLowerCase().includes('file') || customerName?.toLowerCase().includes('file')
+            ? 'files'
+            : 'general'
+    };
+  }, [channel, chatId, description, customerName]);
+
+  const { canPost, canReact, canReply } = useTeamChannelPermission(isChannel ? channelObj : null);
   const isManager = user?.role === 'Manager' || user?.role === 'Admin' || user?.isAdmin;
-  const isViewOnly = (isAnnouncement || isCommissionSheets) && !isManager;
+  const isViewOnly = !canPost && !isManager;
+
+  const handleDisabledClick = useCallback(() => {
+    Alert.alert('Info', 'You are not allowed to post in this channel.');
+  }, []);
 
   const [isSearching, setIsSearching] = useState(false);
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
@@ -311,6 +331,7 @@ export default function ChatDetailScreen() {
       if (!u) return false;
       const perms = u.dashboardPermissions || [];
       if (perms.includes('vp_sales_dashboard')) return false;
+      if (currentUserId && String(u._id || u.id) === String(currentUserId)) return false;
       
       const fullName = `${u.firstName || u.name || ''} ${u.lastName || ''}`.toLowerCase();
       const userName = (u.userName || '').toLowerCase();
@@ -320,7 +341,7 @@ export default function ChatDetailScreen() {
     });
     console.log('[Mentions Debug] Filtered Results count:', res.length, 'from', filteredParticipants?.length || 0, 'participants');
     return res;
-  }, [showMentions, filteredParticipants, composerText]);
+  }, [showMentions, filteredParticipants, composerText, currentUserId]);
 
   const handleMentionSelect = (u: any) => {
     const rawName = u.username || u.userName || u.firstName || u.name || 'User';
@@ -545,23 +566,29 @@ export default function ChatDetailScreen() {
           }}
           imageUrls={imageUrls}
           isViewOnly={isViewOnly}
+          onDisabledClick={handleDisabledClick}
           searchQuery={searchQuery}
           activeMatchId={highlightedMessageId || searchResults[searchIndex]}
         />
       );
     },
-    [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex, highlightedMessageId, filteredParticipants]
+    [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex, highlightedMessageId, filteredParticipants, handleDisabledClick]
   );
 
   const renderInputToolbar = useCallback(
     (props: any) => {
       if (isViewOnly) {
         return (
-          <View className="p-4 items-center justify-center bg-gray-50 border-t border-gray-100">
-            <Text className="text-[10px] font-black text-gray-400">
-              Only Managers can message here
+          <TouchableOpacity
+            onPress={handleDisabledClick}
+            activeOpacity={0.85}
+            className="p-4 items-center justify-center border-t"
+            style={{ backgroundColor: colors.card, borderTopColor: colors.border }}
+          >
+            <Text className="text-[13px] font-bold" style={{ color: colors.textSecondary }}>
+              You are not allowed to post in this channel.
             </Text>
-          </View>
+          </TouchableOpacity>
         );
       }
       if (isRecording) {
@@ -647,6 +674,8 @@ export default function ChatDetailScreen() {
       );
     },
     [
+      isViewOnly,
+      handleDisabledClick,
       isRecording,
       isRecorded,
       recordedUri,
@@ -781,7 +810,7 @@ export default function ChatDetailScreen() {
                 }}
               >
                 <MentionSuggestions
-                  participants={mentionResults.length > 0 ? mentionResults : filteredParticipants}
+                  participants={(mentionResults.length > 0 ? mentionResults : filteredParticipants).filter((u: any) => String(u._id || u.id) !== String(currentUserId))}
                   onSelect={handleMentionSelect}
                   colors={colors}
                   isDark={isDark}
@@ -860,7 +889,7 @@ export default function ChatDetailScreen() {
                 }}
               >
                 <MentionSuggestions
-                  participants={mentionResults.length > 0 ? mentionResults : filteredParticipants}
+                  participants={(mentionResults.length > 0 ? mentionResults : filteredParticipants).filter((u: any) => String(u._id || u.id) !== String(currentUserId))}
                   onSelect={handleMentionSelect}
                   colors={colors}
                   isDark={isDark}

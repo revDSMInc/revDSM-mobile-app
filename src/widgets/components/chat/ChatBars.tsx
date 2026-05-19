@@ -91,7 +91,7 @@ export function ChatReplyBar({ replyingTo, currentUserId, onCancel }: ReplyBarPr
           <Text
             className="text-[12px] font-semibold opacity-60 flex-1"
             style={{ color: colors.text }}
-            numberOfLines={1}
+            numberOfLines={isReplyVoice ? undefined : 1}
           >
             {replyLabel || 'Attachment'}
           </Text>
