@@ -113,13 +113,7 @@ export const useDealOutcome = (
       }
     }
 
-    // Validation for Sale status (Install Date)
-    if (outcomeStatus === 'sale') {
-      if (!outcomeForm.toBeDetermined && !outcomeForm.installDate) {
-        Alert.alert('Required Field', 'Please select an Install Date or mark it as TBD.');
-        return;
-      }
-    }
+
 
     try {
       setLoadingMessage('Initializing Job Builder...');

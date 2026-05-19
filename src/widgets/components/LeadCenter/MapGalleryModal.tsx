@@ -14,6 +14,8 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 
 const { width, height } = Dimensions.get('window');
 
@@ -50,6 +52,52 @@ export const MapGalleryModal = ({
   // Image Viewer State
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = savedScale.value * e.scale;
+    })
+    .onEnd(() => {
+      if (scale.value < 1) {
+        scale.value = withSpring(1);
+        savedScale.value = 1;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+      } else {
+        savedScale.value = scale.value;
+      }
+    });
+
+  const panGesture = Gesture.Pan()
+    .onUpdate((e) => {
+      if (scale.value > 1) {
+        translateX.value = savedTranslateX.value + e.translationX;
+        translateY.value = savedTranslateY.value + e.translationY;
+      }
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value }
+    ]
+  }));
 
   useEffect(() => {
     if (visible && job) {
@@ -295,14 +343,14 @@ export const MapGalleryModal = ({
               >
                 <Icon 
                   name="presentation" 
-                  size={20} 
+                  size={16} 
                   color={beforeUris.length > 0 && afterUris.length > 0 ? "#65C216" : "#cbd5e1"} 
                 />
                 <Text 
                   className="ml-2 text-[14px] font-black"
                   style={{ color: beforeUris.length > 0 && afterUris.length > 0 ? "#65C216" : "#cbd5e1" }}
                 >
-                  Present View
+                  Present
                 </Text>
               </TouchableOpacity>
 
@@ -340,21 +388,34 @@ export const MapGalleryModal = ({
 
       {/* Full Screen Image Viewer */}
       <Modal visible={viewerVisible} transparent animationType="slide">
-        <View className="flex-1 bg-black justify-center items-center">
-          <TouchableOpacity 
-            className="absolute top-12 right-6 z-10 p-2 bg-white/20 rounded-full"
-            onPress={() => setViewerVisible(false)}
-          >
-            <Icon name="close" size={30} color="white" />
-          </TouchableOpacity>
-          {viewerUri && (
-            <Image 
-              source={{ uri: viewerUri }} 
-              className="w-full h-full"
-              resizeMode="contain"
-            />
-          )}
-        </View>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View className="flex-1 bg-black justify-center items-center">
+            <TouchableOpacity 
+              className="absolute top-12 right-6 z-10 p-2 bg-white/20 rounded-full"
+              onPress={() => {
+                setViewerVisible(false);
+                scale.value = 1;
+                savedScale.value = 1;
+                translateX.value = 0;
+                translateY.value = 0;
+                savedTranslateX.value = 0;
+                savedTranslateY.value = 0;
+              }}
+            >
+              <Icon name="close" size={30} color="white" />
+            </TouchableOpacity>
+            {viewerUri && (
+              <GestureDetector gesture={composedGesture}>
+                <Animated.Image 
+                  source={{ uri: viewerUri }} 
+                  className="w-full h-full"
+                  resizeMode="contain"
+                  style={animatedStyle}
+                />
+              </GestureDetector>
+            )}
+          </View>
+        </GestureHandlerRootView>
       </Modal>
     </View>
   );

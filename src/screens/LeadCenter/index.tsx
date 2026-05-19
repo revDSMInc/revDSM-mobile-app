@@ -34,6 +34,7 @@ import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModa
 import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { RiskReportModal } from '../../widgets/modals/lead-center/RiskReportModal';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
+import { MapSelectionModal } from '../../widgets/common/modal/MapSelectionModal';
 import { useAuth } from '../../hooks/useAuth';
 import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSection';
 import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
@@ -163,6 +164,7 @@ export default function LeadCenterPage() {
   }, [route.params?.tab]);
 
   const [loading, setLoading] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false);
 
   // Auto-refresh Lead data when screen is focused
   useFocusEffect(
@@ -578,7 +580,7 @@ export default function LeadCenterPage() {
                 </View>
               </View>
             </View>
-            <View className="flex-row items-center mb-3">
+            <TouchableOpacity onPress={() => setShowMapModal(true)} className="flex-row items-center mb-3">
               <Ionicon
                 name="location-sharp"
                 size={14}
@@ -587,7 +589,7 @@ export default function LeadCenterPage() {
               <Text className="ml-1 text-xs font-semibold " style={{ color: colors.primary.main }}>
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
               </Text>
-            </View>
+            </TouchableOpacity>
           </View>
           <View
             className="flex-row px-4"
@@ -774,6 +776,12 @@ export default function LeadCenterPage() {
           lead={lead}
         />
       )}
+
+      <MapSelectionModal 
+        visible={showMapModal}
+        address={lead?.fullAddress || lead?.customerDetails?.address || ''}
+        onClose={() => setShowMapModal(false)}
+      />
 
     </>
   );
