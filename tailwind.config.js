@@ -17,6 +17,16 @@ module.exports = {
         extralight: ['PublicSans-ExtraLight'],
         thin: ['PublicSans-Thin'],
       },
+      fontWeight: {
+        thin: 'normal',
+        extralight: 'normal',
+        light: 'normal',
+        medium: 'normal',
+        semibold: 'normal',
+        bold: 'normal',
+        extrabold: 'normal',
+        black: 'normal',
+      },
       colors: {
         primary: {
           lighter: 'var(--color-primary-lighter)',

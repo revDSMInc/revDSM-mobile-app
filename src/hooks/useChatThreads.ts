@@ -20,7 +20,22 @@ export const useChatThreads = (
 
     const refreshData = () => {
       console.log('[Threads] Refreshing list data...');
-      SocketManager.emit('get-all-lead-chats', { page: 1, limit: 100 });
+      
+      const payload: any = { page: 1, limit: 300 };
+      
+      let serverStatus = '';
+      if (statusFilter === 'unresultedleads') serverStatus = 'Unresulted Leads';
+      else if (statusFilter === 'pendinginstall') serverStatus = 'Pending Install';
+      else if (statusFilter === 'installingtoday') serverStatus = 'Installing Today';
+      else if (statusFilter === 'alreadyinstalled') serverStatus = 'Already Installed';
+      else if (statusFilter === 'nosales') serverStatus = 'No Sales';
+      else if (statusFilter !== 'all') serverStatus = statusFilter; 
+
+      if (serverStatus && serverStatus !== 'all') {
+         payload.status = serverStatus;
+      }
+
+      SocketManager.emit('get-all-lead-chats', payload);
       SocketManager.emit('get-team-channels');
     };
 
@@ -73,14 +88,13 @@ export const useChatThreads = (
       unsubLeadRead();
       unsubAllRead();
     };
-  }, [user]);
+  }, [user, statusFilter]);
 
   const filteredChats = useMemo(() => {
-    let result = chats.filter((c) => 
-      c.leadDetails && 
-      (c.leadDetails.leadId || c.leadDetails._id) && 
-      c.leadDetails.leadId !== 'N/A'
-    );
+    let result = [...chats];
+    
+    // We don't filter out N/A leadIds strictly anymore as it was hiding valid chats
+    // that the web app displays properly.
     const query = searchQuery.toLowerCase();
 
     if (query) {

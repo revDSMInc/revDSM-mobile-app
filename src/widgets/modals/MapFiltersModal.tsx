@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, TextInput, Platform, ActivityIndicator, Keyboard } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, Modal, ScrollView, TextInput, Platform, ActivityIndicator, Keyboard, KeyboardAvoidingView } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -63,6 +63,7 @@ export const MapFiltersModal = ({
   const [showDateRangeDropdown, setShowDateRangeDropdown] = useState(false);
   const [dateRangeLabel, setDateRangeLabel] = useState('Select Date Range');
   const [isSearching, setIsSearching] = useState(false);
+  const skipSearch = useRef(false);
 
   useEffect(() => {
     setLocalFilters(filters);
@@ -79,7 +80,7 @@ export const MapFiltersModal = ({
 
   // Debounced search for Places (Only for 'location' type)
   useEffect(() => {
-    if (searchType !== 'location' || !searchText || searchText.length < 3) {
+    if (searchType !== 'location' || !searchText || searchText.length < 3 || skipSearch.current) {
       setSearchResults([]);
       return;
     }
@@ -151,7 +152,11 @@ export const MapFiltersModal = ({
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View className="flex-1 bg-black/40 justify-center px-8">
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <View className="flex-1 bg-black/40 justify-center px-8">
         <View className="bg-white rounded-[24px] p-5 shadow-2xl relative">
           <TouchableOpacity 
             onPress={onClose} 
@@ -187,7 +192,10 @@ export const MapFiltersModal = ({
                       placeholderTextColor="#94a3b8"
                       className="flex-1 font-bold text-slate-700 text-[13px] h-full"
                       value={searchText}
-                      onChangeText={setSearchText}
+                      onChangeText={(text) => {
+                        skipSearch.current = false;
+                        setSearchText(text);
+                      }}
                     />
                     {searchText.length > 0 && (
                       <TouchableOpacity 
@@ -253,8 +261,10 @@ export const MapFiltersModal = ({
                         key={idx}
                         className="p-4 border-b border-slate-50 flex-row items-center"
                         onPress={async () => {
+                          skipSearch.current = true;
                           setSearchText(item.description);
                           setSearchResults([]);
+                          Keyboard.dismiss();
                           
                           // Geocode to get coordinates for map navigation
                           try {
@@ -464,14 +474,14 @@ export const MapFiltersModal = ({
                   <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isFavoriteOnly ? 'self-end' : 'self-start'}`} />
                 </TouchableOpacity>
 
-                <Icon name="account-group" size={24} color="#4CBB17" />
+                {/* <Icon name="account-group" size={24} color="#4CBB17" />
                 <TouchableOpacity 
                   onPress={() => setLocalFilters({ ...localFilters, isReferralOnly: !localFilters.isReferralOnly })}
                   className="w-11 h-6 rounded-full px-1 justify-center"
                   style={{ backgroundColor: localFilters.isReferralOnly ? colors.primary.main : '#e2e8f0' }}
                 >
                   <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isReferralOnly ? 'self-end' : 'self-start'}`} />
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
 
               <TouchableOpacity
@@ -495,6 +505,7 @@ export const MapFiltersModal = ({
           </View>
         </View>
       </View>
+      </KeyboardAvoidingView>
 
 
       {showStartDate && (

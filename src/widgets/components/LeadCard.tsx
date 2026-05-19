@@ -19,6 +19,7 @@ import {
   useResetLeadMutation,
 } from '../../hooks/useLeadMutation';
 import { GlobalModal } from '../common/modal/GlobalModal';
+import { MapSelectionModal } from '../common/modal/MapSelectionModal';
 import { format } from 'date-fns';
 import {
   calculateDistance,
@@ -402,6 +403,7 @@ export function LeadCard({
 }: Props) {
   const { colors, isDark } = useTheme();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false);
   const archiveMutation = useArchiveLeadMutation();
   const deleteMutation = useDeleteLeadMutation();
   const resetMutation = useResetLeadMutation();
@@ -598,7 +600,7 @@ export function LeadCard({
         </View>
 
         {/* ── Address ──────────────────────────────────────────────────── */}
-        <View className="flex-row items-start mb-5">
+        <TouchableOpacity onPress={() => setShowMapModal(true)} className="flex-row items-start mb-5">
           <Ionicon
             name="location-sharp"
             size={18}
@@ -628,7 +630,7 @@ export function LeadCard({
               );
             })()}
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* ── Action Button ─────────────────────────────────────────────── */}
         <View>
@@ -711,6 +713,12 @@ export function LeadCard({
         }}
         onCancel={() => setShowDeleteModal(false)}
         onClose={() => setShowDeleteModal(false)}
+      />
+
+      <MapSelectionModal 
+        visible={showMapModal}
+        address={lead.fullAddress || ''}
+        onClose={() => setShowMapModal(false)}
       />
     </TouchableOpacity>
   );

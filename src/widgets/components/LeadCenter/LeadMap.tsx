@@ -632,8 +632,7 @@ export const LeadMap = ({
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0' },
             { active: 'MJ', inactive: 'AJ', id: 'MJ-1' },
-            { active: 'RF', inactive: 'DEF', id: 'RF-2' },
-            { active: 'FV', inactive: 'DEF', id: 'FV-3' }
+            { active: 'RF', inactive: 'DEF', id: 'RF-2' }
           ].map((btn) => {
             const isFilterActive = activeFilters.includes(btn.id);
             return (

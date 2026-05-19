@@ -99,10 +99,6 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
     `${leadDetails?.office || ''} ${isSale ? leadDetails?.leadId : `Lead ${dateStr}`}`.trim() ||
     'Discussion';
 
-  const statusObj = STATUS_CONFIG[leadDetails?.status] || {
-    label: leadDetails?.status || 'N/A',
-    color: '#94a3b8',
-  };
   const lastMsg = recentMessages?.[0];
   const repName = leadDetails?.assignedRepDetails
     ? `${leadDetails.assignedRepDetails.firstName}`
@@ -139,8 +135,10 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
           >
             {heading}
           </Text>
-          <View className="px-1.5 py-0.5 rounded-md" style={{ backgroundColor: '#212B36' }}>
-            <Text className="text-[10px] font-bold text-white">{statusObj.label}</Text>
+          <View className="px-1.5 py-0.5 rounded-md" style={{ backgroundColor: STATUS_CONFIG[leadDetails?.status]?.color || '#94a3b8' }}>
+            <Text className="text-[10px] font-bold" style={{ color: STATUS_CONFIG[leadDetails?.status]?.textColor || '#fff' }}>
+              {STATUS_CONFIG[leadDetails?.status]?.label || leadDetails?.status || 'N/A'}
+            </Text>
           </View>
         </View>
         {lastMessageAt && (

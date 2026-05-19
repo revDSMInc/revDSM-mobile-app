@@ -15,6 +15,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { launchCamera, launchImageLibrary, MediaType } from 'react-native-image-picker';
 import { GlobalModal } from '../../common/modal/GlobalModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import {
   useSubmitJobBuilderMutation,
   useResetLeadMutation,
@@ -70,9 +72,54 @@ export const JobDocsSection = ({
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [uploadingSlots, setUploadingSlots] = useState<{ [key: string]: boolean }>({});
-  
   const navigation = useNavigation<any>();
   const [outcomeData, setOutcomeData] = useState<any>(null);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = savedScale.value * e.scale;
+    })
+    .onEnd(() => {
+      if (scale.value < 1) {
+        scale.value = withSpring(1);
+        savedScale.value = 1;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+      } else {
+        savedScale.value = scale.value;
+      }
+    });
+
+  const panGesture = Gesture.Pan()
+    .onUpdate((e) => {
+      if (scale.value > 1) {
+        translateX.value = savedTranslateX.value + e.translationX;
+        translateY.value = savedTranslateY.value + e.translationY;
+      }
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value }
+    ]
+  }));
   const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
     agreements: [],
     orderSheets: [],
@@ -427,21 +474,35 @@ export const JobDocsSection = ({
 
       {/* Image Preview Modal */}
       <Modal visible={previewImage !== null} transparent animationType="fade">
-        <View className="flex-1 bg-black/90 items-center justify-center p-4">
-          <TouchableOpacity
-            onPress={() => setPreviewImage(null)}
-            className="absolute top-12 right-6 p-2 bg-white/20 rounded-full z-10"
-          >
-            <Icon name="close" size={24} color="white" />
-          </TouchableOpacity>
-          {previewImage && (
-            <LoadingImage
-              uri={previewImage}
-              className="w-full h-3/4 rounded-2xl"
-              resizeMode="contain"
-            />
-          )}
-        </View>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View className="flex-1 bg-black/90 items-center justify-center p-4">
+            <TouchableOpacity
+              onPress={() => {
+                setPreviewImage(null);
+                scale.value = 1;
+                savedScale.value = 1;
+                translateX.value = 0;
+                translateY.value = 0;
+                savedTranslateX.value = 0;
+                savedTranslateY.value = 0;
+              }}
+              className="absolute top-12 right-6 p-2 bg-white/20 rounded-full z-10"
+            >
+              <Icon name="close" size={24} color="white" />
+            </TouchableOpacity>
+            {previewImage && (
+              <GestureDetector gesture={composedGesture}>
+                <Animated.View className="w-full h-3/4 rounded-2xl" style={animatedStyle}>
+                  <LoadingImage
+                    uri={previewImage}
+                    className="w-full h-full rounded-2xl"
+                    resizeMode="contain"
+                  />
+                </Animated.View>
+              </GestureDetector>
+            )}
+          </View>
+        </GestureHandlerRootView>
       </Modal>
 
       {/* Status Banner removed per user request */}

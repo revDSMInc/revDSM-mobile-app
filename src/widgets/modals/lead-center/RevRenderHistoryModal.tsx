@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Reanimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 
 interface RevRenderHistoryModalProps {
   visible: boolean;
@@ -32,6 +34,53 @@ export const RevRenderHistoryModal = ({
   useEffect(() => {
     setCurrentIndex(initialIndex);
   }, [initialIndex, visible]);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = savedScale.value * e.scale;
+    })
+    .onEnd(() => {
+      if (scale.value < 1) {
+        scale.value = withSpring(1);
+        savedScale.value = 1;
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+      } else {
+        savedScale.value = scale.value;
+      }
+    });
+
+  const panGesture = Gesture.Pan()
+    // Make sure we only pan the zoom view if we're scaled up, otherwise let the slider handle pan
+    .onUpdate((e) => {
+      if (scale.value > 1) {
+        translateX.value = savedTranslateX.value + e.translationX;
+        translateY.value = savedTranslateY.value + e.translationY;
+      }
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value }
+    ]
+  }));
 
   const screenWidth = Dimensions.get('window').width;
   const imageWidth = screenWidth - 40;
@@ -87,7 +136,8 @@ export const RevRenderHistoryModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.95)' }]}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.95)' }]}>
         {/* Header */}
         <View style={styles.header}>
           <View>
@@ -103,7 +153,8 @@ export const RevRenderHistoryModal = ({
         </View>
 
         {/* Comparison Slider */}
-        <View style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }]}>
+        <GestureDetector gesture={composedGesture}>
+          <Reanimated.View style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }, animatedStyle]}>
           {/* AFTER (Background) */}
           <Image
             source={{ uri: afterImage }}
@@ -155,7 +206,8 @@ export const RevRenderHistoryModal = ({
               <Icon name="compare-horizontal" size={20} color="#1C252E" />
             </View>
           </Animated.View>
-        </View>
+        </Reanimated.View>
+        </GestureDetector>
 
         {/* Footer Navigation */}
         <View style={styles.footer}>
@@ -194,6 +246,7 @@ export const RevRenderHistoryModal = ({
           </TouchableOpacity>
         </View>
       </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
