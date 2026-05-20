@@ -22,6 +22,8 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import Icon from 'react-native-vector-icons/Ionicons';
+import Fontisto from 'react-native-vector-icons/Fontisto';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { useTheme } from '../../../theme/ThemeProvider';
 import { MediaViewerModal } from '../../modals/MediaViewerModal';
@@ -41,7 +43,7 @@ const getDocStyleAndIcon = (fileName: string) => {
   switch (ext) {
     case 'pdf':
       return {
-        icon: 'document-text',
+        icon: 'acrobat-reader',
         color: '#FF3B30',
         bg: 'bg-[#FF3B30]',
       };
@@ -49,7 +51,7 @@ const getDocStyleAndIcon = (fileName: string) => {
     case 'xlsx':
     case 'csv':
       return {
-        icon: 'grid',
+        icon: 'microsoft-excel',
         color: '#34C759',
         bg: 'bg-[#34C759]',
       };
@@ -220,6 +222,7 @@ export function ChatMessageBubble({
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [imageAspectRatio, setImageAspectRatio] = useState(1);
+  const [isImageLoading, setIsImageLoading] = useState(false);
 
   useEffect(() => {
     if (fileType === 'image' && mediaUri) {
@@ -271,6 +274,7 @@ export function ChatMessageBubble({
   };
 
   const saveFileToDevice = async () => {
+    if (isDownloading) return;
     if (!mediaUri) return Alert.alert('Error', 'Link loading...');
     const { ReactNativeBlobUtil } = getNativeModules();
     if (!ReactNativeBlobUtil) return Alert.alert('Error', 'Native rebuild needed.');
@@ -951,8 +955,10 @@ export function ChatMessageBubble({
                 padding: 2,
                 margin: 2,
                 marginHorizontal: !isMe ? 2 : 2,
-                overflow: 'visible',
-                minWidth: (msg.replyToDetails || msg.replyTo) ? 200 : undefined,
+                overflow: (fileType === 'image' || fileType === 'video') ? 'hidden' : 'visible',
+                minWidth: (fileType === 'image' || fileType === 'video')
+                  ? SCREEN_WIDTH * 0.65 + 16
+                  : (msg.replyToDetails || msg.replyTo) ? 200 : undefined,
               }}
             >
               {isPinned && (
@@ -1010,14 +1016,25 @@ export function ChatMessageBubble({
                       aspectRatio: imageAspectRatio > 0 ? imageAspectRatio : 1,
                       maxHeight: SCREEN_WIDTH * 1.2,
                       backgroundColor: isDark ? '#1B2B34' : '#F2F2F7',
+                      justifyContent: 'center',
+                      alignItems: 'center',
                     }}
                   >
                     {mediaUri ? (
-                      <Image
-                        source={{ uri: mediaUri }}
-                        style={{ width: '100%', height: '100%' }}
-                        resizeMode="contain"
-                      />
+                      <>
+                        <Image
+                          source={{ uri: mediaUri }}
+                          style={{ width: '100%', height: '100%' }}
+                          resizeMode="cover"
+                          onLoadStart={() => setIsImageLoading(true)}
+                          onLoadEnd={() => setIsImageLoading(false)}
+                        />
+                        {isImageLoading && (
+                          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.05)' }}>
+                            <ActivityIndicator size="small" color={isMe ? '#fff' : colors.primary.main} />
+                          </View>
+                        )}
+                      </>
                     ) : (
                       <View className="flex-1 items-center justify-center">
                         <Icon name="image-outline" size={32} color="#aaa" />
@@ -1032,6 +1049,7 @@ export function ChatMessageBubble({
                   <TouchableOpacity
                     onPress={handleOpenOrDownload}
                     onLongPress={() => setShowReactionBar(true)}
+                    disabled={isDownloading}
                   >
                     <View
                       className="flex-row items-center p-3 gap-3"
@@ -1047,6 +1065,10 @@ export function ChatMessageBubble({
                       >
                         {isDownloading ? (
                           <DownloadProgressRing progress={downloadProgress} color="#fff" />
+                        ) : docInfo.icon === 'acrobat-reader' ? (
+                          <Fontisto name="acrobat-reader" size={18} color="#fff" />
+                        ) : docInfo.icon === 'microsoft-excel' ? (
+                          <MaterialCommunityIcons name="microsoft-excel" size={20} color="#fff" />
                         ) : (
                           <Icon name={docInfo.icon} size={20} color="#fff" />
                         )}
@@ -1164,21 +1186,25 @@ export function ChatMessageBubble({
                           })}
                         </Text>
                         {isMe && (
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (seenByOthers.length > 0) {
-                                setShowSeenList(true);
-                              }
-                            }}
-                            disabled={seenByOthers.length === 0}
-                            className="ml-1"
-                          >
-                            <Icon 
-                              name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
-                              size={seenByOthers.length > 0 ? 12 : 11} 
-                              color="#fff" 
-                            />
-                          </TouchableOpacity>
+                          msg.pending ? (
+                            <ActivityIndicator size="small" color="#fff" style={{ marginLeft: 4 }} />
+                          ) : (
+                            <TouchableOpacity
+                              onPress={() => {
+                                if (seenByOthers.length > 0) {
+                                  setShowSeenList(true);
+                                }
+                              }}
+                              disabled={seenByOthers.length === 0}
+                              className="ml-1"
+                            >
+                              <Icon 
+                                name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
+                                size={seenByOthers.length > 0 ? 12 : 11} 
+                                color="#fff" 
+                              />
+                            </TouchableOpacity>
+                          )
                         )}
                       </View>
                     </View>
@@ -1187,8 +1213,8 @@ export function ChatMessageBubble({
 
                 return (
                   <>
-                    {msg.text && msg.text.trim().length > 0 && (
-                      <View className="px-3 pt-1.5 pb-1">
+                     {msg.text && msg.text.trim().length > 0 && !isMsgVoice && (
+                       <View className="px-3 pt-1.5 pb-1">
                         <ChatMessageText
                           text={msg.text}
                           isMe={isMe}
@@ -1228,21 +1254,25 @@ export function ChatMessageBubble({
                         })}
                       </Text>
                       {isMe && (
-                        <TouchableOpacity
-                          onPress={() => {
-                            if (seenByOthers.length > 0) {
-                              setShowSeenList(true);
-                            }
-                          }}
-                          disabled={seenByOthers.length === 0}
-                          className="ml-1"
-                        >
-                          <Icon 
-                            name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
-                            size={seenByOthers.length > 0 ? 13 : 11} 
-                            color={isMe ? '#fff' : colors.primary.main} 
-                          />
-                        </TouchableOpacity>
+                        msg.pending ? (
+                          <ActivityIndicator size="small" color={isMe ? '#fff' : colors.primary.main} style={{ marginLeft: 4 }} />
+                        ) : (
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (seenByOthers.length > 0) {
+                                setShowSeenList(true);
+                              }
+                            }}
+                            disabled={seenByOthers.length === 0}
+                            className="ml-1"
+                          >
+                            <Icon 
+                              name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
+                              size={seenByOthers.length > 0 ? 13 : 11} 
+                              color={isMe ? '#fff' : colors.primary.main} 
+                            />
+                          </TouchableOpacity>
+                        )
                       )}
                     </View>
                   </>
