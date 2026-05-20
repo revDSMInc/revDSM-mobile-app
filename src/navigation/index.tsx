@@ -34,6 +34,7 @@ export type RootStackParamList = {
     customerName: string;
     description?: string;
     chatType?: 'lead' | 'channel';
+    initialParticipants?: any[];
   };
   MapDetail: { currentLead?: any };
   LeadCenter: { lead: any; initialTool?: string };

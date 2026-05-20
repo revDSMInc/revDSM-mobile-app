@@ -389,6 +389,7 @@ export default function Chat({ onClose, lead }: Props) {
         setMentionQuery(query);
         setShowMentions(true);
         const filtered = participants.filter((p) => {
+          if (currentUserId && String(p._id || p.id || p) === String(currentUserId)) return false;
           const name = `${p.firstName || p.name || ''} ${p.lastName || ''}`.toLowerCase();
           return name.includes(query.toLowerCase());
         });
@@ -398,7 +399,7 @@ export default function Chat({ onClose, lead }: Props) {
         setMentionQuery(null);
       }
     },
-    [chatId, participants]
+    [chatId, participants, currentUserId]
   );
 
   const renderInputToolbar = useCallback(
