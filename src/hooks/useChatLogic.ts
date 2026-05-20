@@ -84,7 +84,13 @@ export const useChatLogic = (
     const startsWithAt = lastWord.startsWith('@');
     console.log('[Mentions Debug] Last word:', JSON.stringify(lastWord), 'Starts with @:', startsWithAt);
     setShowMentions(startsWithAt);
-    if (chatId) ChatService.emitTyping(chatId, text.length > 0);
+    if (chatId) {
+      if (isChannel) {
+        ChatService.emitChannelTyping(chatId, text.length > 0);
+      } else {
+        ChatService.emitTyping(chatId, text.length > 0);
+      }
+    }
   };
 
   const onSend = useCallback(
@@ -125,10 +131,16 @@ export const useChatLogic = (
       } finally {
         setReplyingTo(null);
         setComposerText('');
-        if (chatId) ChatService.emitTyping(chatId, false);
+        if (chatId) {
+          if (isChannel) {
+            ChatService.emitChannelTyping(chatId, false);
+          } else {
+            ChatService.emitTyping(chatId, false);
+          }
+        }
       }
     },
-    [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText]
+    [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText, isChannel]
   );
 
   const handleAttach = useCallback(() => {
