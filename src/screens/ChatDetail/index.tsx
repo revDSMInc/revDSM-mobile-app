@@ -13,7 +13,7 @@ import {
   Alert,
   Vibration,
 } from 'react-native';
-import { GiftedChat, IMessage, Send, InputToolbar, Composer, Day } from 'react-native-gifted-chat';
+import { GiftedChat, IMessage, Send, InputToolbar, Composer, Day, Message } from 'react-native-gifted-chat';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -575,6 +575,26 @@ export default function ChatDetailScreen() {
     [chatId, currentUserId, isChannel, imageUrls, isViewOnly, searchQuery, searchResults, searchIndex, highlightedMessageId, filteredParticipants, handleDisabledClick]
   );
 
+  const renderMessage = useCallback(
+    (props: any) => {
+      // allow empty messages to render
+
+      const isSameUser =
+        props.currentMessage?.user?._id === props.nextMessage?.user?._id;
+      const marginBot = isSameUser ? 2 : 10;
+      return (
+        <Message
+          {...props}
+          containerStyle={{
+            left: { marginBottom: marginBot, marginTop: 0 },
+            right: { marginBottom: marginBot, marginTop: 0 },
+          }}
+        />
+      );
+    },
+    []
+  );
+
   const renderInputToolbar = useCallback(
     (props: any) => {
       if (isViewOnly) {
@@ -758,6 +778,7 @@ export default function ChatDetailScreen() {
               user={{ _id: currentUserId || '' }}
               renderAvatar={null}
               renderBubble={renderBubble}
+              renderMessage={renderMessage}
               renderSystemMessage={renderSystemMessage}
               renderDay={renderDay}
               renderInputToolbar={renderInputToolbar}
@@ -835,6 +856,7 @@ export default function ChatDetailScreen() {
               user={{ _id: currentUserId || '' }}
               renderAvatar={null}
               renderBubble={renderBubble}
+              renderMessage={renderMessage}
               renderSystemMessage={renderSystemMessage}
               renderDay={renderDay}
               renderInputToolbar={renderInputToolbar}

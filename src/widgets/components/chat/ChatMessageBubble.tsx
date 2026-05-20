@@ -209,6 +209,10 @@ export function ChatMessageBubble({
     return secure;
   }, [voiceUri, imageUrls, isMsgVoice]);
 
+  const hasTextOrFiles = useMemo(() => {
+    return !!((msg.text && msg.text.trim().length > 0) || files.length > 0 || isMsgVoice);
+  }, [msg.text, files, isMsgVoice]);
+
   const [showHistory, setShowHistory] = useState(false);
   const [showReactionList, setShowReactionList] = useState(false);
   const [showSeenList, setShowSeenList] = useState(false);
@@ -228,7 +232,7 @@ export function ChatMessageBubble({
     if (fileType === 'image' && mediaUri) {
       Image.getSize(mediaUri, (w, h) => {
         if (w && h) setImageAspectRatio(w / h);
-      }, () => {});
+      }, () => { });
     }
   }, [mediaUri, fileType]);
 
@@ -354,7 +358,7 @@ export function ChatMessageBubble({
       const downloadedPath = res.path();
       setLocalFilePath(downloadedPath);
       setIsDownloading(false);
-      
+
       if (FileViewer) {
         try {
           await FileViewer.open(downloadedPath, { showOpenWithDialog: true });
@@ -842,19 +846,19 @@ export function ChatMessageBubble({
           }}
           disabled={seenByOthers.length === 0}
         >
-          <Icon 
-            name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
-            size={seenByOthers.length > 0 ? 12 : 10} 
-            color="#fff" 
+          <Icon
+            name={seenByOthers.length > 0 ? 'eye' : 'checkmark'}
+            size={seenByOthers.length > 0 ? 12 : 10}
+            color="#fff"
           />
         </TouchableOpacity>
       )}
     </View>
   );
 
-   return (
-     <View onLayout={onLayout} style={{ zIndex: showReactionBar || showFullEmojiPicker ? 9999 : 1 }}>
-       <MediaViewerModal
+  return (
+    <View onLayout={onLayout} style={{ zIndex: showReactionBar || showFullEmojiPicker ? 9999 : 1 }}>
+      <MediaViewerModal
         isVisible={viewerVisible}
         onClose={() => setViewerVisible(false)}
         mediaUri={viewerUri}
@@ -865,7 +869,7 @@ export function ChatMessageBubble({
         style={{
           alignSelf: isMe ? 'flex-end' : 'flex-start',
           marginHorizontal: 0,
-          marginVertical: isSameUser(currentMessage, previousMessage) ? 1.5 : 6,
+          marginVertical: isSameUser(currentMessage, previousMessage) ? 0.3 : 2,
           maxWidth: '100%',
           paddingHorizontal: 2,
           paddingLeft: !isMe ? 2 : 2,
@@ -900,7 +904,14 @@ export function ChatMessageBubble({
         )}
         <View className="flex-row items-end" style={{ flexShrink: 1, maxWidth: '100%' }}>
           {!isMe && (
-            <View className="w-8 h-8 mr-2 mb-1">
+            <View
+              style={{
+                width: 32,
+                height: !isSameUser(currentMessage, previousMessage) ? 32 : 0,
+                marginRight: 8,
+                marginBottom: 0,
+              }}
+            >
               {!isSameUser(currentMessage, previousMessage) && (
                 <View
                   className="w-full h-full rounded-full items-center justify-center"
@@ -914,373 +925,374 @@ export function ChatMessageBubble({
             </View>
           )}
           <GestureDetector gesture={panGesture}>
-            <Animated.View style={[animatedStyle, { padding: 4, overflow: 'visible', flexShrink: 1, maxWidth: MAX_BUBBLE_WIDTH }]}>
+            <Animated.View style={[animatedStyle, { paddingVertical: isSameUser(currentMessage, previousMessage) ? 1 : 2, paddingHorizontal: 4, overflow: 'visible', flexShrink: 1, maxWidth: MAX_BUBBLE_WIDTH }]}>
               <TouchableOpacity
-            onLongPress={() => {
-              if (isViewOnly) {
-                if (onDisabledClick) {
-                  onDisabledClick();
-                } else {
-                  Alert.alert('Info', 'You are not allowed to post in this channel.');
-                }
-                return;
-              }
-              Vibration.vibrate(50);
-              setShowReactionBar(true);
-            }}
-            activeOpacity={0.9}
-            style={{ flexShrink: 1 }}
-          >
-            <View
-              className="rounded-[18px] shadow-sm relative"
-              style={{
-                backgroundColor: isPinned
-                  ? '#FFFDE7'
-                  : isMe
-                    ? '#00A884'
-                    : isDark
-                      ? '#202C33'
-                      : '#FFFFFF',
-                borderWidth: msg._id === activeMatchId ? 2.5 : (!isPinned && !isMe ? 1 : 0),
-                borderColor: msg._id === activeMatchId ? '#FFD700' : '#919EAB33',
-                borderLeftWidth: isPinned ? 6 : undefined,
-                borderLeftColor: isPinned ? '#FBC02B' : undefined,
-                shadowColor: msg._id === activeMatchId ? '#FFD700' : 'transparent',
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: msg._id === activeMatchId ? 0.8 : 0,
-                shadowRadius: 10,
-                elevation: msg._id === activeMatchId ? 8 : 0,
-                borderBottomRightRadius: isMe ? 2 : 18,
-                borderBottomLeftRadius: isMe ? 18 : 2,
-                padding: 2,
-                margin: 2,
-                marginHorizontal: !isMe ? 2 : 2,
-                overflow: (fileType === 'image' || fileType === 'video') ? 'hidden' : 'visible',
-                minWidth: (fileType === 'image' || fileType === 'video')
-                  ? SCREEN_WIDTH * 0.65 + 16
-                  : (msg.replyToDetails || msg.replyTo) ? 200 : undefined,
-              }}
-            >
-              {isPinned && (
-                <View className="flex-row items-center px-2 py-1 bg-black/5 border-b border-black/10">
-                  <Icon name="pin" size={12} color="#FBC02D" />
-                  <Text className="text-[10px] font-black ml-1 text-[#C39529]">PINNED</Text>
-                </View>
-              )}
-              {(msg.replyToDetails || msg.replyTo) && (
-                <View className="p-1 px-2 pt-2">
-                  {renderReplyPreview(msg.replyToDetails || msg.replyTo)}
-                </View>
-              )}
-              {fileType === 'video' && (
-                <View className="p-2 items-center">
-                  <TouchableOpacity
-                    onPress={() => handleMediaPress('video')}
-                    onLongPress={() => setShowReactionBar(true)}
-                    style={{ 
-                      borderRadius: 12, 
-                      overflow: 'hidden', 
-                      backgroundColor: '#000',
-                      width: SCREEN_WIDTH * 0.65,
-                      aspectRatio: 16 / 9,
-                    }}
-                  >
-                    {mediaUri ? (
-                      <>
-                        <Image 
-                          source={{ uri: mediaUri }} 
-                          style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.8 }}
-                          resizeMode="cover"
-                        />
-                        <View className="absolute inset-0 items-center justify-center">
-                          <View className="w-14 h-14 rounded-full bg-black/40 items-center justify-center border border-white/20">
-                            <Icon name="play" size={28} color="#fff" style={{ marginLeft: 3 }} />
-                          </View>
-                        </View>
-                      </>
-                    ) : (
-                      <ActivityIndicator color="#fff" size="small" />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-              {fileType === 'image' && (
-                <View className="p-2 items-center">
-                  <TouchableOpacity
-                    onPress={() => handleMediaPress('image')}
-                    onLongPress={() => setShowReactionBar(true)}
-                    style={{ 
-                      borderRadius: 12, 
-                      overflow: 'hidden',
-                      width: SCREEN_WIDTH * 0.65,
-                      aspectRatio: imageAspectRatio > 0 ? imageAspectRatio : 1,
-                      maxHeight: SCREEN_WIDTH * 1.2,
-                      backgroundColor: isDark ? '#1B2B34' : '#F2F2F7',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                    }}
-                  >
-                    {mediaUri ? (
-                      <>
-                        <Image
-                          source={{ uri: mediaUri }}
-                          style={{ width: '100%', height: '100%' }}
-                          resizeMode="cover"
-                          onLoadStart={() => setIsImageLoading(true)}
-                          onLoadEnd={() => setIsImageLoading(false)}
-                        />
-                        {isImageLoading && (
-                          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.05)' }}>
-                            <ActivityIndicator size="small" color={isMe ? '#fff' : colors.primary.main} />
-                          </View>
-                        )}
-                      </>
-                    ) : (
-                      <View className="flex-1 items-center justify-center">
-                        <Icon name="image-outline" size={32} color="#aaa" />
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-              {['file', 'pdf', 'xls', 'word', 'doc'].includes(fileType) && (() => {
-                const docInfo = getDocStyleAndIcon(primaryFile?.name || 'File');
-                return (
-                  <TouchableOpacity
-                    onPress={handleOpenOrDownload}
-                    onLongPress={() => setShowReactionBar(true)}
-                    disabled={isDownloading}
-                  >
-                    <View
-                      className="flex-row items-center p-3 gap-3"
-                      style={{
-                        borderRadius: 10,
-                        width: isMe ? MAX_BUBBLE_WIDTH - 24 : MAX_BUBBLE_WIDTH - 64,
-                        maxWidth: '100%',
-                      }}
-                    >
-                      <View 
-                        className="w-10 h-10 rounded-lg items-center justify-center"
-                        style={{ backgroundColor: docInfo.color }}
+                onLongPress={() => {
+                  if (isViewOnly) {
+                    if (onDisabledClick) {
+                      onDisabledClick();
+                    } else {
+                      Alert.alert('Info', 'You are not allowed to post in this channel.');
+                    }
+                    return;
+                  }
+                  Vibration.vibrate(50);
+                  setShowReactionBar(true);
+                }}
+                activeOpacity={0.9}
+                style={{ flexShrink: 1 }}
+              >
+                <View
+                  className="shadow-sm relative"
+                  style={{
+                    backgroundColor: isPinned
+                      ? '#FFFDE7'
+                      : isMe
+                        ? '#00A884'
+                        : isDark
+                          ? '#202C33'
+                          : '#FFFFFF',
+                    borderRadius: hasTextOrFiles ? 8 : 5,
+                    borderWidth: msg._id === activeMatchId ? 2.5 : (!isPinned && !isMe ? 1 : 0),
+                    borderColor: msg._id === activeMatchId ? '#FFD700' : '#919EAB33',
+                    borderLeftWidth: isPinned ? 6 : undefined,
+                    borderLeftColor: isPinned ? '#FBC02B' : undefined,
+                    shadowColor: msg._id === activeMatchId ? '#FFD700' : 'transparent',
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: msg._id === activeMatchId ? 0.8 : 0,
+                    shadowRadius: 10,
+                    elevation: msg._id === activeMatchId ? 8 : 0,
+                    borderBottomRightRadius: isMe ? 2 : (hasTextOrFiles ? 18 : 10),
+                    borderBottomLeftRadius: isMe ? (hasTextOrFiles ? 18 : 10) : 2,
+                    padding: 2,
+                    marginVertical: isSameUser(currentMessage, previousMessage) ? 0.5 : 2,
+                    marginHorizontal: !isMe ? 2 : 2,
+                    overflow: (fileType === 'image' || fileType === 'video') ? 'hidden' : 'visible',
+                    minWidth: (fileType === 'image' || fileType === 'video')
+                      ? SCREEN_WIDTH * 0.65 + 16
+                      : (msg.replyToDetails || msg.replyTo) ? 200 : (hasTextOrFiles ? 50 : 50),
+                  }}
+                >
+                  {isPinned && (
+                    <View className="flex-row items-center px-2 py-1 bg-black/5 border-b border-black/10">
+                      <Icon name="pin" size={12} color="#FBC02D" />
+                      <Text className="text-[10px] font-black ml-1 text-[#C39529]">PINNED</Text>
+                    </View>
+                  )}
+                  {(msg.replyToDetails || msg.replyTo) && (
+                    <View className="p-1 px-2 pt-2">
+                      {renderReplyPreview(msg.replyToDetails || msg.replyTo)}
+                    </View>
+                  )}
+                  {fileType === 'video' && (
+                    <View className="p-2 items-center">
+                      <TouchableOpacity
+                        onPress={() => handleMediaPress('video')}
+                        onLongPress={() => setShowReactionBar(true)}
+                        style={{
+                          borderRadius: 12,
+                          overflow: 'hidden',
+                          backgroundColor: '#000',
+                          width: SCREEN_WIDTH * 0.65,
+                          aspectRatio: 16 / 9,
+                        }}
                       >
-                        {isDownloading ? (
-                          <DownloadProgressRing progress={downloadProgress} color="#fff" />
-                        ) : docInfo.icon === 'acrobat-reader' ? (
-                          <Fontisto name="acrobat-reader" size={18} color="#fff" />
-                        ) : docInfo.icon === 'microsoft-excel' ? (
-                          <MaterialCommunityIcons name="microsoft-excel" size={20} color="#fff" />
-                        ) : (
-                          <Icon name={docInfo.icon} size={20} color="#fff" />
-                        )}
-                      </View>
-                      <View className="flex-1">
-                        <Text
-                          className="text-[13px] font-bold"
-                          style={{ color: isMe ? '#fff' : colors.text }}
-                          numberOfLines={1}
-                        >
-                          {isDownloading ? 'Downloading...' : primaryFile?.name || 'File'}
-                        </Text>
-                        {isDownloading && (
-                          <Text
-                            className="text-[10px] opacity-60"
-                            style={{ color: isMe ? '#fff' : colors.text }}
-                          >
-                            {Math.round(downloadProgress * 100)}% complete
-                          </Text>
-                        )}
-                      </View>
-                      {!isDownloading && (
-                        localFilePath ? (
-                          <TouchableOpacity
-                            onPress={handleOpenOrDownload}
-                            style={{ 
-                              padding: 6, 
-                              borderRadius: 20, 
-                              backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)' 
-                            }}
-                          >
-                            <Icon 
-                              name="eye-outline" 
-                              size={16} 
-                              color={isMe ? '#fff' : colors.text} 
+                        {mediaUri ? (
+                          <>
+                            <Image
+                              source={{ uri: mediaUri }}
+                              style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.8 }}
+                              resizeMode="cover"
                             />
-                          </TouchableOpacity>
+                            <View className="absolute inset-0 items-center justify-center">
+                              <View className="w-14 h-14 rounded-full bg-black/40 items-center justify-center border border-white/20">
+                                <Icon name="play" size={28} color="#fff" style={{ marginLeft: 3 }} />
+                              </View>
+                            </View>
+                          </>
                         ) : (
-                          <TouchableOpacity
-                            onPress={saveFileToDevice}
-                            style={{ 
-                              padding: 6, 
-                              borderRadius: 20, 
-                              backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)' 
-                            }}
-                          >
-                            <Icon 
-                              name="arrow-down-outline" 
-                              size={16} 
-                              color={isMe ? '#fff' : colors.text} 
-                            />
-                          </TouchableOpacity>
-                        )
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })()}
-              {isMsgVoice && (
-                <Pressable onLongPress={() => setShowReactionBar(true)}>
-                  <View className="p-2">
-                    <VoiceNotePlayer
-                      uri={secureVoiceUri}
-                      isMe={isMe}
-                      isPinned={isPinned}
-                      maxBubbleWidth={isMe ? MAX_BUBBLE_WIDTH - 24 : MAX_BUBBLE_WIDTH - 64}
-                      mimeType={primaryFile?.mimeType || primaryFile?.fileType || ''}
-                    />
-                    </View>
-                </Pressable>
-              )}
-
-              {(() => {
-                const isSimpleText = !isMsgVoice && (!fileType || fileType === 'text');
-                if (msg.text && isSimpleText) {
-                  return (
-                    <View className="px-3 pt-1.5 pb-1">
-                      <ChatMessageText
-                        text={msg.text}
-                        isMe={isMe}
-                        colors={colors}
-                        isPinned={isPinned}
-                        searchQuery={searchQuery}
-                      />
-                      <View className="flex-row justify-end items-center mt-1">
-                        {msg.isEdited && (
-                          <TouchableOpacity
-                            onPress={() => isMe && setShowHistory(!showHistory)}
-                            disabled={!isMe}
-                          >
-                            <Text
-                              className="text-[9px] font-bold mr-2"
-                              style={{
-                                color: isPinned
-                                  ? '#B78103'
-                                  : isMe
-                                    ? 'rgba(255,255,255,0.85)'
-                                    : colors.primary.main,
-                              }}
-                            >
-                              {isMe && showHistory ? 'Hide Edits' : 'Edited'}
-                            </Text>
-                          </TouchableOpacity>
+                          <ActivityIndicator color="#fff" size="small" />
                         )}
-                        <Text 
-                          style={{ 
-                            fontSize: 9, 
-                            color: isMe ? 'rgba(255,255,255,0.75)' : colors.textSecondary,
-                            fontWeight: 'bold',
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {fileType === 'image' && (
+                    <View className="p-2 items-center">
+                      <TouchableOpacity
+                        onPress={() => handleMediaPress('image')}
+                        onLongPress={() => setShowReactionBar(true)}
+                        style={{
+                          borderRadius: 12,
+                          overflow: 'hidden',
+                          width: SCREEN_WIDTH * 0.65,
+                          aspectRatio: imageAspectRatio > 0 ? imageAspectRatio : 1,
+                          maxHeight: SCREEN_WIDTH * 1.2,
+                          backgroundColor: isDark ? '#1B2B34' : '#F2F2F7',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}
+                      >
+                        {mediaUri ? (
+                          <>
+                            <Image
+                              source={{ uri: mediaUri }}
+                              style={{ width: '100%', height: '100%' }}
+                              resizeMode="cover"
+                              onLoadStart={() => setIsImageLoading(true)}
+                              onLoadEnd={() => setIsImageLoading(false)}
+                            />
+                            {isImageLoading && (
+                              <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.05)' }}>
+                                <ActivityIndicator size="small" color={isMe ? '#fff' : colors.primary.main} />
+                              </View>
+                            )}
+                          </>
+                        ) : (
+                          <View className="flex-1 items-center justify-center">
+                            <Icon name="image-outline" size={32} color="#aaa" />
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {['file', 'pdf', 'xls', 'word', 'doc'].includes(fileType) && (() => {
+                    const docInfo = getDocStyleAndIcon(primaryFile?.name || 'File');
+                    return (
+                      <TouchableOpacity
+                        onPress={handleOpenOrDownload}
+                        onLongPress={() => setShowReactionBar(true)}
+                        disabled={isDownloading}
+                      >
+                        <View
+                          className="flex-row items-center p-3 gap-3"
+                          style={{
+                            borderRadius: 10,
+                            width: isMe ? MAX_BUBBLE_WIDTH - 24 : MAX_BUBBLE_WIDTH - 64,
+                            maxWidth: '100%',
                           }}
                         >
-                          {new Date(msg.createdAt).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                        {isMe && (
-                          msg.pending ? (
-                            <ActivityIndicator size="small" color="#fff" style={{ marginLeft: 4 }} />
-                          ) : (
-                            <TouchableOpacity
-                              onPress={() => {
-                                if (seenByOthers.length > 0) {
-                                  setShowSeenList(true);
-                                }
-                              }}
-                              disabled={seenByOthers.length === 0}
-                              className="ml-1"
+                          <View
+                            className="w-10 h-10 rounded-lg items-center justify-center"
+                            style={{ backgroundColor: docInfo.color }}
+                          >
+                            {isDownloading ? (
+                              <DownloadProgressRing progress={downloadProgress} color="#fff" />
+                            ) : docInfo.icon === 'acrobat-reader' ? (
+                              <Fontisto name="acrobat-reader" size={18} color="#fff" />
+                            ) : docInfo.icon === 'microsoft-excel' ? (
+                              <MaterialCommunityIcons name="microsoft-excel" size={20} color="#fff" />
+                            ) : (
+                              <Icon name={docInfo.icon} size={20} color="#fff" />
+                            )}
+                          </View>
+                          <View className="flex-1">
+                            <Text
+                              className="text-[13px] font-bold"
+                              style={{ color: isMe ? '#fff' : colors.text }}
+                              numberOfLines={1}
                             >
-                              <Icon 
-                                name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
-                                size={seenByOthers.length > 0 ? 12 : 11} 
-                                color="#fff" 
-                              />
-                            </TouchableOpacity>
-                          )
-                        )}
-                      </View>
-                    </View>
-                  );
-                }
-
-                return (
-                  <>
-                     {msg.text && msg.text.trim().length > 0 && !isMsgVoice && (
-                       <View className="px-3 pt-1.5 pb-1">
-                        <ChatMessageText
-                          text={msg.text}
+                              {isDownloading ? 'Downloading...' : primaryFile?.name || 'File'}
+                            </Text>
+                            {isDownloading && (
+                              <Text
+                                className="text-[10px] opacity-60"
+                                style={{ color: isMe ? '#fff' : colors.text }}
+                              >
+                                {Math.round(downloadProgress * 100)}% complete
+                              </Text>
+                            )}
+                          </View>
+                          {!isDownloading && (
+                            localFilePath ? (
+                              <TouchableOpacity
+                                onPress={handleOpenOrDownload}
+                                style={{
+                                  padding: 6,
+                                  borderRadius: 20,
+                                  backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)'
+                                }}
+                              >
+                                <Icon
+                                  name="eye-outline"
+                                  size={16}
+                                  color={isMe ? '#fff' : colors.text}
+                                />
+                              </TouchableOpacity>
+                            ) : (
+                              <TouchableOpacity
+                                onPress={saveFileToDevice}
+                                style={{
+                                  padding: 6,
+                                  borderRadius: 20,
+                                  backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)'
+                                }}
+                              >
+                                <Icon
+                                  name="arrow-down-outline"
+                                  size={16}
+                                  color={isMe ? '#fff' : colors.text}
+                                />
+                              </TouchableOpacity>
+                            )
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })()}
+                  {isMsgVoice && (
+                    <Pressable onLongPress={() => setShowReactionBar(true)}>
+                      <View className="p-2">
+                        <VoiceNotePlayer
+                          uri={secureVoiceUri}
                           isMe={isMe}
-                          colors={colors}
                           isPinned={isPinned}
-                          searchQuery={searchQuery}
+                          maxBubbleWidth={isMe ? MAX_BUBBLE_WIDTH - 24 : MAX_BUBBLE_WIDTH - 64}
+                          mimeType={primaryFile?.mimeType || primaryFile?.fileType || ''}
                         />
                       </View>
-                    )}
-                    <View className="flex-row justify-end items-center px-2 pb-1 mt-1">
-                      {msg.isEdited && (
-                        <TouchableOpacity
-                          onPress={() => isMe && setShowHistory(!showHistory)}
-                          disabled={!isMe}
-                        >
-                          <Text
-                            className="text-[9px] font-bold mr-2"
-                            style={{
-                              color: isPinned
-                                ? '#B78103'
-                                : isMe
-                                  ? 'rgba(255,255,255,0.85)'
-                                  : colors.primary.main,
-                            }}
-                          >
-                            {isMe && showHistory ? 'Hide Edits' : 'Edited'}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                      <Text
-                        className="text-[9px] opacity-60"
-                        style={{ color: isMe ? '#fff' : colors.textSecondary }}
-                      >
-                        {new Date(msg.createdAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </Text>
-                      {isMe && (
-                        msg.pending ? (
-                          <ActivityIndicator size="small" color={isMe ? '#fff' : colors.primary.main} style={{ marginLeft: 4 }} />
-                        ) : (
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (seenByOthers.length > 0) {
-                                setShowSeenList(true);
-                              }
-                            }}
-                            disabled={seenByOthers.length === 0}
-                            className="ml-1"
-                          >
-                            <Icon 
-                              name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
-                              size={seenByOthers.length > 0 ? 13 : 11} 
-                              color={isMe ? '#fff' : colors.primary.main} 
+                    </Pressable>
+                  )}
+
+                  {(() => {
+                    const isSimpleText = !isMsgVoice && (!fileType || fileType === 'text');
+                    if (msg.text && msg.text.trim().length > 0 && isSimpleText) {
+                      return (
+                        <View className="px-2.5 pt-1 pb-0.5" style={{ minWidth: 50 }}>
+                          <ChatMessageText
+                            text={msg.text}
+                            isMe={isMe}
+                            colors={colors}
+                            isPinned={isPinned}
+                            searchQuery={searchQuery}
+                          />
+                          <View className="flex-row justify-end items-center mt-0 pb-0.5">
+                            {msg.isEdited && (
+                              <TouchableOpacity
+                                onPress={() => isMe && setShowHistory(!showHistory)}
+                                disabled={!isMe}
+                              >
+                                <Text
+                                  className="text-[9px] font-bold mr-2"
+                                  style={{
+                                    color: isPinned
+                                      ? '#B78103'
+                                      : isMe
+                                        ? 'rgba(255,255,255,0.85)'
+                                        : colors.primary.main,
+                                  }}
+                                >
+                                  {isMe && showHistory ? 'Hide Edits' : 'Edited'}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            <Text
+                              style={{
+                                fontSize: 9,
+                                color: isMe ? 'rgba(255,255,255,0.75)' : colors.textSecondary,
+                                fontWeight: 'bold',
+                              }}
+                            >
+                              {new Date(msg.createdAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </Text>
+                            {isMe && (
+                              msg.pending ? (
+                                <ActivityIndicator size="small" color="#fff" style={{ marginLeft: 4 }} />
+                              ) : (
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    if (seenByOthers.length > 0) {
+                                      setShowSeenList(true);
+                                    }
+                                  }}
+                                  disabled={seenByOthers.length === 0}
+                                  className="ml-1"
+                                >
+                                  <Icon
+                                    name={seenByOthers.length > 0 ? 'eye' : 'checkmark'}
+                                    size={seenByOthers.length > 0 ? 12 : 11}
+                                    color="#fff"
+                                  />
+                                </TouchableOpacity>
+                              )
+                            )}
+                          </View>
+                        </View>
+                      );
+                    }
+
+                    return (
+                      <>
+                        {msg.text && msg.text.trim().length > 0 && !isMsgVoice && (
+                          <View className="px-2.5 pt-1 pb-0.5" style={{ minWidth: 70 }}>
+                            <ChatMessageText
+                              text={msg.text}
+                              isMe={isMe}
+                              colors={colors}
+                              isPinned={isPinned}
+                              searchQuery={searchQuery}
                             />
-                          </TouchableOpacity>
-                        )
-                      )}
-                    </View>
-                  </>
-                );
-              })()}
-            </View>
-            {renderReactions()}
-          </TouchableOpacity>
+                          </View>
+                        )}
+                        <View className="flex-row justify-end items-center px-1 pb-0.5 mt-0">
+                          {msg.isEdited && (
+                            <TouchableOpacity
+                              onPress={() => isMe && setShowHistory(!showHistory)}
+                              disabled={!isMe}
+                            >
+                              <Text
+                                className="text-[9px] font-bold mr-2"
+                                style={{
+                                  color: isPinned
+                                    ? '#B78103'
+                                    : isMe
+                                      ? 'rgba(255,255,255,0.85)'
+                                      : colors.primary.main,
+                                }}
+                              >
+                                {isMe && showHistory ? 'Hide Edits' : 'Edited'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                          <Text
+                            className="text-[9px] opacity-60"
+                            style={{ color: isMe ? '#fff' : colors.textSecondary }}
+                          >
+                            {new Date(msg.createdAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </Text>
+                          {isMe && (
+                            msg.pending ? (
+                              <ActivityIndicator size="small" color={isMe ? '#fff' : colors.primary.main} style={{ marginLeft: 4 }} />
+                            ) : (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (seenByOthers.length > 0) {
+                                    setShowSeenList(true);
+                                  }
+                                }}
+                                disabled={seenByOthers.length === 0}
+                                className="ml-1"
+                              >
+                                <Icon
+                                  name={seenByOthers.length > 0 ? 'eye' : 'checkmark'}
+                                  size={seenByOthers.length > 0 ? 13 : 11}
+                                  color={isMe ? '#fff' : colors.primary.main}
+                                />
+                              </TouchableOpacity>
+                            )
+                          )}
+                        </View>
+                      </>
+                    );
+                  })()}
+                </View>
+                {renderReactions()}
+              </TouchableOpacity>
             </Animated.View>
           </GestureDetector>
         </View>
