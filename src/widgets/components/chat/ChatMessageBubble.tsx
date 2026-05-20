@@ -96,11 +96,12 @@ interface Props {
   onNavigateToMessage?: (msg: any) => void;
   onDelete: (msgId: string) => void;
   imageUrls: Record<string, string>;
-   isViewOnly?: boolean;
-   searchQuery?: string;
-   activeMatchId?: string | null;
-   onLayout?: (event: any) => void;
- }
+  isViewOnly?: boolean;
+  onDisabledClick?: () => void;
+  searchQuery?: string;
+  activeMatchId?: string | null;
+  onLayout?: (event: any) => void;
+}
 
 export function ChatMessageBubble({
   bubbleProps,
@@ -111,18 +112,19 @@ export function ChatMessageBubble({
   onReact,
   onPin,
   onViewHistory,
-   onNavigateToMessage,
-   onDelete,
-   onLayout,
-   imageUrls,
-   isViewOnly = false,
-   searchQuery,
-   activeMatchId,
- }: Props) {
-   const { colors, isDark } = useTheme();
-   const { currentMessage, previousMessage } = bubbleProps;
-   const msg = currentMessage as any;
-   const position = bubbleProps.position || (String(msg.user?._id) === String(currentUserId) ? 'right' : 'left');
+  onNavigateToMessage,
+  onDelete,
+  onLayout,
+  imageUrls,
+  isViewOnly = false,
+  onDisabledClick,
+  searchQuery,
+  activeMatchId,
+}: Props) {
+  const { colors, isDark } = useTheme();
+  const { currentMessage, previousMessage } = bubbleProps;
+  const msg = currentMessage as any;
+  const position = bubbleProps.position || (String(msg.user?._id) === String(currentUserId) ? 'right' : 'left');
   const isMe = position === 'right';
   const isPinned = msg.isPinned || false;
 
@@ -207,6 +209,7 @@ export function ChatMessageBubble({
 
   const [showHistory, setShowHistory] = useState(false);
   const [showReactionList, setShowReactionList] = useState(false);
+  const [showSeenList, setShowSeenList] = useState(false);
   const [selectedEmojiTab, setSelectedEmojiTab] = useState('All');
   const [showReactionBar, setShowReactionBar] = useState(false);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
@@ -465,6 +468,7 @@ export function ChatMessageBubble({
           backgroundColor: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)',
           borderLeftColor: colors.primary.main,
           maxWidth: MAX_BUBBLE_WIDTH - 20,
+          minWidth: 160,
         }}
       >
         <Text
@@ -486,8 +490,8 @@ export function ChatMessageBubble({
           <Text
             className="text-[12px] opacity-70"
             style={{ color: isMe ? '#fff' : colors.text, flex: 1 }}
-            numberOfLines={1}
-            ellipsizeMode="tail"
+            numberOfLines={isReplyVoice ? undefined : 1}
+            ellipsizeMode={isReplyVoice ? undefined : "tail"}
           >
             {replyLabel}
           </Text>
@@ -503,6 +507,13 @@ export function ChatMessageBubble({
     }
   }, [onReply, msg]);
 
+  const seenByOthers = useMemo(() => {
+    return (msg.seenBy || []).filter((u: any) => {
+      const uId = u.userId || u._id || u.id;
+      return uId && String(uId) !== String(currentUserId);
+    });
+  }, [msg.seenBy, currentUserId]);
+
   const renderReactions = () => {
     const reactions = msg.reactions || [];
     if (reactions.length === 0) return null;
@@ -513,8 +524,9 @@ export function ChatMessageBubble({
       // Handle both object {emoji, reaction} and string formats
       const emoji = typeof r === 'string' ? r : (r.emoji || r.reaction);
       if (!emoji) return acc;
+      const count = (r && typeof r === 'object' && Array.isArray(r.users)) ? r.users.length : 1;
       if (!acc[emoji]) acc[emoji] = 0;
-      acc[emoji]++;
+      acc[emoji] += count;
       return acc;
     }, {});
 
@@ -632,11 +644,8 @@ export function ChatMessageBubble({
                 {tabs.map((tab) => {
                   const isActive = selectedEmojiTab === tab;
                   const count = tab === 'All'
-                    ? reactions.length
-                    : reactions.filter((r: any) => {
-                      const emoji = typeof r === 'string' ? r : (r.emoji || r.reaction);
-                      return emoji === tab;
-                    }).length;
+                    ? allReactions.length
+                    : allReactions.filter((r: any) => r.emoji === tab).length;
 
                   return (
                     <TouchableOpacity
@@ -708,12 +717,134 @@ export function ChatMessageBubble({
     );
   };
 
+  const formatSeenAt = (seenAtStr: string) => {
+    if (!seenAtStr) return '';
+    try {
+      const d = new Date(seenAtStr);
+      const today = new Date();
+      const isToday = d.toDateString() === today.toDateString();
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (isToday) {
+        return `Seen at ${timeStr}`;
+      }
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      return `Seen ${dateStr} at ${timeStr}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const renderSeenListModal = () => {
+    return (
+      <Modal
+        visible={showSeenList}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSeenList(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setShowSeenList(false)}
+          />
+          <View
+            style={{
+              backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+              maxHeight: '50%',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.1,
+              shadowRadius: 10,
+              elevation: 20,
+            }}
+          >
+            {/* Handle Bar */}
+            <View className="w-12 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-full mt-3 mb-1" style={{ alignSelf: 'center' }} />
+
+            <View className="flex-row items-center justify-between px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
+              <View className="flex-row items-center">
+                <Text className="text-xl font-bold mr-2" style={{ color: colors.text }}>Seen By</Text>
+                <View className="bg-blue-100 dark:bg-blue-900/30 rounded-full px-2 py-0.5">
+                  <Text className="text-blue-600 dark:text-blue-400 font-bold text-xs">
+                    {seenByOthers.length}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowSeenList(false)}
+                className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 items-center justify-center"
+              >
+                <Icon name="close" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* User List */}
+            <ScrollView className="px-6" showsVerticalScrollIndicator={false}>
+              {seenByOthers.map((u: any, idx: number) => {
+                const viewerId = u.userId || u._id || u.id;
+                const displayName = u.fullName || u.name || `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Member';
+                const avatar = getAvatarProps({ ...u, name: displayName, _id: viewerId }, false);
+                return (
+                  <View
+                    key={idx}
+                    className="flex-row items-center py-4 border-b border-zinc-50 dark:border-zinc-900 justify-between"
+                    style={{ borderBottomWidth: idx === seenByOthers.length - 1 ? 0 : 1 }}
+                  >
+                    <View className="flex-row items-center flex-1 mr-2">
+                      <View
+                        className="w-11 h-11 rounded-full items-center justify-center mr-4 shadow-sm"
+                        style={{ backgroundColor: avatar.color }}
+                      >
+                        <Text className="text-sm font-black text-white">{avatar.initials}</Text>
+                      </View>
+                      <View className="flex-1">
+                        <Text className="font-bold text-[15px]" style={{ color: colors.text }}>
+                          {displayName}
+                        </Text>
+                        <Text className="text-[11px] opacity-50" style={{ color: colors.text }} numberOfLines={1}>
+                          {u.email || 'No email shared'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text className="text-[10px] font-bold text-zinc-400">
+                      {formatSeenAt(u.seenAt)}
+                    </Text>
+                  </View>
+                );
+              })}
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const statusLayer = (
     <View className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-lg flex-row items-center bg-black/40">
       <Text className="text-[9px] text-white/90 mr-1">
         {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </Text>
-      {isMe && <Icon name={msg.received ? 'checkmark-done' : 'checkmark'} size={10} color="#fff" />}
+      {isMe && (
+        <TouchableOpacity
+          onPress={() => {
+            if (seenByOthers.length > 0) {
+              setShowSeenList(true);
+            }
+          }}
+          disabled={seenByOthers.length === 0}
+        >
+          <Icon 
+            name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
+            size={seenByOthers.length > 0 ? 12 : 10} 
+            color="#fff" 
+          />
+        </TouchableOpacity>
+      )}
     </View>
   );
 
@@ -730,7 +861,7 @@ export function ChatMessageBubble({
         style={{
           alignSelf: isMe ? 'flex-end' : 'flex-start',
           marginHorizontal: 0,
-          marginVertical: 6,
+          marginVertical: isSameUser(currentMessage, previousMessage) ? 1.5 : 6,
           maxWidth: '100%',
           paddingHorizontal: 2,
           paddingLeft: !isMe ? 2 : 2,
@@ -782,6 +913,14 @@ export function ChatMessageBubble({
             <Animated.View style={[animatedStyle, { padding: 4, overflow: 'visible', flexShrink: 1, maxWidth: MAX_BUBBLE_WIDTH }]}>
               <TouchableOpacity
             onLongPress={() => {
+              if (isViewOnly) {
+                if (onDisabledClick) {
+                  onDisabledClick();
+                } else {
+                  Alert.alert('Info', 'You are not allowed to post in this channel.');
+                }
+                return;
+              }
               Vibration.vibrate(50);
               setShowReactionBar(true);
             }}
@@ -813,6 +952,7 @@ export function ChatMessageBubble({
                 margin: 2,
                 marginHorizontal: !isMe ? 2 : 2,
                 overflow: 'visible',
+                minWidth: (msg.replyToDetails || msg.replyTo) ? 200 : undefined,
               }}
             >
               {isPinned && (
@@ -895,7 +1035,11 @@ export function ChatMessageBubble({
                   >
                     <View
                       className="flex-row items-center p-3 gap-3"
-                      style={{ borderRadius: 10, width: MAX_BUBBLE_WIDTH - 4 }}
+                      style={{
+                        borderRadius: 10,
+                        width: isMe ? MAX_BUBBLE_WIDTH - 24 : MAX_BUBBLE_WIDTH - 64,
+                        maxWidth: '100%',
+                      }}
                     >
                       <View 
                         className="w-10 h-10 rounded-lg items-center justify-center"
@@ -979,15 +1123,34 @@ export function ChatMessageBubble({
                 const isSimpleText = !isMsgVoice && (!fileType || fileType === 'text');
                 if (msg.text && isSimpleText) {
                   return (
-                    <View className="px-3 pt-1.5 pb-1.5">
-                      <Text style={{ flexShrink: 1 }}>
-                        <ChatMessageText
-                          text={msg.text}
-                          isMe={isMe}
-                          colors={colors}
-                          isPinned={isPinned}
-                          searchQuery={searchQuery}
-                        />
+                    <View className="px-3 pt-1.5 pb-1">
+                      <ChatMessageText
+                        text={msg.text}
+                        isMe={isMe}
+                        colors={colors}
+                        isPinned={isPinned}
+                        searchQuery={searchQuery}
+                      />
+                      <View className="flex-row justify-end items-center mt-1">
+                        {msg.isEdited && (
+                          <TouchableOpacity
+                            onPress={() => isMe && setShowHistory(!showHistory)}
+                            disabled={!isMe}
+                          >
+                            <Text
+                              className="text-[9px] font-bold mr-2"
+                              style={{
+                                color: isPinned
+                                  ? '#B78103'
+                                  : isMe
+                                    ? 'rgba(255,255,255,0.85)'
+                                    : colors.primary.main,
+                              }}
+                            >
+                              {isMe && showHistory ? 'Hide Edits' : 'Edited'}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                         <Text 
                           style={{ 
                             fontSize: 9, 
@@ -995,28 +1158,36 @@ export function ChatMessageBubble({
                             fontWeight: 'bold',
                           }}
                         >
-                          {"   "}{new Date(msg.createdAt).toLocaleTimeString([], {
+                          {new Date(msg.createdAt).toLocaleTimeString([], {
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
                         </Text>
                         {isMe && (
-                          <Text style={{ fontSize: 10, color: '#fff' }}>
-                            {" "}<Icon 
-                              name={msg.received ? 'checkmark-done' : 'checkmark'} 
-                              size={11} 
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (seenByOthers.length > 0) {
+                                setShowSeenList(true);
+                              }
+                            }}
+                            disabled={seenByOthers.length === 0}
+                            className="ml-1"
+                          >
+                            <Icon 
+                              name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
+                              size={seenByOthers.length > 0 ? 12 : 11} 
                               color="#fff" 
                             />
-                          </Text>
+                          </TouchableOpacity>
                         )}
-                      </Text>
+                      </View>
                     </View>
                   );
                 }
 
                 return (
                   <>
-                    {msg.text && (
+                    {msg.text && msg.text.trim().length > 0 && (
                       <View className="px-3 pt-1.5 pb-1">
                         <ChatMessageText
                           text={msg.text}
@@ -1057,13 +1228,21 @@ export function ChatMessageBubble({
                         })}
                       </Text>
                       {isMe && (
-                        <View className="ml-1">
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (seenByOthers.length > 0) {
+                              setShowSeenList(true);
+                            }
+                          }}
+                          disabled={seenByOthers.length === 0}
+                          className="ml-1"
+                        >
                           <Icon 
-                            name={msg.received ? 'checkmark-done' : 'checkmark'} 
-                            size={11} 
+                            name={seenByOthers.length > 0 ? 'eye' : 'checkmark'} 
+                            size={seenByOthers.length > 0 ? 13 : 11} 
                             color={isMe ? '#fff' : colors.primary.main} 
                           />
-                        </View>
+                        </TouchableOpacity>
                       )}
                     </View>
                   </>
@@ -1349,6 +1528,7 @@ export function ChatMessageBubble({
         </TouchableOpacity>
       </Modal>
       {renderReactionListModal()}
+      {renderSeenListModal()}
     </View>
   );
 }

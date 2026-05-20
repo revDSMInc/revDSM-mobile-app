@@ -31,6 +31,7 @@ export const useChatSession = (
   const [hasMore, setHasMore] = useState(true);
   const [limit, setLimit] = useState(100);
   const [typingUsers, setTypingUsers] = useState<any[]>([]);
+  const [channel, setChannel] = useState<any>(null);
   const typingTimers = useRef<Map<string, any>>(new Map());
 
   const currentUserId = user?._id || user?.id || 'ghost';
@@ -96,6 +97,13 @@ export const useChatSession = (
         }
         if (activeId) {
           await loadMessages(activeId, limit);
+          if (isChannel) {
+            ChatService.getChatDetails(activeId)
+              .then((chan) => {
+                if (chan) setChannel(chan);
+              })
+              .catch(console.error);
+          }
           const fetchAction = isChannel
             ? ChatService.getChannelParticipants(activeId)
             : ChatService.getLeadParticipants(activeId, leadId);
@@ -358,6 +366,60 @@ export const useChatSession = (
       setPinnedMessages(normalized);
     });
 
+    // ── Seen Updates ─────────────────────────────────────────────────────────
+    const handleMessageSeen = (data: any) => {
+      console.log('[Socket] message-seen/channel-message-seen received:', data);
+      const { messageId, messageIds, seenBy } = data || {};
+      const idsToUpdate = Array.isArray(messageIds)
+        ? messageIds.map(String)
+        : messageId
+          ? [String(messageId)]
+          : [];
+      if (idsToUpdate.length === 0) return;
+
+      const updater = (prev: any[]) =>
+        prev.map((m) =>
+          idsToUpdate.includes(String(m._id))
+            ? { ...m, seenBy: seenBy || (m as any).seenBy, received: true }
+            : m
+        );
+      setMessages(updater);
+    };
+
+    const handleChatRead = (data: any) => {
+      console.log('[Socket] chat read event received:', data);
+      const { chatId: eventChatId, channelId, userId, seenAt } = data || {};
+      const activeRoomId = eventChatId || channelId;
+      if (activeRoomId && String(activeRoomId) !== String(chatId)) return;
+      if (userId && String(userId) === String(currentUserId)) return; // Skip my own read events
+
+      const dateSeen = seenAt ? new Date(seenAt) : new Date();
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          // If the message is sent by Me, and it doesn't already have this user in seenBy
+          const isFromMe = String(m.user?._id) === String(currentUserId);
+          if (isFromMe) {
+            const hasUser = ((m as any).seenBy || []).some((u: any) => String(u.userId || u.id) === String(userId));
+            if (!hasUser) {
+              return {
+                ...m,
+                seenBy: [...((m as any).seenBy || []), { userId, id: userId, seenAt: dateSeen.toISOString() }],
+                received: true,
+              };
+            }
+          }
+          return m;
+        })
+      );
+    };
+
+    const unsubMsgSeen = SocketManager.on('message-seen', handleMessageSeen);
+    const unsubChanMsgSeen = SocketManager.on('channel-message-seen', handleMessageSeen);
+    const unsubChanRead = SocketManager.on('channel-read', handleChatRead);
+    const unsubLeadRead = SocketManager.on('lead-chat-read', handleChatRead);
+    const unsubAllRead = SocketManager.on('mark-as-read-response', handleChatRead);
+
     // ── Typing ───────────────────────────────────────────────────────────────
     const handleTyping = (data: any) => {
       if (data.userId === currentUserId) return;
@@ -391,6 +453,11 @@ export const useChatSession = (
       unsubDisconnect();
       unsubNewMsg();
       unsubNewChanMsg();
+      unsubMsgSeen();
+      unsubChanMsgSeen();
+      unsubChanRead();
+      unsubLeadRead();
+      unsubAllRead();
       unsubEdited();
       unsubReactAdded();
       unsubReactRemoved();
@@ -418,5 +485,6 @@ export const useChatSession = (
     hasMore,
     setLimit,
     typingUsers,
+    channel,
   };
 };
