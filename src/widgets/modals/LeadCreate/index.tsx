@@ -32,11 +32,28 @@ import { format } from 'date-fns';
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (createdLead?: any) => void;
   user: any;
+  fromZone?: boolean;
+  zoneId?: string;
+  buildingId?: string;
+  prefilledAddress?: string;
+  prefilledCoords?: { latitude: number; longitude: number } | null;
+  prefilledOwnerName?: string;
 }
 
-export default function LeadCreateModal({ visible, onClose, onSuccess, user }: Props) {
+export default function LeadCreateModal({
+  visible,
+  onClose,
+  onSuccess,
+  user,
+  fromZone = false,
+  zoneId,
+  buildingId,
+  prefilledAddress,
+  prefilledCoords,
+  prefilledOwnerName = '',
+}: Props) {
   const { colors, isDark } = useTheme();
   const createLeadMutation = useCreateLeadMutation();
   const initialFormState: {
@@ -89,8 +106,30 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
 
   useEffect(() => {
     if (visible) {
-      setForm(initialFormState);
-      handleGetCurrentLocation();
+      if (fromZone && prefilledAddress) {
+        let firstName = '';
+        let lastName = '';
+        if (prefilledOwnerName) {
+          const parts = prefilledOwnerName.trim().split(/\s+/);
+          firstName = parts[0] || '';
+          lastName = parts.slice(1).join(' ') || '';
+        }
+        setForm({
+          ...initialFormState,
+          address: prefilledAddress,
+          firstName,
+          lastName,
+          leadType: 'selfGen',
+        });
+        if (prefilledCoords) {
+          setLocation(prefilledCoords);
+        } else {
+          setLocation(null);
+        }
+      } else {
+        setForm(initialFormState);
+        handleGetCurrentLocation();
+      }
     }
   }, [visible]);
 
@@ -310,11 +349,24 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
               email: form.email,
               address: form.address,
             },
+            ...(fromZone && {
+              zoneId,
+              buildingId,
+              latitude: location?.latitude,
+              longitude: location?.longitude,
+            }),
           };
       console.log(payload, 'lf lead creation');
-      await createLeadMutation.mutateAsync(payload);
+      const response = await createLeadMutation.mutateAsync(payload);
       showSuccess('Success', 'Lead created successfully');
-      onSuccess();
+      
+      const createdLead = fromZone ? {
+        ...(response?.data?.lead || response?.data || response),
+        ...payload,
+        status: 'selfGenerated',
+      } : null;
+
+      onSuccess(createdLead);
       onClose();
     } catch (err: any) {
       showError('Error', err?.message || 'Failed to create lead');
@@ -412,8 +464,9 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                   <TextInput
                     value={form.address}
                     onChangeText={handleAddressSearch}
+                    editable={!fromZone}
                     onFocus={() => {
-                      if (suggestions.length > 0) setShowSuggestions(true);
+                      if (!fromZone && suggestions.length > 0) setShowSuggestions(true);
                       scrollViewRef.current?.scrollTo({ y: addressFieldY, animated: true });
                     }}
                     placeholder={
@@ -421,7 +474,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                     }
                     style={{
                       height: 56,
-                      backgroundColor: isDark ? colors.surface : '#F8FAFC',
+                      backgroundColor: isDark ? colors.surface : (fromZone ? '#E2E8F030' : '#F8FAFC'),
                       borderWidth: 1,
                       borderColor: isDark ? colors.border : '#E2E8F0',
                       borderRadius: 16,
@@ -445,19 +498,21 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                     {isLocating ? (
                       <ActivityIndicator size="small" color={colors.primary.main} />
                     ) : form.address.length > 0 ? (
-                      <TouchableOpacity
-                        onPress={() => {
-                          setForm({ ...form, address: '' });
-                          setSuggestions([]);
-                          setShowSuggestions(false);
-                        }}
-                      >
-                        <Ionicons
-                          name="close-circle"
-                          size={18}
-                          color={colors.textSecondary + '80'}
-                        />
-                      </TouchableOpacity>
+                      !fromZone ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setForm({ ...form, address: '' });
+                            setSuggestions([]);
+                            setShowSuggestions(false);
+                          }}
+                        >
+                          <Ionicons
+                            name="close-circle"
+                            size={18}
+                            color={colors.textSecondary + '80'}
+                          />
+                        </TouchableOpacity>
+                      ) : null
                     ) : (
                       <Ionicons
                         name="location-outline"

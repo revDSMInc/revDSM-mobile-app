@@ -5,20 +5,11 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  Image,
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Platform,
-  PermissionsAndroid,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
-import { LeadService } from '../../services/api/leads';
-import { BeforeAfterSliderModal } from './BeforeAfterSliderModal';
-
-const { width } = Dimensions.get('window');
+import { BeforeImageModal } from './BeforeImageModal';
+import { AfterImageModal } from './AfterImageModal';
 
 interface BeforeAfterModalProps {
   visible: boolean;
@@ -33,199 +24,134 @@ export const BeforeAfterModal = ({
   selectedJob,
   onUploadSuccess,
 }: BeforeAfterModalProps) => {
-  const { colors, isDark } = useTheme();
-  const [activeTab, setActiveTab] = useState<'before' | 'after'>('before');
-  const [loading, setLoading] = useState(false);
-  const [showPresentation, setShowPresentation] = useState(false);
+  const { isDark } = useTheme();
+  const [showBeforeModal, setShowBeforeModal] = useState(false);
+  const [showAfterModal, setShowAfterModal] = useState(false);
+  const [beforeCount, setBeforeCount] = useState(0);
+  const [afterCount, setAfterCount] = useState(0);
 
-  const beforeImages = selectedJob?.images?.beforeImages || [];
-  const afterImages = selectedJob?.images?.afterImages || [];
-
-  const handleAddImage = async (useCamera: boolean) => {
-    if (useCamera && Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.CAMERA,
-        {
-          title: 'Camera Permission',
-          message: 'App needs access to your camera to take photos.',
-          buttonNeutral: 'Ask Me Later',
-          buttonNegative: 'Cancel',
-          buttonPositive: 'OK',
-        }
-      );
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
-        return;
-      }
+  useEffect(() => {
+    if (visible) {
+      setBeforeCount(0);
+      setAfterCount(0);
+      setShowBeforeModal(false);
+      setShowAfterModal(false);
     }
+  }, [visible]);
 
-    const options = {
-      mediaType: 'photo' as const,
-      quality: 0.7 as const,
-      selectionLimit: useCamera ? 1 : 0, // 0 means multi-select for gallery
-      saveToPhotos: true,
-    };
-
-    try {
-      const result = useCamera
-        ? await launchCamera(options as any)
-        : await launchImageLibrary(options as any);
-
-      if (result.didCancel) return;
-      if (result.errorCode) {
-        Alert.alert('Error', result.errorMessage || 'Failed to open camera/gallery');
-        return;
-      }
-
-      if (result.assets && result.assets.length > 0) {
-        setLoading(true);
-        const formData = new FormData();
-        formData.append('jobNumber', selectedJob.jobNumber);
-        formData.append('companyId', selectedJob.companyId);
-
-        result.assets.forEach((img, index) => {
-          // On Android, the uri might need 'file://' prefix if not present, 
-          // but image-picker usually provides it correctly.
-          formData.append('files', {
-            uri: img.uri,
-            type: img.type || 'image/jpeg',
-            name: img.fileName || `image_${index}.jpg`,
-          } as any);
-        });
-
-        if (activeTab === 'before') {
-          await LeadService.updateBeforeImages(formData);
-        } else {
-          await LeadService.updateAfterImages(formData);
-        }
-
-        Alert.alert('Success', 'Images uploaded successfully');
-        onUploadSuccess?.();
-      }
-    } catch (error) {
-      console.error('Photo action error:', error);
-      Alert.alert('Error', 'An unexpected error occurred while accessing the camera/gallery');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const currentImages = activeTab === 'before' ? beforeImages : afterImages;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View className="flex-1 justify-end bg-black/60">
-        <View className="bg-white dark:bg-zinc-900 rounded-t-[40px] h-[85%]">
-          {/* Header */}
-          <View className="p-4 border-b border-slate-100 dark:border-zinc-800 flex-row justify-between items-center">
-            <View>
-              <Text className="text-[17px] font-black dark:text-white">Job Photos</Text>
-              <Text className="text-[11px] font-bold text-slate-400">
-                #{selectedJob?.jobNumber}
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              className="p-1.5 bg-slate-100 dark:bg-zinc-800 rounded-full"
-            >
-              <Icon name="close" size={20} color={isDark ? 'white' : 'black'} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Tabs */}
-          <View className="flex-row p-3 gap-3">
-            {(['before', 'after'] as const).map((tab) => (
-              <TouchableOpacity
-                key={tab}
-                onPress={() => setActiveTab(tab)}
-                className={`flex-1 py-2.5 rounded-xl items-center border ${
-                  activeTab === tab
-                    ? 'bg-green-600 border-green-600'
-                    : 'bg-slate-50 dark:bg-zinc-800 border-slate-100 dark:border-zinc-700'
-                }`}
-              >
-                <Text
-                  className={`font-black tracking-widest text-[11px] ${
-                    activeTab === tab ? 'text-white' : 'text-slate-400'
-                  }`}
-                >
-                  {tab} ({tab === 'before' ? beforeImages.length : afterImages.length})
+    <>
+      <Modal visible={visible} animationType="slide" transparent>
+        <View className="flex-1 justify-end bg-black/60">
+          <View className="bg-white dark:bg-zinc-900 rounded-t-[40px] h-[50%]">
+            {/* Header */}
+            <View className="p-4 border-b border-slate-100 dark:border-zinc-800 flex-row justify-between items-center">
+              <View>
+                <Text className="text-[17px] font-black dark:text-white">Upload Photos</Text>
+                <Text className="text-[11px] font-bold text-slate-400">
+                  #{selectedJob?.jobNumber}
                 </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Actions Bar */}
-          <View className="px-5 flex-row justify-between items-center mb-3">
-            <View className="flex-row gap-2.5">
+              </View>
               <TouchableOpacity
-                onPress={() => handleAddImage(true)}
-                className="w-10 h-10 bg-slate-50 dark:bg-zinc-800 rounded-lg items-center justify-center border border-slate-100 dark:border-zinc-700"
+                onPress={onClose}
+                className="p-1.5 bg-slate-100 dark:bg-zinc-800 rounded-full"
               >
-                <Icon name="camera" size={20} color="#4CBB17" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => handleAddImage(false)}
-                className="w-10 h-10 bg-slate-50 dark:bg-zinc-800 rounded-lg items-center justify-center border border-slate-100 dark:border-zinc-700"
-              >
-                <Icon name="image-plus" size={20} color="#4CBB17" />
+                <Icon name="close" size={20} color={isDark ? 'white' : 'black'} />
               </TouchableOpacity>
             </View>
 
-            {beforeImages.length > 0 && afterImages.length > 0 && (
+            {/* Content - Two columns with plus buttons */}
+            <ScrollView className="flex-1 px-4 py-6">
+              <View className="flex-row gap-6">
+                {/* Before Section */}
+                <View className="flex-1">
+                  <View className="mb-4">
+                    <Text className="text-[13px] font-black text-slate-800 dark:text-white mb-3">
+                      Before
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setShowBeforeModal(true)}
+                      className="bg-slate-100 dark:bg-zinc-800 border-2 border-dashed border-slate-200 dark:border-zinc-700 rounded-xl p-8 items-center justify-center aspect-square"
+                    >
+                      <Icon name="plus" size={36} color="#4CBB17" />
+                      <Text className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mt-2">
+                        Add Before
+                      </Text>
+                      {beforeCount > 0 && (
+                        <Text className="text-[10px] font-bold text-green-600 mt-1">
+                          {beforeCount} image{beforeCount > 1 ? 's' : ''} added
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* After Section */}
+                <View className="flex-1">
+                  <View className="mb-4">
+                    <Text className="text-[13px] font-black text-slate-800 dark:text-white mb-3">
+                      After
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setShowAfterModal(true)}
+                      className="bg-slate-100 dark:bg-zinc-800 border-2 border-dashed border-slate-200 dark:border-zinc-700 rounded-xl p-8 items-center justify-center aspect-square"
+                    >
+                      <Icon name="plus" size={36} color="#4CBB17" />
+                      <Text className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mt-2">
+                        Add After
+                      </Text>
+                      {afterCount > 0 && (
+                        <Text className="text-[10px] font-bold text-green-600 mt-1">
+                          {afterCount} image{afterCount > 1 ? 's' : ''} added
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Footer */}
+            <View className="p-4 border-t border-slate-100 dark:border-zinc-800 flex-row gap-3">
               <TouchableOpacity
-                onPress={() => setShowPresentation(true)}
-                className="flex-row items-center bg-blue-50 px-3 py-2 rounded-lg border border-blue-100"
+                onPress={onClose}
+                className="flex-1 border border-slate-200 dark:border-zinc-700 py-3 rounded-lg items-center"
               >
-                <Icon name="presentation" size={18} color="#3b82f6" />
-                <Text className="ml-1.5 font-black text-blue-600 text-[9px] tracking-widest">
-                  Presentation
+                <Text className="text-[13px] font-black text-slate-700 dark:text-slate-300">
+                  Done
                 </Text>
               </TouchableOpacity>
-            )}
+            </View>
           </View>
-
-          <ScrollView className="flex-1 px-4">
-            {loading ? (
-              <View className="py-20 items-center">
-                <ActivityIndicator size="large" color="#4CBB17" />
-                <Text className="mt-4 font-bold text-slate-400">Uploading...</Text>
-              </View>
-            ) : (
-              <View className="flex-row flex-wrap gap-2">
-                {currentImages.map((img: any, idx: number) => (
-                  <View
-                    key={idx}
-                    className="w-[31%] aspect-square rounded-2xl overflow-hidden bg-slate-100"
-                  >
-                    <Image
-                      source={{ uri: img.secureUrl || img.filePath }}
-                      className="w-full h-full"
-                      resizeMode="cover"
-                    />
-                  </View>
-                ))}
-                {currentImages.length === 0 && (
-                  <View className="w-full py-20 items-center justify-center">
-                    <Icon name="image-off-outline" size={48} color="#cbd5e1" />
-                    <Text className="mt-4 font-bold text-slate-300">No {activeTab} images</Text>
-                  </View>
-                )}
-              </View>
-            )}
-            <View style={{ height: 100 }} />
-          </ScrollView>
         </View>
-      </View>
+      </Modal>
 
-      {showPresentation && (
-        <BeforeAfterSliderModal
-          visible={showPresentation}
-          onClose={() => setShowPresentation(false)}
-          beforeImages={beforeImages}
-          afterImages={afterImages}
-        />
-      )}
-    </Modal>
+      {/* Before Image Upload Modal */}
+      <BeforeImageModal
+        visible={showBeforeModal}
+        onClose={() => setShowBeforeModal(false)}
+        job={selectedJob}
+        existingUris={[]}
+        onUploadSuccess={() => {
+          setBeforeCount(c => c + 1);
+          setShowBeforeModal(false);
+          onUploadSuccess?.();
+        }}
+      />
+
+      {/* After Image Upload Modal */}
+      <AfterImageModal
+        visible={showAfterModal}
+        onClose={() => setShowAfterModal(false)}
+        job={selectedJob}
+        existingUris={[]}
+        onUploadSuccess={() => {
+          setAfterCount(c => c + 1);
+          setShowAfterModal(false);
+          onUploadSuccess?.();
+        }}
+      />
+    </>
   );
 };

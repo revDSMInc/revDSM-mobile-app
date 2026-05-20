@@ -31,6 +31,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
+const isJobOwner = (item: any, uid: string | undefined): boolean => {
+  if (!uid || !item) return false;
+  return !!(
+    item.salesRepId === uid ||
+    item.salesRep === uid ||
+    (item.salesRep && typeof item.salesRep === 'object' && item.salesRep._id === uid) ||
+    (item.salesRep && typeof item.salesRep === 'object' && item.salesRep.id === uid) ||
+    item.assignedRepId === uid ||
+    (item.assignedRep && typeof item.assignedRep === 'object' && item.assignedRep._id === uid) ||
+    (item.assignedRep && typeof item.assignedRep === 'object' && item.assignedRep.id === uid)
+  );
+};
+
 export default function MapDetailScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -98,32 +111,46 @@ export default function MapDetailScreen() {
 
   useEffect(() => {
     fetchLeads();
-  }, [filters, userLocation]);
+  }, [filters.radius, filters.isFavoriteOnly, userLocation]);
 
-  const fetchLeads = async () => {
-    if (!user?._id) return;
-    try {
-      setLoading(true);
-      
-      // Default to Tampa coordinates if user is elsewhere (web parity)
-      const payload: any = {
-        radiusInMiles: filters.radius || 50,
-        isFavorite: filters.isFavoriteOnly,
-        latitude: userLocation?.latitude || 27.9506, 
-        longitude: userLocation?.longitude || -82.4572,
-      };
-      
-      const res = await LeadService.findJobs(payload);
-      const data = res.data?.data || [];
-      setLeads(data);
-    } catch (err) {
-      console.error('[MapDetail] Fetch Leads Error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+   const fetchLeads = async () => {
+     if (!user?._id) {
+       console.log('[MapDetail DEBUG] fetchLeads aborted because user?._id is falsy:', user?._id);
+       return;
+     }
+     try {
+       setLoading(true);
+       
+       // Default to Tampa coordinates if user is elsewhere (web parity)
+       const payload: any = {
+         radiusInMiles: filters.radius || 50,
+         isFavorite: filters.isFavoriteOnly,
+         latitude: userLocation?.latitude || 27.9506, 
+         longitude: userLocation?.longitude || -82.4572,
+       };
+       
+       console.log('[MapDetail DEBUG] Calling LeadService.findJobs with payload:', payload);
+       const res = await LeadService.findJobs(payload);
+       const data = res.data?.data || [];
+       console.log('[MapDetail DEBUG] LeadService.findJobs response count:', data.length);
+       setLeads(data);
+       
+       // Update selectedJob if it exists in the new data
+       if (selectedJob?._id) {
+         const updatedJob = data.find((job: any) => job._id === selectedJob._id);
+         if (updatedJob) {
+           setSelectedJob(updatedJob);
+         }
+       }
+     } catch (err) {
+       console.error('[MapDetail DEBUG] Fetch Leads Error:', err);
+     } finally {
+       setLoading(false);
+     }
+   };
 
   const filteredLeads = useMemo(() => {
+    console.log('[MapDetail DEBUG] Recalculating filteredLeads. leads.length:', leads.length, 'myJobsOnly:', filters.myJobsOnly, 'user ID:', user?._id || user?.id);
     let result = [...leads];
     // 1. Filter out specific job number range (Web parity)
     result = result.filter((item) => {
@@ -150,10 +177,24 @@ export default function MapDetailScreen() {
       // Favorites
       if (filters.isFavoriteOnly && !(item.isFavorite || item.isFavourite)) return false;
 
+      // Referral Filter (match web app logic)
+      if (filters.isReferralOnly) {
+        const uid = user?._id || user?.id;
+        const isMine = isJobOwner(item, uid);
+        const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
+        if (!hasReferrals) return false;
+
+        if (!isMine) {
+          const activeToggle = item.jobReferrals[0]?.referralToggle === true || item.jobReferrals[0]?.referralToggle === 'true';
+          if (!activeToggle) return false;
+        }
+      }
+
       // My Jobs Only
       if (filters.myJobsOnly) {
         const uid = user?._id || user?.id;
-        const isMine = item.salesRepId === uid || item.userId === uid || item.salesRep?._id === uid;
+        const isMine = isJobOwner(item, uid);
+        console.log('[MapDetail DEBUG] MyJobsOnly check for job:', item.jobNumber, 'user uid:', uid, 'isMine:', isMine);
         if (!isMine) return false;
       }
 
@@ -174,6 +215,7 @@ export default function MapDetailScreen() {
       return true;
     });
 
+    console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', result.length);
     // Apply Sorting
     return result.sort((a, b) => {
       if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
@@ -185,7 +227,7 @@ export default function MapDetailScreen() {
       if (sortOption === 'date_asc') return timeA - timeB;
       return timeB - timeA; // date_desc
     });
-  }, [leads, filters, sortOption]);
+  }, [leads, filters, sortOption, user]);
 
   // Automatic navigation to searched job or location (Web Parity)
   useEffect(() => {
@@ -214,8 +256,39 @@ export default function MapDetailScreen() {
       />
 
       <View style={{ flex: 1 }}>
-        {isListView ? (
-          <View style={{ flex: 1 }}>
+        <LeadMap 
+          currentLead={centerCoords ?? currentLead} 
+          focusLead={jumpLead}
+          fullScreen 
+          leads={filteredLeads}
+          isFavoriteFilter={filters.isFavoriteOnly}
+          isReferralFilter={filters.isReferralOnly}
+          isMyJobsFilter={filters.myJobsOnly}
+          isHeatMapFilter={filters.isHeatMap}
+          onToggleFilter={(type) => {
+            setFilters((prev) => {
+              if (type === 'heatmap') return { ...prev, isHeatMap: !prev.isHeatMap };
+              if (type === 'myjobs') return { ...prev, myJobsOnly: !prev.myJobsOnly };
+              if (type === 'referral') return { ...prev, isReferralOnly: !prev.isReferralOnly };
+              return prev;
+            });
+          }}
+          onGalleryPress={(job) => {
+            setSelectedJob(job);
+            setShowGalleryModal(true);
+          }}
+          onCameraPress={(job) => {
+            setSelectedJob(job);
+            setShowCameraModal(true);
+          }}
+          onReferencePress={(job) => {
+            setSelectedJob(job);
+            setShowReferralModal(true);
+          }}
+        />
+
+        {isListView && (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#121212' : '#F4F6F8' ,zIndex:10000}]}>
             {/* List Toolbar */}
             <View className="px-5 py-4 flex-row items-center justify-between bg-white dark:bg-black/20 border-b border-slate-100 dark:border-zinc-800 z-50">
               <View className="flex-1 mr-4">
@@ -286,7 +359,7 @@ export default function MapDetailScreen() {
                   <TouchableOpacity 
                     key={job._id}
                     onPress={() => {
-                      setJumpLead(job);
+                      setJumpLead({...job});
                       setIsListView(false);
                     }}
                     activeOpacity={0.7}
@@ -359,27 +432,6 @@ export default function MapDetailScreen() {
               })}
             </ScrollView>
           </View>
-        ) : (
-          <LeadMap 
-            currentLead={centerCoords ?? jumpLead ?? currentLead} 
-            fullScreen 
-            leads={filteredLeads}
-            isFavoriteFilter={filters.isFavoriteOnly}
-            isReferralFilter={filters.isReferralOnly}
-            onGalleryPress={(job) => {
-              setSelectedJob(job);
-              setShowGalleryModal(true);
-            }}
-            onCameraPress={(job) => {
-              setSelectedJob(job);
-              setShowCameraModal(true);
-            }}
-            onReferencePress={(job) => {
-              setSelectedJob(job);
-              setShowReferralModal(true);
-            }}
-          />
-
         )}
       </View>
 
@@ -408,11 +460,8 @@ export default function MapDetailScreen() {
       <MapGalleryModal
         visible={showGalleryModal}
         job={selectedJob}
+        isMyJob={isJobOwner(selectedJob, user?._id || user?.id)}
         onClose={() => setShowGalleryModal(false)}
-        onCameraPress={(job) => {
-          setSelectedJob(job);
-          setShowCameraModal(true);
-        }}
       />
 
 
@@ -423,15 +472,7 @@ export default function MapDetailScreen() {
         onClose={() => setShowReferralModal(false)}
         selectedJob={selectedJob}
         onSuccess={fetchLeads}
-        isMyJob={
-          selectedJob && user && (
-            selectedJob.salesRepId === user._id ||
-            selectedJob.userId === user._id ||
-            selectedJob.salesRep?._id === user._id ||
-            selectedJob.salesRepName === user.fullName ||
-            selectedJob.salesRep === user.userName
-          )
-        }
+        isMyJob={isJobOwner(selectedJob, user?._id || user?.id)}
       />
 
 

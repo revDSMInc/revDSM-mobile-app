@@ -25,6 +25,46 @@ interface ReferralModalProps {
   onSuccess?: () => void;
 }
 
+interface OptionPickerProps {
+  visible: boolean;
+  title: string;
+  options: { label: string; value: string }[];
+  onSelect: (value: string) => void;
+  onClose: () => void;
+}
+
+const OptionPicker = ({ visible, title, options, onSelect, onClose }: OptionPickerProps) => (
+  <Modal visible={visible} transparent animationType="fade">
+    <TouchableOpacity 
+      activeOpacity={1} 
+      onPress={onClose}
+      className="flex-1 justify-end bg-black/40"
+    >
+      <View className="bg-white rounded-t-[32px] p-6 pb-10">
+        <View className="flex-row justify-between items-center mb-6">
+          <Text className="text-[18px] font-black text-slate-800">{title}</Text>
+          <TouchableOpacity onPress={onClose}>
+            <Icon name="close" size={24} color="#000" />
+          </TouchableOpacity>
+        </View>
+        {options.map((opt) => (
+          <TouchableOpacity
+            key={opt.value}
+            onPress={() => {
+              onSelect(opt.value);
+              onClose();
+            }}
+            className="py-4 border-b border-slate-100 flex-row justify-between items-center"
+          >
+            <Text className="text-[15px] font-bold text-slate-700">{opt.label}</Text>
+            <Icon name="chevron-right" size={20} color="#cbd5e1" />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </TouchableOpacity>
+  </Modal>
+);
+
 const InputField = ({ label, value, onChangeText, onPress, placeholder, keyboardType = 'default', multiline = false, dropdown = false, required = false, isDark, editable = true }: any) => (
   <View className="mb-5 relative">
     <View className="absolute -top-2.5 left-3 bg-white px-1 z-10">
@@ -35,7 +75,8 @@ const InputField = ({ label, value, onChangeText, onPress, placeholder, keyboard
     <TouchableOpacity 
       activeOpacity={dropdown ? 0.7 : 1}
       onPress={onPress}
-      className={`flex-row items-center border border-slate-200 rounded-xl px-4 ${multiline ? 'py-2' : 'h-[52px]'}`}
+      disabled={!editable}
+      className={`flex-row items-center border border-slate-200 rounded-xl px-4 ${multiline ? 'py-2' : 'h-[52px]'} ${!editable ? 'bg-slate-50 opacity-60' : 'bg-white'}`}
     >
       <TextInput
         value={value}
@@ -47,17 +88,26 @@ const InputField = ({ label, value, onChangeText, onPress, placeholder, keyboard
         editable={!dropdown && editable}
         pointerEvents={dropdown ? 'none' : 'auto'}
         className={`flex-1 font-bold text-[13px] ${isDark ? 'text-white' : 'text-slate-700'}`}
-        style={{ textAlignVertical: multiline ? 'top' : 'center' }}
+        style={[
+          { textAlignVertical: multiline ? 'top' : 'center' },
+          !editable && {
+            textShadowColor: isDark ? 'rgba(255, 255, 255, 0.6)' : 'rgba(71, 85, 105, 0.6)',
+            textShadowOffset: { width: 0, height: 0 },
+            textShadowRadius: 8,
+            color: 'transparent',
+          }
+        ]}
       />
       {dropdown && <Icon name="chevron-down" size={20} color="#94a3b8" />}
     </TouchableOpacity>
   </View>
 );
 
-const Checkbox = ({ label, checked, onPress }: any) => (
+const Checkbox = ({ label, checked, onPress, disabled = false }: any) => (
   <TouchableOpacity 
     onPress={onPress}
-    className="flex-row items-center w-[48%] mb-3"
+    disabled={disabled}
+    className={`flex-row items-center w-[48%] mb-3 ${disabled ? 'opacity-60' : ''}`}
     activeOpacity={0.7}
   >
     <View className={`w-5 h-5 rounded border items-center justify-center ${checked ? 'bg-[#4CBB17] border-[#4CBB17]' : 'bg-white border-slate-300'}`}>
@@ -68,7 +118,6 @@ const Checkbox = ({ label, checked, onPress }: any) => (
 );
 
 export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSuccess }: ReferralModalProps) => {
-
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -93,15 +142,15 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
 
   const products = ['Fascia Wrap', 'Soffit', 'Gutter', 'Leaf Filter'];
   const contactMethods = [
-    { label: 'Phone Call', value: 'call' },
-    { label: 'SMS / Text', value: 'text' },
-    { label: 'Email', value: 'email' },
+    { label: 'Call', value: 'call' },
+    { label: 'Text', value: 'text' },
   ];
 
   const timeOptions = [
     { label: 'Morning', value: 'morning' },
     { label: 'Afternoon', value: 'afternoon' },
     { label: 'Evening', value: 'evening' },
+    { label: 'Anytime', value: 'anytime' },
   ];
 
   useEffect(() => {
@@ -115,6 +164,17 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
         note: existingReferral.notes || '',
         items: existingReferral.items || [],
         referralToggle: existingReferral.referralToggle || false,
+      });
+    } else if (visible) {
+      setForm({
+        firstName: '',
+        phoneNumber: '',
+        preferredContactMethod: 'call',
+        bestTimeToContact: 'morning',
+        zipCode: '',
+        note: '',
+        items: [],
+        referralToggle: false,
       });
     }
   }, [visible, existingReferral]);
@@ -132,6 +192,19 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
   const handleSubmit = async () => {
     if (mode === 'VIEW') return;
     
+    if (!form.phoneNumber.trim()) {
+      Alert.alert('Validation Error', 'Phone Number is required');
+      return;
+    }
+    if (!form.preferredContactMethod) {
+      Alert.alert('Validation Error', 'Preferred Contact Method is required');
+      return;
+    }
+    if (!form.bestTimeToContact) {
+      Alert.alert('Validation Error', 'Best Time to Contact is required');
+      return;
+    }
+
     setLoading(true);
     try {
       const payload: any = {
@@ -200,97 +273,63 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
           style={{ width: '100%', alignItems: 'center', justifyContent: 'center' }}
         >
           <View className="bg-white rounded-[32px] w-full max-h-[85%]">
-          <View className="p-6 pb-2 flex-row justify-between items-center">
-            <Text className="text-[20px] font-black text-slate-800">{getTitle()}</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Icon name="close" size={24} color="#000" />
-            </TouchableOpacity>
-          </View>
+            <View className="p-6 pb-2 flex-row justify-between items-center">
+              <Text className="text-[20px] font-black text-slate-800">{getTitle()}</Text>
+              <TouchableOpacity onPress={onClose}>
+                <Icon name="close" size={24} color="#000" />
+              </TouchableOpacity>
+            </View>
 
-          <ScrollView 
-            className="px-6" 
-            contentContainerStyle={{ paddingBottom: 30 }}
-            showsVerticalScrollIndicator={false}
-          >
-            <View className="mt-4">
-              <InputField 
-                label="Full Name" 
-                value={form.firstName} 
-                onChangeText={(t: string) => setForm({...form, firstName: t})}
-                placeholder="Full Name"
-                isDark={isDark}
-                editable={!isViewMode}
-              />
-              <InputField 
-                label="Phone Number" 
-                value={form.phoneNumber} 
-                onChangeText={(t: string) => setForm({...form, phoneNumber: t})}
-                placeholder="Phone Number"
-                keyboardType="phone-pad"
-                required
-                isDark={isDark}
-                editable={!isViewMode}
-              />
-              
-              <View className="flex-row gap-4" style={{ zIndex: 100 }}>
-                <View className="flex-1" style={{ zIndex: 100 }}>
-                  <InputField 
-                    label="Method" 
-                    value={contactMethods.find(m => m.value === form.preferredContactMethod)?.label || form.preferredContactMethod} 
-                    dropdown
-                    required
-                    isDark={isDark}
-                    editable={!isViewMode}
-                    onPress={() => !isViewMode && setShowMethodDropdown(!showMethodDropdown)}
-                  />
-                  {showMethodDropdown && (
-                    <View 
-                      style={{
-                        position: 'absolute',
-                        top: 55,
-                        left: 0,
-                        right: 0,
-                        backgroundColor: 'white',
-                        borderWidth: 1,
-                        borderColor: '#f1f5f9',
-                        borderRadius: 12,
-                        elevation: 20,
-                        shadowColor: '#000',
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowOpacity: 0.15,
-                        shadowRadius: 8,
-                        zIndex: 9999,
-                      }}
-                    >
-                      {contactMethods.map(m => (
-                        <TouchableOpacity 
-                          key={m.value}
-                          style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}
-                          onPress={() => {
-                            setForm({...form, preferredContactMethod: m.value});
-                            setShowMethodDropdown(false);
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>{m.label}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
+            <ScrollView 
+              className="px-6" 
+              contentContainerStyle={{ paddingBottom: 30 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <View className="mt-4">
+                <InputField 
+                  label="Full Name" 
+                  value={form.firstName} 
+                  onChangeText={(t: string) => setForm({...form, firstName: t})}
+                  placeholder="Full Name"
+                  isDark={isDark}
+                  editable={!isViewMode}
+                />
+                <InputField 
+                  label="Phone Number" 
+                  value={form.phoneNumber} 
+                  onChangeText={(t: string) => setForm({...form, phoneNumber: t})}
+                  placeholder="Phone Number"
+                  keyboardType="phone-pad"
+                  required
+                  isDark={isDark}
+                  editable={!isViewMode}
+                />
+                
+                <View className="flex-row gap-4">
+                  <View className="flex-1">
+                    <InputField 
+                      label="Preferred Contact Method" 
+                      value={contactMethods.find(m => m.value === form.preferredContactMethod)?.label || form.preferredContactMethod} 
+                      dropdown
+                      required
+                      isDark={isDark}
+                      editable={!isViewMode}
+                      onPress={() => !isViewMode && setShowMethodDropdown(true)}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <InputField 
+                      label="Zip Code" 
+                      value={form.zipCode} 
+                      onChangeText={(t: string) => setForm({...form, zipCode: t})}
+                      placeholder="Zip Code"
+                      keyboardType="numeric"
+                      isDark={isDark}
+                      editable={!isViewMode}
+                    />
+                  </View>
                 </View>
-                <View className="flex-1" style={{ zIndex: 90 }}>
-                  <InputField 
-                    label="Zip Code" 
-                    value={form.zipCode} 
-                    onChangeText={(t: string) => setForm({...form, zipCode: t})}
-                    placeholder="Zip Code"
-                    keyboardType="numeric"
-                    isDark={isDark}
-                    editable={!isViewMode}
-                  />
-                </View>
-              </View>
 
-              <View style={{ zIndex: 80 }}>
                 <InputField 
                   label="Best Time to Contact" 
                   value={timeOptions.find(o => o.value === form.bestTimeToContact)?.label || form.bestTimeToContact} 
@@ -298,106 +337,90 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                   required
                   isDark={isDark}
                   editable={!isViewMode}
-                  onPress={() => !isViewMode && setShowTimeDropdown(!showTimeDropdown)}
+                  onPress={() => !isViewMode && setShowTimeDropdown(true)}
                 />
-                {showTimeDropdown && (
-                  <View 
-                    style={{
-                      position: 'absolute',
-                      top: 55,
-                      left: 0,
-                      right: 0,
-                      backgroundColor: 'white',
-                      borderWidth: 1,
-                      borderColor: '#f1f5f9',
-                      borderRadius: 12,
-                      elevation: 20,
-                      shadowColor: '#000',
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowOpacity: 0.15,
-                      shadowRadius: 8,
-                      zIndex: 9999,
-                    }}
-                  >
-                    {timeOptions.map(o => (
-                      <TouchableOpacity 
-                        key={o.value}
-                        style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}
-                        onPress={() => {
-                          setForm({...form, bestTimeToContact: o.value});
-                          setShowTimeDropdown(false);
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>{o.label}</Text>
-                      </TouchableOpacity>
+                
+                <InputField 
+                  label="Note" 
+                  value={form.note} 
+                  onChangeText={(t: string) => setForm({...form, note: t})}
+                  placeholder="Note"
+                  multiline
+                  isDark={isDark}
+                  editable={!isViewMode}
+                />
+
+                <View className="mt-2 mb-6">
+                  <Text className="text-slate-400 font-bold text-[13px] mb-4">Select Products</Text>
+                  <View className="flex-row flex-wrap justify-between">
+                    {products.map(p => (
+                      <Checkbox 
+                        key={p} 
+                        label={p} 
+                        checked={form.items.includes(p)} 
+                        onPress={() => toggleProduct(p)}
+                        disabled={isViewMode}
+                      />
                     ))}
                   </View>
-                )}
-              </View>
-              
-              <InputField 
-                label="Note" 
-                value={form.note} 
-                onChangeText={(t: string) => setForm({...form, note: t})}
-                placeholder="Note"
-                multiline
-                isDark={isDark}
-                editable={!isViewMode}
-              />
+                </View>
 
-              <View className="mt-2 mb-6">
-                <Text className="text-slate-400 font-bold text-[13px] mb-4">Select Products</Text>
-                <View className="flex-row flex-wrap justify-between">
-                  {products.map(p => (
-                    <Checkbox 
-                      key={p} 
-                      label={p} 
-                      checked={form.items.includes(p)} 
-                      onPress={() => toggleProduct(p)}
-                    />
-                  ))}
+                <View className="flex-row items-center justify-end mb-6">
+                  <Switch
+                    value={form.referralToggle}
+                    onValueChange={(v) => {
+                      if (mode !== 'VIEW') setForm({...form, referralToggle: v});
+                    }}
+                    disabled={isViewMode}
+                    trackColor={{ false: '#e2e8f0', true: '#4CBB17' }}
+                    thumbColor="white"
+                  />
+                  <Text className="ml-3 text-[14px] font-bold text-slate-400">Reference</Text>
                 </View>
               </View>
+            </ScrollView>
 
-              <View className="flex-row items-center justify-end mb-6">
-                 <Switch
-                  value={form.referralToggle}
-                  onValueChange={(v) => {
-                    if (mode !== 'VIEW') setForm({...form, referralToggle: v});
-                  }}
-                  trackColor={{ false: '#e2e8f0', true: '#4CBB17' }}
-                  thumbColor="white"
-                />
-                <Text className="ml-3 text-[14px] font-bold text-slate-400">Reference</Text>
-              </View>
-            </View>
-          </ScrollView>
-
-          <View className="p-6 pt-0 flex-row justify-end gap-3">
-            <TouchableOpacity 
-              onPress={onClose}
-              className="px-6 h-12 rounded-xl items-center justify-center border border-slate-200"
-            >
-              <Text className="font-black text-slate-700">Cancel</Text>
-            </TouchableOpacity>
-            
-            {mode !== 'VIEW' && (
+            <View className="p-6 pt-0 flex-row justify-end gap-3">
               <TouchableOpacity 
-                onPress={handleSubmit}
-                disabled={loading}
-                className="px-8 h-12 rounded-xl items-center justify-center bg-[#212B36] shadow-lg shadow-slate-200"
+                onPress={onClose}
+                className="px-6 h-12 rounded-xl items-center justify-center border border-slate-200"
               >
-                {loading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text className="text-white font-black">{mode === 'ADD' ? 'Submit' : 'Update'}</Text>
-                )}
+                <Text className="font-black text-slate-700">Cancel</Text>
               </TouchableOpacity>
-            )}
+              
+              {mode !== 'VIEW' && (
+                <TouchableOpacity 
+                  onPress={handleSubmit}
+                  disabled={loading}
+                  className="px-8 h-12 rounded-xl items-center justify-center bg-[#212B36] shadow-lg shadow-slate-200"
+                >
+                  {loading ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text className="text-white font-black">{mode === 'ADD' ? 'Submit' : 'Update'}</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
       </View>
+
+      <OptionPicker
+        visible={showMethodDropdown}
+        title="Select Contact Method"
+        options={contactMethods}
+        onSelect={(val) => setForm({ ...form, preferredContactMethod: val })}
+        onClose={() => setShowMethodDropdown(false)}
+      />
+
+      <OptionPicker
+        visible={showTimeDropdown}
+        title="Select Best Time to Contact"
+        options={timeOptions}
+        onSelect={(val) => setForm({ ...form, bestTimeToContact: val })}
+        onClose={() => setShowTimeDropdown(false)}
+      />
     </Modal>
   );
 };

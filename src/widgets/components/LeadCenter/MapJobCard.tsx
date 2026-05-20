@@ -31,26 +31,38 @@ export const MapJobCard = ({
 
   if (!job) return null;
 
-  const formatAddress = (addr: any) => {
+  const parseAddress = (addr: any): { houseNum: string; rest: string } => {
     let street = '';
     let cityStateZip = '';
-    
+
     if (typeof addr === 'string') {
       const parts = addr.split(', ');
       street = parts[0] || '';
       cityStateZip = parts.slice(1).join(', ');
     } else if (addr && typeof addr === 'object') {
+      if (addr.houseNumber) {
+        const rest = [addr.streetName, addr.city, addr.state, addr.zip].filter(Boolean).join(', ');
+        return { houseNum: String(addr.houseNumber), rest };
+      }
       street = addr.streetName || '';
       cityStateZip = [addr.city, addr.state, addr.zip].filter(Boolean).join(', ');
     } else {
-      return 'Address not provided';
+      return { houseNum: '', rest: 'Address not provided' };
     }
 
-    // Hide the first word (house number)
-    const streetParts = street.split(' ');
-    const maskedStreet = streetParts.length > 1 ? streetParts.slice(1).join(' ') : street;
+    const streetParts = street.trim().split(' ');
+    const firstToken = streetParts[0] || '';
+    const isNumeric = /^\d/.test(firstToken);
 
-    return [maskedStreet, cityStateZip].filter(Boolean).join(', ');
+    if (isNumeric && streetParts.length > 1) {
+      const houseNum = firstToken;
+      const streetName = streetParts.slice(1).join(' ');
+      const rest = [streetName, cityStateZip].filter(Boolean).join(', ');
+      return { houseNum, rest };
+    }
+
+    const rest = [street, cityStateZip].filter(Boolean).join(', ');
+    return { houseNum: '', rest };
   };
 
   const formattedDate = job.installationDate
@@ -117,9 +129,24 @@ export const MapJobCard = ({
             Property Address
           </Text>
           <View className="mt-1">
-            <Text className="text-[14px] font-black text-slate-700">
-              {formatAddress(job.address || job)}
-            </Text>
+            {(() => {
+              const { houseNum, rest } = parseAddress(job.address || job);
+              return (
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#334155', lineHeight: 20 }}>
+                  {houseNum !== '' && (
+                    <Text style={{
+                      backgroundColor: 'rgba(148, 163, 184, 0.35)',
+                      color: 'rgba(51, 65, 85, 0.01)',
+                      borderRadius: 12,
+                    }}>
+                      {houseNum}
+                    </Text>
+                  )}
+                  {houseNum !== '' ? ' ' : ''}
+                  {rest}
+                </Text>
+              );
+            })()}
           </View>
         </View>
 
