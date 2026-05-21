@@ -36,13 +36,25 @@ export const ChatHeader = ({
 }: any) => {
   const navigation = useNavigation<any>();
 
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      if (isChannel) {
+        navigation.navigate('ChatThreads');
+      } else {
+        navigation.navigate('Leads');
+      }
+    }
+  };
+
   return (
     <View
       className="px-4 pt-3 pb-4 border-b"
       style={{ backgroundColor: isDark ? '#1A1A1A' : '#fff', borderBottomColor: colors.border }}
     >
       <Pressable
-        onPress={() => navigation.goBack()}
+        onPress={handleBack}
         className="flex-row items-center mb-4"
         hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
         style={{ zIndex: 9999 }}

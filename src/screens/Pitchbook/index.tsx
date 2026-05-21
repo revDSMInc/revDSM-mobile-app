@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useWindowDimensions } from 'react-native';
 import {
   View,
   Text,
@@ -10,6 +11,7 @@ import {
   Animated,
   Platform,
   Modal,
+  StatusBar,
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,6 +43,8 @@ const CATEGORIES = [
 export default function PitchbookScreen() {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const isLandscape = winWidth > winHeight;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const { lead } = (route.params as any) || {};
@@ -48,6 +52,9 @@ export default function PitchbookScreen() {
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
   const [activeCategory, setActiveCategory] = useState('leafFilter_story');
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fsImageLoading, setFsImageLoading] = useState(false);
+  const [mainImageLoading, setMainImageLoading] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
@@ -130,7 +137,7 @@ export default function PitchbookScreen() {
       const outcome = data?.outcome || data;
       setFullLeadData(data);
       if (outcome?.salesPhotos) fetchSecureImages(outcome.salesPhotos);
-    } catch (error) {}
+    } catch (error) { }
   };
 
   useEffect(() => {
@@ -146,6 +153,21 @@ export default function PitchbookScreen() {
     };
   }, [lead?.id, lead?.result, lead?.status]);
 
+  useEffect(() => {
+    if (isFullscreen && isLandscape) {
+      StatusBar.setHidden(true, 'fade');
+    } else {
+      StatusBar.setHidden(false, 'fade');
+    }
+    return () => {
+      StatusBar.setHidden(false, 'fade');
+    };
+  }, [isFullscreen, isLandscape]);
+
+  useEffect(() => {
+    setMainImageLoading(true);
+  }, [activeCategory, currentSlideIndex]);
+
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [pdfPreviewData, setPdfPreviewData] = useState({ url: '', title: '' });
@@ -155,10 +177,10 @@ export default function PitchbookScreen() {
     const reports = outcome?.generatedReports || lead?.generatedReports || [];
     return Array.isArray(reports)
       ? reports.filter((report: any) => {
-          const name = report?.reportName || '';
-          const type = report?.reportType || '';
-          return name.toLowerCase().includes('risk') || type.toLowerCase().includes('risk');
-        })
+        const name = report?.reportName || '';
+        const type = report?.reportType || '';
+        return name.toLowerCase().includes('risk') || type.toLowerCase().includes('risk');
+      })
       : [];
   }, [fullLeadData, lead]);
 
@@ -192,6 +214,7 @@ export default function PitchbookScreen() {
   };
 
   const handleNext = () => {
+    setFsImageLoading(true);
     if (currentSlideIndex < currentCategoryImages.length - 1) {
       setCurrentSlideIndex(currentSlideIndex + 1);
     } else {
@@ -204,6 +227,7 @@ export default function PitchbookScreen() {
   };
 
   const handlePrev = () => {
+    setFsImageLoading(true);
     if (currentSlideIndex > 0) {
       setCurrentSlideIndex(currentSlideIndex - 1);
     } else {
@@ -223,9 +247,28 @@ export default function PitchbookScreen() {
       {/* Pitch Book Toolbar */}
       <View className="flex-row items-center justify-between px-4 pt-6 bg-background">
         <Text className="text-text-primary text-sm font-medium">Pitch Book</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <IonIcon name="close" size={20} color={isDark ? 'white' : '#1C252E'} />
-        </TouchableOpacity>
+        <View className="flex-row items-center gap-3">
+          {/* Fullscreen Button */}
+          <TouchableOpacity
+            onPress={() => setIsFullscreen(true)}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              backgroundColor: isDark ? '#2D3A24' : '#F0FAE8',
+              borderWidth: 1,
+              borderColor: colors.primary.main,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <IonIcon name="expand" size={16} color={colors.primary.main} />
+          </TouchableOpacity>
+          {/* Close Button */}
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <IonIcon name="close" size={20} color={isDark ? 'white' : '#1C252E'} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View className="flex-1">
@@ -241,9 +284,8 @@ export default function PitchbookScreen() {
               style={{ backgroundColor: viewMode === 'rep' ? colors.primary.main : 'transparent' }}
             >
               <Text
-                className={`text-sm font-medium ${
-                  viewMode === 'rep' ? 'text-white' : 'text-text-secondary'
-                }`}
+                className={`text-sm font-medium ${viewMode === 'rep' ? 'text-white' : 'text-text-secondary'
+                  }`}
               >
                 Rep Mode
               </Text>
@@ -256,9 +298,8 @@ export default function PitchbookScreen() {
               }}
             >
               <Text
-                className={`text-sm font-medium ${
-                  viewMode === 'homeowner' ? 'text-white' : 'text-text-secondary'
-                }`}
+                className={`text-sm font-medium ${viewMode === 'homeowner' ? 'text-white' : 'text-text-secondary'
+                  }`}
               >
                 Homeowner View
               </Text>
@@ -329,12 +370,40 @@ export default function PitchbookScreen() {
             </View>
           </View>
           <View className="">
-            <View className="w-full aspect-[4/3] bg-card rounded-2xl shadow-sm border border-border overflow-hidden elevation-2">
+            <View
+              className="w-full aspect-[4/3] bg-card rounded-2xl shadow-sm border border-border overflow-hidden elevation-2"
+              style={{
+                position: 'relative',
+                justifyContent: 'center',
+                alignItems: 'center',
+                paddingHorizontal: 2,
+                paddingVertical: 3,
+              }}
+            >
               <Image
                 source={currentCategoryImages[currentSlideIndex]}
-                className="w-full h-full"
+                style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
+                onLoadStart={() => setMainImageLoading(true)}
+                onLoad={() => setMainImageLoading(false)}
+                onError={() => setMainImageLoading(false)}
               />
+              {mainImageLoading && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.04)',
+                  }}
+                >
+                  <ActivityIndicator size="large" color="#72BD00" />
+                </View>
+              )}
             </View>
           </View>
         </View>
@@ -500,68 +569,68 @@ export default function PitchbookScreen() {
                           ) || 0;
 
                         return (
-                        <View key={section.id} className="mb-4">
-                          <TouchableOpacity
-                            onPress={() =>
-                              setExpandedCat(expandedCat === section.id ? null : section.id)
-                            }
-                            className="flex-row items-center justify-between px-3 py-2 rounded-md shadow-sm"
-                            style={{
-                              backgroundColor: '#F4F6F8',
-                              borderBottomLeftRadius: expandedCat === section.id ? 0 : 8,
-                              borderBottomRightRadius: expandedCat === section.id ? 0 : 8,
-                            }}
-                          >
-                            <Text className="text-sm font-semibold text-[#1C252E]">
-                              {section.name}
-                            </Text>
-                            <View className="flex-row items-center">
-                              <View
-                                className="px-3 py-1 rounded-md mr-3"
-                                style={{ backgroundColor: '#212B36' }}
-                              >
-                                <Text className="text-sm text-white font-semibold">
-                                  {categoryPhotos.length} of{' '}
-                                  {Math.max(sectionTotal, categoryPhotos.length)} complete
-                                </Text>
-                              </View>
-                              <Icon
-                                name={expandedCat === section.id ? 'chevron-up' : 'chevron-down'}
-                                size={16}
-                                color="#919EAB"
-                              />
-                            </View>
-                          </TouchableOpacity>
-
-                          {expandedCat === section.id && (
-                            <View className="flex-row flex-wrap gap-2 mt-3 px-1">
-                              {categoryPhotos.map((img, i) => (
-                                <View key={i} className="w-[31%] mb-2">
-                                  <TouchableOpacity
-                                    onPress={() => setPreviewImage(img.uri)}
-                                    className="aspect-square rounded-xl overflow-hidden border border-slate-100 bg-slate-50 shadow-sm"
-                                  >
-                                    <Image
-                                      source={{ uri: img.uri }}
-                                      className="w-full h-full"
-                                      resizeMode="cover"
-                                    />
-                                    <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-1">
-                                      <Text
-                                        className="text-white text-[8px] font-black text-center  px-1"
-                                        numberOfLines={1}
-                                      >
-                                        {img.subcategory || 'Photo'}
-                                      </Text>
-                                    </View>
-                                  </TouchableOpacity>
+                          <View key={section.id} className="mb-4">
+                            <TouchableOpacity
+                              onPress={() =>
+                                setExpandedCat(expandedCat === section.id ? null : section.id)
+                              }
+                              className="flex-row items-center justify-between px-3 py-2 rounded-md shadow-sm"
+                              style={{
+                                backgroundColor: '#F4F6F8',
+                                borderBottomLeftRadius: expandedCat === section.id ? 0 : 8,
+                                borderBottomRightRadius: expandedCat === section.id ? 0 : 8,
+                              }}
+                            >
+                              <Text className="text-sm font-semibold text-[#1C252E]">
+                                {section.name}
+                              </Text>
+                              <View className="flex-row items-center">
+                                <View
+                                  className="px-3 py-1 rounded-md mr-3"
+                                  style={{ backgroundColor: '#212B36' }}
+                                >
+                                  <Text className="text-sm text-white font-semibold">
+                                    {categoryPhotos.length} of{' '}
+                                    {Math.max(sectionTotal, categoryPhotos.length)} complete
+                                  </Text>
                                 </View>
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                      );
-                    })}
+                                <Icon
+                                  name={expandedCat === section.id ? 'chevron-up' : 'chevron-down'}
+                                  size={16}
+                                  color="#919EAB"
+                                />
+                              </View>
+                            </TouchableOpacity>
+
+                            {expandedCat === section.id && (
+                              <View className="flex-row flex-wrap gap-2 mt-3 px-1">
+                                {categoryPhotos.map((img, i) => (
+                                  <View key={i} className="w-[31%] mb-2">
+                                    <TouchableOpacity
+                                      onPress={() => setPreviewImage(img.uri)}
+                                      className="aspect-square rounded-xl overflow-hidden border border-slate-100 bg-slate-50 shadow-sm"
+                                    >
+                                      <Image
+                                        source={{ uri: img.uri }}
+                                        className="w-full h-full"
+                                        resizeMode="cover"
+                                      />
+                                      <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-1">
+                                        <Text
+                                          className="text-white text-[8px] font-black text-center  px-1"
+                                          numberOfLines={1}
+                                        >
+                                          {img.subcategory || 'Photo'}
+                                        </Text>
+                                      </View>
+                                    </TouchableOpacity>
+                                  </View>
+                                ))}
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
                     {Object.keys(secureImages).length === 0 && (
                       <View className="items-center justify-center py-12 opacity-50">
                         <Icon name="image-off" size={48} color="#919EAB" />
@@ -614,6 +683,432 @@ export default function PitchbookScreen() {
               </ScrollView>
             </View>
           </Animated.View>
+        </Modal>
+
+        {/* ── Fullscreen Presentation Modal ── */}
+        <Modal
+          visible={isFullscreen}
+          transparent={true}
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setIsFullscreen(false)}
+        >
+          {/* Hide status bar in landscape */}
+          <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
+
+          {isLandscape ? (
+            /* ════════════════════════════════════════
+               LANDSCAPE LAYOUT
+               ════════════════════════════════════════ */
+            <View style={{ flex: 1, backgroundColor: '#000', position: 'relative' }}>
+
+              {/* ── Centre: image area + category tabs below image ── */}
+              <View style={{ flex: 1, flexDirection: 'column' }}>
+
+                {/* Upper part: Image and top buttons */}
+                <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
+                  {/* Image */}
+                  {currentCategoryImages[currentSlideIndex] && (
+                    <>
+                      <Image
+                        source={currentCategoryImages[currentSlideIndex]}
+                        style={{ width: '100%', height: '100%' }}
+                        resizeMode="contain"
+                        onLoadStart={() => setFsImageLoading(true)}
+                        onLoad={() => setFsImageLoading(false)}
+                        onError={() => setFsImageLoading(false)}
+                      />
+                      {fsImageLoading && (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 0, left: 0, right: 0, bottom: 0,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: 'rgba(0,0,0,0.45)',
+                          }}
+                        >
+                          <ActivityIndicator size="large" color="#72BD00" />
+                        </View>
+                      )}
+                    </>
+                  )}
+
+                  {/* ── Overlay: page counter top-left ── */}
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: Math.max(insets.top + 10, 24),
+                      left: 16,
+                      backgroundColor: 'rgba(0,0,0,0.50)',
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 12,
+                      zIndex: 10,
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+                      {currentGlobalPageNumber} / {totalGlobalPages}
+                    </Text>
+                  </View>
+
+                  {/* ── Overlay: compress button top-right ── */}
+                  <TouchableOpacity
+                    onPress={() => setIsFullscreen(false)}
+                    style={{
+                      position: 'absolute',
+                      top: Math.max(insets.top + 8, 20),
+                      right: 16,
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: 'rgba(255,255,255,0.15)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 10,
+                    }}
+                  >
+                    <IonIcon name="contract" size={20} color="#fff" />
+                  </TouchableOpacity>
+
+                  {/* Prev Arrow (Floating next to image) */}
+                  <TouchableOpacity
+                    onPress={handlePrev}
+                    disabled={currentGlobalPageNumber === 1}
+                    style={{
+                      position: 'absolute',
+                      left: 8,
+                      top: '50%',
+                      transform: [{ translateY: -20 }],
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(255,255,255,0.22)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: currentGlobalPageNumber === 1 ? 0.25 : 1,
+                      zIndex: 10,
+                    }}
+                  >
+                    <IonIcon
+                      name="chevron-back"
+                      size={22}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+
+                  {/* Next Arrow (Floating next to image, adjusted to clear tools tab) */}
+                  <TouchableOpacity
+                    onPress={handleNext}
+                    disabled={currentGlobalPageNumber === totalGlobalPages}
+                    style={{
+                      position: 'absolute',
+                      right: viewMode === 'rep' ? 44 : 8,
+                      top: '50%',
+                      transform: [{ translateY: -20 }],
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(255,255,255,0.22)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: currentGlobalPageNumber === totalGlobalPages ? 0.25 : 1,
+                      zIndex: 10,
+                    }}
+                  >
+                    <IonIcon
+                      name="chevron-forward"
+                      size={22}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Bottom part: category tabs (sits below image, not overlayed) */}
+                <View
+                  style={{
+                    backgroundColor: '#111',
+                    paddingVertical: 10,
+                    borderTopWidth: 1,
+                    borderTopColor: 'rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{
+                      flexGrow: 1,
+                      justifyContent: 'center',
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    {CATEGORIES.map((cat) => {
+                      const isActive = activeCategory === cat.id;
+                      return (
+                        <TouchableOpacity
+                          key={cat.id}
+                          onPress={() => {
+                            setFsImageLoading(true);
+                            setActiveCategory(cat.id);
+                            setCurrentSlideIndex(0);
+                          }}
+                          style={{
+                            marginHorizontal: 4,
+                            paddingHorizontal: 14,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            backgroundColor: isActive
+                              ? colors.primary.main
+                              : 'rgba(255,255,255,0.12)',
+                            borderWidth: isActive ? 0 : 1,
+                            borderColor: 'rgba(255,255,255,0.18)',
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              fontWeight: '600',
+                              color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
+                            }}
+                          >
+                            {cat.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              </View>
+
+              {/* ── Interactive Tools: right-edge vertical tab (Rep Mode only) ── */}
+              {viewMode === 'rep' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsFullscreen(false);
+                    setTimeout(toggleTools, 300);
+                  }}
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '50%',
+                    transform: [{ translateY: -40 }],
+                    width: 32,
+                    height: 80,
+                    backgroundColor: '#72BD00',
+                    borderTopLeftRadius: 16,
+                    borderBottomLeftRadius: 16,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 99,
+                  }}
+                >
+                  <IonIcon name="chevron-back" size={20} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            /* ════════════════════════════════════════
+               PORTRAIT LAYOUT  (unchanged)
+               ════════════════════════════════════════ */
+            <View style={{ flex: 1, backgroundColor: '#000' }}>
+              {/* Top bar: page counter + exit button */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingHorizontal: 16,
+                  paddingTop: insets.top + 40,
+                  paddingBottom: 5,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                  {currentGlobalPageNumber} / {totalGlobalPages}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setIsFullscreen(false)}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: 'rgba(255,255,255,0.15)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <IonIcon name="contract" size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Image with prev/next arrows */}
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                {currentCategoryImages[currentSlideIndex] && (
+                  <>
+                    <Image
+                      source={currentCategoryImages[currentSlideIndex]}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="contain"
+                      onLoadStart={() => setFsImageLoading(true)}
+                      onLoad={() => setFsImageLoading(false)}
+                      onError={() => setFsImageLoading(false)}
+                    />
+                    {fsImageLoading && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: 'rgba(0,0,0,0.45)',
+                        }}
+                      >
+                        <ActivityIndicator size="large" color="#72BD00" />
+                      </View>
+                    )}
+                  </>
+                )}
+
+                {/* Prev Arrow */}
+                <TouchableOpacity
+                  onPress={handlePrev}
+                  disabled={currentGlobalPageNumber === 1}
+                  style={{
+                    position: 'absolute',
+                    left: 12,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor:
+                      currentGlobalPageNumber === 1
+                        ? 'rgba(255,255,255,0.10)'
+                        : 'rgba(255,255,255,0.22)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <IonIcon
+                    name="chevron-back"
+                    size={22}
+                    color={currentGlobalPageNumber === 1 ? 'rgba(255,255,255,0.35)' : '#fff'}
+                  />
+                </TouchableOpacity>
+
+                {/* Next Arrow */}
+                <TouchableOpacity
+                  onPress={handleNext}
+                  disabled={currentGlobalPageNumber === totalGlobalPages}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor:
+                      currentGlobalPageNumber === totalGlobalPages
+                        ? 'rgba(255,255,255,0.10)'
+                        : 'rgba(255,255,255,0.22)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <IonIcon
+                    name="chevron-forward"
+                    size={22}
+                    color={
+                      currentGlobalPageNumber === totalGlobalPages
+                        ? 'rgba(255,255,255,0.35)'
+                        : '#fff'
+                    }
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Bottom: category tabs + interactive tools button */}
+              <View
+                style={{
+                  backgroundColor: '#111',
+                  paddingBottom: insets.bottom + 4,
+                  borderTopWidth: 1,
+                  borderTopColor: 'rgba(255,255,255,0.08)',
+                }}
+              >
+                {/* Category tab strip */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10 }}
+                >
+                  {CATEGORIES.map((cat) => {
+                    const isActive = activeCategory === cat.id;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => {
+                          setFsImageLoading(true);
+                          setActiveCategory(cat.id);
+                          setCurrentSlideIndex(0);
+                        }}
+                        style={{
+                          marginRight: 8,
+                          paddingHorizontal: 14,
+                          paddingVertical: 7,
+                          borderRadius: 20,
+                          backgroundColor: isActive ? colors.primary.main : 'rgba(255,255,255,0.10)',
+                          borderWidth: isActive ? 0 : 1,
+                          borderColor: 'rgba(255,255,255,0.15)',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: '600',
+                            color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
+                          }}
+                        >
+                          {cat.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Interactive Tools button (Rep Mode only) */}
+                {viewMode === 'rep' && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setIsFullscreen(false);
+                      setTimeout(toggleTools, 300);
+                    }}
+                    style={{
+                      marginHorizontal: 12,
+                      marginBottom: 6,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      backgroundColor: '#F0FAE8',
+                      borderWidth: 1,
+                      borderColor: colors.primary.main,
+                    }}
+                  >
+                    <IonIcon
+                      name="chevron-up"
+                      size={18}
+                      color={colors.primary.main}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={{ color: colors.primary.main, fontWeight: '700', fontSize: 13 }}>
+                      Interactive Tools
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </Modal>
 
         {/* Full Screen Image Preview */}
