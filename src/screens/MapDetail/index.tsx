@@ -166,8 +166,8 @@ export default function MapDetailScreen() {
 
     // 2. Local Filtering based on UI filters (for strictness)
     result = result.filter((item) => {
-      // Job Number / Search Text
-      if (filters.jobNumber) {
+      // Job Number / Search Text - only filter by text if NOT performing a location search
+      if (filters.jobNumber && !filters.centerCoords) {
         const search = filters.jobNumber.toLowerCase();
         const matchesJob = item.jobNumber?.toLowerCase().includes(search);
         const matchesAddress = item.fullAddress?.toLowerCase().includes(search);
@@ -234,13 +234,18 @@ export default function MapDetailScreen() {
     if (filters.centerCoords) {
       setCenterCoords(filters.centerCoords);
       setJumpLead(null); // Clear selected lead if we are jumping to a general area
-    } else if (filters.jobNumber && filteredLeads.length > 0) {
-      const search = filters.jobNumber.toLowerCase();
-      const exactMatch = filteredLeads.find(l => l.jobNumber?.toLowerCase() === search);
-      if (exactMatch) {
-        setJumpLead(exactMatch);
-      } else if (filteredLeads.length === 1) {
-        setJumpLead(filteredLeads[0]);
+    } else {
+      setCenterCoords(null);
+      if (filters.jobNumber && filteredLeads.length > 0) {
+        const search = filters.jobNumber.toLowerCase();
+        const exactMatch = filteredLeads.find(l => l.jobNumber?.toLowerCase() === search);
+        if (exactMatch) {
+          setJumpLead(exactMatch);
+        } else if (filteredLeads.length === 1) {
+          setJumpLead(filteredLeads[0]);
+        }
+      } else {
+        setJumpLead(null);
       }
     }
   }, [filters.jobNumber, filteredLeads, filters.centerCoords]);
@@ -462,6 +467,7 @@ export default function MapDetailScreen() {
         job={selectedJob}
         isMyJob={isJobOwner(selectedJob, user?._id || user?.id)}
         onClose={() => setShowGalleryModal(false)}
+        onUploadSuccess={fetchLeads}
       />
 
 

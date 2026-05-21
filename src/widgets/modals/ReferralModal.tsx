@@ -25,48 +25,23 @@ interface ReferralModalProps {
   onSuccess?: () => void;
 }
 
-interface OptionPickerProps {
-  visible: boolean;
-  title: string;
-  options: { label: string; value: string }[];
-  onSelect: (value: string) => void;
-  onClose: () => void;
-}
-
-const OptionPicker = ({ visible, title, options, onSelect, onClose }: OptionPickerProps) => (
-  <Modal visible={visible} transparent animationType="fade">
-    <TouchableOpacity 
-      activeOpacity={1} 
-      onPress={onClose}
-      className="flex-1 justify-end bg-black/40"
-    >
-      <View className="bg-white rounded-t-[32px] p-6 pb-10">
-        <View className="flex-row justify-between items-center mb-6">
-          <Text className="text-[18px] font-black text-slate-800">{title}</Text>
-          <TouchableOpacity onPress={onClose}>
-            <Icon name="close" size={24} color="#000" />
-          </TouchableOpacity>
-        </View>
-        {options.map((opt) => (
-          <TouchableOpacity
-            key={opt.value}
-            onPress={() => {
-              onSelect(opt.value);
-              onClose();
-            }}
-            className="py-4 border-b border-slate-100 flex-row justify-between items-center"
-          >
-            <Text className="text-[15px] font-bold text-slate-700">{opt.label}</Text>
-            <Icon name="chevron-right" size={20} color="#cbd5e1" />
-          </TouchableOpacity>
-        ))}
-      </View>
-    </TouchableOpacity>
-  </Modal>
-);
-
-const InputField = ({ label, value, onChangeText, onPress, placeholder, keyboardType = 'default', multiline = false, dropdown = false, required = false, isDark, editable = true }: any) => (
-  <View className="mb-5 relative">
+const InputField = ({ 
+  label, 
+  value, 
+  onChangeText, 
+  onPress, 
+  placeholder, 
+  keyboardType = 'default', 
+  multiline = false, 
+  dropdown = false, 
+  required = false, 
+  isDark, 
+  editable = true,
+  showDropdown = false,
+  dropdownOptions = [],
+  onSelectOption
+}: any) => (
+  <View className="mb-5 relative" style={{ zIndex: showDropdown ? 1000 : 1 }}>
     <View className="absolute -top-2.5 left-3 bg-white px-1 z-10">
       <Text className="text-[11px] font-bold text-slate-400">
         {label}{required && <Text className="text-red-500">*</Text>}
@@ -98,8 +73,35 @@ const InputField = ({ label, value, onChangeText, onPress, placeholder, keyboard
           }
         ]}
       />
-      {dropdown && <Icon name="chevron-down" size={20} color="#94a3b8" />}
+      {dropdown && <Icon name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#94a3b8" />}
     </TouchableOpacity>
+
+    {dropdown && showDropdown && dropdownOptions.length > 0 && (
+      <View 
+        className="absolute top-[55px] left-0 right-0 bg-white rounded-xl shadow-xl border border-slate-200 z-[999] overflow-hidden"
+        style={{ 
+          elevation: 10,
+          maxHeight: 180, 
+        }}
+      >
+        <ScrollView 
+          nestedScrollEnabled={true}
+          keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={true}
+        >
+          {dropdownOptions.map((opt: any) => (
+            <TouchableOpacity 
+              key={opt.value}
+              className="p-4 border-b border-slate-100 flex-row justify-between items-center"
+              onPress={() => onSelectOption(opt.value)}
+            >
+              <Text className="font-bold text-[13px] text-slate-700">{opt.label}</Text>
+              {value === opt.label && <Icon name="check" size={16} color="#4CBB17" />}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    )}
   </View>
 );
 
@@ -272,8 +274,8 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
           behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
           style={{ width: '100%', alignItems: 'center', justifyContent: 'center' }}
         >
-          <View className="bg-white rounded-[32px] w-full max-h-[85%]">
-            <View className="p-6 pb-2 flex-row justify-between items-center">
+          <View className="bg-white rounded-[32px] w-full overflow-hidden" style={{ height: '90%' }}>
+            <View className="p-6 pb-2 flex-row justify-between items-center bg-white" style={{ zIndex: 9999 }}>
               <Text className="text-[20px] font-black text-slate-800">{getTitle()}</Text>
               <TouchableOpacity onPress={onClose}>
                 <Icon name="close" size={24} color="#000" />
@@ -282,10 +284,11 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
 
             <ScrollView 
               className="px-6" 
-              contentContainerStyle={{ paddingBottom: 30 }}
+              contentContainerStyle={{ paddingBottom: 30, overflow: 'visible' }}
+              style={{ overflow: 'visible' }}
               showsVerticalScrollIndicator={false}
             >
-              <View className="mt-4">
+              <View className="mt-4" style={{ zIndex: (showMethodDropdown || showTimeDropdown) ? 5000 : 1 }}>
                 <InputField 
                   label="Full Name" 
                   value={form.firstName} 
@@ -305,7 +308,7 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                   editable={!isViewMode}
                 />
                 
-                <View className="flex-row gap-4">
+                <View className="flex-row gap-4" style={{ zIndex: showMethodDropdown ? 2000 : 1 }}>
                   <View className="flex-1">
                     <InputField 
                       label="Preferred Contact Method" 
@@ -314,7 +317,13 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                       required
                       isDark={isDark}
                       editable={!isViewMode}
-                      onPress={() => !isViewMode && setShowMethodDropdown(true)}
+                      onPress={() => !isViewMode && (setShowMethodDropdown(!showMethodDropdown), setShowTimeDropdown(false))}
+                      showDropdown={showMethodDropdown}
+                      dropdownOptions={contactMethods}
+                      onSelectOption={(val: string) => {
+                        setForm({ ...form, preferredContactMethod: val });
+                        setShowMethodDropdown(false);
+                      }}
                     />
                   </View>
                   <View className="flex-1">
@@ -329,16 +338,24 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                     />
                   </View>
                 </View>
-
-                <InputField 
-                  label="Best Time to Contact" 
-                  value={timeOptions.find(o => o.value === form.bestTimeToContact)?.label || form.bestTimeToContact} 
-                  dropdown
-                  required
-                  isDark={isDark}
-                  editable={!isViewMode}
-                  onPress={() => !isViewMode && setShowTimeDropdown(true)}
-                />
+ 
+                <View style={{ zIndex: showTimeDropdown ? 1900 : 1 }}>
+                  <InputField 
+                    label="Best Time to Contact" 
+                    value={timeOptions.find(o => o.value === form.bestTimeToContact)?.label || form.bestTimeToContact} 
+                    dropdown
+                    required
+                    isDark={isDark}
+                    editable={!isViewMode}
+                    onPress={() => !isViewMode && (setShowTimeDropdown(!showTimeDropdown), setShowMethodDropdown(false))}
+                    showDropdown={showTimeDropdown}
+                    dropdownOptions={timeOptions}
+                    onSelectOption={(val: string) => {
+                      setForm({ ...form, bestTimeToContact: val });
+                      setShowTimeDropdown(false);
+                    }}
+                  />
+                </View>
                 
                 <InputField 
                   label="Note" 
@@ -349,7 +366,7 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                   isDark={isDark}
                   editable={!isViewMode}
                 />
-
+ 
                 <View className="mt-2 mb-6">
                   <Text className="text-slate-400 font-bold text-[13px] mb-4">Select Products</Text>
                   <View className="flex-row flex-wrap justify-between">
@@ -364,7 +381,7 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                     ))}
                   </View>
                 </View>
-
+ 
                 <View className="flex-row items-center justify-end mb-6">
                   <Switch
                     value={form.referralToggle}
@@ -379,8 +396,8 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                 </View>
               </View>
             </ScrollView>
-
-            <View className="p-6 pt-0 flex-row justify-end gap-3">
+ 
+            <View className="p-6 pt-0 flex-row justify-end gap-3 bg-white" style={{ zIndex: 9999 }}>
               <TouchableOpacity 
                 onPress={onClose}
                 className="px-6 h-12 rounded-xl items-center justify-center border border-slate-200"
@@ -405,22 +422,6 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
           </View>
         </KeyboardAvoidingView>
       </View>
-
-      <OptionPicker
-        visible={showMethodDropdown}
-        title="Select Contact Method"
-        options={contactMethods}
-        onSelect={(val) => setForm({ ...form, preferredContactMethod: val })}
-        onClose={() => setShowMethodDropdown(false)}
-      />
-
-      <OptionPicker
-        visible={showTimeDropdown}
-        title="Select Best Time to Contact"
-        options={timeOptions}
-        onSelect={(val) => setForm({ ...form, bestTimeToContact: val })}
-        onClose={() => setShowTimeDropdown(false)}
-      />
     </Modal>
   );
 };

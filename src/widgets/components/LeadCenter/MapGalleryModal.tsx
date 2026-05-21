@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LeadService } from '../../../services/api/leads';
+import { FlashMessage } from '../../../config/message';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { BeforeAfterPresentModal } from './BeforeAfterPresentModal';
@@ -88,6 +89,7 @@ interface MapGalleryModalProps {
   onClose: () => void;
   job: any;
   isMyJob?: boolean;
+  onUploadSuccess?: () => void;
 }
 
 export const MapGalleryModal = ({
@@ -95,6 +97,7 @@ export const MapGalleryModal = ({
   onClose,
   job,
   isMyJob = false,
+  onUploadSuccess,
 }: MapGalleryModalProps) => {
   const [signingUrls, setSigningUrls] = useState(false);  // background sign, not blocking
   const [saving, setSaving] = useState(false);
@@ -209,23 +212,33 @@ export const MapGalleryModal = ({
     fetchSignedUrls(bImages, aImages);
   }, [job, setFallbackUris, fetchSignedUrls]);
 
+  const lastJobIdRef = useRef<string | null>(null);
+  const lastVisibleRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (visible && job) {
-      setBeforeUris([]);
-      setAfterUris([]);
-      setBeforeImages([]);
-      setAfterImages([]);
+      const isNewJob = job._id !== lastJobIdRef.current || !lastVisibleRef.current;
+      if (isNewJob) {
+        setBeforeUris([]);
+        setAfterUris([]);
+        setBeforeImages([]);
+        setAfterImages([]);
+      }
+      lastJobIdRef.current = job._id;
+      lastVisibleRef.current = visible;
       initImages();
+    } else if (!visible) {
+      lastVisibleRef.current = false;
     }
-  }, [visible, job?._id, job?.images?.beforeImages?.length, job?.images?.afterImages?.length]);
+  }, [visible, job?._id, job?.images?.beforeImages?.length, job?.images?.afterImages?.length, initImages]);
 
   // ─── Local delete (staged until Save Changes) ────────────────────
   const handleLocalDelete = (type: 'before' | 'after', index: number) => {
     if (type === 'before' && beforeUris.length <= 1) {
-      Alert.alert('Cannot Delete', 'At least 1 before image is required.'); return;
+      FlashMessage.warning('At least 1 before image is required.'); return;
     }
     if (type === 'after' && afterUris.length <= 1) {
-      Alert.alert('Cannot Delete', 'At least 1 after image is required.'); return;
+      FlashMessage.warning('At least 1 after image is required.'); return;
     }
     if (type === 'before') {
       const img = beforeImages[index];
@@ -254,9 +267,11 @@ export const MapGalleryModal = ({
         afterImages: afterPaths,
       });
       setPendingDeletions([]);
+      FlashMessage.success('Images updated successfully');
+      onUploadSuccess?.();
       onClose();
     } catch {
-      Alert.alert('Error', 'Failed to delete images. Please try again.');
+      FlashMessage.error('Failed to delete images. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -408,7 +423,7 @@ export const MapGalleryModal = ({
               <TouchableOpacity
                 onPress={() => {
                   if (beforeUris.length > 0 && afterUris.length > 0) { setShowPresent(true); }
-                  else { Alert.alert('Presentation Mode', 'You need at least one Before and one After image.'); }
+                  else { FlashMessage.warning('You need at least one Before and one After image.'); }
                 }}
                 className="flex-row items-center"
               >
@@ -458,11 +473,26 @@ export const MapGalleryModal = ({
         onClose={() => setShowBeforeModal(false)}
         job={job}
         existingUris={beforeUris}
-        onUploadSuccess={() => {
+        onUploadSuccess={async () => {
           setShowBeforeModal(false);
-          setBeforeUris([]);
-          setAfterUris([]);
-          initImages();
+          if (onUploadSuccess) {
+            onUploadSuccess();
+          } else {
+            try {
+              const res = await LeadService.findJobs({ jobNumber: job.jobNumber });
+              const updated = res.data?.data?.[0];
+              if (updated) {
+                const bImages = updated?.images?.beforeImages || [];
+                const aImages = updated?.images?.afterImages || [];
+                setBeforeImages(bImages);
+                setAfterImages(aImages);
+                setFallbackUris(bImages, aImages);
+                fetchSignedUrls(bImages, aImages);
+              }
+            } catch (err) {
+              console.error('Failed to reload job after before-image upload', err);
+            }
+          }
         }}
       />
 
@@ -472,11 +502,26 @@ export const MapGalleryModal = ({
         onClose={() => setShowAfterModal(false)}
         job={job}
         existingUris={afterUris}
-        onUploadSuccess={() => {
+        onUploadSuccess={async () => {
           setShowAfterModal(false);
-          setBeforeUris([]);
-          setAfterUris([]);
-          initImages();
+          if (onUploadSuccess) {
+            onUploadSuccess();
+          } else {
+            try {
+              const res = await LeadService.findJobs({ jobNumber: job.jobNumber });
+              const updated = res.data?.data?.[0];
+              if (updated) {
+                const bImages = updated?.images?.beforeImages || [];
+                const aImages = updated?.images?.afterImages || [];
+                setBeforeImages(bImages);
+                setAfterImages(aImages);
+                setFallbackUris(bImages, aImages);
+                fetchSignedUrls(bImages, aImages);
+              }
+            } catch (err) {
+              console.error('Failed to reload job after after-image upload', err);
+            }
+          }
         }}
       />
 

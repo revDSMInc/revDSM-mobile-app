@@ -451,17 +451,26 @@ export const LeadMap = ({
       }));
   }, [displayedLeads]);
 
-  // Check if a point is near another point within a threshold
-  // 0.1 degrees ≈ 11 km radius (larger search area for location-based search)
-  const isNearPoint = (lat1: number, lng1: number, lat2: number, lng2: number, threshold = 0.1) => {
-    return Math.abs(lat1 - lat2) < threshold && Math.abs(lng1 - lng2) < threshold;
+  // Haversine formula to compute great-circle distance in kilometers
+  const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) *
+        Math.cos(lat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
   };
 
-  // Check if a job is near the searched location (within ~11 km radius)
+  // Check if a job is near the searched location (within 2 km radius)
   const isNearSearchedLocation = (jobLat: number, jobLng: number) => {
     if (!currentLead?.latitude || !currentLead?.longitude) return false;
-    const isNear = isNearPoint(jobLat, jobLng, currentLead.latitude, currentLead.longitude);
-    return isNear;
+    const dist = getDistanceInKm(jobLat, jobLng, currentLead.latitude, currentLead.longitude);
+    return dist <= 2;
   };
 
   // Debug: Log when search location changes
@@ -473,7 +482,7 @@ export const LeadMap = ({
         if (!job.location?.coordinates) return false;
         return isNearSearchedLocation(job.location.coordinates[1], job.location.coordinates[0]);
       });
-      console.log('[SearchLocation] Markers near search location:', nearbyMarkers.length, nearbyMarkers.map((m: any) => m.jobNumber));
+      console.log('[SearchLocation] Markers within 2km of search location:', nearbyMarkers.length, nearbyMarkers.map((m: any) => m.jobNumber));
     }
   }, [currentLead?.latitude, currentLead?.longitude]);
 
@@ -775,6 +784,7 @@ export const LeadMap = ({
         job={galleryJob}
         isMyJob={isJobOwner(galleryJob, (user as any)?._id || (user as any)?.id)}
         onClose={() => setShowGallery(false)}
+        onUploadSuccess={fetchAllJobs}
       />
 
 

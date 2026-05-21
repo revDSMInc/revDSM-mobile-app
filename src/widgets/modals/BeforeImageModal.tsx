@@ -8,6 +8,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { LeadService } from '../../services/api/leads';
+import { FlashMessage } from '../../config/message';
 
 const ThumbSkeleton = () => {
   const shimmer = useRef(new RNAnimated.Value(0)).current;
@@ -74,7 +75,7 @@ export const BeforeImageModal = ({
         buttonPositive: 'OK',
       });
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        Alert.alert('Permission Denied', 'Camera permission is required.');
+        FlashMessage.error('Camera permission is required.');
         return;
       }
     }
@@ -82,7 +83,7 @@ export const BeforeImageModal = ({
     try {
       const result = useCamera ? await launchCamera(options as any) : await launchImageLibrary(options as any);
       if (result.didCancel) return;
-      if (result.errorCode) { Alert.alert('Error', result.errorMessage || 'Failed to open camera/gallery'); return; }
+      if (result.errorCode) { FlashMessage.error(result.errorMessage || 'Failed to open camera/gallery'); return; }
       if (result.assets && result.assets.length > 0) {
         const picked = result.assets.map((asset, idx) => ({
           uri: asset.uri, type: asset.type || 'image/jpeg',
@@ -91,7 +92,7 @@ export const BeforeImageModal = ({
         setNewImages(prev => [...prev, ...picked]);
       }
     } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred');
+      FlashMessage.error('An unexpected error occurred');
     }
   };
 
@@ -99,7 +100,7 @@ export const BeforeImageModal = ({
     // Only allow delete of new images; also guard against deleting if total would be 0
     const totalAfterDelete = existingUris.length + newImages.length - 1;
     if (existingUris.length > 0 && totalAfterDelete < 1) {
-      Alert.alert('Cannot Delete', 'At least 1 image is required.'); return;
+      FlashMessage.warning('At least 1 image is required.'); return;
     }
     setNewImages(prev => prev.filter((_, i) => i !== index));
   };
@@ -115,11 +116,11 @@ export const BeforeImageModal = ({
         formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
       });
       await LeadService.updateBeforeImages(formData);
-      Alert.alert('Success', 'Before images uploaded successfully');
+      FlashMessage.success('Before images uploaded successfully');
       onUploadSuccess?.();
       onClose();
     } catch (error) {
-      Alert.alert('Error', 'Failed to upload images');
+      FlashMessage.error('Failed to upload images');
     } finally {
       setLoading(false);
     }
