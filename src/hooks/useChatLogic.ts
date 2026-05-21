@@ -84,7 +84,13 @@ export const useChatLogic = (
     const startsWithAt = lastWord.startsWith('@');
     console.log('[Mentions Debug] Last word:', JSON.stringify(lastWord), 'Starts with @:', startsWithAt);
     setShowMentions(startsWithAt);
-    if (chatId) ChatService.emitTyping(chatId, text.length > 0);
+    if (chatId) {
+      if (isChannel) {
+        ChatService.emitChannelTyping(chatId, text.length > 0);
+      } else {
+        ChatService.emitTyping(chatId, text.length > 0);
+      }
+    }
   };
 
   const onSend = useCallback(
@@ -125,10 +131,16 @@ export const useChatLogic = (
       } finally {
         setReplyingTo(null);
         setComposerText('');
-        if (chatId) ChatService.emitTyping(chatId, false);
+        if (chatId) {
+          if (isChannel) {
+            ChatService.emitChannelTyping(chatId, false);
+          } else {
+            ChatService.emitTyping(chatId, false);
+          }
+        }
       }
     },
-    [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText]
+    [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText, isChannel]
   );
 
   const handleAttach = useCallback(() => {
@@ -200,10 +212,11 @@ export const useChatLogic = (
   const handleSendVoiceNote = async (uri: string) => {
     if (!uri || !chatId) return;
     console.log('[Media] Sending voice note:', uri);
+    const tempId = `temp_${Date.now()}`;
     try {
       const fileName = uri.split('/').pop() || `voice_${Date.now()}.m4a`;
       const optimistic = {
-        _id: `temp_${Date.now()}`,
+        _id: tempId,
         text: '🎤 Voice Note',
         createdAt: new Date(),
         user: { _id: String(currentUserId) },
@@ -215,10 +228,21 @@ export const useChatLogic = (
         sent: false,
         received: false,
       };
-      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
-      await ChatService.sendFileMessage(chatId, { uri, name: fileName, type: 'audio/m4a' }, '');
+
+      // Instantly clear the recorder/player and hide the sending bar
       reset();
-    } catch (err) {}
+
+      // Add the optimistic voice note to the message list instantly
+      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
+
+      // Execute the API send in the background
+      await ChatService.sendFileMessage(chatId, { uri, name: fileName, type: 'audio/m4a' }, '');
+    } catch (err) {
+      console.warn('[Media] Failed to send voice note:', err);
+      // Clean up the optimistic message from list on failure
+      setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
+      Alert.alert('Error', 'Failed to send voice note. Please try again.');
+    }
   };
 
   return {

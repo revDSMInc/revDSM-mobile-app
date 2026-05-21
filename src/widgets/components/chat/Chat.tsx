@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
 } from 'react-native';
-import { GiftedChat, IMessage, Send, InputToolbar, Composer } from 'react-native-gifted-chat';
+import { GiftedChat, IMessage, Send, InputToolbar, Composer, Message } from 'react-native-gifted-chat';
 import Icon from 'react-native-vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -361,6 +361,29 @@ export default function Chat({ onClose, lead }: Props) {
     [currentUserId, handleReact, handlePin, handleViewHistory, handleDelete, imageUrls, isViewOnly]
   );
 
+  const renderMessage = useCallback(
+    (props: any) => {
+      const msg = props.currentMessage || {};
+      const files = msg.files || [];
+      const isMsgVoice = !!(msg.audio || msg.voice || msg.audioUrl || msg.voiceUrl || msg.isVoiceNote || msg.type === 'audio');
+// allow empty messages to render
+
+      const isSameUser =
+        props.currentMessage?.user?._id === props.nextMessage?.user?._id;
+      const marginBot = isSameUser ? 2 : 10;
+      return (
+        <Message
+          {...props}
+          containerStyle={{
+            left: { marginBottom: marginBot, marginTop: 0 },
+            right: { marginBottom: marginBot, marginTop: 0 },
+          }}
+        />
+      );
+    },
+    []
+  );
+
   const renderSend = (props: any) => (
     <Send {...props} containerStyle={{ justifyContent: 'center', alignItems: 'center' }}>
       <View
@@ -500,6 +523,7 @@ export default function Chat({ onClose, lead }: Props) {
               },
               onInputTextChanged: handleInputTextChanged,
               renderBubble,
+              renderMessage,
               renderSend,
               renderActions,
               renderInputToolbar,

@@ -442,7 +442,7 @@ export const useChatSession = (
     };
 
     const unsubTyping = SocketManager.on('user-typing', handleTyping);
-    const unsubChanTyping = SocketManager.on('channel-typing', handleTyping);
+    const unsubChanTyping = SocketManager.on('user-typing-channel', handleTyping);
 
     return () => {
       // Leave the room but DO NOT disconnect the global socket
