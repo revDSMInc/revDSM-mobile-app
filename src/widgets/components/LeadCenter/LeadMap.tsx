@@ -40,8 +40,15 @@ const TAMPA_COORDS = {
   longitude: -82.4572,
 };
 
+// Match web app logic exactly - ONLY check salesRepId
+const isJobOwner = (item: any, uid: string | undefined): boolean => {
+  if (!uid || !item) return false;
+  return item.salesRepId === uid;
+};
+
 interface LeadMapProps {
   currentLead?: any;
+  focusLead?: any;
   fullScreen?: boolean;
   onGalleryPress?: (job: any) => void;
   onCameraPress?: (job: any) => void;
@@ -49,10 +56,14 @@ interface LeadMapProps {
   leads?: any[];
   isFavoriteFilter?: boolean;
   isReferralFilter?: boolean;
+  isMyJobsFilter?: boolean;
+  isHeatMapFilter?: boolean;
+  onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral') => void;
 }
 
 export const LeadMap = ({
   currentLead,
+  focusLead,
   fullScreen = false,
   onGalleryPress,
   onCameraPress,
@@ -60,6 +71,9 @@ export const LeadMap = ({
   leads: externalLeads,
   isFavoriteFilter,
   isReferralFilter,
+  isMyJobsFilter,
+  isHeatMapFilter,
+  onToggleFilter,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
@@ -134,18 +148,36 @@ export const LeadMap = ({
   });
   const currentRegion = useRef(region);
 
-  const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => ({
-    isHeatMapActive: activeFilters.includes('HT-0'),
-    isMyJobsOnly: activeFilters.includes('MJ-1'),
-    // Respect both the internal map toggle (RF-2) AND the external filter prop from MapFiltersModal
-    isReferralOnly: activeFilters.includes('RF-2') || !!isReferralFilter,
-    isFavoriteOnly: activeFilters.includes('FV-3') || !!isFavoriteFilter,
-  }), [activeFilters, isFavoriteFilter, isReferralFilter]);
+  const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => {
+    if (onToggleFilter) {
+      return {
+        isHeatMapActive: !!isHeatMapFilter,
+        isMyJobsOnly: !!isMyJobsFilter,
+        isReferralOnly: !!isReferralFilter,
+        isFavoriteOnly: !!isFavoriteFilter,
+      };
+    }
+    return {
+      isHeatMapActive: activeFilters.includes('HT-0'),
+      isMyJobsOnly: activeFilters.includes('MJ-1'),
+      isReferralOnly: activeFilters.includes('RF-2'),
+      isFavoriteOnly: activeFilters.includes('FV-3') || !!isFavoriteFilter,
+    };
+  }, [
+    activeFilters,
+    isFavoriteFilter,
+    isReferralFilter,
+    isMyJobsFilter,
+    isHeatMapFilter,
+    onToggleFilter,
+  ]);
 
   // ─── filteredLeads is synchronous (useMemo) ───────────────────────────────
   // CRITICAL: Do NOT use useState + useEffect here. Two async state updates
   // (allLeads → filteredLeads) cause React Native Maps to render markers in two
   // passes, creating phantom duplicate markers that can't be tapped.
+  const [displayedLeads, setDisplayedLeads] = useState<any[]>([]);
+
   const filteredLeads = useMemo(() => {
     let result = [...allLeads];
 
@@ -160,26 +192,24 @@ export const LeadMap = ({
       // 2. Favorite Filter
       if (isFavoriteOnly && !(item.isFavorite || item.isFavourite)) return false;
 
-      // 3. My Jobs Filter (map toggle only — skip if external leads already filtered by MapDetail)
-      if (isMyJobsOnly && !externalLeads) {
+      // 3. My Jobs Filter
+      if (isMyJobsOnly) {
         const uid = (user as any)?._id || (user as any)?.id;
-        const isOwner = !!uid && (
-          item.salesRepId === uid ||
-          item.salesRep?._id === uid ||
-          item.userId === uid ||
-          item.salesRep === uid ||
-          item.salesRepName === (user as any)?.fullName ||
-          item.salesRepName === (user as any)?.firstName ||
-          item.salesRep === (user as any)?.userName ||
-          item.userName === (user as any)?.userName
-        );
+        const isOwner = isJobOwner(item, uid);
         if (!isOwner) return false;
       }
 
-      // 4. Reference Filter
+      // 4. Reference Filter (match web app logic)
       if (isReferralOnly) {
-        const hasReference = item.jobReferrals?.some((r: any) => r.referralToggle === true);
-        if (!hasReference) return false;
+        const uid = (user as any)?._id || (user as any)?.id;
+        const isMine = isJobOwner(item, uid);
+        const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
+        if (!hasReferrals) return false;
+
+        if (!isMine) {
+          const activeToggle = item.jobReferrals[0]?.referralToggle === true || item.jobReferrals[0]?.referralToggle === 'true';
+          if (!activeToggle) return false;
+        }
       }
 
       return true;
@@ -187,6 +217,12 @@ export const LeadMap = ({
 
     return result;
   }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads]);
+
+  // Sync displayedLeads with filteredLeads - direct sync without clearing
+  // The filterKey on the Fragment will force remount when filters change
+  useEffect(() => {
+    setDisplayedLeads(filteredLeads);
+  }, [filteredLeads]);
 
   // Sync heatmap state when toggle changes
   useEffect(() => {
@@ -232,6 +268,9 @@ export const LeadMap = ({
         latitudeDelta: 0.02,
         longitudeDelta: 0.02,
       }, 1000);
+      if (currentLead._id) {
+        setSelectedLead(currentLead);
+      }
     } else if (currentLead?.latitude && currentLead?.longitude) {
       // Handle direct coordinate objects — used for location search navigation from MapFiltersModal
       mapRef.current?.animateToRegion({
@@ -242,6 +281,19 @@ export const LeadMap = ({
       }, 800);
     }
   }, [currentLead]);
+
+  useEffect(() => {
+    if (focusLead?.location?.coordinates) {
+      const coords = focusLead.location.coordinates;
+      mapRef.current?.animateToRegion({
+        latitude: coords[1],
+        longitude: coords[0],
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 1000);
+      setSelectedLead(focusLead);
+    }
+  }, [focusLead]);
 
   const startTracking = () => {
     const successCallback = (position: any) => {
@@ -298,6 +350,12 @@ export const LeadMap = ({
     const timer = setTimeout(updateSelectedPoint, 500);
     return () => clearTimeout(timer);
   }, [selectedLead]);
+
+  useEffect(() => {
+    if (selectedLead && !displayedLeads.some(job => job._id === selectedLead._id)) {
+      setSelectedLead(null);
+    }
+  }, [displayedLeads, selectedLead]);
 
   const handleToggleFavorite = async (job: any) => {
     const nextValue = !(job.isFavourite || job.isFavorite);
@@ -384,14 +442,49 @@ export const LeadMap = ({
   }, [showRoute, userLocation, currentLead]);
 
   const heatmapPoints = useMemo(() => {
-    return filteredLeads
+    return displayedLeads
       .filter((l: any) => l.location?.coordinates)
       .map((l: any) => ({
         latitude: l.location.coordinates[1],
         longitude: l.location.coordinates[0],
         weight: (l.price || 0) / 1000 || 1,
       }));
-  }, [filteredLeads]);
+  }, [displayedLeads]);
+
+  // Haversine formula to compute great-circle distance in kilometers
+  const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) *
+        Math.cos(lat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
+  };
+
+  // Check if a job is near the searched location (within 2 km radius)
+  const isNearSearchedLocation = (jobLat: number, jobLng: number) => {
+    if (!currentLead?.latitude || !currentLead?.longitude) return false;
+    const dist = getDistanceInKm(jobLat, jobLng, currentLead.latitude, currentLead.longitude);
+    return dist <= 2;
+  };
+
+  // Debug: Log when search location changes
+  useEffect(() => {
+    if (currentLead?.latitude && currentLead?.longitude) {
+      console.log('[SearchLocation] Search location set to:', { lat: currentLead.latitude, lng: currentLead.longitude });
+      console.log('[SearchLocation] Total markers displayed:', displayedLeads.length);
+      const nearbyMarkers = displayedLeads.filter(job => {
+        if (!job.location?.coordinates) return false;
+        return isNearSearchedLocation(job.location.coordinates[1], job.location.coordinates[0]);
+      });
+      console.log('[SearchLocation] Markers within 2km of search location:', nearbyMarkers.length, nearbyMarkers.map((m: any) => m.jobNumber));
+    }
+  }, [currentLead?.latitude, currentLead?.longitude]);
 
   return (
     <View
@@ -449,66 +542,70 @@ export const LeadMap = ({
           />
         )}
 
-        {/* Individual Markers */}
-        {filteredLeads.map((job) => {
-          if (!job.location?.coordinates) return null;
-          const isSelected = selectedLead?._id === job._id;
-          const uid = (user as any)?._id || (user as any)?.id;
-          const isOwner = uid && (
-            job.salesRepId === uid ||
-            job.salesRep?._id === uid ||
-            job.userId === uid ||
-            job.salesRepName === (user as any)?.fullName ||
-            job.userName === (user as any)?.userName
-          );
-          const hasActiveReferral = job.jobReferrals?.some((r: any) => r.referralToggle === true);
-          const isFavJob = job.isFavorite || job.isFavourite;
+         {/* Individual Markers */}
+         <React.Fragment key={filterKey}>
+           {displayedLeads.map((job) => {
+             if (!job.location?.coordinates) return null;
+             const isSelected = selectedLead?._id === job._id;
+             const uid = (user as any)?._id || (user as any)?.id;
+             const isOwner = isJobOwner(job, uid);
+             const hasActiveReferral = job.jobReferrals?.some((r: any) => r.referralToggle === true);
+             const isFavJob = job.isFavorite || job.isFavourite;
+             const jobLat = job.location.coordinates[1];
+             const jobLng = job.location.coordinates[0];
+             const nearSearchedLocation = isNearSearchedLocation(jobLat, jobLng);
 
-          // Tint only for special states; default uses the PNG as-is
-          const tintColor = (isFavoriteOnly && isFavJob)
-            ? '#F59E0B'   // amber for favorite filter
-            : undefined;  // no tint — use original green PNG
+             // Marker color logic (matching web app):
+             // 1. If near searched location → red
+             // 2. Else if favorite filter active AND job is favorite → amber/yellow
+             // 3. Otherwise → no tint (green)
+             const tintColor = nearSearchedLocation
+               ? '#FF0000'   // red for searched location
+               : (isFavoriteOnly && isFavJob)
+               ? '#F59E0B'   // amber for favorite filter
+               : undefined;  // no tint — use original green PNG
 
-          return (
-            <Marker
-              key={`${job._id}-${filterKey}`}
-              coordinate={{
-                latitude: job.location.coordinates[1],
-                longitude: job.location.coordinates[0],
-              }}
-              onPress={(e) => handleMarkerClick(job, e)}
-              tracksViewChanges={isSelected}
-              anchor={{ x: 0.5, y: 1 }}
-              zIndex={isSelected ? 100 : 1}
-              opacity={isHeatMap ? 0 : 1}
-            >
-              <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                <Image
-                  source={markerImg}
-                  style={{
-                    width: 36,
-                    height: 44,
-                    ...(tintColor ? { tintColor } : {}),
-                  }}
-                  resizeMode="contain"
-                />
-                {/* Selected ring */}
-                {isSelected && (
-                  <View style={{
-                    position: 'absolute',
-                    top: -4,
-                    width: 44,
-                    height: 44,
-                    borderRadius: 22,
-                    borderWidth: 2.5,
-                    borderColor: '#4CBB17',
-                    backgroundColor: 'transparent',
-                  }} />
-                )}
-              </View>
-            </Marker>
-          );
-        })}
+             return (
+               <Marker
+                 key={`${job._id}-${isSelected}-${tintColor || 'none'}-${dataVersion}`}
+                 coordinate={{
+                   latitude: jobLat,
+                   longitude: jobLng,
+                 }}
+                 onPress={(e) => handleMarkerClick(job, e)}
+                 tracksViewChanges={isSelected}
+                 anchor={{ x: 0.5, y: 1 }}
+                 zIndex={isSelected ? 100 : 1}
+                 opacity={isHeatMap ? 0 : 1}
+               >
+                 <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                   <Image
+                     source={markerImg}
+                     style={{
+                       width: 36,
+                       height: 44,
+                       ...(tintColor ? { tintColor } : {}),
+                     }}
+                     resizeMode="contain"
+                   />
+                   {/* Selected ring */}
+                   {isSelected && (
+                     <View style={{
+                       position: 'absolute',
+                       top: -4,
+                       width: 44,
+                       height: 44,
+                       borderRadius: 22,
+                       borderWidth: 2.5,
+                       borderColor: '#4CBB17',
+                       backgroundColor: 'transparent',
+                     }} />
+                   )}
+                 </View>
+               </Marker>
+             );
+           })}
+         </React.Fragment>
         {/* User Location Marker */}
         {userLocation && (
           <Marker
@@ -554,22 +651,7 @@ export const LeadMap = ({
             <MapJobCard
               job={selectedLead}
               onClose={() => setSelectedLead(null)}
-              isMyJob={
-                (() => {
-                  const uid = (user as any)?._id || (user as any)?.id;
-                  if (!uid) return false;
-                  return (
-                    selectedLead.salesRepId === uid ||
-                    selectedLead.salesRep?._id === uid ||
-                    selectedLead.userId === uid ||
-                    selectedLead.salesRep === uid ||
-                    selectedLead.salesRepName === (user as any)?.fullName ||
-                    selectedLead.salesRepName === (user as any)?.firstName ||
-                    selectedLead.salesRep === (user as any)?.userName ||
-                    selectedLead.userName === (user as any)?.userName
-                  );
-                })()
-              }
+              isMyJob={isJobOwner(selectedLead, (user as any)?._id || (user as any)?.id)}
               onReferencePress={() => {
                 // If a parent handler exists (e.g. MapDetail), use it.
                 // MapDetail's handler opens a ReferralModal with onSuccess={fetchLeads},
@@ -630,18 +712,24 @@ export const LeadMap = ({
 
         <View className="gap-2">
           {[
-            { active: 'HM', inactive: 'DEF', id: 'HT-0' },
-            { active: 'MJ', inactive: 'AJ', id: 'MJ-1' },
-            { active: 'RF', inactive: 'DEF', id: 'RF-2' }
+            { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
+            { active: 'MJ', inactive: 'AJ', id: 'MJ-1', type: 'myjobs' as const },
+            { active: 'RF', inactive: 'DEF', id: 'RF-2', type: 'referral' as const }
           ].map((btn) => {
-            const isFilterActive = activeFilters.includes(btn.id);
+            const isFilterActive = onToggleFilter
+              ? (btn.type === 'heatmap' ? isHeatMapActive : btn.type === 'myjobs' ? isMyJobsOnly : isReferralOnly)
+              : activeFilters.includes(btn.id);
             return (
               <MapToggleSwitch
                 key={btn.id}
                 value={isFilterActive}
                 onValueChange={(val) => {
-                  if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
-                  else setActiveFilters([...activeFilters, btn.id]);
+                  if (onToggleFilter) {
+                    onToggleFilter(btn.type);
+                  } else {
+                    if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
+                    else setActiveFilters([...activeFilters, btn.id]);
+                  }
                 }}
                 activeLabel={btn.active}
                 inactiveLabel={btn.inactive}
@@ -694,11 +782,9 @@ export const LeadMap = ({
       <MapGalleryModal
         visible={showGallery}
         job={galleryJob}
+        isMyJob={isJobOwner(galleryJob, (user as any)?._id || (user as any)?.id)}
         onClose={() => setShowGallery(false)}
-        onCameraPress={(job) => {
-          setGalleryJob(job);
-          setShowUpload(true);
-        }}
+        onUploadSuccess={fetchAllJobs}
       />
 
 
@@ -727,22 +813,7 @@ export const LeadMap = ({
             setDataVersion((v) => v + 1);
           }
         }}
-        isMyJob={
-          (() => {
-            const uid = (user as any)?._id || (user as any)?.id;
-            if (!uid) return false;
-            return (
-              galleryJob?.salesRepId === uid ||
-              galleryJob?.salesRep?._id === uid ||
-              galleryJob?.userId === uid ||
-              galleryJob?.salesRep === uid ||
-              galleryJob?.salesRepName === (user as any)?.fullName ||
-              galleryJob?.salesRepName === (user as any)?.firstName ||
-              galleryJob?.salesRep === (user as any)?.userName ||
-              galleryJob?.userName === (user as any)?.userName
-            );
-          })()
-        }
+        isMyJob={isJobOwner(galleryJob, (user as any)?._id || (user as any)?.id)}
       />
     </View>
   );

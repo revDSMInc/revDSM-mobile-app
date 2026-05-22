@@ -8,6 +8,7 @@ import { AccountPopover } from '../components/AccountPopover';
 import { ChatThreadsManager } from './ChatThreadsManager';
 import { useNavigation } from '@react-navigation/native';
 import { LeadService } from '../../services/api/leads';
+import Logo from '../../assets/svgs/light-logo';
 
 interface HeaderProps {
   onNavigate?: (route: any) => void;
@@ -86,12 +87,7 @@ export function Header({
       >
         <View className="flex-row items-center">
           <TouchableOpacity onPress={() => onNavigate('Leads')} style={styles.logo}>
-            <Text className="text-[22px] font-black" style={{ color: isDark ? '#fff' : '#2EDE56' }}>
-              rev
-            </Text>
-            <Text className="text-[22px] font-black" style={{ color: colors.primary.contrastText }}>
-              DSM
-            </Text>
+            <Logo />
           </TouchableOpacity>
         </View>
 

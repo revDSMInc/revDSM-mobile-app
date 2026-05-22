@@ -32,11 +32,28 @@ import { format } from 'date-fns';
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (createdLead?: any) => void;
   user: any;
+  fromZone?: boolean;
+  zoneId?: string;
+  buildingId?: string;
+  prefilledAddress?: string;
+  prefilledCoords?: { latitude: number; longitude: number } | null;
+  prefilledOwnerName?: string;
 }
 
-export default function LeadCreateModal({ visible, onClose, onSuccess, user }: Props) {
+export default function LeadCreateModal({
+  visible,
+  onClose,
+  onSuccess,
+  user,
+  fromZone = false,
+  zoneId,
+  buildingId,
+  prefilledAddress,
+  prefilledCoords,
+  prefilledOwnerName = '',
+}: Props) {
   const { colors, isDark } = useTheme();
   const createLeadMutation = useCreateLeadMutation();
   const initialFormState: {
@@ -46,6 +63,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
     email: string;
     address: string;
     leadType: 'selfGen' | 'lf_lead';
+    lowesLead: boolean;
     lfLeadTime: string;
     lfLeadId: string;
     leadCode: string;
@@ -57,6 +75,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
     email: '',
     address: '',
     leadType: 'selfGen',
+    lowesLead: false,
     lfLeadTime: '9am',
     lfLeadId: '',
     leadCode: '',
@@ -89,8 +108,30 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
 
   useEffect(() => {
     if (visible) {
-      setForm(initialFormState);
-      handleGetCurrentLocation();
+      if (fromZone && prefilledAddress) {
+        let firstName = '';
+        let lastName = '';
+        if (prefilledOwnerName) {
+          const parts = prefilledOwnerName.trim().split(/\s+/);
+          firstName = parts[0] || '';
+          lastName = parts.slice(1).join(' ') || '';
+        }
+        setForm({
+          ...initialFormState,
+          address: prefilledAddress,
+          firstName,
+          lastName,
+          leadType: 'selfGen',
+        });
+        if (prefilledCoords) {
+          setLocation(prefilledCoords);
+        } else {
+          setLocation(null);
+        }
+      } else {
+        setForm(initialFormState);
+        handleGetCurrentLocation();
+      }
     }
   }, [visible]);
 
@@ -235,8 +276,13 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
     };
 
     // Base validation for all leads
-    if (!form.firstName || !form.lastName || !form.phone || !form.address) {
+    if (!form.firstName || !form.lastName || !form.address) {
       showError('Missing Info', 'Please fill all required customer fields marked with *');
+      return;
+    }
+
+    if (!fromZone && !form.phone) {
+      showError('Missing Info', 'Phone number is required');
       return;
     }
 
@@ -297,6 +343,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
             leadType: 'selfGen',
             repId: user?._id || user?.id,
             fullAddress: form.address,
+            lowesLead: form.lowesLead === true,
             location: location
               ? {
                   type: 'Point',
@@ -306,15 +353,28 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
             customer: {
               firstName: form.firstName,
               lastName: form.lastName,
-              phone: form.phone,
+              ...(form.phone ? { phone: form.phone } : {}),
               email: form.email,
               address: form.address,
             },
+            ...(fromZone && {
+              zoneId,
+              buildingId,
+              latitude: location?.latitude,
+              longitude: location?.longitude,
+            }),
           };
       console.log(payload, 'lf lead creation');
-      await createLeadMutation.mutateAsync(payload);
+      const response = await createLeadMutation.mutateAsync(payload);
       showSuccess('Success', 'Lead created successfully');
-      onSuccess();
+      
+      const createdLead = fromZone ? {
+        ...(response?.data?.lead || response?.data || response),
+        ...payload,
+        status: 'selfGenerated',
+      } : null;
+
+      onSuccess(createdLead);
       onClose();
     } catch (err: any) {
       showError('Error', err?.message || 'Failed to create lead');
@@ -340,7 +400,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
           >
             <View>
               <Text className="text-xl font-black" style={{ color: colors.text }}>
-                Add New Lead
+                {fromZone ? 'Add Self Gen Lead' : 'Add New Lead'}
               </Text>
               <Text
                 className="text-[11px] font-bold mt-1 opacity-60"
@@ -385,7 +445,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
               </View>
 
               <CustomInput
-                label="Phone Number*"
+                label={fromZone ? 'Phone Number' : 'Phone Number*'}
                 value={form.phone}
                 onChangeText={(t) => {
                   const formatted = formatUSPhoneNumber(t);
@@ -403,6 +463,46 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                 keyboardType="email-address"
               />
 
+              <View style={{ marginTop: 4 }}>
+                <Text
+                  className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2"
+                >
+                  Lowe&apos;s Lead
+                </Text>
+                <View className="flex-row gap-3">
+                  {[
+                    { label: 'No', value: false },
+                    { label: 'Yes', value: true },
+                  ].map((opt) => (
+                    <TouchableOpacity
+                      key={opt.label}
+                      onPress={() => setForm({ ...form, lowesLead: opt.value })}
+                      className="flex-1 py-3 items-center rounded-xl border"
+                      style={{
+                        backgroundColor:
+                          form.lowesLead === opt.value
+                            ? isDark
+                              ? colors.surface
+                              : '#fff'
+                            : 'transparent',
+                        borderColor:
+                          form.lowesLead === opt.value ? colors.primary.main : colors.border,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontWeight: '700',
+                          color:
+                            form.lowesLead === opt.value ? colors.primary.main : colors.textSecondary,
+                        }}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
               {/* Address Section */}
               <View onLayout={(e) => setAddressFieldY(e.nativeEvent.layout.y)}>
                 <Text className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">
@@ -412,8 +512,9 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                   <TextInput
                     value={form.address}
                     onChangeText={handleAddressSearch}
+                    editable={!fromZone}
                     onFocus={() => {
-                      if (suggestions.length > 0) setShowSuggestions(true);
+                      if (!fromZone && suggestions.length > 0) setShowSuggestions(true);
                       scrollViewRef.current?.scrollTo({ y: addressFieldY, animated: true });
                     }}
                     placeholder={
@@ -421,7 +522,7 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                     }
                     style={{
                       height: 56,
-                      backgroundColor: isDark ? colors.surface : '#F8FAFC',
+                      backgroundColor: isDark ? colors.surface : (fromZone ? '#E2E8F030' : '#F8FAFC'),
                       borderWidth: 1,
                       borderColor: isDark ? colors.border : '#E2E8F0',
                       borderRadius: 16,
@@ -445,19 +546,21 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                     {isLocating ? (
                       <ActivityIndicator size="small" color={colors.primary.main} />
                     ) : form.address.length > 0 ? (
-                      <TouchableOpacity
-                        onPress={() => {
-                          setForm({ ...form, address: '' });
-                          setSuggestions([]);
-                          setShowSuggestions(false);
-                        }}
-                      >
-                        <Ionicons
-                          name="close-circle"
-                          size={18}
-                          color={colors.textSecondary + '80'}
-                        />
-                      </TouchableOpacity>
+                      !fromZone ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setForm({ ...form, address: '' });
+                            setSuggestions([]);
+                            setShowSuggestions(false);
+                          }}
+                        >
+                          <Ionicons
+                            name="close-circle"
+                            size={18}
+                            color={colors.textSecondary + '80'}
+                          />
+                        </TouchableOpacity>
+                      ) : null
                     ) : (
                       <Ionicons
                         name="location-outline"
@@ -543,54 +646,56 @@ export default function LeadCreateModal({ visible, onClose, onSuccess, user }: P
                 </View>
               </View>
 
-              {/* Lead Type Toggle */}
-              <View className="mt-4 mb-6">
-                <Text
-                  className="text-[10px] font-black tracking-widest uppercase mb-3"
-                  style={{ color: colors.textSecondary, opacity: 0.6 }}
-                >
-                  Lead Classification
-                </Text>
-                <View
-                  className="flex-row gap-3 p-1 rounded-2xl"
-                  style={{ backgroundColor: isDark ? 'rgba(0,0,0,0.1)' : colors.grey[200] }}
-                >
-                  {['selfGen', 'lf_lead'].map((type) => (
-                    <TouchableOpacity
-                      key={type}
-                      onPress={() => setForm({ ...form, leadType: type as 'selfGen' | 'lf_lead' })}
-                      className="flex-1 py-3 items-center rounded-xl"
-                      style={{
-                        backgroundColor:
-                          form.leadType === type
-                            ? isDark
-                              ? colors.surface
-                              : '#fff'
-                            : 'transparent',
-                        borderWidth: 1,
-                        borderColor:
-                          form.leadType === type ? `${colors.primary.main}25` : 'transparent',
-                        shadowColor: form.leadType === type ? '#000' : 'transparent',
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: form.leadType === type ? 0.08 : 0,
-                        shadowRadius: 2,
-                        elevation: form.leadType === type ? 1 : 0,
-                      }}
-                    >
-                      <Text
-                        className="text-[11px] font-black"
+              {/* Lead Type — hidden from zone canvasser (self-gen only, web parity) */}
+              {!fromZone && (
+                <View className="mt-4 mb-6">
+                  <Text
+                    className="text-[10px] font-black tracking-widest uppercase mb-3"
+                    style={{ color: colors.textSecondary, opacity: 0.6 }}
+                  >
+                    Lead Classification
+                  </Text>
+                  <View
+                    className="flex-row gap-3 p-1 rounded-2xl"
+                    style={{ backgroundColor: isDark ? 'rgba(0,0,0,0.1)' : colors.grey[200] }}
+                  >
+                    {['selfGen', 'lf_lead'].map((type) => (
+                      <TouchableOpacity
+                        key={type}
+                        onPress={() => setForm({ ...form, leadType: type as 'selfGen' | 'lf_lead' })}
+                        className="flex-1 py-3 items-center rounded-xl"
                         style={{
-                          color:
-                            form.leadType === type ? colors.primary.main : colors.textSecondary,
-                          opacity: form.leadType === type ? 1 : 0.4,
+                          backgroundColor:
+                            form.leadType === type
+                              ? isDark
+                                ? colors.surface
+                                : '#fff'
+                              : 'transparent',
+                          borderWidth: 1,
+                          borderColor:
+                            form.leadType === type ? `${colors.primary.main}25` : 'transparent',
+                          shadowColor: form.leadType === type ? '#000' : 'transparent',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: form.leadType === type ? 0.08 : 0,
+                          shadowRadius: 2,
+                          elevation: form.leadType === type ? 1 : 0,
                         }}
                       >
-                        {type === 'selfGen' ? 'SELF GEN' : 'LF LEAD'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                        <Text
+                          className="text-[11px] font-black"
+                          style={{
+                            color:
+                              form.leadType === type ? colors.primary.main : colors.textSecondary,
+                            opacity: form.leadType === type ? 1 : 0.4,
+                          }}
+                        >
+                          {type === 'selfGen' ? 'SELF GEN' : 'LF LEAD'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
-              </View>
+              )}
 
               {form.leadType === 'lf_lead' && (
                 <View

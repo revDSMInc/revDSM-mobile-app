@@ -195,6 +195,8 @@ export const MapFiltersModal = ({
                       onChangeText={(text) => {
                         skipSearch.current = false;
                         setSearchText(text);
+                        // Clear centerCoords if they modify the text so we don't use a stale geocoded location
+                        setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
                       }}
                     />
                     {searchText.length > 0 && (
@@ -237,6 +239,8 @@ export const MapFiltersModal = ({
                       setSearchType('job');
                       setShowTypeDropdown(false);
                       setSearchResults([]);
+                      // Clear location coordinates when switching search modes
+                      setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
                     }}
                   >
                     <Icon name="pound" size={16} color="#64748b" />

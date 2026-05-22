@@ -615,7 +615,7 @@ export function LeadCard({
             >
               {lead.fullAddress || 'Address Pending'}
             </Text>
-            {userLocation && lead.location?.coordinates && (() => {
+            {/* {userLocation && lead.location?.coordinates && (() => {
               const dist = calculateDistance(
                 userLocation.latitude,
                 userLocation.longitude,
@@ -628,7 +628,7 @@ export function LeadCard({
                   {dist.toFixed(1)} miles away
                 </Text>
               );
-            })()}
+            })()} */}
           </View>
         </TouchableOpacity>
 

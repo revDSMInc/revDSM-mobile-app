@@ -27,6 +27,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { useLeadsData } from '../../hooks/useLeadsData';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
 import LeadCreateModal from '../../widgets/modals/LeadCreate';
+import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
 import { LeadCard } from '../../widgets/components/LeadCard';
 import { Header } from '../../widgets/common/MainHeader';
 import { RootStackParamList } from '../../navigation';
@@ -53,6 +54,7 @@ export default function LeadsPage() {
   const [selfGenSubTab, setSelfGenSubTab] = useState<'today' | 'archived'>('today');
   const [searchQuery, setSearchQuery] = useState('');
   const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [zoneCanvasserVisible, setZoneCanvasserVisible] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(
     null
@@ -361,6 +363,7 @@ export default function LeadsPage() {
             <Feather name="calendar" size={24} color={'#FFFFFF'} />
           </TouchableOpacity>
           <TouchableOpacity
+            onPress={() => setZoneCanvasserVisible(true)}
             style={{
               backgroundColor: '#C684FF',
               borderRadius: 8,
@@ -516,6 +519,13 @@ export default function LeadsPage() {
         onClose={() => setCreateModalVisible(false)}
         onSuccess={onRefresh}
         user={user}
+      />
+
+      <ZoneCanvasserMap
+        visible={zoneCanvasserVisible}
+        onClose={() => setZoneCanvasserVisible(false)}
+        user={user}
+        navigation={navigation}
       />
     </SafeAreaView>
   );
