@@ -783,7 +783,7 @@ export default function ChatDetailScreen() {
               renderDay={renderDay}
               renderInputToolbar={renderInputToolbar}
               onInputTextChanged={handleComposerChange}
-              extraData={{ filteredMessages, imageUrls, showMentions, composerText, mentionResults }}
+              extraData={{ filteredMessages, imageUrls, filteredParticipants, highlightedMessageId }}
               renderChatFooter={renderFooter}
               inverted={true}
               flatListProps={{
@@ -791,8 +791,8 @@ export default function ChatDetailScreen() {
                 contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
                 keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
                 getItemLayout: (data: any, index: number) => ({
-                  length: 180,
-                  offset: 180 * index,
+                  length: 160,
+                  offset: 160 * index,
                   index,
                 }),
                 onScrollToIndexFailed: (info: any) => {
@@ -801,7 +801,7 @@ export default function ChatDetailScreen() {
                   try {
                     console.log('[FlatList] iOS onScrollToIndexFailed index:', info.index);
                     engine?.scrollToOffset?.({
-                      offset: info.highestMeasuredFrameIndex * 180 + (info.index - info.highestMeasuredFrameIndex) * 180,
+                      offset: info.highestMeasuredFrameIndex * 160 + (info.index - info.highestMeasuredFrameIndex) * 160,
                       animated: true,
                     });
                   } catch (err) {
@@ -861,7 +861,7 @@ export default function ChatDetailScreen() {
               renderDay={renderDay}
               renderInputToolbar={renderInputToolbar}
               onInputTextChanged={handleComposerChange}
-              extraData={{ filteredMessages, imageUrls, showMentions, composerText, mentionResults }}
+              extraData={{ filteredMessages, imageUrls, filteredParticipants, highlightedMessageId }}
               renderChatFooter={renderFooter}
               isKeyboardInternallyHandled={false}
               bottomOffset={0}
@@ -871,8 +871,8 @@ export default function ChatDetailScreen() {
                 contentContainerStyle: { paddingHorizontal: 16, paddingBottom: 20 },
                 keyExtractor: (item: any) => (item?._id || item?.id || Math.random()).toString(),
                 getItemLayout: (data: any, index: number) => ({
-                  length: 180,
-                  offset: 180 * index,
+                  length: 160,
+                  offset: 160 * index,
                   index,
                 }),
                 onScrollToIndexFailed: (info: any) => {
@@ -881,7 +881,7 @@ export default function ChatDetailScreen() {
                   try {
                     console.log('[FlatList] Android onScrollToIndexFailed index:', info.index);
                     engine?.scrollToOffset?.({
-                      offset: info.highestMeasuredFrameIndex * 180 + (info.index - info.highestMeasuredFrameIndex) * 180,
+                      offset: info.highestMeasuredFrameIndex * 160 + (info.index - info.highestMeasuredFrameIndex) * 160,
                       animated: true,
                     });
                   } catch (err) {

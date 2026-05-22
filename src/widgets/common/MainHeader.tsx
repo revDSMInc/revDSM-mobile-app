@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../hooks/useAuth';
@@ -7,6 +7,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { AccountPopover } from '../components/AccountPopover';
 import { ChatThreadsManager } from './ChatThreadsManager';
 import { useNavigation } from '@react-navigation/native';
+import { LeadService } from '../../services/api/leads';
 
 interface HeaderProps {
   onNavigate?: (route: any) => void;
@@ -23,6 +24,8 @@ export function Header({
   const { user } = useAuth();
   const navigation = useNavigation<any>();
   const [popoverVisible, setPopoverVisible] = useState(false);
+  const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState(false);
 
   const onNavigate = (route: any) => {
     if (parentOnNavigate) parentOnNavigate(route);
@@ -30,6 +33,45 @@ export function Header({
   };
 
   const initials = `${user?.firstName?.[0] || 'U'}${user?.lastName?.[0] || ''}`;
+
+  useEffect(() => {
+    const pic = user?.profilePicture;
+    if (!pic) {
+      setResolvedAvatarUrl(null);
+      return;
+    }
+
+    setAvatarError(false);
+
+    if (typeof pic === 'string' && pic.startsWith('http')) {
+      setResolvedAvatarUrl(pic);
+      return;
+    }
+
+    let filePath = '';
+    let bucketName = 'np-revdsm-staging';
+
+    if (typeof pic === 'string') {
+      filePath = pic;
+    } else if (typeof pic === 'object' && pic?.filePath) {
+      filePath = pic.filePath;
+      bucketName = pic.bucketName || bucketName;
+    }
+
+    if (!filePath) {
+      setResolvedAvatarUrl(null);
+      return;
+    }
+
+    LeadService.getSecureUrls([{ bucketName, filePath }])
+      .then((res: any) => {
+        const secureData = res.data?.data || res.data || [];
+        if (secureData[0]?.secureUrl) {
+          setResolvedAvatarUrl(secureData[0].secureUrl);
+        }
+      })
+      .catch((err: any) => console.warn('Header avatar resolve failed', err));
+  }, [user?.profilePicture?.filePath, user?.profilePicture]);
 
   return (
     <View
@@ -81,9 +123,18 @@ export function Header({
               { backgroundColor: colors.surface, borderColor: colors.primary.main },
             ]}
           >
-            <Text className="text-xs font-black" style={{ color: colors.text }}>
-              {initials}
-            </Text>
+            {resolvedAvatarUrl && !avatarError ? (
+              <Image
+                source={{ uri: resolvedAvatarUrl }}
+                style={{ width: 28, height: 28, borderRadius: 14 }}
+                resizeMode="cover"
+                onError={() => setAvatarError(true)}
+              />
+            ) : (
+              <Text className="text-xs font-black" style={{ color: colors.text }}>
+                {initials}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -110,6 +161,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
     borderWidth: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },

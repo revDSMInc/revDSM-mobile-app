@@ -105,7 +105,7 @@ interface Props {
   onLayout?: (event: any) => void;
 }
 
-export function ChatMessageBubble({
+export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   bubbleProps,
   currentUserId,
   participants = [],
@@ -1573,5 +1573,4 @@ export function ChatMessageBubble({
       {renderSeenListModal()}
     </View>
   );
-}
-// FORCE_REBUNDLE_MARKER_12345
+});

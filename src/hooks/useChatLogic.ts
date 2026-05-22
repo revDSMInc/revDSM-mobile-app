@@ -146,9 +146,10 @@ export const useChatLogic = (
   const handleAttach = useCallback(() => {
     launchImageLibrary({ mediaType: 'mixed', selectionLimit: 5 }, async (response) => {
       if (response.assets && chatId) {
-        for (const f of response.assets) {
+        const assets = response.assets;
+        const optimistics = assets.map((f) => {
           const isImg = f.type?.startsWith('image');
-          const optimistic = {
+          return {
             _id: `temp_${Date.now()}_${Math.random()}`,
             text: isImg ? '' : f.fileName,
             image: isImg ? f.uri : undefined,
@@ -161,12 +162,16 @@ export const useChatLogic = (
             sent: false,
             received: false,
           };
-          setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
-          await ChatService.sendFileMessage(
-            chatId,
-            { uri: f.uri, name: f.fileName, type: f.type },
-            ''
-          );
+        });
+        setMessages((prev: any[]) => GiftedChat.append(prev, optimistics));
+        try {
+          await Promise.all(assets.map((f) =>
+            ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.fileName, type: f.type }, '')
+          ));
+        } catch (err: any) {
+          console.warn('[Media] send failed:', err?.message || err);
+          setMessages((prev: any[]) => prev.filter((m) => typeof m._id === 'string' && m._id.startsWith('temp_')));
+          Alert.alert('Send Failed', 'Failed to send attachment. Please try again.');
         }
       }
     });
@@ -180,32 +185,32 @@ export const useChatLogic = (
       });
 
       if (results && chatId) {
-        for (const f of results) {
-          const optimistic = {
-            _id: `temp_${Date.now()}_${Math.random()}`,
-            text: f.name || 'Document',
-            createdAt: new Date(),
-            user: { _id: String(currentUserId) },
-            files: [
-              { url: f.uri, name: f.name, mimeType: f.type, type: 'file' },
-            ],
-            pending: true,
-            sent: false,
-            received: false,
-          };
-          setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
-          await ChatService.sendFileMessage(
-            chatId,
-            { uri: f.uri, name: f.name, type: f.type },
-            ''
-          );
-        }
+        const docs = results;
+        const optimistics = docs.map((f) => ({
+          _id: `temp_${Date.now()}_${Math.random()}`,
+          text: f.name || 'Document',
+          createdAt: new Date(),
+          user: { _id: String(currentUserId) },
+          files: [
+            { url: f.uri, name: f.name, mimeType: f.type, type: 'file' },
+          ],
+          pending: true,
+          sent: false,
+          received: false,
+        }));
+        setMessages((prev: any[]) => GiftedChat.append(prev, optimistics));
+        await Promise.all(docs.map((f) =>
+          ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.name, type: f.type }, '')
+        ));
       }
     } catch (err: any) {
       if (DocumentPicker.isErrorWithCode(err) && err.code === DocumentPicker.errorCodes.OPERATION_CANCELED) {
         return;
       }
-      Alert.alert('Document Picker', 'Failed to pick document. Please try again.');
+      console.warn('[Document] send failed:', err?.message || err);
+      // Remove optimistic messages on failure
+      setMessages((prev: any[]) => prev.filter((m) => typeof m._id === 'string' && m._id.startsWith('temp_')));
+      Alert.alert('Send Failed', 'Failed to send document. Please try again.');
     }
   }, [chatId, currentUserId, setMessages]);
 
@@ -224,8 +229,8 @@ export const useChatLogic = (
         audio: uri,
         isVoiceNote: true,
         files: [{ url: uri, name: fileName, mimeType: 'audio/m4a', type: 'audio' }],
-        pending: true,
-        sent: false,
+        pending: false,
+        sent: true,
         received: false,
       };
 

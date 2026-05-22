@@ -29,6 +29,7 @@ import {
 } from '../../hooks/useLeadMutation';
 import { LeadService } from '../../services/api/leads';
 import { resolveS3Url } from '../../utils/s3-utils';
+import { getRawPhoneNumber } from '../../utils/phone-util';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
 import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
@@ -41,6 +42,7 @@ import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/Op
 import Icon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { EditCustomerModal } from '../../widgets/modals/lead-center/EditCustomerModal';
 import Feather from 'react-native-vector-icons/Feather';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
@@ -50,6 +52,7 @@ type TabType = 'job_docs' | 'tools';
 
 import { ImageGridModal } from '../../widgets/modals/lead-center/ImageGridModal';
 import { Linking } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { FlashMessage } from '../../config/message';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -165,6 +168,51 @@ export default function LeadCenterPage() {
 
   const [loading, setLoading] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
+  const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
+  const [showPhoneOptions, setShowPhoneOptions] = useState(false);
+  const [showEmailOptions, setShowEmailOptions] = useState(false);
+
+  const handleCall = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) {
+      Linking.openURL(`tel:${getRawPhoneNumber(phone)}`);
+    }
+    setShowPhoneOptions(false);
+  };
+
+  const handleTextMessage = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) {
+      Linking.openURL(`sms:${getRawPhoneNumber(phone)}`);
+    }
+    setShowPhoneOptions(false);
+  };
+
+  const handleCopyPhone = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) {
+      Clipboard.setString(phone);
+      FlashMessage.success('Copied', 'Phone number copied to clipboard');
+    }
+    setShowPhoneOptions(false);
+  };
+
+  const handleEmail = () => {
+    const email = lead?.customerDetails?.email;
+    if (email) {
+      Linking.openURL(`mailto:${email}`);
+    }
+    setShowEmailOptions(false);
+  };
+
+  const handleCopyEmail = () => {
+    const email = lead?.customerDetails?.email;
+    if (email) {
+      Clipboard.setString(email);
+      FlashMessage.success('Copied', 'Email copied to clipboard');
+    }
+    setShowEmailOptions(false);
+  };
 
   // Auto-refresh Lead data when screen is focused
   useFocusEffect(
@@ -322,6 +370,50 @@ export default function LeadCenterPage() {
     const res = await consentMutation.mutateAsync(data);
     await refetch();
     return res;
+  };
+
+  const handleCustomerSubmit = async (data: { firstName: string; lastName: string; phone: string; email: string }) => {
+    try {
+      const customerId = lead.customerDetails?._id || lead.customerDetails?.id || lead?._id || lead?.id;
+      if (!customerId) {
+        throw new Error('Customer ID is missing. Unable to update customer.');
+      }
+
+      const payload = {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: getRawPhoneNumber(data.phone),
+        email: data.email,
+      };
+
+      console.log('[EditCustomer] PATCH lead/v1/customer/' + customerId, payload);
+      await LeadService.updateCustomer(customerId, payload);
+
+      setLead((prev: any) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          customerDetails: {
+            ...prev.customerDetails,
+            firstName: data.firstName,
+            lastName: data.lastName,
+            phone: data.phone,
+            email: data.email,
+          },
+        };
+      });
+
+      FlashMessage.success('Success', 'Customer details updated successfully.');
+      refetch();
+    } catch (error: any) {
+      const apiError = error?.response?.data || error?.data || error;
+      const errorMsg =
+        typeof apiError === 'string'
+          ? apiError.substring(0, 200)
+          : apiError?.message || error?.message || 'Failed to update customer info.';
+      console.error('Update Customer Error:', errorMsg);
+      throw new Error(errorMsg);
+    }
   };
 
   const handleWaiverSubmit = async (data: any) => {
@@ -520,27 +612,41 @@ export default function LeadCenterPage() {
                   <FontAwesome
                     name="user"
                     size={14}
-                    color={isDark ? colors.textSecondary : '#637381'}
+                    color="#72BD00"
                   />
                   <Text className="ml-1 text-xs font-semibold text-text-primary">
                     {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
                   </Text>
+                  <TouchableOpacity
+                    onPress={() => setShowEditCustomerModal(true)}
+                    style={{ marginLeft: 6, paddingHorizontal: 4 }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Feather
+                      name="edit-2"
+                      size={12}
+                      color="#72BD00"
+                    />
+                  </TouchableOpacity>
                 </View>
-                <View className="flex-row items-center">
+                <TouchableOpacity
+                  className="flex-row items-center"
+                  onPress={() => setShowPhoneOptions(true)}
+                >
                   <FontAwesome
                     name="phone"
                     size={14}
-                    color={isDark ? colors.textSecondary : '#637381'}
+                    color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold text-text-primary">
+                  <Text className="ml-1 text-xs font-semibold" style={{ color: '#72BD00' }}>
                     {lead.customerDetails?.phone}
                   </Text>
-                </View>
+                </TouchableOpacity>
                 <View className="flex-row items-center">
                   <Ionicon
                     name="calendar-clear"
                     size={14}
-                    color={isDark ? colors.textSecondary : '#637381'}
+                    color="#72BD00"
                   />
                   <Text className="ml-1 text-xs font-semibold text-text-primary">
                     {formatDate(lead?.leadDatetime)}
@@ -558,21 +664,24 @@ export default function LeadCenterPage() {
                 <View>
                   <Text className="ml-1 text-xs font-semibold text-[#1C252E]"></Text>
                 </View>
-                <View className="flex-row items-center">
+                <TouchableOpacity
+                  className="flex-row items-center"
+                  onPress={() => setShowEmailOptions(true)}
+                >
                   <Ionicon
                     name="mail"
                     size={14}
-                    color={isDark ? colors.textSecondary : '#637381'}
+                    color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold  text-text-primary">
+                  <Text className="ml-1 text-xs font-semibold" style={{ color: '#72BD00' }}>
                     {lead?.customerDetails?.email || 'N/A'}
                   </Text>
-                </View>
+                </TouchableOpacity>
                 <View className="flex-row items-center">
                   <MaterialIcon
                     name="clock"
                     size={14}
-                    color={isDark ? colors.textSecondary : '#637381'}
+                    color="#72BD00"
                   />
                   <Text className="ml-1 text-xs font-semibold  text-text-primary">
                     {lead.leadTime}
@@ -584,7 +693,7 @@ export default function LeadCenterPage() {
               <Ionicon
                 name="location-sharp"
                 size={14}
-                color={isDark ? colors.textSecondary : '#637381'}
+                color="#72BD00"
               />
               <Text className="ml-1 text-xs font-semibold " style={{ color: colors.primary.main }}>
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
@@ -782,6 +891,103 @@ export default function LeadCenterPage() {
         address={lead?.fullAddress || lead?.customerDetails?.address || ''}
         onClose={() => setShowMapModal(false)}
       />
+
+      {showEditCustomerModal && (
+        <EditCustomerModal
+          visible={showEditCustomerModal}
+          onClose={() => setShowEditCustomerModal(false)}
+          onSubmit={handleCustomerSubmit}
+          lead={lead}
+        />
+      )}
+
+      <Modal
+        visible={showPhoneOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPhoneOptions(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setShowPhoneOptions(false)}
+        >
+          <View
+            style={{
+              backgroundColor: colors.card,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              padding: 24,
+              paddingBottom: insets.bottom + 16,
+            }}
+          >
+            <View style={{ width: 40, height: 4, backgroundColor: colors.textSecondary, borderRadius: 2, alignSelf: 'center', marginBottom: 20, opacity: 0.3 }} />
+            <TouchableOpacity
+              onPress={handleCall}
+              className="flex-row items-center py-4"
+            >
+              <Feather name="phone-call" size={18} color={colors.text} />
+              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Call</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity
+              onPress={handleTextMessage}
+              className="flex-row items-center py-4"
+            >
+              <Feather name="message-square" size={18} color={colors.text} />
+              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Text Message</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity
+              onPress={handleCopyPhone}
+              className="flex-row items-center py-4"
+            >
+              <Feather name="copy" size={18} color={colors.text} />
+              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Copy Number</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showEmailOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowEmailOptions(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setShowEmailOptions(false)}
+        >
+          <View
+            style={{
+              backgroundColor: colors.card,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              padding: 24,
+              paddingBottom: insets.bottom + 16,
+            }}
+          >
+            <View style={{ width: 40, height: 4, backgroundColor: colors.textSecondary, borderRadius: 2, alignSelf: 'center', marginBottom: 20, opacity: 0.3 }} />
+            <TouchableOpacity
+              onPress={handleEmail}
+              className="flex-row items-center py-4"
+            >
+              <Feather name="mail" size={18} color={colors.text} />
+              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Email</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity
+              onPress={handleCopyEmail}
+              className="flex-row items-center py-4"
+            >
+              <Feather name="copy" size={18} color={colors.text} />
+              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Copy Email</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
     </>
   );

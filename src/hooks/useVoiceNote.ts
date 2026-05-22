@@ -5,7 +5,7 @@ import Sound, {
   AudioEncoderAndroidType,
   AVEncoderAudioQualityIOSType,
 } from 'react-native-nitro-sound';
-import type { AudioSet, PlayBackType, RecordBackType } from 'react-native-nitro-sound';
+import type { AudioSet, PlayBackType } from 'react-native-nitro-sound';
 import { Platform, PermissionsAndroid, Alert } from 'react-native';
 import RNFS from 'react-native-fs';
 
@@ -44,6 +44,7 @@ export function useVoiceNote(): VoiceNoteHookResult {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentPathRef = useRef<string | null>(null);
+  const permissionGrantedRef = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -59,25 +60,35 @@ export function useVoiceNote(): VoiceNoteHookResult {
 
   // ─── Permissions ─────────────────────────────────────────────────────────────
 
-  const requestMicPermission = async (): Promise<boolean> => {
+  const ensureMicPermission = useCallback(async (): Promise<boolean> => {
+    if (permissionGrantedRef.current) return true;
     if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: 'Microphone Permission',
-          message: 'revDSM needs the microphone to record voice notes.',
-          buttonPositive: 'Allow',
-        }
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Permission',
+            message: 'revDSM needs the microphone to record voice notes.',
+            buttonPositive: 'Allow',
+          }
+        );
+        const result = granted === PermissionsAndroid.RESULTS.GRANTED;
+        permissionGrantedRef.current = result;
+        return result;
+      } catch {
+        return false;
+      }
     }
-    return true; // iOS prompts on first use via NSMicrophoneUsageDescription
-  };
+    // iOS prompts on first use via NSMicrophoneUsageDescription
+    permissionGrantedRef.current = true;
+    return true;
+  }, []);
 
   // ─── Recording ───────────────────────────────────────────────────────────────
 
   const startRecording = useCallback(async () => {
-    const hasPermission = await requestMicPermission();
+    // Permission check only once per session — cached in ref after first call
+    const hasPermission = await ensureMicPermission();
     if (!hasPermission) {
       Alert.alert('Permission Denied', 'Microphone access is required to record voice notes.');
       return;
@@ -108,21 +119,31 @@ export function useVoiceNote(): VoiceNoteHookResult {
     timerRef.current = setInterval(() => {
       setRecordingTime((t) => t + 1);
     }, 1000);
-  }, []);
+  }, [ensureMicPermission]);
 
   const stopRecording = useCallback(async () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    const uri = await player.stopRecorder();
-    player.removeRecordBackListener();
 
-    // Ensure we have the full path on iOS
-    const finalUri = uri && uri.includes('/') ? uri : currentPathRef.current;
-
+    // Immediately show recorded state — native finalization runs in background
+    const finalUri = currentPathRef.current;
     setRecordedUri(finalUri);
     setRecordingState('recorded');
+
+    // Finalize the recording file asynchronously
+    try {
+      const uri = await player.stopRecorder();
+      player.removeRecordBackListener();
+      // Override with the real path from native if it differs
+      const resolvedUri = uri && uri.includes('/') ? uri : finalUri;
+      if (resolvedUri !== finalUri) {
+        setRecordedUri(resolvedUri);
+      }
+    } catch (e) {
+      console.warn('[VoiceNote] stopRecorder error:', e);
+    }
   }, []);
 
   const cancelRecording = useCallback(() => {

@@ -29,6 +29,9 @@ export const LeadEndpoints = {
   getJobs: {
     list: '/job/v1/find',
   },
+  customer: {
+    update: (leadId: string) => `lead/v1/customer/${leadId}`,
+  },
   referral: {
     create: '/referral/v1/customer',
     update: (id: string) => `/referral/v1/customer/${id}`,
@@ -146,6 +149,9 @@ export const LeadService = {
 
   updateReferral: (id: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.referral.update(id), payload),
+
+  updateCustomer: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.customer.update(leadId), payload),
 
   findJobs: (payload: any): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.getJobs.list, payload),
