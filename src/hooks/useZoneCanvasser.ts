@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Alert } from 'react-native';
-import MapView from 'react-native-maps';
+import MapView, { Region } from 'react-native-maps';
 import Geolocation from 'react-native-geolocation-service';
 import axios from 'axios';
 
@@ -12,6 +12,12 @@ import {
   updateBuildingLead,
   updateSalesRepLead,
 } from '../services/api/zone-canvasser';
+import {
+  clearZoneMapState,
+  markZoneCanvasserShouldReopen,
+  peekZoneMapState,
+  saveZoneMapState,
+} from '../utils/zone-canvasser-session';
 import type {
   ActionSubmitData,
   BuildingStatusOverride,
@@ -22,6 +28,9 @@ import type {
 
 export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 'visible' | 'user'>) {
   const mapRef = useRef<MapView>(null);
+  const mapRegionRef = useRef<Region | null>(null);
+  const hasRestoredRef = useRef(false);
+  const pendingRestoreRef = useRef<Awaited<ReturnType<typeof peekZoneMapState>>>(null);
 
   const [mapType, setMapType] = useState<'standard' | 'satellite'>('satellite');
   const [userLocation, setUserLocation] = useState<MapCoordinate | null>(null);
@@ -103,12 +112,43 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   }, []);
 
   useEffect(() => {
-    if (visible) {
-      setBuildingStatusOverrides({});
-      fetchZones();
-      handleGetCurrentLocation();
+    if (!visible) {
+      hasRestoredRef.current = false;
+      pendingRestoreRef.current = null;
+      return;
     }
+    setBuildingStatusOverrides({});
+    fetchZones();
+    handleGetCurrentLocation();
+    peekZoneMapState().then((saved) => {
+      if (saved) pendingRestoreRef.current = saved;
+    });
   }, [visible, fetchZones, handleGetCurrentLocation]);
+
+  const handleMapRegionChange = useCallback((region: Region) => {
+    mapRegionRef.current = region;
+  }, []);
+
+  /** Web handleSaveMapState — persist camera + building before navigating to Lead Center. */
+  const saveMapStateForAppointment = useCallback(async () => {
+    if (!selectedBuilding) return;
+    const region =
+      mapRegionRef.current ||
+      initialRegion || {
+        latitude: 27.9506,
+        longitude: -82.4572,
+        latitudeDelta: 0.0922,
+        longitudeDelta: 0.0421,
+      };
+    await saveZoneMapState({
+      latitude: region.latitude,
+      longitude: region.longitude,
+      latitudeDelta: region.latitudeDelta,
+      longitudeDelta: region.longitudeDelta,
+      buildingId: selectedBuilding.id,
+    });
+    await markZoneCanvasserShouldReopen();
+  }, [selectedBuilding, initialRegion]);
 
   const allBuildings = useMemo(() => {
     const list: ZoneCanvasserBuilding[] = [];
@@ -141,11 +181,11 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         const matchedGroup = canvasserLeadGroup || crmLeadGroup;
         const finalLead = matchedGroup ? matchedGroup[0] : null;
         const rawStatus = finalLead?.status || null;
-        let leadStatus = normalizeLeadStatus(rawStatus);
-        const isCrmLead = rawStatus === 'selfGenerated';
+        let leadStatus = normalizeLeadStatus(rawStatus) || (finalLead ? 'create_lead' : null);
+        const isCrmLead = rawStatus === 'selfGenerated' || rawStatus === 'create_lead' || !!crmLeadGroup;
         let leads = matchedGroup || [];
 
-        const override = buildingStatusOverrides[building.id];
+        const override = buildingStatusOverrides[String(building.id)];
         if (override) {
           leadStatus = override.leadStatus ?? leadStatus;
           if (override.leads) leads = override.leads;
@@ -169,33 +209,99 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     return list;
   }, [zones, buildingStatusOverrides]);
 
-  const handleLocationSearch = async () => {
-    if (!searchText.trim()) return;
-    setIsProcessing(true);
-    try {
-      const res = await axios.get(
-        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-          searchText
-        )}&key=${ENV.GOOGLE_MAPS_API_KEY}`
-      );
-      if (res.data.results?.[0]) {
-        const { lat, lng } = res.data.results[0].geometry.location;
-        setSearchCoords({ latitude: lat, longitude: lng });
-        mapRef.current?.animateToRegion(
-          { latitude: lat, longitude: lng, latitudeDelta: 0.00922, longitudeDelta: 0.00421 },
-          500
-        );
-        setSearchModalVisible(false);
-      } else {
-        Alert.alert('Not Found', 'Could not find that location.');
-      }
-    } catch (error) {
-      console.error('Search failed', error);
-      Alert.alert('Error', 'Failed to search for location.');
-    } finally {
-      setIsProcessing(false);
+  /** Keep selected building lead in sync after zones refetch (e.g. workflowState → resume after Start Appointment). */
+  useEffect(() => {
+    if (!visible || !selectedBuilding?.id) return;
+    const fresh = allBuildings.find((b) => String(b.id) === String(selectedBuilding.id));
+    if (!fresh) return;
+
+    const prevLead = selectedBuilding.leads?.[0];
+    const nextLead = fresh.leads?.[0];
+    const prevWs = prevLead?.workflowState;
+    const nextWs = nextLead?.workflowState;
+
+    if (
+      prevWs !== nextWs ||
+      JSON.stringify(prevLead?.actionCounts) !== JSON.stringify(nextLead?.actionCounts)
+    ) {
+      console.log('[ZoneCanvasser] Syncing building lead from zones', {
+        buildingId: fresh.id,
+        prevWorkflowState: prevWs,
+        nextWorkflowState: nextWs,
+        prevActionCounts: prevLead?.actionCounts,
+        nextActionCounts: nextLead?.actionCounts,
+      });
+      setSelectedBuilding(fresh);
     }
-  };
+  }, [allBuildings, visible, selectedBuilding?.id]);
+
+  // Restore map + building popup after returning from Lead Center (web sessionStorage parity)
+  useEffect(() => {
+    if (!visible || hasRestoredRef.current) return;
+
+    let cancelled = false;
+    (async () => {
+      if (!pendingRestoreRef.current) {
+        pendingRestoreRef.current = await peekZoneMapState();
+      }
+      const saved = pendingRestoreRef.current;
+      if (!saved) {
+        hasRestoredRef.current = true;
+        return;
+      }
+
+      if (allBuildings.length === 0) return;
+
+      const building = allBuildings.find(
+        (b) => String(b.id) === String(saved.buildingId)
+      );
+      if (!building) return;
+
+      if (cancelled) return;
+
+      const region = {
+        latitude: saved.latitude,
+        longitude: saved.longitude,
+        latitudeDelta: saved.latitudeDelta,
+        longitudeDelta: saved.longitudeDelta,
+      };
+      mapRegionRef.current = region;
+      pendingRestoreRef.current = null;
+      await clearZoneMapState();
+      hasRestoredRef.current = true;
+
+      setSelectedBuilding(building);
+      setSubmittedLeadPopupOpen(true);
+      fetchZones();
+
+      console.log('[ZoneCanvasser] Restored map state after Lead Center', {
+        buildingId: saved.buildingId,
+        workflowState: building.leads?.[0]?.workflowState,
+      });
+
+      setTimeout(() => {
+        mapRef.current?.animateToRegion(region, 400);
+      }, 350);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, allBuildings]);
+
+  const navigateToSearchLocation = useCallback((coords: MapCoordinate) => {
+    setSearchCoords(coords);
+    mapRef.current?.animateToRegion(
+      {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        latitudeDelta: 0.00922,
+        longitudeDelta: 0.00421,
+      },
+      500
+    );
+    setSearchModalVisible(false);
+  }, []);
 
   const handleZoom = (zoomIn: boolean) => {
     mapRef.current?.getCamera().then((camera) => {
@@ -252,7 +358,12 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
   const handleMapPress = (e: any) => {
     if (!isDrawingMode || drawType !== 'polygon') return;
-    setDrawCoordinates((prev) => [...prev, e.nativeEvent.coordinate]);
+    // Extract coordinate synchronously before setState — React's event pooling
+    // nullifies e.nativeEvent by the time the updater callback runs, causing
+    // "Cannot read property 'coordinate' of null" on the 3rd dot.
+    const coordinate = e?.nativeEvent?.coordinate;
+    if (!coordinate) return;
+    setDrawCoordinates((prev) => [...prev, coordinate]);
   };
 
   const handleSaveZone = async () => {
@@ -359,7 +470,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   const handleBuildingPress = (building: ZoneCanvasserBuilding) => {
     setSelectedBuilding(building);
     setIsEditingGoBack(false);
-    if (building.leadStatus && building.leads?.length > 0) {
+    if (building.leads && building.leads.length > 0) {
       setSubmittedLeadPopupOpen(true);
     } else {
       setPropertyData(null);
@@ -441,7 +552,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         };
         setBuildingStatusOverrides((prev) => ({
           ...prev,
-          [selectedBuilding.id]: {
+          [String(selectedBuilding.id)]: {
             leadStatus: markerStatus,
             leads: [mergedLead],
           },
@@ -470,6 +581,35 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
+  /** Optimistic + persisted lead patch after setLeadWork (preview → resume on web). */
+  const patchBuildingLeadAfterWork = useCallback(
+    (buildingId: string | number, patch: Record<string, any>) => {
+      console.log('[ZoneCanvasser] patchBuildingLeadAfterWork', { buildingId, patch });
+      const key = String(buildingId);
+      setBuildingStatusOverrides((prev) => {
+        const existing = prev[key];
+        const baseLeads = existing?.leads || selectedBuilding?.leads || [];
+        const lead0 = baseLeads[0] || {};
+        const mergedLead = { ...lead0, ...patch };
+        return {
+          ...prev,
+          [key]: {
+            leadStatus: existing?.leadStatus ?? selectedBuilding?.leadStatus ?? null,
+            leads: [mergedLead],
+          },
+        };
+      });
+      if (selectedBuilding && String(selectedBuilding.id) === key) {
+        const lead0 = selectedBuilding.leads?.[0] || {};
+        setSelectedBuilding({
+          ...selectedBuilding,
+          leads: [{ ...lead0, ...patch }],
+        });
+      }
+    },
+    [selectedBuilding]
+  );
+
   const handleLeadCreateSuccess = (createdLead: any) => {
     setLeadCreateOpen(false);
     setResultsModalOpen(false);
@@ -490,13 +630,19 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         assignedRepId: responseData.assignedRepId,
         workflowState: responseData.workflowState || 'preview',
         actionCounts: responseData.actionCounts || {},
+        lowesLead: responseData.lowesLead === true,
       };
+      console.log('[ZoneCanvasser] Lead created (self-gen)', {
+        leadId: processedLead._id,
+        workflowState: processedLead.workflowState,
+        lowesLead: processedLead.lowesLead,
+      });
 
       setSelectedBuilding((prev) => {
         if (!prev) return prev;
         setBuildingStatusOverrides((overrides) => ({
           ...overrides,
-          [prev.id]: { leadStatus: 'create_lead', leads: [processedLead] },
+          [String(prev.id)]: { leadStatus: 'create_lead', leads: [processedLead] },
         }));
         return {
           ...prev,
@@ -571,7 +717,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     setZoneStatsPopupOpen,
     isProcessing,
     handleGetCurrentLocation,
-    handleLocationSearch,
+    navigateToSearchLocation,
     handleZoom,
     handleTouchStart,
     handleTouchMove,
@@ -587,5 +733,9 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     startDrawing,
     cancelDrawing,
     setIsEditingGoBack,
+    handleMapRegionChange,
+    saveMapStateForAppointment,
+    patchBuildingLeadAfterWork,
+    fetchZones,
   };
 }

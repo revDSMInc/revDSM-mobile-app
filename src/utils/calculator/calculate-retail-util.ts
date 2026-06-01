@@ -7,16 +7,18 @@ export const calculateRetail = ({
   pricing,
   extras,
   extrasList50,
+  isLowesLead = false,
 }: any) => {
   const n = (v: any) => (v === undefined || v === null || isNaN(Number(v)) ? 0 : Number(v));
+  const adminFee = isLowesLead ? 0 : 500;
 
   if (markupKey === '100') {
-    return baseRetailTotal + 500;
+    return baseRetailTotal + adminFee;
   }
 
   if (markupKey === '65') {
-    const check100 = baseRetailTotal + 500;
-    return (check100 - 500) * 0.65 + 500;
+    const check100 = baseRetailTotal + adminFee;
+    return (check100 - adminFee) * 0.65 + adminFee;
   }
 
   if (markupKey === '50') {

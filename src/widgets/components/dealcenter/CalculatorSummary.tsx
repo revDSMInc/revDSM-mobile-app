@@ -17,6 +17,17 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { useAnimatedStyle, SharedValue } from 'react-native-reanimated';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
+import {
+  validatePriceForPaymentMethod,
+  WELLS_FARGO_HIGH_KEYS,
+  WF_HIGH_MIN_PRICE,
+} from '../../../utils/calculator/payment-method-validation';
+import {
+  getRolloutPaymentCategories,
+  getDropAddPlanCategories,
+  isPlanBelowMinPrice,
+  getBelowMinMessage,
+} from '../../../utils/calculator/lowes-payment-util';
 import Feather from 'react-native-vector-icons/Feather';
 import { PALETTE } from '../../../theme/theme';
 import Doc from '../../../assets/svgs/icons/doc';
@@ -46,6 +57,7 @@ export const CalculatorSummary = ({
   activeCalc,
   results,
   calculators,
+  setCalculators,
   setActiveIdx,
   activeIdx,
   setCurrentView,
@@ -64,7 +76,42 @@ export const CalculatorSummary = ({
   handleResetJobBuilder,
 }: any) => {
   const { colors } = useTheme();
+  const isLowesLead = lead?.lowesLead === true;
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
+
+  const rolloutEndPrice = Number(activeCalc.price) || 0;
+
+  const handlePaymentPlanSelect = (method: string) => {
+    const oldMethod = activeCalc.inputs.paymentPlan;
+    const currentPrice = rolloutEndPrice;
+    const isConfirmedWithPrice = !!activeCalc.isRolloutConfirmed && currentPrice > 0;
+
+    if (WELLS_FARGO_HIGH_KEYS.includes(method) && currentPrice > 0 && currentPrice < WF_HIGH_MIN_PRICE) {
+      Alert.alert(
+        'Payment plan',
+        `Payment plan changed — this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`
+      );
+    } else if (isConfirmedWithPrice && method !== oldMethod) {
+      Alert.alert(
+        'Payment plan',
+        `Payment method updated — the rollout price $${currentPrice.toLocaleString()} is already confirmed.`
+      );
+    }
+
+    if (isPlanBelowMinPrice(method, currentPrice)) {
+      Alert.alert('Payment plan', getBelowMinMessage(method, currentPrice));
+      return;
+    }
+    const methodValidation = validatePriceForPaymentMethod(currentPrice, method);
+    if (currentPrice > 0 && !methodValidation.isValid) {
+      Alert.alert('Payment plan', methodValidation.message);
+      return;
+    }
+
+    updateActive({ inputs: { paymentPlan: method } });
+    handleSave();
+    setShowPaymentPicker(false);
+  };
   const dpInputRef = useRef<TextInput>(null);
   const {
     error,
@@ -87,6 +134,8 @@ export const CalculatorSummary = ({
     handleAddDrop,
     handleUnselectDrop,
     handlePriceChange,
+    handlePriceBlur,
+    priceText,
     handleConfirmAll,
     calculateMonthly,
     handleDiscountChange,
@@ -100,7 +149,16 @@ export const CalculatorSummary = ({
     setAddedPlans,
     tempPlan,
     setTempPlan,
-  } = useCalculatorSummary(activeCalc, results, calculators, updateActive, handleSave, refresh);
+  } = useCalculatorSummary(
+    activeCalc,
+    results,
+    calculators,
+    updateActive,
+    handleSave,
+    refresh,
+    isLowesLead,
+    setCalculators
+  );
 
   const isSaved = Number(activeCalc.price) > 0;
   const screensCount = Number(activeCalc.inputs.ckToInstallers) || 0;
@@ -292,8 +350,8 @@ export const CalculatorSummary = ({
                   </View>
                 </View>
                 <TouchableOpacity
-                  onPress={() => !activeCalc.isRolloutConfirmed && !isJobBuilderSubmitted && setShowPaymentPicker(true)}
-                  disabled={activeCalc.isRolloutConfirmed || isJobBuilderSubmitted}
+                  onPress={() => !isJobBuilderSubmitted && setShowPaymentPicker(true)}
+                  disabled={isJobBuilderSubmitted}
                   className="min-h-[56px] bg-card border border-border rounded-2xl px-4 py-3 flex-row items-center justify-between shadow-sm"
                 >
                   <View className="flex-1 pr-4">
@@ -329,6 +387,7 @@ export const CalculatorSummary = ({
                       LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
                       Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                       Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                      Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
                       'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
                       Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
                     };
@@ -366,6 +425,7 @@ export const CalculatorSummary = ({
                       LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
                       Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                       Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                      Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
                       'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
                       Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
                     };
@@ -450,12 +510,13 @@ export const CalculatorSummary = ({
                         ? 'text-green-600'
                         : 'text-text-primary'
                     }`}
-                    value={effectiveEndPrice ? String(effectiveEndPrice) : ''}
+                    value={activeDrop || activeCalc.isRolloutConfirmed ? String(effectiveEndPrice || '') : priceText}
                     placeholder="Enter End Price"
                     placeholderTextColor="#919EAB"
                     keyboardType="numeric"
                     editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
                     onChangeText={handlePriceChange}
+                    onEndEditing={handlePriceBlur}
                   />
                   {activeDrop || activeCalc.isRolloutConfirmed ? (
                     <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
@@ -770,7 +831,11 @@ export const CalculatorSummary = ({
                               return;
                             }
                             if (!selectedPlan) {
-                              const initialPlan = activeCalc.inputs.paymentPlan;
+                              const initialPlan = isLowesLead
+                                ? activeCalc.inputs.paymentPlan?.startsWith('lowes')
+                                  ? activeCalc.inputs.paymentPlan
+                                  : 'lowes_ach'
+                                : activeCalc.inputs.paymentPlan;
                               setSelectedPlan(initialPlan);
                               if (!addedPlans.includes(initialPlan)) {
                                 setAddedPlans([initialPlan]);
@@ -815,7 +880,11 @@ export const CalculatorSummary = ({
                             return;
                           }
                           if (!selectedPlan) {
-                            const initialPlan = activeCalc.inputs.paymentPlan;
+                            const initialPlan = isLowesLead
+                              ? activeCalc.inputs.paymentPlan?.startsWith('lowes')
+                                ? activeCalc.inputs.paymentPlan
+                                : 'lowes_ach'
+                              : activeCalc.inputs.paymentPlan;
                             setSelectedPlan(initialPlan);
                             if (!addedPlans.includes(initialPlan)) {
                               setAddedPlans([initialPlan]);
@@ -942,198 +1011,61 @@ export const CalculatorSummary = ({
               </View>
 
               <ScrollView className="p-4" showsVerticalScrollIndicator={false}>
-                {/* Basic Options */}
-                <View className="mb-4">
-                  {[
-                    { value: 'check', label: 'Check (0% Fee)' },
-                    { value: 'mcVisaDscvr', label: 'MC/VISA/DSCVR (3.00% Fee)' },
-                    { value: 'amex', label: 'AMEX (5.00% Fee)' },
-                  ].map((opt) => (
-                    <TouchableOpacity
-                      key={opt.value}
-                      onPress={() => {
-                        updateActive({ inputs: { paymentPlan: opt.value } });
-                        setShowPaymentPicker(false);
-                      }}
-                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
-                        activeCalc.inputs.paymentPlan === opt.value
-                          ? 'bg-green-50 border-green-500'
-                          : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <Text
-                        className={`text-sm font-bold ${
-                          activeCalc.inputs.paymentPlan === opt.value
-                            ? 'text-green-700'
-                            : 'text-slate-800'
-                        }`}
-                      >
-                        {opt.label}
+                {getRolloutPaymentCategories(isLowesLead).map((cat) => (
+                  <View key={cat.title} className="mb-4">
+                    <View className={`px-4 py-2 mb-2 rounded-lg ${cat.bg}`}>
+                      <Text className={`text-[10px] font-black tracking-widest ${cat.text}`}>
+                        {cat.title}
                       </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* GreenSky */}
-                <View className="mb-4">
-                  <View
-                    className="px-4 py-2 mb-2 rounded-lg"
-                    style={{ backgroundColor: '#d9ead3' }}
-                  >
-                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
-                      GreenSky Plans
-                    </Text>
+                    </View>
+                    {cat.plans.map((key) => {
+                      const plan = paymentPlans[key];
+                      if (!plan) return null;
+                      const belowMin = isPlanBelowMinPrice(key, rolloutEndPrice);
+                      return (
+                        <TouchableOpacity
+                          key={key}
+                          onPress={() => {
+                            if (belowMin) {
+                              Alert.alert('Payment plan', getBelowMinMessage(key, rolloutEndPrice));
+                              return;
+                            }
+                            handlePaymentPlanSelect(key);
+                          }}
+                          className={`px-4 py-3.5 mb-2 rounded-xl border ${
+                            activeCalc.inputs.paymentPlan === key
+                              ? 'bg-green-50 border-green-500'
+                              : belowMin
+                              ? 'bg-slate-100 border-slate-200 opacity-60'
+                              : 'bg-white border-slate-200'
+                          }`}
+                        >
+                          <Text
+                            className={`text-sm font-bold ${
+                              activeCalc.inputs.paymentPlan === key
+                                ? 'text-green-700'
+                                : 'text-slate-800'
+                            }`}
+                          >
+                            {plan.label}
+                          </Text>
+                          {plan.minPrice && (
+                            <Text
+                              className={`text-[10px] font-bold mt-1 ${
+                                belowMin ? 'text-red-500' : 'text-slate-400'
+                              }`}
+                            >
+                              Requires ${plan.minPrice?.toLocaleString()}+
+                              {rolloutEndPrice > 0
+                                ? ` (current: $${rolloutEndPrice.toLocaleString()})`
+                                : ' — enter end price first'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
-                  {[
-                    'greensky2511',
-                    'greensky2521',
-                    'greensky2531',
-                    'greensky1599',
-                    'greensky1509',
-                    'greensky2011',
-                  ].map((key) => (
-                    <TouchableOpacity
-                      key={key}
-                      onPress={() => {
-                        updateActive({ inputs: { paymentPlan: key } });
-                        setShowPaymentPicker(false);
-                      }}
-                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
-                        activeCalc.inputs.paymentPlan === key
-                          ? 'bg-green-50 border-green-500'
-                          : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <Text
-                        className={`text-sm font-bold ${
-                          activeCalc.inputs.paymentPlan === key
-                            ? 'text-green-700'
-                            : 'text-slate-800'
-                        }`}
-                      >
-                        {paymentPlans[key]?.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Wells Fargo */}
-                <View className="mb-4">
-                  <View
-                    className="px-4 py-2 mb-2 rounded-lg"
-                    style={{ backgroundColor: '#f4cccc' }}
-                  >
-                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
-                      Wells Fargo Plans
-                    </Text>
-                  </View>
-                  {[
-                    'wf1148',
-                    'wf1019',
-                    'wf1157',
-                    'wf1197',
-                    'wf2225',
-                    'wf3198',
-                    'wf1529',
-                    'wf4073',
-                    'wf4079',
-                    'wf4091',
-                    'wf4103',
-                    'wf4115',
-                  ].map((key) => (
-                    <TouchableOpacity
-                      key={key}
-                      onPress={() => {
-                        updateActive({ inputs: { paymentPlan: key } });
-                        setShowPaymentPicker(false);
-                      }}
-                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
-                        activeCalc.inputs.paymentPlan === key
-                          ? 'bg-green-50 border-green-500'
-                          : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <Text
-                        className={`text-sm font-bold ${
-                          activeCalc.inputs.paymentPlan === key
-                            ? 'text-green-700'
-                            : 'text-slate-800'
-                        }`}
-                      >
-                        {paymentPlans[key]?.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Wells Fargo High */}
-                <View className="mb-4">
-                  <View
-                    className="px-4 py-2 mb-2 rounded-lg"
-                    style={{ backgroundColor: '#f4cccc' }}
-                  >
-                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
-                      Wells Fargo High (&gt;$7,500)
-                    </Text>
-                  </View>
-                  {['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'].map((key) => (
-                    <TouchableOpacity
-                      key={key}
-                      onPress={() => {
-                        updateActive({ inputs: { paymentPlan: key } });
-                        setShowPaymentPicker(false);
-                      }}
-                      className={`px-4 py-3.5 mb-2 rounded-xl border ${
-                        activeCalc.inputs.paymentPlan === key
-                          ? 'bg-green-50 border-green-500'
-                          : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <Text
-                        className={`text-sm font-bold ${
-                          activeCalc.inputs.paymentPlan === key
-                            ? 'text-green-700'
-                            : 'text-slate-800'
-                        }`}
-                      >
-                        {paymentPlans[key]?.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Concora */}
-                <View className="mb-8">
-                  <View
-                    className="px-4 py-2 mb-2 rounded-lg"
-                    style={{ backgroundColor: '#c9daf8' }}
-                  >
-                    <Text className="text-[10px] font-black text-slate-900  tracking-widest">
-                      Concora Credit
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      updateActive({ inputs: { paymentPlan: 'concora' } });
-                      setShowPaymentPicker(false);
-                    }}
-                    className={`px-4 py-3.5 mb-2 rounded-xl border ${
-                      activeCalc.inputs.paymentPlan === 'concora'
-                        ? 'bg-green-50 border-green-500'
-                        : 'bg-white border-slate-200'
-                    }`}
-                  >
-                    <Text
-                      className={`text-sm font-bold ${
-                        activeCalc.inputs.paymentPlan === 'concora'
-                          ? 'text-green-700'
-                          : 'text-slate-800'
-                      }`}
-                    >
-                      {paymentPlans.concora?.label || 'Concora Plan'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                ))}
               </ScrollView>
               <TouchableOpacity
                 onPress={() => setShowPaymentPicker(false)}
@@ -1222,40 +1154,34 @@ export const CalculatorSummary = ({
                     {fCurrency(Number(dropValue) || 0)}
                   </Text>
                   <View className="flex-row items-center gap-2">
-                    {/* CK Badge */}
-                    <TouchableOpacity
-                      onPress={() => setSelectedPlan('check')}
-                      className={`px-3 py-1.5 rounded-lg border-2 ${
-                        selectedPlan === 'check'
-                          ? 'bg-[#31D076] border-[#31D076]'
-                          : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <Text
-                        className={`text-[11px] font-black ${
-                          selectedPlan === 'check' ? 'text-white' : 'text-slate-400'
+                    {(isLowesLead
+                      ? [
+                          { key: 'lowes_ach', label: 'ACH' },
+                          { key: 'lowes_cc', label: 'CC' },
+                        ]
+                      : [
+                          { key: 'check', label: 'CK' },
+                          { key: 'mcVisaDscvr', label: 'CC' },
+                        ]
+                    ).map((badge) => (
+                      <TouchableOpacity
+                        key={badge.key}
+                        onPress={() => setSelectedPlan(badge.key)}
+                        className={`px-3 py-1.5 rounded-lg border-2 ${
+                          selectedPlan === badge.key
+                            ? 'bg-[#31D076] border-[#31D076]'
+                            : 'bg-white border-slate-200'
                         }`}
                       >
-                        CK
-                      </Text>
-                    </TouchableOpacity>
-                    {/* CC Badge */}
-                    <TouchableOpacity
-                      onPress={() => setSelectedPlan('mcVisaDscvr')}
-                      className={`px-3 py-1.5 rounded-lg border-2 ${
-                        selectedPlan === 'mcVisaDscvr'
-                          ? 'bg-[#31D076] border-[#31D076]'
-                          : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <Text
-                        className={`text-[11px] font-black ${
-                          selectedPlan === 'mcVisaDscvr' ? 'text-white' : 'text-slate-400'
-                        }`}
-                      >
-                        CC
-                      </Text>
-                    </TouchableOpacity>
+                        <Text
+                          className={`text-[11px] font-black ${
+                            selectedPlan === badge.key ? 'text-white' : 'text-slate-400'
+                          }`}
+                        >
+                          {badge.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 </View>
 
@@ -1331,6 +1257,8 @@ export const CalculatorSummary = ({
                     const balance = Math.max(0, (Number(dropValue) || 0) - downPayment);
                     const monthly = calculateMonthly(balance, planKey);
                     const isSelected = selectedPlan === planKey;
+                    const dropPriceNum = Number(dropValue) || 0;
+                    const belowMin = !!(plan?.minPrice && dropPriceNum > 0 && dropPriceNum < plan.minPrice);
 
                     const planCode = planKey.replace(/^[a-z]+/, '').toUpperCase();
                     const planTitle = planCode || plan.label.split('(')[0].trim();
@@ -1354,7 +1282,7 @@ export const CalculatorSummary = ({
                                 const newPlans = addedPlans.filter((k) => k !== planKey);
                                 setAddedPlans(newPlans);
                                 if (selectedPlan === planKey) {
-                                  setSelectedPlan(newPlans[0] || 'check');
+                                  setSelectedPlan(newPlans[0] || (isLowesLead ? 'lowes_ach' : 'check'));
                                 }
                               }}
                               className="bg-[#FF5630] h-full rounded-2xl items-center justify-center"
@@ -1373,10 +1301,21 @@ export const CalculatorSummary = ({
                         rightThreshold={40}
                       >
                         <TouchableOpacity
-                          onPress={() => setSelectedPlan(planKey)}
+                          onPress={() => {
+                            if (belowMin) {
+                              Alert.alert(
+                                'Minimum price',
+                                `This plan requires a minimum price of $${plan.minPrice.toLocaleString()} (Entered: $${dropPriceNum.toLocaleString()}).`
+                              );
+                              return;
+                            }
+                            setSelectedPlan(planKey);
+                          }}
                           className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${
                             isSelected
                               ? 'bg-white border-[#31D076]'
+                              : belowMin
+                              ? 'bg-slate-100 border-slate-200 opacity-50'
                               : 'bg-slate-50 border-slate-100'
                           }`}
                         >
@@ -1411,6 +1350,11 @@ export const CalculatorSummary = ({
                               </Text>
                               <Text className="text-xs font-bold text-slate-400 ml-1">/mo</Text>
                             </View>
+                            {belowMin && (
+                              <Text className="text-[10px] font-bold text-red-500 mt-1">
+                                ${plan.minPrice.toLocaleString()}+ req.
+                              </Text>
+                            )}
                           </View>
 
                           <View
@@ -1485,47 +1429,9 @@ export const CalculatorSummary = ({
                 </View>
 
                 <ScrollView className="px-4 py-4" showsVerticalScrollIndicator={false}>
-                  {(() => {
-                    const categories = [
-                      {
-                        title: 'Basic Options',
-                        bg: 'bg-slate-50',
-                        text: 'text-slate-900',
-                        plans: ['check', 'mcVisaDscvr', 'amex'],
-                      },
-                      {
-                        title: 'GreenSky Plans',
-                        bg: 'bg-[#d9ead3]',
-                        text: 'text-[#2e4d2e]',
-                        plans: Object.keys(paymentPlans).filter((k) => k.startsWith('greensky')),
-                      },
-                      {
-                        title: 'Wells Fargo Plans',
-                        bg: 'bg-[#f4cccc]',
-                        text: 'text-[#662222]',
-                        plans: Object.keys(paymentPlans).filter(
-                          (k) =>
-                            k.startsWith('wf') &&
-                            !['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'].includes(
-                              k
-                            )
-                        ),
-                      },
-                      {
-                        title: 'Wells Fargo High (>$7,500)',
-                        bg: 'bg-[#f4cccc]',
-                        text: 'text-[#662222]',
-                        plans: ['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'],
-                      },
-                      {
-                        title: 'Concora Credit',
-                        bg: 'bg-[#c9daf8]',
-                        text: 'text-[#223366]',
-                        plans: ['concora'],
-                      },
-                    ];
-
-                    return categories.map((cat, ci) => (
+                  {getDropAddPlanCategories(isLowesLead).map((cat, ci) => {
+                    const dropPriceNum = Number(dropValue) || 0;
+                    return (
                       <View key={ci} className="mb-4">
                         <View
                           className={`px-3 py-1 rounded-md mb-2 inline-block self-start ${cat.bg}`}
@@ -1541,13 +1447,25 @@ export const CalculatorSummary = ({
                             const plan = paymentPlans[key];
                             if (!plan) return null;
                             const isSelected = tempPlan === key;
+                            const belowMin = isPlanBelowMinPrice(key, dropPriceNum);
                             return (
                               <TouchableOpacity
                                 key={key}
-                                onPress={() => setTempPlan(key)}
+                                onPress={() => {
+                                  if (belowMin) {
+                                    Alert.alert(
+                                      'Payment plan',
+                                      getBelowMinMessage(key, dropPriceNum)
+                                    );
+                                    return;
+                                  }
+                                  setTempPlan(key);
+                                }}
                                 className={`p-3 rounded-xl border ${
                                   isSelected
                                     ? 'bg-green-50 border-[#31D076]'
+                                    : belowMin
+                                    ? 'bg-slate-100 border-slate-100 opacity-60'
                                     : 'bg-white border-slate-100'
                                 }`}
                               >
@@ -1558,13 +1476,22 @@ export const CalculatorSummary = ({
                                 >
                                   {plan.label}
                                 </Text>
+                                {plan.minPrice && (
+                                  <Text
+                                    className={`text-[9px] font-bold mt-1 ${
+                                      belowMin ? 'text-red-500' : 'text-slate-400'
+                                    }`}
+                                  >
+                                    ${plan.minPrice?.toLocaleString()}+ req.
+                                  </Text>
+                                )}
                               </TouchableOpacity>
                             );
                           })}
                         </View>
                       </View>
-                    ));
-                  })()}
+                    );
+                  })}
                 </ScrollView>
 
                 <View className="flex-row gap-3 p-4 border-t border-slate-100">

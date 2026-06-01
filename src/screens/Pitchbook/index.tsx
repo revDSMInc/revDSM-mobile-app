@@ -482,6 +482,426 @@ export default function PitchbookScreen() {
           </View>
         )}
 
+        {/* ── Fullscreen Presentation Modal ── */}
+        <Modal
+          visible={isFullscreen}
+          transparent={true}
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setIsFullscreen(false)}
+        >
+          {/* Hide status bar in landscape */}
+          <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
+
+          {isLandscape ? (
+            /* ════════════════════════════════════════
+               LANDSCAPE LAYOUT
+               ════════════════════════════════════════ */
+            <View style={{ flex: 1, backgroundColor: '#000', position: 'relative' }}>
+
+              {/* ── Centre: image area + category tabs below image ── */}
+              <View style={{ flex: 1, flexDirection: 'column' }}>
+
+                {/* Upper part: Image and top buttons */}
+                <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
+                  {/* Image */}
+                  {currentCategoryImages[currentSlideIndex] && (
+                    <>
+                      <Image
+                        source={currentCategoryImages[currentSlideIndex]}
+                        style={{ width: '100%', height: '100%' }}
+                        resizeMode="contain"
+                        onLoadStart={() => setFsImageLoading(true)}
+                        onLoad={() => setFsImageLoading(false)}
+                        onError={() => setFsImageLoading(false)}
+                      />
+                      {fsImageLoading && (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 0, left: 0, right: 0, bottom: 0,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: 'rgba(0,0,0,0.45)',
+                          }}
+                        >
+                          <ActivityIndicator size="large" color="#72BD00" />
+                        </View>
+                      )}
+                    </>
+                  )}
+
+                  {/* ── Overlay: page counter top-left ── */}
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: Math.max(insets.top + 10, 24),
+                      left: 16,
+                      backgroundColor: 'rgba(0,0,0,0.50)',
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 12,
+                      zIndex: 10,
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+                      {currentGlobalPageNumber} / {totalGlobalPages}
+                    </Text>
+                  </View>
+
+                  {/* ── Overlay: compress button top-right ── */}
+                  <TouchableOpacity
+                    onPress={() => setIsFullscreen(false)}
+                    style={{
+                      position: 'absolute',
+                      top: Math.max(insets.top + 8, 20),
+                      right: 16,
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: 'rgba(255,255,255,0.15)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 10,
+                    }}
+                  >
+                    <IonIcon name="contract" size={20} color="#fff" />
+                  </TouchableOpacity>
+
+                  {/* Prev Arrow (Floating next to image) */}
+                  <TouchableOpacity
+                    onPress={handlePrev}
+                    disabled={currentGlobalPageNumber === 1}
+                    style={{
+                      position: 'absolute',
+                      left: 8,
+                      top: '50%',
+                      transform: [{ translateY: -20 }],
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(255,255,255,0.22)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: currentGlobalPageNumber === 1 ? 0.25 : 1,
+                      zIndex: 10,
+                    }}
+                  >
+                    <IonIcon
+                      name="chevron-back"
+                      size={22}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+
+                  {/* Next Arrow (Floating next to image, adjusted to clear tools tab) */}
+                  <TouchableOpacity
+                    onPress={handleNext}
+                    disabled={currentGlobalPageNumber === totalGlobalPages}
+                    style={{
+                      position: 'absolute',
+                      right: viewMode === 'rep' ? 44 : 8,
+                      top: '50%',
+                      transform: [{ translateY: -20 }],
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(255,255,255,0.22)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: currentGlobalPageNumber === totalGlobalPages ? 0.25 : 1,
+                      zIndex: 10,
+                    }}
+                  >
+                    <IonIcon
+                      name="chevron-forward"
+                      size={22}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Bottom part: category tabs (sits below image, not overlayed) */}
+                <View
+                  style={{
+                    backgroundColor: '#111',
+                    paddingVertical: 10,
+                    borderTopWidth: 1,
+                    borderTopColor: 'rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{
+                      flexGrow: 1,
+                      justifyContent: 'center',
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    {CATEGORIES.map((cat) => {
+                      const isActive = activeCategory === cat.id;
+                      return (
+                        <TouchableOpacity
+                          key={cat.id}
+                          onPress={() => {
+                            setFsImageLoading(true);
+                            setActiveCategory(cat.id);
+                            setCurrentSlideIndex(0);
+                          }}
+                          style={{
+                            marginHorizontal: 4,
+                            paddingHorizontal: 14,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            backgroundColor: isActive
+                              ? colors.primary.main
+                              : 'rgba(255,255,255,0.12)',
+                            borderWidth: isActive ? 0 : 1,
+                            borderColor: 'rgba(255,255,255,0.18)',
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              fontWeight: '600',
+                              color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
+                            }}
+                          >
+                            {cat.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              </View>
+
+              {/* ── Interactive Tools: right-edge vertical tab (Rep Mode only) ── */}
+              {viewMode === 'rep' && (
+                <TouchableOpacity
+                  onPress={toggleTools}
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '50%',
+                    transform: [{ translateY: -40 }],
+                    width: 32,
+                    height: 80,
+                    backgroundColor: '#72BD00',
+                    borderTopLeftRadius: 16,
+                    borderBottomLeftRadius: 16,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 99,
+                  }}
+                >
+                  <IonIcon name="chevron-back" size={20} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            /* ════════════════════════════════════════
+               PORTRAIT LAYOUT  (unchanged)
+               ════════════════════════════════════════ */
+            <View style={{ flex: 1, backgroundColor: '#000' }}>
+              {/* Top bar: page counter + exit button */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingHorizontal: 16,
+                  paddingTop: insets.top + 40,
+                  paddingBottom: 5,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                  {currentGlobalPageNumber} / {totalGlobalPages}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setIsFullscreen(false)}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: 'rgba(255,255,255,0.15)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <IonIcon name="contract" size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Image with prev/next arrows */}
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                {currentCategoryImages[currentSlideIndex] && (
+                  <>
+                    <Image
+                      source={currentCategoryImages[currentSlideIndex]}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="contain"
+                      onLoadStart={() => setFsImageLoading(true)}
+                      onLoad={() => setFsImageLoading(false)}
+                      onError={() => setFsImageLoading(false)}
+                    />
+                    {fsImageLoading && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: 'rgba(0,0,0,0.45)',
+                        }}
+                      >
+                        <ActivityIndicator size="large" color="#72BD00" />
+                      </View>
+                    )}
+                  </>
+                )}
+
+                {/* Prev Arrow */}
+                <TouchableOpacity
+                  onPress={handlePrev}
+                  disabled={currentGlobalPageNumber === 1}
+                  style={{
+                    position: 'absolute',
+                    left: 12,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor:
+                      currentGlobalPageNumber === 1
+                        ? 'rgba(255,255,255,0.10)'
+                        : 'rgba(255,255,255,0.22)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <IonIcon
+                    name="chevron-back"
+                    size={22}
+                    color={currentGlobalPageNumber === 1 ? 'rgba(255,255,255,0.35)' : '#fff'}
+                  />
+                </TouchableOpacity>
+
+                {/* Next Arrow */}
+                <TouchableOpacity
+                  onPress={handleNext}
+                  disabled={currentGlobalPageNumber === totalGlobalPages}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor:
+                      currentGlobalPageNumber === totalGlobalPages
+                        ? 'rgba(255,255,255,0.10)'
+                        : 'rgba(255,255,255,0.22)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <IonIcon
+                    name="chevron-forward"
+                    size={22}
+                    color={
+                      currentGlobalPageNumber === totalGlobalPages
+                        ? 'rgba(255,255,255,0.35)'
+                        : '#fff'
+                    }
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Bottom: category tabs + interactive tools button */}
+              <View
+                style={{
+                  backgroundColor: '#111',
+                  paddingBottom: insets.bottom + 4,
+                  borderTopWidth: 1,
+                  borderTopColor: 'rgba(255,255,255,0.08)',
+                }}
+              >
+                {/* Category tab strip */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10 }}
+                >
+                  {CATEGORIES.map((cat) => {
+                    const isActive = activeCategory === cat.id;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => {
+                          setFsImageLoading(true);
+                          setActiveCategory(cat.id);
+                          setCurrentSlideIndex(0);
+                        }}
+                        style={{
+                          marginRight: 8,
+                          paddingHorizontal: 14,
+                          paddingVertical: 7,
+                          borderRadius: 20,
+                          backgroundColor: isActive ? colors.primary.main : 'rgba(255,255,255,0.10)',
+                          borderWidth: isActive ? 0 : 1,
+                          borderColor: 'rgba(255,255,255,0.15)',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: '600',
+                            color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
+                          }}
+                        >
+                          {cat.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Interactive Tools button (Rep Mode only) */}
+                {viewMode === 'rep' && (
+                  <TouchableOpacity
+                    onPress={toggleTools}
+                    style={{
+                      marginHorizontal: 12,
+                      marginBottom: 6,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      backgroundColor: '#F0FAE8',
+                      borderWidth: 1,
+                      borderColor: colors.primary.main,
+                    }}
+                  >
+                    <IonIcon
+                      name="chevron-up"
+                      size={18}
+                      color={colors.primary.main}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={{ color: colors.primary.main, fontWeight: '700', fontSize: 13 }}>
+                      Interactive Tools
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
+        </Modal>
+
         {/* Interactive Tools — Modal Bottom Sheet (Rep Mode only) */}
         <Modal
           visible={viewMode === 'rep' && showTools}
@@ -683,432 +1103,6 @@ export default function PitchbookScreen() {
               </ScrollView>
             </View>
           </Animated.View>
-        </Modal>
-
-        {/* ── Fullscreen Presentation Modal ── */}
-        <Modal
-          visible={isFullscreen}
-          transparent={true}
-          animationType="fade"
-          statusBarTranslucent
-          onRequestClose={() => setIsFullscreen(false)}
-        >
-          {/* Hide status bar in landscape */}
-          <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
-
-          {isLandscape ? (
-            /* ════════════════════════════════════════
-               LANDSCAPE LAYOUT
-               ════════════════════════════════════════ */
-            <View style={{ flex: 1, backgroundColor: '#000', position: 'relative' }}>
-
-              {/* ── Centre: image area + category tabs below image ── */}
-              <View style={{ flex: 1, flexDirection: 'column' }}>
-
-                {/* Upper part: Image and top buttons */}
-                <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
-                  {/* Image */}
-                  {currentCategoryImages[currentSlideIndex] && (
-                    <>
-                      <Image
-                        source={currentCategoryImages[currentSlideIndex]}
-                        style={{ width: '100%', height: '100%' }}
-                        resizeMode="contain"
-                        onLoadStart={() => setFsImageLoading(true)}
-                        onLoad={() => setFsImageLoading(false)}
-                        onError={() => setFsImageLoading(false)}
-                      />
-                      {fsImageLoading && (
-                        <View
-                          style={{
-                            position: 'absolute',
-                            top: 0, left: 0, right: 0, bottom: 0,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            backgroundColor: 'rgba(0,0,0,0.45)',
-                          }}
-                        >
-                          <ActivityIndicator size="large" color="#72BD00" />
-                        </View>
-                      )}
-                    </>
-                  )}
-
-                  {/* ── Overlay: page counter top-left ── */}
-                  <View
-                    style={{
-                      position: 'absolute',
-                      top: Math.max(insets.top + 10, 24),
-                      left: 16,
-                      backgroundColor: 'rgba(0,0,0,0.50)',
-                      paddingHorizontal: 10,
-                      paddingVertical: 4,
-                      borderRadius: 12,
-                      zIndex: 10,
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
-                      {currentGlobalPageNumber} / {totalGlobalPages}
-                    </Text>
-                  </View>
-
-                  {/* ── Overlay: compress button top-right ── */}
-                  <TouchableOpacity
-                    onPress={() => setIsFullscreen(false)}
-                    style={{
-                      position: 'absolute',
-                      top: Math.max(insets.top + 8, 20),
-                      right: 16,
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: 'rgba(255,255,255,0.15)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 10,
-                    }}
-                  >
-                    <IonIcon name="contract" size={20} color="#fff" />
-                  </TouchableOpacity>
-
-                  {/* Prev Arrow (Floating next to image) */}
-                  <TouchableOpacity
-                    onPress={handlePrev}
-                    disabled={currentGlobalPageNumber === 1}
-                    style={{
-                      position: 'absolute',
-                      left: 8,
-                      top: '50%',
-                      transform: [{ translateY: -20 }],
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor: 'rgba(255,255,255,0.22)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: currentGlobalPageNumber === 1 ? 0.25 : 1,
-                      zIndex: 10,
-                    }}
-                  >
-                    <IonIcon
-                      name="chevron-back"
-                      size={22}
-                      color="#fff"
-                    />
-                  </TouchableOpacity>
-
-                  {/* Next Arrow (Floating next to image, adjusted to clear tools tab) */}
-                  <TouchableOpacity
-                    onPress={handleNext}
-                    disabled={currentGlobalPageNumber === totalGlobalPages}
-                    style={{
-                      position: 'absolute',
-                      right: viewMode === 'rep' ? 44 : 8,
-                      top: '50%',
-                      transform: [{ translateY: -20 }],
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor: 'rgba(255,255,255,0.22)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: currentGlobalPageNumber === totalGlobalPages ? 0.25 : 1,
-                      zIndex: 10,
-                    }}
-                  >
-                    <IonIcon
-                      name="chevron-forward"
-                      size={22}
-                      color="#fff"
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                {/* Bottom part: category tabs (sits below image, not overlayed) */}
-                <View
-                  style={{
-                    backgroundColor: '#111',
-                    paddingVertical: 10,
-                    borderTopWidth: 1,
-                    borderTopColor: 'rgba(255,255,255,0.08)',
-                  }}
-                >
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{
-                      flexGrow: 1,
-                      justifyContent: 'center',
-                      paddingHorizontal: 8,
-                    }}
-                  >
-                    {CATEGORIES.map((cat) => {
-                      const isActive = activeCategory === cat.id;
-                      return (
-                        <TouchableOpacity
-                          key={cat.id}
-                          onPress={() => {
-                            setFsImageLoading(true);
-                            setActiveCategory(cat.id);
-                            setCurrentSlideIndex(0);
-                          }}
-                          style={{
-                            marginHorizontal: 4,
-                            paddingHorizontal: 14,
-                            paddingVertical: 6,
-                            borderRadius: 20,
-                            backgroundColor: isActive
-                              ? colors.primary.main
-                              : 'rgba(255,255,255,0.12)',
-                            borderWidth: isActive ? 0 : 1,
-                            borderColor: 'rgba(255,255,255,0.18)',
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 11,
-                              fontWeight: '600',
-                              color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
-                            }}
-                          >
-                            {cat.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-              </View>
-
-              {/* ── Interactive Tools: right-edge vertical tab (Rep Mode only) ── */}
-              {viewMode === 'rep' && (
-                <TouchableOpacity
-                  onPress={() => {
-                    setIsFullscreen(false);
-                    setTimeout(toggleTools, 300);
-                  }}
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: '50%',
-                    transform: [{ translateY: -40 }],
-                    width: 32,
-                    height: 80,
-                    backgroundColor: '#72BD00',
-                    borderTopLeftRadius: 16,
-                    borderBottomLeftRadius: 16,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 99,
-                  }}
-                >
-                  <IonIcon name="chevron-back" size={20} color="#fff" />
-                </TouchableOpacity>
-              )}
-            </View>
-          ) : (
-            /* ════════════════════════════════════════
-               PORTRAIT LAYOUT  (unchanged)
-               ════════════════════════════════════════ */
-            <View style={{ flex: 1, backgroundColor: '#000' }}>
-              {/* Top bar: page counter + exit button */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingHorizontal: 16,
-                  paddingTop: insets.top + 40,
-                  paddingBottom: 5,
-                }}
-              >
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
-                  {currentGlobalPageNumber} / {totalGlobalPages}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setIsFullscreen(false)}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: 'rgba(255,255,255,0.15)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <IonIcon name="contract" size={20} color="#fff" />
-                </TouchableOpacity>
-              </View>
-
-              {/* Image with prev/next arrows */}
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                {currentCategoryImages[currentSlideIndex] && (
-                  <>
-                    <Image
-                      source={currentCategoryImages[currentSlideIndex]}
-                      style={{ width: '100%', height: '100%' }}
-                      resizeMode="contain"
-                      onLoadStart={() => setFsImageLoading(true)}
-                      onLoad={() => setFsImageLoading(false)}
-                      onError={() => setFsImageLoading(false)}
-                    />
-                    {fsImageLoading && (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: 'rgba(0,0,0,0.45)',
-                        }}
-                      >
-                        <ActivityIndicator size="large" color="#72BD00" />
-                      </View>
-                    )}
-                  </>
-                )}
-
-                {/* Prev Arrow */}
-                <TouchableOpacity
-                  onPress={handlePrev}
-                  disabled={currentGlobalPageNumber === 1}
-                  style={{
-                    position: 'absolute',
-                    left: 12,
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    backgroundColor:
-                      currentGlobalPageNumber === 1
-                        ? 'rgba(255,255,255,0.10)'
-                        : 'rgba(255,255,255,0.22)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <IonIcon
-                    name="chevron-back"
-                    size={22}
-                    color={currentGlobalPageNumber === 1 ? 'rgba(255,255,255,0.35)' : '#fff'}
-                  />
-                </TouchableOpacity>
-
-                {/* Next Arrow */}
-                <TouchableOpacity
-                  onPress={handleNext}
-                  disabled={currentGlobalPageNumber === totalGlobalPages}
-                  style={{
-                    position: 'absolute',
-                    right: 12,
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    backgroundColor:
-                      currentGlobalPageNumber === totalGlobalPages
-                        ? 'rgba(255,255,255,0.10)'
-                        : 'rgba(255,255,255,0.22)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <IonIcon
-                    name="chevron-forward"
-                    size={22}
-                    color={
-                      currentGlobalPageNumber === totalGlobalPages
-                        ? 'rgba(255,255,255,0.35)'
-                        : '#fff'
-                    }
-                  />
-                </TouchableOpacity>
-              </View>
-
-              {/* Bottom: category tabs + interactive tools button */}
-              <View
-                style={{
-                  backgroundColor: '#111',
-                  paddingBottom: insets.bottom + 4,
-                  borderTopWidth: 1,
-                  borderTopColor: 'rgba(255,255,255,0.08)',
-                }}
-              >
-                {/* Category tab strip */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10 }}
-                >
-                  {CATEGORIES.map((cat) => {
-                    const isActive = activeCategory === cat.id;
-                    return (
-                      <TouchableOpacity
-                        key={cat.id}
-                        onPress={() => {
-                          setFsImageLoading(true);
-                          setActiveCategory(cat.id);
-                          setCurrentSlideIndex(0);
-                        }}
-                        style={{
-                          marginRight: 8,
-                          paddingHorizontal: 14,
-                          paddingVertical: 7,
-                          borderRadius: 20,
-                          backgroundColor: isActive ? colors.primary.main : 'rgba(255,255,255,0.10)',
-                          borderWidth: isActive ? 0 : 1,
-                          borderColor: 'rgba(255,255,255,0.15)',
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: '600',
-                            color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
-                          }}
-                        >
-                          {cat.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Interactive Tools button (Rep Mode only) */}
-                {viewMode === 'rep' && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setIsFullscreen(false);
-                      setTimeout(toggleTools, 300);
-                    }}
-                    style={{
-                      marginHorizontal: 12,
-                      marginBottom: 6,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      paddingVertical: 12,
-                      borderRadius: 10,
-                      backgroundColor: '#F0FAE8',
-                      borderWidth: 1,
-                      borderColor: colors.primary.main,
-                    }}
-                  >
-                    <IonIcon
-                      name="chevron-up"
-                      size={18}
-                      color={colors.primary.main}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={{ color: colors.primary.main, fontWeight: '700', fontSize: 13 }}>
-                      Interactive Tools
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          )}
         </Modal>
 
         {/* Full Screen Image Preview */}

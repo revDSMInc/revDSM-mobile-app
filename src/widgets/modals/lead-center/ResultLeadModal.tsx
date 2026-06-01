@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, Platform, ActivityIndicator, StyleSheet } from 'react-native';
+import { BlurView } from '@react-native-community/blur';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -62,7 +63,19 @@ export const ResultLeadModal = ({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <View className="flex-1 justify-end bg-black/40">
+      <View className="flex-1 justify-end">
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        >
+          <BlurView
+            style={StyleSheet.absoluteFill}
+            blurType={isDark ? 'dark' : 'light'}
+            blurAmount={10}
+            reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+          />
+        </TouchableOpacity>
         <View
           className="w-full rounded-t-[32px] px-6 pt-5 pb-8"
           style={{ backgroundColor: isDark ? colors.surface : colors.background }}

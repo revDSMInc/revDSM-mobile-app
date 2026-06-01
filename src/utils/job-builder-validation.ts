@@ -352,6 +352,86 @@ export const validateMisc = (data: any, calculatorData: any): ValidationResult =
   return { valid: true };
 };
 
+export const validateLighting = (data: any, calculatorData: any): ValidationResult => {
+  const getExtrasVal = (key: string) => {
+    if (!calculatorData) return 0;
+    const lower = key.toLowerCase();
+    const rk = Object.keys(calculatorData).find((k) => k.toLowerCase() === lower);
+    const rv = rk ? n(calculatorData[rk]) : 0;
+    if (rv > 0) return rv;
+    const extras = calculatorData.extras || {};
+    const ek = Object.keys(extras).find((k) => k.toLowerCase() === lower);
+    const ev = ek ? n(extras[ek]) : 0;
+    if (ev > 0) return ev;
+    const inputs = calculatorData.inputs || {};
+    const ik = Object.keys(inputs).find((k) => k.toLowerCase() === lower);
+    return ik ? n(inputs[ik]) : 0;
+  };
+
+  const story1Footage = getExtrasVal('lighting1stStory');
+  const story2Footage = getExtrasVal('lighting2ndStory');
+  const story3Footage = getExtrasVal('lighting3rdStory');
+
+  const hasLightingFootage = story1Footage > 0 || story2Footage > 0 || story3Footage > 0;
+  const hasExtrasValue = [
+    getExtrasVal('lightingBoosterBox'),
+    getExtrasVal('lightingControlBox'),
+    getExtrasVal('lightingElectricalOutlet'),
+    getExtrasVal('lightingWifiExtender'),
+  ].some((v) => v > 0);
+
+  if (!hasLightingFootage && !hasExtrasValue) return { valid: true };
+
+  const combinations = data.combinations || [];
+  if (combinations.length === 0) {
+    return { valid: false, error: 'At least one lighting combination required' };
+  }
+
+  for (const combo of combinations) {
+    if (
+      !combo.trackColor ||
+      !combo.wireColor ||
+      !combo.trackMaterial ||
+      !combo.mountingLocation ||
+      !combo.substrate
+    ) {
+      return {
+        valid: false,
+        error: 'Color, Wire, Material, Location, and Substrate required for all combinations',
+      };
+    }
+  }
+
+  const calculateAllocatedFootage = (storyIndex: number) => {
+    return combinations.reduce((total: number, combo: any) => {
+      const storyMeasurements = (combo.measurements || []).slice(storyIndex * 6, (storyIndex + 1) * 6);
+      return total + storyMeasurements.reduce((sum: number, val: any) => sum + n(val), 0);
+    }, 0);
+  };
+
+  const storyFootages = [story1Footage, story2Footage, story3Footage];
+  const storyLabels = ['1st Story', '2nd Story', '3rd Story'];
+
+  for (let s = 0; s < 3; s++) {
+    const avail = storyFootages[s];
+    if (avail > 0) {
+      const allocated = calculateAllocatedFootage(s);
+      const remaining = avail - allocated;
+      if (Math.abs(remaining) > 0.1) {
+        return {
+          valid: false,
+          error:
+            remaining > 0
+              ? `Lighting ${storyLabels[s]}: ${remaining.toFixed(1)}ft remaining`
+              : `Lighting ${storyLabels[s]}: Over-allocated by ${Math.abs(remaining).toFixed(1)}ft`,
+        };
+      }
+    }
+  }
+
+  return { valid: true };
+};
+
 export const validateStep = (
   stepId: string,
   jobState: any,
@@ -361,6 +441,7 @@ export const validateStep = (
   if (stepId === 'leaffilter') return validateLeafFilter(jobState.leaffilter || {}, calculatorData);
   if (stepId === 'soffit') return validateSoffit(jobState.soffit || {}, calculatorData);
   if (stepId === 'fascia') return validateFascia(jobState.fascia || {}, calculatorData);
+  if (stepId === 'lighting') return validateLighting(jobState.lighting || {}, calculatorData);
   if (stepId === 'additional') return validateMisc(jobState.additional || {}, calculatorData);
   return { valid: true };
 };

@@ -4,6 +4,7 @@ import { calculateResultUtil } from '../utils/calculator/calculation-results-uti
 import { getUpdatedCalculatorTitles } from '../utils/calculator/tab-naming.utils';
 import { pricing, extrasList, extrasList50 } from '../utils/calculator/pricing-data';
 import { paymentPlans } from '../utils/calculator/payment-plans';
+import { getDefaultPaymentMethod } from '../utils/calculator/lowes-payment-util';
 import { LeadService } from '../services/api/leads';
 import { Alert } from 'react-native';
 
@@ -39,6 +40,7 @@ const INITIAL_INPUTS = {
 const INITIAL_EXTRAS = extrasList.reduce((acc: any, curr) => ({ ...acc, [curr.id]: '' }), {});
 
 export const useDealCalculator = (lead: any) => {
+  const isLowesLead = lead?.lowesLead === true;
   const [calculators, setCalculators] = useState<any[]>([
     {
       _id: null,
@@ -69,6 +71,7 @@ export const useDealCalculator = (lead: any) => {
       paymentPlans,
       markupKey: '50',
       hideScreens: true,
+      isLowesLead,
     });
     const finalTotal = calculateResultUtil({
       details: active,
@@ -78,6 +81,7 @@ export const useDealCalculator = (lead: any) => {
       paymentPlans,
       markupKey: inputs.markup || '100',
       hideScreens: true,
+      isLowesLead,
     });
     const price65 = calculateResultUtil({
       details: active,
@@ -87,6 +91,7 @@ export const useDealCalculator = (lead: any) => {
       paymentPlans,
       markupKey: '65',
       hideScreens: true,
+      isLowesLead,
     });
     const price100 = calculateResultUtil({
       details: active,
@@ -96,6 +101,7 @@ export const useDealCalculator = (lead: any) => {
       paymentPlans,
       markupKey: '100',
       hideScreens: true,
+      isLowesLead,
     });
 
     const items: any[] = [];
@@ -125,7 +131,12 @@ export const useDealCalculator = (lead: any) => {
     extrasList.forEach((e: any) => {
       const val = n(extras[e.id]);
       if (val > 0)
-        items.push({ label: e.label, value: val, category: e.category || 'Additional Services' });
+        items.push({
+          label: e.label,
+          value: val,
+          category: e.category || 'Additional Services',
+          unit: e.unit,
+        });
     });
 
     if (n(inputs.extraLabor)) {
@@ -244,7 +255,7 @@ export const useDealCalculator = (lead: any) => {
             filter45Ft3: String(c.filter45Ft3 || c.filter_45_footage_3 || ''),
             ckToInstallers: String(c.ckToInstallers || c.check_to_installers || ''),
             extraLabor: String(c.extraLabor || c.extra_labor_hours || ''),
-            paymentPlan: c.paymentMethod || 'check',
+            paymentPlan: getDefaultPaymentMethod(isLowesLead, c.paymentMethod),
             markup: String(c.pricemarkup || '100'),
             discountPercentage: Number(c.discountPercentage || 15),
             isDefaultDiscount: !!c.isDefaultDiscount,
@@ -291,6 +302,34 @@ export const useDealCalculator = (lead: any) => {
       fetchCalculators();
     }
   }, [lead?._id]);
+
+  useEffect(() => {
+    const activeCalc = calculators[activeIdx];
+    if (!activeCalc) return;
+    const extras = activeCalc.extras || {};
+    const hasStoryFt = ['lighting1stStory', 'lighting2ndStory', 'lighting3rdStory'].some(
+      (f) => Number(extras[f]) > 0
+    );
+    const expectedControlBox = hasStoryFt ? '1' : '';
+    const currentControlBox = String(extras.lightingControlBox || '');
+
+    if (currentControlBox !== expectedControlBox) {
+      setCalculators((prev) => {
+        const next = [...prev];
+        if (!next[activeIdx]) return prev;
+        const current = { ...next[activeIdx] };
+        current.extras = { ...current.extras, lightingControlBox: expectedControlBox };
+        next[activeIdx] = current;
+        return next;
+      });
+    }
+  }, [
+    activeIdx,
+    calculators.length,
+    calculators[activeIdx]?.extras?.lighting1stStory,
+    calculators[activeIdx]?.extras?.lighting2ndStory,
+    calculators[activeIdx]?.extras?.lighting3rdStory,
+  ]);
 
   const updateActive = useCallback(
     (patch: any) => {
@@ -388,8 +427,18 @@ export const useDealCalculator = (lead: any) => {
   };
 
   useEffect(() => {
-    if (!latestActiveRef.current) latestActiveRef.current = active;
-  }, [active]);
+    if (active) {
+      const currentInState = calculators.find((c) => c._id === latestActiveRef.current?._id);
+      if (currentInState) {
+        latestActiveRef.current = currentInState;
+        if (currentInState.isRolloutConfirmed) {
+          isPendingSave.current = false;
+        }
+      } else {
+        latestActiveRef.current = active;
+      }
+    }
+  }, [calculators, active]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -416,11 +465,13 @@ export const useDealCalculator = (lead: any) => {
       }`.trim();
       const initialTitle = leadName || `${calculators.length + 1}`;
 
+      const defaultPay = getDefaultPaymentMethod(isLowesLead);
       const fullPayload = {
         title: '.',
         position: calculators.length,
         ...INITIAL_INPUTS,
-        paymentMethod: 'check',
+        paymentPlan: defaultPay,
+        paymentMethod: defaultPay,
         pricemarkup: '100',
         ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
         price: 0,
@@ -435,7 +486,7 @@ export const useDealCalculator = (lead: any) => {
             {
               _id: newC._id,
               name: newC.title || '.',
-              inputs: INITIAL_INPUTS,
+              inputs: { ...INITIAL_INPUTS, paymentPlan: defaultPay },
               extras: INITIAL_EXTRAS,
               discounts: { seniorVet: false, preOrder: false },
               price: 0,

@@ -53,6 +53,10 @@ const INITIAL_JOB_STATE = {
   },
   soffit: { vinyl: { type: '' }, porch: { location: [] }, nailer: { type: '' } },
   fascia: { wrap: { type: '' }, boards: { boardType: '' }, aluminumBoards: { footage: '' } },
+  lighting: {
+    combinations: [],
+    extras: { boosterBox: 0, controlBox: 0, electricalOutlet: 0, wifiExtender: 0 },
+  },
   additional: { extraLabor: 0 },
   scheduleTime: null,
 };
@@ -352,10 +356,11 @@ export default function LFCalculator({ route }: any) {
       const res = await LeadService.getLeadOutcome(currentLead._id);
       const data = res.data?.data || res.data;
       if (data) {
-        setOutcomeStatus(data.status);
+        const outcome = data.outcome || data.leadData || data;
+        setOutcomeStatus(outcome.status || outcome.result);
         setOutcomeForm({
           ...outcomeForm,
-          ...data.leadData,
+          ...outcome,
         });
       }
     } catch (e) {
@@ -382,6 +387,7 @@ export default function LFCalculator({ route }: any) {
             expanded={expanded}
             onToggle={(id: string) => setExpanded({ ...expanded, [id]: !expanded[id] })}
             onUpdate={updateActive}
+            readOnly={!!active?.isRolloutConfirmed}
             results={results}
             onClose={onClose}
             handleAddJobToTracker={handleAddJobToTracker}
@@ -462,6 +468,7 @@ export default function LFCalculator({ route }: any) {
           activeCalc={active}
           results={results}
           calculators={calculators}
+          setCalculators={setCalculators}
           setActiveIdx={setActiveIdx}
           activeIdx={activeIdx}
           setCurrentView={setCurrentView}
@@ -507,6 +514,7 @@ export default function LFCalculator({ route }: any) {
         onResetJobBuilder={handleResetJobBuilder}
         loading={loading}
         isJobBuilderSubmitted={isJobBuilderSubmitted}
+        lead={currentLead}
       />
 
       <Modal visible={currentView === 'picker'} transparent animationType="slide">

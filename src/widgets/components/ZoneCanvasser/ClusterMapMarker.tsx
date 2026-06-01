@@ -7,22 +7,21 @@ type Props = {
   size: ClusterSize;
 };
 
-/** Leaflet markercluster styles from web buildings-layer.js */
-const CLUSTER_STYLES: Record<
-  ClusterSize,
-  { outer: string; inner: string }
-> = {
+const CLUSTER_STYLES: Record<ClusterSize, { outer: string; inner: string; text: string }> = {
   small: {
     outer: 'rgba(181, 226, 140, 0.6)',
     inner: 'rgba(110, 204, 57, 0.6)',
+    text: '#000000',
   },
   medium: {
     outer: 'rgba(241, 211, 87, 0.6)',
     inner: 'rgba(240, 194, 12, 0.6)',
+    text: '#000000',
   },
   large: {
     outer: 'rgba(253, 156, 115, 0.6)',
     inner: 'rgba(241, 128, 23, 0.6)',
+    text: '#000000',
   },
 };
 
@@ -32,26 +31,18 @@ export function ClusterMapMarker({ count, size }: Props) {
   const label = count > 999 ? '999+' : String(count);
 
   return (
-    <View style={styles.outer} accessibilityLabel={`${count} buildings`}>
-      <View style={[styles.outerRing, { backgroundColor: colors.outer }]}>
-        <View style={[styles.inner, { backgroundColor: colors.inner }]}>
-          <Text style={styles.label}>{label}</Text>
-        </View>
+    <View style={[styles.outerRing, { backgroundColor: colors.outer }]}>
+      <View style={[styles.inner, { backgroundColor: colors.inner }]}>
+        <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
       </View>
     </View>
   );
 }
 
-const OUTER = 40;
+const OUTER = 44;
 const INNER = 30;
 
 const styles = StyleSheet.create({
-  outer: {
-    width: OUTER,
-    height: OUTER,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   outerRing: {
     width: OUTER,
     height: OUTER,
@@ -67,9 +58,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   label: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '900',
     textAlign: 'center',
+    includeFontPadding: false,
   },
 });
+

@@ -5,7 +5,6 @@ import { ResultsModal } from './ResultsModal';
 import { ActionModal } from './ActionModal';
 import { SubmittedLeadPopup } from './SubmittedLeadPopup';
 import { ZoneStatsPopup } from './ZoneStatsPopup';
-import { SearchLocationModal } from './SearchLocationModal';
 import type { ZoneCanvasserBuilding, MapCoordinate } from '../../../types/zone-canvasser';
 
 type Props = {
@@ -22,16 +21,12 @@ type Props = {
   leadCreateOpen: boolean;
   submittedLeadPopupOpen: boolean;
   zoneStatsPopupOpen: boolean;
-  searchModalVisible: boolean;
-  searchText: string;
   setPropertyModalOpen: (v: boolean) => void;
   setResultsModalOpen: (v: boolean) => void;
   setActionModalOpen: (v: boolean) => void;
   setLeadCreateOpen: (v: boolean) => void;
   setSubmittedLeadPopupOpen: (v: boolean) => void;
   setZoneStatsPopupOpen: (v: boolean) => void;
-  setSearchModalVisible: (v: boolean) => void;
-  setSearchText: (text: string) => void;
   setSelectedBuilding: (b: ZoneCanvasserBuilding | null) => void;
   setSelectedZone: (z: any) => void;
   setPropertyData: (d: any) => void;
@@ -42,7 +37,6 @@ type Props = {
   onLeadCreateSuccess: (lead: any) => void;
   onGoBackEdit: () => void;
   onStartAppointment: () => void | Promise<void>;
-  onLocationSearch: () => void;
 };
 
 export function ZoneCanvasserModals({
@@ -59,16 +53,12 @@ export function ZoneCanvasserModals({
   leadCreateOpen,
   submittedLeadPopupOpen,
   zoneStatsPopupOpen,
-  searchModalVisible,
-  searchText,
   setPropertyModalOpen,
   setResultsModalOpen,
   setActionModalOpen,
   setLeadCreateOpen,
   setSubmittedLeadPopupOpen,
   setZoneStatsPopupOpen,
-  setSearchModalVisible,
-  setSearchText,
   setSelectedBuilding,
   setSelectedZone,
   setPropertyData,
@@ -79,7 +69,6 @@ export function ZoneCanvasserModals({
   onLeadCreateSuccess,
   onGoBackEdit,
   onStartAppointment,
-  onLocationSearch,
 }: Props) {
   const address =
     propertyData?.formattedAddress ||
@@ -184,13 +173,6 @@ export function ZoneCanvasserModals({
         />
       )}
 
-      <SearchLocationModal
-        visible={searchModalVisible}
-        searchText={searchText}
-        onChangeText={setSearchText}
-        onSearch={onLocationSearch}
-        onClose={() => setSearchModalVisible(false)}
-      />
     </>
   );
 }

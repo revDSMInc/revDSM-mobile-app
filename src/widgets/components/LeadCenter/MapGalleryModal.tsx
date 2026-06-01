@@ -12,6 +12,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-na
 import { BeforeAfterPresentModal } from './BeforeAfterPresentModal';
 import { BeforeImageModal } from '../../modals/BeforeImageModal';
 import { AfterImageModal } from '../../modals/AfterImageModal';
+import Logo from "../../../assets/svgs/logo"
 
 const { width, height } = Dimensions.get('window');
 
@@ -292,8 +293,7 @@ export const MapGalleryModal = ({
             {/* Header */}
             <View className="p-6 flex-row justify-between items-center">
               <View className="flex-row items-center">
-                <Text className="text-[28px] font-black text-[#65C216]">rev</Text>
-                <Text className="text-[28px] font-black text-slate-800">DSM</Text>
+                <Logo width={120} />
               </View>
               <View className="flex-row items-center gap-2">
                 {/* Subtle signing indicator — non-blocking */}
@@ -310,12 +310,12 @@ export const MapGalleryModal = ({
             </View>
 
             {/* Read-only badge */}
-            {!isMyJob && (
+            {/* {!isMyJob && (
               <View className="mx-6 mb-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl flex-row items-center gap-2">
                 <Icon name="eye-outline" size={14} color="#94a3b8" />
                 <Text className="text-[11px] font-bold text-slate-400">View only — not your job</Text>
               </View>
-            )}
+            )} */}
 
             <ScrollView className="px-6 pb-2">
               <View className="flex-row gap-4">

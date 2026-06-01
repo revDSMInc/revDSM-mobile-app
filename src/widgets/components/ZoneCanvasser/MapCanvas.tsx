@@ -27,6 +27,7 @@ type Props = {
   onTouchStart: (e: any) => void;
   onTouchMove: (e: any) => void;
   onTouchEnd: () => void;
+  onRegionChangeComplete?: (region: Region) => void;
 };
 
 const DEFAULT_REGION: Region = {
@@ -73,6 +74,7 @@ export function MapCanvas({
   onTouchStart,
   onTouchMove,
   onTouchEnd,
+  onRegionChangeComplete,
 }: Props) {
   const rectangleDrawing = isDrawingMode && drawType === 'rectangle';
   const [mapRegion, setMapRegion] = useState<Region>(
@@ -80,9 +82,13 @@ export function MapCanvas({
   );
   const clusterIndexRef = useRef<Supercluster | null>(null);
 
-  const handleRegionChangeComplete = useCallback((region: Region) => {
-    setMapRegion(region);
-  }, []);
+  const handleRegionChangeComplete = useCallback(
+    (region: Region) => {
+      setMapRegion(region);
+      onRegionChangeComplete?.(region);
+    },
+    [onRegionChangeComplete]
+  );
 
   const clusteredMarkers = useMemo(() => {
     const region = mapRegion ?? initialRegion ?? DEFAULT_REGION;
@@ -154,20 +160,33 @@ export function MapCanvas({
         >
           {isDrawingMode && drawCoordinates.length > 0 && (
             <>
-              <Polyline coordinates={drawCoordinates} strokeColor="#FF5630" strokeWidth={3} />
+              <Polyline
+                key="draft-polyline"
+                coordinates={drawCoordinates}
+                strokeColor="#FF5630"
+                strokeWidth={3}
+              />
               {drawCoordinates.length >= 3 && (
                 <Polygon
+                  key="draft-polygon"
                   coordinates={drawCoordinates}
                   fillColor="rgba(255, 86, 48, 0.2)"
                   strokeColor="#FF5630"
                   strokeWidth={1}
                 />
               )}
-              {drawCoordinates.map((coord, idx) => (
-                <Marker key={`draft-${idx}`} coordinate={coord} anchor={{ x: 0.5, y: 0.5 }}>
-                  <View className="w-3 h-3 rounded-full bg-[#FF5630] border-2 border-white" />
-                </Marker>
-              ))}
+              {drawCoordinates.map((coord, idx) =>
+                coord?.latitude != null && coord?.longitude != null ? (
+                  <Marker
+                    key={`draft-dot-${idx}`}
+                    coordinate={coord}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                    tracksViewChanges={false}
+                  >
+                    <View style={styles.draftDot} />
+                  </Marker>
+                ) : null
+              )}
             </>
           )}
 
@@ -221,7 +240,7 @@ export function MapCanvas({
                   coordinate={{ latitude: item.latitude, longitude: item.longitude }}
                   onPress={() => handleClusterPress(item.clusterId, item.buildings)}
                   anchor={{ x: 0.5, y: 0.5 }}
-                  tracksViewChanges={false}
+                  tracksViewChanges={true}
                 >
                   <ClusterMapMarker count={item.count} size={item.size} />
                 </Marker>
@@ -232,3 +251,14 @@ export function MapCanvas({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  draftDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FF5630',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+});

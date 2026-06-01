@@ -10,11 +10,18 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
   Switch,
+  Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { demoReasons } from '../../components/dealcenter/ResultViews';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
+import {
+  getOutcomeDownPaymentMethods,
+  getRolloutPaymentCategories,
+  isPlanBelowMinPrice,
+  getBelowMinMessage,
+} from '../../../utils/calculator/lowes-payment-util';
 import RNFlashMessage from 'react-native-flash-message';
 import { useRef } from 'react';
 
@@ -35,15 +42,10 @@ interface OutcomeModalProps {
   onResetJobBuilder?: () => void;
   loading?: boolean;
   isJobBuilderSubmitted?: boolean;
+  lead?: any;
 }
 
 const oneLegOptions = ['No', 'MR', 'MRS'];
-
-const downPaymentMethods = [
-  { label: 'Check (0% Fee)', value: 'check' },
-  { label: 'MC/VISA/DSCVR (3.00% Fee)', value: 'card' },
-  { label: 'AMEX (5.00% Fee)', value: 'amex' },
-];
 
 export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   visible,
@@ -62,8 +64,14 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   onResetJobBuilder,
   loading,
   isJobBuilderSubmitted,
+  lead,
 }) => {
   const { colors } = useTheme();
+  const isLowesLead = lead?.lowesLead === true;
+  const contractPrice = Number(
+    String(outcomeForm.originalContractPrice || '0').replace(/[^0-9.]/g, '')
+  );
+  const downPaymentMethods = getOutcomeDownPaymentMethods(isLowesLead);
   const [expanded, setExpanded] = useState<string | null>(null);
   const flashRef = useRef<any>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -462,171 +470,66 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         )}
                         {expanded === 'balMethod' && (
                           <View className="border border-[#1C252E] rounded-lg bg-[#F8FAFC] shadow-sm mt-1 mb-4 overflow-hidden">
-                            <View>
-                              {/* Standard Methods */}
-                              {['check', 'mcVisaDscvr', 'amex'].map((key) => {
-                                const plan = paymentPlans[key];
-                                if (!plan) return null;
-                                return (
-                                  <TouchableOpacity
-                                    key={key}
-                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                      outcomeForm.balancePaymentMethod === key
-                                        ? 'rounded-lg bg-[#F4F6F8]'
-                                        : ''
-                                    }`}
-                                    onPress={() => {
-                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
-                                      setExpanded(null);
-                                    }}
-                                  >
-                                    <View className="flex-1">
-                                      <Text
-                                        className={`text-[13px] font-semibold ${
-                                          outcomeForm.balancePaymentMethod === key
-                                            ? 'text-[#1C252E]'
-                                            : 'text-[#637381]'
-                                        }`}
-                                      >
-                                        {plan.label}
-                                      </Text>
-                                    </View>
-                                    {outcomeForm.balancePaymentMethod === key && (
-                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                    )}
-                                  </TouchableOpacity>
-                                );
-                              })}
-
-                              {/* GreenSky Plans */}
-                              <View className="bg-[#d9ead3] px-4 py-1.5">
-                                <Text className="text-[11px] font-bold text-black uppercase">
-                                  GreenSky Plans
-                                </Text>
-                              </View>
-                              {Object.entries(paymentPlans)
-                                .filter(([key]) => key.startsWith('greensky'))
-                                .map(([key, plan]) => (
-                                  <TouchableOpacity
-                                    key={key}
-                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                      outcomeForm.balancePaymentMethod === key
-                                        ? 'rounded-lg bg-[#F4F6F8]'
-                                        : ''
-                                    }`}
-                                    onPress={() => {
-                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
-                                      setExpanded(null);
-                                    }}
-                                  >
-                                    <View className="flex-1">
-                                      <Text
-                                        className={`text-[13px] font-semibold ${
-                                          outcomeForm.balancePaymentMethod === key
-                                            ? 'text-[#1C252E]'
-                                            : 'text-[#637381]'
-                                        }`}
-                                      >
-                                        {plan.label}
-                                      </Text>
-                                      {plan.displayMonths && (
-                                        <Text className="text-[10px] text-[#919EAB]">
-                                          {plan.displayMonths}
+                            {getRolloutPaymentCategories(isLowesLead).map((cat) => (
+                              <View key={cat.title}>
+                                <View className={`${cat.bg} px-4 py-1.5`}>
+                                  <Text className="text-[11px] font-bold text-black uppercase">
+                                    {cat.title}
+                                  </Text>
+                                </View>
+                                {cat.plans.map((key) => {
+                                  const plan = paymentPlans[key];
+                                  if (!plan) return null;
+                                  const belowMin = isPlanBelowMinPrice(key, contractPrice);
+                                  return (
+                                    <TouchableOpacity
+                                      key={key}
+                                      className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
+                                        outcomeForm.balancePaymentMethod === key
+                                          ? 'rounded-lg bg-[#F4F6F8]'
+                                          : belowMin
+                                          ? 'opacity-50'
+                                          : ''
+                                      }`}
+                                      onPress={() => {
+                                        if (belowMin) {
+                                          Alert.alert(
+                                            'Payment plan',
+                                            getBelowMinMessage(key, contractPrice)
+                                          );
+                                          return;
+                                        }
+                                        setOutcomeForm({
+                                          ...outcomeForm,
+                                          balancePaymentMethod: key,
+                                        });
+                                        setExpanded(null);
+                                      }}
+                                    >
+                                      <View className="flex-1">
+                                        <Text
+                                          className={`text-[13px] font-semibold ${
+                                            outcomeForm.balancePaymentMethod === key
+                                              ? 'text-[#1C252E]'
+                                              : 'text-[#637381]'
+                                          }`}
+                                        >
+                                          {plan.label}
                                         </Text>
+                                        {belowMin && (
+                                          <Text className="text-[10px] text-red-500">
+                                            Requires ${plan.minPrice?.toLocaleString()}+
+                                          </Text>
+                                        )}
+                                      </View>
+                                      {outcomeForm.balancePaymentMethod === key && (
+                                        <Ionicons name="checkmark" size={16} color="#1C252E" />
                                       )}
-                                    </View>
-                                    {outcomeForm.balancePaymentMethod === key && (
-                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                    )}
-                                  </TouchableOpacity>
-                                ))}
-
-                              {/* Wells Fargo Plans */}
-                              <View className="bg-[#f4cccc] px-4 py-1.5">
-                                <Text className="text-[11px] font-bold text-black uppercase">
-                                  Wells Fargo Plans
-                                </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
                               </View>
-                              {Object.entries(paymentPlans)
-                                .filter(([key]) => key.startsWith('wf'))
-                                .map(([key, plan]) => (
-                                  <TouchableOpacity
-                                    key={key}
-                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                      outcomeForm.balancePaymentMethod === key
-                                        ? 'rounded-lg bg-[#F4F6F8]'
-                                        : ''
-                                    }`}
-                                    onPress={() => {
-                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
-                                      setExpanded(null);
-                                    }}
-                                  >
-                                    <View className="flex-1">
-                                      <Text
-                                        className={`text-[13px] font-semibold ${
-                                          outcomeForm.balancePaymentMethod === key
-                                            ? 'text-[#1C252E]'
-                                            : 'text-[#637381]'
-                                        }`}
-                                      >
-                                        {plan.label}
-                                      </Text>
-                                      {plan.displayMonths && (
-                                        <Text className="text-[10px] text-[#919EAB]">
-                                          {plan.displayMonths}
-                                        </Text>
-                                      )}
-                                    </View>
-                                    {outcomeForm.balancePaymentMethod === key && (
-                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                    )}
-                                  </TouchableOpacity>
-                                ))}
-
-                              {/* Other Plans */}
-                              <View className="bg-[#c9daf8] px-4 py-1.5">
-                                <Text className="text-[11px] font-bold text-black uppercase">
-                                  Other Plans
-                                </Text>
-                              </View>
-                              {Object.entries(paymentPlans)
-                                .filter(
-                                  ([key]) =>
-                                    !key.startsWith('greensky') &&
-                                    !key.startsWith('wf') &&
-                                    !['check', 'mcVisaDscvr', 'amex'].includes(key)
-                                )
-                                .map(([key, plan]) => (
-                                  <TouchableOpacity
-                                    key={key}
-                                    className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                      outcomeForm.balancePaymentMethod === key
-                                        ? 'rounded-lg bg-[#F4F6F8]'
-                                        : ''
-                                    }`}
-                                    onPress={() => {
-                                      setOutcomeForm({ ...outcomeForm, balancePaymentMethod: key });
-                                      setExpanded(null);
-                                    }}
-                                  >
-                                    <View className="flex-1">
-                                      <Text
-                                        className={`text-[13px] font-semibold ${
-                                          outcomeForm.balancePaymentMethod === key
-                                            ? 'text-[#1C252E]'
-                                            : 'text-[#637381]'
-                                        }`}
-                                      >
-                                        {plan.label}
-                                      </Text>
-                                    </View>
-                                    {outcomeForm.balancePaymentMethod === key && (
-                                      <Ionicons name="checkmark" size={16} color="#1C252E" />
-                                    )}
-                                  </TouchableOpacity>
-                                ))}
-                            </View>
+                            ))}
                           </View>
                         )}
                       </View>
@@ -712,26 +615,38 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
                   {/* Categories Tags */}
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
-                    {categories.map((cat: any) => (
-                      <View
-                        key={cat}
-                        className="flex-row items-center px-3 py-1.5 rounded-lg mr-2"
-                        style={{ backgroundColor: cat === 'Gutters' ? '#EBF8FF' : '#E6FFFA' }}
-                      >
-                        <Ionicons
-                          name={cat === 'Gutters' ? 'home' : 'leaf'}
-                          size={12}
-                          color={cat === 'Gutters' ? '#3182CE' : '#38A169'}
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text
-                          className="text-[12px] font-bold"
-                          style={{ color: cat === 'Gutters' ? '#3182CE' : '#38A169' }}
+                    {categories.map((cat: any) => {
+                      const catConfig: Record<string, { icon: string; color: string; bg: string }> = {
+                        Gutters:             { icon: 'home',                    color: '#3182CE', bg: '#EBF8FF' },
+                        LeafFilter:          { icon: 'leaf',                    color: '#38A169', bg: '#E6FFFA' },
+                        Soffit:              { icon: 'construct',               color: '#00B8D9', bg: '#E0F8FB' },
+                        Fascia:              { icon: 'layers',                  color: '#8E33FF', bg: '#F2E8FF' },
+                        Lighting:            { icon: 'bulb',                    color: '#FFAB00', bg: '#FFF8E6' },
+                        'Additional Services': { icon: 'add-circle',           color: '#FFAB00', bg: '#FFF8E6' },
+                        Miscellaneous:       { icon: 'ellipsis-horizontal-circle', color: '#637381', bg: '#F4F6F8' },
+                      };
+                      const cfg = catConfig[cat] || { icon: 'list', color: '#637381', bg: '#F4F6F8' };
+                      return (
+                        <View
+                          key={cat}
+                          className="flex-row items-center px-3 py-1.5 rounded-lg mr-2"
+                          style={{ backgroundColor: cfg.bg }}
                         >
-                          {cat}
-                        </Text>
-                      </View>
-                    ))}
+                          <Ionicons
+                            name={cfg.icon}
+                            size={12}
+                            color={cfg.color}
+                            style={{ marginRight: 6 }}
+                          />
+                          <Text
+                            className="text-[12px] font-bold"
+                            style={{ color: cfg.color }}
+                          >
+                            {cat}
+                          </Text>
+                        </View>
+                      );
+                    })}
                   </ScrollView>
 
                   {/* Items List */}
@@ -743,28 +658,38 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         }
                         return true;
                       })
-                      .map((item: any, idx: number) => (
-                      <View key={idx} className="bg-white rounded-lg p-3 flex-row items-center">
-                        <View
-                          className="w-7 h-7 rounded-full items-center justify-center mr-3"
-                          style={{
-                            backgroundColor: item.category === 'Gutters' ? '#E1F5FE' : '#E8F5E9',
-                          }}
-                        >
-                          <Ionicons
-                            name={item.category === 'Gutters' ? 'home' : 'leaf'}
-                            size={14}
-                            color={item.category === 'Gutters' ? '#00B8D9' : '#22C55E'}
-                          />
-                        </View>
-                        <Text
-                          className="text-[13px] font-bold text-[#1C252E] flex-1"
-                          numberOfLines={1}
-                        >
-                          {item.value}' {item.label}
-                        </Text>
-                      </View>
-                    ))}
+                      .map((item: any, idx: number) => {
+                        const itemCatConfig: Record<string, { icon: string; iconColor: string; bg: string }> = {
+                          Gutters:             { icon: 'home',                    iconColor: '#00B8D9', bg: '#E1F5FE' },
+                          LeafFilter:          { icon: 'leaf',                    iconColor: '#22C55E', bg: '#E8F5E9' },
+                          Soffit:              { icon: 'construct',               iconColor: '#00B8D9', bg: '#E1F5FE' },
+                          Fascia:              { icon: 'layers',                  iconColor: '#8E33FF', bg: '#F2E8FF' },
+                          Lighting:            { icon: 'bulb',                    iconColor: '#FFAB00', bg: '#FFF8E6' },
+                          'Additional Services': { icon: 'add-circle',           iconColor: '#FFAB00', bg: '#FFF8E6' },
+                          Miscellaneous:       { icon: 'ellipsis-horizontal-circle', iconColor: '#637381', bg: '#F4F6F8' },
+                        };
+                        const cfg = itemCatConfig[item.category] || { icon: 'list', iconColor: '#637381', bg: '#F4F6F8' };
+                        return (
+                          <View key={idx} className="bg-white rounded-lg p-3 flex-row items-center">
+                            <View
+                              className="w-7 h-7 rounded-full items-center justify-center mr-3"
+                              style={{ backgroundColor: cfg.bg }}
+                            >
+                              <Ionicons
+                                name={cfg.icon}
+                                size={14}
+                                color={cfg.iconColor}
+                              />
+                            </View>
+                            <Text
+                              className="text-[13px] font-bold text-[#1C252E] flex-1"
+                              numberOfLines={1}
+                            >
+                              {item.value}' {item.label}
+                            </Text>
+                          </View>
+                        );
+                      })}
                   </View>
                 </View>
 

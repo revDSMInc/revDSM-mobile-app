@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,16 +12,16 @@ import {
   Modal,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+import { getScheduledDateTime } from '../../utils/location-util';
 import {
-  calculateDistance,
-  getScheduledDateTime,
-  isSelfGeneratedLead,
-  canCheckIn,
-  isResumeAppointment,
-  GEOFENCE_RADIUS_MILES,
-} from '../../utils/location-util';
+  executeStartAppointmentFlow,
+  logLeadCardSelect,
+  persistActiveLeadId,
+} from '../../utils/lead-activity-log';
+import { logEvent } from '../../services/api/LoggerService';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useLeadsData } from '../../hooks/useLeadsData';
@@ -38,9 +38,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import FontAwesome from 'react-native-vector-icons/FontAwesome5';
 import Geolocation from 'react-native-geolocation-service';
 import { PermissionsAndroid } from 'react-native';
-import { logEvent } from '../../services/api/LoggerService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import ChatService from '../../services/api/ChatService';
+import { consumeZoneCanvasserReopen } from '../../utils/zone-canvasser-session';
 
 export default function LeadsPage() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -55,6 +53,32 @@ export default function LeadsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [zoneCanvasserVisible, setZoneCanvasserVisible] = useState(false);
+
+  const reopenZoneFromParams = route.params?.reopenZoneCanvasser;
+
+  useEffect(() => {
+    if (reopenZoneFromParams) {
+      setZoneCanvasserVisible(true);
+      navigation.setParams({ reopenZoneCanvasser: undefined });
+    }
+  }, [reopenZoneFromParams, navigation]);
+
+  // Fallback: reopen via AsyncStorage when Leads regains focus (web zoneCanvasserOpen flag)
+  useFocusEffect(
+    useCallback(() => {
+      if (reopenZoneFromParams) return undefined;
+      let cancelled = false;
+      (async () => {
+        const shouldReopen = await consumeZoneCanvasserReopen();
+        if (!cancelled && shouldReopen) {
+          setZoneCanvasserVisible(true);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [reopenZoneFromParams])
+  );
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(
     null
@@ -167,113 +191,19 @@ export default function LeadsPage() {
 
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
-
-    // Save leadId for cross-module logging (parity with web localStorage)
-    if (item._id) {
-      await AsyncStorage.setItem('leadId', item._id);
-    }
-
-    // 1. Log Card Select (Web Parity)
-    if (user?._id) {
-      logEvent('select', {
-        user_id: user._id,
-        module_type: 'lead_card',
-        created_by: user._id,
-        meta: {
-          leadId: item._id,
-          contactPerson:
-            `${item.customerDetails?.firstName || ''} ${
-              item.customerDetails?.lastName || ''
-            }`.trim() || 'N/A',
-          address: item.fullAddress || 'N/A',
-          action: 'view_lead_details',
-        },
-      });
-    }
+    await logLeadCardSelect(user, item);
 
     try {
-      let targetLead = item;
-
-      // ── Web Parity: job-card.js handleImageButtonClick() ─────────────────
-      // Determine geofence (1 mile — matches web rangeMiles = 1)
-      const isInRange =
-        userLocation && item.location?.coordinates
-          ? calculateDistance(
-              userLocation.latitude,
-              userLocation.longitude,
-              item.location.coordinates[1], // lat (GeoJSON: [lng, lat])
-              item.location.coordinates[0]  // lng
-            ) <= GEOFENCE_RADIUS_MILES
-          : false;
-
-      const isSelfGen = isSelfGeneratedLead(item);
-      const canCheckInLead = canCheckIn(item);
-      const isResumeLead = isResumeAppointment(item);
-
-      const scheduledTime = getScheduledDateTime(item);
-      const now = new Date();
-      const nowTime = now.getTime();
-      const fifteenMinBefore = scheduledTime ? scheduledTime.getTime() - 15 * 60 * 1000 : null;
-      const oneHourAfter = scheduledTime ? scheduledTime.getTime() + 60 * 60 * 1000 : null;
-      const isBeforeWindow = fifteenMinBefore !== null ? nowTime < fifteenMinBefore : false;
-      const isWithinWindow =
-        fifteenMinBefore !== null && oneHourAfter !== null
-          ? nowTime >= fifteenMinBefore && nowTime <= oneHourAfter
-          : false;
-
-      // ── Determine which log module to fire (mirrors web's per-state logging)
-      let logModule = '';
-
-      if (isResumeLead) {
-        // resume state: RESUME if in range + in window, REVIEW otherwise
-        const shouldResume = isSelfGen ? isInRange : isInRange && isWithinWindow;
-        logModule = shouldResume ? 'lead_resume' : 'lead_review';
-      } else {
-        // preview / first-check-in state: log check_in only when we actually trigger work
-        const shouldCheckIn = isSelfGen
-          ? isInRange && !isBeforeWindow
-          : isInRange && (isWithinWindow || (!isBeforeWindow && !isWithinWindow)); // expired onsite → still allow
-        if (shouldCheckIn) logModule = 'lead_check_in';
-      }
-
-      // ── Only call work API for actionable states (not UPCOMING / resulted)
-      const isResulted = !['lfLead', 'selfGenerated', 'scheduled'].includes(item.status || '');
-      const shouldCallWork = !isResulted && !isBeforeWindow;
-
-      if (shouldCallWork && user?._id) {
-        const res = await workMutation.mutateAsync({ leadId: item._id, userId: user._id });
-
-        // Fire action log after successful work API call
-        if (logModule) {
-          logEvent('click', {
-            user_id: user._id,
-            module_type: logModule,
-            action: `${logModule}_clicked`,
-            created_by: user._id,
-            meta: {
-              leadId: item._id,
-              hasExistingImages: (item.salesPhotos || []).length > 0,
-              isSelfGenerated: isSelfGen,
-            },
-          });
-
-          // Create Chat on first check-in (web parity: CreateChat in handleImageButtonClick)
-          if (logModule === 'lead_check_in' && item._id) {
-            ChatService.createChatForLead(item._id).catch((e) =>
-              console.warn('[Chat] Auto-creation failed:', e)
-            );
-          }
-        }
-
-        const workData = res.data?.data || res.data;
-        if (workData) {
-          targetLead = { ...item, ...workData };
-        }
-      }
-
-      navigation.navigate('LeadCenter', { lead: targetLead });
+      const { lead: targetLead } = await executeStartAppointmentFlow({
+        lead: item,
+        user,
+        userLocation,
+        workMutation,
+      });
+      navigation.navigate('LeadCenter', { lead: targetLead, appointmentStarted: true });
     } catch (err) {
       console.log('Action Error:', err);
+      await persistActiveLeadId(item._id);
       navigation.navigate('LeadCenter', { lead: item });
     }
   };

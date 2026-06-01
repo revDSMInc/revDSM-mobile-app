@@ -13,6 +13,7 @@ const ORDER = [
   'Labor',
   'LF Misc',
   'G Misc',
+  'Lighting',
 ];
 
 /**
@@ -107,6 +108,19 @@ export const getPresentComponents = (details: any) => {
 
   if (hasGMisc && !present.has('G')) {
     present.add('G Misc');
+  }
+
+  // Lighting
+  const hasLighting =
+    hasValue(e.lighting1stStory) ||
+    hasValue(e.lighting2ndStory) ||
+    hasValue(e.lighting3rdStory) ||
+    hasValue(e.lightingWifiExtender) ||
+    hasValue(e.lightingBoosterBox) ||
+    hasValue(e.lightingElectricalOutlet);
+
+  if (hasLighting) {
+    present.add('Lighting');
   }
 
   return present;

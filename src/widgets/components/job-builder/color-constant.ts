@@ -106,4 +106,10 @@ export const COLORS = {
     { name: 'Clay', hex: '#D4A574' },
     { name: 'Bronze', hex: '#8B4513' },
   ],
+  Lighting: [
+    { name: 'White', hex: '#FFFFFF' },
+    { name: 'Black', hex: '#1D1D1D' },
+    { name: 'Light Brown', hex: '#C4A882' },
+    { name: 'Dark Brown', hex: '#7B4F2E' },
+  ],
 };

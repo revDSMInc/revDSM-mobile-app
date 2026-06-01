@@ -25,7 +25,12 @@ export const CalculatorForm = ({
   colors,
   isAutoSaving,
   lastUpdatedAt,
+  readOnly = false,
 }: any) => {
+  const guardedUpdate = (patch: any) => {
+    if (readOnly) return;
+    onUpdate(patch);
+  };
   const hasGutterInput =
     Number(inputs.gutter5DsE) > 0 || Number(inputs.gutter6Ft1) > 0 || Number(inputs.gutter7DsE) > 0;
   const hasGutterData =
@@ -61,6 +66,14 @@ export const CalculatorForm = ({
   const hasFasciaData = ['trimWrap', 'fasciaBoard', 'aluminumFasciaBoard'].some(
     (k) => Number(extras[k]) > 0
   );
+  const hasLightingData = [
+    'lighting1stStory',
+    'lighting2ndStory',
+    'lighting3rdStory',
+    'lightingWifiExtender',
+    'lightingBoosterBox',
+    'lightingElectricalOutlet',
+  ].some((k) => Number(extras[k]) > 0);
   const hasAdditionalData = Number(inputs.extraLabor) > 0 || Number(inputs.ckToInstallers) > 0;
 
   return (
@@ -115,25 +128,25 @@ export const CalculatorForm = ({
           onClear={
             hasGutterData
               ? () =>
-                  onUpdate({
-                    inputs: {
-                      gutter5DsE: '',
-                      gutter6Ft1: '',
-                      gutter7DsE: '',
-                      miters: '',
-                      endCaps: '',
-                      spoutSavers: '',
-                    },
-                    extras: {
-                      wedges: '',
-                      straps: '',
-                      modifyHeight: '',
-                      replaceCorner: '',
-                      groundSpout: '',
-                      extendedSplashGuard: '',
-                      extendedSplashGuard032: '',
-                    },
-                  })
+                guardedUpdate({
+                  inputs: {
+                    gutter5DsE: '',
+                    gutter6Ft1: '',
+                    gutter7DsE: '',
+                    miters: '',
+                    endCaps: '',
+                    spoutSavers: '',
+                  },
+                  extras: {
+                    wedges: '',
+                    straps: '',
+                    modifyHeight: '',
+                    replaceCorner: '',
+                    groundSpout: '',
+                    extendedSplashGuard: '',
+                    extendedSplashGuard032: '',
+                  },
+                })
               : null
           }
         >
@@ -143,21 +156,24 @@ export const CalculatorForm = ({
             value={inputs.gutter5DsE}
             keyName="gutter5DsE"
             price={pricing.gutters['5_inch_all_stories']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'6" Gutter/DS/Elbows'}
             value={inputs.gutter6Ft1}
             keyName="gutter6Ft1"
             price={pricing.gutters['6_inch_all_stories']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'7" Gutter/DS/Elbows'}
             value={inputs.gutter7DsE}
             keyName="gutter7DsE"
             price={pricing.gutters['7_inch_all_stories']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <SubHeader title="Extras" />
           <InputField
@@ -165,7 +181,8 @@ export const CalculatorForm = ({
             value={extras.wedges}
             keyName="wedges"
             price={pricing.extras.wedges}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
             highlighted={hasGutterInput}
           />
@@ -174,7 +191,8 @@ export const CalculatorForm = ({
             value={extras.straps}
             keyName="straps"
             price={pricing.extras.straps}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -182,7 +200,8 @@ export const CalculatorForm = ({
             value={extras.modifyHeight}
             keyName="modifyHeight"
             price={pricing.extras.modifyHeight}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -190,7 +209,8 @@ export const CalculatorForm = ({
             value={extras.replaceCorner}
             keyName="replaceCorner"
             price={pricing.extras.replaceCorner}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -198,7 +218,8 @@ export const CalculatorForm = ({
             value={extras.groundSpout}
             keyName="groundSpout"
             price={pricing.extras.groundSpout}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -206,7 +227,8 @@ export const CalculatorForm = ({
             value={extras.extendedSplashGuard}
             keyName="extendedSplashGuard"
             price={pricing.extras.extendedSplashGuard}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -214,7 +236,8 @@ export const CalculatorForm = ({
             value={extras.extendedSplashGuard032}
             keyName="extendedSplashGuard032"
             price={pricing.extras.extendedSplashGuard032}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
         </Section>
@@ -230,27 +253,27 @@ export const CalculatorForm = ({
           onClear={
             hasProtectionData
               ? () =>
-                  onUpdate({
-                    inputs: {
-                      versaMaxFt1: '',
-                      versa6Ft1: '',
-                      versa7Ft1: '',
-                      filter45Ft1: '',
-                      versa6Ft2: '',
-                      versa7Ft2: '',
-                      filter45Ft2: '',
-                      versa6Ft3: '',
-                      versa7Ft3: '',
-                      filter45Ft3: '',
-                    },
-                    extras: {
-                      csr: '',
-                      cornersFilter: '',
-                      sawzallHanger: '',
-                      removeProtection: '',
-                      ribbedRoof: '',
-                    },
-                  })
+                guardedUpdate({
+                  inputs: {
+                    versaMaxFt1: '',
+                    versa6Ft1: '',
+                    versa7Ft1: '',
+                    filter45Ft1: '',
+                    versa6Ft2: '',
+                    versa7Ft2: '',
+                    filter45Ft2: '',
+                    versa6Ft3: '',
+                    versa7Ft3: '',
+                    filter45Ft3: '',
+                  },
+                  extras: {
+                    csr: '',
+                    cornersFilter: '',
+                    sawzallHanger: '',
+                    removeProtection: '',
+                    ribbedRoof: '',
+                  },
+                })
               : null
           }
         >
@@ -260,14 +283,16 @@ export const CalculatorForm = ({
             value={inputs.versaMaxFt1}
             keyName="versaMaxFt1"
             price={pricing.filters.versa_max_all_stories}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'C-S-R'}
             value={extras.csr}
             keyName="csr"
             price={pricing.extras.csr}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <SubHeader title="1st Story" />
@@ -276,21 +301,24 @@ export const CalculatorForm = ({
             value={inputs.versa6Ft1}
             keyName="versa6Ft1"
             price={pricing.filters.versa_6['1']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'7" Versa (1st Story)'}
             value={inputs.versa7Ft1}
             keyName="versa7Ft1"
             price={pricing.filters.versa_7['1']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'4" & 5" Versa (1st Story)'}
             value={inputs.filter45Ft1}
             keyName="filter45Ft1"
             price={pricing.filters.filter_4_5['1']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <SubHeader title="2nd Story" />
           <InputField
@@ -298,21 +326,24 @@ export const CalculatorForm = ({
             value={inputs.versa6Ft2}
             keyName="versa6Ft2"
             price={pricing.filters.versa_6['2']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'7" Versa (2nd Story)'}
             value={inputs.versa7Ft2}
             keyName="versa7Ft2"
             price={pricing.filters.versa_7['2']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'4" & 5" Versa (2nd Story)'}
             value={inputs.filter45Ft2}
             keyName="filter45Ft2"
             price={pricing.filters.filter_4_5['2']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <SubHeader title="3rd Story" />
           <InputField
@@ -320,21 +351,24 @@ export const CalculatorForm = ({
             value={inputs.versa6Ft3}
             keyName="versa6Ft3"
             price={pricing.filters.versa_6['3']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'7" Versa (3rd Story)'}
             value={inputs.versa7Ft3}
             keyName="versa7Ft3"
             price={pricing.filters.versa_7['3']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label={'4" & 5" Versa (3rd Story)'}
             value={inputs.filter45Ft3}
             keyName="filter45Ft3"
             price={pricing.filters.filter_4_5['3']}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <SubHeader title="Extras" />
           <InputField
@@ -342,7 +376,8 @@ export const CalculatorForm = ({
             value={extras.cornersFilter}
             keyName="cornersFilter"
             price={pricing.extras.cornersFilter}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
             highlighted={hasVersaOrFilter}
           />
@@ -351,7 +386,8 @@ export const CalculatorForm = ({
             value={extras.sawzallHanger}
             keyName="sawzallHanger"
             price={pricing.extras.sawzallHanger}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
             highlighted={hasVersaOrFilter}
           />
@@ -360,7 +396,8 @@ export const CalculatorForm = ({
             value={extras.removeProtection}
             keyName="removeProtection"
             price={pricing.extras.removeProtection}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
             highlighted={hasVersaOrFilter}
           />
@@ -369,7 +406,8 @@ export const CalculatorForm = ({
             value={extras.ribbedRoof}
             keyName="ribbedRoof"
             price={pricing.extras.ribbedRoof}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
             highlighted={hasVersaMax}
           />
@@ -386,9 +424,9 @@ export const CalculatorForm = ({
           onClear={
             hasSoffitData
               ? () =>
-                  onUpdate({
-                    extras: { vinylSoffit: '', porchCeiling: '', nailerBuildOut: '' },
-                  })
+                guardedUpdate({
+                  extras: { vinylSoffit: '', porchCeiling: '', nailerBuildOut: '' },
+                })
               : null
           }
         >
@@ -397,7 +435,8 @@ export const CalculatorForm = ({
             value={extras.vinylSoffit}
             keyName="vinylSoffit"
             price={pricing.extras.vinylSoffit}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -405,7 +444,8 @@ export const CalculatorForm = ({
             value={extras.porchCeiling}
             keyName="porchCeiling"
             price={pricing.extras.porchCeiling}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -413,7 +453,8 @@ export const CalculatorForm = ({
             value={extras.nailerBuildOut}
             keyName="nailerBuildOut"
             price={pricing.extras.nailerBuildOut}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
         </Section>
@@ -429,9 +470,9 @@ export const CalculatorForm = ({
           onClear={
             hasFasciaData
               ? () =>
-                  onUpdate({
-                    extras: { trimWrap: '', fasciaBoard: '', aluminumFasciaBoard: '' },
-                  })
+                guardedUpdate({
+                  extras: { trimWrap: '', fasciaBoard: '', aluminumFasciaBoard: '' },
+                })
               : null
           }
         >
@@ -440,7 +481,8 @@ export const CalculatorForm = ({
             value={extras.trimWrap}
             keyName="trimWrap"
             price={pricing.extras.trimWrap}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -448,7 +490,8 @@ export const CalculatorForm = ({
             value={extras.fasciaBoard}
             keyName="fasciaBoard"
             price={pricing.extras.fasciaBoard}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
           <InputField
@@ -456,7 +499,116 @@ export const CalculatorForm = ({
             value={extras.aluminumFasciaBoard}
             keyName="aluminumFasciaBoard"
             price={pricing.extras.aluminumFasciaBoard}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
+            isExtra
+          />
+        </Section>
+
+        <Section
+          title="LeafFilter Lighting"
+          id="lighting"
+          icon="bulb"
+          color="#FFAB00"
+          desc="LeafFilter lighting services"
+          expanded={expanded}
+          onToggle={onToggle}
+          onClear={
+            hasLightingData
+              ? () =>
+                guardedUpdate({
+                  extras: {
+                    lighting1stStory: '',
+                    lighting2ndStory: '',
+                    lighting3rdStory: '',
+                    lightingControlBox: '',
+                    lightingWifiExtender: '',
+                    lightingBoosterBox: '',
+                    lightingElectricalOutlet: '',
+                  },
+                })
+              : null
+          }
+        >
+          <InputField
+            label="Lighting 1st Story"
+            value={extras.lighting1stStory}
+            keyName="lighting1stStory"
+            price={pricing.extras.lighting1stStory}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
+            isExtra
+          />
+          <InputField
+            label="Lighting 2nd Story"
+            value={extras.lighting2ndStory}
+            keyName="lighting2ndStory"
+            price={pricing.extras.lighting2ndStory}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
+            isExtra
+          />
+          <InputField
+            label="Lighting 3rd Story"
+            value={extras.lighting3rdStory}
+            keyName="lighting3rdStory"
+            price={pricing.extras.lighting3rdStory}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
+            isExtra
+          />
+          {/* Control Box — auto-calculated, read-only */}
+          <View className="relative mt-2 mb-3">
+            <View className="absolute -top-[7px] left-3 z-10 px-1" style={{ backgroundColor: '#F4F6F8' }}>
+              <Text className="text-[10px] font-black text-[#1C252E]">Control Box</Text>
+            </View>
+            <View
+              className="flex-row items-center border rounded-lg"
+              style={{
+                borderColor: '#919EAB33',
+                backgroundColor: '#F4F6F8',
+                paddingVertical: 2,
+                paddingHorizontal: 14,
+              }}
+            >
+              <Text className="flex-1 h-11 text-sm font-black text-[#919EAB]" style={{ lineHeight: 44 }}>
+                {extras.lightingControlBox || '0'}
+              </Text>
+              <View className="flex-row items-center">
+                <View className="border-l border-[#919EAB33] pl-3 ml-1 flex-row items-center">
+                  <Text className="text-[10px] font-bold text-green-600">${pricing.extras.lightingControlBox}</Text>
+                </View>
+              </View>
+            </View>
+            <Text className="text-[8px] font-semibold text-slate-400 ml-1 mt-0.5">
+              Auto-set to 1 when any lighting story footage is entered
+            </Text>
+          </View>
+          <InputField
+            label="WiFi Extender"
+            value={extras.lightingWifiExtender}
+            keyName="lightingWifiExtender"
+            price={pricing.extras.lightingWifiExtender}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
+            isExtra
+          />
+          <InputField
+            label="Booster Box(s)"
+            value={extras.lightingBoosterBox}
+            keyName="lightingBoosterBox"
+            price={pricing.extras.lightingBoosterBox}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
+            isExtra
+          />
+          <InputField
+            label="Electrical Outlet"
+            value={extras.lightingElectricalOutlet}
+            keyName="lightingElectricalOutlet"
+            price={pricing.extras.lightingElectricalOutlet}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
             isExtra
           />
         </Section>
@@ -471,7 +623,7 @@ export const CalculatorForm = ({
           onToggle={onToggle}
           onClear={
             hasAdditionalData
-              ? () => onUpdate({ inputs: { extraLabor: '', ckToInstallers: '' } })
+              ? () => guardedUpdate({ inputs: { extraLabor: '', ckToInstallers: '' } })
               : null
           }
         >
@@ -480,14 +632,16 @@ export const CalculatorForm = ({
             value={inputs.extraLabor}
             keyName="extraLabor"
             price={pricing.extras.extraLabor}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
           <InputField
             label="Number of screens $75"
             value={inputs.ckToInstallers}
             keyName="ckToInstallers"
             price={75}
-            onUpdate={onUpdate}
+            onUpdate={guardedUpdate}
+            editable={!readOnly}
           />
         </Section>
 
@@ -525,6 +679,7 @@ export const CalculatorForm = ({
                 LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
                 Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
                 Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
                 'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
                 Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
               };

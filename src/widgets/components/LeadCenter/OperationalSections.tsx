@@ -15,6 +15,7 @@ export const ToolsSection = ({
   onShowJobBuilder,
   onShowCalculator,
   onShowPitchbook,
+  onShowRooflineDeck,
   revRenderJobs = [],
 }: any) => {
   const { colors, isDark } = useTheme();
@@ -174,6 +175,12 @@ export const ToolsSection = ({
         desc="Presentation materials"
         icon="book-open-page-variant"
         onPress={onShowPitchbook}
+      />
+      <ToolCard
+        title="Roofline Deck"
+        desc="Roofline system presentation"
+        icon="home-roof"
+        onPress={onShowRooflineDeck}
       />
       <View
         className="p-3 rounded-lg flex-col mb-4 border"

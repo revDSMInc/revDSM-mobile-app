@@ -175,7 +175,13 @@ export const JobDocsSection = ({
       const docs = data?.leadOutcomeDocuments;
       if (docs) {
         const { agreements = [], orderSheets = [] } = docs;
-        const allPaths = [...agreements, ...orderSheets].map((doc: any) => ({
+
+        const allDocs = [
+          ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
+          ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
+        ];
+
+        const allPaths = allDocs.map((doc: any) => ({
           filePath: doc.filePath,
           bucketName: doc.bucketName,
         }));
@@ -184,23 +190,28 @@ export const JobDocsSection = ({
           const res = await LeadService.getSecureUrls(allPaths);
           const urls = res.data?.data || res.data;
 
-          const mapDocs = (list: any[]) =>
-            list.map((doc: any) => {
-              const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
-              const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
-              return {
-                uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-                name: doc.name || (doc.documentType === 'agreement' ? 'Agreement' : 'Order Sheet'),
-                serverId: doc._id,
-                size: size,
-              };
-            });
+          const mappedAll = allDocs.map((doc: any) => {
+            const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
+            const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
+            const finalType = doc.documentType || doc._sourceGroup;
+            return {
+              uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
+              name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
+              serverId: doc._id,
+              size: size,
+              documentType: finalType,
+            };
+          });
 
           setResolvedDocuments({
-            agreements: mapDocs(agreements),
-            orderSheets: mapDocs(orderSheets),
+            agreements: mappedAll.filter((d: any) => d.documentType === 'agreement'),
+            orderSheets: mappedAll.filter((d: any) => d.documentType === 'orderSheet'),
           });
+        } else {
+          setResolvedDocuments({ agreements: [], orderSheets: [] });
         }
+      } else {
+        setResolvedDocuments({ agreements: [], orderSheets: [] });
       }
     } catch (error) {
       console.error('Failed to fetch outcome', error);
@@ -208,11 +219,9 @@ export const JobDocsSection = ({
   }, [lead?._id]);
 
   useEffect(() => {
-    const result = String(lead?.result || lead?.status || '').toLowerCase();
-    if (result === 'sale' || result === 'demo') {
-      fetchOutcome();
-    }
-  }, [fetchOutcome, lead?.result, lead?.status]);
+    fetchOutcome();
+  }, [fetchOutcome]);
+
 
   // ── Progress ──────────────────────────────────────────────────────────────
   const totalRequired = IMAGE_CATEGORIES.reduce((acc, section) => {

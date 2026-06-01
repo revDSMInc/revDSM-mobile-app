@@ -23,6 +23,7 @@ export type Lead = {
   workflowState?: 'preview' | 'resume' | 'complete' | string;
   isSelfGen?: boolean;
   selfGen?: boolean;
+  lowesLead?: boolean;
   location?: {
     type: string;
     coordinates: [number, number];
