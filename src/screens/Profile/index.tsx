@@ -15,6 +15,9 @@ import {
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
+import { useDispatch } from 'react-redux';
+import { setInitial } from '../../redux/reducer/auth.reducer';
+import { store } from '../../redux/store';
 import { SettingsService } from '../../services/api/SettingsService';
 import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
@@ -42,6 +45,7 @@ type TabType = 'profile' | '2fa';
 
 export default function ProfilePage() {
   const { user } = useAuth();
+  const dispatch = useDispatch();
   const { colors, isDark } = useTheme();
   const navigation = useNavigation<any>();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
@@ -115,23 +119,48 @@ export default function ProfilePage() {
   const [trustedDevices, setTrustedDevices] = useState<any[]>([]);
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
 
-  const fetchSecureAvatarUrl = useCallback(async (pic: any) => {
-    if (!pic || typeof pic !== 'object' || !pic.filePath) return;
-    
-    setImageLoading(true);
-    try {
-      const res = await LeadService.getSecureUrls([{
-        bucketName: pic.bucketName || 'np-revdsm-staging',
-        filePath: pic.filePath
-      }]);
-      const secureData = res.data?.data || res.data || [];
-      if (secureData[0]?.secureUrl) {
-        setFormData(prev => ({ ...prev, avatarUrl: secureData[0].secureUrl }));
+  const resolveAvatarUrl = useCallback(async (pic: any) => {
+    if (!pic) return;
+    if (typeof pic === 'string') {
+      if (pic.startsWith('http')) {
+        setFormData(prev => ({ ...prev, avatarUrl: pic }));
+        return pic;
       }
-    } catch (err) {
-      console.error('Fetch Secure Avatar Error:', err);
-    } finally {
-      setImageLoading(false);
+      setImageLoading(true);
+      try {
+        const res = await LeadService.getSecureUrls([{
+          bucketName: 'np-revdsm-staging',
+          filePath: pic
+        }]);
+        const secureData = res.data?.data || res.data || [];
+        if (secureData[0]?.secureUrl) {
+          setFormData(prev => ({ ...prev, avatarUrl: secureData[0].secureUrl }));
+          return secureData[0].secureUrl;
+        }
+      } catch (err) {
+        console.error('Fetch Secure Avatar Error:', err);
+      } finally {
+        setImageLoading(false);
+      }
+      return;
+    }
+    if (typeof pic === 'object' && pic?.filePath) {
+      setImageLoading(true);
+      try {
+        const res = await LeadService.getSecureUrls([{
+          bucketName: pic.bucketName || 'np-revdsm-staging',
+          filePath: pic.filePath
+        }]);
+        const secureData = res.data?.data || res.data || [];
+        if (secureData[0]?.secureUrl) {
+          setFormData(prev => ({ ...prev, avatarUrl: secureData[0].secureUrl }));
+          return secureData[0].secureUrl;
+        }
+      } catch (err) {
+        console.error('Fetch Secure Avatar Error:', err);
+      } finally {
+        setImageLoading(false);
+      }
     }
   }, []);
 
@@ -153,17 +182,13 @@ export default function ProfilePage() {
         }));
 
         if (u.profilePicture) {
-          if (typeof u.profilePicture === 'string' && u.profilePicture.startsWith('http')) {
-            setFormData(prev => ({ ...prev, avatarUrl: u.profilePicture }));
-          } else {
-            fetchSecureAvatarUrl(u.profilePicture);
-          }
+          resolveAvatarUrl(u.profilePicture);
         }
       }
     } catch (err) {
       console.error('Fetch Profile Error:', err);
     }
-  }, [fetchSecureAvatarUrl]);
+  }, [resolveAvatarUrl]);
 
   const fetchTfaSettings = useCallback(async () => {
     try {
@@ -249,13 +274,25 @@ export default function ProfilePage() {
 
       const updatedUser = res.data?.data?.data || res.data?.data || res.data;
 
-      // If response has new profile picture, fetch its secure URL
+      // Resolve profile picture to a usable URL from the upload response
       if (updatedUser?.profilePicture) {
-        await fetchSecureAvatarUrl(updatedUser.profilePicture);
+        await resolveAvatarUrl(updatedUser.profilePicture);
       }
       
       // Refresh global user state to sync across app
       await refreshUser();
+      
+      // Check if the user's profilePicture needs resolving, then update Redux
+      const freshUser = store.getState().auth.user;
+      const pic = freshUser?.profilePicture;
+      if (pic && !(typeof pic === 'string' && pic.startsWith('http'))) {
+        const resolvedUrl = await resolveAvatarUrl(pic);
+        if (resolvedUrl) {
+          dispatch(setInitial({
+            user: { ...store.getState().auth.user, profilePicture: resolvedUrl }
+          }));
+        }
+      }
       
       Alert.alert('Success', 'Profile updated successfully', [
         {
@@ -274,20 +311,42 @@ export default function ProfilePage() {
   };
 
   const handlePickImage = async () => {
-    const result = await launchImageLibrary({
-      mediaType: 'photo',
-      includeBase64: false,
-      maxHeight: 500,
-      maxWidth: 500,
-    });
-
-    if (result.assets && result.assets.length > 0) {
-      const asset = result.assets[0];
-      setFormData({ 
-        ...formData, 
-        avatarUrl: asset.uri || '',
-        avatarAsset: asset
+    try {
+      const result = await launchImageLibrary({
+        mediaType: 'photo',
+        includeBase64: false,
+        maxHeight: 500,
+        maxWidth: 500,
+        quality: 0.8,
       });
+
+      if (result.didCancel) {
+        return;
+      }
+
+      if (result.errorMessage) {
+        Alert.alert('Error', result.errorMessage);
+        return;
+      }
+
+      if (result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        
+        // Check file size (max 3.1 MB as mentioned in UI)
+        if (asset.fileSize && asset.fileSize > 3100000) {
+          Alert.alert('Error', 'Image size exceeds 3.1 MB limit');
+          return;
+        }
+
+        setFormData({ 
+          ...formData, 
+          avatarUrl: asset.uri || '',
+          avatarAsset: asset
+        });
+      }
+    } catch (error) {
+      console.error('Image picker error:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
     }
   };
 
@@ -589,7 +648,15 @@ export default function ProfilePage() {
                   {imageLoading ? (
                     <ActivityIndicator color={colors.primary.main} />
                   ) : formData.avatarUrl ? (
-                    <Image source={{ uri: formData.avatarUrl }} className="w-full h-full" />
+                    <>
+                      <Image source={{ uri: formData.avatarUrl }} className="absolute w-full h-full" />
+                      <View className="absolute inset-0 bg-black/40 items-center justify-center">
+                        <Icon name="camera-outline" size={22} color="white" />
+                        <Text className="text-[9px] mt-1 font-bold text-white">
+                          Upload photo
+                        </Text>
+                      </View>
+                    </>
                   ) : (
                     <View className="items-center">
                       <Icon name="camera-outline" size={28} color={colors.textSecondary} />

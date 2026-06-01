@@ -85,12 +85,13 @@ export default function LeadsPage() {
   );
 
   const apiParams = useMemo(() => {
+    if (currentTab === 'rehash') return {};
     if (currentTab === 'issued') return { status: 'lfLead', period: issuedSubTab };
     if (currentTab === 'selfGen') {
       if (selfGenSubTab === 'archived') return { status: 'archive' };
       return { status: 'selfGenerated', period: 'today' };
     }
-    return currentTab === 'rehash' ? { status: 'rehash' } : {};
+    return {};
   }, [currentTab, issuedSubTab, selfGenSubTab]);
 
   const { leads, loading, refresh, removeLocalLead } = useLeadsData(apiParams);
@@ -357,7 +358,17 @@ export default function LeadsPage() {
         </View>
       )}
 
-      {loading ? (
+      {currentTab === 'rehash' ? (
+        <View className="flex-1 items-center justify-center pt-[30%]">
+          <Feather name="tool" size={48} color={colors.textSecondary} />
+          <Text className="text-base font-semibold mt-4" style={{ color: colors.text }}>
+            Coming Soon
+          </Text>
+          <Text className="text-xs text-center mt-2 px-8" style={{ color: colors.textSecondary }}>
+            This feature is under development and will be available soon.
+          </Text>
+        </View>
+      ) : loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={colors.primary.main} size="large" />
         </View>
