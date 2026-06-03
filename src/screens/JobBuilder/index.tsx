@@ -31,6 +31,8 @@ import { Alert } from 'react-native';
 import { FlashMessage } from '../../config/message';
 import JobService from '../../services/api/JobService';
 import { calculateCommission } from '../../utils/calculator/commission-utils';
+import { parseSafeISO } from '../../utils/date-util';
+
 
 const { width, height } = Dimensions.get('window');
 
@@ -115,6 +117,7 @@ export default function JobBuilderScreen() {
   const { user } = useAuth();
 
   const sentImageIds = useRef(new Set());
+  const isExitingRef = useRef(false);
   // Blocks the 2s debounce auto-save while a document upload is in progress
   // to avoid MongoDB write conflicts on the outcome record.
   const isDocUploadingRef = useRef(false);
@@ -548,7 +551,10 @@ export default function JobBuilderScreen() {
             let formattedInstallDate: string | null = null;
             if (!isTBD && scheduleTime.date) {
               try {
-                formattedInstallDate = new Date(scheduleTime.date).toISOString();
+                const parsedDate = parseSafeISO(scheduleTime.date);
+                if (parsedDate && !isNaN(parsedDate.getTime())) {
+                  formattedInstallDate = parsedDate.toISOString();
+                }
               } catch (e) {
                 console.warn('[JobBuilder] Failed to parse installDate:', scheduleTime.date, e);
               }
@@ -595,7 +601,7 @@ export default function JobBuilderScreen() {
     }
   };
 
-  const handleClose = async () => {
+  const saveDraftProgress = useCallback(async () => {
     // Lightweight draft save — no loader, no timeline update
     // Only persist the jobBuilder progress; do NOT touch LFCalculator to avoid
     // triggering the Mongoose "title required" validation on an incomplete calculator.
@@ -642,7 +648,30 @@ export default function JobBuilderScreen() {
         );
       }
     } catch (_) { /* silent */ }
+  }, [leadId, calculatorData, jobState, outcomeForm, user]);
 
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+      if (isExitingRef.current) return;
+      isExitingRef.current = true;
+      e.preventDefault();
+
+      Promise.resolve(saveDraftProgress()).finally(() => {
+        if (onGoBack) onGoBack(jobState);
+        navigation.dispatch(e.data.action);
+        setTimeout(() => {
+          isExitingRef.current = false;
+        }, 0);
+      });
+    });
+
+    return unsubscribe;
+  }, [navigation, onGoBack, jobState, saveDraftProgress]);
+
+  const handleClose = async () => {
+    if (isExitingRef.current) return;
+    isExitingRef.current = true;
+    await saveDraftProgress();
     if (onGoBack) onGoBack(jobState);
     navigation.goBack();
   };

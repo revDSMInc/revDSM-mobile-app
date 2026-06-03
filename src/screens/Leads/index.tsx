@@ -383,8 +383,7 @@ export default function LeadsPage() {
               isDark={isDark}
               isTomorrow={currentTab === 'issued' && issuedSubTab === 'tomorrow'}
               isArchived={
-                (currentTab === 'selfGen' && selfGenSubTab === 'archived') ||
-                currentTab === 'rehash'
+                currentTab === 'selfGen' && selfGenSubTab === 'archived'
               }
               actionLoading={workMutation.isPending && selectedLead?._id === item._id}
               onPress={() => handleActionPress(item)}

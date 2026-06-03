@@ -119,23 +119,20 @@ export const ToolsSection = ({
               </Text>
             </View>
             <View className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-              <View 
-                className="h-full bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]" 
-                style={{ width: `${(revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100}%` }} 
+              <View
+                className="h-full bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]"
+                style={{ width: `${(revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100}%` }}
               />
             </View>
-            <Text className="text-[10px] text-slate-400 mt-1 italic">
-              {revRenderJobs.find((j: any) => j.status === 'running')?.payload?.selections?.soffit || 'Rendering Photos...'}
-            </Text>
           </View>
         )}
 
         {isLoading ? (
           <View className="flex-row">
             {[1, 2, 3].map((i) => (
-              <View 
-                key={i} 
-                className="w-20 h-16 rounded-xl mr-3 bg-slate-200 animate-pulse" 
+              <View
+                key={i}
+                className="w-20 h-16 rounded-xl mr-3 bg-slate-200 animate-pulse"
                 style={{ backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }}
               />
             ))}
@@ -347,9 +344,9 @@ const PulsingSkeleton = ({ isDark }: { isDark: boolean }) => {
   }, []);
 
   return (
-    <Animated.View 
+    <Animated.View
       className="w-20 h-16 rounded-xl mr-3 items-center justify-center"
-      style={{ 
+      style={{
         backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
         opacity: opacity
       }}
@@ -372,7 +369,7 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
         onLoadEnd={() => setLoading(false)}
       />
       {loading && (
-        <View 
+        <View
           className="absolute inset-0 items-center justify-center bg-slate-100/50"
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         >

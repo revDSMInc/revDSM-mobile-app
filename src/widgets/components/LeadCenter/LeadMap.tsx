@@ -276,8 +276,8 @@ export const LeadMap = ({
       mapRef.current?.animateToRegion({
         latitude: currentLead.latitude,
         longitude: currentLead.longitude,
-        latitudeDelta: 0.05,
-        longitudeDelta: 0.05,
+        latitudeDelta: currentLead.latitudeDelta || 0.05,
+        longitudeDelta: currentLead.longitudeDelta || 0.05,
       }, 800);
     }
   }, [currentLead]);
@@ -616,6 +616,34 @@ export const LeadMap = ({
               <View className="w-8 h-8 rounded-full bg-blue-500/20 border-2 border-white items-center justify-center shadow-lg">
                 <View className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
               </View>
+            </View>
+          </Marker>
+        )}
+
+        {/* Location-search center marker */}
+        {currentLead?.latitude && currentLead?.longitude && (
+          <Marker
+            coordinate={{
+              latitude: currentLead.latitude,
+              longitude: currentLead.longitude,
+            }}
+            anchor={{ x: 0.5, y: 1 }}
+            zIndex={999}
+          >
+            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="map-marker" size={34} color="#FF3B30" />
+              <View
+                style={{
+                  position: 'absolute',
+                  bottom: -2,
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: '#FF3B30',
+                  borderWidth: 1,
+                  borderColor: '#fff',
+                }}
+              />
             </View>
           </Marker>
         )}

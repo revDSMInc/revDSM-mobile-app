@@ -6,6 +6,7 @@
   text {
     font-family: PublicSans-Regular;
   }
+
   input {
     font-family: PublicSans-Regular;
   }
@@ -75,7 +76,7 @@
   --color-primary-main: #4CBB17;
   --color-primary-dark: #5BE49B;
   --color-primary-darker: #C8FAD6;
-  
+
   --background: #161C24;
   --surface: #212B36;
   --text-primary: #FFFFFF;

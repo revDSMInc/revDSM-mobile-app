@@ -222,6 +222,18 @@ export const SummarySection = ({
                 accParts.length > 0
                   ? `${parts.join(' · ')} (${accParts.join(', ')})`
                   : parts.join(' · '),
+              locationRows: ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER']
+                .map((location, locationIndex) => {
+                  const entries = ['1st Story', '2nd Story', '3rd Story']
+                    .map((story, storyIndex) => {
+                      const measurementIndex = locationIndex * 3 + storyIndex;
+                      const val = parseFloat(combo.measurements?.[measurementIndex] || 0);
+                      return val > 0 ? { story, value: val } : null;
+                    })
+                    .filter(Boolean) as Array<{ story: string; value: number }>;
+                  return entries.length > 0 ? { location, entries } : null;
+                })
+                .filter(Boolean),
             });
           }
         });
@@ -346,18 +358,21 @@ export const SummarySection = ({
 
           if (combo.gutterProfile) comboParts.push(combo.gutterProfile);
 
+          const isVersaMax = combo.lfProfile === 'Versa Max';
+          const storiesToShow = isVersaMax ? [0, 1, 2] : (combo.stories || []).map((s: number) => s - 1);
           const locationRows: any[] = [];
-          [1, 2, 3].forEach((story) => {
-            const storyEntries: any[] = [];
-            locationNames.forEach((loc, locIdx) => {
-              const mIdx = locIdx + (story - 1) * 6;
+          locationNames.forEach((loc, locIdx) => {
+            const entries: any[] = [];
+            storiesToShow.forEach((storyIndex: number) => {
+              const mIdx = locIdx + storyIndex * 6;
               const val = parseFloat(combo.measurements?.[mIdx] || 0);
               if (val > 0) {
-                storyEntries.push({ location: loc, value: val });
+                entries.push({ story: storyLabels[storyIndex + 1], value: val });
               }
             });
-            if (storyEntries.length > 0)
-              locationRows.push({ story: storyLabels[story], entries: storyEntries });
+            if (entries.length > 0) {
+              locationRows.push({ location: loc, entries });
+            }
           });
 
           combinationFields.push({
@@ -493,44 +508,6 @@ export const SummarySection = ({
       }
     }
 
-    // 5. Misc Section
-    if (jobState.additional && hasValue(jobState.additional)) {
-      const misc = jobState.additional || {};
-      const fields: any[] = [];
-      const laborVal = parseFloat(misc.extraLabor) || getVal('extraLabor');
-      const screensVal = parseFloat(misc.numberOfScreenPulls) || getVal('screens');
-
-      if (laborVal > 0)
-        fields.push({
-          label: 'Extra Labor',
-          value: `${laborVal} Extra Labor${laborVal > 1 ? 's' : ''}`,
-        });
-      if (misc.extraLaborReason)
-        fields.push({ label: 'Extra Labor Reason', value: misc.extraLaborReason });
-      if (screensVal > 0)
-        fields.push({ label: 'Number of Screen Pulls', value: String(screensVal) });
-      if (misc.cutAndRemoveShingleOverhang)
-        fields.push({
-          label: 'Cut and Remove Shingle Overhang',
-          value: misc.cutAndRemoveShingleOverhang,
-        });
-      if (misc.dripEdgeFlashingFootage > 0)
-        fields.push({
-          label: 'Drip Edge/Flashing Footage',
-          value: `${misc.dripEdgeFlashingFootage} ft`,
-        });
-      if (misc.fortyFootLadderNeeded)
-        fields.push({ label: 'Forty Foot Ladder Needed', value: misc.fortyFootLadderNeeded });
-      if (misc.requireHarnessWork)
-        fields.push({ label: 'Require Harness Work', value: misc.requireHarnessWork });
-      if (misc.needWalkboards)
-        fields.push({ label: 'Need Walkboards', value: misc.needWalkboards });
-
-      if (fields.length > 0) {
-        sections.push({ title: 'Misc', color: '#FFAB00', subsections: [{ name: '', fields }] });
-      }
-    }
-
     // 5. Lighting Section
     if (jobState.lighting && hasValue(jobState.lighting)) {
       const lighting = jobState.lighting;
@@ -554,18 +531,16 @@ export const SummarySection = ({
         if (combo.substrate) parts.push(combo.substrate);
 
         const locationRows: any[] = [];
-        const storyLabelsNum = { 1: '1st Story', 2: '2nd Story', 3: '3rd Story' };
-        [1, 2, 3].forEach((story) => {
-          const storyEntries: any[] = [];
-          locationNames.forEach((loc, locIdx) => {
-            const mIdx = locIdx + (story - 1) * 6;
-            const val = parseFloat(combo.measurements?.[mIdx] || 0);
-            if (val > 0) {
-              storyEntries.push({ location: loc, value: val });
-            }
-          });
-          if (storyEntries.length > 0) {
-            locationRows.push({ story: (storyLabelsNum as any)[story], entries: storyEntries });
+        locationNames.forEach((loc, locIndex) => {
+          const entries = storyLabels
+            .map((story, storyIndex) => {
+              const mIdx = locIndex + storyIndex * 6;
+              const val = parseFloat(combo.measurements?.[mIdx] || 0);
+              return val > 0 ? { story, value: val } : null;
+            })
+            .filter(Boolean);
+          if (entries.length > 0) {
+            locationRows.push({ location: loc, entries });
           }
         });
 
@@ -600,6 +575,44 @@ export const SummarySection = ({
 
       if (lightingSubsections.length > 0) {
         sections.push({ title: 'Lighting', color: '#FF9F43', subsections: lightingSubsections });
+      }
+    }
+
+    // 6. Misc Section (after Lighting to match web app order)
+    if (jobState.additional && hasValue(jobState.additional)) {
+      const misc = jobState.additional || {};
+      const fields: any[] = [];
+      const laborVal = parseFloat(misc.extraLabor) || getVal('extraLabor');
+      const screensVal = parseFloat(misc.numberOfScreenPulls) || getVal('screens');
+
+      if (laborVal > 0)
+        fields.push({
+          label: 'Extra Labor',
+          value: `${laborVal} Extra Labor${laborVal > 1 ? 's' : ''}`,
+        });
+      if (misc.extraLaborReason)
+        fields.push({ label: 'Extra Labor Reason', value: misc.extraLaborReason });
+      if (screensVal > 0)
+        fields.push({ label: 'Number of Screen Pulls', value: String(screensVal) });
+      if (misc.cutAndRemoveShingleOverhang)
+        fields.push({
+          label: 'Cut and Remove Shingle Overhang',
+          value: misc.cutAndRemoveShingleOverhang,
+        });
+      if (misc.dripEdgeFlashingFootage > 0)
+        fields.push({
+          label: 'Drip Edge/Flashing Footage',
+          value: `${misc.dripEdgeFlashingFootage} ft`,
+        });
+      if (misc.fortyFootLadderNeeded)
+        fields.push({ label: 'Forty Foot Ladder Needed', value: misc.fortyFootLadderNeeded });
+      if (misc.requireHarnessWork)
+        fields.push({ label: 'Require Harness Work', value: misc.requireHarnessWork });
+      if (misc.needWalkboards)
+        fields.push({ label: 'Need Walkboards', value: misc.needWalkboards });
+
+      if (fields.length > 0) {
+        sections.push({ title: 'Misc', color: '#FFAB00', subsections: [{ name: '', fields }] });
       }
     }
 
@@ -787,8 +800,6 @@ export const SummarySection = ({
 
       let totalGutterFt = 0;
       let gColor = '';
-      let gSizes: string[] = [];
-      let gLocs: string[] = [];
       const gMain = gSec?.subsections.find(
         (ss: any) => ss.name === '' || ss.name.toLowerCase().includes('gutter')
       );
@@ -814,12 +825,21 @@ export const SummarySection = ({
               
               const sizePart = parts.find((p: string) => p.includes('"'));
               const size = (sizePart?.match(/(\d+)/) || [])[1] || '5';
-              
-              if (!gSizes.includes(size)) gSizes.push(size);
-              if (size === '5' || size === '6') {
-                if (!gLocs.includes('LEFT SIDE')) gLocs.push('LEFT SIDE');
-              } else if (size === '7') {
-                if (!gLocs.includes('REAR')) gLocs.push('REAR');
+              const comboLocations = (f.locationRows || [])
+                .map((row: any) => {
+                  const rowTotal = (row.entries || []).reduce(
+                    (sum: number, entry: any) => sum + (parseFloat(entry.value) || 0),
+                    0
+                  );
+                  return rowTotal > 0 ? `${row.location}: ${rowTotal}'` : null;
+                })
+                .filter(Boolean)
+                .join(', ');
+
+              if (comboLocations) {
+                scope.push(`Install ${size}" K-Style ${gColor} gutters on ${comboLocations}; Total ${ft}'`);
+              } else {
+                scope.push(`Install ${size}" K-Style ${gColor} gutters — ${ft}'`);
               }
             }
           }
@@ -827,10 +847,6 @@ export const SummarySection = ({
       });
 
       if (totalGutterFt > 0) {
-        const sizeText = gSizes.length > 1 ? `${gSizes.join('" & ')}"` : `${gSizes[0]}"`;
-        scope.push(
-          `Install ${sizeText} K-Style ${gColor} gutters on ${gLocs.join(', ')}; ${totalGutterFt}'`
-        );
         let installDesc = 'Installation: Align, pitch';
         if (hasWedges) installDesc += ', install wedges for slanted/step fascia';
         installDesc += ', install hidden hangers every 20-25", seal each seam, miter and connection with 50yr silicone';
@@ -946,8 +962,11 @@ export const SummarySection = ({
             if (f.locationRows && f.locationRows.length > 0) {
               locationStr = f.locationRows
                 .map((row: any) => {
-                  const locs = row.entries.map((e: any) => `${e.location}: ${e.value} ft`).join(', ');
-                  return `${row.story} (${locs})`;
+                  const totals = (row.entries || []).reduce(
+                    (sum: number, e: any) => sum + (parseFloat(e.value) || 0),
+                    0
+                  );
+                  return `${row.location}: ${totals} ft`;
                 })
                 .join(', ');
             }

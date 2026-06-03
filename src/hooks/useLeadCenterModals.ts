@@ -87,15 +87,14 @@ export const useLeadCenterModals = (
           toggleModal('showWaiverModal', true);
         }
       } else if (toolId === 'consent-download') {
-        handlers.handleDownloadReport?.(extra, 'ConsentForm');
+        handleOpenPdf(extra, 'Consent Form');
       } else if (toolId === 'waiver-download') {
-        handlers.handleDownloadReport?.(extra, 'RoofWaiver');
+        handleOpenPdf(extra, 'Roof Waiver');
       } else if (toolId === 'inspection') {
         toggleModal('showInspectionModal', true);
       } else if (toolId === 'inspection-preview') {
         handleOpenPdf(extra, 'Inspection Report');
       } else if (toolId === 'inspection-download') {
-        // We'll open preview for now, but we could also add a direct download handler
         handleOpenPdf(extra, 'Inspection Report');
       } else if (toolId === 'risk') {
         toggleModal('showRiskModal', true);
@@ -107,16 +106,14 @@ export const useLeadCenterModals = (
           riskJob?.status === 'completed' || riskJob?.progress === 100
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
-        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || extra);
+        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || extra, 'Risk Report');
       } else if (toolId === 'risk-download') {
         const existing = findReport('risk_report');
         const jobUrl =
           riskJob?.status === 'completed' || riskJob?.progress === 100
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
-        handlers.handleDownloadRiskReport?.(
-          jobUrl || secureUrls[existing?.reportPath || ''] || extra
-        );
+        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || extra, 'Risk Report');
       } else if (toolId === 'risk-reset') {
         handlers.handleResetRiskReport?.(extra);
       } else if (toolId === 'revrender') {

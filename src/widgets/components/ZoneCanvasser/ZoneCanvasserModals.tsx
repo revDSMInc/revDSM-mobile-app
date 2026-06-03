@@ -72,9 +72,12 @@ export function ZoneCanvasserModals({
 }: Props) {
   const address =
     propertyData?.formattedAddress ||
-    selectedBuilding?.label ||
+    selectedBuilding?.leads?.[0]?.address ||
+    selectedBuilding?.leads?.[0]?.fullAddress ||
     selectedBuilding?.address ||
+    selectedBuilding?.label ||
     '';
+
 
   return (
     <>

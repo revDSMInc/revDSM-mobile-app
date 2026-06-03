@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, SafeAreaView, View } from 'react-native';
+import { Modal, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../common/MainHeader';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
@@ -79,10 +80,10 @@ export default function ZoneCanvasserMap({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaView
         className="flex-1"
-        style={{ backgroundColor: isDark ? colors.background : '#F8FAFC' }}
+        style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
       >
         <Header
           onFilterPress={() => z.setSearchModalVisible(true)}
@@ -97,7 +98,7 @@ export default function ZoneCanvasserMap({
 
         {z.isDrawingMode && <DrawingInfoBanner drawType={z.drawType} />}
 
-        <View className="flex-1 relative">
+        <View className="flex-1 relative" style={{ flex: 1 }}>
           <SearchLocationModal
             visible={z.searchModalVisible}
             searchText={z.searchText}

@@ -80,7 +80,7 @@ export const getPresentComponents = (details: any) => {
   }
 
   // Labor
-  if (hasValue(e.extraLabor)) {
+  if (hasValue(p.extraLabor) || hasValue(e.extraLabor)) {
     present.add('Labor');
   }
 

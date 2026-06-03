@@ -18,6 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { format, addDays, parseISO, isValid } from 'date-fns';
 import JobService, { JobEntry } from '../../services/api/JobService';
+import { parseSafeISO } from '../../utils/date-util';
 import { AddEditJobModal } from './components/AddEditJobModal';
 import { CustomDatePicker } from './components/CustomDatePicker';
 import { paymentPlans } from '../../utils/calculator/payment-plans';
@@ -48,6 +49,7 @@ export default function JobTrackerPage() {
   const [selectedJobForMenu, setSelectedJobForMenu] = useState<JobEntry | null>(null);
   const [menuPosition, setMenuPosition] = useState(0);
   const [showStatusUpdateModal, setShowStatusUpdateModal] = useState(false);
+  const [selectedPaymentDetails, setSelectedPaymentDetails] = useState<string | null>(null);
 
   const [jobToUpdateStatus, setJobToUpdateStatus] = useState<JobEntry | null>(null);
 
@@ -87,7 +89,7 @@ export default function JobTrackerPage() {
       if (parts.length !== 3) return null;
       compareDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
     } else {
-      compareDate = parseISO(date);
+      compareDate = parseSafeISO(date);
     }
 
     if (!isValid(compareDate)) return null;
@@ -105,27 +107,35 @@ export default function JobTrackerPage() {
   const formatPaymentMethod = (paymentMethod: string) => {
     if (!paymentMethod) return 'N/A';
     
+    // Check if it's in paymentPlans
+    const plan = paymentPlans[paymentMethod];
+    if (!plan) return paymentMethod;
+
     // Basic Options
-    const basic: Record<string, string> = {
-      check: 'Check (0% Fee)',
-      mcVisaDscvr: 'MC/VISA/DSCVR (3.00% Fee)',
-      amex: 'AMEX (5.00% Fee)',
-    };
-    if (basic[paymentMethod]) return basic[paymentMethod];
+    const basicKeys = ['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'];
+    if (basicKeys.includes(paymentMethod)) {
+      return plan.label;
+    }
 
-    if (paymentMethod === 'concora') return 'Concora (19.9% APR)';
+    if (paymentMethod === 'concora') {
+      return plan.label.split(' (Bank Fee:')[0];
+    }
 
-    // Financing Plans
+    if (plan.shortlabel) {
+      return plan.shortlabel;
+    }
+
+    // Financing Plans (GreenSky / Wells Fargo)
     let planName = '';
     if (paymentMethod.startsWith('greensky')) planName = 'GreenSky';
     else if (paymentMethod.startsWith('wf')) planName = 'Wells Fargo';
 
-    const numberMatch = paymentMethod.match(/\d+/);
+    const numberMatch = plan.label.match(/^(\d+)/);
     if (numberMatch && planName) {
-      return `${planName} ${numberMatch[0]}`;
+      return `${planName} ${numberMatch[1]}`;
     }
 
-    return paymentMethod;
+    return plan.label;
   };
 
   const {
@@ -442,7 +452,7 @@ export default function JobTrackerPage() {
                       }`}
                     >
                       {soldDateFilter
-                        ? format(parseISO(soldDateFilter), 'MM/dd/yyyy')
+                        ? format(parseSafeISO(soldDateFilter), 'MM/dd/yyyy')
                         : 'MM/DD/YYYY'}
                     </Text>
                   </View>
@@ -479,7 +489,7 @@ export default function JobTrackerPage() {
                       }`}
                     >
                       {payoutDateFilter
-                        ? format(parseISO(payoutDateFilter), 'MM/dd/yyyy')
+                        ? format(parseSafeISO(payoutDateFilter), 'MM/dd/yyyy')
                         : 'MM/DD/YYYY'}
                     </Text>
                   </View>
@@ -685,7 +695,7 @@ export default function JobTrackerPage() {
                                 <View className="w-28">
                                   {(() => {
                                     const style = getDateChipStyle(job.installDate, 'install');
-                                    const dateStr = job.installDate ? format(parseISO(job.installDate), 'MM/dd/yyyy') : 'TBD';
+                                    const dateStr = job.installDate ? format(parseSafeISO(job.installDate), 'MM/dd/yyyy') : 'TBD';
                                     if (style) {
                                       return (
                                         <View className="px-2 py-0.5 rounded-full self-start" style={{ backgroundColor: style.bg }}>
@@ -697,7 +707,7 @@ export default function JobTrackerPage() {
                                   })()}
                                 </View>
                                 <Text className="w-28 text-[13px] font-medium text-text-primary">
-                                  {format(parseISO(job.soldDate), 'MM/dd/yyyy')}
+                                  {format(parseSafeISO(job.soldDate), 'MM/dd/yyyy')}
                                 </Text>
                                 <View className="w-36">
                                   {(() => {
@@ -713,9 +723,19 @@ export default function JobTrackerPage() {
                                     return <Text className="text-[13px] font-medium text-text-primary">{payoutStr}</Text>;
                                   })()}
                                 </View>
-                                <Text className="w-40 text-[13px] font-medium text-text-primary">
-                                  {formatPaymentMethod(job.paymentMethod)}
-                                </Text>
+                                <View className="w-40 flex-row items-center gap-1">
+                                  <Text className="text-[13px] font-medium text-text-primary" numberOfLines={1} style={{ flexShrink: 1 }}>
+                                    {formatPaymentMethod(job.paymentMethod)}
+                                  </Text>
+                                  {job.paymentMethod && !['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'].includes(job.paymentMethod) && (
+                                    <TouchableOpacity
+                                      onPress={() => setSelectedPaymentDetails(job.paymentMethod)}
+                                      style={{ padding: 4 }}
+                                    >
+                                      <Feather name="info" size={14} color={colors.primary.main} />
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
                                 <Text className="w-40 text-[13px] font-medium text-text-primary">
                                   {(job as any).appointment?.title || job.customerName || 'N/A'}
                                 </Text>
@@ -1051,6 +1071,37 @@ export default function JobTrackerPage() {
               </TouchableOpacity>
             </View>
           </View>
+        </Pressable>
+      </Modal>
+
+      {/* Payment Method Details Modal */}
+      <Modal
+        visible={selectedPaymentDetails !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSelectedPaymentDetails(null)}
+      >
+        <Pressable
+          className="flex-1 bg-black/40 justify-center items-center px-6"
+          onPress={() => setSelectedPaymentDetails(null)}
+        >
+          <Pressable
+            className="w-full max-w-sm rounded-[24px] p-6 shadow-xl"
+            style={{ backgroundColor: colors.card }}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-lg font-black text-text-primary">
+                Payment Method Details
+              </Text>
+              <TouchableOpacity onPress={() => setSelectedPaymentDetails(null)}>
+                <Feather name="x" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text className="text-sm font-medium text-text-secondary leading-6">
+              {selectedPaymentDetails ? (paymentPlans[selectedPaymentDetails]?.label || selectedPaymentDetails) : ''}
+            </Text>
+          </Pressable>
         </Pressable>
       </Modal>
     </View>

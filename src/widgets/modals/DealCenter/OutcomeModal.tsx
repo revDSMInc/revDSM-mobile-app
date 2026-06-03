@@ -11,9 +11,11 @@ import {
   ActivityIndicator,
   Switch,
   Alert,
+  StyleSheet,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { BlurView } from '@react-native-community/blur';
 import { demoReasons } from '../../components/dealcenter/ResultViews';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import {
@@ -66,7 +68,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   isJobBuilderSubmitted,
   lead,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const isLowesLead = lead?.lowesLead === true;
   const contractPrice = Number(
     String(outcomeForm.originalContractPrice || '0').replace(/[^0-9.]/g, '')
@@ -206,7 +208,20 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View className="flex-1 bg-black/50 justify-center px-4">
+        <View className="flex-1 justify-center px-4">
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={onClose}
+          >
+            <BlurView
+              style={StyleSheet.absoluteFill}
+              blurType={isDark ? 'dark' : 'light'}
+              blurAmount={10}
+              reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+            />
+          </TouchableOpacity>
+
           <View className="bg-white rounded-2xl shadow-2xl max-h-[85%] overflow-hidden">
             {/* Header */}
             <View

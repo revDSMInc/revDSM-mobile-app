@@ -792,6 +792,7 @@ export const REV_RENDER_COLORS = {
     { name: 'Misty Shadow', hex: '#4A4D39' },
     { name: 'Musket Brown', hex: '#65564F' },
     { name: 'Russet Red', hex: '#A9443B' },
+    { name: 'Black', hex: '#2D2E2E' },
   ],
   pinholeSoffit: [
     { name: 'White', hex: '#E7E7E2' },
@@ -808,6 +809,7 @@ export const REV_RENDER_COLORS = {
     { name: 'Pebblestone Clay', hex: '#A49A84' },
     { name: 'Everest', hex: '#7E8D91' },
     { name: 'Musket Brown', hex: '#65564F' },
+    { name: 'Black', hex: '#2D2E2E' },
   ],
   common: [
     { name: 'White', hex: '#E7E7E2' },
@@ -822,5 +824,6 @@ export const REV_RENDER_COLORS = {
     { name: 'Victorian Grey', hex: '#9D9B91' },
     { name: 'Pebblestone Clay', hex: '#A49A84' },
     { name: 'Musket Brown', hex: '#65564F' },
+    { name: 'Black', hex: '#2D2E2E' },
   ],
 };

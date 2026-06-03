@@ -569,13 +569,21 @@ export const JobDocsSection = ({
                       />
                       <DetailRow 
                         label="Down Payment" 
-                        value={(outcomeData?.downPayment || outcomeData?.leadData?.downPayment) ? `$${Number(outcomeData?.downPayment || outcomeData?.leadData?.downPayment).toLocaleString()}` : '-'} 
+                        value={(() => {
+                          const v = outcomeData?.downPayment ?? outcomeData?.leadData?.downPayment;
+                          return (v === null || v === undefined || v === '') ? '$0.00' : '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        })()} 
+                        method={(() => {
+                          const v = outcomeData?.downPayment ?? outcomeData?.leadData?.downPayment;
+                          if (v === null || v === undefined || v === '' || Number(v) === 0) return undefined;
+                          return outcomeData?.paymentMethod || outcomeData?.leadData?.paymentMethod;
+                        })()}
                         isDark={isDark}
                       />
                       <DetailRow 
                         label="Remaining Balance" 
                         value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                        method={paymentPlans[outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod]?.label?.split(' (')[0]}
+                        method={outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod}
                         isDark={isDark}
                       />
                       <DetailRow 

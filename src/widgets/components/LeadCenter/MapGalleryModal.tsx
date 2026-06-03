@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, Modal, Image,
   Dimensions, ScrollView, ActivityIndicator, Alert,
   Animated as RNAnimated,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LeadService } from '../../../services/api/leads';
@@ -54,7 +55,11 @@ const GalleryImage = React.memo(({ uri, onExpand, onDelete, canDelete }: {
   const [imgLoaded, setImgLoaded] = useState(false);
 
   return (
-    <View className="rounded-2xl overflow-hidden bg-slate-100 aspect-[3/4] shadow-sm relative">
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onPress={onExpand}
+      className="rounded-2xl overflow-hidden bg-slate-100 aspect-[3/4] shadow-sm relative"
+    >
       {!imgLoaded && <ImageSkeleton />}
       <Image
         source={{ uri }}
@@ -81,7 +86,7 @@ const GalleryImage = React.memo(({ uri, onExpand, onDelete, canDelete }: {
           )}
         </>
       )}
-    </View>
+    </TouchableOpacity>
   );
 });
 
@@ -281,10 +286,18 @@ export const MapGalleryModal = ({
   if (!job) return null;
 
   const hasNoImages = beforeUris.length === 0 && afterUris.length === 0;
+  // iOS can fail to present a Modal over another active Modal.
+  // Hide the base gallery modal while any child modal is open.
+  const mainModalVisible =
+    visible &&
+    !showBeforeModal &&
+    !showAfterModal &&
+    !showPresent &&
+    !viewerVisible;
 
   return (
     <View>
-      <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+      <Modal visible={mainModalVisible} animationType="fade" transparent onRequestClose={onClose}>
         <View className="flex-1 justify-center items-center bg-black/60 px-5">
           <View
             className="bg-white rounded-[32px] overflow-hidden"
@@ -533,7 +546,14 @@ export const MapGalleryModal = ({
       />
 
       {/* Full-screen viewer */}
-      <Modal visible={viewerVisible} transparent animationType="slide">
+      <Modal
+        visible={viewerVisible}
+        transparent
+        animationType="slide"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => { setViewerVisible(false); resetViewer(); }}
+      >
         <GestureHandlerRootView style={{ flex: 1 }}>
           <View className="flex-1 bg-black justify-center items-center">
             <TouchableOpacity

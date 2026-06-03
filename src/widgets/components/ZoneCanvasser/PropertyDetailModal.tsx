@@ -35,13 +35,15 @@ export function PropertyDetailModal({ visible, building, onContinue, onCancel }:
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchPropertyDetails(lat, lng);
+      const data = (await fetchPropertyDetails(lat, lng)) as any;
       setPropertyData(data);
       if (data?.propertyLookupUnavailable) {
-        setError(data.error || 'Property data lookup is only available for US addresses');
+        const addr = data.formattedAddress || building?.label || 'N/A';
+        setError(`Property data lookup failed (${addr})`);
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to fetch property details');
+      const addr = building?.label || 'N/A';
+      setError(`Property data lookup failed (${addr})`);
     } finally {
       setLoading(false);
     }

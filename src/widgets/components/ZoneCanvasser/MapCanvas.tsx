@@ -134,7 +134,7 @@ export function MapCanvas({
   );
 
   return (
-    <View className="flex-1 relative">
+    <View className="flex-1 relative" style={{ flex: 1 }}>
       <View
         style={StyleSheet.absoluteFillObject}
         onStartShouldSetResponder={() => rectangleDrawing}
@@ -175,7 +175,7 @@ export function MapCanvas({
                   strokeWidth={1}
                 />
               )}
-              {drawCoordinates.map((coord, idx) =>
+              {drawType === 'polygon' && drawCoordinates.map((coord, idx) =>
                 coord?.latitude != null && coord?.longitude != null ? (
                   <Marker
                     key={`draft-dot-${idx}`}

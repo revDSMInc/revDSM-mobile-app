@@ -290,9 +290,8 @@ export default function LeadCenterPage() {
       customerName: (() => {
         const isSale = lead.status === 'sale';
         const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
-        return `${lead.office || ''} ${
-          isSale ? lead.leadId : `Lead ${dateStr} - ${lead.leadId || 'N/A'}`
-        }`.trim() || 'Discussion';
+        return `${lead.office || ''} ${isSale ? lead.leadId : `Lead ${dateStr} - ${lead.leadId || 'N/A'}`
+          }`.trim() || 'Discussion';
       })(),
     });
   };
@@ -444,7 +443,7 @@ export default function LeadCenterPage() {
       await consentMutation.mutateAsync(payload);
       await refetch();
       toggleModal('showPaperFallback', false);
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleInspectionSubmit = async (data: any) => {
@@ -456,7 +455,7 @@ export default function LeadCenterPage() {
       const filePath = `${dirs.DocumentDir}/${fileName}`;
 
       const formData: any[] = [];
-      
+
       Object.keys(data).forEach((key) => {
         const value = data[key];
         if (!value && value !== 0) return;
@@ -639,8 +638,11 @@ export default function LeadCenterPage() {
           <View className="px-4">
             <View className="flex-row gap-[30%] mb-4">
               <View className="flex-col gap-3">
-                <Text className="text-sm" style={{ color: colors.textSecondary }}>
-                  Lead ID: {lead.leadId}
+                <Text className="text-sm" style={{ color: colors.primary.main }}>
+                  Lead ID:
+                  <Text className="font-semibold" style={{ color: colors.text }}>
+                    {lead.leadId}
+                  </Text>
                 </Text>
                 <View className="flex-row items-center">
                   <FontAwesome
@@ -689,7 +691,7 @@ export default function LeadCenterPage() {
               </View>
 
               <View className="flex-col gap-3">
-                <Text className="text-sm text-right" style={{ color: colors.textSecondary }}>
+                <Text className="text-sm text-right" style={{ color: colors.primary.main }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
@@ -819,7 +821,7 @@ export default function LeadCenterPage() {
           className="px-5 py-4 flex-row gap-2"
           style={{
             backgroundColor: isDark ? colors.surface : colors.background,
-            paddingBottom: Platform.OS === 'ios' ? insets.bottom : 16,
+            paddingBottom: Platform.OS === 'ios' ? 0 : 16,
           }}
         >
           <TouchableOpacity
@@ -921,7 +923,7 @@ export default function LeadCenterPage() {
         />
       )}
 
-      <MapSelectionModal 
+      <MapSelectionModal
         visible={showMapModal}
         address={lead?.fullAddress || lead?.customerDetails?.address || ''}
         onClose={() => setShowMapModal(false)}

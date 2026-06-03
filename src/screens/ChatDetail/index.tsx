@@ -215,7 +215,8 @@ export default function ChatDetailScreen() {
 
   const { canPost, canReact, canReply } = useTeamChannelPermission(isChannel ? channelObj : null);
   const isManager = user?.role === 'Manager' || user?.role === 'Admin' || user?.isAdmin;
-  const isViewOnly = !canPost && !isManager;
+  const isViewOnly = isChannel ? (!canPost && !isManager) : false;
+
 
   const handleDisabledClick = useCallback(() => {
     Alert.alert('Info', 'You are not allowed to post in this channel.');

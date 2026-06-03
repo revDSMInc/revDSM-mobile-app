@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Platform,
+  Alert,
+  Share,
 } from 'react-native';
 import Pdf from 'react-native-pdf';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -28,6 +30,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!visible || !uri) {
@@ -77,7 +80,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         }).fetch('GET', uri);
 
         const downloadedPath = res.path();
-        
+
         // VALIDATION: Check if it's actually a PDF (starts with %PDF- which is JVBERi in base64)
         const firstChunk = await ReactNativeBlobUtil.fs.readFile(downloadedPath, 'base64');
         const isPDF = firstChunk.startsWith('JVBERi');
@@ -105,23 +108,36 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
   }, [uri, visible]);
 
   const handleDownloadToDevice = async () => {
-    if (!uri) return;
+    const sourceUri = localUri || uri;
+    if (!sourceUri || saving) return;
     try {
+      setSaving(true);
       FlashMessage.info('Download started...', 'Downloading');
       const { dirs } = ReactNativeBlobUtil.fs;
       const fileName = uri.split('?')[0].split('/').pop() || `revdsm_${Date.now()}.pdf`;
-      const publicPath = `${dirs.DownloadDir}/${fileName}`;
+      const baseDir = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
+      const publicPath = `${baseDir}/${fileName}`;
 
       // 1. Handle Local vs Remote files
-      if (uri.startsWith('file://') || uri.startsWith('/')) {
-        const cleanSourcePath = uri.replace('file://', '');
+      if (sourceUri.startsWith('file://') || sourceUri.startsWith('/')) {
+        const cleanSourcePath = sourceUri.replace('file://', '');
+
+        // Remove existing file to prevent cp error
+        const exists = await ReactNativeBlobUtil.fs.exists(publicPath);
+        if (exists) {
+          await ReactNativeBlobUtil.fs.unlink(publicPath);
+        }
+
         await ReactNativeBlobUtil.fs.cp(cleanSourcePath, publicPath);
-        
+
         if (Platform.OS === 'android') {
           // Add to DownloadManager and scan so it appears in 'Downloads' app
           ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: 'application/pdf' }]);
         } else {
-          ReactNativeBlobUtil.ios.openDocument(publicPath);
+          await Share.share({
+            url: `file://${publicPath}`,
+            title: title || 'Save PDF',
+          });
         }
       } else {
         // Remote URL - Use DownloadManager for Android
@@ -134,20 +150,24 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
               description: 'Downloading PDF document',
               mime: 'application/pdf',
             },
-          }).fetch('GET', uri);
+          }).fetch('GET', sourceUri);
         } else {
           await ReactNativeBlobUtil.config({
             path: publicPath,
             fileCache: true,
-          }).fetch('GET', uri);
-          ReactNativeBlobUtil.ios.openDocument(publicPath);
+          }).fetch('GET', sourceUri);
+
+          await Share.share({
+            url: `file://${publicPath}`,
+            title: title || 'Save PDF',
+          });
         }
       }
-      
-      FlashMessage.success('Success', 'Document saved to Downloads');
     } catch (err) {
       console.error('[PdfPreviewModal] Public download error:', err);
-      FlashMessage.error('Error', 'Failed to save document to device');
+      Alert.alert('Error', 'Failed to save document to device.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -164,8 +184,16 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
               {title || 'Document Preview'}
             </Text>
           </View>
-          <TouchableOpacity onPress={handleDownloadToDevice} style={styles.downloadBtn}>
-            <Icon name="download" size={24} color={isDark ? '#fff' : colors.primary.main} />
+          <TouchableOpacity
+            onPress={handleDownloadToDevice}
+            style={styles.downloadBtn}
+            disabled={saving || downloading}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color={isDark ? '#fff' : colors.primary.main} />
+            ) : (
+              <Icon name="download" size={24} color={isDark ? '#fff' : colors.primary.main} />
+            )}
           </TouchableOpacity>
         </View>
 

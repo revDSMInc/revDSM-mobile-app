@@ -5,6 +5,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { ENV } from '../../config/env';
 import axios from 'axios';
+import { CustomDatePicker } from '../../screens/JobTracker/components/CustomDatePicker';
 
 export interface FilterState {
   jobNumber: string;
@@ -53,7 +54,7 @@ export const MapFiltersModal = ({
   const [localFilters, setLocalFilters] = useState(filters);
   const [showStartDate, setShowStartDate] = useState(false);
   const [showEndDate, setShowEndDate] = useState(false);
-  
+
   // Search State
   const [searchType, setSearchType] = useState<'location' | 'job'>('location');
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
@@ -98,7 +99,7 @@ export const MapFiltersModal = ({
       const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
         input
       )}&key=${ENV.GOOGLE_MAPS_API_KEY}&components=country:us`;
-      
+
       const res = await axios.get(url);
       if (res.data?.predictions) {
         setSearchResults(res.data.predictions);
@@ -147,338 +148,341 @@ export const MapFiltersModal = ({
       endDate: end ? end.toISOString() : null,
     });
     setDateRangeLabel(label);
-    if (option !== 'Custom') setShowDateRangeDropdown(false);
+    // Always close dropdown after selection (including Custom) for iOS parity.
+    setShowDateRangeDropdown(false);
   };
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
         <View className="flex-1 bg-black/40 justify-center px-8">
-        <View className="bg-white rounded-[24px] p-5 shadow-2xl relative">
-          <TouchableOpacity 
-            onPress={onClose} 
-            className="absolute right-4 top-4 z-30 p-2"
-          >
-            <Icon name="close" size={24} color="#64748b" />
-          </TouchableOpacity>
+          <View className="bg-white rounded-[24px] p-5 shadow-2xl relative">
+            <TouchableOpacity
+              onPress={onClose}
+              className="absolute right-4 top-4 z-30 p-2"
+            >
+              <Icon name="close" size={24} color="#64748b" />
+            </TouchableOpacity>
 
-          <View className="mt-8">
-            {/* Search Input with Type Toggle */}
-            <View className="mb-3" style={{ zIndex: 200 }}>
-              <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-                {/* Type Toggle Dropdown Trigger */}
-                <TouchableOpacity 
-                  onPress={() => {
-                    setShowTypeDropdown(!showTypeDropdown);
-                    setShowRadiusDropdown(false);
-                  }}
-                  className="w-[85px] h-full items-center justify-center flex-row px-2"
-                  style={{ backgroundColor: colors.primary.main }}
-                >
-                  <Icon name={searchType === 'location' ? "map-marker" : "pound"} size={18} color="white" />
-                  <Text className="text-white font-bold text-[12px] ml-1 uppercase">
-                    {searchType === 'location' ? 'Loc' : 'Job#'}
-                  </Text>
-                  <Icon name={showTypeDropdown ? "chevron-up" : "chevron-down"} size={14} color="white" className="ml-1" />
-                </TouchableOpacity>
+            <View className="mt-8">
+              {/* Search Input with Type Toggle */}
+              <View className="mb-3" style={{ zIndex: 200 }}>
+                <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                  {/* Type Toggle Dropdown Trigger */}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowTypeDropdown(!showTypeDropdown);
+                      setShowRadiusDropdown(false);
+                    }}
+                    className="w-[85px] h-full items-center justify-center flex-row px-2"
+                    style={{ backgroundColor: colors.primary.main }}
+                  >
+                    <Icon name={searchType === 'location' ? "map-marker" : "pound"} size={18} color="white" />
+                    <Text className="text-white font-bold text-[12px] ml-1 uppercase">
+                      {searchType === 'location' ? 'Loc' : 'Job#'}
+                    </Text>
+                    <Icon name={showTypeDropdown ? "chevron-up" : "chevron-down"} size={14} color="white" className="ml-1" />
+                  </TouchableOpacity>
 
-                <View className="flex-1 px-3 justify-center">
-                  <View className="flex-row items-center">
-                    <TextInput
-                      placeholder={searchType === 'location' ? "Enter a location" : "Enter job number"}
-                      placeholderTextColor="#94a3b8"
-                      className="flex-1 font-bold text-slate-700 text-[13px] h-full"
-                      value={searchText}
-                      onChangeText={(text) => {
-                        skipSearch.current = false;
-                        setSearchText(text);
-                        // Clear centerCoords if they modify the text so we don't use a stale geocoded location
-                        setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
-                      }}
-                    />
-                    {searchText.length > 0 && (
-                      <TouchableOpacity 
-                        onPress={() => {
-                          setSearchText('');
-                          setSearchResults([]);
-                          setLocalFilters({ ...localFilters, centerCoords: undefined });
+                  <View className="flex-1 px-3 justify-center">
+                    <View className="flex-row items-center">
+                      <TextInput
+                        placeholder={searchType === 'location' ? "Enter a location" : "Enter job number"}
+                        placeholderTextColor="#94a3b8"
+                        className="flex-1 font-bold text-slate-700 text-[13px] h-full"
+                        value={searchText}
+                        onChangeText={(text) => {
+                          skipSearch.current = false;
+                          setSearchText(text);
+                          // Clear centerCoords if they modify the text so we don't use a stale geocoded location
+                          setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
                         }}
-                        className="p-1"
-                      >
-                        <Icon name="close-circle" size={18} color="#94a3b8" />
-                      </TouchableOpacity>
-                    )}
-                    {isSearching && <ActivityIndicator size="small" color="#059669" />}
+                      />
+                      {searchText.length > 0 && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setSearchText('');
+                            setSearchResults([]);
+                            setLocalFilters({ ...localFilters, centerCoords: undefined });
+                          }}
+                          className="p-1"
+                        >
+                          <Icon name="close-circle" size={18} color="#94a3b8" />
+                        </TouchableOpacity>
+                      )}
+                      {isSearching && <ActivityIndicator size="small" color="#059669" />}
+                    </View>
                   </View>
                 </View>
-              </View>
 
-              {/* Search Type Dropdown Menu */}
-              {showTypeDropdown && (
-                <View 
-                  className="absolute top-[52px] left-0 w-[100px] bg-white rounded-xl shadow-xl border border-slate-100 z-[110]"
-                  style={{ elevation: 10 }}
-                >
-                  <TouchableOpacity 
-                    className="p-3 border-b border-slate-50 flex-row items-center"
-                    onPress={() => {
-                      setSearchType('location');
-                      setShowTypeDropdown(false);
-                      setSearchResults([]);
-                    }}
+                {/* Search Type Dropdown Menu */}
+                {showTypeDropdown && (
+                  <View
+                    className="absolute top-[52px] left-0 w-[100px] bg-white rounded-xl shadow-xl border border-slate-100 z-[110]"
+                    style={{ elevation: 10 }}
                   >
-                    <Icon name="map-marker" size={16} color="#64748b" />
-                    <Text className="ml-2 font-bold text-[12px] text-slate-700">Location</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    className="p-3 flex-row items-center"
-                    onPress={() => {
-                      setSearchType('job');
-                      setShowTypeDropdown(false);
-                      setSearchResults([]);
-                      // Clear location coordinates when switching search modes
-                      setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
-                    }}
-                  >
-                    <Icon name="pound" size={16} color="#64748b" />
-                    <Text className="ml-2 font-bold text-[12px] text-slate-700">Job #</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Places Search Results */}
-              {searchType === 'location' && searchResults.length > 0 && (
-                <View 
-                  className="absolute top-[55px] left-0 right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[100] overflow-hidden"
-                  style={{ elevation: 5, height: 200 }}
-                >
-                  <ScrollView 
-                    nestedScrollEnabled={true}
-                    keyboardShouldPersistTaps="handled"
-                    contentContainerStyle={{ flexGrow: 1 }}
-                  >
-                    {searchResults.map((item, idx) => (
-                      <TouchableOpacity
-                        key={idx}
-                        className="p-4 border-b border-slate-50 flex-row items-center"
-                        onPress={async () => {
-                          skipSearch.current = true;
-                          setSearchText(item.description);
-                          setSearchResults([]);
-                          Keyboard.dismiss();
-                          
-                          // Geocode to get coordinates for map navigation
-                          try {
-                            const url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.place_id}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
-                            const res = await axios.get(url);
-                            if (res.data?.results?.[0]?.geometry?.location) {
-                              const { lat, lng } = res.data.results[0].geometry.location;
-                              setLocalFilters({
-                                ...localFilters,
-                                centerCoords: { latitude: lat, longitude: lng }
-                              });
-                            }
-                          } catch (e) {
-                            console.log('Geocoding error:', e);
-                          }
-                        }}
-                      >
-                        <Icon name="map-marker" size={16} color="#94a3b8" />
-                        <Text className="ml-3 text-[13px] text-slate-700 flex-1" numberOfLines={1}>
-                          {item.description}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-
-            {/* Distance */}
-            <View className="mb-3" style={{ zIndex: 150 }}>
-              <FilterInput icon="radius-outline" primaryColor={colors.primary.main}>
-                <TouchableOpacity 
-                  onPress={() => {
-                    setShowRadiusDropdown(!showRadiusDropdown);
-                    setShowTypeDropdown(false);
-                  }}
-                  className="flex-row items-center justify-between"
-                >
-                  <Text className={`font-bold text-[13px] ${localFilters.radius ? 'text-slate-700' : 'text-slate-400'}`}>
-                    {localFilters.radius ? `${localFilters.radius} ${localFilters.radius === 1 ? 'Mile' : 'Miles'}` : 'Select Distance'}
-                  </Text>
-                  <Icon name={showRadiusDropdown ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" />
-                </TouchableOpacity>
-              </FilterInput>
-
-              {showRadiusDropdown && (
-                <View 
-                  className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120] overflow-hidden"
-                  style={{ 
-                    elevation: 10,
-                    height: 180, 
-                  }}
-                >
-                  <ScrollView 
-                    nestedScrollEnabled={true}
-                    keyboardShouldPersistTaps="always"
-                    showsVerticalScrollIndicator={true}
-                  >
-                    <TouchableOpacity 
-                      className="p-4 border-b border-slate-50"
+                    <TouchableOpacity
+                      className="p-3 border-b border-slate-50 flex-row items-center"
                       onPress={() => {
-                        setLocalFilters({ ...localFilters, radius: 0 });
-                        setShowRadiusDropdown(false);
+                        setSearchType('location');
+                        setShowTypeDropdown(false);
+                        setSearchResults([]);
                       }}
                     >
-                      <Text className="font-bold text-[13px] text-slate-400">Select Distance</Text>
+                      <Icon name="map-marker" size={16} color="#64748b" />
+                      <Text className="ml-2 font-bold text-[12px] text-slate-700">Location</Text>
                     </TouchableOpacity>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((val) => (
-                      <TouchableOpacity 
-                        key={val}
+                    <TouchableOpacity
+                      className="p-3 flex-row items-center"
+                      onPress={() => {
+                        setSearchType('job');
+                        setShowTypeDropdown(false);
+                        setSearchResults([]);
+                        // Clear location coordinates when switching search modes
+                        setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
+                      }}
+                    >
+                      <Icon name="pound" size={16} color="#64748b" />
+                      <Text className="ml-2 font-bold text-[12px] text-slate-700">Job #</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Places Search Results */}
+                {searchType === 'location' && searchResults.length > 0 && (
+                  <View
+                    className="absolute top-[55px] left-0 right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[100] overflow-hidden"
+                    style={{ elevation: 5, height: 200 }}
+                  >
+                    <ScrollView
+                      nestedScrollEnabled={true}
+                      keyboardShouldPersistTaps="handled"
+                      contentContainerStyle={{ flexGrow: 1 }}
+                    >
+                      {searchResults.map((item, idx) => (
+                        <TouchableOpacity
+                          key={idx}
+                          className="p-4 border-b border-slate-50 flex-row items-center"
+                          onPress={async () => {
+                            skipSearch.current = true;
+                            setSearchText(item.description);
+                            setSearchResults([]);
+                            Keyboard.dismiss();
+
+                            // Geocode to get coordinates for map navigation
+                            try {
+                              const url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.place_id}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
+                              const res = await axios.get(url);
+                              if (res.data?.results?.[0]?.geometry?.location) {
+                                const { lat, lng } = res.data.results[0].geometry.location;
+                                setLocalFilters({
+                                  ...localFilters,
+                                  centerCoords: { latitude: lat, longitude: lng }
+                                });
+                              }
+                            } catch (e) {
+                              console.log('Geocoding error:', e);
+                            }
+                          }}
+                        >
+                          <Icon name="map-marker" size={16} color="#94a3b8" />
+                          <Text className="ml-3 text-[13px] text-slate-700 flex-1" numberOfLines={1}>
+                            {item.description}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
+
+              {/* Distance */}
+              <View className="mb-3" style={{ zIndex: 150 }}>
+                <FilterInput icon="radius-outline" primaryColor={colors.primary.main}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowRadiusDropdown(!showRadiusDropdown);
+                      setShowTypeDropdown(false);
+                    }}
+                    className="flex-row items-center justify-between"
+                  >
+                    <Text className={`font-bold text-[13px] ${localFilters.radius ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {localFilters.radius ? `${localFilters.radius} ${localFilters.radius === 1 ? 'Mile' : 'Miles'}` : 'Select Distance'}
+                    </Text>
+                    <Icon name={showRadiusDropdown ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                </FilterInput>
+
+                {showRadiusDropdown && (
+                  <View
+                    className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120] overflow-hidden"
+                    style={{
+                      elevation: 10,
+                      height: 180,
+                    }}
+                  >
+                    <ScrollView
+                      nestedScrollEnabled={true}
+                      keyboardShouldPersistTaps="always"
+                      showsVerticalScrollIndicator={true}
+                    >
+                      <TouchableOpacity
                         className="p-4 border-b border-slate-50"
                         onPress={() => {
-                          setLocalFilters({ ...localFilters, radius: val });
+                          setLocalFilters({ ...localFilters, radius: 0 });
                           setShowRadiusDropdown(false);
                         }}
                       >
-                        <Text className="font-bold text-[13px] text-slate-700">
-                          {val} {val === 1 ? 'Mile' : 'Miles'}
-                        </Text>
+                        <Text className="font-bold text-[13px] text-slate-400">Select Distance</Text>
+                      </TouchableOpacity>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((val) => (
+                        <TouchableOpacity
+                          key={val}
+                          className="p-4 border-b border-slate-50"
+                          onPress={() => {
+                            setLocalFilters({ ...localFilters, radius: val });
+                            setShowRadiusDropdown(false);
+                          }}
+                        >
+                          <Text className="font-bold text-[13px] text-slate-700">
+                            {val} {val === 1 ? 'Mile' : 'Miles'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+              </View>
+
+              {/* Price Inputs with labels */}
+              <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
+                  <Text className="text-white font-black text-[12px]">Min</Text>
+                </View>
+                <View className="flex-1 px-3 justify-center">
+                  <TextInput
+                    placeholder="Min Price"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="numeric"
+                    className="font-bold text-slate-700 text-[13px]"
+                    style={{ paddingVertical: 0, includeFontPadding: false as any }}
+                    value={localFilters.minPrice}
+                    onChangeText={(text) => setLocalFilters({ ...localFilters, minPrice: text })}
+                  />
+                </View>
+              </View>
+
+              <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
+                  <Text className="text-white font-black text-[12px]">Max</Text>
+                </View>
+                <View className="flex-1 px-3 justify-center">
+                  <TextInput
+                    placeholder="Max Price"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="numeric"
+                    className="font-bold text-slate-700 text-[13px]"
+                    style={{ paddingVertical: 0, includeFontPadding: false as any }}
+                    value={localFilters.maxPrice}
+                    onChangeText={(text) => setLocalFilters({ ...localFilters, maxPrice: text })}
+                  />
+                </View>
+              </View>
+
+              {/* Date Range Dropdown */}
+              <View className="z-[80] mb-3">
+                <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                  <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
+                    <Icon name="calendar-month" size={22} color="white" />
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
+                    className="flex-1 px-3 flex-row items-center justify-between"
+                  >
+                    <Text className={`font-bold text-[13px] ${dateRangeLabel !== 'Select Date Range' ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {dateRangeLabel}
+                    </Text>
+                    <Icon name={showDateRangeDropdown ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                </View>
+
+                {showDateRangeDropdown && (
+                  <View
+                    className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120]"
+                    style={{ elevation: 10 }}
+                  >
+                    {['Past 30 Days', 'Past Year', 'Past 5 Years', 'Custom'].map((opt) => (
+                      <TouchableOpacity
+                        key={opt}
+                        className="p-4 border-b border-slate-50"
+                        onPress={() => handleDateRangeSelect(opt)}
+                      >
+                        <Text className="font-bold text-[13px] text-slate-700">{opt}</Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
-                </View>
-              )}
-
-            </View>
-
-            {/* Price Inputs with labels */}
-            <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-              <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
-                <Text className="text-white font-black text-[12px]">Min</Text>
-              </View>
-              <View className="flex-1 px-3 justify-center">
-                <TextInput
-                  placeholder="Min Price"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
-                  className="font-bold text-slate-700 text-[13px]"
-                  value={localFilters.minPrice}
-                  onChangeText={(text) => setLocalFilters({ ...localFilters, minPrice: text })}
-                />
-              </View>
-            </View>
-
-            <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-              <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
-                <Text className="text-white font-black text-[12px]">Max</Text>
-              </View>
-              <View className="flex-1 px-3 justify-center">
-                <TextInput
-                  placeholder="Max Price"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
-                  className="font-bold text-slate-700 text-[13px]"
-                  value={localFilters.maxPrice}
-                  onChangeText={(text) => setLocalFilters({ ...localFilters, maxPrice: text })}
-                />
-              </View>
-            </View>
-
-            {/* Date Range Dropdown */}
-            <View className="z-[80] mb-3">
-              <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-                <View className="w-[50px] h-full items-center justify-center" style={{ backgroundColor: colors.primary.main }}>
-                  <Icon name="calendar-month" size={22} color="white" />
-                </View>
-                <TouchableOpacity
-                  onPress={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
-                  className="flex-1 px-3 flex-row items-center justify-between"
-                >
-                  <Text className={`font-bold text-[13px] ${dateRangeLabel !== 'Select Date Range' ? 'text-slate-700' : 'text-slate-400'}`}>
-                    {dateRangeLabel}
-                  </Text>
-                  <Icon name={showDateRangeDropdown ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" />
-                </TouchableOpacity>
+                  </View>
+                )}
               </View>
 
-              {showDateRangeDropdown && (
-                <View 
-                  className="absolute top-[52px] left-[50px] right-0 bg-white rounded-xl shadow-xl border border-slate-100 z-[120]"
-                  style={{ elevation: 10 }}
-                >
-                  {['Past 30 Days', 'Past Year', 'Past 5 Years', 'Custom'].map((opt) => (
-                    <TouchableOpacity 
-                      key={opt}
-                      className="p-4 border-b border-slate-50"
-                      onPress={() => handleDateRangeSelect(opt)}
+              {/* Custom Date Inputs */}
+              {dateRangeLabel === 'Custom' && (
+                <View className="mb-3">
+                  <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                    <View className="w-[50px] h-full bg-slate-100 items-center justify-center">
+                      <Icon name="calendar-start" size={20} color="#64748b" />
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setShowStartDate(true)}
+                      className="flex-1 px-3 justify-center"
                     >
-                      <Text className="font-bold text-[13px] text-slate-700">{opt}</Text>
+                      <Text className={`font-bold text-[13px] ${localFilters.startDate ? 'text-slate-700' : 'text-slate-400'}`}>
+                        {localFilters.startDate ? new Date(localFilters.startDate).toLocaleDateString() : 'Start date'}
+                      </Text>
                     </TouchableOpacity>
-                  ))}
+                  </View>
+
+                  <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
+                    <View className="w-[50px] h-full bg-slate-100 items-center justify-center">
+                      <Icon name="calendar-end" size={20} color="#64748b" />
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setShowEndDate(true)}
+                      className="flex-1 px-3 justify-center"
+                    >
+                      <Text className={`font-bold text-[13px] ${localFilters.endDate ? 'text-slate-700' : 'text-slate-400'}`}>
+                        {localFilters.endDate ? new Date(localFilters.endDate).toLocaleDateString() : 'End date'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
-            </View>
 
-            {/* Custom Date Inputs */}
-            {dateRangeLabel === 'Custom' && (
-              <View className="mb-3">
-                <View className="flex-row items-center mb-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-                  <View className="w-[50px] h-full bg-slate-100 items-center justify-center">
-                    <Icon name="calendar-start" size={20} color="#64748b" />
-                  </View>
+              {/* Toggles Row */}
+              <View className="flex-row items-center justify-between mb-8 px-1">
+                <View className="flex-row gap-5 items-center">
+                  <Icon name="format-list-checks" size={24} color="#000" />
                   <TouchableOpacity
-                    onPress={() => setShowStartDate(true)}
-                    className="flex-1 px-3 justify-center"
+                    onPress={() => setLocalFilters({ ...localFilters, myJobsOnly: !localFilters.myJobsOnly })}
+                    className="w-11 h-6 rounded-full px-1 justify-center"
+                    style={{ backgroundColor: localFilters.myJobsOnly ? colors.primary.main : '#e2e8f0' }}
                   >
-                    <Text className={`font-bold text-[13px] ${localFilters.startDate ? 'text-slate-700' : 'text-slate-400'}`}>
-                      {localFilters.startDate ? new Date(localFilters.startDate).toLocaleDateString() : 'Start date'}
-                    </Text>
+                    <View className={`w-4 h-4 bg-white rounded-full ${localFilters.myJobsOnly ? 'self-end' : 'self-start'}`} />
                   </TouchableOpacity>
-                </View>
 
-                <View className="flex-row items-center bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden h-[50px]">
-                  <View className="w-[50px] h-full bg-slate-100 items-center justify-center">
-                    <Icon name="calendar-end" size={20} color="#64748b" />
-                  </View>
+                  <Icon name="star" size={24} color="#FFA500" />
                   <TouchableOpacity
-                    onPress={() => setShowEndDate(true)}
-                    className="flex-1 px-3 justify-center"
+                    onPress={() => setLocalFilters({ ...localFilters, isFavoriteOnly: !localFilters.isFavoriteOnly })}
+                    className="w-11 h-6 rounded-full px-1 justify-center"
+                    style={{ backgroundColor: localFilters.isFavoriteOnly ? colors.primary.main : '#e2e8f0' }}
                   >
-                    <Text className={`font-bold text-[13px] ${localFilters.endDate ? 'text-slate-700' : 'text-slate-400'}`}>
-                      {localFilters.endDate ? new Date(localFilters.endDate).toLocaleDateString() : 'End date'}
-                    </Text>
+                    <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isFavoriteOnly ? 'self-end' : 'self-start'}`} />
                   </TouchableOpacity>
-                </View>
-              </View>
-            )}
 
-            {/* Toggles Row */}
-            <View className="flex-row items-center justify-between mb-8 px-1">
-              <View className="flex-row gap-5 items-center">
-                <Icon name="format-list-checks" size={24} color="#000" />
-                <TouchableOpacity 
-                  onPress={() => setLocalFilters({ ...localFilters, myJobsOnly: !localFilters.myJobsOnly })}
-                  className="w-11 h-6 rounded-full px-1 justify-center"
-                  style={{ backgroundColor: localFilters.myJobsOnly ? colors.primary.main : '#e2e8f0' }}
-                >
-                  <View className={`w-4 h-4 bg-white rounded-full ${localFilters.myJobsOnly ? 'self-end' : 'self-start'}`} />
-                </TouchableOpacity>
-
-                <Icon name="star" size={24} color="#FFA500" />
-                <TouchableOpacity 
-                  onPress={() => setLocalFilters({ ...localFilters, isFavoriteOnly: !localFilters.isFavoriteOnly })}
-                  className="w-11 h-6 rounded-full px-1 justify-center"
-                  style={{ backgroundColor: localFilters.isFavoriteOnly ? colors.primary.main : '#e2e8f0' }}
-                >
-                  <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isFavoriteOnly ? 'self-end' : 'self-start'}`} />
-                </TouchableOpacity>
-
-                {/* <Icon name="account-group" size={24} color="#4CBB17" />
+                  {/* <Icon name="account-group" size={24} color="#4CBB17" />
                 <TouchableOpacity 
                   onPress={() => setLocalFilters({ ...localFilters, isReferralOnly: !localFilters.isReferralOnly })}
                   className="w-11 h-6 rounded-full px-1 justify-center"
@@ -486,33 +490,33 @@ export const MapFiltersModal = ({
                 >
                   <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isReferralOnly ? 'self-end' : 'self-start'}`} />
                 </TouchableOpacity> */}
+                </View>
+
+                <TouchableOpacity
+                  onPress={handleReset}
+                  className="w-12 h-10 rounded-xl items-center justify-center"
+                  style={{ backgroundColor: colors.primary.main }}
+                >
+                  <Icon name="refresh" size={24} color="white" />
+                </TouchableOpacity>
               </View>
 
+              {/* Search Button */}
               <TouchableOpacity
-                onPress={handleReset}
-                className="w-12 h-10 rounded-xl items-center justify-center"
-                style={{ backgroundColor: colors.primary.main }}
+                onPress={handleApply}
+                className="w-full h-14 rounded-2xl flex-row items-center justify-center shadow-xl"
+                style={{ backgroundColor: colors.primary.main, shadowColor: colors.primary.main }}
               >
-                <Icon name="refresh" size={24} color="white" />
+                <Icon name="magnify" size={26} color="white" />
+                <Text className="text-white font-black text-lg ml-2 uppercase">Search</Text>
               </TouchableOpacity>
             </View>
-
-            {/* Search Button */}
-            <TouchableOpacity
-              onPress={handleApply}
-              className="w-full h-14 rounded-2xl flex-row items-center justify-center shadow-xl"
-              style={{ backgroundColor: colors.primary.main, shadowColor: colors.primary.main }}
-            >
-              <Icon name="magnify" size={26} color="white" />
-              <Text className="text-white font-black text-lg ml-2 uppercase">Search</Text>
-            </TouchableOpacity>
           </View>
         </View>
-      </View>
       </KeyboardAvoidingView>
 
 
-      {showStartDate && (
+      {showStartDate && Platform.OS === 'android' && (
         <DateTimePicker
           value={localFilters.startDate ? new Date(localFilters.startDate) : new Date()}
           mode="date"
@@ -523,7 +527,7 @@ export const MapFiltersModal = ({
           }}
         />
       )}
-      {showEndDate && (
+      {showEndDate && Platform.OS === 'android' && (
         <DateTimePicker
           value={localFilters.endDate ? new Date(localFilters.endDate) : new Date()}
           mode="date"
@@ -533,6 +537,29 @@ export const MapFiltersModal = ({
             if (date) setLocalFilters({ ...localFilters, endDate: date.toISOString() });
           }}
         />
+      )}
+
+      {Platform.OS === 'ios' && (
+        <>
+          <CustomDatePicker
+            visible={showStartDate}
+            onClose={() => setShowStartDate(false)}
+            initialDate={localFilters.startDate || undefined}
+            onSelect={(dateStr) => {
+              const d = new Date(dateStr);
+              setLocalFilters({ ...localFilters, startDate: d.toISOString() });
+            }}
+          />
+          <CustomDatePicker
+            visible={showEndDate}
+            onClose={() => setShowEndDate(false)}
+            initialDate={localFilters.endDate || undefined}
+            onSelect={(dateStr) => {
+              const d = new Date(dateStr);
+              setLocalFilters({ ...localFilters, endDate: d.toISOString() });
+            }}
+          />
+        </>
       )}
     </Modal>
   );

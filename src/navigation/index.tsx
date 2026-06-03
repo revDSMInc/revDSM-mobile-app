@@ -99,7 +99,7 @@ export default function RootNavigator() {
   }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator screenOptions={{ headerShown: false, screenOrientation: 'portrait' } as any}>
       {!isAuthenticated ? (
         <>
           <Stack.Screen name="Login" component={LoginPage} />

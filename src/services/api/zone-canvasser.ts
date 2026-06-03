@@ -44,31 +44,49 @@ export async function fetchPropertyDetails(latitude: number, longitude: number) 
   const fullAddress = `${address1}, ${address2}`;
   const isUSAddress = /, [A-Z]{2}, \d{5}/.test(fullAddress);
 
-  if (!isUSAddress) {
-    return {
-      formattedAddress: geocodeData.results[0].formatted_address,
-      address1,
-      address2,
-      geocodeData: geocodeData.results[0],
-      propertyLookupUnavailable: true,
-      error: 'Property data lookup is only available for US addresses',
-    };
-  }
-
-  const propRes = await api.get<any>('/property/v1/properties', {
-    params: { address: fullAddress },
-  });
-
-  const propertyRecord = normalizePropertyResponse(propRes.data);
-
-  return {
-    ...(propertyRecord || {}),
+  const baseResult = {
     formattedAddress: geocodeData.results[0].formatted_address,
     address1,
     address2,
     geocodeData: geocodeData.results[0],
   };
+
+  if (!isUSAddress) {
+    return {
+      ...baseResult,
+      propertyLookupUnavailable: true,
+      error: 'Property data lookup is only available for US addresses',
+    };
+  }
+
+  try {
+    const propRes = await api.get<any>('/property/v1/properties', {
+      params: { address: fullAddress },
+    });
+
+    const propertyRecord = normalizePropertyResponse(propRes.data);
+    if (!propertyRecord) {
+      return {
+        ...baseResult,
+        propertyLookupUnavailable: true,
+        error: 'No property data found in RentCast API for this address',
+      };
+    }
+
+    return {
+      ...propertyRecord,
+      ...baseResult,
+    };
+  } catch (err: any) {
+    console.warn('[fetchPropertyDetails] RentCast details fetch failed:', err);
+    return {
+      ...baseResult,
+      propertyLookupUnavailable: true,
+      error: 'Property data lookup failed (RentCast API unavailable)',
+    };
+  }
 }
+
 
 export async function createBuildingLead(payload: any) {
   const res = await api.post<any>('/sales-rep/lead/v1/create', payload);

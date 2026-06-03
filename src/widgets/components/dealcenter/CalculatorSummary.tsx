@@ -36,6 +36,7 @@ import { LeadService } from '../../../services/api/leads';
 
 import { useCalculatorSummary } from '../../../hooks/useCalculatorSummary';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { BlurView } from '@react-native-community/blur';
 
 const getOrdinal = (n: number) => {
   const j = n % 10,
@@ -75,7 +76,7 @@ export const CalculatorSummary = ({
   jobBuilderState,
   handleResetJobBuilder,
 }: any) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const isLowesLead = lead?.lowesLead === true;
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
 
@@ -227,7 +228,7 @@ export const CalculatorSummary = ({
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       <View className="flex-1 bg-background">
         {/* Top Header & Tabs */}
@@ -250,9 +251,8 @@ export const CalculatorSummary = ({
                     <TouchableOpacity
                       key={idx}
                       onPress={() => setActiveIdx(idx)}
-                      className={`flex-1 flex-row items-center justify-center h-full border-b-2 ${
-                        idx === activeIdx ? 'border-green-500' : 'border-transparent'
-                      }`}
+                      className={`flex-1 flex-row items-center justify-center h-full border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                        }`}
                     >
                       {isLocked && (
                         <Ionicons
@@ -264,9 +264,8 @@ export const CalculatorSummary = ({
                       )}
                       <Text
                         numberOfLines={1}
-                        className={`font-black  ${
-                          calculators.length > 1 ? 'text-[10px]' : 'text-sm'
-                        } ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'}`}
+                        className={`font-black  ${calculators.length > 1 ? 'text-[10px]' : 'text-sm'
+                          } ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'}`}
                       >
                         {calc.name || `R${idx + 1}`}
                       </Text>
@@ -282,9 +281,8 @@ export const CalculatorSummary = ({
                     <TouchableOpacity
                       key={idx}
                       onPress={() => setActiveIdx(idx)}
-                      className={`flex-row items-center h-full px-4 border-b-2 ${
-                        idx === activeIdx ? 'border-green-500' : 'border-transparent'
-                      }`}
+                      className={`flex-row items-center h-full px-4 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                        }`}
                     >
                       <View className="flex-row items-center">
                         {isLocked && (
@@ -296,9 +294,8 @@ export const CalculatorSummary = ({
                           />
                         )}
                         <Text
-                          className={`text-sm font-black  ${
-                            idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
-                          }`}
+                          className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
+                            }`}
                         >
                           {calc.name || `Rollout ${idx + 1}`}
                         </Text>
@@ -319,9 +316,8 @@ export const CalculatorSummary = ({
         >
           <View className="px-5 py-6">
             <View
-              className={`bg-card rounded-3xl p-5 border-2 ${
-                isSaved ? 'border-green-500 bg-green-500/10' : 'border-border'
-              }`}
+              className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500 bg-green-500/10' : 'border-border'
+                }`}
             >
               <View className="flex-row items-center justify-between mb-6">
                 <Text className="text-xs font-semibold text-text-primary">{activeCalc.name}</Text>
@@ -480,36 +476,32 @@ export const CalculatorSummary = ({
 
               <View>
                 <Text
-                  className={`text-[10px] font-black  mb-2 ml-1 tracking-widest ${
-                    isSaved ? 'text-green-600' : 'text-amber-500'
-                  }`}
+                  className={`text-[10px] font-black  mb-2 ml-1 tracking-widest ${isSaved ? 'text-green-600' : 'text-amber-500'
+                    }`}
                 >
                   Rollout End Price
                 </Text>
                 <View
-                  className={`flex-row items-center bg-card border rounded-2xl px-4 h-16 shadow-sm ${
-                    error
-                      ? 'border-red-500'
-                      : activeDrop
+                  className={`flex-row items-center bg-card border rounded-2xl px-4 h-16 shadow-sm ${error
+                    ? 'border-red-500'
+                    : activeDrop
                       ? 'border-green-500'
                       : isSaved
-                      ? 'border-green-500'
-                      : 'border-border'
-                  }`}
+                        ? 'border-green-500'
+                        : 'border-border'
+                    }`}
                 >
                   <Text
-                    className={`text-xl font-black mr-2 ${
-                      activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
-                    }`}
+                    className={`text-xl font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
+                      }`}
                   >
                     $
                   </Text>
                   <TextInput
-                    className={`flex-1 font-black text-lg ${
-                      activeDrop || activeCalc.isRolloutConfirmed
-                        ? 'text-green-600'
-                        : 'text-text-primary'
-                    }`}
+                    className={`flex-1 font-black text-lg ${activeDrop || activeCalc.isRolloutConfirmed
+                      ? 'text-green-600'
+                      : 'text-text-primary'
+                      }`}
                     value={activeDrop || activeCalc.isRolloutConfirmed ? String(effectiveEndPrice || '') : priceText}
                     placeholder="Enter End Price"
                     placeholderTextColor="#919EAB"
@@ -566,11 +558,10 @@ export const CalculatorSummary = ({
                                 },
                               })
                             }
-                            className={`w-7 h-4 rounded-full items-center justify-center px-0.5 ${
-                              activeCalc.inputs.isDefaultDiscount
-                                ? 'bg-green-500 items-end'
-                                : 'bg-surface items-start'
-                            }`}
+                            className={`w-7 h-4 rounded-full items-center justify-center px-0.5 ${activeCalc.inputs.isDefaultDiscount
+                              ? 'bg-green-500 items-end'
+                              : 'bg-surface items-start'
+                              }`}
                           >
                             <View className="w-3 h-3 bg-card rounded-full" />
                           </TouchableOpacity>
@@ -581,16 +572,14 @@ export const CalculatorSummary = ({
                           <TouchableOpacity
                             key={d}
                             onPress={() => handleDiscountChange(d)}
-                            className={`flex-1 h-10 rounded-xl items-center justify-center border ${
-                              currentDiscount === d
-                                ? 'bg-green-500/10 border-green-500/20'
-                                : 'bg-card border-border'
-                            }`}
+                            className={`flex-1 h-10 rounded-xl items-center justify-center border ${currentDiscount === d
+                              ? 'bg-green-500/10 border-green-500/20'
+                              : 'bg-card border-border'
+                              }`}
                           >
                             <Text
-                              className={`text-xs font-black ${
-                                currentDiscount === d ? 'text-green-600' : 'text-text-secondary'
-                              }`}
+                              className={`text-xs font-black ${currentDiscount === d ? 'text-green-600' : 'text-text-secondary'
+                                }`}
                             >
                               {d}%
                             </Text>
@@ -689,22 +678,22 @@ export const CalculatorSummary = ({
                     </View>
                   </View>
                 </View>
-
-                {/* Installers Check */}
-                <View className="bg-green-500/10 rounded-2xl p-4 flex-row justify-between items-center border border-green-500/20 mb-10">
-                  <Text className="text-xs font-bold text-green-800">
-                    Number of screens $75
-                  </Text>
-                  <Text className="text-lg font-black text-green-600">
-                    {fCurrency(screensCount * 75)}
-                  </Text>
-                </View>
               </View>
             )}
 
             {/* Locked State View (Summary only) */}
             {activeCalc.isRolloutConfirmed && (
               <View className="mt-8">
+                {/* Installers Check */}
+                <View className="bg-white border border-slate-100 rounded-2xl p-4 flex-row justify-between items-center shadow-sm mb-6">
+                  <Text className="text-xs font-bold text-slate-800">
+                    Check to installers (screens)
+                  </Text>
+                  <Text className="text-lg font-black text-green-600">
+                    {fCurrency(screensCount * 75)}
+                  </Text>
+                </View>
+
                 {/* <View className="bg-green-500/10 rounded-3xl p-6 border border-green-500/20 items-center mb-8">
                   <Text className="text-sm font-black text-green-600  tracking-widest mb-2">
                     Final Secured Price
@@ -737,9 +726,8 @@ export const CalculatorSummary = ({
                             <View className="flex-row items-center gap-4">
                               <TouchableOpacity onPress={() => setDisplayDrop(drop)}>
                                 <Text
-                                  className={`text-[11px] font-bold ${
-                                    isSecured ? 'text-green-600' : 'text-slate-500'
-                                  }`}
+                                  className={`text-[11px] font-bold ${isSecured ? 'text-green-600' : 'text-slate-500'
+                                    }`}
                                 >
                                   View
                                 </Text>
@@ -755,36 +743,31 @@ export const CalculatorSummary = ({
                           </View>
 
                           <View
-                            className={`bg-white border-2 rounded-xl p-3 flex-row items-center justify-between ${
-                              isSecured ? 'border-green-500' : 'border-slate-200'
-                            }`}
+                            className={`bg-white border-2 rounded-xl p-3 flex-row items-center justify-between ${isSecured ? 'border-green-500' : 'border-slate-200'
+                              }`}
                           >
                             <Text
-                              className={`text-xl font-black ${
-                                isSecured ? 'text-green-600' : 'text-slate-400'
-                              }`}
+                              className={`text-xl font-black ${isSecured ? 'text-green-600' : 'text-slate-400'
+                                }`}
                             >
                               {fCurrency(drop.dropedPrice)}
                             </Text>
                             <View className="flex-row items-center gap-4">
                               <TouchableOpacity
                                 onPress={() => setDisplayDrop(drop)}
-                                className={`px-6 py-2 rounded-lg ${
-                                  isSecured ? 'bg-[#22C55E]' : 'bg-slate-200'
-                                }`}
+                                className={`px-6 py-2 rounded-lg ${isSecured ? 'bg-[#22C55E]' : 'bg-slate-200'
+                                  }`}
                               >
                                 <Text
-                                  className={`text-xs font-black ${
-                                    isSecured ? 'text-white' : 'text-slate-500'
-                                  }`}
+                                  className={`text-xs font-black ${isSecured ? 'text-white' : 'text-slate-500'
+                                    }`}
                                 >
                                   Display
                                 </Text>
                               </TouchableOpacity>
                               <Text
-                                className={`text-[10px] font-black  ${
-                                  isSecured ? 'text-green-600' : 'text-slate-400'
-                                }`}
+                                className={`text-[10px] font-black  ${isSecured ? 'text-green-600' : 'text-slate-400'
+                                  }`}
                               >
                                 {isSecured ? 'SECURED' : 'LOCKED'}
                               </Text>
@@ -954,7 +937,7 @@ export const CalculatorSummary = ({
         {!activeCalc.isRolloutConfirmed && (
           <View
             className="px-6 py-6 border-t border-border bg-card"
-            style={{ paddingBottom: insets.bottom + 10 }}
+            style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10 }}
           >
             <View className="flex-row items-center mb-4">
               <View className="flex-1 mr-3">
@@ -973,17 +956,15 @@ export const CalculatorSummary = ({
 
               <TouchableOpacity
                 disabled={!allCalculatorsConfirmed || !!error || isConfirming}
-                className={`h-11 px-6 rounded-xl items-center justify-center shadow-lg ${
-                  allCalculatorsConfirmed && !error
-                    ? 'bg-green-600 shadow-green-600/30'
-                    : 'bg-surface shadow-none'
-                }`}
+                className={`h-11 px-6 rounded-xl items-center justify-center shadow-lg ${allCalculatorsConfirmed && !error
+                  ? 'bg-green-600 shadow-green-600/30'
+                  : 'bg-surface shadow-none'
+                  }`}
                 onPress={handleConfirmAll}
               >
                 <Text
-                  className={`text-[10px] font-black  tracking-widest ${
-                    allCalculatorsConfirmed && !error ? 'text-white' : 'text-text-secondary'
-                  }`}
+                  className={`text-[10px] font-black  tracking-widest ${allCalculatorsConfirmed && !error ? 'text-white' : 'text-text-secondary'
+                    }`}
                 >
                   {isConfirming ? 'Confirming...' : 'Confirm'}
                 </Text>
@@ -1032,28 +1013,25 @@ export const CalculatorSummary = ({
                             }
                             handlePaymentPlanSelect(key);
                           }}
-                          className={`px-4 py-3.5 mb-2 rounded-xl border ${
-                            activeCalc.inputs.paymentPlan === key
-                              ? 'bg-green-50 border-green-500'
-                              : belowMin
+                          className={`px-4 py-3.5 mb-2 rounded-xl border ${activeCalc.inputs.paymentPlan === key
+                            ? 'bg-green-50 border-green-500'
+                            : belowMin
                               ? 'bg-slate-100 border-slate-200 opacity-60'
                               : 'bg-white border-slate-200'
-                          }`}
+                            }`}
                         >
                           <Text
-                            className={`text-sm font-bold ${
-                              activeCalc.inputs.paymentPlan === key
-                                ? 'text-green-700'
-                                : 'text-slate-800'
-                            }`}
+                            className={`text-sm font-bold ${activeCalc.inputs.paymentPlan === key
+                              ? 'text-green-700'
+                              : 'text-slate-800'
+                              }`}
                           >
                             {plan.label}
                           </Text>
                           {plan.minPrice && (
                             <Text
-                              className={`text-[10px] font-bold mt-1 ${
-                                belowMin ? 'text-red-500' : 'text-slate-400'
-                              }`}
+                              className={`text-[10px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
+                                }`}
                             >
                               Requires ${plan.minPrice?.toLocaleString()}+
                               {rolloutEndPrice > 0
@@ -1079,11 +1057,20 @@ export const CalculatorSummary = ({
 
         {/* Result Lead Modal */}
         <Modal visible={showResultModal} transparent animationType="fade">
-          <TouchableOpacity
-            className="flex-1 bg-black/40 justify-center px-5"
-            activeOpacity={1}
-            onPress={() => setShowResultModal(false)}
-          >
+          <View className="flex-1 justify-center px-5">
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setShowResultModal(false)}
+            >
+              <BlurView
+                style={StyleSheet.absoluteFill}
+                blurType={isDark ? 'dark' : 'light'}
+                blurAmount={10}
+                reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+              />
+            </TouchableOpacity>
+
             <View className="bg-card rounded-2xl p-4 shadow-2xl">
               <View className="flex-row justify-center items-center">
                 <View className="p-4 mb-6 bg-[#FFF0D9] rounded-xl">
@@ -1134,7 +1121,7 @@ export const CalculatorSummary = ({
                 <Text className="text-center text-base font-bold text-text-primary">Cancel</Text>
               </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+          </View>
         </Modal>
 
         <Modal visible={showDropModal} transparent animationType="fade">
@@ -1156,27 +1143,25 @@ export const CalculatorSummary = ({
                   <View className="flex-row items-center gap-2">
                     {(isLowesLead
                       ? [
-                          { key: 'lowes_ach', label: 'ACH' },
-                          { key: 'lowes_cc', label: 'CC' },
-                        ]
+                        { key: 'lowes_ach', label: 'ACH' },
+                        { key: 'lowes_cc', label: 'CC' },
+                      ]
                       : [
-                          { key: 'check', label: 'CK' },
-                          { key: 'mcVisaDscvr', label: 'CC' },
-                        ]
+                        { key: 'check', label: 'CK' },
+                        { key: 'mcVisaDscvr', label: 'CC' },
+                      ]
                     ).map((badge) => (
                       <TouchableOpacity
                         key={badge.key}
                         onPress={() => setSelectedPlan(badge.key)}
-                        className={`px-3 py-1.5 rounded-lg border-2 ${
-                          selectedPlan === badge.key
-                            ? 'bg-[#31D076] border-[#31D076]'
-                            : 'bg-white border-slate-200'
-                        }`}
+                        className={`px-3 py-1.5 rounded-lg border-2 ${selectedPlan === badge.key
+                          ? 'bg-[#31D076] border-[#31D076]'
+                          : 'bg-white border-slate-200'
+                          }`}
                       >
                         <Text
-                          className={`text-[11px] font-black ${
-                            selectedPlan === badge.key ? 'text-white' : 'text-slate-400'
-                          }`}
+                          className={`text-[11px] font-black ${selectedPlan === badge.key ? 'text-white' : 'text-slate-400'
+                            }`}
                         >
                           {badge.label}
                         </Text>
@@ -1311,20 +1296,18 @@ export const CalculatorSummary = ({
                             }
                             setSelectedPlan(planKey);
                           }}
-                          className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${
-                            isSelected
-                              ? 'bg-white border-[#31D076]'
-                              : belowMin
+                          className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${isSelected
+                            ? 'bg-white border-[#31D076]'
+                            : belowMin
                               ? 'bg-slate-100 border-slate-200 opacity-50'
                               : 'bg-slate-50 border-slate-100'
-                          }`}
+                            }`}
                         >
                           <View className="flex-1">
                             <View className="flex-row items-center gap-2 mb-1">
                               <Text
-                                className={`text-base font-black ${
-                                  isSelected ? 'text-slate-900' : 'text-slate-400'
-                                }`}
+                                className={`text-base font-black ${isSelected ? 'text-slate-900' : 'text-slate-400'
+                                  }`}
                               >
                                 {planTitle}
                               </Text>
@@ -1342,9 +1325,8 @@ export const CalculatorSummary = ({
                             </Text>
                             <View className="flex-row items-baseline">
                               <Text
-                                className={`text-xl font-black ${
-                                  isSelected ? 'text-slate-900' : 'text-slate-400'
-                                }`}
+                                className={`text-xl font-black ${isSelected ? 'text-slate-900' : 'text-slate-400'
+                                  }`}
                               >
                                 ${Math.round(monthly).toLocaleString()}
                               </Text>
@@ -1358,11 +1340,10 @@ export const CalculatorSummary = ({
                           </View>
 
                           <View
-                            className={`w-7 h-7 rounded-full border-2 items-center justify-center ${
-                              isSelected
-                                ? 'border-[#31D076] bg-white'
-                                : 'border-slate-200 bg-slate-100'
-                            }`}
+                            className={`w-7 h-7 rounded-full border-2 items-center justify-center ${isSelected
+                              ? 'border-[#31D076] bg-white'
+                              : 'border-slate-200 bg-slate-100'
+                              }`}
                           >
                             {isSelected && <View className="w-4 h-4 rounded-full bg-[#31D076]" />}
                           </View>
@@ -1400,14 +1381,12 @@ export const CalculatorSummary = ({
                     setShowDropModal(false);
                     setShowResultModal(true);
                   }}
-                  className={`flex-1 h-14 rounded-2xl items-center justify-center shadow-lg ${
-                    !selectedPlan ? 'bg-slate-200' : 'bg-[#31D076] shadow-green-100'
-                  }`}
+                  className={`flex-1 h-14 rounded-2xl items-center justify-center shadow-lg ${!selectedPlan ? 'bg-slate-200' : 'bg-[#31D076] shadow-green-100'
+                    }`}
                 >
                   <Text
-                    className={`font-black text-base ${
-                      !selectedPlan ? 'text-slate-400' : 'text-white'
-                    }`}
+                    className={`font-black text-base ${!selectedPlan ? 'text-slate-400' : 'text-white'
+                      }`}
                   >
                     Secure This Price
                   </Text>
@@ -1461,26 +1440,23 @@ export const CalculatorSummary = ({
                                   }
                                   setTempPlan(key);
                                 }}
-                                className={`p-3 rounded-xl border ${
-                                  isSelected
-                                    ? 'bg-green-50 border-[#31D076]'
-                                    : belowMin
+                                className={`p-3 rounded-xl border ${isSelected
+                                  ? 'bg-green-50 border-[#31D076]'
+                                  : belowMin
                                     ? 'bg-slate-100 border-slate-100 opacity-60'
                                     : 'bg-white border-slate-100'
-                                }`}
+                                  }`}
                               >
                                 <Text
-                                  className={`font-bold text-[11px] ${
-                                    isSelected ? 'text-[#31D076]' : 'text-slate-900'
-                                  }`}
+                                  className={`font-bold text-[11px] ${isSelected ? 'text-[#31D076]' : 'text-slate-900'
+                                    }`}
                                 >
                                   {plan.label}
                                 </Text>
                                 {plan.minPrice && (
                                   <Text
-                                    className={`text-[9px] font-bold mt-1 ${
-                                      belowMin ? 'text-red-500' : 'text-slate-400'
-                                    }`}
+                                    className={`text-[9px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
+                                      }`}
                                   >
                                     ${plan.minPrice?.toLocaleString()}+ req.
                                   </Text>
@@ -1510,9 +1486,8 @@ export const CalculatorSummary = ({
                       }
                       setIsPlanPickerVisible(false);
                     }}
-                    className={`flex-1 h-10 rounded-xl items-center justify-center ${
-                      !tempPlan ? 'bg-slate-200' : 'bg-[#31D076]'
-                    }`}
+                    className={`flex-1 h-10 rounded-xl items-center justify-center ${!tempPlan ? 'bg-slate-200' : 'bg-[#31D076]'
+                      }`}
                   >
                     <Text className="text-white font-black text-xs">Add Plan</Text>
                   </TouchableOpacity>

@@ -19,6 +19,9 @@ import { AppointmentSchedulerModal } from '../../modals/job-builder/AppointmentS
 import { demoReasons } from '../../components/dealcenter/ResultViews';
 import { LeadService } from '../../../services/api/leads';
 import { ContractAmendmentModal, AmendmentChange } from './ContractAmendmentModal';
+import JobService from '../../../services/api/JobService';
+import { parseSafeISO } from '../../../utils/date-util';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -308,6 +311,40 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         status: lead?.status || lead?.result || outcomeData?.status || '',
       };
       await onUpdate(payload);
+
+      // Sync with JobTracker if it exists
+      try {
+        const jobs = await JobService.getJobs();
+        const leadId = lead?._id || outcomeData?.leadId;
+        const apptId = lead?.appointmentId || outcomeData?.appointmentId || leadId;
+        const calcId = lead?.calculatorId || outcomeData?.calculatorId || outcomeData?.selectedCalculatorId;
+        const jobNum = lead?.jobNumber || outcomeData?.jobNumber || lead?.leadData?.jobNumber || outcomeData?.leadData?.jobNumber;
+
+        const existingJob = jobs.find(
+          (j) =>
+            (apptId && j.appointmentId === apptId) ||
+            (calcId && j.calculatorId === calcId) ||
+            (jobNum && j.jobNumber === jobNum)
+        );
+
+        if (existingJob) {
+          const isTBD = !apiDate || apiDate === 'TBD';
+          let formattedInstallDate: string | null = null;
+          if (!isTBD && apiDate) {
+            const parsedDate = parseSafeISO(apiDate);
+            if (parsedDate && !isNaN(parsedDate.getTime())) {
+              formattedInstallDate = parsedDate.toISOString();
+            }
+          }
+          await JobService.updateJob((existingJob._id || existingJob.id)!, {
+            installDate: formattedInstallDate,
+            toBeDetermined: isTBD,
+          });
+        }
+      } catch (jobTrackerError) {
+        console.warn('[EditContractDetailsModal] Job tracker sync failed:', jobTrackerError);
+      }
+
       setSchedulerOpen(false);
       onClose();
     } catch (err: any) {
@@ -592,7 +629,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
   return (
     <>
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Modal visible={visible && !schedulerOpen && !amendmentOpen} transparent animationType="slide" onRequestClose={onClose}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}

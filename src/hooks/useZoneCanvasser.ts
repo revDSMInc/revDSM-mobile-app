@@ -330,9 +330,15 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   };
 
+  const isConvertingRef = useRef(false);
+
   const handleTouchMove = async (e: any) => {
     if (!isDrawingMode || drawType !== 'rectangle' || !startPoint) return;
+    if (isConvertingRef.current) return;
+
     const { locationX, locationY } = e.nativeEvent;
+    
+    isConvertingRef.current = true;
     try {
       const currentCoord = await mapRef.current?.coordinateForPoint({ x: locationX, y: locationY });
       if (currentCoord && startPoint.coord) {
@@ -347,10 +353,16 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
           { latitude: maxLat, longitude: maxLng },
           { latitude: minLat, longitude: maxLng },
           { latitude: minLat, longitude: minLng },
+          { latitude: maxLat, longitude: minLng }, // close the loop
         ]);
       }
     } catch (err) {
       console.warn('Touch move error:', err);
+    } finally {
+      // Small delay to prevent bridge flooding
+      setTimeout(() => {
+        isConvertingRef.current = false;
+      }, 16);
     }
   };
 
@@ -387,12 +399,37 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         ( way["building"](poly:"${polygonString}"); relation["building"](poly:"${polygonString}"); );
         out center;
       `;
-      const response = await axios.post('https://overpass-api.de/api/interpreter', overpassQuery, {
-        headers: {
-          'Content-Type': 'text/plain',
-          'User-Agent': 'RevDSMSalesMobile/1.0 (dev@revdsm.com)',
-        },
-      });
+      let response: any = null;
+      let overpassError: any = null;
+      const endpoints = [
+        'https://overpass-api.de/api/interpreter',
+        'https://lz4.overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+      ];
+      
+      for (let i = 0; i < endpoints.length; i++) {
+        try {
+          response = await axios.post(endpoints[i], overpassQuery, {
+            headers: {
+              'Content-Type': 'text/plain',
+              'User-Agent': 'RevDSMSalesMobile/1.0 (dev@revdsm.com)',
+            },
+            timeout: 15000, // 15 seconds
+          });
+          if (response && response.data) break;
+        } catch (err: any) {
+          overpassError = err;
+          console.warn(`Overpass API failed on ${endpoints[i]}:`, err?.message);
+          // Wait 1s before trying next endpoint to allow servers to breathe/cache
+          await new Promise(resolve => setTimeout(() => resolve(undefined), 1000));
+        }
+      }
+
+      if (!response || !response.data) {
+        throw new Error(
+          `Failed to fetch building data. Please try again or draw a smaller zone. (${overpassError?.message || 'Timeout'})`
+        );
+      }
 
       const elements = response.data.elements || [];
       const buildingsData = elements

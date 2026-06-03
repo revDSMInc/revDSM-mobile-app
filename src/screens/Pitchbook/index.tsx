@@ -153,6 +153,7 @@ export default function PitchbookScreen() {
     };
   }, [lead?.id, lead?.result, lead?.status]);
 
+
   useEffect(() => {
     if (isFullscreen && isLandscape) {
       StatusBar.setHidden(true, 'fade');
@@ -164,9 +165,7 @@ export default function PitchbookScreen() {
     };
   }, [isFullscreen, isLandscape]);
 
-  useEffect(() => {
-    setMainImageLoading(true);
-  }, [activeCategory, currentSlideIndex]);
+  // Removed artificial loading state that caused permanent loaders for local images
 
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
@@ -214,7 +213,6 @@ export default function PitchbookScreen() {
   };
 
   const handleNext = () => {
-    setFsImageLoading(true);
     if (currentSlideIndex < currentCategoryImages.length - 1) {
       setCurrentSlideIndex(currentSlideIndex + 1);
     } else {
@@ -227,7 +225,6 @@ export default function PitchbookScreen() {
   };
 
   const handlePrev = () => {
-    setFsImageLoading(true);
     if (currentSlideIndex > 0) {
       setCurrentSlideIndex(currentSlideIndex - 1);
     } else {
@@ -238,6 +235,208 @@ export default function PitchbookScreen() {
         setCurrentSlideIndex(Object.keys(pitchBookImages[prevCat]).length - 1);
       }
     }
+  };
+
+  const renderInteractiveTools = () => {
+    if (viewMode !== 'rep' || !showTools) return null;
+    return (
+      <View style={[{ zIndex: 1000 }, StyleSheet.absoluteFill]}>
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }}
+          activeOpacity={1}
+          onPress={toggleTools}
+        />
+        <Animated.View
+          className="w-full bg-background rounded-t-[32px] shadow-2xl"
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: Dimensions.get('window').height * 0.7,
+            transform: [
+              {
+                translateY: toolsAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [Dimensions.get('window').height * 0.7, 0],
+                }),
+              },
+            ],
+          }}
+        >
+          <View className="items-center pt-3 pb-1">
+            <View className="w-10 h-1 rounded-full bg-gray-300" />
+          </View>
+
+          <View className="px-6 pt-4 pb-4 border-b border-border">
+            <View className="flex-row items-center justify-between">
+              <Text className="text-text-primary text-lg font-bold">Details</Text>
+              <TouchableOpacity onPress={toggleTools}>
+                <IonIcon name="close" size={24} color="#919EAB" />
+              </TouchableOpacity>
+            </View>
+
+            <View className="flex-row gap-6 mt-6">
+              <ToolTab
+                label="Inspection"
+                icon="camera"
+                active={activeToolTab === 'inspection'}
+                onPress={() => setActiveToolTab('inspection')}
+              />
+              <ToolTab
+                label="Risk"
+                icon="alert"
+                active={activeToolTab === 'risk'}
+                onPress={() => setActiveToolTab('risk')}
+              />
+              <ToolTab
+                label="Videos"
+                icon="video"
+                active={activeToolTab === 'videos'}
+                onPress={() => setActiveToolTab('videos')}
+              />
+              <ToolTab
+                label="Notes"
+                icon="file-document-outline"
+                active={activeToolTab === 'notes'}
+                onPress={() => setActiveToolTab('notes')}
+              />
+            </View>
+          </View>
+          <View className="flex-1">
+            <ScrollView className="p-6" showsVerticalScrollIndicator={false}>
+              {activeToolTab === 'inspection' && (
+                <View>
+                  <Text className="text-text-primary font-bold text-base mb-4">
+                    Property Inspection Photos
+                  </Text>
+                  {IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0).map(
+                    (section) => {
+                      const categoryPhotos = secureImages[section.name] || [];
+                      const sectionTotal =
+                        section.subCategories?.reduce(
+                          (s: number, sub: any) => s + (sub.required || 1),
+                          0
+                        ) || 0;
+
+                      return (
+                        <View key={section.id} className="mb-4">
+                          <TouchableOpacity
+                            onPress={() =>
+                              setExpandedCat(expandedCat === section.id ? null : section.id)
+                            }
+                            className="flex-row items-center justify-between px-3 py-2 rounded-md shadow-sm"
+                            style={{
+                              backgroundColor: '#F4F6F8',
+                              borderBottomLeftRadius: expandedCat === section.id ? 0 : 8,
+                              borderBottomRightRadius: expandedCat === section.id ? 0 : 8,
+                            }}
+                          >
+                            <Text className="text-sm font-semibold text-[#1C252E]">
+                              {section.name}
+                            </Text>
+                            <View className="flex-row items-center">
+                              <View
+                                className="px-3 py-1 rounded-md mr-3"
+                                style={{ backgroundColor: '#212B36' }}
+                              >
+                                <Text className="text-sm text-white font-semibold">
+                                  {categoryPhotos.length} of{' '}
+                                  {Math.max(sectionTotal, categoryPhotos.length)} complete
+                                </Text>
+                              </View>
+                              <Icon
+                                name={expandedCat === section.id ? 'chevron-up' : 'chevron-down'}
+                                size={16}
+                                color="#919EAB"
+                              />
+                            </View>
+                          </TouchableOpacity>
+
+                          {expandedCat === section.id && (
+                            <View className="flex-row flex-wrap gap-2 mt-3 px-1">
+                              {categoryPhotos.map((img, i) => (
+                                <View key={i} className="w-[31%] mb-2">
+                                  <TouchableOpacity
+                                    onPress={() => setPreviewImage(img.uri)}
+                                    className="aspect-square rounded-xl overflow-hidden border border-slate-100 bg-slate-50 shadow-sm"
+                                  >
+                                    <Image
+                                      source={{ uri: img.uri }}
+                                      className="w-full h-full"
+                                      resizeMode="cover"
+                                    />
+                                    <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-1">
+                                      <Text
+                                        className="text-white text-[8px] font-black text-center  px-1"
+                                        numberOfLines={1}
+                                      >
+                                        {img.subcategory || 'Photo'}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    }
+                  )}
+                  {Object.keys(secureImages).length === 0 && (
+                    <View className="items-center justify-center py-12 opacity-50">
+                      <Icon name="image-off" size={48} color="#919EAB" />
+                      <Text className="text-text-secondary mt-4 font-bold">
+                        No inspection photos available
+                      </Text>
+                      <Text className="text-text-secondary text-[10px] mt-1">
+                        Photos added in Job Docs will appear here.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {activeToolTab === 'risk' && (
+                <RiskContent
+                  lead={fullLeadData?.outcome || lead}
+                  refetch={refetch}
+                  reports={riskReports}
+                  onDownload={handleDownloadReport}
+                />
+              )}
+
+              {activeToolTab === 'notes' && (
+                <View>
+                  <Text className="text-text-primary font-bold text-base mb-4">Lead Notes</Text>
+                  <View className="bg-surface p-4 rounded-xl border border-border">
+                    <Text className="text-text-primary text-sm leading-6">
+                      {fullLeadData?.notes ||
+                        fullLeadData?.customerDetails?.notes ||
+                        'No specific notes available for this lead.'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {activeToolTab === 'videos' && (
+                <View>
+                  <Text className="text-text-primary font-bold text-base mb-4">
+                    Educational Videos
+                  </Text>
+                  <View className="items-center justify-center py-12 opacity-50">
+                    <Icon name="video-off" size={48} color="#919EAB" />
+                    <Text className="text-text-secondary mt-4">
+                      Video content goes here. This area is scrollable.
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </Animated.View>
+      </View>
+    );
   };
 
   return (
@@ -385,7 +584,7 @@ export default function PitchbookScreen() {
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
                 onLoadStart={() => setMainImageLoading(true)}
-                onLoad={() => setMainImageLoading(false)}
+                onLoadEnd={() => setMainImageLoading(false)}
                 onError={() => setMainImageLoading(false)}
               />
               {mainImageLoading && (
@@ -485,9 +684,9 @@ export default function PitchbookScreen() {
         {/* ── Fullscreen Presentation Modal ── */}
         <Modal
           visible={isFullscreen}
-          transparent={true}
           animationType="fade"
           statusBarTranslucent
+          supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
           onRequestClose={() => setIsFullscreen(false)}
         >
           {/* Hide status bar in landscape */}
@@ -512,7 +711,7 @@ export default function PitchbookScreen() {
                         style={{ width: '100%', height: '100%' }}
                         resizeMode="contain"
                         onLoadStart={() => setFsImageLoading(true)}
-                        onLoad={() => setFsImageLoading(false)}
+                        onLoadEnd={() => setFsImageLoading(false)}
                         onError={() => setFsImageLoading(false)}
                       />
                       {fsImageLoading && (
@@ -574,7 +773,7 @@ export default function PitchbookScreen() {
                     disabled={currentGlobalPageNumber === 1}
                     style={{
                       position: 'absolute',
-                      left: 8,
+                      left: Math.max((insets.left || 0) + 24, 48),
                       top: '50%',
                       transform: [{ translateY: -20 }],
                       width: 40,
@@ -600,7 +799,7 @@ export default function PitchbookScreen() {
                     disabled={currentGlobalPageNumber === totalGlobalPages}
                     style={{
                       position: 'absolute',
-                      right: viewMode === 'rep' ? 44 : 8,
+                      right: viewMode === 'rep' ? Math.max((insets.right || 0) + 48, 48) : Math.max((insets.right || 0) + 24, 48),
                       top: '50%',
                       transform: [{ translateY: -20 }],
                       width: 40,
@@ -900,210 +1099,10 @@ export default function PitchbookScreen() {
               </View>
             </View>
           )}
+          {renderInteractiveTools()}
         </Modal>
 
-        {/* Interactive Tools — Modal Bottom Sheet (Rep Mode only) */}
-        <Modal
-          visible={viewMode === 'rep' && showTools}
-          transparent
-          animationType="none"
-          statusBarTranslucent
-          onRequestClose={toggleTools}
-        >
-          <TouchableOpacity
-            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }}
-            activeOpacity={1}
-            onPress={toggleTools}
-          />
-          <Animated.View
-            className="w-full bg-background rounded-t-[32px] shadow-2xl"
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: Dimensions.get('window').height * 0.7,
-              transform: [
-                {
-                  translateY: toolsAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [Dimensions.get('window').height * 0.7, 0],
-                  }),
-                },
-              ],
-            }}
-          >
-            <View className="items-center pt-3 pb-1">
-              <View className="w-10 h-1 rounded-full bg-gray-300" />
-            </View>
-
-            <View className="px-6 pt-4 pb-4 border-b border-border">
-              <View className="flex-row items-center justify-between">
-                <Text className="text-text-primary text-lg font-bold">Details</Text>
-                <TouchableOpacity onPress={toggleTools}>
-                  <IonIcon name="close" size={24} color="#919EAB" />
-                </TouchableOpacity>
-              </View>
-
-              <View className="flex-row gap-6 mt-6">
-                <ToolTab
-                  label="Inspection"
-                  icon="camera"
-                  active={activeToolTab === 'inspection'}
-                  onPress={() => setActiveToolTab('inspection')}
-                />
-                <ToolTab
-                  label="Risk"
-                  icon="alert"
-                  active={activeToolTab === 'risk'}
-                  onPress={() => setActiveToolTab('risk')}
-                />
-                <ToolTab
-                  label="Videos"
-                  icon="video"
-                  active={activeToolTab === 'videos'}
-                  onPress={() => setActiveToolTab('videos')}
-                />
-                <ToolTab
-                  label="Notes"
-                  icon="file-document-outline"
-                  active={activeToolTab === 'notes'}
-                  onPress={() => setActiveToolTab('notes')}
-                />
-              </View>
-            </View>
-            <View className="flex-1">
-              <ScrollView className="p-6" showsVerticalScrollIndicator={false}>
-                {activeToolTab === 'inspection' && (
-                  <View>
-                    <Text className="text-text-primary font-bold text-base mb-4">
-                      Property Inspection Photos
-                    </Text>
-                    {IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0).map(
-                      (section) => {
-                        const categoryPhotos = secureImages[section.name] || [];
-                        const sectionTotal =
-                          section.subCategories?.reduce(
-                            (s: number, sub: any) => s + (sub.required || 1),
-                            0
-                          ) || 0;
-
-                        return (
-                          <View key={section.id} className="mb-4">
-                            <TouchableOpacity
-                              onPress={() =>
-                                setExpandedCat(expandedCat === section.id ? null : section.id)
-                              }
-                              className="flex-row items-center justify-between px-3 py-2 rounded-md shadow-sm"
-                              style={{
-                                backgroundColor: '#F4F6F8',
-                                borderBottomLeftRadius: expandedCat === section.id ? 0 : 8,
-                                borderBottomRightRadius: expandedCat === section.id ? 0 : 8,
-                              }}
-                            >
-                              <Text className="text-sm font-semibold text-[#1C252E]">
-                                {section.name}
-                              </Text>
-                              <View className="flex-row items-center">
-                                <View
-                                  className="px-3 py-1 rounded-md mr-3"
-                                  style={{ backgroundColor: '#212B36' }}
-                                >
-                                  <Text className="text-sm text-white font-semibold">
-                                    {categoryPhotos.length} of{' '}
-                                    {Math.max(sectionTotal, categoryPhotos.length)} complete
-                                  </Text>
-                                </View>
-                                <Icon
-                                  name={expandedCat === section.id ? 'chevron-up' : 'chevron-down'}
-                                  size={16}
-                                  color="#919EAB"
-                                />
-                              </View>
-                            </TouchableOpacity>
-
-                            {expandedCat === section.id && (
-                              <View className="flex-row flex-wrap gap-2 mt-3 px-1">
-                                {categoryPhotos.map((img, i) => (
-                                  <View key={i} className="w-[31%] mb-2">
-                                    <TouchableOpacity
-                                      onPress={() => setPreviewImage(img.uri)}
-                                      className="aspect-square rounded-xl overflow-hidden border border-slate-100 bg-slate-50 shadow-sm"
-                                    >
-                                      <Image
-                                        source={{ uri: img.uri }}
-                                        className="w-full h-full"
-                                        resizeMode="cover"
-                                      />
-                                      <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-1">
-                                        <Text
-                                          className="text-white text-[8px] font-black text-center  px-1"
-                                          numberOfLines={1}
-                                        >
-                                          {img.subcategory || 'Photo'}
-                                        </Text>
-                                      </View>
-                                    </TouchableOpacity>
-                                  </View>
-                                ))}
-                              </View>
-                            )}
-                          </View>
-                        );
-                      })}
-                    {Object.keys(secureImages).length === 0 && (
-                      <View className="items-center justify-center py-12 opacity-50">
-                        <Icon name="image-off" size={48} color="#919EAB" />
-                        <Text className="text-text-secondary mt-4 font-bold">
-                          No inspection photos available
-                        </Text>
-                        <Text className="text-text-secondary text-[10px] mt-1">
-                          Photos added in Job Docs will appear here.
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {activeToolTab === 'risk' && (
-                  <RiskContent
-                    lead={fullLeadData?.outcome || lead}
-                    refetch={refetch}
-                    reports={riskReports}
-                    onDownload={handleDownloadReport}
-                  />
-                )}
-
-                {activeToolTab === 'notes' && (
-                  <View>
-                    <Text className="text-text-primary font-bold text-base mb-4">Lead Notes</Text>
-                    <View className="bg-surface p-4 rounded-xl border border-border">
-                      <Text className="text-text-primary text-sm leading-6">
-                        {fullLeadData?.notes ||
-                          fullLeadData?.customerDetails?.notes ||
-                          'No specific notes available for this lead.'}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-
-                {activeToolTab === 'videos' && (
-                  <View>
-                    <Text className="text-text-primary font-bold text-base mb-4">
-                      Educational Videos
-                    </Text>
-                    <View className="items-center justify-center py-12 opacity-50">
-                      <Icon name="video-off" size={48} color="#919EAB" />
-                      <Text className="text-text-secondary mt-4">
-                        Video content goes here. This area is scrollable.
-                      </Text>
-                    </View>
-                  </View>
-                )}
-              </ScrollView>
-            </View>
-          </Animated.View>
-        </Modal>
+        {!isFullscreen && renderInteractiveTools()}
 
         {/* Full Screen Image Preview */}
         <Modal visible={!!previewImage} transparent animationType="fade">

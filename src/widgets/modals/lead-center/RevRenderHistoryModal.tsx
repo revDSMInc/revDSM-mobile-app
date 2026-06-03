@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,8 +6,6 @@ import {
   Modal,
   Image,
   Dimensions,
-  PanResponder,
-  Animated,
   StyleSheet,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -35,6 +33,11 @@ export const RevRenderHistoryModal = ({
     setCurrentIndex(initialIndex);
   }, [initialIndex, visible]);
 
+  const screenWidth = Dimensions.get('window').width;
+  const imageWidth = screenWidth - 40;
+  const imageHeight = 400;
+
+  // ── Pinch / pan for zooming ───────────────────────────────────────────
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -43,24 +46,18 @@ export const RevRenderHistoryModal = ({
   const savedTranslateY = useSharedValue(0);
 
   const pinchGesture = Gesture.Pinch()
-    .onUpdate((e) => {
-      scale.value = savedScale.value * e.scale;
-    })
+    .onUpdate((e) => { scale.value = savedScale.value * e.scale; })
     .onEnd(() => {
       if (scale.value < 1) {
-        scale.value = withSpring(1);
-        savedScale.value = 1;
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
-        savedTranslateX.value = 0;
-        savedTranslateY.value = 0;
+        scale.value = withSpring(1); savedScale.value = 1;
+        translateX.value = withSpring(0); translateY.value = withSpring(0);
+        savedTranslateX.value = 0; savedTranslateY.value = 0;
       } else {
         savedScale.value = scale.value;
       }
     });
 
-  const panGesture = Gesture.Pan()
-    // Make sure we only pan the zoom view if we're scaled up, otherwise let the slider handle pan
+  const zoomPan = Gesture.Pan()
     .onUpdate((e) => {
       if (scale.value > 1) {
         translateX.value = savedTranslateX.value + e.translationX;
@@ -72,47 +69,50 @@ export const RevRenderHistoryModal = ({
       savedTranslateY.value = translateY.value;
     });
 
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+  const composedGesture = Gesture.Simultaneous(pinchGesture, zoomPan);
 
-  const animatedStyle = useAnimatedStyle(() => ({
+  const imageAnimStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: translateX.value },
       { translateY: translateY.value },
-      { scale: scale.value }
-    ]
+      { scale: scale.value },
+    ],
   }));
 
-  const screenWidth = Dimensions.get('window').width;
-  const imageWidth = screenWidth - 40;
-  const imageHeight = 400; // Large view
-  const sliderPosition = useRef(new Animated.Value(imageWidth / 2)).current;
+  // ── Comparison slider ─────────────────────────────────────────────────
+  // sliderX lives in Reanimated so the handle moves without a JS bridge round-trip.
+  const sliderX = useSharedValue(imageWidth / 2);
+  const savedSliderX = useSharedValue(imageWidth / 2);
 
-  // Reset slider whenever index changes
+  // Reset whenever the card changes
   useEffect(() => {
-    sliderPosition.setValue(imageWidth / 2);
-    sliderPosition.setOffset(0);
+    sliderX.value = imageWidth / 2;
+    savedSliderX.value = imageWidth / 2;
   }, [currentIndex]);
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: Animated.event([null, { dx: sliderPosition }], {
-        useNativeDriver: false,
-      }),
-      onPanResponderRelease: (_e, gestureState) => {
-        const currentX = (sliderPosition as any)._value;
-        if (currentX < 0) {
-          Animated.spring(sliderPosition, { toValue: 0, useNativeDriver: false }).start();
-        } else if (currentX > imageWidth) {
-          Animated.spring(sliderPosition, { toValue: imageWidth, useNativeDriver: false }).start();
-        } else {
-          sliderPosition.setOffset(currentX);
-          sliderPosition.setValue(0);
-        }
-      },
+  const sliderPan = Gesture.Pan()
+    // Only activate on clear horizontal swipes so vertical scrolls pass through
+    .activeOffsetX([-6, 6])
+    .failOffsetY([-12, 12])
+    .onUpdate((e) => {
+      const next = savedSliderX.value + e.translationX;
+      sliderX.value = Math.max(0, Math.min(imageWidth, next));
     })
-  ).current;
+    .onEnd(() => {
+      savedSliderX.value = sliderX.value;
+    });
+
+  const handleAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: sliderX.value - 0 }], // -30 = half handle width (60/2)
+  }));
+
+  const maskAnimStyle = useAnimatedStyle(() => ({
+    width: sliderX.value,
+  }));
+
+  // ── Nav ───────────────────────────────────────────────────────────────
+  const handlePrev = () => { if (currentIndex > 0) setCurrentIndex(currentIndex - 1); };
+  const handleNext = () => { if (currentIndex < runs.length - 1) setCurrentIndex(currentIndex + 1); };
 
   const currentRun = runs[currentIndex];
   if (!currentRun) return null;
@@ -120,132 +120,115 @@ export const RevRenderHistoryModal = ({
   const beforeImage = currentRun.originalUrl || currentRun.s3UrlOriginal;
   const afterImage = currentRun.generatedUrl || currentRun.s3UrlGenerated;
 
-  const maskWidth = sliderPosition.interpolate({
-    inputRange: [0, imageWidth],
-    outputRange: [0, imageWidth],
-    extrapolate: 'clamp',
-  });
-
-  const handlePrev = () => {
-    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
-  };
-
-  const handleNext = () => {
-    if (currentIndex < runs.length - 1) setCurrentIndex(currentIndex + 1);
-  };
-
   return (
     <Modal visible={visible} transparent animationType="fade">
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.95)' }]}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>Render #{runs.length - currentIndex}</Text>
-            <View style={styles.statusRow}>
-              <Icon name="check-circle" size={14} color="#72BD00" />
-              <Text style={styles.statusText}>Rendered</Text>
+          {/* Header */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.headerTitle}>Render #{runs.length - currentIndex}</Text>
+              <View style={styles.statusRow}>
+                <Icon name="check-circle" size={14} color="#72BD00" />
+                <Text style={styles.statusText}>Rendered</Text>
+              </View>
             </View>
-          </View>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-            <Icon name="close" size={24} color="white" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Comparison Slider */}
-        <GestureDetector gesture={composedGesture}>
-          <Reanimated.View style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }, animatedStyle]}>
-          {/* AFTER (Background) */}
-          <Image
-            source={{ uri: afterImage }}
-            style={{ position: 'absolute', width: imageWidth, height: imageHeight }}
-            resizeMode="cover"
-          />
-
-          {/* BEFORE (Masked Top Layer) */}
-          <Animated.View
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              height: imageHeight,
-              width: maskWidth,
-              overflow: 'hidden',
-              borderRightWidth: 1,
-              borderRightColor: 'rgba(255,255,255,0.5)',
-            }}
-          >
-            <Image
-              source={{ uri: beforeImage }}
-              style={{ width: imageWidth, height: imageHeight }}
-              resizeMode="cover"
-            />
-          </Animated.View>
-
-          {/* Labels */}
-          <View style={[styles.label, styles.labelBefore]}>
-            <Text style={styles.labelText}>Before</Text>
-          </View>
-          <View style={[styles.label, styles.labelAfter]}>
-            <Text style={styles.labelText}>After</Text>
-          </View>
-
-          {/* Draggable Handle */}
-          <Animated.View
-            style={[
-              styles.handle,
-              {
-                height: imageHeight,
-                transform: [{ translateX: sliderPosition }],
-              },
-            ]}
-            {...panResponder.panHandlers}
-          >
-            <View style={styles.handleLine} />
-            <View style={styles.handleCircle}>
-              <Icon name="compare-horizontal" size={20} color="#1C252E" />
-            </View>
-          </Animated.View>
-        </Reanimated.View>
-        </GestureDetector>
-
-        {/* Footer Navigation */}
-        <View style={styles.footer}>
-          <View style={styles.navRow}>
-            <TouchableOpacity
-              onPress={handlePrev}
-              disabled={currentIndex === 0}
-              style={[styles.navBtn, currentIndex === 0 && { opacity: 0.3 }]}
-            >
-              <Icon name="chevron-left" size={32} color="white" />
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+              <Icon name="close" size={24} color="white" />
             </TouchableOpacity>
+          </View>
 
-            <View style={styles.pagination}>
-              {runs.map((_, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.dot,
-                    { backgroundColor: i === currentIndex ? '#72BD00' : 'rgba(255,255,255,0.3)' },
-                  ]}
+          {/* Comparison Slider — zoom wrapper */}
+          <GestureDetector gesture={composedGesture}>
+            <Reanimated.View
+              style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }, imageAnimStyle]}
+            >
+              {/* AFTER — background */}
+              <Image
+                source={{ uri: afterImage }}
+                style={{ position: 'absolute', width: imageWidth, height: imageHeight }}
+                resizeMode="cover"
+              />
+
+              {/* BEFORE — clipped left portion, driven by sliderX */}
+              <Reanimated.View
+                style={[
+                  {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    height: imageHeight,
+                    overflow: 'hidden',
+                    borderRightWidth: 1,
+                    borderRightColor: 'rgba(255,255,255,0.5)',
+                  },
+                  maskAnimStyle,
+                ]}
+              >
+                <Image
+                  source={{ uri: beforeImage }}
+                  style={{ width: imageWidth, height: imageHeight }}
+                  resizeMode="cover"
                 />
-              ))}
+              </Reanimated.View>
+
+              {/* Labels */}
+              <View style={[styles.label, styles.labelBefore]}>
+                <Text style={styles.labelText}>Before</Text>
+              </View>
+              <View style={[styles.label, styles.labelAfter]}>
+                <Text style={styles.labelText}>After</Text>
+              </View>
+
+              {/* Draggable handle — uses its own RNGH Pan so it doesn't fight PanResponder */}
+              <GestureDetector gesture={sliderPan}>
+                <Reanimated.View style={[styles.handle, { height: imageHeight }, handleAnimStyle]}>
+                  <View style={styles.handleLine} />
+                  <View style={styles.handleCircle}>
+                    <Icon name="compare-horizontal" size={20} color="#1C252E" />
+                  </View>
+                </Reanimated.View>
+              </GestureDetector>
+            </Reanimated.View>
+          </GestureDetector>
+
+          {/* Footer Navigation */}
+          <View style={styles.footer}>
+            <View style={styles.navRow}>
+              <TouchableOpacity
+                onPress={handlePrev}
+                disabled={currentIndex === 0}
+                style={[styles.navBtn, currentIndex === 0 && { opacity: 0.3 }]}
+              >
+                <Icon name="chevron-left" size={32} color="white" />
+              </TouchableOpacity>
+
+              <View style={styles.pagination}>
+                {runs.map((_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.dot,
+                      { backgroundColor: i === currentIndex ? '#72BD00' : 'rgba(255,255,255,0.3)' },
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <TouchableOpacity
+                onPress={handleNext}
+                disabled={currentIndex === runs.length - 1}
+                style={[styles.navBtn, currentIndex === runs.length - 1 && { opacity: 0.3 }]}
+              >
+                <Icon name="chevron-right" size={32} color="white" />
+              </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              onPress={handleNext}
-              disabled={currentIndex === runs.length - 1}
-              style={[styles.navBtn, currentIndex === runs.length - 1 && { opacity: 0.3 }]}
-            >
-              <Icon name="chevron-right" size={32} color="white" />
+            <TouchableOpacity onPress={onClose} style={styles.footerCloseBtn}>
+              <Text style={styles.footerCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-
-          <TouchableOpacity onPress={onClose} style={styles.footerCloseBtn}>
-            <Text style={styles.footerCloseText}>Close</Text>
-          </TouchableOpacity>
         </View>
-      </View>
       </GestureHandlerRootView>
     </Modal>
   );
