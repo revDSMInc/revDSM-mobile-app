@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -22,27 +22,27 @@ type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MATERIAL_SECTIONS = [
-  { 
-    key: 'soffit', 
-    label: 'Soffit', 
+  {
+    key: 'soffit',
+    label: 'Soffit',
     types: ['Pinhole Soffit', 'Hidden Vent Soffit'],
     getColors: (type?: string) => type === 'Pinhole Soffit' ? REV_RENDER_COLORS.pinholeSoffit : REV_RENDER_COLORS.hiddenVentSoffit
   },
-  { 
-    key: 'fascia', 
-    label: 'Fascia Wrap', 
+  {
+    key: 'fascia',
+    label: 'Fascia Wrap',
     types: [],
     getColors: () => REV_RENDER_COLORS.fascia
   },
-  { 
-    key: 'gutter', 
-    label: 'Gutter', 
+  {
+    key: 'gutter',
+    label: 'Gutter',
     types: ['K-Style'],
     getColors: () => REV_RENDER_COLORS.gutter
   },
-  { 
-    key: 'downspout', 
-    label: 'Downspout', 
+  {
+    key: 'downspout',
+    label: 'Downspout',
     types: ['3x4 Rectangular'],
     getColors: () => REV_RENDER_COLORS.gutter
   },
@@ -64,6 +64,8 @@ const INITIAL_CONFIG = {
   downspoutColor: REV_RENDER_COLORS.gutter[0],
   downspoutChecked: false,
 };
+
+const loadedUris = new Set<string>();
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -161,7 +163,7 @@ export default function RevRenderScreen() {
   }, [status]);
 
   const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!loadedUris.has(uri));
     return (
       <View style={[{ height, backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }, style]}>
         {loading && (
@@ -175,8 +177,22 @@ export default function RevRenderScreen() {
           style={{ width: '100%', height: '100%' }}
           resizeMode="cover"
           fadeDuration={0}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
+          onLoadStart={() => {
+            if (!loadedUris.has(uri)) {
+              setLoading(true);
+            }
+          }}
+          onLoad={() => {
+            loadedUris.add(uri);
+            setLoading(false);
+          }}
+          onLoadEnd={() => {
+            loadedUris.add(uri);
+            setLoading(false);
+          }}
+          onError={() => {
+            setLoading(false);
+          }}
         />
       </View>
     );
@@ -245,19 +261,19 @@ export default function RevRenderScreen() {
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         <View className="px-4 py-4">
           <View className="flex-row items-center mb-8">
-              <TouchableOpacity 
-                onPress={() => navigation.goBack()} 
-                className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
-              >
-                <Icon name="arrow-left" size={24} color="#637381" />
-              </TouchableOpacity>
-              <View>
-                <Text className="text-xl font-bold" style={{ color: colors.text }}>revRender</Text>
-                <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
-                  Select a photo to render
-                </Text>
-              </View>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
+            >
+              <Icon name="arrow-left" size={24} color="#637381" />
+            </TouchableOpacity>
+            <View>
+              <Text className="text-xl font-bold" style={{ color: colors.text }}>revRender</Text>
+              <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
+                Select a photo to render
+              </Text>
             </View>
+          </View>
           <View
             className="rounded-3xl border shadow-sm mb-10 overflow-hidden"
             style={{
@@ -337,22 +353,22 @@ export default function RevRenderScreen() {
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
         <View className="px-4 py-4">
           <View className="flex-row items-center mb-8">
-              <TouchableOpacity 
-                onPress={() => setStatus('grid')} 
-                className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
-              >
-                <Icon name="arrow-left" size={24} color="#637381" />
-              </TouchableOpacity>
-              <View>
-                <Text className="text-xl font-bold" style={{ color: colors.text }}>Configure Render</Text>
-                <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
-                  {selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}
-                </Text>
-              </View>
+            <TouchableOpacity
+              onPress={() => setStatus('grid')}
+              className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
+            >
+              <Icon name="arrow-left" size={24} color="#637381" />
+            </TouchableOpacity>
+            <View>
+              <Text className="text-xl font-bold" style={{ color: colors.text }}>Configure Render</Text>
+              <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
+                {selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}
+              </Text>
             </View>
-          <View 
+          </View>
+          <View
             className="rounded-[20px] border mb-6 overflow-hidden"
-            style={{ 
+            style={{
               backgroundColor: isDark ? '#1E1E1E' : '#fff',
               borderColor: isDark ? '#3A3A3A' : '#F4F6F8',
             }}
@@ -365,9 +381,9 @@ export default function RevRenderScreen() {
             </View>
           </View>
 
-          <View 
+          <View
             className="rounded-[24px] border p-5 mb-6"
-            style={{ 
+            style={{
               backgroundColor: isDark ? '#1E1E1E' : '#fff',
               borderColor: '#2EDE56',
             }}
@@ -376,13 +392,13 @@ export default function RevRenderScreen() {
               <Text className="text-[17px] font-black" style={{ color: isDark ? '#fff' : '#1C252E' }}>
                 Same Color for All
               </Text>
-              <TouchableOpacity 
-                onPress={() => setConfig({...config, sameColor: !config.sameColor})}
+              <TouchableOpacity
+                onPress={() => setConfig({ ...config, sameColor: !config.sameColor })}
                 className="w-12 h-6 rounded-full px-1 justify-center"
                 style={{ backgroundColor: config.sameColor ? '#2EDE56' : '#919EAB' }}
               >
-                <View 
-                  className="w-4 h-4 rounded-full bg-white" 
+                <View
+                  className="w-4 h-4 rounded-full bg-white"
                   style={{ alignSelf: config.sameColor ? 'flex-end' : 'flex-start' }}
                 />
               </TouchableOpacity>
@@ -404,7 +420,7 @@ export default function RevRenderScreen() {
                         key={i}
                         onPress={() => handleCommonColorSelect(color)}
                         className="w-10 h-10 rounded-lg border-2"
-                        style={{ 
+                        style={{
                           backgroundColor: color.hex,
                           borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
                         }}
@@ -427,7 +443,7 @@ export default function RevRenderScreen() {
             const selectedColor = config[`${section.key}Color`];
 
             return (
-              <View 
+              <View
                 key={section.key}
                 className="mb-4 rounded-[20px] border overflow-hidden"
                 style={{
@@ -435,15 +451,15 @@ export default function RevRenderScreen() {
                   borderColor: isChecked ? '#2EDE56' : (isDark ? '#3A3A3A' : '#F4F6F8'),
                 }}
               >
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setExpandedSection(isOpen ? null : section.key)}
                   className="p-5 flex-row justify-between items-center"
                 >
                   <View className="flex-row items-center flex-1">
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={() => toggleChecked(section.key)}
                       className="w-5 h-5 rounded-md items-center justify-center mr-4"
-                      style={{ 
+                      style={{
                         backgroundColor: isChecked ? '#2EDE56' : 'transparent',
                         borderWidth: isChecked ? 0 : 1.5,
                         borderColor: isDark ? '#555' : '#D0D5DD'
@@ -456,7 +472,7 @@ export default function RevRenderScreen() {
                     </Text>
                     {isChecked && selectedColor && (
                       <View className="flex-row items-center ml-auto mr-4">
-                         <View className="w-6 h-6 rounded-lg mr-2 border border-gray-200" style={{ backgroundColor: selectedColor.hex }} />
+                        <View className="w-6 h-6 rounded-lg mr-2 border border-gray-200" style={{ backgroundColor: selectedColor.hex }} />
                         <Text className="text-xs" style={{ color: '#919EAB' }}>{selectedColor.name}</Text>
                       </View>
                     )}
@@ -491,7 +507,7 @@ export default function RevRenderScreen() {
                     )}
                     {!config.sameColor && (
                       <View className="mt-5">
-                         <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>COLOR</Text>
+                        <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>COLOR</Text>
                         <View className="flex-row flex-wrap gap-2">
                           {section.getColors(selectedType).map((color: any, i: number) => {
                             const isSelected = selectedColor?.hex === color.hex;
@@ -532,8 +548,8 @@ export default function RevRenderScreen() {
         <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
           <View className="px-4 py-6">
             <View className="flex-row items-center mb-8">
-              <TouchableOpacity 
-                onPress={() => setStatus('grid')} 
+              <TouchableOpacity
+                onPress={() => setStatus('grid')}
                 className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
               >
                 <Icon name="arrow-left" size={24} color="#637381" />
@@ -548,10 +564,10 @@ export default function RevRenderScreen() {
 
             <View className="gap-y-6">
               {renderQueue.map((item, index) => (
-                <View 
+                <View
                   key={item.id}
                   className="rounded-[24px] border p-5 shadow-sm"
-                  style={{ 
+                  style={{
                     backgroundColor: isDark ? '#1E1E1E' : '#fff',
                     borderColor: isDark ? '#2A2A2A' : '#F4F6F8'
                   }}
@@ -572,12 +588,12 @@ export default function RevRenderScreen() {
 
                   <View className="gap-y-3">
                     {item.summary.map((s: any, idx: number) => (
-                      <View 
+                      <View
                         key={idx}
                         className="p-3.5 rounded-xl flex-row items-center"
                         style={{ backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
                       >
-                        <View 
+                        <View
                           className="w-5 h-5 rounded-[4px] mr-3 border border-gray-200"
                           style={{ backgroundColor: s.colorHex }}
                         />
@@ -607,9 +623,9 @@ export default function RevRenderScreen() {
           </View>
         </ScrollView>
 
-        <View 
-          className="px-6 pt-6 pb-10 border-t" 
-          style={{ 
+        <View
+          className="px-6 pt-6 pb-10 border-t"
+          style={{
             backgroundColor: isDark ? '#1A1A1A' : '#fff',
             borderTopColor: isDark ? '#2A2A2A' : '#F4F6F8',
           }}
@@ -636,18 +652,18 @@ export default function RevRenderScreen() {
   const hasPhotos = Object.values(sectionImages || {}).flat().length > 0;
 
   return (
-    <View className="flex-1" style={{ backgroundColor: isDark ? colors.background : '#fff' }}>
+    <SafeAreaView className="flex-1" style={{ backgroundColor: isDark ? colors.background : '#fff' }}>
 
 
       <View className="flex-1" style={{ zIndex: 1 }}>
         {!hasPhotos
           ? renderEmptyState()
           : status === 'grid'
-          ? renderGrid()
-          : status === 'config'
-          ? renderConfig()
-          : renderQueueView()}
+            ? renderGrid()
+            : status === 'config'
+              ? renderConfig()
+              : renderQueueView()}
       </View>
-    </View>
+    </SafeAreaView>
   );
 }

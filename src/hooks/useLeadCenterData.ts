@@ -3,9 +3,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { resolveS3Url } from '../utils/s3-utils';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
-import { logEvent } from '../services/api/LoggerService';
+import {
+  logLeadCheckOut,
+  logLeadSessionEnter,
+  persistActiveLeadId,
+} from '../utils/lead-activity-log';
 
-export const useLeadCenterData = (initialLead: any, user: any) => {
+export const useLeadCenterData = (
+  initialLead: any,
+  user: any,
+  options?: { appointmentStarted?: boolean }
+) => {
   const queryClient = useQueryClient();
   const [lead, setLead] = useState<any>(initialLead);
 
@@ -86,9 +94,12 @@ export const useLeadCenterData = (initialLead: any, user: any) => {
         setIsOutcomeLoading(true);
         const res = await LeadService.getLeadOutcome(lead._id);
         const data = res.data?.data || res.data;
-        if (data?.leadData?.jobBuilder) setJobState(data.leadData.jobBuilder);
-        if (data?.leadData?.LFCalculator) setCalculatorData(data.leadData.LFCalculator);
-        if (data?.leadData) setOutcomeForm(data.leadData);
+        if (data) {
+          const outcome = data.outcome || data.leadData || data;
+          if (outcome?.jobBuilder) setJobState(outcome.jobBuilder);
+          if (outcome?.LFCalculator) setCalculatorData(outcome.LFCalculator);
+          setOutcomeForm(outcome);
+        }
       } catch (err: any) {
         // 404 is expected for leads that haven't been resulted/processed yet
         if (err?.response?.status !== 404 && err?.status !== 404) {
@@ -182,27 +193,23 @@ export const useLeadCenterData = (initialLead: any, user: any) => {
 
   useEffect(() => {
     if (!lead?._id || !user?._id) return;
-    LeadService.workLead(lead._id, user._id)
-      .then((res) => console.log('Work started successfully:', res.data))
-      .catch((e) => console.warn('[LeadCenter] Work start failed:', e));
+
+    persistActiveLeadId(lead._id);
+    logLeadSessionEnter(user, lead);
+
+    if (!options?.appointmentStarted) {
+      LeadService.workLead(lead._id, user._id).catch((e) =>
+        console.warn('[LeadCenter] Work start failed:', e)
+      );
+    }
+
     return () => {
-      if (user?._id && lead?._id) {
-        logEvent('unload', {
-          user_id: user._id,
-          module_type: 'lead_check_out',
-          action: 'check_out_unloaded',
-          created_by: user._id,
-          meta: {
-            leadId: lead._id,
-            unload: true,
-          },
-        });
-      }
-      LeadService.endWorkLead(lead._id)
-        .then((res) => console.log('Work ended successfully:', res.data))
-        .catch((e) => console.warn('[LeadCenter] Work end failed:', e));
+      logLeadCheckOut(user, lead);
+      LeadService.endWorkLead(lead._id).catch((e) =>
+        console.warn('[LeadCenter] Work end failed:', e)
+      );
     };
-  }, [lead?._id, user?._id]);
+  }, [lead?._id, user?._id, options?.appointmentStarted]);
 
   useEffect(() => {
     return () => {

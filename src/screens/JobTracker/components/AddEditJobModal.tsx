@@ -14,8 +14,10 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import JobService, { JobEntry } from '../../../services/api/JobService';
 import { format, parseISO, isValid } from 'date-fns';
+import { parseSafeISO } from '../../../utils/date-util';
 import { CustomDatePicker } from './CustomDatePicker';
 import { calculateCommission } from '../../../utils/calculator/commission-utils';
+import { paymentPlans } from '../../../utils/calculator/payment-plans';
 
 interface Props {
   visible: boolean;
@@ -24,62 +26,64 @@ interface Props {
   job?: JobEntry | null;
 }
 
+const basicKeys = ['check', 'mcVisaDscvr', 'amex'];
+const basicOptions = basicKeys.map((k) => ({
+  label: paymentPlans[k]?.label || k,
+  value: k,
+}));
+
+const greenskyOptions = Object.keys(paymentPlans)
+  .filter((k) => k.startsWith('greensky'))
+  .map((k) => ({ label: paymentPlans[k]?.label || k, value: k }));
+
+const wfNormalOptions = Object.keys(paymentPlans)
+  .filter((k) => k.startsWith('wf') && !k.startsWith('wf36'))
+  .map((k) => ({ label: paymentPlans[k]?.label || k, value: k }));
+
+const wfOver7500Options = Object.keys(paymentPlans)
+  .filter((k) => k.startsWith('wf36'))
+  .map((k) => ({ label: paymentPlans[k]?.label || k, value: k }));
+
+const concoraOptions = Object.keys(paymentPlans)
+  .filter((k) => k === 'concora')
+  .map((k) => ({ label: paymentPlans[k]?.label || k, value: k }));
+
+const lowesOptions = Object.keys(paymentPlans)
+  .filter((k) => k.startsWith('lowes_'))
+  .map((k) => ({ label: paymentPlans[k]?.label || k, value: k }));
+
 const PAYMENT_GROUPS = [
   {
     title: 'Basic Options',
     bg: '#F8FAFC',
-    options: [
-      { label: 'Check (0% Fee)', value: 'check' },
-      { label: 'MC/VISA/DSCVR (3.00% Fee)', value: 'mcVisaDscvr' },
-      { label: 'AMEX (5.00% Fee)', value: 'amex' },
-    ],
+    options: basicOptions,
   },
   {
     title: 'GreenSky Plans',
     bg: '#d9ead3',
-    options: [
-      { label: '2511 (6 Months 0% Interest)', value: 'greensky2511' },
-      { label: '2521 (12 Months 0% Interest)', value: 'greensky2521' },
-      { label: '2531 (18 Months 0% Interest)', value: 'greensky2531' },
-      { label: '1599 (Fixed Rate 9.99% APR)', value: 'greensky1599' },
-    ],
+    options: greenskyOptions,
   },
   {
     title: 'Wells Fargo Plans',
     bg: '#f4cccc',
-    options: [
-      { label: '1148 (6 Months no interest)', value: 'wf1148' },
-      { label: '1019 (12 Months no interest)', value: 'wf1019' },
-      { label: '1157 (6.9% APR, 1/50th)', value: 'wf1157' },
-      { label: '1197 (9.99% APR, 3.5% payment)', value: 'wf1197' },
-      { label: '2225 (12.9% APR, 1/50th)', value: 'wf2225' },
-      { label: '3198 (5.99% APR, 60 payments)', value: 'wf3198' },
-      { label: '1529 (8.99% APR, 84 payments)', value: 'wf1529' },
-      { label: '4073 (18 Months, 0% interest)', value: 'wf4073' },
-      { label: '4079 (24 Months, 0% interest)', value: 'wf4079' },
-      { label: '4091 (36 Months, 0% interest)', value: 'wf4091' },
-      { label: '4103 (48 Months, 0% interest)', value: 'wf4103' },
-      { label: '4115 (60 Months, 0% interest)', value: 'wf4115' },
-    ],
+    options: wfNormalOptions,
   },
   {
     title: 'Wells Fargo Plans (Jobs over $7,500)',
     bg: '#f4cccc',
-    options: [
-      { label: '3672 (7.99% APR, 96 payments)', value: 'wf3672' },
-      { label: '3667 (7.99% APR, 108 payments)', value: 'wf3667' },
-      { label: '3668 (7.99% APR, 120 payments)', value: 'wf3668' },
-      { label: '3669 (9.99% APR, 96 payments)', value: 'wf3669' },
-      { label: '3670 (9.99% APR, 108 payments)', value: 'wf3670' },
-      { label: '3671 (9.99% APR, 120 payments)', value: 'wf3671' },
-    ],
+    options: wfOver7500Options,
   },
   {
     title: 'Concora Credit',
     bg: '#c9daf8',
-    options: [{ label: 'Concora (19.9% APR)', value: 'concora' }],
+    options: concoraOptions,
   },
-];
+  {
+    title: "Lowe's Plans",
+    bg: '#e6f7ff',
+    options: lowesOptions,
+  },
+].filter((g) => g.options.length > 0);
 
 const ALL_PAYMENT_METHODS = PAYMENT_GROUPS.flatMap((g) => g.options);
 
@@ -201,7 +205,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
       <View style={styles.overlay}>
         <View style={[styles.content, { backgroundColor: colors.card }]}>
           <ScrollView className="px-8 py-8" showsVerticalScrollIndicator={false}>
-            <Text className="text-[22px] font-black text-[#1C252E] mb-10 mt-2">
+            <Text className="text-lg font-black text-[#1C252E] mb-6 mt-2">
               {job?.id || job?._id ? 'Edit Job' : 'Add This Job to Job Tracker'}
             </Text>
 
@@ -383,7 +387,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               >
                 <TextInput
                   value={
-                    formData.installDate ? format(parseISO(formData.installDate), 'MM/dd/yyyy') : ''
+                    formData.installDate ? format(parseSafeISO(formData.installDate), 'MM/dd/yyyy') : ''
                   }
                   editable={false}
                   pointerEvents="none"
@@ -432,7 +436,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                 >
                   <TextInput
                     value={
-                      formData.soldDate ? format(parseISO(formData.soldDate), 'MM/dd/yyyy') : ''
+                      formData.soldDate ? format(parseSafeISO(formData.soldDate), 'MM/dd/yyyy') : ''
                     }
                     editable={false}
                     pointerEvents="none"

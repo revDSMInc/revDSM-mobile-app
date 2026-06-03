@@ -8,6 +8,9 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   if (!userId) return;
 
   const meta = { ...details.meta };
+  if (details.action && meta.action == null) {
+    meta.action = details.action;
+  }
 
   // Sync with web app: automatically attach leadId if missing and available in storage
   if (!meta.leadId) {

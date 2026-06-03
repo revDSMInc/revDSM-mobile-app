@@ -20,6 +20,7 @@ import { GutterSection } from '../../widgets/components/job-builder/GutterSectio
 import { LeafFilterSection } from '../../widgets/components/job-builder/LeafFilterSection';
 import { SoffitSection } from '../../widgets/components/job-builder/SoffitSection';
 import { FasciaSection } from '../../widgets/components/job-builder/FasciaSection';
+import { LightingSection } from '../../widgets/components/job-builder/LightingSection';
 import { MiscSection } from '../../widgets/components/job-builder/MiscSection';
 import { SummarySection } from '../../widgets/components/job-builder/SummarySection';
 import { LeadService } from '../../services/api/leads';
@@ -28,6 +29,10 @@ import { useAuth } from '../../hooks/useAuth';
 import { useLeadQuery } from '../../hooks/useLeadQuery';
 import { Alert } from 'react-native';
 import { FlashMessage } from '../../config/message';
+import JobService from '../../services/api/JobService';
+import { calculateCommission } from '../../utils/calculator/commission-utils';
+import { parseSafeISO } from '../../utils/date-util';
+
 
 const { width, height } = Dimensions.get('window');
 
@@ -39,6 +44,37 @@ const STEPS = [
   { id: 'additional', label: 'Misc', icon: 'dots-horizontal' },
   { id: 'summary', label: 'Summary', icon: 'clipboard-list-outline' },
 ];
+
+const STATE_ABBREVIATIONS = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
+  colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
+  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA',
+  kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
+  missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH',
+  'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC',
+  'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA',
+  'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN',
+  texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA', washington: 'WA',
+  'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY',
+};
+
+function getOfficeInitials(repDetails: any) {
+  const officeName = repDetails?.office?.[0]?.name || repDetails?.officeName || '';
+  if (officeName) {
+    const cleanName = officeName.trim().toLowerCase();
+    return (
+      STATE_ABBREVIATIONS[cleanName as keyof typeof STATE_ABBREVIATIONS] ||
+      officeName.substring(0, 2).toUpperCase()
+    );
+  }
+  return repDetails?.office?.[0]?.code || '';
+}
+
+function buildJobNumber(repDetails: any, leadNum: string | number) {
+  const initials = getOfficeInitials(repDetails);
+  return initials ? `${initials}${leadNum}` : String(leadNum ?? 'N/A');
+}
 
 export default function JobBuilderScreen() {
   const navigation = useNavigation<any>();
@@ -81,6 +117,7 @@ export default function JobBuilderScreen() {
   const { user } = useAuth();
 
   const sentImageIds = useRef(new Set());
+  const isExitingRef = useRef(false);
   // Blocks the 2s debounce auto-save while a document upload is in progress
   // to avoid MongoDB write conflicts on the outcome record.
   const isDocUploadingRef = useRef(false);
@@ -110,10 +147,12 @@ export default function JobBuilderScreen() {
           status: 'Sale',
           jobBuilder: jobStateWithoutDocs,
           LFCalculator: {
-            ...calculatorData,
+            ...(calculatorData || {}),
             createdBy: user?._id || user?.id || calculatorData?.createdBy,
             appointmentId: calculatorData?.appointmentId || leadId,
-            title: calculatorData?.title || 'Job Builder Estimate',
+            title: (calculatorData?.title && String(calculatorData.title).trim())
+              ? calculatorData.title
+              : 'Job Builder Estimate',
           },
           calculatorId: calculatorData?._id,
           selectedCalculatorId: calculatorData?._id,
@@ -326,6 +365,15 @@ export default function JobBuilderScreen() {
             onValidationError={onValidationError}
           />
         );
+      case 'lighting':
+        return (
+          <LightingSection
+            jobState={jobState}
+            onUpdate={handleUpdate}
+            calculatorData={calculatorData}
+            onValidationError={onValidationError}
+          />
+        );
       case 'additional':
         return (
           <MiscSection
@@ -472,6 +520,67 @@ export default function JobBuilderScreen() {
           LeadService.updateLeadTimelineProgress(leadId, { jobBuild: 'complete' }),
         ]);
 
+        // ── Auto-add to Job Tracker on Sale ──────────────────────────
+        const isSale = (outcomeForm?.result || leadData?.result || '').toLowerCase() === 'sale';
+        if (isSale) {
+          try {
+            const scheduleTime = finalJobState.scheduleTime || {};
+            const isTBD = !scheduleTime.date || scheduleTime.date === 'TBD';
+            const rawPrice = parseFloat(
+              String(outcomeForm?.originalContractPrice || leadData?.originalContractPrice || '0').replace(/,/g, '')
+            ) || 0;
+            const pmMethod =
+              outcomeForm?.balancePaymentMethod ||
+              outcomeForm?.paymentMethod ||
+              leadData?.balancePaymentMethod ||
+              leadData?.paymentMethod ||
+              '';
+
+            const repDetails = leadData?.assignedRepDetails || {};
+            const leadNum = leadData?.leadId || leadData?.jobNumber || leadId;
+            const jobNumber = buildJobNumber(repDetails, leadNum);
+
+            const customerName =
+              (leadData?.customerDetails
+                ? `${leadData.customerDetails.firstName || ''} ${leadData.customerDetails.lastName || ''}`.trim()
+                : '') ||
+              leadData?.title ||
+              outcomeForm?.customerName ||
+              'Customer';
+
+            let formattedInstallDate: string | null = null;
+            if (!isTBD && scheduleTime.date) {
+              try {
+                const parsedDate = parseSafeISO(scheduleTime.date);
+                if (parsedDate && !isNaN(parsedDate.getTime())) {
+                  formattedInstallDate = parsedDate.toISOString();
+                }
+              } catch (e) {
+                console.warn('[JobBuilder] Failed to parse installDate:', scheduleTime.date, e);
+              }
+            }
+
+            const jobTrackerPayload = {
+              jobNumber,
+              salesPrice: rawPrice,
+              paymentMethod: pmMethod,
+              installDate: formattedInstallDate,
+              soldDate: new Date().toISOString(),
+              toBeDetermined: isTBD,
+              commission: calculateCommission(rawPrice, pmMethod).amount,
+              appointmentId: calculatorData?.appointmentId || leadId || undefined,
+              calculatorId: calculatorData?._id || undefined,
+              customerName,
+              isManual: false,
+            };
+
+            await JobService.createJob(jobTrackerPayload);
+          } catch (jobTrackerError) {
+            // Non-fatal — job builder already submitted successfully
+            console.warn('[JobBuilder] Job tracker auto-add failed:', jobTrackerError);
+          }
+        }
+
         // Invalidate queries to update Leads page and Lead Center data
         queryClient.invalidateQueries({ queryKey: ['leads'] });
         queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
@@ -492,9 +601,10 @@ export default function JobBuilderScreen() {
     }
   };
 
-  const handleClose = async () => {
+  const saveDraftProgress = useCallback(async () => {
     // Lightweight draft save — no loader, no timeline update
-    // Just persist the current job state and return to the OutcomeModal
+    // Only persist the jobBuilder progress; do NOT touch LFCalculator to avoid
+    // triggering the Mongoose "title required" validation on an incomplete calculator.
     try {
       if (leadId) {
         const gutterExtras: any[] = [];
@@ -510,16 +620,23 @@ export default function JobBuilderScreen() {
           }
         });
 
-        const draftPayload = {
+        // Build the LFCalculator object, always ensuring title is a non-empty string to satisfy backend validation.
+        const lfCalculatorPayload = {
+          ...(calculatorData || {}),
+          createdBy: user?._id || user?.id || calculatorData?.createdBy,
+          appointmentId: calculatorData?.appointmentId || leadId,
+          title: (calculatorData?.title && String(calculatorData.title).trim())
+            ? calculatorData.title
+            : 'Job Builder Estimate',
+        };
+
+        const draftPayload: any = {
+          // Spread outcomeForm and ensure LFCalculator has a valid title
           ...outcomeForm,
+          LFCalculator: lfCalculatorPayload,
           jobBuilder: {
             ...jobState,
             gutter: { ...jobState.gutter, extras: gutterExtras },
-          },
-          LFCalculator: {
-            ...calculatorData,
-            createdBy: user?._id || user?.id || calculatorData?.createdBy,
-            appointmentId: calculatorData?.appointmentId || leadId,
           },
           calculatorId: calculatorData?._id,
           appointmentId: calculatorData?.appointmentId || leadId,
@@ -531,7 +648,30 @@ export default function JobBuilderScreen() {
         );
       }
     } catch (_) { /* silent */ }
+  }, [leadId, calculatorData, jobState, outcomeForm, user]);
 
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+      if (isExitingRef.current) return;
+      isExitingRef.current = true;
+      e.preventDefault();
+
+      Promise.resolve(saveDraftProgress()).finally(() => {
+        if (onGoBack) onGoBack(jobState);
+        navigation.dispatch(e.data.action);
+        setTimeout(() => {
+          isExitingRef.current = false;
+        }, 0);
+      });
+    });
+
+    return unsubscribe;
+  }, [navigation, onGoBack, jobState, saveDraftProgress]);
+
+  const handleClose = async () => {
+    if (isExitingRef.current) return;
+    isExitingRef.current = true;
+    await saveDraftProgress();
     if (onGoBack) onGoBack(jobState);
     navigation.goBack();
   };

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Alert } from 'react-native';
 import { format, parseISO, isValid, addDays, parse } from 'date-fns';
 import JobService, { JobEntry } from '../services/api/JobService';
+import { parseSafeISO } from '../utils/date-util';
 
 export const useJobTracker = (selectedYear: number) => {
   const [jobs, setJobs] = useState<JobEntry[]>([]);
@@ -18,8 +19,8 @@ export const useJobTracker = (selectedYear: number) => {
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('');
 
   const calculateExpectedPayout = (installDate: string | null) => {
-    if (!installDate) return 'TBD';
-    const date = parseISO(installDate);
+    if (!installDate || installDate === 'TBD') return 'TBD';
+    const date = parseSafeISO(installDate);
     if (!isValid(date)) return 'N/A';
     return format(addDays(date, 14), 'MM/dd/yyyy');
   };
@@ -93,7 +94,7 @@ export const useJobTracker = (selectedYear: number) => {
       let matchPayoutDate = true;
       if (payoutDateFilter) {
         const expectedPayoutStr = calculateExpectedPayout(j.installDate);
-        const filterDateStr = format(parseISO(payoutDateFilter), 'MM/dd/yyyy');
+        const filterDateStr = format(parseSafeISO(payoutDateFilter), 'MM/dd/yyyy');
         matchPayoutDate = expectedPayoutStr === filterDateStr;
       }
 

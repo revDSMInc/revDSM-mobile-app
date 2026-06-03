@@ -13,6 +13,8 @@ import {
   ActivityIndicator,
   Modal,
   Alert,
+  Platform,
+  InteractionManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -53,6 +55,10 @@ const INITIAL_JOB_STATE = {
   },
   soffit: { vinyl: { type: '' }, porch: { location: [] }, nailer: { type: '' } },
   fascia: { wrap: { type: '' }, boards: { boardType: '' }, aluminumBoards: { footage: '' } },
+  lighting: {
+    combinations: [],
+    extras: { boosterBox: 0, controlBox: 0, electricalOutlet: 0, wifiExtender: 0 },
+  },
   additional: { extraLabor: 0 },
   scheduleTime: null,
 };
@@ -116,7 +122,7 @@ export default function LFCalculator({ route }: any) {
     try {
       const jobs = await JobService.getJobs();
       setTrackerJobs(jobs);
-    } catch (e) {}
+    } catch (e) { }
   }, []);
 
   useEffect(() => {
@@ -167,44 +173,48 @@ export default function LFCalculator({ route }: any) {
   const handleFinishOutcome = () => {
     handleFinishOutcomeHook((showJB: boolean) => {
       if (showJB) {
-        navigation.navigate('JobBuilder', {
-          initialJobState: jobState,
-          calculatorData: active,
-          leadId: currentLead?._id || currentLead?.leadId || currentLead?.id,
-          outcomeForm: { ...outcomeForm, result: outcomeStatus },
-          // Called when user closes JobBuilder WITHOUT completing
-          onGoBack: (updatedJobState: any) => {
-            setJobState(updatedJobState);
-            setCurrentView('outcome');
-          },
-          // Called when user COMPLETES the job — close modal, go to Rollout view, and refresh data
-          onComplete: (updatedJobState: any) => {
-            if (updatedJobState) {
-              // Update local lead state with the completed job builder data
-              setCurrentLead((prev: any) => ({
-                ...prev,
-                jobBuilder: updatedJobState,
-              }));
-            }
-            // Clear jobState so we don't show "Reset Job Builder" if we ever come back
-            setJobState({});
-            
-            // Reset the navigation stack to LeadCenter (with Job Docs tab) and Leads list
-            // This properly removes JobBuilder and DealCenter from the history
-            navigation.reset({
-              index: 1,
-              routes: [
-                { name: 'Leads' },
-                { 
-                  name: 'LeadCenter', 
-                  params: { 
-                    lead: currentLead, 
-                    tab: 'job_docs' 
-                  } 
-                },
-              ],
-            });
-          },
+        // Ensure the native Outcome modal unmounts before navigating (critical on iOS).
+        setCurrentView('summary');
+        InteractionManager.runAfterInteractions(() => {
+          navigation.navigate('JobBuilder', {
+            initialJobState: jobState,
+            calculatorData: active,
+            leadId: currentLead?._id || currentLead?.leadId || currentLead?.id,
+            outcomeForm: { ...outcomeForm, result: outcomeStatus },
+            // Called when user closes JobBuilder WITHOUT completing
+            onGoBack: (updatedJobState: any) => {
+              setJobState(updatedJobState);
+              setCurrentView('outcome');
+            },
+            // Called when user COMPLETES the job — close modal, go to Rollout view, and refresh data
+            onComplete: (updatedJobState: any) => {
+              if (updatedJobState) {
+                // Update local lead state with the completed job builder data
+                setCurrentLead((prev: any) => ({
+                  ...prev,
+                  jobBuilder: updatedJobState,
+                }));
+              }
+              // Clear jobState so we don't show "Reset Job Builder" if we ever come back
+              setJobState({});
+
+              // Reset the navigation stack to LeadCenter (with Job Docs tab) and Leads list
+              // This properly removes JobBuilder and DealCenter from the history
+              navigation.reset({
+                index: 1,
+                routes: [
+                  { name: 'Leads' },
+                  {
+                    name: 'LeadCenter',
+                    params: {
+                      lead: currentLead,
+                      tab: 'job_docs'
+                    }
+                  },
+                ],
+              });
+            },
+          });
         });
       }
     });
@@ -263,7 +273,7 @@ export default function LFCalculator({ route }: any) {
       setCalcLoading(false);
     }
   }, [fetchFreshLead, fetchCalculators, fetchTrackerJobs, refetchOutcome, setCalcLoading]);
-  
+
   const handleResetJobBuilder = () => {
     Alert.alert(
       'Reset Job Builder',
@@ -352,10 +362,11 @@ export default function LFCalculator({ route }: any) {
       const res = await LeadService.getLeadOutcome(currentLead._id);
       const data = res.data?.data || res.data;
       if (data) {
-        setOutcomeStatus(data.status);
+        const outcome = data.outcome || data.leadData || data;
+        setOutcomeStatus(outcome.status || outcome.result);
         setOutcomeForm({
           ...outcomeForm,
-          ...data.leadData,
+          ...outcome,
         });
       }
     } catch (e) {
@@ -382,6 +393,7 @@ export default function LFCalculator({ route }: any) {
             expanded={expanded}
             onToggle={(id: string) => setExpanded({ ...expanded, [id]: !expanded[id] })}
             onUpdate={updateActive}
+            readOnly={!!active?.isRolloutConfirmed}
             results={results}
             onClose={onClose}
             handleAddJobToTracker={handleAddJobToTracker}
@@ -397,7 +409,7 @@ export default function LFCalculator({ route }: any) {
           />
           <View
             className="px-5 py-4 border-t border-border bg-card"
-            style={{ paddingBottom: insets.bottom + 10 }}
+            style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10 }}
           >
             <View className="flex-row items-center justify-between">
               <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1 mr-4">
@@ -410,18 +422,16 @@ export default function LFCalculator({ route }: any) {
                       <TouchableOpacity
                         key={idx}
                         onPress={() => setActiveIdx(idx)}
-                        className={`px-4 h-10 rounded-xl border flex-row items-center ${
-                          isActive
+                        className={`px-4 h-10 rounded-xl border flex-row items-center ${isActive
                             ? isWarning
                               ? 'bg-amber-500 border-amber-500'
                               : 'bg-green-500 border-green-500'
                             : 'bg-surface border-border'
-                        }`}
+                          }`}
                       >
                         <Text
-                          className={`text-[10px] font-black  ${
-                            isActive ? 'text-white' : 'text-text-secondary'
-                          }`}
+                          className={`text-[10px] font-black  ${isActive ? 'text-white' : 'text-text-secondary'
+                            }`}
                         >
                           {calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
                         </Text>
@@ -462,6 +472,7 @@ export default function LFCalculator({ route }: any) {
           activeCalc={active}
           results={results}
           calculators={calculators}
+          setCalculators={setCalculators}
           setActiveIdx={setActiveIdx}
           activeIdx={activeIdx}
           setCurrentView={setCurrentView}
@@ -507,6 +518,7 @@ export default function LFCalculator({ route }: any) {
         onResetJobBuilder={handleResetJobBuilder}
         loading={loading}
         isJobBuilderSubmitted={isJobBuilderSubmitted}
+        lead={currentLead}
       />
 
       <Modal visible={currentView === 'picker'} transparent animationType="slide">
@@ -530,17 +542,15 @@ export default function LFCalculator({ route }: any) {
                         updateActive({ inputs: { paymentPlan: key } });
                         setCurrentView(prevView);
                       }}
-                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${
-                        inputs.paymentPlan === key
+                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
                           ? 'border-green-500 bg-green-500/10'
                           : 'border-border bg-surface'
-                      }`}
+                        }`}
                     >
                       <View className="flex-1">
                         <Text
-                          className={`text-sm font-black ${
-                            inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
-                          }`}
+                          className={`text-sm font-black ${inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
+                            }`}
                         >
                           {plan.label}
                         </Text>
@@ -573,17 +583,15 @@ export default function LFCalculator({ route }: any) {
                         updateActive({ inputs: { paymentPlan: key } });
                         setCurrentView(prevView);
                       }}
-                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${
-                        inputs.paymentPlan === key
+                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
                           ? 'border-green-500 bg-green-500/10'
                           : 'border-border bg-surface'
-                      }`}
+                        }`}
                     >
                       <View className="flex-1">
                         <Text
-                          className={`text-sm font-black ${
-                            inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
-                          }`}
+                          className={`text-sm font-black ${inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
+                            }`}
                         >
                           {plan.label}
                         </Text>
@@ -627,17 +635,15 @@ export default function LFCalculator({ route }: any) {
                         updateActive({ inputs: { paymentPlan: key } });
                         setCurrentView(prevView);
                       }}
-                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${
-                        inputs.paymentPlan === key
+                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
                           ? 'border-green-500 bg-green-500/10'
                           : 'border-border bg-surface'
-                      }`}
+                        }`}
                     >
                       <View className="flex-1">
                         <Text
-                          className={`text-sm font-black ${
-                            inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
-                          }`}
+                          className={`text-sm font-black ${inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
+                            }`}
                         >
                           {plan.label}
                         </Text>
@@ -670,17 +676,15 @@ export default function LFCalculator({ route }: any) {
                         updateActive({ inputs: { paymentPlan: key } });
                         setCurrentView(prevView);
                       }}
-                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${
-                        inputs.paymentPlan === key
+                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
                           ? 'border-green-500 bg-green-500/10'
                           : 'border-border bg-surface'
-                      }`}
+                        }`}
                     >
                       <View className="flex-1">
                         <Text
-                          className={`text-sm font-black ${
-                            inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
-                          }`}
+                          className={`text-sm font-black ${inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
+                            }`}
                         >
                           {plan.label}
                         </Text>
@@ -711,17 +715,15 @@ export default function LFCalculator({ route }: any) {
                         updateActive({ inputs: { paymentPlan: key } });
                         setCurrentView(prevView);
                       }}
-                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${
-                        inputs.paymentPlan === key
+                      className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
                           ? 'border-green-500 bg-green-500/10'
                           : 'border-border bg-surface'
-                      }`}
+                        }`}
                     >
                       <View className="flex-1">
                         <Text
-                          className={`text-sm font-black ${
-                            inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
-                          }`}
+                          className={`text-sm font-black ${inputs.paymentPlan === key ? 'text-green-500' : 'text-text-primary'
+                            }`}
                         >
                           {plan.label}
                         </Text>

@@ -11,7 +11,7 @@ import {
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaFrameContext, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { REV_RENDER_VIEW_GROUPS } from '../../../constants/lead-center';
@@ -233,24 +233,16 @@ export const RevRenderModal = ({
   };
 
   // ── Helper Components ──────────────────────────────────────────────────────
-  
+
   const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
-    const [loading, setLoading] = useState(true);
     return (
       <View style={[{ height, backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }, style]}>
-        {loading && (
-          <View className="absolute inset-0 items-center justify-center z-10">
-            <ActivityIndicator color={colors.primary.main} />
-          </View>
-        )}
         <Image
           key={uri}
           source={{ uri, cache: 'force-cache' }}
           style={{ width: '100%', height: '100%' }}
           resizeMode="cover"
           fadeDuration={0}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
         />
       </View>
     );
@@ -365,8 +357,8 @@ export const RevRenderModal = ({
                           {photo.label}
                         </Text>
                       </View>
-                      <HouseImage 
-                        uri={photo?.uri || photo?.s3url} 
+                      <HouseImage
+                        uri={photo?.uri || photo?.s3url}
                         height={130}
                       />
                     </TouchableOpacity>
@@ -400,12 +392,12 @@ export const RevRenderModal = ({
     const toggleChecked = (key: string) => {
       const newChecked = !config[`${key}Checked`];
       const newConfig = { ...config, [`${key}Checked`]: newChecked };
-      
+
       // If turning ON and sameColorForAll is active, sync with global color (using soffitColor as ref)
       if (newChecked && sameColorForAll) {
         newConfig[`${key}Color`] = config.soffitColor;
       }
-      
+
       setConfig(newConfig);
     };
 
@@ -413,15 +405,15 @@ export const RevRenderModal = ({
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
         <View className="px-4 py-4">
           {/* Selected Image Card */}
-          <View 
+          <View
             className="rounded-[20px] border mb-6 overflow-hidden"
-            style={{ 
+            style={{
               backgroundColor: isDark ? '#1E1E1E' : '#fff',
               borderColor: isDark ? '#3A3A3A' : '#F4F6F8',
             }}
           >
-            <HouseImage 
-              uri={selectedPhoto?.uri || selectedPhoto?.s3url} 
+            <HouseImage
+              uri={selectedPhoto?.uri || selectedPhoto?.s3url}
               height={220}
             />
             <View className="px-4 py-3">
@@ -432,9 +424,9 @@ export const RevRenderModal = ({
           </View>
 
           {/* Same Color for All Card */}
-          <View 
+          <View
             className="rounded-[24px] border p-5 mb-6"
-            style={{ 
+            style={{
               backgroundColor: isDark ? '#1E1E1E' : '#fff',
               borderColor: '#2EDE56', // Brand green border from screenshot
               shadowColor: '#2EDE56',
@@ -448,13 +440,13 @@ export const RevRenderModal = ({
               <Text className="text-[17px] font-black" style={{ color: isDark ? '#fff' : '#1C252E' }}>
                 Same Color for All
               </Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setSameColorForAll(!sameColorForAll)}
                 className="w-12 h-6 rounded-full px-1 justify-center"
                 style={{ backgroundColor: sameColorForAll ? '#2EDE56' : '#919EAB' }}
               >
-                <View 
-                  className="w-4 h-4 rounded-full bg-white" 
+                <View
+                  className="w-4 h-4 rounded-full bg-white"
                   style={{ alignSelf: sameColorForAll ? 'flex-end' : 'flex-start' }}
                 />
               </TouchableOpacity>
@@ -477,7 +469,7 @@ export const RevRenderModal = ({
                         key={color.name}
                         onPress={() => handleGlobalColorSelect(color)}
                         className="w-10 h-10 rounded-lg border-2"
-                        style={{ 
+                        style={{
                           backgroundColor: color.hex,
                           borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
                         }}
@@ -501,7 +493,7 @@ export const RevRenderModal = ({
             const selectedColor = config[`${section.key}Color`];
 
             return (
-              <View 
+              <View
                 key={section.key}
                 className="mb-4 rounded-[20px] border overflow-hidden"
                 style={{
@@ -509,15 +501,15 @@ export const RevRenderModal = ({
                   borderColor: isChecked ? '#2EDE56' : (isDark ? '#3A3A3A' : '#F4F6F8'),
                 }}
               >
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setExpandedSection(isOpen ? null : section.key)}
                   className="p-5 flex-row justify-between items-center"
                 >
                   <View className="flex-row items-center flex-1">
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={() => toggleChecked(section.key)}
                       className="w-5 h-5 rounded-md items-center justify-center mr-4"
-                      style={{ 
+                      style={{
                         backgroundColor: isChecked ? '#2EDE56' : 'transparent',
                         borderWidth: isChecked ? 0 : 1.5,
                         borderColor: isDark ? '#555' : '#D0D5DD'
@@ -525,14 +517,14 @@ export const RevRenderModal = ({
                     >
                       {isChecked && <Icon name="check" size={14} color="white" />}
                     </TouchableOpacity>
-                    
+
                     <Text className="text-[16px] font-black" style={{ color: isDark ? '#fff' : '#1C252E' }}>
                       {section.label}
                     </Text>
 
                     {isChecked && selectedColor && (
                       <View className="flex-row items-center ml-auto mr-4">
-                         <View 
+                        <View
                           className="w-6 h-6 rounded-lg mr-2 border border-gray-200"
                           style={{ backgroundColor: selectedColor.hex }}
                         />
@@ -540,10 +532,10 @@ export const RevRenderModal = ({
                       </View>
                     )}
                   </View>
-                  <Icon 
-                    name={isOpen ? 'chevron-up' : 'chevron-down'} 
-                    size={20} 
-                    color="#919EAB" 
+                  <Icon
+                    name={isOpen ? 'chevron-up' : 'chevron-down'}
+                    size={20}
+                    color="#919EAB"
                   />
                 </TouchableOpacity>
 
@@ -579,7 +571,7 @@ export const RevRenderModal = ({
 
                     {!sameColorForAll && (
                       <View className="mt-5">
-                         <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>
+                        <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>
                           TEXTURE
                         </Text>
                         <View className="flex-row flex-wrap gap-2">
@@ -592,7 +584,7 @@ export const RevRenderModal = ({
                                   setConfig({ ...config, [`${section.key}Color`]: color });
                                 }}
                                 className="w-10 h-10 rounded-lg border-2"
-                                style={{ 
+                                style={{
                                   backgroundColor: color.hex,
                                   borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
                                 }}
@@ -641,10 +633,10 @@ export const RevRenderModal = ({
 
             <View className="gap-y-6">
               {renderQueue.map((item, index) => (
-                <View 
+                <View
                   key={item.id}
                   className="rounded-[32px] border p-6"
-                  style={{ 
+                  style={{
                     backgroundColor: isDark ? '#1E1E1E' : '#fff',
                     borderColor: isDark ? '#333' : '#F4F6F8'
                   }}
@@ -665,12 +657,12 @@ export const RevRenderModal = ({
 
                   <View className="gap-y-3">
                     {item.summary.map((s: any, idx: number) => (
-                      <View 
+                      <View
                         key={idx}
                         className="bg-[#919EAB14] p-4 rounded-2xl flex-row items-center justify-between"
                       >
                         <View className="flex-row items-center">
-                          <View 
+                          <View
                             className="w-4 h-4 rounded-full mr-3 border border-white"
                             style={{ backgroundColor: s.colorHex }}
                           />
@@ -723,27 +715,29 @@ export const RevRenderModal = ({
   const insets = useSafeAreaInsets();
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={handleClose}>
-      <View className="flex-1" style={{ backgroundColor: colors.background, paddingTop: insets.top }}>
-        {/* Header (only on grid/config) */}
-        {status !== 'queue' && (
-          <View className="px-4 py-4 flex-row items-center border-b border-[#919EAB14]">
-            <TouchableOpacity onPress={handleBack} className="p-1">
-              <Icon name="arrow-left" size={24} color={colors.text} />
-            </TouchableOpacity>
-            <Text className="ml-4 text-lg font-bold" style={{ color: colors.text }}>
-              {status === 'grid' ? 'Select Photo' : 'Configure Render'}
-            </Text>
-            <TouchableOpacity onPress={handleClose} className="ml-auto p-1">
-              <Icon name="close" size={24} color={colors.text} />
-            </TouchableOpacity>
-          </View>
-        )}
+    <SafeAreaView>
+      <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={handleClose}>
+        <View className="flex-1" style={{ backgroundColor: colors.background, paddingTop: insets.top }}>
+          {/* Header (only on grid/config) */}
+          {status !== 'queue' && (
+            <View className="px-4 py-4 flex-row items-center border-b border-[#919EAB14]">
+              <TouchableOpacity onPress={handleBack} className="p-1">
+                <Icon name="arrow-left" size={24} color={colors.text} />
+              </TouchableOpacity>
+              <Text className="ml-4 text-lg font-bold" style={{ color: colors.text }}>
+                {status === 'grid' ? 'Select Photo' : 'Configure Render'}
+              </Text>
+              <TouchableOpacity onPress={handleClose} className="ml-auto p-1">
+                <Icon name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+          )}
 
-        {status === 'grid' && (allPhotos.length > 0 ? renderGrid() : renderEmptyState())}
-        {status === 'config' && renderConfig()}
-        {status === 'queue' && renderQueueView()}
-      </View>
-    </Modal>
+          {status === 'grid' && (allPhotos.length > 0 ? renderGrid() : renderEmptyState())}
+          {status === 'config' && renderConfig()}
+          {status === 'queue' && renderQueueView()}
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 };

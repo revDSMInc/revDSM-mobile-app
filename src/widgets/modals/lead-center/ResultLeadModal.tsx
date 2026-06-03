@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -62,16 +62,12 @@ export const ResultLeadModal = ({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <View className="flex-1 justify-end bg-black/40">
+      <View className="flex-1 justify-end">
+
         <View
           className="w-full rounded-t-[32px] px-6 pt-5 pb-8"
           style={{ backgroundColor: isDark ? colors.surface : colors.background }}
         >
-          {/* Handle bar */}
-          <View className="items-center mb-6">
-            <View className="w-12 h-1 bg-gray-300/30 rounded-full" />
-          </View>
-
           {/* Header */}
           <View className="flex-row items-center justify-between mb-8">
             <Text className="text-xl font-bold" style={{ color: colors.text }}>

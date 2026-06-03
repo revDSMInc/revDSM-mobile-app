@@ -1,6 +1,28 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { paymentPlans } from '../utils/calculator/payment-plans';
 import { LeadService } from '../services/api/leads';
+import { calculateResultUtil } from '../utils/calculator/calculation-results-util';
+import { pricing, extrasList, extrasList50 } from '../utils/calculator/pricing-data';
+import {
+  validatePriceForPaymentMethod,
+  WELLS_FARGO_HIGH_KEYS,
+  WF_HIGH_MIN_PRICE,
+} from '../utils/calculator/payment-method-validation';
+
+const getCostPriceForCalc = (calc: any, isLowesLead?: boolean): number => {
+  const price50 = calculateResultUtil({
+    details: calc,
+    markupKey: '50',
+    pricing,
+    extrasList,
+    extrasList50,
+    paymentPlans,
+    paymentMethod: calc.inputs?.paymentPlan || calc.paymentMethod || 'check',
+    hideScreens: true,
+    isLowesLead,
+  });
+  return Math.round(price50);
+};
 
 export const useCalculatorSummary = (
   activeCalc: any,
@@ -8,7 +30,9 @@ export const useCalculatorSummary = (
   calculators: any,
   updateActive: any,
   handleSave: any,
-  refresh: any
+  refresh: any,
+  isLowesLead?: boolean,
+  setCalculators?: any
 ) => {
   const [error, setError] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -27,10 +51,22 @@ export const useCalculatorSummary = (
   const [addedPlans, setAddedPlans] = useState<string[]>([]);
   const [tempPlan, setTempPlan] = useState<string | null>(null);
 
+  // Local string state so the TextInput is never reset mid-typing
+  const [priceText, setPriceText] = useState<string>(
+    activeCalc.price ? String(activeCalc.price) : ''
+  );
+
+  // Keep priceText in sync when activeCalc.price changes externally
+  // (e.g. switching between rollout tabs) but NOT while the user is typing
+  useEffect(() => {
+    setPriceText(activeCalc.price ? String(activeCalc.price) : '');
+  }, [activeCalc._id]);
+
   const handleAddDrop = async (status = 'declined') => {
     const num = Number(dropValue.replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.price50);
     const endPrice = Number(activeCalc.price) || 0;
+    const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
 
     if (num < costPrice) {
       setError(`Drop price cannot be less than cost ($${costPrice.toLocaleString()})`);
@@ -41,8 +77,21 @@ export const useCalculatorSummary = (
       setError(`Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`);
       return;
     }
+
+    const methodValidation = validatePriceForPaymentMethod(num, dropPaymentMethod);
+    if (!methodValidation.isValid) {
+      setError(methodValidation.message);
+      return;
+    }
+
+    if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && num < WF_HIGH_MIN_PRICE) {
+      setError(
+        `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}.`
+      );
+      return;
+    }
+
     try {
-      const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
       const newDrop = {
         dropedPrice: num,
         status,
@@ -112,22 +161,41 @@ export const useCalculatorSummary = (
     }
   };
 
+  // Called on every keystroke — only updates local display string, no save
   const handlePriceChange = (val: string) => {
-    const num = Number(val.replace(/[^0-9.]/g, ''));
+    // Strip non-numeric characters except decimal point
+    const cleaned = val.replace(/[^0-9.]/g, '');
+    setPriceText(cleaned);
     if (error) setError(null);
+  };
+
+  // Called when the user finishes editing (onEndEditing / onBlur)
+  const handlePriceBlur = () => {
+    const num = Number(priceText.replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.price50);
     const activePaymentMethod = activeCalc.inputs.paymentPlan;
     const planName = activePaymentMethod.startsWith('wf')
       ? 'Wells Fargo'
       : activePaymentMethod.startsWith('greensky')
       ? 'GreenSky'
+      : activePaymentMethod.startsWith('lowes')
+      ? "Lowe's"
       : 'This plan';
-    const wellsFargoHighKeys = ['wf3672', 'wf3667', 'wf3668', 'wf3669', 'wf3670', 'wf3671'];
+
     if (num > 0) {
-      if (num < costPrice)
+      if (num < costPrice) {
         setError(`Price cannot be less than cost ($${costPrice.toLocaleString()})`);
-      else if (wellsFargoHighKeys.includes(activePaymentMethod) && num < 7500)
-        setError(`${planName} High plans require a minimum of $7,500`);
+        return;
+      }
+      if (WELLS_FARGO_HIGH_KEYS.includes(activePaymentMethod) && num < WF_HIGH_MIN_PRICE) {
+        setError(`${planName} High plans require a minimum of $${WF_HIGH_MIN_PRICE.toLocaleString()}`);
+        return;
+      }
+      const methodValidation = validatePriceForPaymentMethod(num, activePaymentMethod);
+      if (!methodValidation.isValid) {
+        setError(methodValidation.message);
+        return;
+      }
     }
     updateActive({ price: num });
     handleSave();
@@ -136,6 +204,36 @@ export const useCalculatorSummary = (
   const handleConfirmAll = async () => {
     try {
       setIsConfirming(true);
+
+      for (const calc of calculators) {
+        if (calc.isRolloutConfirmed) continue;
+        const enteredPrice = Number(calc.price) || 0;
+        if (enteredPrice <= 0) continue;
+
+        const activeMethod = calc.inputs?.paymentPlan || calc.paymentMethod || 'check';
+        const costPrice = getCostPriceForCalc(calc, isLowesLead);
+
+        if (enteredPrice < costPrice) {
+          setError(
+            `"${calc.name}" rollout price ($${enteredPrice.toLocaleString()}) is below cost ($${costPrice.toLocaleString()}). Please update it before confirming.`
+          );
+          return;
+        }
+        if (WELLS_FARGO_HIGH_KEYS.includes(activeMethod) && enteredPrice < WF_HIGH_MIN_PRICE) {
+          setError(
+            `"${calc.name}" uses a Wells Fargo $7,500+ plan but rollout price is $${enteredPrice.toLocaleString()}. Minimum required is $${WF_HIGH_MIN_PRICE.toLocaleString()}.`
+          );
+          return;
+        }
+        const methodValidation = validatePriceForPaymentMethod(enteredPrice, activeMethod);
+        if (!methodValidation.isValid) {
+          setError(
+            `"${calc.name}" rollout price ($${enteredPrice.toLocaleString()}) does not meet the minimum for the selected payment plan. ${methodValidation.message}`
+          );
+          return;
+        }
+      }
+
       const promises = calculators.map((calc: any) => {
         if (calc.price > 0 && !calc.isRolloutConfirmed) {
           const payload = {
@@ -154,6 +252,19 @@ export const useCalculatorSummary = (
         return Promise.resolve();
       });
       await Promise.all(promises);
+      if (setCalculators) {
+        setCalculators((prev: any) =>
+          prev.map((calc: any) => {
+            if (calc.price > 0 && !calc.isRolloutConfirmed) {
+              return {
+                ...calc,
+                isRolloutConfirmed: true,
+              };
+            }
+            return calc;
+          })
+        );
+      }
       if (refresh) await refresh();
     } catch (e) {
       setError('Failed to confirm rollout prices. Please try again.');
@@ -197,6 +308,8 @@ export const useCalculatorSummary = (
     handleAddDrop,
     handleUnselectDrop,
     handlePriceChange,
+    handlePriceBlur,
+    priceText,
     handleConfirmAll,
     calculateMonthly,
     handleDiscountChange,

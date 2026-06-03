@@ -28,6 +28,7 @@ import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { format } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlashMessage } from '../../config/message';
 
 const { width, height } = Dimensions.get('window');
 
@@ -42,6 +43,33 @@ const isJobOwner = (item: any, uid: string | undefined): boolean => {
     (item.assignedRep && typeof item.assignedRep === 'object' && item.assignedRep._id === uid) ||
     (item.assignedRep && typeof item.assignedRep === 'object' && item.assignedRep.id === uid)
   );
+};
+
+const toRad = (deg: number) => (deg * Math.PI) / 180;
+const getDistanceInMiles = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+const getRegionDeltaForRadiusMiles = (latitude: number, radiusMiles: number) => {
+  // latitude: ~69 miles per degree. Use diameter (radius * 2) to fit full range.
+  const latDelta = (radiusMiles * 2) / 69;
+  // longitude shrinks by cos(latitude)
+  const cosLat = Math.cos((latitude * Math.PI) / 180) || 0.0001;
+  const lonDelta = latDelta / Math.max(cosLat, 0.0001);
+
+  // Small padding so pins at the edge stay visible.
+  return {
+    latitudeDelta: Math.max(latDelta * 1.2, 0.01),
+    longitudeDelta: Math.max(lonDelta * 1.2, 0.01),
+  };
 };
 
 export default function MapDetailScreen() {
@@ -77,9 +105,15 @@ export default function MapDetailScreen() {
 
   const [isListView, setIsListView] = useState(false);
   const [jumpLead, setJumpLead] = useState<any>(null);
-  const [centerCoords, setCenterCoords] = useState<{ latitude: number, longitude: number } | null>(null);
+  const [centerCoords, setCenterCoords] = useState<{
+    latitude: number;
+    longitude: number;
+    latitudeDelta?: number;
+    longitudeDelta?: number;
+  } | null>(null);
   const [sortOption, setSortOption] = useState<'price_asc' | 'price_desc' | 'date_asc' | 'date_desc'>('date_desc');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
+  const lastRadiusMessageKeyRef = useRef<string>('');
 
   const sortLabels = {
     price_asc: 'Price Ascending',
@@ -202,6 +236,19 @@ export default function MapDetailScreen() {
       if (filters.minPrice && (item.price || 0) < parseFloat(filters.minPrice)) return false;
       if (filters.maxPrice && (item.price || 0) > parseFloat(filters.maxPrice)) return false;
 
+      // Location radius filter (from searched location)
+      if (filters.centerCoords && filters.radius > 0) {
+        const coords = item?.location?.coordinates;
+        if (!coords || coords.length < 2) return false;
+        const miles = getDistanceInMiles(
+          filters.centerCoords.latitude,
+          filters.centerCoords.longitude,
+          coords[1],
+          coords[0]
+        );
+        if (miles > filters.radius) return false;
+      }
+
       // Date Range
       if (filters.startDate) {
         const itemDate = new Date(item.installationDate || item.createdAt || 0);
@@ -232,7 +279,13 @@ export default function MapDetailScreen() {
   // Automatic navigation to searched job or location (Web Parity)
   useEffect(() => {
     if (filters.centerCoords) {
-      setCenterCoords(filters.centerCoords);
+      const radius = filters.radius || 0;
+      if (radius > 0) {
+        const deltas = getRegionDeltaForRadiusMiles(filters.centerCoords.latitude, radius);
+        setCenterCoords({ ...filters.centerCoords, ...deltas });
+      } else {
+        setCenterCoords(filters.centerCoords);
+      }
       setJumpLead(null); // Clear selected lead if we are jumping to a general area
     } else {
       setCenterCoords(null);
@@ -249,6 +302,20 @@ export default function MapDetailScreen() {
       }
     }
   }, [filters.jobNumber, filteredLeads, filters.centerCoords]);
+
+  useEffect(() => {
+    // Distance result feedback for location-based radius searches only.
+    if (!filters.centerCoords || !filters.radius) return;
+    const key = `${filters.centerCoords.latitude.toFixed(5)}-${filters.centerCoords.longitude.toFixed(5)}-${filters.radius}-${filteredLeads.length}`;
+    if (lastRadiusMessageKeyRef.current === key) return;
+    lastRadiusMessageKeyRef.current = key;
+
+    if (filteredLeads.length > 0) {
+      FlashMessage.success('Job found');
+    } else {
+      FlashMessage.warning('No job found');
+    }
+  }, [filters.centerCoords, filters.radius, filteredLeads.length]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>

@@ -75,6 +75,21 @@ export const getJobSummaryItems = (calculatorData: any) => {
     items.push({ category: 'Fascia' });
   }
 
+  // Lighting items
+  const hasLighting = [
+    'lighting1stStory',
+    'lighting2ndStory',
+    'lighting3rdStory',
+    'lightingControlBox',
+    'lightingWifiExtender',
+    'lightingBoosterBox',
+    'lightingElectricalOutlet',
+  ].some((k) => n(extras[k]) > 0 || n(inputs[k]) > 0 || n(calculatorData?.[k]) > 0);
+
+  if (hasLighting) {
+    items.push({ category: 'Lighting' });
+  }
+
   // Additional items
   const hasAdditional = n(inputs.extraLabor) > 0 || n(inputs.ckToInstallers) > 0;
 
@@ -93,13 +108,14 @@ export const getAvailableSteps = (calculatorData: any) => {
     { step: 2, category: 'leaffilter', categoryKey: 'LeafFilter', name: 'LeafFilter' },
     { step: 3, category: 'soffit', categoryKey: 'Soffit', name: 'Soffit' },
     { step: 4, category: 'fascia', categoryKey: 'Fascia', name: 'Fascia' },
-    { step: 5, category: 'additional', categoryKey: 'Additional', name: 'Misc' },
-    { step: 6, category: 'summary', categoryKey: 'Summary', name: 'Summary' },
+    { step: 5, category: 'lighting', categoryKey: 'Lighting', name: 'Lighting' },
+    { step: 6, category: 'additional', categoryKey: 'Additional', name: 'Misc' },
+    { step: 7, category: 'summary', categoryKey: 'Summary', name: 'Summary' },
   ];
 
   return steps.map((step) => {
     // MISC and SUMMARY are always unlocked
-    if (step.step >= 5) return { ...step, isLocked: false };
+    if (step.step >= 6) return { ...step, isLocked: false };
 
     // Check if this category exists in calculator items
     const isAvailable = jobSummaryItems.some((item) => item.category === step.categoryKey);

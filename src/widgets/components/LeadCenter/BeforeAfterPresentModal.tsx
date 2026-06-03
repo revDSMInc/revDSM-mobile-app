@@ -8,6 +8,7 @@ import {
   Dimensions,
   ScrollView,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -50,14 +51,21 @@ export const BeforeAfterPresentModal = ({
   if (numSlides === 0) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
       <View style={styles.overlay}>
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Before & After Gallery</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Icon name="close" size={28} color="#94a3b8" />
+              <Icon name="close" size={Platform.OS === 'ios' ? 22 : 28} color="#94a3b8" />
             </TouchableOpacity>
           </View>
 
@@ -147,8 +155,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   container: {
-    width: width * 0.95,
-    height: height * 0.92,
+    width: Platform.OS === 'ios' ? width * 0.95 : width * 0.95,
+    height: Platform.OS === 'ios' ? height * 0.8 : height * 0.92,
     backgroundColor: 'white',
     borderRadius: 32,
     overflow: 'hidden',
@@ -157,18 +165,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 20,
+    paddingHorizontal: Platform.OS === 'ios' ? 16 : 24,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 20,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
   },
   title: {
-    fontSize: 22,
+    fontSize: Platform.OS === 'ios' ? 16 : 22,
     fontWeight: '900',
     color: '#1e293b',
   },
   closeButton: {
-    padding: 4,
+    padding: Platform.OS === 'ios' ? 2 : 4,
   },
   card: {
     backgroundColor: 'white',

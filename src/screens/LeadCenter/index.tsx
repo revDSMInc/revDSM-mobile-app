@@ -14,6 +14,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { logLeadSessionPause } from '../../utils/lead-activity-log';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
 import Pitchbook from '../../widgets/modals/lead-center/Pitchbook';
@@ -107,7 +108,8 @@ export default function LeadCenterPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { lead: initialLead, initialTool } = route.params || {};
+  const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted } =
+    route.params || {};
 
   // Custom Hooks for Data, Reports, and Modals
   const {
@@ -122,7 +124,7 @@ export default function LeadCenterPage() {
     isOutcomeLoading,
     sectionImages,
     setSectionImages,
-  } = useLeadCenterData(initialLead, user);
+  } = useLeadCenterData(initialLead, user, { appointmentStarted });
 
   const {
     secureUrls,
@@ -229,12 +231,12 @@ export default function LeadCenterPage() {
     const handleAutoOpen = async () => {
       if (route.params?.openJobBuilder && !isOutcomeLoading) {
         try {
-          await LeadService.resetLead(lead?._id);
           const res = await LeadService.getLeadOutcome(lead?._id);
           const data = res.data?.data || res.data;
           let updatedJobState;
-          if (data?.leadData?.jobBuilder) {
-            updatedJobState = data.leadData.jobBuilder;
+          const outcome = data?.outcome || data?.leadData || data;
+          if (outcome?.jobBuilder) {
+            updatedJobState = outcome.jobBuilder;
             setJobState(updatedJobState);
           } else {
             updatedJobState = {
@@ -288,9 +290,8 @@ export default function LeadCenterPage() {
       customerName: (() => {
         const isSale = lead.status === 'sale';
         const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
-        return `${lead.office || ''} ${
-          isSale ? lead.leadId : `Lead ${dateStr} - ${lead.leadId || 'N/A'}`
-        }`.trim() || 'Discussion';
+        return `${lead.office || ''} ${isSale ? lead.leadId : `Lead ${dateStr} - ${lead.leadId || 'N/A'}`
+          }`.trim() || 'Discussion';
       })(),
     });
   };
@@ -298,12 +299,12 @@ export default function LeadCenterPage() {
   const handleShowJobBuilder = async () => {
     try {
       setLoading(true);
-      await LeadService.resetLead(lead?._id);
       const res = await LeadService.getLeadOutcome(lead?._id);
       const data = res.data?.data || res.data;
       let updatedJobState;
-      if (data?.leadData?.jobBuilder) {
-        updatedJobState = data.leadData.jobBuilder;
+      const outcome = data?.outcome || data?.leadData || data;
+      if (outcome?.jobBuilder) {
+        updatedJobState = outcome.jobBuilder;
         setJobState(updatedJobState);
       } else {
         updatedJobState = {
@@ -442,7 +443,7 @@ export default function LeadCenterPage() {
       await consentMutation.mutateAsync(payload);
       await refetch();
       toggleModal('showPaperFallback', false);
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleInspectionSubmit = async (data: any) => {
@@ -454,7 +455,7 @@ export default function LeadCenterPage() {
       const filePath = `${dirs.DocumentDir}/${fileName}`;
 
       const formData: any[] = [];
-      
+
       Object.keys(data).forEach((key) => {
         const value = data[key];
         if (!value && value !== 0) return;
@@ -531,7 +532,31 @@ export default function LeadCenterPage() {
     }
   };
 
-  const handleClose = () => navigation.goBack();
+  const returnToZoneCanvasser = useCallback(() => {
+    navigation.navigate('Leads', { reopenZoneCanvasser: true });
+  }, [navigation]);
+
+  useEffect(() => {
+    if (!fromZoneCanvasser) return undefined;
+    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+      if (e.data.action.type === 'GO_BACK') {
+        e.preventDefault();
+        returnToZoneCanvasser();
+      }
+    });
+    return unsubscribe;
+  }, [navigation, fromZoneCanvasser, returnToZoneCanvasser]);
+
+  const handleClose = async () => {
+    if (lead?._id) {
+      await logLeadSessionPause(user, lead);
+    }
+    if (fromZoneCanvasser) {
+      returnToZoneCanvasser();
+      return;
+    }
+    navigation.goBack();
+  };
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return '—';
@@ -549,7 +574,15 @@ export default function LeadCenterPage() {
       <SafeAreaView
         style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.background }]}
       >
-        <Header onNavigate={(route) => navigation.navigate(route)} />
+        <Header
+          onNavigate={(route) => {
+            if (route === 'Leads' && fromZoneCanvasser) {
+              navigation.navigate('Leads', { reopenZoneCanvasser: true });
+              return;
+            }
+            navigation.navigate(route);
+          }}
+        />
 
         <ImageGridModal
           visible={showInspectionGrid}
@@ -605,8 +638,11 @@ export default function LeadCenterPage() {
           <View className="px-4">
             <View className="flex-row gap-[30%] mb-4">
               <View className="flex-col gap-3">
-                <Text className="text-sm" style={{ color: colors.textSecondary }}>
-                  Lead ID: {lead.leadId}
+                <Text className="text-sm" style={{ color: colors.primary.main }}>
+                  Lead ID:
+                  <Text className="font-semibold" style={{ color: colors.text }}>
+                    {lead.leadId}
+                  </Text>
                 </Text>
                 <View className="flex-row items-center">
                   <FontAwesome
@@ -655,7 +691,7 @@ export default function LeadCenterPage() {
               </View>
 
               <View className="flex-col gap-3">
-                <Text className="text-sm text-right" style={{ color: colors.textSecondary }}>
+                <Text className="text-sm text-right" style={{ color: colors.primary.main }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
@@ -773,6 +809,7 @@ export default function LeadCenterPage() {
                   navigation.navigate('DealCenter', { lead });
                 }}
                 onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
+                onShowRooflineDeck={() => navigation.navigate('RooflineDeck', { lead })}
                 onShowInspectionGrid={() => toggleModal('showInspectionGrid', true)}
                 onOpenPdf={handleOpenPdf}
               />
@@ -784,7 +821,7 @@ export default function LeadCenterPage() {
           className="px-5 py-4 flex-row gap-2"
           style={{
             backgroundColor: isDark ? colors.surface : colors.background,
-            paddingBottom: Platform.OS === 'ios' ? insets.bottom : 16,
+            paddingBottom: Platform.OS === 'ios' ? 0 : 16,
           }}
         >
           <TouchableOpacity
@@ -886,7 +923,7 @@ export default function LeadCenterPage() {
         />
       )}
 
-      <MapSelectionModal 
+      <MapSelectionModal
         visible={showMapModal}
         address={lead?.fullAddress || lead?.customerDetails?.address || ''}
         onClose={() => setShowMapModal(false)}

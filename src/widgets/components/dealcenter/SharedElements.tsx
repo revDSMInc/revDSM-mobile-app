@@ -109,6 +109,7 @@ export const InputField = ({
   onUpdate,
   highlighted = false,
   red = false,
+  editable = true,
 }: any) => {
   const [localValue, setLocalValue] = useState(String(value || ''));
   useEffect(() => {
@@ -137,8 +138,10 @@ export const InputField = ({
         <TextInput
           className="flex-1 h-11 text-sm font-black text-[#1C252E]"
           value={localValue}
+          editable={editable}
           onChangeText={setLocalValue}
           onBlur={() => {
+            if (!editable) return;
             if (localValue !== String(value)) {
               if (isExtra) onUpdate({ extras: { [keyName]: localValue } });
               else onUpdate({ inputs: { [keyName]: localValue } });

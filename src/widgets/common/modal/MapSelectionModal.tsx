@@ -14,25 +14,45 @@ export const MapSelectionModal = ({ visible, address, onClose }: MapSelectionMod
 
   const handleOpenGoogleMaps = () => {
     const encodedAddress = encodeURIComponent(address);
-    const url = Platform.OS === 'ios'
-      ? `comgooglemaps://?q=${encodedAddress}`
-      : `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+    const webUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
 
-    Linking.canOpenURL(url).then(supported => {
-      if (supported) {
-        Linking.openURL(url);
-      } else {
-        // Fallback for iOS if Google Maps app is not installed
-        Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodedAddress}`);
-      }
-    });
+    if (Platform.OS === 'ios') {
+      const appUrl = `comgooglemaps://?q=${encodedAddress}`;
+      Linking.canOpenURL(appUrl)
+        .then(supported => {
+          if (supported) {
+            Linking.openURL(appUrl).catch(err => {
+              console.error('Failed to open Google Maps app, trying web fallback:', err);
+              Linking.openURL(webUrl).catch(webErr => {
+                console.error('Failed to open Google Maps web URL:', webErr);
+              });
+            });
+          } else {
+            Linking.openURL(webUrl).catch(err => {
+              console.error('Failed to open Google Maps web URL:', err);
+            });
+          }
+        })
+        .catch(err => {
+          console.error('canOpenURL error for Google Maps:', err);
+          Linking.openURL(webUrl).catch(webErr => {
+            console.error('Failed to open Google Maps web URL:', webErr);
+          });
+        });
+    } else {
+      Linking.openURL(webUrl).catch(err => {
+        console.error('Failed to open Google Maps:', err);
+      });
+    }
     onClose();
   };
 
   const handleOpenAppleMaps = () => {
     const encodedAddress = encodeURIComponent(address);
     const url = `http://maps.apple.com/?q=${encodedAddress}`;
-    Linking.openURL(url);
+    Linking.openURL(url).catch(err => {
+      console.error('Failed to open Apple Maps:', err);
+    });
     onClose();
   };
 

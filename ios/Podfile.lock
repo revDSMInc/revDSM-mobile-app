@@ -1522,6 +1522,28 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - react-native-blur (4.4.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - react-native-cameraroll (7.10.2):
     - hermes-engine
     - RCTRequired
@@ -2671,6 +2693,7 @@ DEPENDENCIES:
   - React-Mapbuffer (from `../node_modules/react-native/ReactCommon`)
   - React-microtasksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
   - react-native-blob-util (from `../node_modules/react-native-blob-util`)
+  - "react-native-blur (from `../node_modules/@react-native-community/blur`)"
   - "react-native-cameraroll (from `../node_modules/@react-native-camera-roll/camera-roll`)"
   - "react-native-document-picker (from `../node_modules/@react-native-documents/picker`)"
   - react-native-geolocation-service (from `../node_modules/react-native-geolocation-service`)
@@ -2822,6 +2845,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/microtasks"
   react-native-blob-util:
     :path: "../node_modules/react-native-blob-util"
+  react-native-blur:
+    :path: "../node_modules/@react-native-community/blur"
   react-native-cameraroll:
     :path: "../node_modules/@react-native-camera-roll/camera-roll"
   react-native-document-picker:
@@ -2982,6 +3007,7 @@ SPEC CHECKSUMS:
   React-Mapbuffer: f4ee8c62e0ef8359d139124f35a471518a172cd3
   React-microtasksnativemodule: d1956f0eec54c619b63a379520fb4c618a55ccb9
   react-native-blob-util: 5926090844c5d8081f065066cdb262854351777d
+  react-native-blur: 1b00ef07fe0efdc0c40b37139a5268ccad73c72d
   react-native-cameraroll: bd1a177463acbba89365d09e81057294eba1e2f6
   react-native-document-picker: 29b2ee2573287f2b34c7716c98ffc3d9322fbe72
   react-native-geolocation-service: 32b2c2a3b91e70ce2a8d0c684801aaeb0a07e0ec
@@ -3039,6 +3065,6 @@ SPEC CHECKSUMS:
   RNWorklets: 06ce05d69455cc14f5676c177050a39aa557d4d2
   Yoga: c0b3f2c7e8d3e327e450223a2414ca3fa296b9a2
 
-PODFILE CHECKSUM: 1d01199d72308e3298d351d42e443eb7f2860981
+PODFILE CHECKSUM: 6a658428d60a94e574ac1af54b2ba676d9c23203
 
 COCOAPODS: 1.15.2

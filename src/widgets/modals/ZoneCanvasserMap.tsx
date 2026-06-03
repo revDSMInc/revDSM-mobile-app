@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, SafeAreaView, View } from 'react-native';
+import { Modal, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../common/MainHeader';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
@@ -12,6 +13,8 @@ import { DrawingToolbar } from '../components/ZoneCanvasser/DrawingToolbar';
 import { DrawingInfoBanner } from '../components/ZoneCanvasser/DrawingInfoBanner';
 import { LoadingOverlay } from '../components/ZoneCanvasser/LoadingOverlay';
 import { ZoneCanvasserModals } from '../components/ZoneCanvasser/ZoneCanvasserModals';
+import { SearchLocationModal } from '../components/ZoneCanvasser/SearchLocationModal';
+import { executeStartAppointmentFlow } from '../../utils/lead-activity-log';
 import type { ZoneCanvasserMapProps } from '../../types/zone-canvasser';
 
 export default function ZoneCanvasserMap({
@@ -37,23 +40,50 @@ export default function ZoneCanvasserMap({
   const handleStartAppointment = async () => {
     const lead = z.selectedBuilding?.leads?.[0];
     const leadId = lead?._id || lead?.id;
-    if (leadId) {
-      try {
-        await workMutation.mutateAsync({ leadId, userId: user?._id || user?.id });
-      } catch (e) {
-        console.warn('Work mutation failed', e);
-      }
-      z.setSubmittedLeadPopupOpen(false);
-      onClose();
-      navigation.navigate('LeadCenter', { lead });
+    if (!leadId) return;
+
+    let targetLead = lead;
+    try {
+      const result = await executeStartAppointmentFlow({
+        lead,
+        user,
+        userLocation: z.userLocation,
+        workMutation,
+        fromZoneCanvasser: true,
+        onWorkSuccess: (updated) => {
+          if (!z.selectedBuilding?.id) return;
+          const prevCounts = lead?.actionCounts || {};
+          const nextCounts = updated.actionCounts || {
+            ...prevCounts,
+            lead_check_in: prevCounts.lead_check_in || 0,
+            lead_resume: prevCounts.lead_resume || 0,
+          };
+          z.patchBuildingLeadAfterWork(z.selectedBuilding.id, {
+            workflowState: updated.workflowState || 'resume',
+            actionCounts: nextCounts,
+          });
+        },
+      });
+      targetLead = result.lead;
+    } catch (e) {
+      console.warn('[ZoneCanvasser] Start appointment failed', e);
     }
+
+    await z.saveMapStateForAppointment();
+    z.setSubmittedLeadPopupOpen(false);
+    onClose();
+    navigation.navigate('LeadCenter', {
+      lead: targetLead,
+      fromZoneCanvasser: true,
+      appointmentStarted: true,
+    });
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaView
         className="flex-1"
-        style={{ backgroundColor: isDark ? colors.background : '#F8FAFC' }}
+        style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
       >
         <Header
           onFilterPress={() => z.setSearchModalVisible(true)}
@@ -68,7 +98,15 @@ export default function ZoneCanvasserMap({
 
         {z.isDrawingMode && <DrawingInfoBanner drawType={z.drawType} />}
 
-        <View className="flex-1 relative">
+        <View className="flex-1 relative" style={{ flex: 1 }}>
+          <SearchLocationModal
+            visible={z.searchModalVisible}
+            searchText={z.searchText}
+            onChangeText={z.setSearchText}
+            onClose={() => z.setSearchModalVisible(false)}
+            onLocationSelected={z.navigateToSearchLocation}
+            isProcessing={z.isProcessing}
+          />
           <MapCanvas
             mapRef={z.mapRef}
             mapType={z.mapType}
@@ -85,6 +123,7 @@ export default function ZoneCanvasserMap({
             onTouchStart={z.handleTouchStart}
             onTouchMove={z.handleTouchMove}
             onTouchEnd={z.handleTouchEnd}
+            onRegionChangeComplete={z.handleMapRegionChange}
           />
 
           <MapDrawTools
@@ -140,16 +179,12 @@ export default function ZoneCanvasserMap({
           leadCreateOpen={z.leadCreateOpen}
           submittedLeadPopupOpen={z.submittedLeadPopupOpen}
           zoneStatsPopupOpen={z.zoneStatsPopupOpen}
-          searchModalVisible={z.searchModalVisible}
-          searchText={z.searchText}
           setPropertyModalOpen={z.setPropertyModalOpen}
           setResultsModalOpen={z.setResultsModalOpen}
           setActionModalOpen={z.setActionModalOpen}
           setLeadCreateOpen={z.setLeadCreateOpen}
           setSubmittedLeadPopupOpen={z.setSubmittedLeadPopupOpen}
           setZoneStatsPopupOpen={z.setZoneStatsPopupOpen}
-          setSearchModalVisible={z.setSearchModalVisible}
-          setSearchText={z.setSearchText}
           setSelectedBuilding={z.setSelectedBuilding}
           setSelectedZone={z.setSelectedZone}
           setPropertyData={z.setPropertyData}
@@ -160,7 +195,6 @@ export default function ZoneCanvasserMap({
           onLeadCreateSuccess={z.handleLeadCreateSuccess}
           onGoBackEdit={z.handleGoBackEdit}
           onStartAppointment={handleStartAppointment}
-          onLocationSearch={z.handleLocationSearch}
         />
       </SafeAreaView>
     </Modal>

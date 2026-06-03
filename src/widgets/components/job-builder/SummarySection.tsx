@@ -82,11 +82,9 @@ export const SummarySection = ({
 
   // Fetch lead outcome specifically for documents
   React.useEffect(() => {
-    const result = String(leadData?.result || leadData?.status || '').toLowerCase();
-    if (result === 'sale' || result === 'demo') {
-      fetchOutcome();
-    }
-  }, [leadId, leadData?.result, leadData?.status]);
+    fetchOutcome();
+  }, [leadId]);
+
 
   // Resolve secure URLs for leadOutcomeDocuments
   React.useEffect(() => {
@@ -95,7 +93,14 @@ export const SummarySection = ({
       const docs = outcomeData?.leadOutcomeDocuments || leadData?.leadOutcomeDocuments;
       if (docs) {
         const { agreements = [], orderSheets = [] } = docs;
-        const allPaths = [...agreements, ...orderSheets].map((doc) => ({
+
+        // Preserve original group source in case documentType is missing
+        const allDocs = [
+          ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
+          ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
+        ];
+
+        const allPaths = allDocs.map((doc: any) => ({
           filePath: doc.filePath,
           bucketName: doc.bucketName,
         }));
@@ -105,29 +110,34 @@ export const SummarySection = ({
             const response = await LeadService.getSecureUrls(allPaths);
             const urls = response.data?.data || response.data;
 
-            const mapDocs = (docs: any[]) =>
-              docs.map((doc) => {
-                const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
-                const isPdf = doc.filePath?.toLowerCase().includes('.pdf') || doc.name?.toLowerCase().includes('.pdf');
-                return {
-                  uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-                  name: doc.name || (doc.documentType === 'agreement' ? 'Agreement' : 'Order Sheet'),
-                  serverId: doc._id,
-                  isNew: false,
-                  isSystemGenerated: doc.documentType === 'agreement' && isPdf,
-                };
-              });
+            const mappedAll = allDocs.map((doc: any) => {
+              const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
+              const isPdf = doc.filePath?.toLowerCase().includes('.pdf') || doc.name?.toLowerCase().includes('.pdf');
+              const finalType = doc.documentType || doc._sourceGroup;
+              return {
+                uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
+                name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: doc._id,
+                isNew: false,
+                isSystemGenerated: finalType === 'agreement' && isPdf,
+                documentType: finalType,
+              };
+            });
 
             const resolved = {
-              agreements: mapDocs(agreements),
-              orderSheets: mapDocs(orderSheets),
+              agreements: mappedAll.filter((d) => d.documentType === 'agreement'),
+              orderSheets: mappedAll.filter((d) => d.documentType === 'orderSheet'),
             };
 
             setResolvedDocuments(resolved);
           } catch (error) {
             console.error('[Summary] Failed to resolve secure URLs:', error);
           }
+        } else {
+          setResolvedDocuments({ agreements: [], orderSheets: [] });
         }
+      } else {
+        setResolvedDocuments({ agreements: [], orderSheets: [] });
       }
     };
     resolveDocs();
@@ -212,6 +222,18 @@ export const SummarySection = ({
                 accParts.length > 0
                   ? `${parts.join(' · ')} (${accParts.join(', ')})`
                   : parts.join(' · '),
+              locationRows: ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER']
+                .map((location, locationIndex) => {
+                  const entries = ['1st Story', '2nd Story', '3rd Story']
+                    .map((story, storyIndex) => {
+                      const measurementIndex = locationIndex * 3 + storyIndex;
+                      const val = parseFloat(combo.measurements?.[measurementIndex] || 0);
+                      return val > 0 ? { story, value: val } : null;
+                    })
+                    .filter(Boolean) as Array<{ story: string; value: number }>;
+                  return entries.length > 0 ? { location, entries } : null;
+                })
+                .filter(Boolean),
             });
           }
         });
@@ -336,18 +358,21 @@ export const SummarySection = ({
 
           if (combo.gutterProfile) comboParts.push(combo.gutterProfile);
 
+          const isVersaMax = combo.lfProfile === 'Versa Max';
+          const storiesToShow = isVersaMax ? [0, 1, 2] : (combo.stories || []).map((s: number) => s - 1);
           const locationRows: any[] = [];
-          [1, 2, 3].forEach((story) => {
-            const storyEntries: any[] = [];
-            locationNames.forEach((loc, locIdx) => {
-              const mIdx = locIdx + (story - 1) * 6;
+          locationNames.forEach((loc, locIdx) => {
+            const entries: any[] = [];
+            storiesToShow.forEach((storyIndex: number) => {
+              const mIdx = locIdx + storyIndex * 6;
               const val = parseFloat(combo.measurements?.[mIdx] || 0);
               if (val > 0) {
-                storyEntries.push({ location: loc, value: val });
+                entries.push({ story: storyLabels[storyIndex + 1], value: val });
               }
             });
-            if (storyEntries.length > 0)
-              locationRows.push({ story: storyLabels[story], entries: storyEntries });
+            if (entries.length > 0) {
+              locationRows.push({ location: loc, entries });
+            }
           });
 
           combinationFields.push({
@@ -483,7 +508,77 @@ export const SummarySection = ({
       }
     }
 
-    // 5. Misc Section
+    // 5. Lighting Section
+    if (jobState.lighting && hasValue(jobState.lighting)) {
+      const lighting = jobState.lighting;
+      const lightingSubsections: any[] = [];
+      const locationNames = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
+      const storyLabels = ['1st Story', '2nd Story', '3rd Story'];
+
+      const combinations = lighting.combinations || [];
+      const combinationFields: any[] = [];
+
+      combinations.forEach((combo: any, idx: number) => {
+        const comboTotal = (combo.measurements || []).reduce((sum: number, v: any) => sum + (parseFloat(v) || 0), 0);
+        if (comboTotal === 0 && !combo.trackColor && !combo.wireColor && !combo.trackMaterial && !combo.mountingLocation && !combo.substrate) return;
+
+        const parts = [];
+        if (comboTotal > 0) parts.push(`${comboTotal} ft`);
+        if (combo.trackColor) parts.push(`Track: ${combo.trackColor}`);
+        if (combo.wireColor) parts.push(`Wire: ${combo.wireColor}`);
+        if (combo.trackMaterial) parts.push(combo.trackMaterial);
+        if (combo.mountingLocation) parts.push(combo.mountingLocation);
+        if (combo.substrate) parts.push(combo.substrate);
+
+        const locationRows: any[] = [];
+        locationNames.forEach((loc, locIndex) => {
+          const entries = storyLabels
+            .map((story, storyIndex) => {
+              const mIdx = locIndex + storyIndex * 6;
+              const val = parseFloat(combo.measurements?.[mIdx] || 0);
+              return val > 0 ? { story, value: val } : null;
+            })
+            .filter(Boolean);
+          if (entries.length > 0) {
+            locationRows.push({ location: loc, entries });
+          }
+        });
+
+        combinationFields.push({
+          label: `Combination #${idx + 1}`,
+          value: parts.join(' · '),
+          locationRows,
+        });
+      });
+
+      if (combinationFields.length > 0) {
+        lightingSubsections.push({ name: '', fields: combinationFields });
+      }
+
+      const extras = lighting.extras || {};
+      const extrasFields: any[] = [];
+      const extrasLabels = {
+        boosterBox: 'Booster Box',
+        controlBox: 'Control Box',
+        electricalOutlet: 'Electrical Outlet',
+        wifiExtender: 'WiFi Extender',
+      };
+      Object.entries(extrasLabels).forEach(([key, label]) => {
+        const val = parseFloat(extras[key]) || 0;
+        if (val > 0) {
+          extrasFields.push({ label: '', value: `${val} ${label}` });
+        }
+      });
+      if (extrasFields.length > 0) {
+        lightingSubsections.push({ name: 'Extras', fields: extrasFields });
+      }
+
+      if (lightingSubsections.length > 0) {
+        sections.push({ title: 'Lighting', color: '#FF9F43', subsections: lightingSubsections });
+      }
+    }
+
+    // 6. Misc Section (after Lighting to match web app order)
     if (jobState.additional && hasValue(jobState.additional)) {
       const misc = jobState.additional || {};
       const fields: any[] = [];
@@ -705,8 +800,6 @@ export const SummarySection = ({
 
       let totalGutterFt = 0;
       let gColor = '';
-      let gSizes: string[] = [];
-      let gLocs: string[] = [];
       const gMain = gSec?.subsections.find(
         (ss: any) => ss.name === '' || ss.name.toLowerCase().includes('gutter')
       );
@@ -732,12 +825,21 @@ export const SummarySection = ({
               
               const sizePart = parts.find((p: string) => p.includes('"'));
               const size = (sizePart?.match(/(\d+)/) || [])[1] || '5';
-              
-              if (!gSizes.includes(size)) gSizes.push(size);
-              if (size === '5' || size === '6') {
-                if (!gLocs.includes('LEFT SIDE')) gLocs.push('LEFT SIDE');
-              } else if (size === '7') {
-                if (!gLocs.includes('REAR')) gLocs.push('REAR');
+              const comboLocations = (f.locationRows || [])
+                .map((row: any) => {
+                  const rowTotal = (row.entries || []).reduce(
+                    (sum: number, entry: any) => sum + (parseFloat(entry.value) || 0),
+                    0
+                  );
+                  return rowTotal > 0 ? `${row.location}: ${rowTotal}'` : null;
+                })
+                .filter(Boolean)
+                .join(', ');
+
+              if (comboLocations) {
+                scope.push(`Install ${size}" K-Style ${gColor} gutters on ${comboLocations}; Total ${ft}'`);
+              } else {
+                scope.push(`Install ${size}" K-Style ${gColor} gutters — ${ft}'`);
               }
             }
           }
@@ -745,10 +847,6 @@ export const SummarySection = ({
       });
 
       if (totalGutterFt > 0) {
-        const sizeText = gSizes.length > 1 ? `${gSizes.join('" & ')}"` : `${gSizes[0]}"`;
-        scope.push(
-          `Install ${sizeText} K-Style ${gColor} gutters on ${gLocs.join(', ')}; ${totalGutterFt}'`
-        );
         let installDesc = 'Installation: Align, pitch';
         if (hasWedges) installDesc += ', install wedges for slanted/step fascia';
         installDesc += ', install hidden hangers every 20-25", seal each seam, miter and connection with 50yr silicone';
@@ -851,6 +949,44 @@ export const SummarySection = ({
         f.value.toLowerCase().includes('groundspout')
       );
       if (gsField) scope.push(`Install ${extractFt(gsField.value) || '1'} groundspouts`);
+
+      // 19.5. Lighting
+      const lightSec = findSec('lighting');
+      if (lightSec) {
+        getFields(lightSec, '').forEach((f: any) => {
+          if (f.label && f.label.startsWith('Combination #') && f.value) {
+            const parts = f.value.split('·').map((s: string) => s.trim()).filter(Boolean);
+            const footage = extractFt(parts[0]) || '0';
+
+            let locationStr = '';
+            if (f.locationRows && f.locationRows.length > 0) {
+              locationStr = f.locationRows
+                .map((row: any) => {
+                  const totals = (row.entries || []).reduce(
+                    (sum: number, e: any) => sum + (parseFloat(e.value) || 0),
+                    0
+                  );
+                  return `${row.location}: ${totals} ft`;
+                })
+                .join(', ');
+            }
+
+            const detailParts = parts.slice(1);
+            const detailStr = detailParts.length > 0 ? ` (${detailParts.join(', ')})` : '';
+            const locationPart = locationStr ? ` — ${locationStr}` : ` — ${footage} ft`;
+
+            scope.push(`Install Permanent Lighting${detailStr}${locationPart}`);
+          }
+        });
+
+        const extraFields = getFields(lightSec, 'extras');
+        const extraItems = extraFields
+          .filter((f: any) => f.value && f.value.trim() !== '')
+          .map((f: any) => f.value.trim());
+        if (extraItems.length > 0) {
+          scope.push(`Lighting Extras: ${extraItems.join(', ')}`);
+        }
+      }
 
       const mSec = findSec('misc');
       const mFields = getFields(mSec, '');

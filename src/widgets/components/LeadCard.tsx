@@ -507,6 +507,24 @@ export function LeadCard({
       }}
     >
       <View className="p-4">
+        {lead.lowesLead === true && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 8,
+              left: 0,
+              right: 0,
+              alignItems: 'center',
+              zIndex: 1,
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: '800', color: '#084f93' }}>
+              L
+              <Text style={{ fontSize: 13, fontWeight: '800', color: '#084f93' }}>OWE&apos;s</Text>
+            </Text>
+          </View>
+        )}
 
         {/* ── Header: Time & Status Chip ───────────────────────────────── */}
         <View className="flex-row items-center justify-between mb-4">

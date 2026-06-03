@@ -13,6 +13,7 @@ export const calculateResultUtil = ({
   discounts = {} as any,
   ckToInstallers = 0,
   hideScreens = false,
+  isLowesLead = false,
 }: any) => {
   if (!details) return 0;
 
@@ -78,6 +79,7 @@ export const calculateResultUtil = ({
     pricing,
     extras,
     extrasList50,
+    isLowesLead,
   });
 
   let price = fee >= 1 ? checkRetail : checkRetail / (1 - fee);

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Alert } from 'react-native';
 import { LeadService } from '../services/api/leads';
+import { getDefaultPaymentMethod } from '../utils/calculator/lowes-payment-util';
+import { useAuth } from './useAuth';
 
 export const useDealOutcome = (
   lead: any,
@@ -10,6 +12,7 @@ export const useDealOutcome = (
   onRefresh?: () => void,
   onClose?: () => void
 ) => {
+  const { user } = useAuth();
   const [outcomeStatus, setOutcomeStatus] = useState<'demo' | 'sale' | null>(null);
   const [outcomeForm, setOutcomeForm] = useState<any>({
     oneLeg: 'No',
@@ -41,11 +44,14 @@ export const useDealOutcome = (
       const res = await LeadService.getLeadOutcome(activeLeadId);
       const data = res.data?.data || res.data;
       if (data) {
-        if (data.status || data.result) setOutcomeStatus(data.status || data.result);
-        if (data.jobBuilder || data.leadData?.jobBuilder)
-          setJobState(data.jobBuilder || data.leadData.jobBuilder);
-        if (data.leadData || data)
-          setOutcomeForm((prev: any) => ({ ...prev, ...(data.leadData || data) }));
+        const outcome = data.outcome || data.leadData || data;
+        const status = outcome.status || outcome.result;
+        if (status) setOutcomeStatus(status);
+
+        const builder = outcome.jobBuilder;
+        if (builder) setJobState(builder);
+
+        setOutcomeForm((prev: any) => ({ ...prev, ...outcome }));
       }
     } catch (err) {
     } finally {
@@ -80,9 +86,21 @@ export const useDealOutcome = (
         ? activeCalculator.dropPrice[activeCalculator.dropPrice.length - 1].dropedPrice
         : activeCalculator.price;
     const final = Number(latestDrop) || results.total || 0;
-    const planKey = activeCalculator?.inputs?.paymentPlan || 'check';
+    const isLowesLead = lead?.lowesLead === true;
+    const planKey = getDefaultPaymentMethod(
+      isLowesLead,
+      activeCalculator?.inputs?.paymentPlan
+    );
     const dpMethod =
-      planKey === 'mcVisaDscvr' ? 'card' : ['check', 'amex'].includes(planKey) ? planKey : 'check';
+      planKey === 'mcVisaDscvr'
+        ? 'card'
+        : planKey === 'lowes_cc'
+        ? 'lowes_cc'
+        : ['check', 'amex', 'lowes_ach'].includes(planKey)
+        ? planKey
+        : isLowesLead
+        ? 'lowes_ach'
+        : 'check';
 
     setOutcomeForm({
       ...outcomeForm,
@@ -113,131 +131,35 @@ export const useDealOutcome = (
       }
     }
 
-
-
     try {
-      setLoadingMessage('Initializing Job Builder...');
+      setLoadingMessage('Opening Job Builder...');
       setLoading(true);
 
-      // 1. Reset Job Builder on backend (requested fresh start)
-      // We wrap this in a sub-try-catch to ensure that if the reset endpoint fails (common in staging),
-      // we still proceed with the local initialization and subsequent outcome saving.
-      try {
-        await LeadService.resetLead(leadId);
-      } catch (resetErr) {
-        console.warn(
-          '[Outcome] Backend reset failed, proceeding with local initialization:',
-          resetErr
-        );
-      }
+      // Build the LFCalculator payload — always required with a title
+      const lfCalculatorPayload = activeCalculator && Object.keys(activeCalculator).length > 0
+        ? {
+            ...activeCalculator,
+            title: (activeCalculator?.title && String(activeCalculator.title).trim())
+              ? activeCalculator.title
+              : 'Job Builder Estimate',
+            appointmentId: activeCalculator?.appointmentId || appointmentId,
+            createdBy: user?._id || user?.id || activeCalculator?.createdBy,
+          }
+        : undefined;
 
-      // 2. Initialize fresh job state with default rows based on calculator data
-      const inputs = activeCalculator?.inputs || {};
-
-      const lfCombos: any[] = [];
-      // Always include at least one LF combo
-      lfCombos.push({
-        id: Date.now(),
-        lfColor: 'White',
-        lfProfile: 'Versa',
-        measurements: Array(18).fill('0'),
-        gutterOpeningWidth: '5"',
-        gutterProfile: 'K-Style',
-      });
-
-      // Add more if rollout has multi-tier data
-      if (
-        Number(inputs.versa6Ft2 || inputs.versa7Ft2 || inputs.filter45Ft2 || inputs.versaMaxFt2) > 0
-      ) {
-        lfCombos.push({
-          id: Date.now() + 1,
-          lfColor: 'White',
-          lfProfile: 'Versa',
-          measurements: Array(18).fill('0'),
-          gutterOpeningWidth: '5"',
-          gutterProfile: 'K-Style',
-        });
-      }
-      if (
-        Number(inputs.versa6Ft3 || inputs.versa7Ft3 || inputs.filter45Ft3 || inputs.versaMaxFt3) > 0
-      ) {
-        lfCombos.push({
-          id: Date.now() + 2,
-          lfColor: 'White',
-          lfProfile: 'Versa',
-          measurements: Array(18).fill('0'),
-          gutterOpeningWidth: '5"',
-          gutterProfile: 'K-Style',
-        });
-      }
-
-      const initialJobState = {
-        gutter: {
-          gutterColorsMulti: [
-            {
-              id: Date.now() + 3,
-              color: 'White',
-              size: (() => {
-                if (Number(inputs.gutter5DsE) > 0 || Number(inputs.gutter5Inch) > 0)
-                  return '5" K-Style';
-                if (Number(inputs.gutter6Ft1) > 0 || Number(inputs.gutter6Inch) > 0)
-                  return '6" K-Style';
-                if (Number(inputs.gutter7DsE) > 0 || Number(inputs.gutter7Inch) > 0)
-                  return '7" K-Style';
-                if (Number(inputs.gutter8Inch) > 0) return '8" K-Style';
-                return '5" K-Style';
-              })(),
-              measurements: Array(18).fill('0'),
-              mitersOutside: 0,
-              mitersInside: 0,
-              endCapsRights: 0,
-              endCapsLefts: 0,
-            },
-          ],
-          downspoutsMulti: [
-            {
-              id: Date.now() + 4,
-              color: 'White',
-              type: '2 X 3',
-              footage: 0,
-              aElbows: 0,
-              bElbows: 0,
-              roundElbow: 0,
-              offsetElbows: 0,
-              spoutSavers: 0,
-            },
-          ],
-          extrasColors: { groundSpout: 'Black' },
-        },
-        leaffilter: {
-          combinations: lfCombos,
-          extras: {
-            csr: 0,
-            cornersFilter: 0,
-            sawzallHanger: 0,
-            removeProtection: 0,
-            ribbedRoof: 0,
-          },
-        },
-        soffit: { vinyl: { type: '' }, porch: { location: [] }, nailer: { type: '' } },
-        fascia: { wrap: { type: '' }, boards: { boardType: '' }, aluminumBoards: { footage: '' } },
-        additional: { extraLabor: activeCalculator?.inputs?.extraLabor || 0 },
-        scheduleTime: null,
-      };
-
-      // Set the local state
-      setJobState(initialJobState);
-
-      // 3. Construct payload and update backend outcome
-      const payload = {
+      // Update outcome: only touch status/result/LFCalculator/calculator references.
+      // DO NOT send jobBuilder here — the web app never overwrites the existing jobBuilder
+      // when Build Job is pressed. Overwriting it would wipe agreements the user already attached.
+      const payload: any = {
         ...outcomeForm,
+        // Strip any stale LFCalculator that might be in outcomeForm from a previous fetch
+        LFCalculator: undefined,
         status: outcomeStatus,
         result: outcomeStatus,
         calculatorId: activeCalculator?._id,
-        jobBuilder: initialJobState,
         selectedCalculatorId: activeCalculator?._id,
         selectedAppointmentId: appointmentId,
-        appointmentId: appointmentId, // Pass explicitly as requested
+        appointmentId: appointmentId,
         lastPriceQuoted: (outcomeStatus as any) === 'demo' ? outcomeForm.lastPriceQuoted : '',
         originalContractPrice:
           (outcomeStatus as any) === 'sale' ? outcomeForm.originalContractPrice : '',
@@ -245,20 +167,24 @@ export const useDealOutcome = (
         balance: (outcomeStatus as any) === 'sale' ? outcomeForm.balance : '',
       };
 
-      // Update Lead Outcome
+      // Only attach LFCalculator if we have valid calculator data
+      if (lfCalculatorPayload) {
+        payload.LFCalculator = lfCalculatorPayload;
+      }
+
+      // Update Lead Outcome (status + LFCalculator only — existing jobBuilder preserved on server)
       await LeadService.updateLeadOutcome(leadId, payload);
 
       // Update Timeline
       await LeadService.updateLeadTimelineProgress(leadId, {
         leadResulted: 'completed',
-        jobBuild: 'active', // active for both demo and sale — user goes to Job Builder
+        jobBuild: 'active',
         salesProcess: 'completed',
       });
 
       onRefresh?.();
 
       // Both sale and demo go to Job Builder
-      // (demo = didn't close today but still needs job details built)
       if (outcomeStatus === 'sale' || outcomeStatus === 'demo') {
         setTimeout(() => {
           setLoading(false);
@@ -271,7 +197,6 @@ export const useDealOutcome = (
     } catch (e) {
       setLoading(false);
       console.error('[Outcome] Global initialization failed:', e);
-      // Only show Alert if the core outcome update fails
       Alert.alert(
         'Initialization Error',
         'System could not initialize the Job Builder. Please check your connection.'

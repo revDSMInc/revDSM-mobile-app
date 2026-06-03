@@ -12,6 +12,7 @@ import ChatDetailScreen from '../screens/ChatDetail/index';
 import MapDetailPage from '../screens/MapDetail';
 import LeadCenterPage from '../screens/LeadCenter';
 import PitchbookScreen from '../screens/Pitchbook';
+import RooflineDeckScreen from '../screens/RooflineDeck';
 import DealCenter from '../screens/DealCenter/index';
 import ForgotPasswordScreen from '../screens/auth/forgot-password';
 import EmailOTPScreen from '../screens/auth/email-otp';
@@ -22,7 +23,14 @@ import RevRenderScreen from '../screens/RevRender/index';
 
 export type RootStackParamList = {
   Login: undefined;
-  Leads: { openChatId?: string } | undefined;
+  Leads: { openChatId?: string; reopenZoneCanvasser?: boolean } | undefined;
+  LeadCenter: {
+    lead: any;
+    initialTool?: string;
+    fromZoneCanvasser?: boolean;
+    appointmentStarted?: boolean;
+    tab?: string;
+  };
   Profile: undefined;
   AppointmentDetails: { leadId: string };
   JobTracker: undefined;
@@ -37,8 +45,8 @@ export type RootStackParamList = {
     initialParticipants?: any[];
   };
   MapDetail: { currentLead?: any };
-  LeadCenter: { lead: any; initialTool?: string };
   Pitchbook: { lead: any };
+  RooflineDeck: { lead: any };
   DealCenter: { lead: any };
   ForgotPassword: undefined;
   EmailOTP: { 
@@ -91,7 +99,7 @@ export default function RootNavigator() {
   }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator screenOptions={{ headerShown: false, screenOrientation: 'portrait' } as any}>
       {!isAuthenticated ? (
         <>
           <Stack.Screen name="Login" component={LoginPage} />
@@ -111,6 +119,7 @@ export default function RootNavigator() {
           <Stack.Screen name="MapDetail" component={MapDetailPage} />
           <Stack.Screen name="LeadCenter" component={LeadCenterPage} />
           <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
+          <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
           <Stack.Screen name="DealCenter" component={DealCenter} />
           <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
           <Stack.Screen name="RevRender" component={RevRenderScreen} />

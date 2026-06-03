@@ -1,5 +1,5 @@
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import { Platform } from 'react-native';
+import { Platform, Share } from 'react-native';
 import { FlashMessage } from '../config/message';
 
 /**
@@ -17,17 +17,27 @@ export const downloadPdfToDevice = async (uri: string, title?: string) => {
     const safeName = urlHash.endsWith('.pdf') ? urlHash : `${urlHash}.pdf`;
     const finalFileName = title ? `${title.replace(/\s+/g, '_')}.pdf` : safeName;
     
-    const publicPath = `${dirs.DownloadDir}/${finalFileName}`;
+    const baseDir = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
+    const publicPath = `${baseDir}/${finalFileName}`;
 
     // 1. Handle Local vs Remote files
     if (uri.startsWith('file://') || uri.startsWith('/')) {
       const cleanSourcePath = uri.replace('file://', '');
+      
+      // Remove existing file to prevent cp error
+      const exists = await ReactNativeBlobUtil.fs.exists(publicPath);
+      if (exists) {
+        await ReactNativeBlobUtil.fs.unlink(publicPath);
+      }
       await ReactNativeBlobUtil.fs.cp(cleanSourcePath, publicPath);
       
       if (Platform.OS === 'android') {
         ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: 'application/pdf' }]);
       } else {
-        ReactNativeBlobUtil.ios.openDocument(publicPath);
+        await Share.share({
+          url: `file://${publicPath}`,
+          title: title || 'Save PDF',
+        });
       }
     } else {
       // Remote URL - Use DownloadManager for Android
@@ -46,11 +56,15 @@ export const downloadPdfToDevice = async (uri: string, title?: string) => {
           path: publicPath,
           fileCache: true,
         }).fetch('GET', uri);
-        ReactNativeBlobUtil.ios.openDocument(publicPath);
+        
+        await Share.share({
+          url: `file://${publicPath}`,
+          title: title || 'Save PDF',
+        });
       }
     }
     
-    FlashMessage.success('Success', 'Document saved to Downloads');
+    FlashMessage.success('Success', Platform.OS === 'ios' ? 'Document shared' : 'Document saved to Downloads');
     return publicPath;
   } catch (err) {
     console.error('[DownloadUtil] Public download error:', err);

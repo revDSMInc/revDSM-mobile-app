@@ -43,6 +43,14 @@ export const LeadEndpoints = {
     preview: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/preview`,
     sign: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/sign`,
   },
+  leadDraft: {
+    upsert: (leadId: string) => `lead/v1/${leadId}/draft`,
+    update: (draftId: string) => `lead/v1/draft/${draftId}`,
+  },
+  comms: {
+    sms: 'comms/v1/sms',
+    email: 'comms/v1/email',
+  },
   weather: {
     generate: (leadId: string) => `pdf-reports/v1/weather/${leadId}/generate`,
     status: (jobId: string) => `pdf-reports/v1/job/${jobId}/status`,
@@ -176,4 +184,21 @@ export const LeadService = {
   getRiskDownloadUrl: (jobId: string) => `${ENV.API_URL}/${LeadEndpoints.weather.download(jobId)}`,
   resetWeatherReport: (reportId: string): Promise<AxiosResponse<any>> =>
     api.patch(LeadEndpoints.weather.reset(reportId)),
+
+  // Lead Draft (contract amendments)
+  upsertLeadDraft: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.leadDraft.upsert(leadId), payload),
+  updateLeadDraft: (draftId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.leadDraft.update(draftId), payload),
+
+  // Comms (SMS / Email)
+  sendSms: (payload: { body: string; to: string; leadId: string }): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.comms.sms, payload),
+  sendEmail: (payload: {
+    body: string;
+    is_html?: boolean;
+    subject: string;
+    to: string;
+    leadId: string;
+  }): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.comms.email, payload),
 };

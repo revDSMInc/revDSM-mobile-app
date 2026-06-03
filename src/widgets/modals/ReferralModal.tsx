@@ -66,11 +66,8 @@ const InputField = ({
         style={[
           { textAlignVertical: multiline ? 'top' : 'center' },
           !editable && {
-            textShadowColor: isDark ? 'rgba(255, 255, 255, 0.6)' : 'rgba(71, 85, 105, 0.6)',
-            textShadowOffset: { width: 0, height: 0 },
-            textShadowRadius: 8,
-            color: 'transparent',
-          }
+            color: isDark ? '#E5E7EB' : '#334155',
+          },
         ]}
       />
       {dropdown && <Icon name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#94a3b8" />}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -196,12 +196,13 @@ function AppointmentButton({
 }
 
 function GenericLeadBody({ leadData }: { leadData: any }) {
+  const status = leadData.status || 'create_lead';
   return (
     <>
       {leadData.name && (
         <PopupField icon="account-outline" label="Name" value={leadData.name} />
       )}
-      {leadData.status === 'create_lead' && leadData.phoneNumber && (
+      {status === 'create_lead' && leadData.phoneNumber && (
         <PopupField icon="phone-outline" label="Phone" value={leadData.phoneNumber} />
       )}
       {leadData.followupDate && (
@@ -235,9 +236,10 @@ export function SubmittedLeadPopup({
   onStartAppointment,
 }: Props) {
   const [apptLoading, setApptLoading] = useState(false);
-  const isCrmLead = leadData?.status === 'selfGenerated' || !!leadData?.fullAddress;
-  const isGoBack = leadData?.status === 'go_back';
-  const isInterestedNoTime = leadData?.status === 'interested_no_time';
+  const status = leadData?.status || 'create_lead';
+  const isCrmLead = status === 'selfGenerated' || status === 'create_lead' || !!leadData?.fullAddress;
+  const isGoBack = status === 'go_back';
+  const isInterestedNoTime = status === 'interested_no_time';
 
   const isInRange = useMemo(() => {
     if (!userPosition) return false;
@@ -269,7 +271,22 @@ export function SubmittedLeadPopup({
 
   const apptStatus = getApptStatus();
   const address = getLeadAddress(leadData, isCrmLead);
-  const statusChip = getStatusChipConfig(leadData?.status);
+
+  useEffect(() => {
+    if (!visible || !leadData) return;
+    console.log('[ZoneCanvasser][SubmittedLeadPopup] appointment state', {
+      leadId: leadData._id || leadData.id,
+      workflowState,
+      isInRange,
+      canCheckIn,
+      isResume,
+      apptText: apptStatus.text,
+      apptDisabled: apptStatus.disabled,
+      actionCounts: leadData.actionCounts,
+      lowesLead: leadData.lowesLead,
+    });
+  }, [visible, leadData, workflowState, isInRange, canCheckIn, isResume, apptStatus]);
+  const statusChip = getStatusChipConfig(status);
 
   const handleAppointmentPress = async () => {
     if (apptStatus.disabled) {

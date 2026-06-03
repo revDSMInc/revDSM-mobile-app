@@ -76,7 +76,7 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
 
                 {view === 'calendar' && (
                   <View className="flex-row items-center gap-6">
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={prevMonth}
                       disabled={isSameMonth(currentMonth, new Date())}
                       style={{ opacity: isSameMonth(currentMonth, new Date()) ? 0.3 : 1 }}
@@ -120,13 +120,11 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
                           }}
                           className={`w-[14.28%] h-10 items-center justify-center mb-2 rounded-full`}
                         >
-                          <View className={`w-10 h-10 items-center justify-center rounded-full ${
-                            isSelected ? 'bg-[#72BD00]' : ''
-                          }`}>
+                          <View className={`w-10 h-10 items-center justify-center rounded-full ${isSelected ? 'bg-[#72BD00]' : ''
+                            }`}>
                             <Text
-                              className={`text-[13px] font-medium ${
-                                isSelected ? 'text-white' : 'text-text-primary'
-                              }`}
+                              className={`text-[13px] font-medium ${isSelected ? 'text-white' : 'text-text-primary'
+                                }`}
                             >
                               {format(day, 'd')}
                             </Text>
@@ -160,14 +158,12 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
                         setCurrentMonth(next);
                         setView('calendar');
                       }}
-                      className={`w-[23%] py-3 rounded-xl items-center ${
-                        currentMonth.getMonth() === idx ? 'bg-[#72BD00]' : 'bg-surface'
-                      }`}
+                      className={`w-[23%] py-3 rounded-xl items-center ${currentMonth.getMonth() === idx ? 'bg-[#72BD00]' : 'bg-surface'
+                        }`}
                     >
                       <Text
-                        className={`text-xs font-bold ${
-                          currentMonth.getMonth() === idx ? 'text-white' : 'text-text-primary'
-                        }`}
+                        className={`text-xs font-bold ${currentMonth.getMonth() === idx ? 'text-white' : 'text-text-primary'
+                          }`}
                       >
                         {m}
                       </Text>
@@ -193,14 +189,12 @@ export const CustomDatePicker = ({ visible, onClose, onSelect, initialDate }: Pr
                             setCurrentMonth(next);
                             setView('calendar');
                           }}
-                          className={`w-[31%] py-3 rounded-xl items-center ${
-                            currentMonth.getFullYear() === y ? 'bg-[#72BD00]' : 'bg-surface'
-                          }`}
+                          className={`w-[31%] py-3 rounded-xl items-center ${currentMonth.getFullYear() === y ? 'bg-[#72BD00]' : 'bg-surface'
+                            }`}
                         >
                           <Text
-                            className={`text-sm font-black ${
-                              currentMonth.getFullYear() === y ? 'text-white' : 'text-text-primary'
-                            }`}
+                            className={`text-sm font-black ${currentMonth.getFullYear() === y ? 'text-white' : 'text-text-primary'
+                              }`}
                           >
                             {y}
                           </Text>
