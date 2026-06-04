@@ -44,7 +44,8 @@ export const LeadEndpoints = {
     sign: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/sign`,
   },
   leadDraft: {
-    upsert: (leadId: string) => `lead/v1/${leadId}/draft`,
+    upsert: (leadId: string) => `lead/v1/${leadId}/drafts`,
+    get: (leadId: string) => `lead/v1/${leadId}/draft`,
     update: (draftId: string) => `lead/v1/draft/${draftId}`,
   },
   comms: {
@@ -190,6 +191,11 @@ export const LeadService = {
     api.post(LeadEndpoints.leadDraft.upsert(leadId), payload),
   updateLeadDraft: (draftId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.patch(LeadEndpoints.leadDraft.update(draftId), payload),
+  getLeadDraft: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.leadDraft.get(leadId)),
+
+  deleteRevRenderRun: (runId: string, payload?: { reason: string }): Promise<AxiosResponse<any>> =>
+    api.delete(`/rev-render/v1/runs/${runId}`, { data: payload }),
 
   // Comms (SMS / Email)
   sendSms: (payload: { body: string; to: string; leadId: string }): Promise<AxiosResponse<any>> =>

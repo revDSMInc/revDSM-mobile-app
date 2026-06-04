@@ -117,7 +117,11 @@ export default function RootNavigator() {
           <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
           <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
           <Stack.Screen name="MapDetail" component={MapDetailPage} />
-          <Stack.Screen name="LeadCenter" component={LeadCenterPage} />
+          <Stack.Screen
+            name="LeadCenter"
+            component={LeadCenterPage}
+            options={{ gestureEnabled: true }}
+          />
           <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
           <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
           <Stack.Screen name="DealCenter" component={DealCenter} />

@@ -106,7 +106,7 @@ export default function JobTrackerPage() {
 
   const formatPaymentMethod = (paymentMethod: string) => {
     if (!paymentMethod) return 'N/A';
-    
+
     // Check if it's in paymentPlans
     const plan = paymentPlans[paymentMethod];
     if (!plan) return paymentMethod;
@@ -185,7 +185,7 @@ export default function JobTrackerPage() {
 
   return (
     <View style={[styles.root, { backgroundColor: isDark ? colors.background : '#FAF9F6' }]}>
-      <View style={{ height: insets.top, backgroundColor: isDark ? colors.surface : '#111827' }} />
+      <View style={{ height: insets.top, backgroundColor: isDark ? colors.surface : '#FAF9F6' }} />
       <Header onNavigate={(route) => navigation.navigate(route)} />
 
       <ScrollView
@@ -447,9 +447,8 @@ export default function JobTrackerPage() {
                   <View className="flex-1">
                     <Text className="text-[10px] font-bold text-text-secondary">Date Sold</Text>
                     <Text
-                      className={`text-sm font-medium ${
-                        soldDateFilter ? 'text-text-primary' : 'text-text-secondary'
-                      }`}
+                      className={`text-sm font-medium ${soldDateFilter ? 'text-text-primary' : 'text-text-secondary'
+                        }`}
                     >
                       {soldDateFilter
                         ? format(parseSafeISO(soldDateFilter), 'MM/dd/yyyy')
@@ -484,9 +483,8 @@ export default function JobTrackerPage() {
                       Expected Payout Date
                     </Text>
                     <Text
-                      className={`text-sm font-medium ${
-                        payoutDateFilter ? 'text-text-primary' : 'text-text-secondary'
-                      }`}
+                      className={`text-sm font-medium ${payoutDateFilter ? 'text-text-primary' : 'text-text-secondary'
+                        }`}
                     >
                       {payoutDateFilter
                         ? format(parseSafeISO(payoutDateFilter), 'MM/dd/yyyy')
@@ -831,9 +829,8 @@ export default function JobTrackerPage() {
                   className={`p-4 rounded-2xl mb-1 ${statusFilter === s ? 'bg-[#72BD0010]' : ''}`}
                 >
                   <Text
-                    className={`text-sm font-bold ${
-                      statusFilter === s ? 'text-[#72BD00]' : 'text-text-secondary'
-                    }`}
+                    className={`text-sm font-bold ${statusFilter === s ? 'text-[#72BD00]' : 'text-text-secondary'
+                      }`}
                   >
                     {s.charAt(0).toUpperCase() + s.slice(1)}
                   </Text>
@@ -868,14 +865,12 @@ export default function JobTrackerPage() {
                       setPaymentMethodFilter(key);
                       setShowPaymentPicker(false);
                     }}
-                    className={`p-4 rounded-2xl mb-1 ${
-                      paymentMethodFilter === key ? 'bg-[#72BD0010]' : ''
-                    }`}
+                    className={`p-4 rounded-2xl mb-1 ${paymentMethodFilter === key ? 'bg-[#72BD0010]' : ''
+                      }`}
                   >
                     <Text
-                      className={`text-[13px] font-bold ${
-                        paymentMethodFilter === key ? 'text-[#72BD00]' : 'text-text-secondary'
-                      }`}
+                      className={`text-[13px] font-bold ${paymentMethodFilter === key ? 'text-[#72BD00]' : 'text-text-secondary'
+                        }`}
                     >
                       {paymentPlans[key].label}
                     </Text>
@@ -905,14 +900,12 @@ export default function JobTrackerPage() {
                           setPaymentMethodFilter(key);
                           setShowPaymentPicker(false);
                         }}
-                        className={`p-4 rounded-2xl mb-1 ${
-                          paymentMethodFilter === key ? 'bg-[#72BD0010]' : ''
-                        }`}
+                        className={`p-4 rounded-2xl mb-1 ${paymentMethodFilter === key ? 'bg-[#72BD0010]' : ''
+                          }`}
                       >
                         <Text
-                          className={`text-[13px] font-medium ${
-                            paymentMethodFilter === key ? 'text-[#72BD00]' : 'text-text-secondary'
-                          }`}
+                          className={`text-[13px] font-medium ${paymentMethodFilter === key ? 'text-[#72BD00]' : 'text-text-secondary'
+                            }`}
                         >
                           {paymentPlans[key].label}
                         </Text>
@@ -1022,16 +1015,14 @@ export default function JobTrackerPage() {
                         setJobToUpdateStatus({ ...jobToUpdateStatus!, status: s.value as any });
                         setShowStatusDropdown(false);
                       }}
-                      className={`px-4 py-3 ${
-                        jobToUpdateStatus?.status === s.value ? 'bg-slate-50' : ''
-                      }`}
+                      className={`px-4 py-3 ${jobToUpdateStatus?.status === s.value ? 'bg-slate-50' : ''
+                        }`}
                     >
                       <Text
-                        className={`text-sm font-semibold ${
-                          jobToUpdateStatus?.status === s.value
+                        className={`text-sm font-semibold ${jobToUpdateStatus?.status === s.value
                             ? 'text-[#1C252E]'
                             : 'text-[#637381]'
-                        }`}
+                          }`}
                       >
                         {s.label}
                       </Text>

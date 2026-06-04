@@ -141,16 +141,18 @@ export const getCalculatorBaseName = (details: any) => {
 
   if (isFullPackage) {
     let name = '📦';
-    const extrasOrder = ['FBoard', 'Labor'];
+    const extrasOrder = ['FBoard', 'Labor', 'Lighting'];
     const selectedExtras = extrasOrder.filter((comp) => present.has(comp));
 
     if (selectedExtras.length > 0) {
-      name += '+' + selectedExtras.join('+');
+      name += '+' + selectedExtras.map((comp) => (comp === 'Lighting' ? 'Light' : comp)).join('+');
     }
     return name;
   }
 
-  const baseName = ORDER.filter((comp) => present.has(comp)).join('+');
+  const baseName = ORDER.filter((comp) => present.has(comp))
+    .map((comp) => (comp === 'Lighting' ? 'Light' : comp))
+    .join('+');
 
   if (!baseName && details.name) {
     return details.name;

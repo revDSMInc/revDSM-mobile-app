@@ -14,6 +14,8 @@ import { BeforeAfterPresentModal } from './BeforeAfterPresentModal';
 import { BeforeImageModal } from '../../modals/BeforeImageModal';
 import { AfterImageModal } from '../../modals/AfterImageModal';
 import Logo from "../../../assets/svgs/logo"
+import { ENV } from '../../../config/env';
+
 
 const { width, height } = Dimensions.get('window');
 
@@ -178,11 +180,11 @@ export const MapGalleryModal = ({
       setSigningUrls(true);
       const filePaths = [
         ...bImages.map((img: any) => ({
-          bucketName: img.bucketName || 'np-revdsm-staging',
+          bucketName: img.bucketName || ENV.S3_BUCKET,
           filePath: img.filePath || img.s3url || img.secureUrl,
         })),
         ...aImages.map((img: any) => ({
-          bucketName: img.bucketName || 'np-revdsm-staging',
+          bucketName: img.bucketName || ENV.S3_BUCKET,
           filePath: img.filePath || img.s3url || img.secureUrl,
         })),
       ];

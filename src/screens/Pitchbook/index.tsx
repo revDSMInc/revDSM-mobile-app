@@ -27,7 +27,10 @@ import { LeadService } from '../../services/api/leads';
 import { ActivityIndicator, Linking, Alert } from 'react-native';
 import { useLeadReports } from '../../hooks/useLeadReports';
 import YearDropdown from '../../widgets/components/YearDropdown';
+import { ENV } from '../../config/env';
+
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
+import { downloadPdfToDevice } from '../../utils/download-utils';
 
 const { width } = Dimensions.get('window');
 
@@ -53,8 +56,6 @@ export default function PitchbookScreen() {
   const [activeCategory, setActiveCategory] = useState('leafFilter_story');
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [fsImageLoading, setFsImageLoading] = useState(false);
-  const [mainImageLoading, setMainImageLoading] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
@@ -101,7 +102,7 @@ export default function PitchbookScreen() {
     if (!photos?.length) return;
     try {
       const filePaths = photos.map((p: any) => ({
-        bucketName: p.bucketName || 'np-revdsm-staging',
+        bucketName: p.bucketName || ENV.S3_BUCKET,
         filePath: p.s3url,
       }));
       const secureRes = await LeadService.getSecureUrls(filePaths);
@@ -204,7 +205,7 @@ export default function PitchbookScreen() {
           setPdfPreviewData({ url, title: report.reportName || 'Report Preview' });
           setShowPdfModal(true);
         } else {
-          Linking.openURL(url);
+          downloadPdfToDevice(url, report.reportName || 'Risk Report');
         }
       }
     } catch (error) {
@@ -583,26 +584,7 @@ export default function PitchbookScreen() {
                 source={currentCategoryImages[currentSlideIndex]}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
-                onLoadStart={() => setMainImageLoading(true)}
-                onLoadEnd={() => setMainImageLoading(false)}
-                onError={() => setMainImageLoading(false)}
               />
-              {mainImageLoading && (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: 'rgba(0,0,0,0.04)',
-                  }}
-                >
-                  <ActivityIndicator size="large" color="#72BD00" />
-                </View>
-              )}
             </View>
           </View>
         </View>
@@ -704,31 +686,11 @@ export default function PitchbookScreen() {
                 {/* Upper part: Image and top buttons */}
                 <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
                   {/* Image */}
-                  {currentCategoryImages[currentSlideIndex] && (
-                    <>
-                      <Image
-                        source={currentCategoryImages[currentSlideIndex]}
-                        style={{ width: '100%', height: '100%' }}
-                        resizeMode="contain"
-                        onLoadStart={() => setFsImageLoading(true)}
-                        onLoadEnd={() => setFsImageLoading(false)}
-                        onError={() => setFsImageLoading(false)}
-                      />
-                      {fsImageLoading && (
-                        <View
-                          style={{
-                            position: 'absolute',
-                            top: 0, left: 0, right: 0, bottom: 0,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            backgroundColor: 'rgba(0,0,0,0.45)',
-                          }}
-                        >
-                          <ActivityIndicator size="large" color="#72BD00" />
-                        </View>
-                      )}
-                    </>
-                  )}
+                  <Image
+                    source={currentCategoryImages[currentSlideIndex]}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="contain"
+                  />
 
                   {/* ── Overlay: page counter top-left ── */}
                   <View
@@ -844,7 +806,6 @@ export default function PitchbookScreen() {
                         <TouchableOpacity
                           key={cat.id}
                           onPress={() => {
-                            setFsImageLoading(true);
                             setActiveCategory(cat.id);
                             setCurrentSlideIndex(0);
                           }}
@@ -936,32 +897,11 @@ export default function PitchbookScreen() {
               {/* Image with prev/next arrows */}
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                 {currentCategoryImages[currentSlideIndex] && (
-                  <>
-                    <Image
-                      source={currentCategoryImages[currentSlideIndex]}
-                      style={{ width: '100%', height: '100%' }}
-                      resizeMode="contain"
-                      onLoadStart={() => setFsImageLoading(true)}
-                      onLoad={() => setFsImageLoading(false)}
-                      onError={() => setFsImageLoading(false)}
-                    />
-                    {fsImageLoading && (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: 'rgba(0,0,0,0.45)',
-                        }}
-                      >
-                        <ActivityIndicator size="large" color="#72BD00" />
-                      </View>
-                    )}
-                  </>
+                  <Image
+                    source={currentCategoryImages[currentSlideIndex]}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="contain"
+                  />
                 )}
 
                 {/* Prev Arrow */}
@@ -1040,7 +980,6 @@ export default function PitchbookScreen() {
                       <TouchableOpacity
                         key={cat.id}
                         onPress={() => {
-                          setFsImageLoading(true);
                           setActiveCategory(cat.id);
                           setCurrentSlideIndex(0);
                         }}

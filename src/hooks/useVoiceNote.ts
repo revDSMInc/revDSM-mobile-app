@@ -97,7 +97,9 @@ export function useVoiceNote(): VoiceNoteHookResult {
     setRecordingTime(0);
     setRecordingState('recording');
 
-    // Use absolute path in Caches directory to ensure write permissions
+    // Use absolute path in Caches directory to ensure write permissions.
+    // NOTE: Do NOT include file:// in the recorder path — the native recorder
+    // expects a plain filesystem path. We add the prefix only after stopping.
     const extension = Platform.OS === 'ios' ? 'm4a' : 'mp4';
     const filename = `voice_${Date.now()}.${extension}`;
     const path = `${RNFS.CachesDirectoryPath}/${filename}`;
@@ -107,9 +109,9 @@ export function useVoiceNote(): VoiceNoteHookResult {
       AudioSourceAndroid: AudioSourceAndroidType.MIC,
       OutputFormatAndroid: OutputFormatAndroidType.MPEG_4,
       AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
-      // iOS
+      // iOS — mono channel, high quality AAC
       AVEncoderAudioQualityKeyIOS: AVEncoderAudioQualityIOSType.high,
-      AVNumberOfChannelsKeyIOS: 2,
+      AVNumberOfChannelsKeyIOS: 1,
       AVFormatIDKeyIOS: 'aac',
     };
 
@@ -127,22 +129,32 @@ export function useVoiceNote(): VoiceNoteHookResult {
       timerRef.current = null;
     }
 
-    // Immediately show recorded state — native finalization runs in background
-    const finalUri = currentPathRef.current;
-    setRecordedUri(finalUri);
-    setRecordingState('recorded');
-
-    // Finalize the recording file asynchronously
+    // IMPORTANT: await stopRecorder() BEFORE updating state.
+    // In production (Hermes), setting state optimistically and reading the file
+    // immediately after caused crashes because the native layer hadn't finished
+    // flushing the file to disk. The user could tap Send on an incomplete file.
     try {
-      const uri = await player.stopRecorder();
+      const nativeUri = await player.stopRecorder();
       player.removeRecordBackListener();
-      // Override with the real path from native if it differs
-      const resolvedUri = uri && uri.includes('/') ? uri : finalUri;
-      if (resolvedUri !== finalUri) {
-        setRecordedUri(resolvedUri);
+
+      // Determine the resolved path — prefer native return value if it includes a slash
+      let resolved: string | null =
+        nativeUri && nativeUri.includes('/') ? nativeUri : (currentPathRef.current ?? null);
+
+      // On iOS production builds, React Native's networking stack (used by FormData)
+      // requires a file:// prefix for local file URIs. Debug builds are more lenient.
+      if (Platform.OS === 'ios' && resolved && !resolved.startsWith('file://')) {
+        resolved = `file://${resolved}`;
       }
+
+      console.log('[VoiceNote] Recording finalized:', resolved);
+      setRecordedUri(resolved);
+      setRecordingState('recorded');
     } catch (e) {
       console.warn('[VoiceNote] stopRecorder error:', e);
+      // Revert to idle on failure so the user can try again
+      setRecordingState('idle');
+      setRecordingTime(0);
     }
   }, []);
 

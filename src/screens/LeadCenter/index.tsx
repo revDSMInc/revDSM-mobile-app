@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -10,6 +10,7 @@ import {
   Platform,
   StatusBar,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -125,6 +126,26 @@ export default function LeadCenterPage() {
     sectionImages,
     setSectionImages,
   } = useLeadCenterData(initialLead, user, { appointmentStarted });
+
+  const hasLoggedPauseRef = useRef(false);
+  const userRef = useRef(user);
+  const leadRef = useRef(lead);
+
+  useEffect(() => {
+    userRef.current = user;
+    leadRef.current = lead;
+  }, [user, lead]);
+
+  useEffect(() => {
+    return () => {
+      if (leadRef.current?._id && !hasLoggedPauseRef.current) {
+        hasLoggedPauseRef.current = true;
+        logLeadSessionPause(userRef.current, leadRef.current).catch((err) => {
+          console.warn('[LeadCenter] Unmount session pause logging failed:', err);
+        });
+      }
+    };
+  }, []);
 
   const {
     secureUrls,
@@ -536,27 +557,30 @@ export default function LeadCenterPage() {
     navigation.navigate('Leads', { reopenZoneCanvasser: true });
   }, [navigation]);
 
-  useEffect(() => {
-    if (!fromZoneCanvasser) return undefined;
-    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
-      if (e.data.action.type === 'GO_BACK') {
-        e.preventDefault();
-        returnToZoneCanvasser();
+  const handleClose = useCallback(async () => {
+    if (lead?._id && !hasLoggedPauseRef.current) {
+      hasLoggedPauseRef.current = true;
+      try {
+        await logLeadSessionPause(user, lead);
+      } catch (err) {
+        console.warn('[LeadCenter] Session pause logging failed:', err);
       }
-    });
-    return unsubscribe;
-  }, [navigation, fromZoneCanvasser, returnToZoneCanvasser]);
-
-  const handleClose = async () => {
-    if (lead?._id) {
-      await logLeadSessionPause(user, lead);
     }
     if (fromZoneCanvasser) {
       returnToZoneCanvasser();
       return;
     }
     navigation.goBack();
-  };
+  }, [lead, user, fromZoneCanvasser, returnToZoneCanvasser, navigation]);
+
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleClose();
+      return true; // prevent default back press on Android
+    });
+
+    return () => backHandler.remove();
+  }, [handleClose]);
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return '—';

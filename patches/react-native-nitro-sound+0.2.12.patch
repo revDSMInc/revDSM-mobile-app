@@ -1,0 +1,117 @@
+diff --git a/node_modules/react-native-nitro-sound/ios/Sound.swift b/node_modules/react-native-nitro-sound/ios/Sound.swift
+index 561bb76..bc23e81 100644
+--- a/node_modules/react-native-nitro-sound/ios/Sound.swift
++++ b/node_modules/react-native-nitro-sound/ios/Sound.swift
+@@ -49,36 +49,46 @@ final class HybridSound: HybridSoundSpec_base, HybridSoundSpec_protocol {
+                 return
+             }
+ 
+-            do {
+-                // Setup audio session in background
+-                self.recordingSession = AVAudioSession.sharedInstance()
+-
+-                // Apply AVModeIOS if provided
+-                let sessionMode = audioSets?.AVModeIOS.map(self.getAudioSessionMode) ?? .default
++            self.recordingSession = AVAudioSession.sharedInstance()
++            let permission = self.recordingSession?.recordPermission ?? .undetermined
+ 
+-                try self.recordingSession?.setCategory(.playAndRecord,
+-                                                     mode: sessionMode,
+-                                                     options: [.defaultToSpeaker, .allowBluetooth])
+-                try self.recordingSession?.setActive(true)
++            if permission == .denied {
++                promise.reject(withError: RuntimeError.error(withMessage: "Recording permission denied. Please enable microphone access in Settings."))
++                return
++            }
+ 
+-                print("🎙️ Audio session set up successfully")
++            func proceedWithRecording() {
++                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++                    guard let self = self else { return }
++                    do {
++                        // Apply AVModeIOS if provided
++                        let sessionMode = audioSets?.AVModeIOS.map(self.getAudioSessionMode) ?? .default
++
++                        try self.recordingSession?.setCategory(.playAndRecord,
++                                                             mode: sessionMode,
++                                                             options: [.defaultToSpeaker, .allowBluetooth])
++
++                        print("🎙️ Audio session set up successfully (category set)")
++                        self.setupAndStartRecording(uri: uri, audioSets: audioSets, meteringEnabled: meteringEnabled, promise: promise)
++                    } catch {
++                        print("🎙️ Audio session setup failed: \(error)")
++                        promise.reject(withError: RuntimeError.error(withMessage: "Audio session setup failed: \(error.localizedDescription)"))
++                    }
++                }
++            }
+ 
+-                // Request permission if needed
++            if permission == .undetermined {
+                 self.recordingSession?.requestRecordPermission { [weak self] allowed in
+                     guard let self = self else { return }
+-
+                     if allowed {
+-                        // Continue in background
+-                        DispatchQueue.global(qos: .userInitiated).async {
+-                            self.setupAndStartRecording(uri: uri, audioSets: audioSets, meteringEnabled: meteringEnabled, promise: promise)
+-                        }
++                        proceedWithRecording()
+                     } else {
+                         promise.reject(withError: RuntimeError.error(withMessage: "Recording permission denied. Please enable microphone access in Settings."))
+                     }
+                 }
+-            } catch {
+-                print("🎙️ Audio session setup failed: \(error)")
+-                promise.reject(withError: RuntimeError.error(withMessage: "Audio session setup failed: \(error.localizedDescription)"))
++            } else {
++                // permission is .granted
++                proceedWithRecording()
+             }
+         }
+ 
+@@ -710,6 +720,13 @@ final class HybridSound: HybridSoundSpec_base, HybridSoundSpec_protocol {
+ 
+     // MARK: - Private Methods
+ 
++    private func safeConvertDoubleToInt(_ value: Double?, minVal: Int, maxVal: Int) -> Int? {
++        guard let val = value, val.isFinite, val >= Double(minVal), val <= Double(maxVal) else {
++            return nil
++        }
++        return Int(val)
++    }
++
+     private func getAudioSettings(audioSets: AudioSet?) -> [String: Any] {
+         var settings: [String: Any] = [:]
+ 
+@@ -727,22 +744,22 @@ final class HybridSound: HybridSoundSpec_base, HybridSoundSpec_protocol {
+         // Apply custom settings with explicit overrides taking precedence
+         if let audioSets = audioSets {
+             // iOS-specific settings take highest priority
+-            if let sampleRate = audioSets.AVSampleRateKeyIOS {
++            if let sampleRate = safeConvertDoubleToInt(audioSets.AVSampleRateKeyIOS, minVal: 8000, maxVal: 192000) {
+                 settings[AVSampleRateKey] = sampleRate
+-            } else if let audioSamplingRate = audioSets.AudioSamplingRate {
++            } else if let audioSamplingRate = safeConvertDoubleToInt(audioSets.AudioSamplingRate, minVal: 8000, maxVal: 192000) {
+                 // Fall back to cross-platform setting
+-                settings[AVSampleRateKey] = Int(audioSamplingRate)
++                settings[AVSampleRateKey] = audioSamplingRate
+             }
+ 
+-            if let channels = audioSets.AVNumberOfChannelsKeyIOS {
+-                settings[AVNumberOfChannelsKey] = Int(channels)
+-            } else if let audioChannels = audioSets.AudioChannels {
++            if let channels = safeConvertDoubleToInt(audioSets.AVNumberOfChannelsKeyIOS, minVal: 1, maxVal: 10) {
++                settings[AVNumberOfChannelsKey] = channels
++            } else if let audioChannels = safeConvertDoubleToInt(audioSets.AudioChannels, minVal: 1, maxVal: 10) {
+                 // Fall back to cross-platform setting
+-                settings[AVNumberOfChannelsKey] = Int(audioChannels)
++                settings[AVNumberOfChannelsKey] = audioChannels
+             }
+ 
+-            if let bitRate = audioSets.AudioEncodingBitRate {
+-                settings[AVEncoderBitRateKey] = Int(bitRate)
++            if let bitRate = safeConvertDoubleToInt(audioSets.AudioEncodingBitRate, minVal: 8000, maxVal: 1000000) {
++                settings[AVEncoderBitRateKey] = bitRate
+             }
+ 
+             if let quality = audioSets.AVEncoderAudioQualityKeyIOS {

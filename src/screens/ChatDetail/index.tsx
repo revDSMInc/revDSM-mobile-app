@@ -204,7 +204,7 @@ export default function ChatDetailScreen() {
       _id: chatId,
       id: chatId,
       channelType: description?.toLowerCase().includes('announcement') || customerName?.toLowerCase().includes('announcement')
-        ? 'announcements' 
+        ? 'announcements'
         : description?.toLowerCase().includes('commission') || customerName?.toLowerCase().includes('commission')
           ? 'commission-sheets'
           : description?.toLowerCase().includes('file') || customerName?.toLowerCase().includes('file')
@@ -260,7 +260,7 @@ export default function ChatDetailScreen() {
       const scrollInterval = setInterval(() => {
         const container = listRef.current || chatRef.current?._messageContainerRef?.current;
         const engine = container?.scrollToIndex ? container : (container?.getNode ? container.getNode() : (container?.flatListRef?.current || container?.flatListRef || container?._flatListRef || container));
-        
+
         if (engine && typeof engine.scrollToIndex === 'function') {
           try {
             console.log('[Navigate] Scrolling to index:', index);
@@ -276,12 +276,12 @@ export default function ChatDetailScreen() {
             }
           }
         } else if (engine && typeof engine.scrollToOffset === 'function') {
-           try {
-             engine.scrollToOffset({ offset: index * 180, animated: true });
-             clearInterval(scrollInterval);
-           } catch (err) {}
+          try {
+            engine.scrollToOffset({ offset: index * 180, animated: true });
+            clearInterval(scrollInterval);
+          } catch (err) { }
         }
-        
+
         attempts++;
         if (attempts > 10) clearInterval(scrollInterval);
       }, 100);
@@ -327,13 +327,13 @@ export default function ChatDetailScreen() {
     if (!lastWord.startsWith('@')) return [];
     const query = lastWord.slice(1).toLowerCase();
     console.log('[Mentions Debug] Recalculating query:', JSON.stringify(query));
-    
+
     const res = (filteredParticipants || []).filter((u) => {
       if (!u) return false;
       const perms = u.dashboardPermissions || [];
       if (perms.includes('vp_sales_dashboard')) return false;
       if (currentUserId && String(u._id || u.id) === String(currentUserId)) return false;
-      
+
       const fullName = `${u.firstName || u.name || ''} ${u.lastName || ''}`.toLowerCase();
       const userName = (u.userName || '').toLowerCase();
       const matches = fullName.includes(query) || userName.includes(query);
@@ -812,21 +812,21 @@ export default function ChatDetailScreen() {
               }}
             />
             {showMentions && (
-              <View 
-                style={{ 
-                  position: 'absolute', 
-                  bottom: 64, 
-                  left: 16, 
-                  right: 16, 
-                  zIndex: 99999, 
-                  elevation: 20, 
-                  backgroundColor: colors.card, 
-                  borderRadius: 16, 
-                  borderWidth: 1, 
-                  borderColor: colors.border, 
-                  shadowColor: '#000', 
-                  shadowOffset: { width: 0, height: -4 }, 
-                  shadowOpacity: 0.1, 
+              <View
+                style={{
+                  position: 'absolute',
+                  bottom: 64,
+                  left: 16,
+                  right: 16,
+                  zIndex: 99999,
+                  elevation: 20,
+                  backgroundColor: colors.card,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: -4 },
+                  shadowOpacity: 0.1,
                   shadowRadius: 8,
                   overflow: 'hidden'
                 }}
@@ -892,21 +892,21 @@ export default function ChatDetailScreen() {
               }}
             />
             {showMentions && (
-              <View 
-                style={{ 
-                  position: 'absolute', 
-                  bottom: 64, 
-                  left: 16, 
-                  right: 16, 
-                  zIndex: 99999, 
-                  elevation: 20, 
-                  backgroundColor: colors.card, 
-                  borderRadius: 16, 
-                  borderWidth: 1, 
-                  borderColor: colors.border, 
-                  shadowColor: '#000', 
-                  shadowOffset: { width: 0, height: -4 }, 
-                  shadowOpacity: 0.1, 
+              <View
+                style={{
+                  position: 'absolute',
+                  bottom: 64,
+                  left: 16,
+                  right: 16,
+                  zIndex: 99999,
+                  elevation: 20,
+                  backgroundColor: colors.card,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: -4 },
+                  shadowOpacity: 0.1,
                   shadowRadius: 8,
                   overflow: 'hidden'
                 }}
@@ -936,28 +936,50 @@ export default function ChatDetailScreen() {
         animationType="fade"
         onRequestClose={() => setShowPinned(false)}
       >
-        <TouchableOpacity className="flex-1" activeOpacity={1} onPress={() => setShowPinned(false)}>
+        {/* Use a plain View wrapper — backdrop and card are SIBLINGS, not parent/child.
+            This prevents tap events on the card from bubbling up to the backdrop and
+            triggering setShowPinned(false), which in production caused the beforeRemove
+            listener to fire and navigate back. */}
+        <View style={{ flex: 1 }}>
+          {/* Backdrop — sits below the card and closes the modal on tap */}
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setShowPinned(false)}
+          />
+          {/* Card — floats above backdrop; touches here do NOT reach the backdrop */}
           <View
-            className="absolute left-4 right-4 z-[9999] rounded-2xl shadow-2xl border"
             style={{
+              position: 'absolute',
+              left: 16,
+              right: 16,
               top: Platform.OS === 'ios' ? insets.top + 120 : 110,
+              zIndex: 9999,
               backgroundColor: colors.card,
+              borderRadius: 16,
+              borderWidth: 1,
               borderColor: colors.border,
               maxHeight: '60%',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.15,
+              shadowRadius: 12,
+              elevation: 16,
             }}
           >
-             <PinnedMessagesArea
-               pinnedMessages={pinnedMessages}
-               imageUrls={imageUrls}
-               onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id, isChannel)}
-               onNavigate={(msg: any) => {
-                 handleNavigateToMessage(msg);
-                 setShowPinned(false);
-               }}
-             />
+            <PinnedMessagesArea
+              pinnedMessages={pinnedMessages}
+              imageUrls={imageUrls}
+              onUnpin={(msg: any) => ChatService.unpinMessage(chatId!, msg._id, isChannel)}
+              onNavigate={(msg: any) => {
+                handleNavigateToMessage(msg);
+                setShowPinned(false);
+              }}
+            />
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
+
 
       <EditHistoryModal
         visible={historyModalVisible}

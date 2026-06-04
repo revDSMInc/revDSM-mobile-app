@@ -102,7 +102,7 @@ export const ChatHeader = ({
 
         <View className="flex-row items-center gap-3">
           <TouchableOpacity onPress={() => setShowPinned(true)} className="relative">
-            <Pin />
+            <Pin width={30} height={30} />
             {pinnedMessages.length > 0 && (
               <View className="absolute -top-1.5 -right-1.5 bg-amber-500 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 items-center justify-center">
                 <Text className="text-[8px] text-white font-bold">{pinnedMessages.length}</Text>
@@ -110,7 +110,7 @@ export const ChatHeader = ({
             )}
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setParticipantModalVisible(true)} className="relative">
-            <Icon name="people" size={24} color="#94a3b8" />
+            <Icon name="people" size={30} color="#94a3b8" />
             <View className="absolute -top-1 -right-1 bg-green-500 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 items-center justify-center">
               <Text className="text-[8px] text-white font-bold">{participants.length}</Text>
             </View>

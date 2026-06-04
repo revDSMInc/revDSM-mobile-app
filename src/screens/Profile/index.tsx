@@ -23,6 +23,8 @@ import { AuthService } from '../../services/api/auth';
 import { LeadService } from '../../services/api/leads';
 import Clipboard from '@react-native-clipboard/clipboard';
 import RNFS from 'react-native-fs';
+import { ENV } from '../../config/env';
+
 import ReactNativeBlobUtil from 'react-native-blob-util';
 
 import { useTheme } from '../../theme/ThemeProvider';
@@ -129,7 +131,7 @@ export default function ProfilePage() {
       setImageLoading(true);
       try {
         const res = await LeadService.getSecureUrls([{
-          bucketName: 'np-revdsm-staging',
+          bucketName: ENV.S3_BUCKET,
           filePath: pic
         }]);
         const secureData = res.data?.data || res.data || [];
@@ -148,7 +150,7 @@ export default function ProfilePage() {
       setImageLoading(true);
       try {
         const res = await LeadService.getSecureUrls([{
-          bucketName: pic.bucketName || 'np-revdsm-staging',
+          bucketName: pic.bucketName || ENV.S3_BUCKET,
           filePath: pic.filePath
         }]);
         const secureData = res.data?.data || res.data || [];

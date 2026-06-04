@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Feather from 'react-native-vector-icons/Feather';
@@ -572,7 +572,7 @@ export const CalculatorForm = ({
               }}
             >
               <Text className="flex-1 h-11 text-sm font-black text-[#919EAB]" style={{ lineHeight: 44 }}>
-                {extras.lightingControlBox || '0'}
+                {String(extras.lightingControlBox || '').trim() === '0' || String(extras.lightingControlBox || '').trim() === '' ? '' : extras.lightingControlBox}
               </Text>
               <View className="flex-row items-center">
                 <View className="border-l border-[#919EAB33] pl-3 ml-1 flex-row items-center">
@@ -645,7 +645,7 @@ export const CalculatorForm = ({
           />
         </Section>
 
-        <View className="mb-8 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] overflow-hidden">
+        <View className="mb-8 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF]">
           <View className="p-5 flex-row items-center justify-between">
             <View className="flex-row items-center">
               <View className="w-12 h-12 rounded-2xl bg-[#E5D9FF] items-center justify-center mr-4">

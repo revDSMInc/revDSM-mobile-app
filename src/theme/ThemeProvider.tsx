@@ -29,17 +29,22 @@ const ThemeContext = createContext<ThemeContextValue>({
 export const useTheme = () => useContext(ThemeContext);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { colorScheme, setColorScheme } = useColorScheme();
+  const { setColorScheme } = useColorScheme();
 
-  const isDark = colorScheme === 'dark';
-  const mode: ThemeMode = isDark ? 'dark' : 'light';
+  // Temporarily force NativeWind's color scheme to 'light'
+  useEffect(() => {
+    setColorScheme('light');
+  }, [setColorScheme]);
+
+  const isDark = false;
+  const mode: ThemeMode = 'light';
 
   const colors = useMemo(
     () => ({
       ...PALETTE,
-      ...(isDark ? PALETTE.dark : PALETTE.light),
+      ...PALETTE.light,
     }),
-    [isDark]
+    []
   );
 
   const value = useMemo(
@@ -47,9 +52,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       mode,
       colors,
       isDark,
-      setColorScheme: (scheme: any) => setColorScheme(scheme),
+      setColorScheme: () => {}, // Disable setting dark mode temporarily
     }),
-    [mode, colors, isDark, setColorScheme]
+    [colors]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
