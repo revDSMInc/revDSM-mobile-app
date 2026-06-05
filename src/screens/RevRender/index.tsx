@@ -67,6 +67,43 @@ const INITIAL_CONFIG = {
 
 const loadedUris = new Set<string>();
 
+const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
+  const { colors, isDark } = useTheme();
+  const [loading, setLoading] = useState(!loadedUris.has(uri));
+  return (
+    <View style={[{ height, backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }, style]}>
+      {loading && (
+        <View className="absolute inset-0 items-center justify-center z-10">
+          <ActivityIndicator color={colors.primary.main} />
+        </View>
+      )}
+      <Image
+        key={uri}
+        source={{ uri, cache: 'force-cache' }}
+        style={{ width: '100%', height: '100%' }}
+        resizeMode="cover"
+        fadeDuration={0}
+        onLoadStart={() => {
+          if (!loadedUris.has(uri)) {
+            setLoading(true);
+          }
+        }}
+        onLoad={() => {
+          loadedUris.add(uri);
+          setLoading(false);
+        }}
+        onLoadEnd={() => {
+          loadedUris.add(uri);
+          setLoading(false);
+        }}
+        onError={() => {
+          setLoading(false);
+        }}
+      />
+    </View>
+  );
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function RevRenderScreen() {
@@ -161,43 +198,6 @@ export default function RevRenderScreen() {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBack);
     return () => backHandler.remove();
   }, [status]);
-
-  const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
-    const [loading, setLoading] = useState(!loadedUris.has(uri));
-    return (
-      <View style={[{ height, backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8' }, style]}>
-        {loading && (
-          <View className="absolute inset-0 items-center justify-center z-10">
-            <ActivityIndicator color={colors.primary.main} />
-          </View>
-        )}
-        <Image
-          key={uri}
-          source={{ uri, cache: 'force-cache' }}
-          style={{ width: '100%', height: '100%' }}
-          resizeMode="cover"
-          fadeDuration={0}
-          onLoadStart={() => {
-            if (!loadedUris.has(uri)) {
-              setLoading(true);
-            }
-          }}
-          onLoad={() => {
-            loadedUris.add(uri);
-            setLoading(false);
-          }}
-          onLoadEnd={() => {
-            loadedUris.add(uri);
-            setLoading(false);
-          }}
-          onError={() => {
-            setLoading(false);
-          }}
-        />
-      </View>
-    );
-  };
-
   // ── Renders ────────────────────────────────────────────────────────────────
 
   const renderEmptyState = () => (

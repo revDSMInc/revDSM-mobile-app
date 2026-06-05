@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { resolveS3Url } from '../utils/s3-utils';
+import { ENV } from '../config/env';
 import { IMAGE_CATEGORIES } from '../constants/lead-center';
 import {
   logLeadCheckOut,
@@ -131,7 +132,7 @@ export const useLeadCenterData = (
           let updatedSecureData: any[] = [];
           if (newPhotos.length > 0) {
             const filePaths = newPhotos.map((p: any) => ({
-              bucketName: p.bucketName || 'np-revdsm-staging',
+              bucketName: p.bucketName || ENV.S3_BUCKET,
               filePath: p.s3url,
             }));
             const secureRes = await LeadService.getSecureUrls(filePaths);

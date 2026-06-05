@@ -13,7 +13,7 @@ import {
   Modal,
 } from 'react-native';
 
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Geolocation from 'react-native-geolocation-service';
 import { useNavigation } from '@react-navigation/native';
@@ -140,6 +140,11 @@ export const LeadMap = ({
   const [showUpload, setShowUpload] = useState(false);
   const [showReferral, setShowReferral] = useState(false);
   const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-3']);
+
+  // Boundary lock — same bounds as the web app Leaflet MAP_BOUNDS
+  // SW [15, -180]  NE [85, -40]
+  const [mapScrollEnabled, setMapScrollEnabled] = useState(true);
+  const isOutOfBoundsRef = useRef(false);
 
   const [region, setRegion] = useState({
     ...TAMPA_COORDS,
@@ -501,13 +506,49 @@ export const LeadMap = ({
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
         initialRegion={region}
+        maxZoomLevel={20}
+        scrollEnabled={mapScrollEnabled}
         onRegionChange={(r) => {
+          // Boundary lock: same as Leaflet maxBoundsViscosity=1.0
+          // The instant the center crosses the US/Canada border, kill the gesture
+          // by flipping scrollEnabled=false. Can't use animateToRegion here
+          // because the native gesture overrides it while the finger is down.
+          const MIN_LAT = 15, MAX_LAT = 85, MIN_LNG = -180, MAX_LNG = -40;
+          const isOut =
+            r.latitude < MIN_LAT || r.latitude > MAX_LAT ||
+            r.longitude < MIN_LNG || r.longitude > MAX_LNG;
+
+          if (isOut && !isOutOfBoundsRef.current) {
+            isOutOfBoundsRef.current = true;
+            setMapScrollEnabled(false); // kills the active drag gesture immediately
+          }
+
           currentRegion.current = r;
           updateSelectedPoint();
         }}
         onRegionChangeComplete={(r) => {
           currentRegion.current = r;
           updateSelectedPoint();
+
+          // Snap back and re-enable scrolling after gesture was killed
+          if (isOutOfBoundsRef.current) {
+            const MIN_LAT = 15, MAX_LAT = 85, MIN_LNG = -180, MAX_LNG = -40;
+            const clampedLat = Math.min(Math.max(r.latitude, MIN_LAT), MAX_LAT);
+            const clampedLng = Math.min(Math.max(r.longitude, MIN_LNG), MAX_LNG);
+            mapRef.current?.animateToRegion(
+              {
+                latitude: clampedLat,
+                longitude: clampedLng,
+                latitudeDelta: r.latitudeDelta,
+                longitudeDelta: r.longitudeDelta,
+              },
+              250
+            );
+            setTimeout(() => {
+              isOutOfBoundsRef.current = false;
+              setMapScrollEnabled(true);
+            }, 300);
+          }
         }}
         onPress={() => {
           if (markerPressedRef.current) {
@@ -517,7 +558,16 @@ export const LeadMap = ({
           setSelectedLead(null);
         }}
         customMapStyle={isDark ? darkMapStyle : []}
+        onMapReady={() => {
+          // Matches Leaflet MAP_BOUNDS: SW [15,-180], NE [85,-40]
+          mapRef.current?.setMapBoundaries(
+            { latitude: 85, longitude: -40 },
+            { latitude: 15, longitude: -180 }
+          );
+        }}
       >
+
+
 
         {/* Route Polyline */}
         {routeCoordinates.length > 0 && (

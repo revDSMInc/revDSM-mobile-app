@@ -946,6 +946,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         defaultEmail={lead?.customerDetails?.email || ''}
         customerFirstName={lead?.customerDetails?.firstName || ''}
         customerLastName={lead?.customerDetails?.lastName || ''}
+        draftId={draftId}
       />
     </>
   );

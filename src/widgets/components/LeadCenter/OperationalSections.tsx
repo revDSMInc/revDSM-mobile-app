@@ -19,7 +19,7 @@ export const ToolsSection = ({
   revRenderJobs = [],
 }: any) => {
   const { colors, isDark } = useTheme();
-  const { data: runs, isLoading } = useRevRenderRunsQuery(lead?._id || '');
+  const { data: runs, isLoading, refetch: refetchRuns } = useRevRenderRunsQuery(lead?._id || '');
 
   const [historyModal, setHistoryModal] = useState({ visible: false, index: 0 });
   const [selectedYear, setSelectedYear] = useState(3);
@@ -318,6 +318,8 @@ export const ToolsSection = ({
         onClose={() => setHistoryModal({ ...historyModal, visible: false })}
         runs={runs || []}
         initialIndex={historyModal.index}
+        leadId={lead?._id}
+        onDeleteSuccess={refetchRuns}
       />
     </View>
   );

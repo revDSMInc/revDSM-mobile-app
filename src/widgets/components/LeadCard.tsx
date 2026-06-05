@@ -181,11 +181,11 @@ function getLeadState(
   const isInRange =
     userLocation && lead.location?.coordinates
       ? calculateDistance(
-          userLocation.latitude,
-          userLocation.longitude,
-          lead.location.coordinates[1], // lat is index 1 (GeoJSON: [lng, lat])
-          lead.location.coordinates[0]  // lng is index 0
-        ) <= GEOFENCE_RADIUS_MILES
+        userLocation.latitude,
+        userLocation.longitude,
+        lead.location.coordinates[1], // lat is index 1 (GeoJSON: [lng, lat])
+        lead.location.coordinates[0]  // lng is index 0
+      ) <= GEOFENCE_RADIUS_MILES
       : false;
 
   const isSelfGen = isSelfGeneratedLead(lead);
@@ -482,9 +482,9 @@ export function LeadCard({
       const msg = !scheduledTime
         ? 'This appointment opens when you arrive on-site.'
         : `This appointment opens at ${format(
-            new Date(scheduledTime.getTime() - 15 * 60 * 1000),
-            'hh:mm a'
-          )} when you arrive on-site.`;
+          new Date(scheduledTime.getTime() - 15 * 60 * 1000),
+          'hh:mm a'
+        )} when you arrive on-site.`;
       Alert.alert('Appointment Preview', msg);
     } else {
       onPress();
@@ -519,9 +519,9 @@ export function LeadCard({
               zIndex: 1,
             }}
           >
-            <Text style={{ fontSize: 16, fontWeight: '800', color: '#084f93' }}>
+            <Text style={{ fontSize: 16, fontWeight: '900', color: '#084f93', letterSpacing: 0 }}>
               L
-              <Text style={{ fontSize: 13, fontWeight: '800', color: '#084f93' }}>OWE&apos;s</Text>
+              <Text style={{ fontSize: 13, fontWeight: '900', color: '#084f93', letterSpacing: -2 }}>OWE&apos;s</Text>
             </Text>
           </View>
         )}
@@ -733,7 +733,7 @@ export function LeadCard({
         onClose={() => setShowDeleteModal(false)}
       />
 
-      <MapSelectionModal 
+      <MapSelectionModal
         visible={showMapModal}
         address={lead.fullAddress || ''}
         onClose={() => setShowMapModal(false)}

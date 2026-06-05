@@ -10,6 +10,7 @@ import api from './index';
 import SocketManager from '../SocketManager';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
+import { ENV } from '../../config/env';
 
 class ChatService {
   private urlCache: Record<string, { url: string; expiresAt: number }> = {};
@@ -69,7 +70,7 @@ class ChatService {
     // 2. Fetch from backend for remaining paths
     const payload = {
       filePaths: pathsToFetch.map((p) => ({
-        bucketName: 'np-revdsm-staging',
+        bucketName: ENV.S3_BUCKET,
         filePath: p,
       })),
     };
@@ -295,17 +296,25 @@ class ChatService {
   }
 
   async sendFileMessage(chatId: string, file: any, message = '', replyTo?: string): Promise<void> {
-    // Copy content:// URIs to a local cache file so FormData can read them
-    let resolvedUri = file?.uri;
-    if (Platform.OS === 'android' && resolvedUri?.startsWith('content://')) {
+    let resolvedUri = file?.uri ?? '';
+
+    // Android: copy content:// URIs to a local cache file so FormData can read them.
+    // content:// URIs are not supported by the native networking stack directly.
+    if (Platform.OS === 'android' && resolvedUri.startsWith('content://')) {
       try {
         const ext = file.name?.split('.').pop() || 'file';
         const dest = `${RNFS.CachesDirectoryPath}/upload_${Date.now()}.${ext}`;
         await RNFS.copyFile(resolvedUri, dest);
         resolvedUri = dest;
       } catch (e) {
-        console.warn('[sendFileMessage] copy failed, using original URI:', e);
+        console.warn('[sendFileMessage] Android content copy failed, using original URI:', e);
       }
+    }
+
+    // iOS: production Hermes builds require a file:// prefix for local file URIs
+    // when used in FormData. Debug builds accept bare paths but prod does not.
+    if (Platform.OS === 'ios' && resolvedUri && !resolvedUri.startsWith('file://') && !resolvedUri.startsWith('http')) {
+      resolvedUri = `file://${resolvedUri}`;
     }
 
     const formData = new FormData();
@@ -315,12 +324,12 @@ class ChatService {
       uri: resolvedUri,
       name: file.name || `file_${Date.now()}`,
       type: file.type || 'application/octet-stream',
-    });
+    } as any);
 
-    // Do NOT set Content-Type — Axios removes it for FormData so the
-    // networking layer can append the required multipart boundary.
+    // Do NOT set Content-Type — let the networking layer append the multipart boundary.
     await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
   }
+
 
   async sendMessageREST(payload: {
     chatId: string;

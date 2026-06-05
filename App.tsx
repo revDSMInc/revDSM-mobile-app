@@ -51,7 +51,7 @@ function AppContent() {
         backgroundColor={colors.background}
       />
       <NavigationContainer>
-          <RootNavigator />
+        <RootNavigator />
       </NavigationContainer>
       <FlashMessage position="top" />
     </QueryClientProvider>

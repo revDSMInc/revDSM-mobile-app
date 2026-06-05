@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
+import { downloadPdfToDevice } from '../utils/download-utils';
 
 interface ModalState {
   showJobBuilder: boolean;
@@ -113,7 +114,8 @@ export const useLeadCenterModals = (
           riskJob?.status === 'completed' || riskJob?.progress === 100
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
-        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || extra, 'Risk Report');
+        const targetUrl = jobUrl || secureUrls[existing?.reportPath || ''] || extra;
+        downloadPdfToDevice(targetUrl, 'Risk Report');
       } else if (toolId === 'risk-reset') {
         handlers.handleResetRiskReport?.(extra);
       } else if (toolId === 'revrender') {

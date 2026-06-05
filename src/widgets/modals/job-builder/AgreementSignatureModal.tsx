@@ -19,6 +19,7 @@ import FileViewer from 'react-native-file-viewer';
 import Pdf from 'react-native-pdf';
 import { FlashMessage } from '../../../config/message';
 import { LeadService } from '../../../services/api/leads';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 interface AgreementSignatureModalProps {
   visible: boolean;
@@ -131,11 +132,11 @@ export const AgreementSignatureModal = ({
     const svgContent = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
       <svg width="500" height="200" viewBox="0 0 500 200" xmlns="http://www.w3.org/2000/svg">
         ${paths
-          .map(
-            (p) =>
-              `<path d="${p}" stroke="black" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" />`
-          )
-          .join('')}
+        .map(
+          (p) =>
+            `<path d="${p}" stroke="black" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" />`
+        )
+        .join('')}
       </svg>`;
 
     const filePath = `${RNFS.CachesDirectoryPath}/${fileName}_${Date.now()}.svg`;
@@ -216,8 +217,9 @@ export const AgreementSignatureModal = ({
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false}>
-      <View style={{ flex: 1, backgroundColor: 'white' }}>
-        <View style={{ width: '100%', height: '100%', backgroundColor: 'white' }}>
+      <SafeAreaProvider>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={{ flex: 1, backgroundColor: 'white' }}>
           {/* Header */}
           <View style={{ paddingHorizontal: 24, paddingVertical: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
             <View>
@@ -292,11 +294,11 @@ export const AgreementSignatureModal = ({
                                 left:
                                   offsetX +
                                   (Number(signatureFields.buyerInitials.xPercent) / 100) *
-                                    renderedW,
+                                  renderedW,
                                 top:
                                   offsetY +
                                   (Number(signatureFields.buyerInitials.yPercent) / 100) *
-                                    renderedH,
+                                  renderedH,
                                 width: `${Math.max(
                                   15,
                                   Number(signatureFields.buyerInitials.widthPercent) * 1.2
@@ -363,11 +365,11 @@ export const AgreementSignatureModal = ({
                                 left:
                                   offsetX +
                                   (Number(signatureFields.buyerSignature.xPercent) / 100) *
-                                    renderedW,
+                                  renderedW,
                                 top:
                                   offsetY +
                                   (Number(signatureFields.buyerSignature.yPercent) / 100) *
-                                    renderedH,
+                                  renderedH,
                                 width: `${Math.max(
                                   16,
                                   Number(signatureFields.buyerSignature.widthPercent) * 0.65
@@ -446,11 +448,11 @@ export const AgreementSignatureModal = ({
             <TouchableOpacity
               onPress={handleSubmit}
               disabled={loading || initialsPaths.length === 0 || signaturePaths.length === 0}
-              style={{ 
-                flex: 2, 
-                height: 48, 
-                borderRadius: 12, 
-                alignItems: 'center', 
+              style={{
+                flex: 2,
+                height: 48,
+                borderRadius: 12,
+                alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: loading || initialsPaths.length === 0 || signaturePaths.length === 0 ? '#e2e8f0' : '#059669',
                 shadowColor: '#059669',
@@ -471,7 +473,7 @@ export const AgreementSignatureModal = ({
           </View>
         </View>
 
-        {/* Signature Drawing Overlay */}
+        {/* Signature Drawing Overlay — sits as sibling to the main content View, inside SafeAreaView */}
         {activePad && (
           <View style={[styles.overlay, { backgroundColor: 'rgba(0, 0, 0, 0.95)', alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
             <View style={{ backgroundColor: 'white', width: '100%', borderRadius: 40, overflow: 'hidden' }}>
@@ -508,15 +510,15 @@ export const AgreementSignatureModal = ({
                     ))}
                     {(activePad === 'initials' ? currentInitialsPath : currentSignaturePath) !==
                       '' && (
-                      <Path
-                        d={activePad === 'initials' ? currentInitialsPath : currentSignaturePath}
-                        stroke="#1e293b"
-                        strokeWidth={3}
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    )}
+                        <Path
+                          d={activePad === 'initials' ? currentInitialsPath : currentSignaturePath}
+                          stroke="#1e293b"
+                          strokeWidth={3}
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      )}
                   </Svg>
                 </View>
               </View>
@@ -538,7 +540,8 @@ export const AgreementSignatureModal = ({
             </View>
           </View>
         )}
-      </View>
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 };

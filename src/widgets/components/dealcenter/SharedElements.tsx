@@ -111,9 +111,15 @@ export const InputField = ({
   red = false,
   editable = true,
 }: any) => {
-  const [localValue, setLocalValue] = useState(String(value || ''));
+  const getDisplayValue = (val: any) => {
+    if (val === undefined || val === null) return '';
+    const s = String(val).trim();
+    return s === '0' || s === '0.00' ? '' : s;
+  };
+
+  const [localValue, setLocalValue] = useState(getDisplayValue(value));
   useEffect(() => {
-    setLocalValue(String(value || ''));
+    setLocalValue(getDisplayValue(value));
   }, [value]);
 
   const bgColor = red ? '#FFF1F0' : highlighted ? '#fff5da' : 'white';
@@ -142,7 +148,10 @@ export const InputField = ({
           onChangeText={setLocalValue}
           onBlur={() => {
             if (!editable) return;
-            if (localValue !== String(value)) {
+            const normLocal = localValue.trim() === '0' ? '' : localValue.trim();
+            const normValue = String(value === undefined || value === null ? '' : value).trim();
+            const normValClean = normValue === '0' || normValue === '0.00' ? '' : normValue;
+            if (normLocal !== normValClean) {
               if (isExtra) onUpdate({ extras: { [keyName]: localValue } });
               else onUpdate({ inputs: { [keyName]: localValue } });
             }

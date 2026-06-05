@@ -82,6 +82,38 @@ export const CalculatorSummary = ({
 
   const rolloutEndPrice = Number(activeCalc.price) || 0;
 
+  const CATEGORY_ORDER = [
+    'Gutters',
+    'LeafFilter',
+    'Soffit',
+    'Fascia',
+    'Lighting',
+    'Additional Services',
+    'Miscellaneous'
+  ];
+
+  const categoryCounts = results.items.reduce((acc: Record<string, number>, item: any) => {
+    const cat = item.category || 'Additional Services';
+    acc[cat] = (acc[cat] || 0) + 1;
+    return acc;
+  }, {});
+
+  const uniqueCategories = Array.from(
+    new Set(results.items.map((i: any) => i.category || 'Additional Services'))
+  ).sort((a: any, b: any) => {
+    const indexA = CATEGORY_ORDER.indexOf(a);
+    const indexB = CATEGORY_ORDER.indexOf(b);
+    return (indexA > -1 ? indexA : 999) - (indexB > -1 ? indexB : 999);
+  });
+
+  const sortedItems = [...results.items].sort((a: any, b: any) => {
+    const catA = a.category || 'Additional Services';
+    const catB = b.category || 'Additional Services';
+    const indexA = CATEGORY_ORDER.indexOf(catA);
+    const indexB = CATEGORY_ORDER.indexOf(catB);
+    return (indexA > -1 ? indexA : 999) - (indexB > -1 ? indexB : 999);
+  });
+
   const handlePaymentPlanSelect = (method: string) => {
     const oldMethod = activeCalc.inputs.paymentPlan;
     const currentPrice = rolloutEndPrice;
@@ -372,9 +404,8 @@ export const CalculatorSummary = ({
                 </View>
 
                 <View className="flex-row flex-wrap gap-2 mb-4">
-                  {Array.from(
-                    new Set(results.items.map((i: any) => i.category || 'Additional Services'))
-                  ).map((category: any) => {
+                  {uniqueCategories.map((category: any) => {
+                    const count = categoryCounts[category] || 0;
                     const categoryStyles: Record<
                       string,
                       { color: string; icon: string; bg: string }
@@ -404,7 +435,7 @@ export const CalculatorSummary = ({
                           className="ml-1.5 text-[10px] font-black tracking-tight"
                           style={{ color: style.color }}
                         >
-                          {category}
+                          {category} {count}
                         </Text>
                       </View>
                     );
@@ -412,7 +443,7 @@ export const CalculatorSummary = ({
                 </View>
 
                 <View className="gap-3">
-                  {results.items.map((item: any, i: number) => {
+                  {sortedItems.map((item: any, i: number) => {
                     const categoryStyles: Record<
                       string,
                       { color: string; icon: string; bg: string }
@@ -1125,7 +1156,19 @@ export const CalculatorSummary = ({
         </Modal>
 
         <Modal visible={showDropModal} transparent animationType="fade">
-          <View className="flex-1 bg-black/60 justify-center px-5">
+          <View className="flex-1 justify-center px-5">
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setShowDropModal(false)}
+            >
+              <BlurView
+                style={StyleSheet.absoluteFill}
+                blurType={isDark ? 'dark' : 'light'}
+                blurAmount={10}
+                reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+              />
+            </TouchableOpacity>
             <View className="bg-white rounded-[40px] p-6 shadow-2xl">
               {/* Header: Icon + UPDATED PRICE + CK/CC badges */}
               <View className="items-center mb-6">
@@ -1499,7 +1542,19 @@ export const CalculatorSummary = ({
 
         {/* Customer Display Modal (Web Parity) */}
         <Modal visible={!!displayDrop} transparent animationType="fade">
-          <View className="flex-1 bg-black/60 justify-center px-6">
+          <View className="flex-1 justify-center px-6">
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setDisplayDrop(null)}
+            >
+              <BlurView
+                style={StyleSheet.absoluteFill}
+                blurType={isDark ? 'dark' : 'light'}
+                blurAmount={10}
+                reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+              />
+            </TouchableOpacity>
             <View className="bg-white rounded-[40px] p-8 shadow-2xl">
               {/* Header Icon */}
               <View className="items-center mb-6">

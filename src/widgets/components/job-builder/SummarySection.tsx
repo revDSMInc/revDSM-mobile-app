@@ -711,6 +711,22 @@ export const SummarySection = ({
         if (match) scope.push(`Install Fascia Board (${match[2]} ${match[1]}) — ${ft}'`);
       });
 
+      // 2.1 Aluminum Fascia Boards
+      let aluminumHandled = false;
+      getFields(fSec, 'aluminum fascia boards').forEach((f: any) => {
+        if (f.value.toLowerCase().includes('aluminum') && f.value.toLowerCase().includes('fascia board')) {
+          const ft = extractFt(f.value) || '1';
+          scope.push(`Install Aluminum 2"x2" Fascia Board; ${ft}'`);
+          aluminumHandled = true;
+        }
+      });
+      if (!aluminumHandled) {
+        const alFt = jobState?.fascia?.aluminumBoards?.footage;
+        if (alFt && parseFloat(alFt) > 0) {
+          scope.push(`Install Aluminum 2"x2" Fascia Board; ${alFt}'`);
+        }
+      }
+
       // 3. Soffit & Porch
       const sSec = findSec('soffit');
       let soffitFt = 0;
@@ -876,76 +892,243 @@ export const SummarySection = ({
         }
       });
 
-      // 11. LeafFilter
+      // 11. LeafFilter & Versa Max
       let hasLF = false;
       let hasVM = false;
-      const lfByColor: any = {};
+      const locationNames = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
+      
+      // Extract gutterWidth
+      let gutterWidth: number | null = null;
+      lfSec?.subsections?.forEach((sub: any) => {
+        sub.fields?.forEach((field: any) => {
+          if (
+            field.label &&
+            (field.label.toLowerCase().includes('gutter width') ||
+              field.label.toLowerCase().includes('width') ||
+              field.label.toLowerCase().includes('gutter_width') ||
+              field.label.toLowerCase().includes('opening width') ||
+              field.label.toLowerCase().includes('select width'))
+          ) {
+            if (field.value) {
+              const value = String(field.value).trim();
+              let widthValue = null;
+              if (value.includes('-')) {
+                const parts = value.split('-');
+                if (parts.length === 2) {
+                  widthValue = parseFloat(parts[0].trim());
+                }
+              } else if (value.includes('<')) {
+                const match = value.match(/[\d.]+/);
+                if (match) {
+                  widthValue = parseFloat(match[0]);
+                }
+              } else {
+                widthValue = parseFloat(value);
+              }
+              if (widthValue !== null && !isNaN(widthValue)) {
+                gutterWidth = widthValue;
+              }
+            }
+          }
+        });
+      });
+      // Check main section fields too for gutter width
+      lfSec?.fields?.forEach((field: any) => {
+        if (
+          field.label &&
+          (field.label.toLowerCase().includes('gutter width') ||
+            field.label.toLowerCase().includes('width') ||
+            field.label.toLowerCase().includes('gutter_width') ||
+            field.label.toLowerCase().includes('opening width') ||
+            field.label.toLowerCase().includes('select width'))
+        ) {
+          if (field.value) {
+            const value = String(field.value).trim();
+            let widthValue = null;
+            if (value.includes('-')) {
+              const parts = value.split('-');
+              if (parts.length === 2) {
+                widthValue = parseFloat(parts[0].trim());
+              }
+            } else if (value.includes('<')) {
+              const match = value.match(/[\d.]+/);
+              if (match) {
+                widthValue = parseFloat(match[0]);
+              }
+            } else {
+              widthValue = parseFloat(value);
+            }
+            if (widthValue !== null && !isNaN(widthValue)) {
+              gutterWidth = widthValue;
+            }
+          }
+        }
+      });
+      if (gutterWidth === null) {
+        gutterWidth = 2.5; // Default fallback matching web app
+      }
+
       const lfMain = lfSec?.subsections.find(
         (ss: any) => ss.name === '' || ss.name.toLowerCase().includes('combination')
       );
-      
-      const locationNames = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
-      
-      lfMain?.fields.forEach((f: any, fIdx: number) => {
-        if (f.label?.startsWith('Combination #')) {
-          const p = f.value.split('·').map((s: any) => s.trim());
-          if (p.length >= 3) {
-            const ft = parseInt(extractFt(p[0]) || '0');
-            const color = p[1];
-            const profile = p[2].toLowerCase();
-            
-            if (ft > 0) {
-              const comboIdx = parseInt(f.label.match(/#(\d+)/)?.[1] || '0') - 1;
-              const combo = jobState.leaffilter?.combinations?.[comboIdx];
-              const comboLocs: string[] = [];
-              
-              if (combo?.measurements) {
-                locationNames.forEach((locName, locIdx) => {
-                  let locTotal = 0;
-                  for (let story = 0; story < 3; story++) {
-                    locTotal += parseFloat(combo.measurements[locIdx + (story * 6)]) || 0;
-                  }
-                  if (locTotal > 0) comboLocs.push(locName);
-                });
-              }
-              
-              if (comboLocs.length === 0) comboLocs.push('LEFT SIDE');
 
-              if (profile.includes('versa max')) {
-                hasVM = true;
-              } else {
-                hasLF = true;
-                if (!lfByColor[color]) lfByColor[color] = { ft: 0, locs: [] };
-                lfByColor[color].ft += ft;
-                comboLocs.forEach(loc => {
-                  if (!lfByColor[color].locs.includes(loc)) lfByColor[color].locs.push(loc);
+      const processedCombinations = new Set<string>();
+      const versaMaxEntries: string[] = [];
+
+      lfMain?.fields.forEach((f: any) => {
+        if (f.label?.startsWith('Combination #')) {
+          if (processedCombinations.has(f.value)) return;
+          processedCombinations.add(f.value);
+
+          const parts = f.value.split('·').map((s: any) => s.trim());
+          if (parts.length >= 3) {
+            const footage = extractFt(parts[0]);
+            const color = parts[1];
+            const profile = parts[2];
+
+            if (footage && parseInt(footage) > 0) {
+              const comboLocations: Record<string, number> = {};
+              if (f.locationRows && f.locationRows.length > 0) {
+                f.locationRows.forEach((row: any) => {
+                  const rowTotal = (row.entries || []).reduce(
+                    (sum: number, entry: any) => sum + (parseFloat(entry.value) || 0),
+                    0
+                  );
+                  if (rowTotal > 0) {
+                    comboLocations[row.location] = rowTotal;
+                  }
                 });
+              } else {
+                const comboIdx = parseInt(f.label.match(/#(\d+)/)?.[1] || '0') - 1;
+                const combo = jobState.leaffilter?.combinations?.[comboIdx];
+                if (combo?.measurements) {
+                  locationNames.forEach((locName, locIdx) => {
+                    let locTotal = 0;
+                    for (let story = 0; story < 3; story++) {
+                      locTotal += parseFloat(combo.measurements[locIdx + (story * 6)]) || 0;
+                    }
+                    if (locTotal > 0) {
+                      comboLocations[locName] = locTotal;
+                    }
+                  });
+                }
+              }
+
+              const locationStr = Object.entries(comboLocations)
+                .map(([loc, ft]) => `${loc}: ${ft}'`)
+                .join(', ');
+
+              if (profile.toLowerCase().includes('versa') && !profile.toLowerCase().includes('max')) {
+                hasLF = true;
+                const sizeMatch = profile.match(/(\d+(\.\d+)?(\s*-\s*\d+(\.\d+)?)?)\s*"?/);
+                const gutterSize = sizeMatch ? sizeMatch[1] + '"' : '';
+                const gutterSizeText = gutterSize ? ` (for ${gutterSize} gutters)` : '';
+
+                if (locationStr) {
+                  scope.push(`Install ${color} LeafFilter${gutterSizeText} on ${locationStr} — Total: ${footage}'`);
+                } else {
+                  scope.push(`Install ${color} LeafFilter${gutterSizeText} — Total: ${footage}'`);
+                }
+              } else if (profile.toLowerCase().includes('versa max')) {
+                hasVM = true;
+                const sizeMatch = profile.match(/([+>\-<=]*\s*)?(\d+(\.\d+)?(\s*-\s*\d+(\.\d+)?)?)\s*"?/);
+                let gutterSize = '';
+                if (sizeMatch) {
+                  const prefix = sizeMatch[1] || '';
+                  gutterSize = prefix + sizeMatch[2] + '"';
+                }
+                const gutterSizeText = gutterSize ? ` (for ${gutterSize} gutters)` : '';
+
+                if (locationStr) {
+                  versaMaxEntries.push(`Install ${color} Versa Max${gutterSizeText} on ${locationStr} — Total: ${footage}'`);
+                } else {
+                  versaMaxEntries.push(`Install ${color} Versa Max${gutterSizeText} on LEFT SIDE — Total: ${footage}'`);
+                }
               }
             }
           }
         }
       });
-      
-      Object.keys(lfByColor).forEach((c) =>
+
+      // Extra checks for Versa Max in profile fields (same as web app)
+      lfSec?.subsections?.forEach((subsection: any) => {
+        subsection.fields?.forEach((field: any) => {
+          if (
+            field.label &&
+            field.label.toLowerCase().includes('leaffilter profile') &&
+            field.value &&
+            field.value.toLowerCase().includes('versa max')
+          ) {
+            hasVM = true;
+          }
+        });
+      });
+      lfSec?.fields?.forEach((field: any) => {
+        if (
+          field.label &&
+          field.label.toLowerCase().includes('leaffilter profile') &&
+          field.value &&
+          field.value.toLowerCase().includes('versa max')
+        ) {
+          hasVM = true;
+        }
+      });
+
+      // 12. Gutter Tune-Up
+      if (hasLF && totalGutterFt === 0) {
         scope.push(
-          `Install ${c} LeafFilter on ${lfByColor[c].locs.join(', ')} — ${lfByColor[c].ft}'`
-        )
+          `Gutter Tune-Up: Remove debris from gutter and downspouts to ground, clean gutter and downspouts thoroughly, realign and repitch if needed, Install Hidden Hangers every 25", seal each seam, miter and connection with 50yr silicone`
+        );
+      }
+
+      // 14. Versa Max Tune-Up
+      if (hasVM) {
+        scope.push(
+          `Existing Fascia Gutter Tune Up: Remove all debris from gutter and downspouts interior, seal each seam, miter and connection with 50yr silicone`
+        );
+      }
+
+      // 15. Versa Max Cleaning Disclaimer
+      if (hasVM && gutterWidth !== null && gutterWidth < 3.4) {
+        scope.push(`Due to gutter width, cleaning or sealing cannot be guaranteed`);
+      }
+
+      // 13. Versa Max Install
+      if (versaMaxEntries.length > 0) {
+        versaMaxEntries.forEach((entry) => scope.push(entry));
+      }
+
+      // 16 & 17. Splash Guards
+      const extrasFields = getFields(gSec, 'extras');
+      const splashGuardField = extrasFields.find((f: any) =>
+        f.value.toLowerCase().includes('splash guard') && !f.value.toLowerCase().includes('.032')
       );
-      if (hasLF && totalGutterFt === 0)
-        scope.push(
-          `Gutter Tune-Up: Remove debris, clean thoroughly, realign and repitch, Install Hidden Hangers every 25", seal with 50yr silicone`
-        );
-      if (hasVM)
-        scope.push(
-          `Existing Fascia Gutter Tune Up: Remove all debris, seal each seam, miter and connection with 50yr silicone`
-        );
-      if (hasLF || hasVM)
+      if (splashGuardField) {
+        const count = extractFt(splashGuardField.value) || '1';
+        const colorMatch = splashGuardField.value.match(/(\w+\s*\w*)\s+Extended Splash Guard/i);
+        const color = colorMatch ? colorMatch[1] : '';
+        scope.push(`Install ${color} Splash Guard — ${count}'`);
+      }
+
+      const splashGuard032Field = extrasFields.find((f: any) =>
+        f.value.toLowerCase().includes('splash guard') && f.value.toLowerCase().includes('.032')
+      );
+      if (splashGuard032Field) {
+        const count = extractFt(splashGuard032Field.value) || '1';
+        const colorMatch = splashGuard032Field.value.match(/(\w+\s*\w*)\s+Extended.*\.032/i);
+        const color = colorMatch ? colorMatch[1] : '';
+        scope.push(`Install ${color} Splash Guard .32 Gauge — ${count}'`);
+      }
+
+      // 18. Warranty
+      if (hasLF || hasVM) {
         scope.push(
           `Includes No Clog and No Leak Guarantee and Lifetime Transferable Warranty on LeafFilter`
         );
+      }
 
-      // 19. Groundspouts & Misc
-      const gsField = getFields(gSec, 'extras').find((f: any) =>
+      // 19. Groundspouts
+      const gsField = extrasFields.find((f: any) =>
         f.value.toLowerCase().includes('groundspout')
       );
       if (gsField) scope.push(`Install ${extractFt(gsField.value) || '1'} groundspouts`);
@@ -992,8 +1175,25 @@ export const SummarySection = ({
       const mFields = getFields(mSec, '');
       const labField = mFields.find((f: any) => f.label?.toLowerCase().includes('extra labor'));
       if (labField?.value) scope.push(`Additional Labor: ${labField.value}`);
+
+      // 20. Screens
+      const screensField = mFields.find((f: any) =>
+        f.label && (
+          f.label.toLowerCase().includes('screen') ||
+          f.label.toLowerCase().includes('number of screen pulls')
+        )
+      );
+      if (screensField && screensField.value) {
+        const screenCount = parseInt(screensField.value) || 0;
+        if (screenCount > 0) {
+          scope.push(`Remove and reinstall ${screenCount} screens`);
+        }
+      }
+
       const notesField = mFields.find((f: any) => f.label?.toLowerCase().includes('notes'));
-      if (notesField?.value) scope.push(notesField.value);
+      if (notesField?.value && notesField.value.trim() !== '') {
+        scope.push(notesField.value.trim());
+      }
 
       const payload = {
         customer: {
@@ -1166,9 +1366,9 @@ export const SummarySection = ({
                           key={rIdx}
                           style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
                         >
-                          <Text style={{ fontSize: 6, fontWeight: '900', color: '#64748b' }}>{row.story}</Text>
+                          <Text style={{ fontSize: 6, fontWeight: '900', color: '#64748b' }}>{row.location}</Text>
                           <Text style={{ fontSize: 6, fontWeight: 'bold', color: '#059669' }}>
-                            {row.entries.map((e: any) => `${e.location}: ${e.value}ft`).join(' · ')}
+                            {row.entries.map((e: any) => `${e.story}: ${e.value}ft`).join(' · ')}
                           </Text>
                         </View>
                       ))}

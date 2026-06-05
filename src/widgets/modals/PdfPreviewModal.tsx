@@ -11,6 +11,8 @@ import {
   Platform,
   Alert,
   Share,
+  Image,
+  ScrollView,
 } from 'react-native';
 import Pdf from 'react-native-pdf';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -31,13 +33,23 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [isImage, setIsImage] = useState(false);
+
+  const isImageUri = (uriPath: string) => {
+    const cleanPath = uriPath.split('?')[0];
+    return cleanPath.toLowerCase().match(/\.(jpg|jpeg|png|gif|webp)$/) !== null;
+  };
 
   useEffect(() => {
     if (!visible || !uri) {
       setLocalUri(null);
       setError(null);
+      setIsImage(false);
       return;
     }
+
+    const isImg = isImageUri(uri);
+    setIsImage(isImg);
 
     // If already a local file path, use it directly
     if (uri.startsWith('file://') || uri.startsWith('/')) {
@@ -61,7 +73,8 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         }
 
         const urlHash = uri.split('?')[0].split('/').pop() || `doc_${Date.now()}`;
-        const safeName = urlHash.endsWith('.pdf') ? urlHash : `${urlHash}.pdf`;
+        const ext = isImg ? (urlHash.split('.').pop() || 'jpg') : 'pdf';
+        const safeName = urlHash.toLowerCase().endsWith(`.${ext}`) ? urlHash : `${urlHash}.${ext}`;
         const filePath = `${dir}/${safeName}`;
 
         const fileExists = await ReactNativeBlobUtil.fs.exists(filePath);
@@ -76,25 +89,27 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         const res = await ReactNativeBlobUtil.config({
           path: filePath,
           fileCache: true,
-          appendExt: 'pdf',
+          appendExt: ext,
         }).fetch('GET', uri);
 
         const downloadedPath = res.path();
 
-        // VALIDATION: Check if it's actually a PDF (starts with %PDF- which is JVBERi in base64)
-        const firstChunk = await ReactNativeBlobUtil.fs.readFile(downloadedPath, 'base64');
-        const isPDF = firstChunk.startsWith('JVBERi');
+        if (!isImg) {
+          // VALIDATION: Check if it's actually a PDF (starts with %PDF- which is JVBERi in base64)
+          const firstChunk = await ReactNativeBlobUtil.fs.readFile(downloadedPath, 'base64');
+          const isPDF = firstChunk.startsWith('JVBERi');
 
-        if (!isPDF) {
-          console.error('[PdfPreviewModal] Validation failed. Not a PDF.');
-          await ReactNativeBlobUtil.fs.unlink(downloadedPath);
-          setError('The document appears to be corrupted or invalid.');
-          setDownloading(false);
-          return;
+          if (!isPDF) {
+            console.error('[PdfPreviewModal] Validation failed. Not a PDF.');
+            await ReactNativeBlobUtil.fs.unlink(downloadedPath);
+            setError('The document appears to be corrupted or invalid.');
+            setDownloading(false);
+            return;
+          }
         }
 
         const finalPath = Platform.OS === 'android' ? `file://${downloadedPath}` : downloadedPath;
-        console.log('[PdfPreviewModal] PDF Validated and loaded:', finalPath);
+        console.log('[PdfPreviewModal] File loaded:', finalPath);
         setLocalUri(finalPath);
       } catch (err: any) {
         console.error('[PdfPreviewModal] Download error:', err);
@@ -114,9 +129,11 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       setSaving(true);
       FlashMessage.info('Download started...', 'Downloading');
       const { dirs } = ReactNativeBlobUtil.fs;
-      const fileName = uri.split('?')[0].split('/').pop() || `revdsm_${Date.now()}.pdf`;
+      const ext = isImage ? (uri.split('?')[0].split('.').pop() || 'jpg') : 'pdf';
+      const fileName = uri.split('?')[0].split('/').pop() || `revdsm_${Date.now()}.${ext}`;
       const baseDir = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
       const publicPath = `${baseDir}/${fileName}`;
+      const mimeType = isImage ? `image/${ext === 'png' ? 'png' : 'jpeg'}` : 'application/pdf';
 
       // 1. Handle Local vs Remote files
       if (sourceUri.startsWith('file://') || sourceUri.startsWith('/')) {
@@ -132,11 +149,11 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
 
         if (Platform.OS === 'android') {
           // Add to DownloadManager and scan so it appears in 'Downloads' app
-          ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: 'application/pdf' }]);
+          ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: mimeType }]);
         } else {
           await Share.share({
             url: `file://${publicPath}`,
-            title: title || 'Save PDF',
+            title: title || (isImage ? 'Save Image' : 'Save PDF'),
           });
         }
       } else {
@@ -147,8 +164,8 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
               useDownloadManager: true,
               notification: true,
               path: publicPath,
-              description: 'Downloading PDF document',
-              mime: 'application/pdf',
+              description: isImage ? 'Downloading image document' : 'Downloading PDF document',
+              mime: mimeType,
             },
           }).fetch('GET', sourceUri);
         } else {
@@ -159,7 +176,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
 
           await Share.share({
             url: `file://${publicPath}`,
-            title: title || 'Save PDF',
+            title: title || (isImage ? 'Save Image' : 'Save PDF'),
           });
         }
       }
@@ -221,25 +238,41 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
               </TouchableOpacity>
             </View>
           ) : localUri ? (
-            <Pdf
-              key={localUri}
-              source={{ uri: localUri }}
-              trustAllCerts={false}
-              style={[styles.pdf, { backgroundColor: isDark ? colors.surface : '#f8fafc' }]}
-              onLoadComplete={(numberOfPages) => {
-                console.log(`[PdfPreviewModal] Loaded ${numberOfPages} pages`);
-              }}
-              onPageChanged={(page) => {
-                console.log(`[PdfPreviewModal] Page: ${page}`);
-              }}
-              onError={(err) => {
-                console.error('[PdfPreviewModal] PDF render error:', err);
-                setError('Unable to render this document.');
-              }}
-              renderActivityIndicator={() => (
-                <ActivityIndicator color={colors.primary.main} size="large" />
-              )}
-            />
+            isImage ? (
+              <ScrollView
+                maximumZoomScale={3}
+                minimumZoomScale={1}
+                showsHorizontalScrollIndicator={false}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.imageContainer}
+              >
+                <Image
+                  source={{ uri: localUri }}
+                  style={styles.image}
+                  resizeMode="contain"
+                />
+              </ScrollView>
+            ) : (
+              <Pdf
+                key={localUri}
+                source={{ uri: localUri }}
+                trustAllCerts={false}
+                style={[styles.pdf, { backgroundColor: isDark ? colors.surface : '#f8fafc' }]}
+                onLoadComplete={(numberOfPages) => {
+                  console.log(`[PdfPreviewModal] Loaded ${numberOfPages} pages`);
+                }}
+                onPageChanged={(page) => {
+                  console.log(`[PdfPreviewModal] Page: ${page}`);
+                }}
+                onError={(err) => {
+                  console.error('[PdfPreviewModal] PDF render error:', err);
+                  setError('Unable to render this document.');
+                }}
+                renderActivityIndicator={() => (
+                  <ActivityIndicator color={colors.primary.main} size="large" />
+                )}
+              />
+            )
           ) : (
             <View style={styles.centerContainer}>
               <Icon name="file-outline" size={48} color={isDark ? '#555' : '#cbd5e1'} />
@@ -325,5 +358,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 10,
+  },
+  imageContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  image: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height - 120, // offset header
   },
 });

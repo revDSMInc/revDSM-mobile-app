@@ -128,6 +128,7 @@ export const JobDocsSection = ({
     agreements: true,
     orderSheets: true,
   });
+  const [leadDraft, setLeadDraft] = useState<any>(null);
 
   const isResulted = useMemo(() => {
     const status = lead?.status?.toLowerCase();
@@ -170,6 +171,14 @@ export const JobDocsSection = ({
       const response = await LeadService.getLeadOutcome(lead._id);
       const data = response.data?.data || response.data;
       setOutcomeData(data);
+
+      try {
+        const draftRes = await LeadService.getLeadDraft(lead._id);
+        const draftData = draftRes.data?.data || draftRes.data;
+        setLeadDraft(draftData);
+      } catch (err) {
+        setLeadDraft(null);
+      }
 
       // Resolve documents if any
       const docs = data?.leadOutcomeDocuments;
@@ -523,12 +532,23 @@ export const JobDocsSection = ({
               className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 overflow-hidden"
               style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
             >
-              <View className="bg-[#4CBB17] py-2.5 flex-row items-center justify-center">
-                <Icon name="check" size={16} color="white" />
-                <Text className="text-white font-black text-xs ml-2 tracking-widest uppercase">
-                  {getStatusLabel().toUpperCase()} - LEAD RESULTED
-                </Text>
-              </View>
+              {leadDraft?.status?.toLowerCase() === 'pending' ? (
+                <View className="bg-[#F4B400] py-2.5 items-center justify-center px-4">
+                  <Text className="text-[#1C252E] font-black text-xs tracking-widest uppercase text-center">
+                    SALE - PENDING CUSTOMER SIGNATURE
+                  </Text>
+                  <Text className="text-[#1C252E] font-semibold text-[10px] text-center mt-1">
+                    Awaiting Amendment Approval:{"\n"}• Contract Pricing
+                  </Text>
+                </View>
+              ) : (
+                <View className="bg-[#4CBB17] py-2.5 flex-row items-center justify-center">
+                  <Icon name="check" size={16} color="white" />
+                  <Text className="text-white font-black text-xs ml-2 tracking-widest uppercase">
+                    {getStatusLabel().toUpperCase()} - LEAD RESULTED
+                  </Text>
+                </View>
+              )}
 
               <View className="p-5">
                 <View className="flex-row justify-between items-center mb-6">
@@ -846,7 +866,11 @@ export const JobDocsSection = ({
       </View>
       <EditContractDetailsModal 
         visible={showEditModal}
-        onClose={() => setShowEditModal(false)}
+        onClose={() => {
+          setShowEditModal(false);
+          fetchOutcome();
+          refetch();
+        }}
         outcomeData={outcomeData}
         lead={lead}
         onUpdate={handleUpdateContract}

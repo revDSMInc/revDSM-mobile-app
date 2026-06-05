@@ -7,17 +7,23 @@ import {
   Image,
   Dimensions,
   StyleSheet,
+  TextInput,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
+import { LeadService } from '../../../services/api/leads';
 
 interface RevRenderHistoryModalProps {
   visible: boolean;
   onClose: () => void;
   runs: any[];
   initialIndex: number;
+  leadId?: string;
+  onDeleteSuccess?: () => void;
 }
 
 export const RevRenderHistoryModal = ({
@@ -25,13 +31,65 @@ export const RevRenderHistoryModal = ({
   onClose,
   runs,
   initialIndex,
+  leadId,
+  onDeleteSuccess,
 }: RevRenderHistoryModalProps) => {
   const { colors, isDark } = useTheme();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [deleteVisible, setDeleteVisible] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     setCurrentIndex(initialIndex);
   }, [initialIndex, visible]);
+
+  useEffect(() => {
+    if (visible && runs.length === 0) {
+      onClose();
+    }
+  }, [runs, visible]);
+
+  useEffect(() => {
+    if (currentIndex >= runs.length) {
+      setCurrentIndex(Math.max(0, runs.length - 1));
+    }
+  }, [runs, currentIndex]);
+
+  const handleDeletePress = () => {
+    setDeleteReason('');
+    setDeleteVisible(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!currentRun?.runId && !currentRun?._id) return;
+    const runId = currentRun.runId || currentRun._id;
+    setIsDeleting(true);
+    try {
+      await LeadService.deleteRevRenderRun(runId, { reason: deleteReason });
+      
+      if (onDeleteSuccess) {
+        onDeleteSuccess();
+      }
+
+      if (runs.length <= 1) {
+        onClose();
+      } else {
+        setCurrentIndex((prev) => {
+          if (prev >= runs.length - 1) {
+            return Math.max(0, runs.length - 2);
+          }
+          return prev;
+        });
+      }
+      setDeleteVisible(false);
+      setDeleteReason('');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to delete render.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const screenWidth = Dimensions.get('window').width;
   const imageWidth = screenWidth - 40;
@@ -127,7 +185,14 @@ export const RevRenderHistoryModal = ({
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>Render #{runs.length - currentIndex}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.headerTitle}>Render #{runs.length - currentIndex}</Text>
+                {(currentRun?.runId || currentRun?._id) && (
+                  <TouchableOpacity onPress={handleDeletePress} style={{ marginLeft: 12 }}>
+                    <Icon name="trash-can-outline" size={22} color="#FF5630" />
+                  </TouchableOpacity>
+                )}
+              </View>
               <View style={styles.statusRow}>
                 <Icon name="check-circle" size={14} color="#72BD00" />
                 <Text style={styles.statusText}>Rendered</Text>
@@ -228,6 +293,50 @@ export const RevRenderHistoryModal = ({
               <Text style={styles.footerCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Delete Confirmation Modal */}
+          <Modal visible={deleteVisible} transparent animationType="fade">
+            <View style={styles.deleteOverlay}>
+              <View style={[styles.deleteContainer, { backgroundColor: isDark ? '#1C252E' : 'white' }]}>
+                <View style={styles.alertIconBg}>
+                  <Icon name="alert-outline" size={32} color="#FF5630" />
+                </View>
+                <Text style={[styles.deleteTitle, { color: isDark ? 'white' : '#1C252E' }]}>Delete render?</Text>
+                <Text style={styles.deleteDesc}>
+                  This render will be removed from your gallery. Please enter a short reason for your records.
+                </Text>
+                <TextInput
+                  style={[styles.reasonInput, { color: isDark ? 'white' : '#1C252E', borderColor: colors.border }]}
+                  placeholder="Reason for deletion"
+                  placeholderTextColor="#919EAB"
+                  value={deleteReason}
+                  onChangeText={setDeleteReason}
+                  multiline
+                  maxLength={2000}
+                />
+                <View style={styles.deleteActions}>
+                  <TouchableOpacity
+                    onPress={() => setDeleteVisible(false)}
+                    disabled={isDeleting}
+                    style={[styles.deleteBtnCancel, { borderColor: colors.border }]}
+                  >
+                    <Text style={[styles.btnTextCancel, { color: isDark ? 'white' : '#1C252E' }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleDeleteConfirm}
+                    disabled={isDeleting || !deleteReason.trim()}
+                    style={[styles.deleteBtnConfirm, { opacity: (isDeleting || !deleteReason.trim()) ? 0.6 : 1 }]}
+                  >
+                    {isDeleting ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text style={styles.btnTextConfirm}>Delete</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
         </View>
       </GestureHandlerRootView>
     </Modal>
@@ -354,6 +463,81 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   footerCloseText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deleteOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  deleteContainer: {
+    width: '100%',
+    maxWidth: 320,
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+  },
+  alertIconBg: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 86, 48, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deleteTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  deleteDesc: {
+    color: '#637381',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  reasonInput: {
+    width: '100%',
+    height: 80,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    textAlignVertical: 'top',
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  deleteActions: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  deleteBtnCancel: {
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteBtnConfirm: {
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#FF5630',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnTextCancel: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  btnTextConfirm: {
     color: 'white',
     fontSize: 14,
     fontWeight: '600',

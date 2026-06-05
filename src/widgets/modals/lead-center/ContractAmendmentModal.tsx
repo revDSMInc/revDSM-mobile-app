@@ -19,6 +19,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
 
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AmendmentChange {
@@ -40,6 +41,7 @@ interface ContractAmendmentModalProps {
   defaultEmail?: string;
   customerFirstName?: string;
   customerLastName?: string;
+  draftId?: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -49,30 +51,7 @@ function formatValue(v: any): string {
   return String(v);
 }
 
-const formatPhoneNumber = (text: string) => {
-  let cleaned = text.replace(/\D/g, '');
-  if (cleaned.length === 11 && cleaned.startsWith('1')) {
-    cleaned = cleaned.slice(1);
-  }
-  if (cleaned.length > 10) {
-    cleaned = cleaned.slice(-10);
-  }
-  
-  const match = cleaned.match(/^(\d{0,3})(\d{0,3})(\d{0,4})$/);
-  if (!match) return text;
-  
-  const [, p1, p2, p3] = match;
-  if (cleaned.length > 6) {
-    return `(${p1}) ${p2}-${p3}`;
-  }
-  if (cleaned.length > 3) {
-    return `(${p1}) ${p2}`;
-  }
-  if (cleaned.length > 0) {
-    return `(${p1}`;
-  }
-  return '';
-};
+
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -88,6 +67,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   defaultEmail = '',
   customerFirstName = '',
   customerLastName = '',
+  draftId = null,
 }) => {
   const { colors, isDark } = useTheme();
 
@@ -166,15 +146,15 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   const publicLink = useMemo(() => {
     if (!leadId) return '';
     let base: string = ENV.API_URL || '';
-    
+
     // Clean up trailing slash
     if (base.endsWith('/')) {
       base = base.slice(0, -1);
     }
-    
+
     // Map backend server URL to its corresponding web app frontend client URL
     if (base.includes('dev-api.revdsm.com')) {
-      base = 'https://dev.np.revdsm.com';
+      base = 'https://dev-sales.revdsm.com';
     } else if (base.includes('staging-api.revdsm.com')) {
       base = 'https://staging-app.revdsm.com';
     } else if (base.includes('api.revdsm.com')) {
@@ -183,7 +163,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
       // General regex fallback: replace -api with -app or remove api prefix
       base = base.replace('-api', '-app').replace('api.', 'app.').replace('/api', '');
     }
-    
+
     return `${base}/lead-drafts/${encodeURIComponent(leadId)}`;
   }, [leadId]);
 
@@ -202,11 +182,26 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     [publicLink, customerFirstName, customerLastName]
   );
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  /** Formats only the local 10-digit part as (XXX) XXX-XXXX, no +1 prefix. */
+  const formatLocalPhone = (text: string): string => {
+    const digits = text.replace(/\D/g, '').slice(-10).substring(0, 10);
+    if (!digits) return '';
+    if (digits.length <= 3) return `(${digits}`;
+    if (digits.length <= 6) return `(${digits.substring(0, 3)}) ${digits.substring(3)}`;
+    return `(${digits.substring(0, 3)}) ${digits.substring(3, 6)}-${digits.substring(6)}`;
+  };
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleOpenSend = (mode: SendMode) => {
     setSendView(mode);
-    const defaultValue = mode === 'sms' ? defaultPhone : defaultEmail;
-    setSendTo(mode === 'sms' ? formatPhoneNumber(defaultValue) : defaultValue);
+    if (mode === 'sms') {
+      // Strip country code and format only the local part
+      const digits = defaultPhone.replace(/\D/g, '').replace(/^1/, '').slice(-10);
+      setSendTo(formatLocalPhone(digits));
+    } else {
+      setSendTo(defaultEmail);
+    }
     setSendSubject('Contract Amendment Signature Required');
   };
 
@@ -241,6 +236,15 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
           leadId,
         });
       }
+
+      if (draftId) {
+        try {
+          await LeadService.updateLeadDraft(draftId, { status: 'pending' });
+        } catch (draftErr) {
+          console.warn('Failed to update draft status to pending:', draftErr);
+        }
+      }
+
       Alert.alert(
         'Sent',
         sendView === 'sms' ? 'Text message sent successfully.' : 'Email sent successfully.'
@@ -280,7 +284,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   // ── Send sub-modal ─────────────────────────────────────────────────────────
   if (visible && sendView) {
     const cleanDigits = sendTo.replace(/\D/g, '');
-    const canSend = sendView === 'sms' ? cleanDigits.length >= 10 : sendTo.trim().length > 0;
+    const canSend = sendView === 'sms' ? cleanDigits.length === 10 : sendTo.trim().length > 0;
 
     return (
       <Modal visible animationType="slide" transparent onRequestClose={() => setSendView(null)}>
@@ -319,11 +323,27 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
                     color="#637381"
                     style={{ marginRight: 8 }}
                   />
+                  {sendView === 'sms' && (
+                    <Text
+                      style={[
+                        styles.inputText,
+                        {
+                          color: isDark ? '#FFFFFF80' : '#637381',
+                          flex: 0,
+                          fontWeight: '700',
+                          marginRight: 4,
+                          includeFontPadding: false,
+                        },
+                      ]}
+                    >
+                      +1
+                    </Text>
+                  )}
                   <TextInput
                     value={sendTo}
                     onChangeText={(text) => {
                       if (sendView === 'sms') {
-                        setSendTo(formatPhoneNumber(text));
+                        setSendTo(formatLocalPhone(text));
                       } else {
                         setSendTo(text);
                       }

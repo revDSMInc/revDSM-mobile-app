@@ -108,6 +108,7 @@ export default function LeadsPage() {
     }
   }, [route.params?.openChatId, leads]);
 
+  // ── Location: permission + watchPosition (kept for movement updates) ──────
   React.useEffect(() => {
     let watchId: number | undefined;
     let cancelled = false;
@@ -127,21 +128,32 @@ export default function LeadsPage() {
           );
           if (granted !== PermissionsAndroid.RESULTS.GRANTED || cancelled) return;
         } else {
-          // Check existing status before requesting to avoid the iOS 17+ main-thread warning
           const currentAuth = await Geolocation.requestAuthorization('whenInUse');
           if (currentAuth !== 'granted' || cancelled) return;
         }
 
+        // Web parity: always get a fresh fix immediately (maximumAge:0).
+        // watchPosition with distanceFilter:20 never fires when the rep is
+        // already standing at the lead — this one-shot call mirrors what the
+        // web does with getCurrentPosition({ maximumAge: 0 }) per card.
+        Geolocation.getCurrentPosition(
+          (pos) => { if (!cancelled) setUserLocation(pos.coords); },
+          (err) => console.warn('[Location] Initial fix error:', err),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+
+        // Keep the watch running for ongoing movement updates
         watchId = Geolocation.watchPosition(
           (pos) => {
             if (!cancelled) setUserLocation(pos.coords);
           },
-          (err) => console.warn('Location watch error', err),
+          (err) => console.warn('[Location] Watch error:', err),
           {
             enableHighAccuracy: true,
-            distanceFilter: 20, // Increased: only update after 20m movement
-            interval: 10000, // Android: poll every 10s instead of 5s
-            fastestInterval: 5000, // Android: minimum interval
+            distanceFilter: 0,   // fire immediately on mount, then on every position event
+            interval: 10000,
+            fastestInterval: 5000,
+            // Note: maximumAge is NOT valid on GeoWatchOptions — only on getCurrentPosition
             forceRequestLocation: false,
             showLocationDialog: false,
           }
@@ -157,6 +169,28 @@ export default function LeadsPage() {
       if (watchId !== undefined) Geolocation.clearWatch(watchId);
     };
   }, []);
+
+  // ── Web parity: on every focus (e.g. returning from LeadCenter) —
+  // 1. fresh GPS fix (maximumAge:0) so isInRange is never stale
+  // 2. refresh() so workflowState in the list matches what LeadCenter changed
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+
+      // Fresh GPS fix — mirrors web's getCurrentPosition({ maximumAge: 0 }) per card
+      Geolocation.getCurrentPosition(
+        (pos) => { if (!cancelled) setUserLocation(pos.coords); },
+        (err) => console.warn('[Location] Focus fix error:', err),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+
+      // Re-fetch leads so workflowState (resume/preview/complete) is in sync
+      // with whatever changed in the LeadCenter (footstep) session
+      refresh().catch((err) => console.warn('[Leads] Focus refresh error:', err));
+
+      return () => { cancelled = true; };
+    }, [refresh])
+  );
 
   const filteredLeads = useMemo(() => {
     if (!leads) return [];

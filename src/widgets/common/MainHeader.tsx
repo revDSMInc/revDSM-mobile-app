@@ -9,8 +9,10 @@ import { ChatThreadsManager } from './ChatThreadsManager';
 import { useNavigation } from '@react-navigation/native';
 import { LeadService } from '../../services/api/leads';
 import Logo from '../../assets/svgs/light-logo';
+import { ENV } from '../../config/env';
 
 interface HeaderProps {
+
   onNavigate?: (route: any) => void;
   onFilterPress?: () => void;
   onListPress?: () => void;
@@ -50,7 +52,7 @@ export function Header({
     }
 
     let filePath = '';
-    let bucketName = 'np-revdsm-staging';
+    let bucketName = ENV.S3_BUCKET;
 
     if (typeof pic === 'string') {
       filePath = pic;
@@ -58,6 +60,7 @@ export function Header({
       filePath = pic.filePath;
       bucketName = pic.bucketName || bucketName;
     }
+
 
     if (!filePath) {
       setResolvedAvatarUrl(null);

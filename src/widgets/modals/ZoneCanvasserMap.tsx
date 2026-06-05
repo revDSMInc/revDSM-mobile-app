@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../common/MainHeader';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
@@ -71,27 +71,35 @@ export default function ZoneCanvasserMap({
 
     await z.saveMapStateForAppointment();
     z.setSubmittedLeadPopupOpen(false);
-    onClose();
-    navigation.navigate('LeadCenter', {
-      lead: targetLead,
-      fromZoneCanvasser: true,
-      appointmentStarted: true,
-    });
+    setTimeout(() => {
+      onClose();
+      setTimeout(() => {
+        navigation.navigate('LeadCenter', {
+          lead: targetLead,
+          fromZoneCanvasser: true,
+          appointmentStarted: true,
+        });
+      }, 400);
+    }, 300);
   };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <SafeAreaView
-        className="flex-1"
-        style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
-      >
+      <SafeAreaProvider>
+        <SafeAreaView
+          className="flex-1"
+          style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
+        >
         <Header
           onFilterPress={() => z.setSearchModalVisible(true)}
           onNavigate={(route: string) => {
             if (route === 'Leads') {
               onClose();
             } else {
-              navigation.navigate(route);
+              onClose();
+              setTimeout(() => {
+                navigation.navigate(route);
+              }, 400);
             }
           }}
         />
@@ -196,7 +204,8 @@ export default function ZoneCanvasserMap({
           onGoBackEdit={z.handleGoBackEdit}
           onStartAppointment={handleStartAppointment}
         />
-      </SafeAreaView>
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

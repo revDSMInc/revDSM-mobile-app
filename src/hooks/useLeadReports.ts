@@ -6,8 +6,10 @@ import { FlashMessage } from '../config/message';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
 import { downloadPdfToDevice } from '../utils/download-utils';
+import { ENV } from '../config/env';
 
 export interface RiskJob {
+
   jobId: string;
   progress: number;
   status: string;
@@ -36,7 +38,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     try {
       console.log('[Reports] Calling multiple secure URL API...');
       const filePaths = reports.map((r: any) => ({
-        bucketName: r.bucketName || 'np-revdsm-staging',
+        bucketName: r.bucketName || ENV.S3_BUCKET,
         filePath: r.reportPath,
       }));
 
