@@ -355,7 +355,7 @@ export const CalculatorSummary = ({
         >
           <View className="px-5 py-6">
             <View
-              className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500 ' : 'border-border'
+              className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500' : 'border-border'
                 }`}
             >
               <View className="flex-row items-center justify-between mb-6">
@@ -379,23 +379,9 @@ export const CalculatorSummary = ({
                   <Text className="text-sm font-medium text-text-primary">Payment Method</Text>
                   <View className="flex-row items-center gap-2">
                     <Text className="text-xs text-text-secondary">Set as Default</Text>
-                    <TouchableOpacity
-                      onPress={() => setIsDefaultPayment(prev => !prev)}
-                      activeOpacity={0.8}
-                      style={{
-                        width: 36, height: 20,
-                        borderRadius: 10,
-                        backgroundColor: isDefaultPayment ? '#22C55E' : '#D1D5DB',
-                        justifyContent: 'center',
-                        paddingHorizontal: 3,
-                      }}
-                    >
-                      <View style={{
-                        width: 14, height: 14, borderRadius: 7,
-                        backgroundColor: '#FFFFFF',
-                        alignSelf: isDefaultPayment ? 'flex-end' : 'flex-start',
-                      }} />
-                    </TouchableOpacity>
+                    <View className="w-8 h-5 bg-green-500 rounded-full items-end justify-center px-1">
+                      <View className="w-3 h-3 bg-white rounded-full" />
+                    </View>
                   </View>
                 </View>
                 <TouchableOpacity
