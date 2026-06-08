@@ -6,6 +6,269 @@ import JobService from '../../../services/api/JobService';
 import { Section, SubHeader, InputField } from './SharedElements';
 import { pricing } from '../../../utils/calculator/pricing-data';
 
+const CATEGORY_STYLES: Record<string, { color: string; icon: string; bg: string }> = {
+  Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+  LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+  Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+  Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
+  'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+  Miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
+};
+
+const CATEGORY_ORDER = [
+  'Gutters', 'LeafFilter', 'Soffit', 'Fascia', 'Lighting', 'Additional Services', 'Miscellaneous',
+];
+
+export const LockedCalculatorView = ({
+  inputs, extras, results, active, lead, onClose, isDark, colors, isAutoSaving, lastUpdatedAt,
+  showWarning = true,
+}: any) => {
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
+
+  const rolloutEndPrice = Number(active?.price) || 0;
+
+  /* ── Derived data ── */
+  const categoryCounts: Record<string, number> = {};
+  results.items.forEach((item: any) => {
+    const cat = item.category || 'Additional Services';
+    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+  });
+
+  const uniqueCategories: string[] = (
+    Array.from(new Set(results.items.map((i: any) => i.category || 'Additional Services')))
+  ).sort((a: any, b: any) => {
+    const ia = CATEGORY_ORDER.indexOf(a);
+    const ib = CATEGORY_ORDER.indexOf(b);
+    return (ia > -1 ? ia : 999) - (ib > -1 ? ib : 999);
+  }) as string[];
+
+  const sortedItems = [...results.items].sort((a: any, b: any) => {
+    const ia = CATEGORY_ORDER.indexOf(a.category || 'Additional Services');
+    const ib = CATEGORY_ORDER.indexOf(b.category || 'Additional Services');
+    return (ia > -1 ? ia : 999) - (ib > -1 ? ib : 999);
+  });
+
+  const visibleItems = selectedCat
+    ? sortedItems.filter((i: any) => (i.category || 'Additional Services') === selectedCat)
+    : sortedItems;
+
+  const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+  const calcName =
+    active?.name && active.name !== '.'
+      ? active.name
+      : lead?.customerDetails?.firstName
+        ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
+        : lead?.title || 'Calculator';
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 48 }}
+      >
+        {/* ── Top header: back button + lead name ── */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={{
+              marginRight: 10, width: 34, height: 34,
+              borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8,
+              alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <Feather name="arrow-left" size={14} color={isDark ? colors.text : colors.textSecondary} />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '900', color: '#1C252E' }} numberOfLines={1}>
+              {lead?.customerDetails?.firstName
+                ? `${lead.customerDetails.firstName} ${lead.customerDetails.lastName}`
+                : lead?.title || 'Lead Center'}
+              <Text style={{ fontSize: 15, fontWeight: '900', color: '#1C252E' }}>
+                {' '}- {lead?.leadTime || ''} Lead
+              </Text>
+            </Text>
+            {isAutoSaving ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                <ActivityIndicator size={8} color="#4CBB17" />
+                <Text style={{ fontSize: 10, fontWeight: '900', color: '#16A34A', marginLeft: 4 }}>Syncing...</Text>
+              </View>
+            ) : lastUpdatedAt ? (
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 2 }}>
+                Last updated at {lastUpdatedAt}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {/* ── Warning Banner (hidden when opened from Summary) ── */}
+        {showWarning && (
+          <View style={{
+            backgroundColor: '#FFFBEB',
+            borderWidth: 1, borderColor: '#FDE68A',
+            borderRadius: 14, padding: 14, marginBottom: 14,
+            flexDirection: 'row', alignItems: 'center',
+          }}>
+            <Ionicons name="lock-closed" size={16} color="#D97706" style={{ marginRight: 10 }} />
+            <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#92400E', lineHeight: 18 }}>
+              Rollout price confirmed — this calculator is locked and cannot be edited. You can duplicate job tab or create new for easy editing for new job scope.
+            </Text>
+          </View>
+        )}
+
+        {/* ── ONE single container wrapping name + pills + items ── */}
+        <View style={{
+          backgroundColor: '#FFFFFF',
+          borderWidth: 1.5,
+          borderColor: '#4CBB17',
+          borderRadius: 20,
+          overflow: 'hidden',
+          marginBottom: 16,
+        }}>
+          {/* Calculator name */}
+          <View style={{ paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
+            <Text style={{ fontSize: 20, fontWeight: '900', color: '#1C252E' }}>
+              {calcName}
+            </Text>
+          </View>
+
+          {/* Category filter pills — wrapping (no horizontal scroll) */}
+          <View style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            paddingHorizontal: 14,
+            paddingBottom: 14,
+            gap: 8,
+          }}>
+            {uniqueCategories.map((cat: string) => {
+              const s = CATEGORY_STYLES[cat] || { color: '#637381', icon: 'list', bg: '#F4F6F8' };
+              const isActive = selectedCat === cat;
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => setSelectedCat(isActive ? null : cat)}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingHorizontal: 10, paddingVertical: 5,
+                    borderRadius: 20,
+                    backgroundColor: isActive ? s.color : s.bg,
+                  }}
+                >
+                  <Ionicons name={s.icon} size={11} color={isActive ? '#FFF' : s.color} style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: isActive ? '#FFF' : s.color }}>
+                    {cat} {categoryCounts[cat]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Flat item rows — all inside the same container, divided by thin lines */}
+          {visibleItems.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: 28 }}>
+              <Ionicons name="cube-outline" size={32} color="#CBD5E1" />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginTop: 8 }}>
+                No items in this category
+              </Text>
+            </View>
+          ) : (
+            visibleItems.map((item: any, i: number) => {
+              const s = CATEGORY_STYLES[item.category] || { color: '#637381', icon: 'list', bg: '#F4F6F8' };
+              return (
+                <View key={i}>
+                  {/* Top divider before each item (replaces individual borders) */}
+                  <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingHorizontal: 18, paddingVertical: 13,
+                  }}>
+                    {/* Circular icon */}
+                    <View style={{
+                      width: 38, height: 38, borderRadius: 19,
+                      backgroundColor: s.bg,
+                      alignItems: 'center', justifyContent: 'center',
+                      marginRight: 14,
+                    }}>
+                      <Ionicons name={s.icon} size={18} color={s.color} />
+                    </View>
+                    {/* Quantity + label */}
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
+                      <Text style={{ fontWeight: '900' }}>{item.value}{item.unit || "'"}</Text>
+                      {'  '}{item.label}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
+          {/* Bottom padding inside container */}
+          <View style={{ height: 8 }} />
+        </View>
+
+        {/* ── Pricing section — scrollable at the bottom, NOT fixed ── */}
+        {/* COST / LIST / TOTAL boxes */}
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+          {[
+            { label: 'COST', value: results.price50, highlight: false },
+            { label: 'LIST', value: results.price65, highlight: false },
+            { label: 'TOTAL', value: results.price100, highlight: true },
+          ].map((tier, i) => (
+            <View
+              key={i}
+              style={{
+                flex: 1, alignItems: 'center', paddingVertical: 12,
+                borderRadius: 14, borderWidth: 1,
+                backgroundColor: tier.highlight ? '#DCFCE7' : '#F8FAFC',
+                borderColor: tier.highlight ? '#86EFAC' : '#E2E8F0',
+              }}
+            >
+              <Text style={{
+                fontSize: 9, fontWeight: '900', letterSpacing: 1, marginBottom: 4,
+                color: tier.highlight ? '#15803D' : '#94A3B8',
+              }}>
+                {tier.label}
+              </Text>
+              <Text style={{
+                fontSize: 15, fontWeight: '900',
+                color: tier.highlight ? '#15803D' : '#1C252E',
+              }}>
+                {fmt(tier.value)}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Rollout End Price + LOCKED badge */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          backgroundColor: '#F0FDF4', borderRadius: 14,
+          paddingHorizontal: 16, paddingVertical: 12,
+          borderWidth: 1, borderColor: '#86EFAC',
+        }}>
+          <View>
+            <Text style={{ fontSize: 9, fontWeight: '900', color: '#15803D', letterSpacing: 1, marginBottom: 2 }}>
+              Rollout End Price
+            </Text>
+            <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>
+              {rolloutEndPrice > 0 ? fmt(rolloutEndPrice) : '—'}
+            </Text>
+          </View>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center',
+            backgroundColor: '#DCFCE7', paddingHorizontal: 14, paddingVertical: 7,
+            borderRadius: 20, borderWidth: 1, borderColor: '#86EFAC',
+          }}>
+            <Ionicons name="lock-closed" size={12} color="#15803D" style={{ marginRight: 5 }} />
+            <Text style={{ fontSize: 12, fontWeight: '900', color: '#15803D', letterSpacing: 0.5 }}>LOCKED</Text>
+          </View>
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
 export const CalculatorForm = ({
   inputs,
   extras,
@@ -75,6 +338,24 @@ export const CalculatorForm = ({
     'lightingElectricalOutlet',
   ].some((k) => Number(extras[k]) > 0);
   const hasAdditionalData = Number(inputs.extraLabor) > 0 || Number(inputs.ckToInstallers) > 0;
+
+  /* ── If locked, render the read-only locked view ── */
+  if (readOnly) {
+    return (
+      <LockedCalculatorView
+        inputs={inputs}
+        extras={extras}
+        results={results}
+        active={active}
+        lead={lead}
+        onClose={onClose}
+        isDark={isDark}
+        colors={colors}
+        isAutoSaving={isAutoSaving}
+        lastUpdatedAt={lastUpdatedAt}
+      />
+    );
+  }
 
   return (
     <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false}>

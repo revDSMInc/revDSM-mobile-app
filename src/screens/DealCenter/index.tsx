@@ -425,70 +425,7 @@ export default function LFCalculator({ route }: any) {
             className="px-5 py-4 border-t border-border bg-card relative"
             style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10, position: 'relative' }}
           >
-            {isFullPackage && (
-              <TouchableOpacity
-                onPress={() => setShowTooltip(!showTooltip)}
-                style={{
-                  position: 'absolute',
-                  top: -48,
-                  right: 20,
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: '#00B8D9',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: 0.2,
-                  shadowRadius: 6,
-                  elevation: 5,
-                  zIndex: 2000,
-                }}
-              >
-                <Ionicons name="information-circle-outline" size={24} color="white" />
-              </TouchableOpacity>
-            )}
 
-            {isFullPackage && showTooltip && (
-              <View
-                style={{
-                  position: 'absolute',
-                  bottom: 60,
-                  left: 20,
-                  right: 20,
-                  backgroundColor: 'white',
-                  borderRadius: 20,
-                  padding: 16,
-                  borderWidth: 1,
-                  borderColor: '#E5D9FF',
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 6 },
-                  shadowOpacity: 0.15,
-                  shadowRadius: 10,
-                  elevation: 10,
-                  zIndex: 2001,
-                }}
-              >
-                <View className="flex-row items-center justify-between mb-3">
-                  <View className="flex-row items-center">
-                    <Text style={{ fontSize: 18, marginRight: 8 }}>📦</Text>
-                    <Text className="text-sm font-black text-slate-800">
-                      Full Package Includes:
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setShowTooltip(false)} className="p-1">
-                    <Ionicons name="close" size={18} color="#94A3B8" />
-                  </TouchableOpacity>
-                </View>
-                <View className="gap-1 pl-1">
-                  <Text className="text-xs font-bold text-slate-600">• Gutter</Text>
-                  <Text className="text-xs font-bold text-slate-600">• Soffit</Text>
-                  <Text className="text-xs font-bold text-slate-600">• FWrap</Text>
-                  <Text className="text-xs font-bold text-slate-600">• (Versa OR VMax)</Text>
-                </View>
-              </View>
-            )}
 
             <View className="flex-row items-center justify-between">
               <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1 mr-4">
