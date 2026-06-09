@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import io, { Socket } from 'socket.io-client';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../../utils/storage';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { ENV } from '../../config/env';
@@ -22,9 +22,9 @@ export function ChatThreadsManager({ onNavigate }: Props) {
     if (!user) return;
 
     let socket: Socket;
-    const initSocket = async () => {
+    const initSocket = () => {
       try {
-        const token = await AsyncStorage.getItem('accessToken');
+        const token = Storage.getItem('accessToken');
         socket = io(ENV.API_URL, { auth: { token } });
         socketRef.current = socket;
 

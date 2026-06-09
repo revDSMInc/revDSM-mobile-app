@@ -32,6 +32,7 @@ interface RoofWaiverModalProps {
   loading?: boolean;
   onFinalUpload?: (pdfPath: string) => Promise<void>;
   uploading?: boolean;
+  prefilledData?: any;
 }
 
 import { useRoofWaiver } from '../../../hooks/useRoofWaiver';
@@ -46,6 +47,7 @@ export const RoofWaiverModal = ({
   loading,
   onFinalUpload,
   uploading,
+  prefilledData,
 }: RoofWaiverModalProps) => {
   const { colors } = useTheme();
 
@@ -62,7 +64,8 @@ export const RoofWaiverModal = ({
     currentPath,
     panResponder,
     handleFinalSubmit,
-  } = useRoofWaiver(lead, onSubmit, onFinalUpload, onClose);
+    submissionType,
+  } = useRoofWaiver(lead, onSubmit, onFinalUpload, onClose, prefilledData);
 
   const openSigPad = () => {
     setLivePaths([...savedPaths]);
@@ -142,9 +145,20 @@ export const RoofWaiverModal = ({
           <View style={[styles.header, { backgroundColor: colors.primary.main }]}>
             <Text style={styles.headerTitle}>Roof Waiver Form</Text>
             <TouchableOpacity onPress={onPaperFallback} style={styles.paperFallbackBtn}>
-              <Text style={styles.paperFallbackText}>Paper Fallback</Text>
+              <Text style={styles.paperFallbackText}>
+                {submissionType === 'paper' ? 'Rescan Paper' : 'Paper Fallback'}
+              </Text>
             </TouchableOpacity>
           </View>
+
+          {submissionType === 'paper' && (
+            <View style={{ backgroundColor: '#F0F9EB', paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#E1F3D8', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Icon name="check-circle" size={16} color="#72BD00" />
+              <Text style={{ color: '#67C23A', fontSize: 12, fontWeight: '600' }}>
+                Paper Fallback Mode: Prefilled from OCR scan.
+              </Text>
+            </View>
+          )}
 
           <ScrollView
             style={styles.body}

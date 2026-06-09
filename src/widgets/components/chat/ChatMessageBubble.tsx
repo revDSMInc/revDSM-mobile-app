@@ -928,14 +928,6 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
             <Animated.View style={[animatedStyle, { paddingVertical: isSameUser(currentMessage, previousMessage) ? 1 : 2, paddingHorizontal: 4, overflow: 'visible', flexShrink: 1, maxWidth: MAX_BUBBLE_WIDTH }]}>
               <TouchableOpacity
                 onLongPress={() => {
-                  if (isViewOnly) {
-                    if (onDisabledClick) {
-                      onDisabledClick();
-                    } else {
-                      Alert.alert('Info', 'You are not allowed to post in this channel.');
-                    }
-                    return;
-                  }
                   Vibration.vibrate(50);
                   setShowReactionBar(true);
                 }}
@@ -1443,11 +1435,11 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                 )}
               </View>
             </View>
-            {!isViewOnly && (
-              <View
-                className="rounded-2xl overflow-hidden shadow-2xl"
-                style={{ backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }}
-              >
+            <View
+              className="rounded-2xl overflow-hidden shadow-2xl"
+              style={{ backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }}
+            >
+              {!isViewOnly && (
                 <TouchableOpacity
                   onPress={() => {
                     onReply(msg);
@@ -1464,36 +1456,38 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                   </Text>
                   <Icon name="arrow-undo-outline" size={20} color={isDark ? '#aaa' : '#555'} />
                 </TouchableOpacity>
-                {fileType === 'text' && !isMsgVoice && !!msg.text && (
-                  <TouchableOpacity
-                    onPress={handleCopy}
-                    className="flex-row items-center justify-between px-5 py-3.5 border-b"
-                    style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+              )}
+              {fileType === 'text' && !isMsgVoice && !!msg.text && (
+                <TouchableOpacity
+                  onPress={handleCopy}
+                  className="flex-row items-center justify-between px-5 py-3.5 border-b"
+                  style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                >
+                  <Text
+                    className="font-semibold text-[15px]"
+                    style={{ color: isDark ? '#fff' : '#000' }}
                   >
-                    <Text
-                      className="font-semibold text-[15px]"
-                      style={{ color: isDark ? '#fff' : '#000' }}
-                    >
-                      Copy
-                    </Text>
-                    <Icon name="copy-outline" size={20} color={isDark ? '#aaa' : '#555'} />
-                  </TouchableOpacity>
-                )}
-                {primaryFile && (
-                  <TouchableOpacity
-                    onPress={saveFileToDevice}
-                    className="flex-row items-center justify-between px-5 py-3.5 border-b"
-                    style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                    Copy
+                  </Text>
+                  <Icon name="copy-outline" size={20} color={isDark ? '#aaa' : '#555'} />
+                </TouchableOpacity>
+              )}
+              {primaryFile && (
+                <TouchableOpacity
+                  onPress={saveFileToDevice}
+                  className="flex-row items-center justify-between px-5 py-3.5 border-b"
+                  style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                >
+                  <Text
+                    className="font-semibold text-[15px]"
+                    style={{ color: isDark ? '#fff' : '#000' }}
                   >
-                    <Text
-                      className="font-semibold text-[15px]"
-                      style={{ color: isDark ? '#fff' : '#000' }}
-                    >
-                      Download to Device
-                    </Text>
-                    <Icon name="download-outline" size={20} color={isDark ? '#aaa' : '#555'} />
-                  </TouchableOpacity>
-                )}
+                    Download to Device
+                  </Text>
+                  <Icon name="download-outline" size={20} color={isDark ? '#aaa' : '#555'} />
+                </TouchableOpacity>
+              )}
+              {!isViewOnly && (
                 <TouchableOpacity
                   onPress={() => {
                     onPin(msg);
@@ -1514,58 +1508,58 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                     color={isDark ? '#aaa' : '#555'}
                   />
                 </TouchableOpacity>
-                {msg.isEdited && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      onViewHistory(msg);
-                      setShowReactionBar(false);
-                    }}
-                    className="flex-row items-center justify-between px-5 py-3.5"
-                    style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+              )}
+              {msg.isEdited && (
+                <TouchableOpacity
+                  onPress={() => {
+                    onViewHistory(msg);
+                    setShowReactionBar(false);
+                  }}
+                  className="flex-row items-center justify-between px-5 py-3.5"
+                  style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                >
+                  <Text
+                    className="font-semibold text-[15px]"
+                    style={{ color: isDark ? '#fff' : '#000' }}
                   >
-                    <Text
-                      className="font-semibold text-[15px]"
-                      style={{ color: isDark ? '#fff' : '#000' }}
-                    >
-                      View History
-                    </Text>
-                    <Icon name="time-outline" size={20} color={isDark ? '#aaa' : '#555'} />
-                  </TouchableOpacity>
-                )}
-                {isMe && (
-                  <>
-                    {(() => {
-                      const now = new Date();
-                      const created = new Date(msg.createdAt);
-                      const diffInMinutes = (now.getTime() - created.getTime()) / (1000 * 60);
-                      const isUnder15Mins = diffInMinutes <= 15;
+                    View History
+                  </Text>
+                  <Icon name="time-outline" size={20} color={isDark ? '#aaa' : '#555'} />
+                </TouchableOpacity>
+              )}
+              {!isViewOnly && isMe && (
+                <>
+                  {(() => {
+                    const now = new Date();
+                    const created = new Date(msg.createdAt);
+                    const diffInMinutes = (now.getTime() - created.getTime()) / (1000 * 60);
+                    const isUnder15Mins = diffInMinutes <= 15;
 
-                      if (fileType === 'text' && !isMsgVoice && isUnder15Mins) {
-                        return (
-                          <TouchableOpacity
-                            onPress={() => {
-                              onEdit(msg);
-                              setShowReactionBar(false);
-                            }}
-                            className="flex-row items-center justify-between px-5 py-3.5"
-                            style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                    if (fileType === 'text' && !isMsgVoice && isUnder15Mins) {
+                      return (
+                        <TouchableOpacity
+                          onPress={() => {
+                            onEdit(msg);
+                            setShowReactionBar(false);
+                          }}
+                          className="flex-row items-center justify-between px-5 py-3.5"
+                          style={{ borderBottomColor: isDark ? '#2C2C2E' : '#F2F2F7' }}
+                        >
+                          <Text
+                            className="font-semibold text-[15px]"
+                            style={{ color: isDark ? '#fff' : '#000' }}
                           >
-                            <Text
-                              className="font-semibold text-[15px]"
-                              style={{ color: isDark ? '#fff' : '#000' }}
-                            >
-                              Edit
-                            </Text>
-                            <Icon name="create-outline" size={20} color={isDark ? '#aaa' : '#555'} />
-                          </TouchableOpacity>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </>
-                )}
-              </View>
-            )}
+                            Edit
+                          </Text>
+                          <Icon name="create-outline" size={20} color={isDark ? '#aaa' : '#555'} />
+                        </TouchableOpacity>
+                      );
+                    }
+                    return null;
+                  })()}
+                </>
+              )}
+            </View>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>

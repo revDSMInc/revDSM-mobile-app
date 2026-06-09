@@ -20,6 +20,7 @@ import ResetPasswordScreen from '../screens/auth/reset-password';
 import AuthenticatorOTPScreen from '../screens/auth/authenticator-otp';
 import JobBuilderScreen from '../screens/JobBuilder/index';
 import RevRenderScreen from '../screens/RevRender/index';
+import ImageAnnotationScreen from '../screens/ImageAnnotation/index';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -83,6 +84,11 @@ export type RootStackParamList = {
     onGenerate: (payload: any) => Promise<string | null>;
     onGenerateAll?: (payloads: any[]) => void;
   };
+  ImageAnnotation: {
+    selectedPhotos: any[];
+    lead: any;
+    onSaveSuccess?: () => void;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -127,6 +133,7 @@ export default function RootNavigator() {
           <Stack.Screen name="DealCenter" component={DealCenter} />
           <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
           <Stack.Screen name="RevRender" component={RevRenderScreen} />
+          <Stack.Screen name="ImageAnnotation" component={ImageAnnotationScreen} options={{ gestureEnabled: false }} />
         </>
       )}
     </Stack.Navigator>

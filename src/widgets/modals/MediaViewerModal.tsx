@@ -14,20 +14,29 @@ import {
   Animated,
   PanResponder,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../theme/ThemeProvider';
 import SafeBottomSpacer from '../../widgets/common/SafeBottomSpacer';
 
 const getNativeModules = () => {
   try {
+    const cameraRollModule = require('@react-native-camera-roll/camera-roll');
     return {
       Video: require('react-native-video').default,
       ReactNativeBlobUtil: require('react-native-blob-util').default,
-      CameraRoll: require('@react-native-camera-roll/camera-roll').CameraRoll,
+      CameraRoll: cameraRollModule.CameraRoll,
+      iosReadGalleryPermission: cameraRollModule.iosReadGalleryPermission,
+      iosRequestAddOnlyGalleryPermission: cameraRollModule.iosRequestAddOnlyGalleryPermission,
     };
-  } catch (e) {
-    return { Video: null, ReactNativeBlobUtil: null, CameraRoll: null };
+  } catch {
+    return {
+      Video: null,
+      ReactNativeBlobUtil: null,
+      CameraRoll: null,
+      iosReadGalleryPermission: null,
+      iosRequestAddOnlyGalleryPermission: null,
+    };
   }
 };
 
@@ -46,12 +55,12 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   onClose,
   mediaUri,
   mediaType,
-  fileName,
+  fileName: _fileName,
 }) => {
-  const { isDark } = useTheme();
+  useTheme();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const [paused] = useState(false);
   const videoRef = useRef<any>(null);
 
   // ─── Animation & Swipe ──────────────────────────────────────────────────────
@@ -87,7 +96,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
 
   useEffect(() => {
     if (isVisible) translateY.setValue(0);
-  }, [isVisible]);
+  }, [isVisible, translateY]);
 
   // ─── Permissions ────────────────────────────────────────────────────────────
   const hasAndroidPermission = async () => {
@@ -103,7 +112,12 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   };
 
   const saveToGallery = async () => {
-    const { ReactNativeBlobUtil, CameraRoll } = getNativeModules();
+    const {
+      ReactNativeBlobUtil,
+      CameraRoll,
+      iosReadGalleryPermission,
+      iosRequestAddOnlyGalleryPermission,
+    } = getNativeModules();
     if (!ReactNativeBlobUtil || !CameraRoll) return;
 
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
@@ -118,14 +132,34 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
       }
     }
 
+    if (Platform.OS === 'ios') {
+      if (iosReadGalleryPermission && iosRequestAddOnlyGalleryPermission) {
+        try {
+          const status = await iosReadGalleryPermission('addOnly');
+          if (status !== 'granted' && status !== 'limited') {
+            const requestStatus = await iosRequestAddOnlyGalleryPermission();
+            if (requestStatus !== 'granted' && requestStatus !== 'limited') {
+              Alert.alert('Permission Denied', 'Photo Library permission is required to save photos.');
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('Failed to check/request iOS photo library permission:', error);
+        }
+      }
+    }
+
     setLoading(true);
     try {
       const ext = mediaType === 'image' ? 'jpg' : 'mp4';
       const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/save_${Date.now()}.${ext}`;
       const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri);
-      await CameraRoll.saveAsset(res.path(), { type: mediaType === 'image' ? 'photo' : 'video' });
+      const rawPath = res.path();
+      const saveTag = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
+      await CameraRoll.saveAsset(saveTag, { type: mediaType === 'image' ? 'photo' : 'video' });
       Alert.alert('Success', 'Saved to gallery!');
-    } catch {
+    } catch (err) {
+      console.error('Save failed:', err);
       Alert.alert('Error', 'Save failed');
     } finally {
       setLoading(false);

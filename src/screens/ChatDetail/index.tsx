@@ -433,6 +433,7 @@ export default function ChatDetailScreen() {
           {...composerProps}
           textInputProps={{
             ...composerProps.textInputProps,
+            accessibilityLabel: 'ChatInput',
             onChangeText: (text: string) => {
               composerProps.onTextChanged?.(text);
               handleComposerChange(text);
@@ -768,7 +769,7 @@ export default function ChatDetailScreen() {
           </Text>
         </View>
       ) : Platform.OS === 'ios' ? (
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={64}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 64}>
           <View style={{ flex: 1, overflow: 'visible' }}>
             <GiftedChatAny
               ref={chatRef}

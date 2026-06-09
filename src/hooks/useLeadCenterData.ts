@@ -131,18 +131,31 @@ export const useLeadCenterData = (
 
           let updatedSecureData: any[] = [];
           if (newPhotos.length > 0) {
-            const filePaths = newPhotos.map((p: any) => ({
-              bucketName: p.bucketName || ENV.S3_BUCKET,
-              filePath: p.s3url,
-            }));
-            const secureRes = await LeadService.getSecureUrls(filePaths);
-            updatedSecureData = secureRes.data?.data || secureRes.data || [];
+            try {
+              const filePaths = newPhotos.map((p: any) => ({
+                bucketName: p.bucketName || ENV.S3_BUCKET,
+                filePath: p.s3url,
+              }));
+              const secureRes = await LeadService.getSecureUrls(filePaths);
+              updatedSecureData = secureRes.data?.data || secureRes.data || [];
+            } catch (err) {
+              console.warn('Failed to fetch secure URLs from API, using fallback S3 URLs:', err);
+            }
           }
 
           const map: Record<string, any[]> = {};
           lead.salesPhotos.forEach((photo: any) => {
             const catName = photo.category;
-            if (!map[catName]) map[catName] = [];
+
+            // Find category config case-insensitively by ID or name
+            const categoryConfig = IMAGE_CATEGORIES.find(
+              (c) => c.id.toLowerCase() === catName.toLowerCase() || c.name.toLowerCase() === catName.toLowerCase()
+            );
+
+            // Normalize key to categoryConfig.name (e.g. "Inspection" instead of "inspection")
+            const normalizedCatKey = categoryConfig ? categoryConfig.name : catName;
+
+            if (!map[normalizedCatKey]) map[normalizedCatKey] = [];
 
             // Try to find existing image data first
             let imageData = Object.values(existingMap)
@@ -150,13 +163,26 @@ export const useLeadCenterData = (
               .find((img) => img.s3url === photo.s3url);
 
             if (!imageData) {
-              const categoryConfig = IMAGE_CATEGORIES.find((c) => c.name === catName);
               let subIndex = -1;
               if (categoryConfig && photo.subcategory) {
+                // Try standard subcategories first
                 subIndex =
                   categoryConfig.subCategories?.findIndex(
                     (s) => s.id === photo.subcategory || s.name === photo.subcategory
                   ) ?? -1;
+
+                // Try cardGroups subcategories if not found
+                if (subIndex === -1 && categoryConfig.cardGroups) {
+                  for (const group of categoryConfig.cardGroups) {
+                    const foundIdx = group.subCategories?.findIndex(
+                      (s) => s.id === photo.subcategory || s.name === photo.subcategory
+                    ) ?? -1;
+                    if (foundIdx !== -1) {
+                      subIndex = foundIdx;
+                      break;
+                    }
+                  }
+                }
               }
 
               if (subIndex === -1) {
@@ -174,12 +200,12 @@ export const useLeadCenterData = (
                 uri: imageUri,
                 s3url: photo.s3url,
                 id: photo._id,
-                index: subIndex >= 0 ? subIndex : map[catName].length,
+                index: subIndex >= 0 ? subIndex : map[normalizedCatKey].length,
                 subcategory: photo.subcategory,
               };
             }
 
-            map[catName].push(imageData);
+            map[normalizedCatKey].push(imageData);
           });
           setSectionImages(map);
         } catch (error) {

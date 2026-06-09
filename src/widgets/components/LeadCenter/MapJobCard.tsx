@@ -105,14 +105,16 @@ export const MapJobCard = ({
 
         {/* Price & Rep Row */}
         <View className="flex-row gap-2 mt-3 mb-4">
-          <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
-            <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
-              Sales Rep
-            </Text>
-            <Text className="text-[14px] font-bold text-slate-700" numberOfLines={1}>
-              {job.userName || job.salesRepName || job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
-            </Text>
-          </View>
+          {isMyJob && (
+            <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
+              <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
+                Sales Rep
+              </Text>
+              <Text className="text-[14px] font-bold text-slate-700" numberOfLines={1}>
+                {job.userName || job.salesRepName || job.salesRep?.fullName || job.salesRep?.firstName || 'Unknown'}
+              </Text>
+            </View>
+          )}
           <View className="flex-1 bg-[#f8f9fa] rounded-[12px] p-2">
             <Text className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">
               Price

@@ -48,7 +48,7 @@ export const JobImageUploadModal = ({
     setLoading(false);
   };
 
-  const handlePickImage = async (useCamera: boolean) => {
+  const handlePickImage = (useCamera: boolean) => {
     const options = {
       mediaType: 'photo' as const,
       quality: 0.7 as PhotoQuality,
@@ -57,21 +57,24 @@ export const JobImageUploadModal = ({
       includeExtra: true,
     };
 
-    try {
-      const result = useCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    const handleResult = (result: any) => {
+      setTimeout(() => {
+        if (result.didCancel) return;
+        if (result.errorMessage) {
+          Alert.alert('Camera Error', result.errorMessage);
+          return;
+        }
 
-      if (result.didCancel) return;
-      if (result.errorMessage) {
-        Alert.alert('Camera Error', result.errorMessage);
-        return;
-      }
+        if (result.assets) {
+          setImages((prev) => [...prev, ...result.assets!]);
+        }
+      }, 0);
+    };
 
-      if (result.assets) {
-        setImages((prev) => [...prev, ...result.assets!]);
-      }
-    } catch (error) {
-      console.error('Image Picker Error:', error);
-      Alert.alert('Error', 'Failed to open camera or gallery');
+    if (useCamera) {
+      launchCamera(options, handleResult);
+    } else {
+      launchImageLibrary(options, handleResult);
     }
   };
 

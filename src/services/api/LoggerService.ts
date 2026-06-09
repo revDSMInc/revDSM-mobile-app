@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { ENV } from '../../config/env';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 
 export const logEvent = async (eventType: string, details: any = {}) => {
@@ -14,7 +14,7 @@ export const logEvent = async (eventType: string, details: any = {}) => {
 
   // Sync with web app: automatically attach leadId if missing and available in storage
   if (!meta.leadId) {
-    const storedLeadId = await AsyncStorage.getItem('leadId');
+    const storedLeadId = Storage.getItem('leadId');
     if (storedLeadId) {
       meta.leadId = storedLeadId;
     }

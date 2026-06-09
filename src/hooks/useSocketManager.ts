@@ -10,7 +10,7 @@
 
 import { useEffect } from 'react';
 import { useSelector } from 'react-redux';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../utils/storage';
 import { RootState } from '../redux/store';
 import SocketManager from '../services/SocketManager';
 
@@ -19,16 +19,15 @@ export function useSocketManager() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      // Token is stored in AsyncStorage by setSessionHeader() during login/init.
+      // Token is stored in MMKV by setSessionHeader() during login/init.
       // The Redux user object only holds profile data, not the token.
-      AsyncStorage.getItem('accessToken').then((token) => {
-        if (token) {
-          console.log('[useSocketManager] Authenticated — connecting global socket');
-          SocketManager.connect(token);
-        } else {
-          console.warn('[useSocketManager] Authenticated but no token in storage');
-        }
-      });
+      const token = Storage.getItem('accessToken');
+      if (token) {
+        console.log('[useSocketManager] Authenticated — connecting global socket');
+        SocketManager.connect(token);
+      } else {
+        console.warn('[useSocketManager] Authenticated but no token in storage');
+      }
     } else {
       // User logged out — disconnect the socket
       console.log('[useSocketManager] Not authenticated — disconnecting socket');

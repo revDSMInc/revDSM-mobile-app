@@ -78,19 +78,24 @@ export const AfterImageModal = ({
       }
     }
     const options = { mediaType: 'photo' as const, quality: 0.7 as const, selectionLimit: useCamera ? 1 : 0, saveToPhotos: true };
-    try {
-      const result = useCamera ? await launchCamera(options as any) : await launchImageLibrary(options as any);
-      if (result.didCancel) return;
-      if (result.errorCode) { FlashMessage.error(result.errorMessage || 'Failed to open camera/gallery'); return; }
-      if (result.assets && result.assets.length > 0) {
-        const picked = result.assets.map((asset, idx) => ({
-          uri: asset.uri, type: asset.type || 'image/jpeg',
-          name: asset.fileName || `after_${Date.now()}_${idx}.jpg`,
-        }));
-        setNewImages(prev => [...prev, ...picked]);
-      }
-    } catch (error) {
-      FlashMessage.error('An unexpected error occurred');
+    const handleResult = (result: any) => {
+      setTimeout(() => {
+        if (result.didCancel) return;
+        if (result.errorCode) { FlashMessage.error(result.errorMessage || 'Failed to open camera/gallery'); return; }
+        if (result.assets && result.assets.length > 0) {
+          const picked = result.assets.map((asset: any, idx: number) => ({
+            uri: asset.uri, type: asset.type || 'image/jpeg',
+            name: asset.fileName || `after_${Date.now()}_${idx}.jpg`,
+          }));
+          setNewImages(prev => [...prev, ...picked]);
+        }
+      }, 0);
+    };
+
+    if (useCamera) {
+      launchCamera(options as any, handleResult);
+    } else {
+      launchImageLibrary(options as any, handleResult);
     }
   };
 

@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { GiftedChat, IMessage, Send, InputToolbar, Composer, Message } from 'react-native-gifted-chat';
 import Icon from 'react-native-vector-icons/Ionicons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../../../utils/storage';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useAuth } from '../../../hooks/useAuth';
 import ChatService from '../../../services/api/ChatService';
@@ -212,7 +212,7 @@ export default function Chat({ onClose, lead }: Props) {
             await ChatService.addParticipant(activeId, currentUserId);
           }
 
-          const token = await AsyncStorage.getItem('accessToken');
+          const token = Storage.getItem('accessToken');
           if (token && mounted) {
             const socket = ChatService.connect(token, activeId);
             socketRef.current = socket;
@@ -538,6 +538,10 @@ export default function Chat({ onClose, lead }: Props) {
               renderComposer: (composerProps: any) => (
                 <Composer
                   {...composerProps}
+                  textInputProps={{
+                    ...composerProps.textInputProps,
+                    accessibilityLabel: 'ChatInput',
+                  }}
                   textInputStyle={{
                     color: isDark ? '#fff' : '#000',
                     fontSize: 15,

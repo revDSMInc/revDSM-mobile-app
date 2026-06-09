@@ -120,9 +120,8 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     setBuildingStatusOverrides({});
     fetchZones();
     handleGetCurrentLocation();
-    peekZoneMapState().then((saved) => {
-      if (saved) pendingRestoreRef.current = saved;
-    });
+    const saved = peekZoneMapState();
+    if (saved) pendingRestoreRef.current = saved;
   }, [visible, fetchZones, handleGetCurrentLocation]);
 
   const handleMapRegionChange = useCallback((region: Region) => {
@@ -140,14 +139,14 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
         latitudeDelta: 0.0922,
         longitudeDelta: 0.0421,
       };
-    await saveZoneMapState({
+    saveZoneMapState({
       latitude: region.latitude,
       longitude: region.longitude,
       latitudeDelta: region.latitudeDelta,
       longitudeDelta: region.longitudeDelta,
       buildingId: selectedBuilding.id,
     });
-    await markZoneCanvasserShouldReopen();
+    markZoneCanvasserShouldReopen();
   }, [selectedBuilding, initialRegion]);
 
   const allBuildings = useMemo(() => {
@@ -242,7 +241,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     let cancelled = false;
     (async () => {
       if (!pendingRestoreRef.current) {
-        pendingRestoreRef.current = await peekZoneMapState();
+        pendingRestoreRef.current = peekZoneMapState();
       }
       const saved = pendingRestoreRef.current;
       if (!saved) {
@@ -267,7 +266,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
       };
       mapRegionRef.current = region;
       pendingRestoreRef.current = null;
-      await clearZoneMapState();
+      clearZoneMapState();
       hasRestoredRef.current = true;
 
       setSelectedBuilding(building);

@@ -15,6 +15,8 @@
 		43360991809541B5836783B8 /* PublicSans-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = CDCD8CF8478240E48C7F7804 /* PublicSans-ExtraBold.ttf */; };
 		482C6395E8BCA9046941C418 /* libPods-revDSM_Sales.a in Frameworks */ = {isa = PBXBuildFile; fileRef = B2186A1F8F004CDDE1C82990 /* libPods-revDSM_Sales.a */; };
 		4B7394E262E938570DF7FED5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		52CA88BD2FD6D3890054DEBF /* UITextView+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */; };
+		52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */; };
 		60B4407C44E5461B87E537B7 /* PublicSans-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */; };
 		68A572B955B942D0AE0E05E4 /* PublicSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D39F2F44B2AB4F439F52EF18 /* PublicSans-Medium.ttf */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
@@ -31,6 +33,8 @@
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = revDSM_Sales/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		25DD889537424F1BAB509994 /* PublicSans-Black.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Black.ttf"; path = "../src/assets/fonts/PublicSans-Black.ttf"; sourceTree = "<group>"; };
 		2D8CB56EC0634351A0683404 /* PublicSans-SemiBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-SemiBold.ttf"; path = "../src/assets/fonts/PublicSans-SemiBold.ttf"; sourceTree = "<group>"; };
+		52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextField+DoneButton.m"; sourceTree = "<group>"; };
+		52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextView+DoneButton.m"; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = revDSM_Sales/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = revDSM_Sales/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		B2186A1F8F004CDDE1C82990 /* libPods-revDSM_Sales.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-revDSM_Sales.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -60,6 +64,7 @@
 		13B07FAE1A68108700A75B9A /* revDSM_Sales */ = {
 			isa = PBXGroup;
 			children = (
+				52CA88BC2FD6D3890054DEBF /* RNKeyboardToolbar */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -76,6 +81,15 @@
 				B2186A1F8F004CDDE1C82990 /* libPods-revDSM_Sales.a */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		52CA88BC2FD6D3890054DEBF /* RNKeyboardToolbar */ = {
+			isa = PBXGroup;
+			children = (
+				52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */,
+				52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */,
+			);
+			path = RNKeyboardToolbar;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -235,9 +249,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -274,9 +292,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-revDSM_Sales/Pods-revDSM_Sales-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -290,6 +312,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				52CA88BD2FD6D3890054DEBF /* UITextView+DoneButton.m in Sources */,
+				52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

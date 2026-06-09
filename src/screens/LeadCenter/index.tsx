@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../../utils/storage';
 import { logLeadSessionPause } from '../../utils/lead-activity-log';
 import { ENV } from '../../config/env';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -34,10 +34,10 @@ import { resolveS3Url } from '../../utils/s3-utils';
 import { getRawPhoneNumber } from '../../utils/phone-util';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
-import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { RiskReportModal } from '../../widgets/modals/lead-center/RiskReportModal';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { MapSelectionModal } from '../../widgets/common/modal/MapSelectionModal';
+import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { useAuth } from '../../hooks/useAuth';
 import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSection';
 import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
@@ -194,6 +194,77 @@ export default function LeadCenterPage() {
   const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
   const [showPhoneOptions, setShowPhoneOptions] = useState(false);
   const [showEmailOptions, setShowEmailOptions] = useState(false);
+
+  const [activeFallbackForm, setActiveFallbackForm] = useState<'consent' | 'roof_waiver' | null>(null);
+  const [prefilledOcrData, setPrefilledOcrData] = useState<any>(null);
+
+  const parseOcrData = (ocrResult: any) => {
+    const dataList = ocrResult?.data;
+    const getFromData = (label: string) => {
+      if (Array.isArray(dataList)) {
+        const item = dataList.find((i: any) => i?.label?.toLowerCase() === label.toLowerCase());
+        return item?.value ?? '';
+      }
+      if (dataList && typeof dataList === 'object') {
+        return dataList[label] ?? dataList[label.replace(/\s+/g, '')] ?? '';
+      }
+      return '';
+    };
+
+    const fullName = getFromData('Customer Name') || '';
+    const [firstName = '', ...lastNameParts] = fullName.split(' ');
+    const lastName = lastNameParts.join(' ');
+
+    const rawDate = getFromData('Date') || '';
+    const normalizeOcrDate = (input: string) => {
+      if (!input) return '';
+      const s = String(input).trim().replace(/[-.]/g, '/');
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (m) {
+        const mm = String(parseInt(m[1], 10)).padStart(2, '0');
+        const dd = String(parseInt(m[2], 10)).padStart(2, '0');
+        const y = m[3];
+        const yyyy = y.length === 2 ? 2000 + parseInt(y, 10) : parseInt(y, 10);
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      const d = new Date(s);
+      if (!Number.isNaN(d.getTime())) {
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const yyyy = d.getFullYear();
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      return s;
+    };
+
+    return {
+      firstName,
+      lastName,
+      phoneNumber: getFromData('Phone') || '',
+      email: getFromData('Email') || '',
+      leadId: getFromData('Lead ID') || '',
+      date: normalizeOcrDate(rawDate),
+    };
+  };
+
+  const handlePaperFallbackSubmit = async (fileData: any) => {
+    try {
+      const res = await ocrMutation.mutateAsync(fileData);
+      const parsedData = parseOcrData(res);
+      setPrefilledOcrData(parsedData);
+      
+      const targetForm = activeFallbackForm;
+      setActiveFallbackForm(null);
+      
+      if (targetForm === 'consent') {
+        toggleModal('showConsentModal', true);
+      } else if (targetForm === 'roof_waiver') {
+        toggleModal('showWaiverModal', true);
+      }
+    } catch (err) {
+      console.error('OCR scanning error:', err);
+    }
+  };
 
   const handleCall = () => {
     const phone = lead?.customerDetails?.phone;
@@ -444,33 +515,12 @@ export default function LeadCenterPage() {
     return res;
   };
 
-  const handlePaperFallbackSubmit = async (fileData: any) => {
-    try {
-      await ocrMutation.mutateAsync(fileData);
-      const payload = {
-        fullName: lead?.customerDetails?.firstName + ' ' + (lead?.customerDetails?.lastName || ''),
-        phoneNumber: lead?.customerDetails?.phone,
-        email: lead?.customerDetails?.email,
-        leadId: lead?.leadId,
-        repName: 'Firstrep',
-        officeCode: '01',
-        address: lead?.fullAddress || '',
-        time: '12:00 AM',
-        date: '05/01/2025',
-        type: 'paper',
-        consent: 'true',
-        file: fileData,
-      };
-      await consentMutation.mutateAsync(payload);
-      await refetch();
-      toggleModal('showPaperFallback', false);
-    } catch (e) { }
-  };
+
 
   const handleInspectionSubmit = async (data: any) => {
     try {
       FlashMessage.info('Generating inspection report...', 'Generating');
-      const token = await AsyncStorage.getItem('accessToken');
+      const token = Storage.getItem('accessToken');
       const { dirs } = ReactNativeBlobUtil.fs;
       const fileName = `Inspection_${lead.jobNumber || lead.leadId || 'Report'}.pdf`;
       const filePath = `${dirs.DocumentDir}/${fileName}`;
@@ -800,6 +850,7 @@ export default function LeadCenterPage() {
                 onSectionImagesChange={setSectionImages}
                 refetch={refetch}
                 onOpenPdf={handleOpenPdf}
+                secureUrls={secureUrls}
               />
             )}
             {activeTab === 'tools' && (
@@ -866,10 +917,13 @@ export default function LeadCenterPage() {
       {showConsentModal && (
         <ConsentFormModal
           visible={showConsentModal}
-          onClose={() => toggleModal('showConsentModal', false)}
+          onClose={() => {
+            toggleModal('showConsentModal', false);
+            setPrefilledOcrData(null);
+          }}
           onPaperFallback={() => {
             toggleModal('showConsentModal', false);
-            toggleModal('showPaperFallback', true);
+            setActiveFallbackForm('consent');
           }}
           onSubmit={handleConsentSubmit}
           onFinalUpload={async (pdfPath) => {
@@ -889,16 +943,20 @@ export default function LeadCenterPage() {
           lead={lead}
           type="consent"
           loading={consentMutation.isPending}
+          prefilledData={prefilledOcrData}
         />
       )}
 
       {showWaiverModal && (
         <RoofWaiverModal
           visible={showWaiverModal}
-          onClose={() => toggleModal('showWaiverModal', false)}
+          onClose={() => {
+            toggleModal('showWaiverModal', false);
+            setPrefilledOcrData(null);
+          }}
           onPaperFallback={() => {
             toggleModal('showWaiverModal', false);
-            toggleModal('showPaperFallback', true);
+            setActiveFallbackForm('roof_waiver');
           }}
           onSubmit={handleWaiverSubmit}
           onFinalUpload={async (pdfPath) => {
@@ -917,15 +975,16 @@ export default function LeadCenterPage() {
           uploading={finalizeUploadMutation.isPending}
           lead={lead}
           loading={waiverMutation.isPending}
+          prefilledData={prefilledOcrData}
         />
       )}
 
-      {showPaperFallback && (
+      {activeFallbackForm !== null && (
         <PaperFallbackModal
-          visible={showPaperFallback}
-          onClose={() => toggleModal('showPaperFallback', false)}
+          visible={activeFallbackForm !== null}
+          onClose={() => setActiveFallbackForm(null)}
           onSubmit={handlePaperFallbackSubmit}
-          loading={consentMutation.isPending}
+          loading={ocrMutation.isPending}
         />
       )}
 

@@ -77,7 +77,7 @@ export const CalculatorForm = ({
   const hasAdditionalData = Number(inputs.extraLabor) > 0 || Number(inputs.ckToInstallers) > 0;
 
   return (
-    <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false}>
+    <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
       <View className="px-5 pt-6 pb-40">
         <View className="flex-row items-center justify-between pb-6">
           <View className="flex-row items-center">

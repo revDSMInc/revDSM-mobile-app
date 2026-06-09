@@ -1,39 +1,61 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
-  Image,
   Platform,
   PermissionsAndroid,
   Alert,
   ActivityIndicator,
   Modal,
-  ScrollView,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { launchCamera, launchImageLibrary, MediaType } from 'react-native-image-picker';
-import { GlobalModal } from '../../common/modal/GlobalModal';
+import { launchCamera } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import {
   useSubmitJobBuilderMutation,
   useResetLeadMutation,
   useUploadImagesMutation,
   useDeleteImageMutation,
+  useUpdateLeadImagePositionMutation,
 } from '../../../hooks/useLeadMutation';
 import { ResultLeadModal } from '../../modals/lead-center/ResultLeadModal';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
-import { JobDocsThumbnails } from '../../../assets/images/jobdocs';
 import Geolocation from 'react-native-geolocation-service';
 import { LeadService } from '../../../services/api/leads';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect } from 'react';
-import Feather from 'react-native-vector-icons/Feather';
-import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
-import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { EditContractDetailsModal } from '../../modals/lead-center/EditContractDetailsModal';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DocumentScannerModal } from '../../modals/job-builder/DocumentScannerModal';
+import RNFS from 'react-native-fs';
+// @ts-ignore
+import base64 from 'base-64';
+
+const getNativeModules = () => {
+  try {
+    const cameraRollModule = require('@react-native-camera-roll/camera-roll');
+    return {
+      ReactNativeBlobUtil: require('react-native-blob-util').default,
+      CameraRoll: cameraRollModule.CameraRoll,
+      iosReadGalleryPermission: cameraRollModule.iosReadGalleryPermission,
+      iosRequestAddOnlyGalleryPermission: cameraRollModule.iosRequestAddOnlyGalleryPermission,
+    };
+  } catch {
+    return {
+      ReactNativeBlobUtil: null,
+      CameraRoll: null,
+      iosReadGalleryPermission: null,
+      iosRequestAddOnlyGalleryPermission: null,
+    };
+  }
+};
+
+// Subcomponents
+import { ContractDetailsCard } from './ContractDetailsCard';
+import { TagPhotoModal } from './TagPhotoModal';
+import { ManagePhotosModal } from './ManagePhotosModal';
+import { ImageSlideshowModal } from './ImageSlideshowModal';
+import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue';
 
 interface SectionImage {
   uri: string;
@@ -47,10 +69,38 @@ interface SectionImage {
 interface JobDocsSectionProps {
   lead: any;
   sectionImages: { [key: string]: SectionImage[] };
-  onSectionImagesChange: (images: { [key: string]: SectionImage[] }) => void;
+  onSectionImagesChange: (
+    images: { [key: string]: SectionImage[] } | ((prev: { [key: string]: SectionImage[] }) => { [key: string]: SectionImage[] })
+  ) => void;
   refetch: () => Promise<void>;
   onOpenPdf?: (url: string, title?: string) => void;
+  secureUrls?: Record<string, string>;
 }
+
+const MANAGE_TABS = [
+  { id: 'HOME', label: 'HOME', icon: 'home-outline' },
+  { id: 'INSPECTION', label: 'INSPECTION', icon: 'magnify' },
+  { id: 'MEASURE', label: 'MEASURE', icon: 'ruler' },
+  { id: 'ROOFLINE', label: 'ROOFLINE', icon: 'home-roof' },
+  { id: 'MISC', label: 'MISC', icon: 'dots-horizontal' },
+];
+
+const getCategoryIdsForTab = (tabId: string): string[] => {
+  switch (tabId) {
+    case 'HOME':
+      return ['home'];
+    case 'INSPECTION':
+      return ['inspection'];
+    case 'MEASURE':
+      return ['measurements'];
+    case 'ROOFLINE':
+      return ['roofline-observation', 'roof-inspection'];
+    case 'MISC':
+      return ['miscellaneous'];
+    default:
+      return [];
+  }
+};
 
 export const JobDocsSection = ({
   lead,
@@ -58,68 +108,92 @@ export const JobDocsSection = ({
   onSectionImagesChange,
   refetch,
   onOpenPdf,
+  secureUrls: _secureUrls = {},
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
 
   const submitJobMutation = useSubmitJobBuilderMutation();
   const resetLeadMutation = useResetLeadMutation();
   const uploadImagesMutation = useUploadImagesMutation();
   const deleteImageMutation = useDeleteImageMutation();
+  const updateImagePositionMutation = useUpdateLeadImagePositionMutation();
 
-  const [expandedAll, setExpandedAll] = useState(false);
+
+
+
   const [showResultModal, setShowResultModal] = useState(false);
   const [pendingResult, setPendingResult] = useState<string>('noDemo');
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Scanner states for direct upload
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet'>('agreement');
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Slideshow preview states
+  const [previewImages, setPreviewImages] = useState<{ uri: string; label: string }[]>([]);
+  const [previewIndex, setPreviewIndex] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Manage components states
   const [showEditModal, setShowEditModal] = useState(false);
-  const [uploadingSlots, setUploadingSlots] = useState<{ [key: string]: boolean }>({});
-  const navigation = useNavigation<any>();
-  const [outcomeData, setOutcomeData] = useState<any>(null);
+  const [, setUploadingSlots] = useState<{ [key: string]: boolean }>({});
+  const outcomeData = lead;
 
-  const scale = useSharedValue(1);
-  const savedScale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const savedTranslateX = useSharedValue(0);
-  const savedTranslateY = useSharedValue(0);
+  // Upload queue state — persisted to MMKV
+  const [queueItems, setQueueItems] = useState<UploadQueueItem[]>(() => uploadQueueManager.getQueue());
 
-  const pinchGesture = Gesture.Pinch()
-    .onUpdate((e) => {
-      scale.value = savedScale.value * e.scale;
-    })
-    .onEnd(() => {
-      if (scale.value < 1) {
-        scale.value = withSpring(1);
-        savedScale.value = 1;
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
-        savedTranslateX.value = 0;
-        savedTranslateY.value = 0;
-      } else {
-        savedScale.value = scale.value;
+  const [taggingAsset, setTaggingAsset] = useState<any>(null);
+  const [showTagModal, setShowTagModal] = useState(false);
+  const [showManageModal, setShowManageModal] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [activeTagTab, setActiveTagTab] = useState<string>('HOME');
+  const [activeManageTab, setActiveManageTab] = useState<string>('HOME');
+  const [isContinuousCamera, setIsContinuousCamera] = useState<boolean>(false);
+  const [movingImage, setMovingImage] = useState<{ image: SectionImage; categoryName: string } | null>(null);
+  const [conflict, setConflict] = useState<any | null>(null);
+
+  const pendingUploadRef = useRef<Promise<any> | null>(null);
+
+  // Register queue listener — sync React state with MMKV queue state and trigger refetch
+  useEffect(() => {
+    const unsubscribe = uploadQueueManager.addListener(() => {
+      const currentQueue = uploadQueueManager.getQueue();
+      setQueueItems([...currentQueue]);
+      // When queue empties (upload finished), refresh lead data from server
+      if (currentQueue.length === 0) {
+        refetch();
       }
     });
 
-  const panGesture = Gesture.Pan()
-    .onUpdate((e) => {
-      if (scale.value > 1) {
-        translateX.value = savedTranslateX.value + e.translationX;
-        translateY.value = savedTranslateY.value + e.translationY;
+    // On mount: resume any incomplete uploads that survived app restart
+    if (uploadQueueManager.getQueue().length > 0) {
+      console.log('[JobDocsSection] Resuming', uploadQueueManager.getQueue().length, 'pending uploads from MMKV queue.');
+      uploadQueueManager.processQueue();
+    }
+
+    return () => unsubscribe();
+  }, []);
+
+  const waitForPendingUpload = useCallback(async () => {
+    if (pendingUploadRef.current) {
+      try {
+        await pendingUploadRef.current;
+      } catch (err) {
+        console.warn('Error waiting for pending upload:', err);
       }
-    })
-    .onEnd(() => {
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
-    });
+    }
+  }, []);
 
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+  // Annotation multiselect states
+  const [isAnnotationSelectMode, setIsAnnotationSelectMode] = useState<boolean>(false);
+  const [selectedAnnotationPhotos, setSelectedAnnotationPhotos] = useState<SectionImage[]>([]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value }
-    ]
-  }));
+  // Contract outcome states
   const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
     agreements: [],
     orderSheets: [],
@@ -130,14 +204,776 @@ export const JobDocsSection = ({
   });
   const [leadDraft, setLeadDraft] = useState<any>(null);
 
+  const getSubcategoryLabel = useCallback((catNameOrId: string, subIdOrName: string) => {
+    if (!subIdOrName) return '';
+    const category = IMAGE_CATEGORIES.find(
+      (c) => c.id === catNameOrId || c.name === catNameOrId
+    );
+    if (!category) return subIdOrName;
+
+    let cleanSubIdOrName = subIdOrName;
+    if (subIdOrName.includes(' - Extra')) {
+      cleanSubIdOrName = subIdOrName.split(' - Extra')[0];
+    }
+
+    const sub = category.subCategories?.find(
+      (s) => s.id === cleanSubIdOrName || s.name === cleanSubIdOrName
+    );
+    if (sub) return sub.name;
+    const group = category.cardGroups?.find(g => g.name === cleanSubIdOrName || g.id === cleanSubIdOrName);
+    if (group) return group.name;
+
+    return subIdOrName;
+  }, []);
+
+  const getImagesForSection = useCallback((sectionOrNameOrId: any): SectionImage[] => {
+    if (!sectionOrNameOrId) return [];
+    let searchStr = '';
+    if (typeof sectionOrNameOrId === 'object') {
+      searchStr = sectionOrNameOrId.name || '';
+    } else {
+      searchStr = sectionOrNameOrId;
+    }
+
+    if (!searchStr) return [];
+
+    // Resolve the canonical key from sectionImages
+    let s3Images: SectionImage[] = [];
+    if (sectionImages[searchStr]) {
+      s3Images = sectionImages[searchStr];
+    } else {
+      const matchingKey = Object.keys(sectionImages).find(
+        (k) => k.toLowerCase() === searchStr.toLowerCase()
+      );
+      if (matchingKey) {
+        s3Images = sectionImages[matchingKey];
+      } else if (typeof sectionOrNameOrId === 'object' && sectionOrNameOrId.id) {
+        const matchingKeyId = Object.keys(sectionImages).find(
+          (k) => k.toLowerCase() === sectionOrNameOrId.id.toLowerCase()
+        );
+        if (matchingKeyId) s3Images = sectionImages[matchingKeyId];
+      }
+    }
+
+    // Merge pending optimistic items for this lead+category from the MMKV queue
+    const pendingForSection = queueItems
+      .filter((item) =>
+        item.leadId === lead?._id &&
+        item.categoryName.toLowerCase() === searchStr.toLowerCase()
+      )
+      .map((item, i): SectionImage => ({
+        uri: item.uri,
+        index: s3Images.length + i,
+        subcategory: item.subcategory,
+        isOptimistic: true,
+      }));
+
+    // Don't duplicate: exclude queue items already reflected in s3Images by matching uri
+    const existingUris = new Set(s3Images.map((img) => img.uri));
+    const uniquePending = pendingForSection.filter((p) => !existingUris.has(p.uri));
+
+    return [...s3Images, ...uniquePending];
+  }, [sectionImages, queueItems, lead?._id]);
+
+  const handleDelete = async (categoryName: string, image: SectionImage) => {
+    if (!image.s3url) {
+      const filtered = (sectionImages[categoryName] || []).filter((img) => img.uri !== image.uri);
+      onSectionImagesChange({ ...sectionImages, [categoryName]: filtered });
+      return;
+    }
+
+    try {
+      const payload = {
+        s3urls: [image.s3url],
+        category: 'salesPhotos',
+      };
+      await deleteImageMutation.mutateAsync({ leadId: lead._id, payload });
+      const filtered = (sectionImages[categoryName] || []).filter((img) => img.s3url !== image.s3url);
+      onSectionImagesChange({ ...sectionImages, [categoryName]: filtered });
+      refetch();
+    } catch (error) {
+      console.error('Delete error', error);
+      Alert.alert('Delete Failed', 'Could not delete the photo. Please try again.');
+    }
+  };
+
+  const handleUpload = async (categoryName: string, idx: number, asset: any, groupName?: string) => {
+    if (!asset || !lead?._id) return;
+
+    const slotKey = `${categoryName}-${groupName || ''}-${idx}`;
+    setUploadingSlots((prev) => ({ ...prev, [slotKey]: true }));
+
+    const categoryObj = IMAGE_CATEGORIES.find((cat) => cat.name === categoryName);
+    const subcategory = groupName
+      ? groupName
+      : categoryObj?.subCategories?.[idx]?.name || `${categoryName} - Extra ${idx + 1}`;
+
+    const tempPhoto: SectionImage = {
+      uri: asset.uri,
+      index: idx,
+      subcategory,
+      isOptimistic: true,
+    };
+
+    // --- Instant Optimistic UI: show the photo immediately in its slot ---
+    // We use functional update on sectionImages to avoid stale closure overwrites
+    // when multiple photos are taken in quick succession.
+    onSectionImagesChange((prev: Record<string, SectionImage[]>) => {
+      const prevList = prev[categoryName] || [];
+      // Only add if not already in the list (guard against double-fire)
+      if (prevList.some((img) => img.uri === asset.uri)) return prev;
+      return {
+        ...prev,
+        [categoryName]: [...prevList, tempPhoto],
+      };
+    });
+
+    // --- Push to persistent MMKV-backed background upload queue ---
+    uploadQueueManager.addToQueue({
+      leadId: lead._id,
+      categoryName,
+      subcategory,
+      uri: asset.uri,
+      type: asset.type || 'image/jpeg',
+      name: asset.fileName || `photo_${Date.now()}.jpg`,
+    });
+
+    // Clear the per-slot uploading spinner (queue handles the real upload)
+    setUploadingSlots((prev) => ({ ...prev, [slotKey]: false }));
+  };
+
+  const handleReset = async () => {
+    Alert.alert('Reset Job Docs', 'Are you sure you want to reset all job documents? This will permanently delete all uploaded images and documents.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await resetLeadMutation.mutateAsync(lead._id);
+            refetch();
+          } catch (e) {
+            console.error('Failed to reset lead job docs', e);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleQuickReset = () => {
+    Alert.alert(
+      'Reset Lead',
+      'Are you sure you want to reset this lead? This will clear current work state.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (lead?._id) {
+                await resetLeadMutation.mutateAsync(lead._id);
+                onSectionImagesChange({});
+                await refetch();
+              }
+            } catch (error) {
+              console.error('Reset failed', error);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleMovePhoto = async (
+    targetCatName: string,
+    targetIdx: number,
+    targetGroupName?: string
+  ) => {
+    if (!movingImage || !lead?._id) return;
+
+    const targetCategoryObj = IMAGE_CATEGORIES.find((cat) => cat.name === targetCatName);
+    const subcategory = targetGroupName
+      ? targetGroupName
+      : targetCategoryObj?.subCategories?.[targetIdx]?.name || `${targetCatName} - Extra ${targetIdx + 1}`;
+
+    const payload = {
+      photoId: movingImage.image.id,
+      currentPosition: {
+        category: movingImage.categoryName,
+        subcategory: movingImage.image.subcategory || '',
+      },
+      newPosition: {
+        category: targetCatName,
+        subcategory,
+      },
+    };
+
+    // Optimistic local state update
+    const currentCategory = movingImage.categoryName;
+    const currentImgs = sectionImages[currentCategory] || [];
+    const photoToMove = currentImgs.find(
+      (img) => img.id === movingImage.image.id || img.uri === movingImage.image.uri
+    );
+
+    if (photoToMove) {
+      const updatedPhoto = {
+        ...photoToMove,
+        subcategory,
+        index: targetIdx,
+      };
+
+      const nextCurrentList = currentImgs.filter(
+        (img) => img.id !== photoToMove.id && img.uri !== photoToMove.uri
+      );
+      const targetImgs = currentCategory === targetCatName ? nextCurrentList : (sectionImages[targetCatName] || []);
+      const nextTargetList = [...targetImgs, updatedPhoto];
+
+      onSectionImagesChange({
+        ...sectionImages,
+        [currentCategory]: nextCurrentList,
+        [targetCatName]: nextTargetList,
+      });
+    }
+
+    // Clear moving image state immediately so UI transitions instantly
+    setMovingImage(null);
+
+    // Run mutation asynchronously in the background, waiting for any pending upload first
+    waitForPendingUpload().then(() => {
+      updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload })
+        .then(() => refetch())
+        .catch((e) => console.error('Move photo in background failed', e));
+    });
+  };
+
+  const handleUpdateContract = async (updatedOutcome: any) => {
+    try {
+      await LeadService.updateLeadOutcome(lead._id, updatedOutcome);
+      await refetch();
+    } catch (e) {
+      console.error('Update contract details failed', e);
+    }
+  };
+
+  const handleAddDocument = (type: 'agreement' | 'orderSheet') => {
+    setScannerType(type);
+    setScannerOpen(true);
+  };
+
+  const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string => {
+    const cleanBase64 = jpegBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+    const binaryImg = base64.decode(cleanBase64);
+    const imgLength = binaryImg.length;
+
+    const obj1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+    const obj2 = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+    const obj3 = `3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 4 0 R /MediaBox [0 0 ${width} ${height}] /Contents 5 0 R >>\nendobj\n`;
+    const obj4 = "4 0 obj\n<< /ProcSet [/PDF /ImageC] /XObject << /Im1 6 0 R >> >>\nendobj\n";
+    const contentStream = `q\n${width} 0 0 ${height} 0 0 cm\n/Im1 Do\nQ\n`;
+    const obj5 = `5 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}endstream\nendobj\n`;
+    const obj6Header = `6 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgLength} >>\nstream\n`;
+    const obj6Footer = "\nendstream\nendobj\n";
+
+    const pdfHeader = "%PDF-1.3\n";
+    const offset1 = pdfHeader.length;
+    const offset2 = offset1 + obj1.length;
+    const offset3 = offset2 + obj2.length;
+    const offset4 = offset3 + obj3.length;
+    const offset5 = offset4 + obj4.length;
+    const offset6 = offset5 + obj5.length;
+    
+    const obj6FullLength = obj6Header.length + imgLength + obj6Footer.length;
+    const offsetStartXref = offset6 + obj6FullLength;
+    
+    const padOffset = (offset: number) => String(offset).padStart(10, '0');
+    
+    const xref = `xref\n0 7\n0000000000 65535 f \n${padOffset(offset1)} 00000 n \n${padOffset(offset2)} 00000 n \n${padOffset(offset3)} 00000 n \n${padOffset(offset4)} 00000 n \n${padOffset(offset5)} 00000 n \n${padOffset(offset6)} 00000 n \n`;
+    const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offsetStartXref}\n%%EOF\n`;
+    
+    const pdfBinaryString = 
+      pdfHeader +
+      obj1 +
+      obj2 +
+      obj3 +
+      obj4 +
+      obj5 +
+      obj6Header +
+      binaryImg +
+      obj6Footer +
+      xref +
+      trailer;
+      
+    return base64.encode(pdfBinaryString);
+  };
+
+  const handleSaveScannedDocument = async (pages: any[]) => {
+    const scannerCategory = scannerType === 'agreement' ? 'agreement' : 'orderSheet';
+    const stateField = scannerCategory === 'agreement' ? 'agreements' : 'orderSheets';
+    const leadId = lead?._id;
+
+    if (!leadId) {
+      Alert.alert('Error', 'No lead ID found. Cannot upload document.');
+      return;
+    }
+
+    try {
+      setIsGenerating(true);
+      const filePayloads: any[] = [];
+      for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        if (p.isNew) {
+          const rawBase64 = await RNFS.readFile(p.uri, 'base64');
+          const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
+          filePayloads.push({
+            name: p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : `scanned_${scannerCategory}_${Date.now()}_${i}.pdf`,
+            file: `data:application/pdf;base64,${pdfBase64}`,
+            type: scannerCategory,
+          });
+        }
+      }
+
+      const payload = {
+        leadData: {},
+        jobState: {},
+        [stateField]: filePayloads,
+      };
+
+      await LeadService.submitJobBuilder(leadId, payload);
+      setScannerOpen(false);
+      await refetch();
+      // Trigger delayed refetches in case of minor backend processing/DB replication lag
+      setTimeout(() => refetch(), 1000);
+      setTimeout(() => refetch(), 3000);
+    } catch (error: any) {
+      console.error('[JobDocsSection] Document upload failed:', error);
+      Alert.alert('Error', error?.message || 'Could not upload documents.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleResultSubmit = async (resultData: any) => {
+    try {
+      const { result } = resultData;
+      const leadData = {
+        ...resultData,
+        status: result === 'noDemo' ? 'noDemo' : result === 'notHit' ? 'notHit' : result,
+      };
+
+      await submitJobMutation.mutateAsync({
+        leadId: lead?._id,
+        payload: { leadData, jobState: {} },
+      });
+
+      setShowResultModal(false);
+      await refetch();
+    } catch (error) {
+      setShowResultModal(false);
+      console.error('Submit result failed', error);
+    }
+  };
+
+
+
+  const hasAndroidPermission = async () => {
+    const version = Number(Platform.Version);
+    if (version >= 33) {
+      const [hasImage, hasVideo] = await Promise.all([
+        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES),
+        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO),
+      ]);
+      return hasImage && hasVideo;
+    }
+    return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+  };
+
+  const handleDownloadAllImages = async () => {
+    const modules = getNativeModules();
+    const ReactNativeBlobUtil = modules.ReactNativeBlobUtil;
+    const CameraRoll = modules.CameraRoll;
+
+    if (!ReactNativeBlobUtil || !CameraRoll) {
+      Alert.alert('Error', 'Native modules not found');
+      return;
+    }
+
+    if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
+      const version = Number(Platform.Version);
+      if (version >= 33) {
+        const granted = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+        ]);
+        if (
+          granted[PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES] !== PermissionsAndroid.RESULTS.GRANTED
+        ) {
+          Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
+          return;
+        }
+      } else {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
+          return;
+        }
+      }
+    }
+
+    if (Platform.OS === 'ios') {
+      const iosReadGalleryPermission = modules.iosReadGalleryPermission;
+      const iosRequestAddOnlyGalleryPermission = modules.iosRequestAddOnlyGalleryPermission;
+      if (iosReadGalleryPermission && iosRequestAddOnlyGalleryPermission) {
+        try {
+          const status = await iosReadGalleryPermission('addOnly');
+          if (status !== 'granted' && status !== 'limited') {
+            const requestStatus = await iosRequestAddOnlyGalleryPermission();
+            if (requestStatus !== 'granted' && requestStatus !== 'limited') {
+              Alert.alert('Permission Denied', 'Photo Library permission is required to save photos.');
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('Failed to check/request iOS photo library permission:', error);
+        }
+      }
+    }
+
+    setIsDownloading(true);
+    setDownloadProgress(0);
+
+    const imagesToDownload: SectionImage[] = [];
+    IMAGE_CATEGORIES.forEach((cat) => {
+      const imgs = sectionImages[cat.name] || [];
+      imgs.forEach((img) => {
+        if (img.uri) {
+          imagesToDownload.push(img);
+        }
+      });
+    });
+
+    if (imagesToDownload.length === 0) {
+      Alert.alert('No Photos', 'There are no photos to download.');
+      setIsDownloading(false);
+      setShowDownloadModal(false);
+      return;
+    }
+
+    let completedCount = 0;
+    let successCount = 0;
+
+    const downloadAndSavePromises = imagesToDownload.map(async (img, idx) => {
+      try {
+        const mediaUri = img.uri;
+        let localPath = '';
+
+        if (mediaUri.startsWith('file://') || mediaUri.startsWith('/')) {
+          localPath = mediaUri;
+        } else {
+          const ext = 'jpg';
+          const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/download_${Date.now()}_${idx}.${ext}`;
+          const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri);
+          localPath = res.path();
+        }
+
+        if (localPath) {
+          const saveTag = localPath.startsWith('file://') ? localPath : `file://${localPath}`;
+          await CameraRoll.saveAsset(saveTag, { type: 'photo' });
+          successCount++;
+        }
+      } catch (err) {
+        console.error('Failed to download image index:', idx, err);
+      } finally {
+        completedCount++;
+        setDownloadProgress(completedCount);
+      }
+    });
+
+    await Promise.all(downloadAndSavePromises);
+
+    setIsDownloading(false);
+    setShowDownloadModal(false);
+
+    if (successCount === imagesToDownload.length) {
+      Alert.alert('Success', `Successfully downloaded all ${successCount} photos to your gallery!`);
+    } else if (successCount > 0) {
+      Alert.alert(
+        'Partial Download',
+        `Downloaded ${successCount} of ${imagesToDownload.length} photos. Some failed.`
+      );
+    } else {
+      Alert.alert('Error', 'Failed to download photos. Please try again.');
+    }
+  };
+
+  const onResultPress = (result: string) => {
+    setPendingResult(result);
+    setShowResultModal(true);
+  };
+
+  const handleStartTakingPhotos = () => {
+    setIsContinuousCamera(true);
+    reopenCameraContinuous();
+  };
+
+  const reopenCameraContinuous = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        setIsContinuousCamera(false);
+        return;
+      }
+    }
+    launchCamera({ mediaType: 'photo', quality: 0.8, presentationStyle: 'fullScreen' }, (response) => {
+      setTimeout(() => {
+        if (response.assets?.[0]) {
+          setTaggingAsset(response.assets[0]);
+          setShowTagModal(true);
+        } else {
+          setIsContinuousCamera(false);
+        }
+      }, 0);
+    });
+  };
+
+  const getRequiredSlotsForActiveTab = useCallback(() => {
+    const catIds = getCategoryIdsForTab(activeManageTab);
+    const slots: any[] = [];
+
+    catIds.forEach((catId) => {
+      const section = IMAGE_CATEGORIES.find((c) => c.id === catId);
+      if (!section) return;
+
+      const addSubs = (subs: any[] = [], groupName?: string) => {
+        subs.forEach((sub, idx) => {
+          const sectionImgs = getImagesForSection(section);
+          const isInspection = catId === 'inspection' || catId === 'roof-inspection-plane';
+
+          if (isInspection) {
+            const matchingImages = sectionImgs.filter(
+              (img) =>
+                (img.subcategory === sub.name ||
+                  img.subcategory === sub.id ||
+                  img.subcategory?.startsWith(`${sub.name} - Extra`) ||
+                  img.subcategory?.startsWith(`${sub.id} - Extra`)) &&
+                !img.subcategory?.toLowerCase().includes('(annotated)')
+            );
+            if (matchingImages.length > 0) {
+              matchingImages.forEach((img, imgIdx) => {
+                slots.push({
+                  id: `${sub.id}-${imgIdx}`,
+                  name: sub.name,
+                  categoryName: section.name,
+                  groupName,
+                  idx,
+                  image: img,
+                });
+              });
+            } else {
+              slots.push({
+                id: sub.id,
+                name: sub.name,
+                categoryName: section.name,
+                groupName,
+                idx,
+                image: undefined,
+              });
+            }
+          } else {
+            const existingImage = sectionImgs.find(
+              (img) => (img.subcategory === sub.name || img.subcategory === sub.id) && !img.subcategory?.toLowerCase().includes('(annotated)')
+            );
+
+            slots.push({
+              id: sub.id,
+              name: sub.name,
+              categoryName: section.name,
+              groupName,
+              idx,
+              image: existingImage,
+            });
+          }
+        });
+      };
+
+      if (section.subCategories && section.subCategories.length > 0) {
+        addSubs(section.subCategories);
+      }
+      if (section.cardGroups) {
+        section.cardGroups.forEach((group) => {
+          if (group.subCategories) {
+            addSubs(group.subCategories, group.name);
+          }
+        });
+      }
+    });
+
+    return slots;
+  }, [activeManageTab, getImagesForSection]);
+
+  const getExtraFilledSlotsForTab = useCallback((tabId: string) => {
+    const catIds = getCategoryIdsForTab(tabId);
+    const extraSlots: any[] = [];
+
+    catIds.forEach((catId) => {
+      const section = IMAGE_CATEGORIES.find((c) => c.id === catId);
+      if (!section) return;
+
+      const sectionImgs = getImagesForSection(section);
+      const isRequiredSub = (name: string) => {
+        if (section.subCategories?.some((sub) => sub.name === name)) return true;
+        if (section.cardGroups?.some((group) => group.subCategories?.some((sub) => sub.name === name))) return true;
+        return false;
+      };
+
+      sectionImgs.forEach((img) => {
+        const isAnnotated = img.subcategory?.toLowerCase().includes('(annotated)');
+        if (!isAnnotated && (!img.subcategory || !isRequiredSub(img.subcategory))) {
+          extraSlots.push({
+            categoryName: section.name,
+            image: img,
+          });
+        }
+      });
+    });
+
+    return extraSlots;
+  }, [getImagesForSection]);
+
+  const getAnnotatedSlotsForTab = useCallback((tabId: string) => {
+    const catIds = getCategoryIdsForTab(tabId);
+    const annotated: any[] = [];
+
+    catIds.forEach((catId) => {
+      const section = IMAGE_CATEGORIES.find((c) => c.id === catId);
+      if (!section) return;
+
+      const sectionImgs = getImagesForSection(section);
+      sectionImgs.forEach((img) => {
+        if (img.subcategory?.toLowerCase().includes('(annotated)')) {
+          annotated.push({
+            categoryName: section.name,
+            image: img,
+          });
+        }
+      });
+    });
+
+    return annotated;
+  }, [getImagesForSection]);
+
+  const getTabCounts = useCallback((tabId: string) => {
+    const catIds = getCategoryIdsForTab(tabId);
+    let captured = 0;
+    let total = 0;
+
+    catIds.forEach((catId) => {
+      const section = IMAGE_CATEGORIES.find((c) => c.id === catId);
+      if (!section) return;
+
+      const sectionImgs = getImagesForSection(section);
+      const standardCount = section.subCategories?.length || 0;
+      const groupCount = section.cardGroups?.reduce((sum, g) => sum + (g.subCategories?.length || 0), 0) || 0;
+      const baseRequired = standardCount + groupCount;
+
+      const extras = getExtraFilledSlotsForTab(tabId).filter(s => s.categoryName === section.name).length;
+      const annotated = getAnnotatedSlotsForTab(tabId).filter(s => s.categoryName === section.name).length;
+
+      let requiredFilled = 0;
+      const addSubsCount = (subs: any[] = []) => {
+        subs.forEach((sub) => {
+          const matchingImages = sectionImgs.filter(
+            (img) =>
+              (img.subcategory === sub.name ||
+                img.subcategory === sub.id ||
+                img.subcategory?.startsWith(`${sub.name} - Extra`) ||
+                img.subcategory?.startsWith(`${sub.id} - Extra`)) &&
+              !img.subcategory?.toLowerCase().includes('(annotated)')
+          );
+          const isInspection = catId === 'inspection' || catId === 'roof-inspection-plane';
+
+          if (isInspection) {
+            requiredFilled += matchingImages.length;
+          } else {
+            if (matchingImages.length > 0) {
+              requiredFilled += 1;
+            }
+          }
+        });
+      };
+
+      if (section.subCategories && section.subCategories.length > 0) {
+        addSubsCount(section.subCategories);
+      }
+      if (section.cardGroups) {
+        section.cardGroups.forEach((group) => {
+          if (group.subCategories) {
+            addSubsCount(group.subCategories);
+          }
+        });
+      }
+
+      total += baseRequired + extras + annotated;
+      captured += requiredFilled + extras + annotated;
+    });
+
+    return { captured, total };
+  }, [getImagesForSection, getExtraFilledSlotsForTab, getAnnotatedSlotsForTab]);
+
+  const toggleSelectPhoto = (img: SectionImage, category: string) => {
+    const isSelected = selectedAnnotationPhotos.some(
+      (p) => p.s3url === img.s3url || p.uri === img.uri
+    );
+    if (isSelected) {
+      setSelectedAnnotationPhotos(prev => prev.filter((p) => p.uri !== img.uri));
+    } else {
+      setSelectedAnnotationPhotos(prev => [...prev, { ...img, categoryName: category }]);
+    }
+  };
+
+  const handleOpenPreviewTab = (clickedImageUri: string) => {
+    const requiredImgs = getRequiredSlotsForActiveTab()
+      .filter((slot) => slot.image !== undefined)
+      .map((slot) => ({
+        uri: slot.image!.uri,
+        label: getSubcategoryLabel(slot.categoryName, slot.image!.subcategory || slot.name).replace('(Annotated)', '').trim(),
+      }));
+
+    const extraImgs = getExtraFilledSlotsForTab(activeManageTab)
+      .map((slot) => ({
+        uri: slot.image.uri,
+        label: getSubcategoryLabel(slot.categoryName, slot.image.subcategory || '').replace('(Annotated)', '').trim(),
+      }));
+
+    const annotatedImgs = getAnnotatedSlotsForTab(activeManageTab)
+      .map((slot) => ({
+        uri: slot.image.uri,
+        label: getSubcategoryLabel(slot.categoryName, slot.image.subcategory || '').replace('(Annotated)', '').trim(),
+      }));
+
+    const allImages = [...requiredImgs, ...extraImgs, ...annotatedImgs];
+    const index = allImages.findIndex((img) => img.uri === clickedImageUri);
+
+    setPreviewImages(allImages.length > 0 ? allImages : [{ uri: clickedImageUri, label: 'Image' }]);
+    setPreviewIndex(index >= 0 ? index : 0);
+    setIsPlaying(false);
+    setIsFullscreen(false);
+  };
+
+  const handleOpenPreviewSingle = (uri: string, label: string = 'Image') => {
+    setPreviewImages([{ uri, label }]);
+    setPreviewIndex(0);
+    setIsPlaying(false);
+    setIsFullscreen(false);
+  };
+
   const isResulted = useMemo(() => {
     const status = lead?.status?.toLowerCase();
     const outcomeStatus = outcomeData?.status?.toLowerCase() || outcomeData?.result?.toLowerCase();
     const validStatuses = ['sale', 'demo', 'nodemo', 'nothit', 'reset', 'demonosale', 'nothome', 'cancelled', 'rescheduled'];
-    
-    // Normalize status (remove spaces/dashes)
     const normalize = (s: string) => s?.toLowerCase().replace(/[^a-z]/g, '') || '';
-    
     return validStatuses.includes(normalize(status)) || validStatuses.includes(normalize(outcomeStatus));
   }, [lead?.status, outcomeData]);
 
@@ -165,26 +1001,25 @@ export const JobDocsSection = ({
     return labels[status] || lead?.status || 'Resulted';
   };
 
-  const fetchOutcome = useCallback(async () => {
-    if (!lead?._id) return;
-    try {
-      const response = await LeadService.getLeadOutcome(lead._id);
-      const data = response.data?.data || response.data;
-      setOutcomeData(data);
-
+  useEffect(() => {
+    const fetchDraft = async () => {
+      if (!lead?._id) return;
       try {
         const draftRes = await LeadService.getLeadDraft(lead._id);
         const draftData = draftRes.data?.data || draftRes.data;
         setLeadDraft(draftData);
-      } catch (err) {
+      } catch {
         setLeadDraft(null);
       }
+    };
+    fetchDraft();
+  }, [lead?._id]);
 
-      // Resolve documents if any
-      const docs = data?.leadOutcomeDocuments;
+  useEffect(() => {
+    const resolveDocs = async () => {
+      const docs = lead?.jobBuilderDocuments;
       if (docs) {
         const { agreements = [], orderSheets = [] } = docs;
-
         const allDocs = [
           ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
           ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
@@ -196,535 +1031,86 @@ export const JobDocsSection = ({
         }));
 
         if (allPaths.length > 0) {
-          const res = await LeadService.getSecureUrls(allPaths);
-          const urls = res.data?.data || res.data;
+          try {
+            const res = await LeadService.getSecureUrls(allPaths);
+            const urls = res.data?.data || res.data;
 
-          const mappedAll = allDocs.map((doc: any) => {
-            const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
-            const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
-            const finalType = doc.documentType || doc._sourceGroup;
-            return {
-              uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-              name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
-              serverId: doc._id,
-              size: size,
-              documentType: finalType,
-            };
-          });
+            const mappedAll = allDocs.map((doc: any) => {
+              const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
+              const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
+              const finalType = doc.documentType || doc._sourceGroup;
+              return {
+                uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
+                name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: doc._id,
+                size,
+                documentType: finalType,
+              };
+            });
 
-          setResolvedDocuments({
-            agreements: mappedAll.filter((d: any) => d.documentType === 'agreement'),
-            orderSheets: mappedAll.filter((d: any) => d.documentType === 'orderSheet'),
-          });
+            setResolvedDocuments({
+              agreements: mappedAll.filter((d: any) => d.documentType === 'agreement'),
+              orderSheets: mappedAll.filter((d: any) => d.documentType === 'orderSheet'),
+            });
+          } catch (error) {
+            console.error('Failed to resolve secure URLs', error);
+          }
         } else {
           setResolvedDocuments({ agreements: [], orderSheets: [] });
         }
       } else {
         setResolvedDocuments({ agreements: [], orderSheets: [] });
       }
-    } catch (error) {
-      console.error('Failed to fetch outcome', error);
-    }
-  }, [lead?._id]);
-
-  useEffect(() => {
-    fetchOutcome();
-  }, [fetchOutcome]);
-
-
-  // ── Progress ──────────────────────────────────────────────────────────────
-  const totalRequired = IMAGE_CATEGORIES.reduce((acc, section) => {
-    const subTotal = section.subCategories?.reduce((s, sub) => s + (sub.required || 1), 0) || 0;
-    const groupTotal =
-      section.cardGroups?.reduce((g, group) => {
-        return g + (group.subCategories?.reduce((s, sub) => s + (sub.required || 1), 0) || 0);
-      }, 0) || 0;
-    return acc + subTotal + groupTotal;
-  }, 0);
-
-  const totalUploaded = Object.values(sectionImages).reduce((acc, imgs) => acc + imgs.length, 0);
-
-  // Calculate empty required slots to make the total dynamic
-  const emptyRequiredCount = IMAGE_CATEGORIES.reduce((acc, section) => {
-    let empty = 0;
-    
-    const checkSubs = (subs: any[] = [], sectionName: string) => {
-      const sectionImgs = sectionImages[sectionName] || [];
-      subs.forEach(sub => {
-        const hasImg = sectionImgs.some(img => img.subcategory === sub.name);
-        if (!hasImg) empty += (sub.required || 1);
-      });
     };
-
-    if (section.subCategories) checkSubs(section.subCategories, section.name);
-    if (section.cardGroups) {
-      section.cardGroups.forEach(group => {
-        if (group.subCategories) checkSubs(group.subCategories, section.name);
-      });
-    }
-    
-    return acc + empty;
-  }, 0);
-
-  const displayTotal = totalUploaded + emptyRequiredCount;
-  const progressPercent = displayTotal > 0 ? (totalUploaded / displayTotal) * 100 : 0;
-
-  const onResultPress = (res: string) => {
-    setPendingResult(res);
-    setShowResultModal(true);
-  };
-
-  const handleReset = () => {
-    onResultPress('reset');
-  };
-
-  const handleQuickReset = () => {
-    Alert.alert(
-      'Reset Lead',
-      'Are you sure you want to reset this lead? This will clear current work state.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (lead?._id) {
-                await resetLeadMutation.mutateAsync(lead._id);
-                onSectionImagesChange({});
-                await refetch();
-                await fetchOutcome();
-              }
-            } catch (error) {
-              console.error('Reset failed', error);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleResultSubmit = async (resultData: any) => {
-    try {
-      // Map result to status explicitly for backend consistency
-      const result = resultData.result;
-      const leadData = {
-        ...resultData,
-        status: result === 'noDemo' ? 'noDemo' : result === 'notHit' ? 'notHit' : result,
-      };
-
-      await submitJobMutation.mutateAsync({
-        leadId: lead?._id,
-        payload: { leadData, jobState: {} },
-      });
-
-      setShowResultModal(false);
-
-      // Refresh all local data in background/sequence to reflect resulted state
-      await refetch();
-      await fetchOutcome();
-    } catch (error) {
-      setShowResultModal(false);
-      console.error('Submit result failed', error);
-    }
-  };
-
-  const handleUpdateContract = async (payload: any) => {
-    try {
-      await LeadService.updateLeadOutcome(lead._id, payload);
-      await fetchOutcome();
-      await refetch();
-    } catch (error) {
-      console.error('Update contract failed', error);
-    }
-  };
+    resolveDocs();
+  }, [lead?.jobBuilderDocuments]);
 
 
-  const handleUpload = async (catName: string, idx: number, asset: any, groupName?: string) => {
-    if (!lead?._id) return;
 
-    const catObj = IMAGE_CATEGORIES.find((c) => c.name === catName);
-    let subcategoryName = `Extra ${catName}`;
+  const globalCounts = useMemo(() => {
+    let totalCaptured = 0;
+    let totalSlots = 0;
+    MANAGE_TABS.forEach((tab) => {
+      const { captured, total } = getTabCounts(tab.id);
+      totalCaptured += captured;
+      totalSlots += total;
+    });
+    return { captured: totalCaptured, total: totalSlots };
+  }, [getTabCounts]);
 
-    if (groupName) {
-      subcategoryName =
-        catObj?.cardGroups
-          ?.find((g) => g.name === groupName)
-          ?.subCategories?.find((_, sIdx) => sIdx === idx)?.name ||
-        groupName ||
-        catObj?.subCategories?.[idx]?.name ||
-        'Photo';
-    } else {
-      const sub = catObj?.subCategories?.[idx];
-      if (sub) {
-        subcategoryName = sub.name;
-      } else {
-        // "Add Extra" slot logic - Use FULL catName and offset by required count
-        const existingImages = sectionImages[catName] || [];
-        const requiredCount = catObj?.subCategories?.length || 0;
+  const displayTotal = useMemo(() => {
+    return globalCounts.total;
+  }, [globalCounts]);
 
-        // Count images that follow the "SectionName - Image X" pattern
-        const extraCount = existingImages.filter((img) =>
-          img.subcategory?.includes(`${catName} - Image`)
-        ).length;
+  const totalUploaded = useMemo(() => {
+    return globalCounts.captured;
+  }, [globalCounts]);
 
-        subcategoryName = `${catName} - Image ${requiredCount + extraCount + 1}`;
-      }
-    }
-
-    // Get current location
-    let coords = { latitude: 0, longitude: 0 };
-    try {
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-        );
-        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-          const position = await new Promise<any>((resolve, reject) => {
-            Geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 15000,
-              maximumAge: 10000,
-            });
-          });
-          coords = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          };
-        }
-      } else {
-        // iOS handled by Info.plist, but we can check or just request
-        const status = await Geolocation.requestAuthorization('whenInUse');
-        if (status === 'granted') {
-          const position = await new Promise<any>((resolve, reject) => {
-            Geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 15000,
-              maximumAge: 10000,
-            });
-          });
-          coords = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          };
-        }
-      }
-    } catch (error) {
-      console.warn('Could not get location', error);
-    }
-
-    const formData = new FormData();
-    formData.append('files', {
-      uri: asset.uri,
-      type: asset.type || 'image/jpeg',
-      name: asset.fileName || `photo_${Date.now()}.jpg`,
-    } as any);
-
-    const imageInfo = [
-      {
-        category: catName,
-        subcategory: subcategoryName,
-        timestampTaken: new Date().toISOString(),
-        coordinates: coords,
-      },
-    ];
-
-    formData.append('images', JSON.stringify(imageInfo));
-    formData.append('category', 'salesPhotos');
-
-    const slotKey = `${groupName || catName}-${idx}`;
-    setUploadingSlots((prev) => ({ ...prev, [slotKey]: true }));
-
-    try {
-      // 1. Optimistic Update: Add to local state immediately
-      const optimisticImage: SectionImage = {
-        uri: asset.uri,
-        s3url: asset.uri, // Use URI as temporary S3 key
-        index: idx,
-        subcategory: subcategoryName,
-        isOptimistic: true,
-      };
-
-      const currentImages = sectionImages[catName] || [];
-      const updatedImages = {
-        ...sectionImages,
-        [catName]: [...currentImages, optimisticImage],
-      };
-      onSectionImagesChange(updatedImages);
-
-      // 2. Perform actual upload
-      await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData });
-
-      // 3. Silent refetch in background
-      refetch();
-    } catch (error) {
-      console.error('Upload failed', error);
-    } finally {
-      setUploadingSlots((prev) => ({ ...prev, [slotKey]: false }));
-    }
-  };
-
-  const handleDelete = async (catName: string, image: SectionImage) => {
-    if (!lead?._id || !image.s3url) return;
-
-    const payload = {
-      s3urls: [image.s3url],
-      category: 'salesPhotos',
-    };
-
-    try {
-      await deleteImageMutation.mutateAsync({ leadId: lead._id, payload });
-      await refetch();
-    } catch (error) {
-      console.error('Delete failed', error);
-    }
-  };
+  const progressPercent = useMemo(() => {
+    if (displayTotal === 0) return 0;
+    return Math.round((totalUploaded / displayTotal) * 100);
+  }, [totalUploaded, displayTotal]);
 
   return (
-    <View className="px-4 py-2">
-      <ResultLeadModal
-        visible={showResultModal}
-        onClose={() => setShowResultModal(false)}
-        onSubmit={handleResultSubmit}
-        initialResult={pendingResult}
-        loading={submitJobMutation.isPending || resetLeadMutation.isPending}
+    <View className="px-4 py-2" style={{ flex: 1 }}>
+      {/* Result Card Details */}
+      <ContractDetailsCard
+        lead={lead}
+        outcomeData={outcomeData}
+        leadDraft={leadDraft}
+        isDark={isDark}
+        colors={colors}
+        resolvedDocuments={resolvedDocuments}
+        expandedDocs={expandedDocs}
+        setExpandedDocs={setExpandedDocs}
+        setShowEditModal={setShowEditModal}
+        onOpenPdf={onOpenPdf}
+        onImagePreview={(uri) => handleOpenPreviewSingle(uri)}
+        getStatusLabel={getStatusLabel}
+        hasContract={hasContract}
+        isResulted={isResulted}
+        onAddDocument={handleAddDocument}
       />
-
-      {/* Image Preview Modal */}
-      <Modal visible={previewImage !== null} transparent animationType="fade">
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <View className="flex-1 bg-black/90 items-center justify-center p-4">
-            <TouchableOpacity
-              onPress={() => {
-                setPreviewImage(null);
-                scale.value = 1;
-                savedScale.value = 1;
-                translateX.value = 0;
-                translateY.value = 0;
-                savedTranslateX.value = 0;
-                savedTranslateY.value = 0;
-              }}
-              className="absolute top-12 right-6 p-2 bg-white/20 rounded-full z-10"
-            >
-              <Icon name="close" size={24} color="white" />
-            </TouchableOpacity>
-            {previewImage && (
-              <GestureDetector gesture={composedGesture}>
-                <Animated.View className="w-full h-3/4 rounded-2xl" style={animatedStyle}>
-                  <LoadingImage
-                    uri={previewImage}
-                    className="w-full h-full rounded-2xl"
-                    resizeMode="contain"
-                  />
-                </Animated.View>
-              </GestureDetector>
-            )}
-          </View>
-        </GestureHandlerRootView>
-      </Modal>
-
-      {/* Status Banner removed per user request */}
-      {isResulted && (
-        <>
-          {/* Contract Details Card */}
-          {hasContract && (
-            <View 
-              className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 overflow-hidden"
-              style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
-            >
-              {leadDraft?.status?.toLowerCase() === 'pending' ? (
-                <View className="bg-[#F4B400] py-2.5 items-center justify-center px-4">
-                  <Text className="text-[#1C252E] font-black text-xs tracking-widest uppercase text-center">
-                    SALE - PENDING CUSTOMER SIGNATURE
-                  </Text>
-                  <Text className="text-[#1C252E] font-semibold text-[10px] text-center mt-1">
-                    Awaiting Amendment Approval:{"\n"}• Contract Pricing
-                  </Text>
-                </View>
-              ) : (
-                <View className="bg-[#4CBB17] py-2.5 flex-row items-center justify-center">
-                  <Icon name="check" size={16} color="white" />
-                  <Text className="text-white font-black text-xs ml-2 tracking-widest uppercase">
-                    {getStatusLabel().toUpperCase()} - LEAD RESULTED
-                  </Text>
-                </View>
-              )}
-
-              <View className="p-5">
-                <View className="flex-row justify-between items-center mb-6">
-                  <Text className="text-lg font-black text-[#1C252E]" style={{ color: colors.text }}>
-                    Contract Details
-                  </Text>
-                  <TouchableOpacity 
-                    onPress={() => setShowEditModal(true)}
-                    className="p-1"
-                  >
-                    <Icon name="pencil" size={20} color="#637381" />
-                  </TouchableOpacity>
-                </View>
-
-                <View className="gap-4 mb-8">
-                  {(String(lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '') === 'demo' || 
-                    String(lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '') === 'demonosale') ? (
-                    <>
-                      <DetailRow 
-                        label="Last Price Quoted" 
-                        value={`$${(Number(outcomeData?.lastPriceQuoted || outcomeData?.leadData?.lastPriceQuoted) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                        color="#4CBB17"
-                        isDark={isDark}
-                      />
-                      <DetailRow 
-                        label="Reason" 
-                        value={outcomeData?.reason || outcomeData?.leadData?.reason || outcomeData?.explain || outcomeData?.leadData?.explain || '-'} 
-                        isDark={isDark}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <DetailRow 
-                        label="Original Contract Price" 
-                        value={`$${(Number(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                        color="#4CBB17"
-                        isDark={isDark}
-                      />
-                      <DetailRow 
-                        label="Down Payment" 
-                        value={(() => {
-                          const v = outcomeData?.downPayment ?? outcomeData?.leadData?.downPayment;
-                          return (v === null || v === undefined || v === '') ? '$0.00' : '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                        })()} 
-                        method={(() => {
-                          const v = outcomeData?.downPayment ?? outcomeData?.leadData?.downPayment;
-                          if (v === null || v === undefined || v === '' || Number(v) === 0) return undefined;
-                          return outcomeData?.paymentMethod || outcomeData?.leadData?.paymentMethod;
-                        })()}
-                        isDark={isDark}
-                      />
-                      <DetailRow 
-                        label="Remaining Balance" 
-                        value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                        method={outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod}
-                        isDark={isDark}
-                      />
-                      <DetailRow 
-                        label="Install Date" 
-                        value={(() => {
-                          const schedule = outcomeData?.jobBuilder?.scheduleTime || outcomeData?.jobBuilderData?.scheduleTime || outcomeData?.jobState?.scheduleTime || outcomeData?.leadData?.scheduleTime;
-                          const date = schedule?.date || outcomeData?.installDate || outcomeData?.leadData?.installDate || lead?.leadDate;
-                          const timeWindow = schedule?.timeWindow || outcomeData?.timeWindow || outcomeData?.leadData?.timeWindow || 'N/A';
-
-                          if (!date || date === 'Not Scheduled') return 'Not Scheduled';
-                          if (date === 'TBD') return 'TBD';
-
-                          let dateObj = new Date(date);
-                          
-                          // Robust parsing for M/d/yyyy format if native Date fails
-                          if (isNaN(dateObj.getTime()) && typeof date === 'string') {
-                            const parts = date.split('/');
-                            if (parts.length === 3) {
-                              const m = parseInt(parts[0]) - 1;
-                              const d = parseInt(parts[1]);
-                              const y = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
-                              dateObj = new Date(y, m, d);
-                            }
-                          }
-
-                          if (!isNaN(dateObj.getTime())) {
-                            const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                            const weekday = weekdays[dateObj.getDay()];
-                            const formatted = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
-                            return `${weekday}, ${formatted} • ${timeWindow}`;
-                          }
-                          return `${date} • ${timeWindow}`;
-                        })()} 
-                        isDark={isDark}
-                      />
-                    </>
-                  )}
-                </View>
-
-                <View className="h-[1px] bg-gray-100 mb-6" />
-
-                {/* Agreement Documents Section */}
-                <View className="mb-6">
-                  <TouchableOpacity 
-                    onPress={() => setExpandedDocs(prev => ({ ...prev, agreements: !prev.agreements }))}
-                    className="flex-row items-center justify-between mb-4"
-                  >
-                    <Text className="text-sm font-bold text-[#1C252E]" style={{ color: colors.text }}>Agreement Documents</Text>
-                    <View className="flex-row items-center gap-2">
-                      <View className="bg-[#1C252E] px-2 py-0.5 rounded-md">
-                        <Text className="text-[10px] font-black text-white">{resolvedDocuments.agreements.length} Files</Text>
-                      </View>
-                      <Icon name={expandedDocs.agreements ? "chevron-up" : "chevron-down"} size={20} color="#637381" />
-                    </View>
-                  </TouchableOpacity>
-
-                  {expandedDocs.agreements && (
-                    <View className="gap-3">
-                      {resolvedDocuments.agreements.map((doc, idx) => (
-                        <DocumentItem 
-                          key={idx} 
-                          doc={doc} 
-                          isDark={isDark} 
-                          colors={colors} 
-                          onOpen={onOpenPdf} 
-                          onImagePreview={setPreviewImage} 
-                        />
-                      ))}
-                      <TouchableOpacity 
-                        onPress={() => navigation.navigate('JobBuilder', { lead, initialTab: 'Summary' })}
-                        className="border-2 border-dashed border-gray-200 rounded-xl py-4 items-center justify-center flex-row gap-2"
-                      >
-                        <Icon name="plus" size={20} color="#637381" />
-                        <Text className="text-sm font-bold text-[#637381]">Add Document</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-
-                {/* Order Sheets Section */}
-                <View>
-                  <TouchableOpacity 
-                    onPress={() => setExpandedDocs(prev => ({ ...prev, orderSheets: !prev.orderSheets }))}
-                    className="flex-row items-center justify-between mb-4"
-                  >
-                    <Text className="text-sm font-bold text-[#1C252E]" style={{ color: colors.text }}>Order Sheets</Text>
-                    <View className="flex-row items-center gap-2">
-                      <View className="bg-[#1C252E] px-2 py-0.5 rounded-md">
-                        <Text className="text-[10px] font-black text-white">{resolvedDocuments.orderSheets.length} Files</Text>
-                      </View>
-                      <Icon name={expandedDocs.orderSheets ? "chevron-up" : "chevron-down"} size={20} color="#637381" />
-                    </View>
-                  </TouchableOpacity>
-
-                  {expandedDocs.orderSheets && (
-                    <View className="gap-3">
-                      {resolvedDocuments.orderSheets.map((doc, idx) => (
-                        <DocumentItem 
-                          key={idx} 
-                          doc={doc} 
-                          isDark={isDark} 
-                          colors={colors} 
-                          onOpen={onOpenPdf} 
-                          onImagePreview={setPreviewImage} 
-                        />
-                      ))}
-                      <TouchableOpacity 
-                        onPress={() => navigation.navigate('JobBuilder', { lead, initialTab: 'Summary' })}
-                        className="border-2 border-dashed border-gray-200 rounded-xl py-4 items-center justify-center flex-row gap-2"
-                      >
-                        <Icon name="plus" size={20} color="#637381" />
-                        <Text className="text-sm font-bold text-[#637381]">Add Document</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-              </View>
-            </View>
-          )}
-        </>
-      )}
 
       {/* Progress Bar */}
       <View className="mb-6 px-1">
@@ -734,19 +1120,6 @@ export const JobDocsSection = ({
             <Text className="text-[13px] font-semibold" style={{ color: colors.primary.main }}>
               {totalUploaded}/{displayTotal} Images
             </Text>
-            <TouchableOpacity
-              onPress={() => setExpandedAll(!expandedAll)}
-              className="flex-row gap-1 items-center"
-            >
-              <Text className="text-[13px] font-semibold" style={{ color: colors.primary.main }}>
-                {expandedAll ? 'Collapse All' : 'Expand All'}
-              </Text>
-              <Icon
-                name={expandedAll ? 'chevron-up' : 'chevron-down'}
-                size={16}
-                color={colors.primary.main}
-              />
-            </TouchableOpacity>
           </View>
         </View>
         <View
@@ -762,42 +1135,44 @@ export const JobDocsSection = ({
           />
         </View>
       </View>
-      <View style={{ height: 20 }} />
+      <View style={{ height: 10 }} />
 
-      {/* Accordion Sections */}
-      {IMAGE_CATEGORIES.map((section) => {
-        const sectionTotal =
-          section.subCategories?.reduce((s, sub) => s + (sub.required || 1), 0) || 0;
-        return (
-          <AccordionItem
-            key={section.id}
-            title={section.name}
-            subCategories={section.subCategories}
-            images={sectionImages[section.name] || []}
-            onUpload={(idx: number, asset: any, groupName?: string) =>
-              handleUpload(section.name, idx, asset, groupName)
-            }
-            onDelete={(image: SectionImage) => handleDelete(section.name, image)}
-            onPreview={(uri: string) => setPreviewImage(uri)}
-            forceExpanded={expandedAll}
-            isUploading={uploadImagesMutation.isPending}
-            uploadingSlots={uploadingSlots}
-            cardGroups={section.cardGroups}
-          />
-        );
-      })}
+      {/* Capture CTA & Manage Photos Buttons */}
+      <TouchableOpacity
+        onPress={handleStartTakingPhotos}
+        className="w-full py-4 rounded-xl items-center justify-center flex-row mb-2"
+        style={{ backgroundColor: '#72BD00' }}
+      >
+        <Icon name="camera" size={20} color="white" style={{ marginRight: 8 }} />
+        <Text className="text-white font-bold text-sm">
+          {totalUploaded > 0 ? 'Continue' : 'Start'} Taking Photos
+        </Text>
+      </TouchableOpacity>
+      <Text className="text-[11px] font-bold text-slate-400 text-center mb-4">
+        Shoot first — tag by location after each shot
+      </Text>
 
-      {/* Divider */}
-      <View style={{ height: 1, overflow: 'hidden', marginVertical: 8 }}>
-        <View
-          style={{
-            height: 2,
-            borderWidth: 1,
-            borderColor: '#C5CAD17A',
-            borderStyle: 'dashed',
-            borderRadius: 0.01,
-          }}
-        />
+      <View className="w-full gap-2.5 mb-6">
+        <TouchableOpacity
+          onPress={() => setShowManageModal(true)}
+          className="w-full py-4 rounded-xl items-center justify-center flex-row border"
+          style={{ borderColor: '#72BD00', backgroundColor: 'transparent' }}
+        >
+          <Icon name="grid" size={20} color="#72BD00" style={{ marginRight: 8 }} />
+          <Text className="font-bold text-sm text-[#72BD00]">
+            Manage Photos ({totalUploaded})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setShowDownloadModal(true)}
+          className="w-full py-4 rounded-xl items-center justify-center flex-row border"
+          style={{ borderColor: '#72BD00', backgroundColor: 'transparent' }}
+        >
+          <Icon name="download" size={20} color="#72BD00" style={{ marginRight: 8 }} />
+          <Text className="font-bold text-sm text-[#72BD00]">
+            Download Images ({totalUploaded})
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Result Buttons */}
@@ -864,417 +1239,176 @@ export const JobDocsSection = ({
           }}
         />
       </View>
-      <EditContractDetailsModal 
+
+      <DocumentScannerModal
+        visible={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        title={scannerType === 'agreement' ? 'Scan Agreement' : 'Scan Order Sheet'}
+        leadId={lead?._id || ''}
+        category={scannerType}
+        initialFiles={
+          resolvedDocuments[scannerType === 'agreement' ? 'agreements' : 'orderSheets'] || []
+        }
+        onSave={handleSaveScannedDocument}
+      />
+
+      <EditContractDetailsModal
         visible={showEditModal}
         onClose={() => {
           setShowEditModal(false);
-          fetchOutcome();
           refetch();
         }}
         outcomeData={outcomeData}
         lead={lead}
         onUpdate={handleUpdateContract}
       />
-    </View>
-  );
-};
 
-// ─── AccordionItem ────────────────────────────────────────────────────────────
+      {/* Result Modal Wrapper */}
+      <ResultLeadModal
+        visible={showResultModal}
+        onClose={() => setShowResultModal(false)}
+        onSubmit={handleResultSubmit}
+        initialResult={pendingResult}
+        loading={submitJobMutation.isPending || resetLeadMutation.isPending}
+      />
 
-interface AccordionItemProps {
-  title: string;
-  subCategories?: any[];
-  cardGroups?: any[];
-  images: SectionImage[];
-  onUpload: (idx: number, asset: any, groupName?: string) => void;
-  onDelete: (image: SectionImage) => void;
-  onPreview: (uri: string) => void;
-  forceExpanded: boolean;
-  isUploading: boolean;
-  uploadingSlots: { [key: string]: boolean };
-}
-
-const AccordionItem = ({
-  title,
-  subCategories,
-  cardGroups,
-  images,
-  onUpload,
-  onDelete,
-  onPreview,
-  forceExpanded,
-  isUploading,
-  uploadingSlots,
-}: AccordionItemProps) => {
-  const { colors, isDark } = useTheme();
-  const [localExpanded, setLocalExpanded] = useState(false);
-  const [pickerIndex, setPickerIndex] = useState<{ idx: number; groupName?: string } | null>(null);
-
-  const expanded = forceExpanded || localExpanded;
-
-  const openCamera = async () => {
-    if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) return;
-    }
-
-    const target = pickerIndex;
-    setPickerIndex(null);
-
-    setTimeout(
-      () => {
-        launchCamera({ mediaType: 'photo', quality: 0.8 }, (response) => {
-          if (response.assets?.[0]?.uri && target !== null) {
-            onUpload(target.idx, response.assets[0], target.groupName);
-          }
-        });
-      },
-      Platform.OS === 'ios' ? 400 : 100
-    );
-  };
-
-  const openGallery = () => {
-    const target = pickerIndex;
-    setPickerIndex(null);
-
-    setTimeout(() => {
-      launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, (response) => {
-        if (response.assets?.[0]?.uri && target !== null) {
-          onUpload(target.idx, response.assets[0], target.groupName);
-        }
-      });
-    }, 400);
-  };
-
-  const renderSlots = (subs: any[] = [], groupName?: string) => {
-    const totalRequired = subs.length;
-
-    // Get images belonging to this section/group
-    const groupImages = groupName
-      ? images.filter(
-          (img) => img.subcategory === groupName || subs.some((s) => s.name === img.subcategory)
-        )
-      : images;
-
-    // Separate required images from extra images
-    const requiredImages = subs.map((sub) =>
-      groupImages.find((img) => img.subcategory === sub.name)
-    );
-    const extraImages = groupImages.filter(
-      (img) => !subs.some((sub) => sub.name === img.subcategory)
-    );
-
-    return (
-      <View className="flex-row flex-wrap justify-between">
-        {/* 1. Required Slots */}
-        {subs.map((sub, idx) => {
-          const existingImage = requiredImages[idx];
-          return (
+      {/* Download Images Confirmation Modal */}
+      <Modal visible={showDownloadModal} transparent animationType="fade">
+        <View className="flex-1 justify-center items-center bg-black/50 px-6">
+          <View
+            className="w-full max-w-sm rounded-[32px] p-6 items-center"
+            style={{ backgroundColor: isDark ? colors.surface : 'white' }}
+          >
+            {/* Download Icon Wrapper */}
             <View
-              key={`req-${idx}`}
-              className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
-              style={{
-                borderColor: existingImage ? 'transparent' : colors.primary.main,
-                backgroundColor: isDark ? colors.primary.main + '10' : colors.primary.main + '05',
-              }}
+              className="w-20 h-20 rounded-full items-center justify-center mb-5"
+              style={{ backgroundColor: '#72BD0015' }}
             >
-              {existingImage ? (
-                renderFilledSlot(existingImage, false)
-              ) : (
+              <View
+                className="w-14 h-14 rounded-full items-center justify-center"
+                style={{ backgroundColor: '#72BD0022' }}
+              >
+                <Icon name="download" size={32} color="#72BD00" />
+              </View>
+            </View>
+
+            {/* Title */}
+            <Text
+              className="text-lg font-black mb-3"
+              style={{ color: colors.text }}
+            >
+              Download Images
+            </Text>
+
+            {/* Message */}
+            <Text
+              className="text-slate-500 text-sm text-center mb-6 px-4"
+              style={{ color: isDark ? colors.textSecondary : '#637381' }}
+            >
+              {isDownloading
+                ? `Downloading ${downloadProgress} of ${totalUploaded} photos...`
+                : `Are you sure you want to download all ${totalUploaded} photos?`}
+            </Text>
+
+            {/* Buttons Row */}
+            {!isDownloading ? (
+              <View className="flex-row gap-3 w-full">
                 <TouchableOpacity
-                  onPress={() => setPickerIndex({ idx, groupName })}
-                  disabled={isUploading}
-                  className="w-full h-full items-center justify-center p-2"
+                  onPress={() => setShowDownloadModal(false)}
+                  className="flex-1 h-12 rounded-xl items-center justify-center border"
+                  style={{ borderColor: '#919EAB33' }}
                 >
-                  {uploadingSlots[`${groupName || title}-${idx}`] ? (
-                    <ActivityIndicator size="small" color={colors.primary.main} />
-                  ) : (
-                    <>
-                      <View className="absolute inset-0">
-                        {sub?.thumbnail && (JobDocsThumbnails as any)[sub.thumbnail] && (
-                          <Image
-                            source={(JobDocsThumbnails as any)[sub.thumbnail]}
-                            className="w-full h-full"
-                            style={{ opacity: 0.3 }}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </View>
-                      <Icon
-                        name="camera-plus-outline"
-                        size={32}
-                        color={colors.text}
-                        style={{ opacity: 0.5, marginBottom: 4 }}
-                      />
-                      <Text
-                        className="text-[10px] font-black text-center mx-2"
-                        style={{ color: colors.text }}
-                      >
-                        {sub.name}
-                      </Text>
-                      <Text className="text-[8px] font-bold text-slate-400 mt-1">CAPTURE</Text>
-                    </>
-                  )}
+                  <Text className="text-sm font-bold" style={{ color: colors.text }}>
+                    Cancel
+                  </Text>
                 </TouchableOpacity>
-              )}
-            </View>
-          );
-        })}
-
-        {/* 2. Extra Uploaded Slots */}
-        {extraImages.map((img, idx) => (
-          <View
-            key={`extra-filled-${idx}`}
-            className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
-            style={{ borderColor: 'transparent' }}
-          >
-            {renderFilledSlot(img, true)}
+                <TouchableOpacity
+                  onPress={handleDownloadAllImages}
+                  className="flex-1 h-12 rounded-xl items-center justify-center"
+                  style={{ backgroundColor: '#72BD00' }}
+                >
+                  <Text className="text-white text-sm font-bold">Download</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <ActivityIndicator size="small" color="#72BD00" />
+            )}
           </View>
-        ))}
-
-        {/* 3. The Final "Add more" Slot */}
-        <View
-          className="w-[48%] h-32 rounded-2xl border-2 border-dashed overflow-hidden mb-4 relative"
-          style={{
-            borderColor: '#00AB55',
-            backgroundColor: isDark ? '#00AB5510' : '#00AB5508',
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => setPickerIndex({ idx: totalRequired + extraImages.length, groupName })}
-            className="w-full h-full items-center justify-center"
-          >
-            <View className="w-10 h-10 rounded-full bg-[#00AB5520] items-center justify-center mb-2">
-              <Icon name="plus" size={24} color="#00AB55" />
-            </View>
-            <Text className="text-[12px] font-black text-[#00AB55]">Add more</Text>
-          </TouchableOpacity>
         </View>
-      </View>
-    );
-  };
+      </Modal>
 
-  const renderFilledSlot = (img: SectionImage, isExtra: boolean) => (
-    <>
-      <LoadingImage uri={img.uri} className="w-full h-full" resizeMode="cover" />
-      <TouchableOpacity
-        onPress={() => onPreview(img.uri)}
-        className="absolute top-2 left-2 p-1.5 bg-black/40 rounded-full"
-      >
-        <Icon name="eye-outline" size={16} color="white" />
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => onDelete(img)}
-        className="absolute top-2 right-2 p-1.5 bg-red-500/80 rounded-full"
-      >
-        <Icon name="trash-can-outline" size={16} color="white" />
-      </TouchableOpacity>
-      <View
-        className={`absolute bottom-0 left-0 right-0 ${
-          isExtra ? 'py-1.5 flex-row items-center justify-center gap-1' : 'p-1.5'
-        } bg-black/40`}
-      >
-        <Text className="text-[9px] text-white font-bold text-center" numberOfLines={1}>
-          {img.subcategory?.replace(/-/g, ' ')}
-        </Text>
-        {isExtra && <Icon name="chevron-down" size={10} color="white" />}
-      </View>
-    </>
-  );
+      {/* Tag Photo Modal */}
+      <TagPhotoModal
+        visible={showTagModal}
+        onClose={() => setShowTagModal(false)}
+        lead={lead}
+        taggingAsset={taggingAsset}
+        setTaggingAsset={setTaggingAsset}
+        movingImage={movingImage}
+        setMovingImage={setMovingImage}
+        conflict={conflict}
+        setConflict={setConflict}
+        activeTagTab={activeTagTab}
+        setActiveTagTab={setActiveTagTab}
+        getImagesForSection={getImagesForSection}
+        handleUpload={handleUpload}
+        handleDelete={handleDelete}
+        handleMovePhoto={handleMovePhoto}
+        isContinuousCamera={isContinuousCamera}
+        setIsContinuousCamera={setIsContinuousCamera}
+        reopenCameraContinuous={reopenCameraContinuous}
+        updateImagePositionMutation={updateImagePositionMutation}
+        refetch={refetch}
+        setShowManageModal={setShowManageModal}
+        totalUploaded={totalUploaded}
+        displayTotal={displayTotal}
+        insets={insets}
+        sectionImages={sectionImages}
+        onSectionImagesChange={onSectionImagesChange}
+        getTabCounts={getTabCounts}
+        waitForPendingUpload={waitForPendingUpload}
+      />
 
-  const emptyRequiredCount = useMemo(() => {
-    let empty = 0;
-    const checkSubs = (subs: any[] = []) => {
-      subs.forEach((sub) => {
-        const hasImg = images.some((img) => img.subcategory === sub.name);
-        if (!hasImg) empty += (sub.required || 1);
-      });
-    };
-    if (cardGroups) cardGroups.forEach((g) => checkSubs(g.subCategories));
-    else checkSubs(subCategories);
-    return empty;
-  }, [images, cardGroups, subCategories]);
+      {/* Manage Photos Modal */}
+      <ManagePhotosModal
+        visible={showManageModal}
+        onClose={() => setShowManageModal(false)}
+        lead={lead}
+        insets={insets}
+        navigation={navigation}
+        refetch={refetch}
+        activeManageTab={activeManageTab}
+        setActiveManageTab={setActiveManageTab}
+        isAnnotationSelectMode={isAnnotationSelectMode}
+        setIsAnnotationSelectMode={setIsAnnotationSelectMode}
+        selectedAnnotationPhotos={selectedAnnotationPhotos}
+        setSelectedAnnotationPhotos={setSelectedAnnotationPhotos}
+        getTabCounts={getTabCounts}
+        getRequiredSlotsForActiveTab={getRequiredSlotsForActiveTab}
+        getExtraFilledSlotsForTab={getExtraFilledSlotsForTab}
+        getAnnotatedSlotsForTab={getAnnotatedSlotsForTab}
+        toggleSelectPhoto={toggleSelectPhoto}
+        handleOpenPreviewTab={handleOpenPreviewTab}
+        setMovingImage={setMovingImage}
+        setShowTagModal={setShowTagModal}
+        handleDelete={handleDelete}
+        getSubcategoryLabel={getSubcategoryLabel}
+      />
 
-  const displayTotal = images.length + emptyRequiredCount;
-
-  return (
-    <View className="mb-3">
-      <GlobalModal
-        visible={pickerIndex !== null}
-        title="Upload Image"
-        message={`Choose a photo for ${title}.`}
-        type="info"
-        onClose={() => setPickerIndex(null)}
-        confirmText="Cancel"
-      >
-        <View className="flex-col w-full px-4 mt-4">
-          <TouchableOpacity
-            onPress={openCamera}
-            className="py-4 px-4 rounded-2xl flex-row items-center border mb-3"
-            style={{
-              borderColor: colors.border,
-              backgroundColor: isDark ? colors.surface : '#fff',
-            }}
-          >
-            <Icon name="camera-outline" size={24} color={colors.text} className="mr-3" />
-            <Text className="text-sm font-bold" style={{ color: colors.text }}>
-              Take Photo
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={openGallery}
-            className="py-4 px-4 rounded-2xl flex-row items-center border"
-            style={{
-              borderColor: colors.border,
-              backgroundColor: isDark ? colors.surface : '#fff',
-            }}
-          >
-            <Icon name="image-outline" size={24} color={colors.text} className="mr-3" />
-            <Text className="text-sm font-bold" style={{ color: colors.text }}>
-              Choose from Gallery
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </GlobalModal>
-
-      <TouchableOpacity
-        onPress={() => setLocalExpanded(!localExpanded)}
-        className="flex-row items-center justify-between px-3 py-2 rounded-md shadow-sm"
-        style={{
-          backgroundColor: colors.card,
-          borderBottomLeftRadius: expanded ? 0 : 8,
-          borderBottomRightRadius: expanded ? 0 : 8,
-        }}
-      >
-        <Text className="text-sm font-semibold text-text-primary">{title}</Text>
-        <View className="flex-row items-center">
-          <View
-            className="px-3 py-1 rounded-md mr-3"
-            style={{ 
-              backgroundColor: images.length === displayTotal && displayTotal > 0 
-                ? '#4CBB17' 
-                : (isDark ? colors.surface : colors.text) 
-            }}
-          >
-            <Text className="text-sm text-white font-semibold">
-              {images.length} of {displayTotal} complete
-            </Text>
-          </View>
-          <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={colors.text} />
-        </View>
-      </TouchableOpacity>
-
-      {expanded && (
-        <View
-          className="p-4 border-l border-r border-b rounded-b-2xl"
-          style={{
-            borderColor: colors.border,
-            backgroundColor: isDark ? colors.background : colors.surface,
-          }}
-        >
-          {cardGroups
-            ? cardGroups.map((group: any) => (
-                <View key={group.id} className="mb-6">
-                  <View className="flex-row items-center mb-4">
-                    <View className="w-1 h-4 bg-green-500 rounded-full mr-2" />
-                    <Text className="text-[11px] font-black text-slate-400 tracking-widest">
-                      {group.name}
-                    </Text>
-                  </View>
-                  {renderSlots(group.subCategories, group.name)}
-                </View>
-              ))
-            : renderSlots(subCategories)}
-        </View>
-      )}
-    </View>
-  );
-};
-
-const loadedUris = new Set<string>();
-
-const LoadingImage = React.memo(({ uri, className, style, resizeMode }: any) => {
-  const [loading, setLoading] = useState(!loadedUris.has(uri));
-  const { colors } = useTheme();
-
-  return (
-    <View className="w-full h-full justify-center items-center">
-      {loading && (
-        <View className="absolute z-10 w-full h-full justify-center items-center bg-black/5">
-          <ActivityIndicator size="small" color={colors.primary.main} />
-        </View>
-      )}
-      <Image
-        source={{ uri }}
-        style={style}
-        className={className}
-        resizeMode={resizeMode}
-        onLoadStart={() => {
-          if (!loadedUris.has(uri)) setLoading(true);
-        }}
-        onLoadEnd={() => {
-          loadedUris.add(uri);
-          setLoading(false);
-        }}
-        onError={() => setLoading(false)}
+      {/* Fullscreen Image Slideshow Modal */}
+      <ImageSlideshowModal
+        visible={previewImages.length > 0}
+        onClose={() => setPreviewImages([])}
+        previewImages={previewImages}
+        setPreviewImages={setPreviewImages}
+        previewIndex={previewIndex}
+        setPreviewIndex={setPreviewIndex}
+        isPlaying={isPlaying}
+        setIsPlaying={setIsPlaying}
+        isFullscreen={isFullscreen}
+        setIsFullscreen={setIsFullscreen}
+        insets={insets}
       />
     </View>
-  );
-});
-
-const DetailRow = ({ label, value, color, method, isDark }: any) => (
-  <View className="flex-row justify-between items-center py-1">
-    <Text className="text-[12px] text-gray-500 font-medium">{label}</Text>
-    <View className="flex-row items-center">
-      <Text 
-        className="text-[10px] font-black mr-2" 
-        style={{ color: color || (isDark ? '#FFFFFF' : '#1C252E') }}
-      >
-        {value}
-      </Text>
-      {method && (
-        <View 
-          className="px-2 py-1 rounded-md border border-gray-100 shadow-sm"
-          style={{ 
-            backgroundColor: isDark ? '#1C252E' : '#FFFFFF', 
-            borderColor: isDark ? '#FFFFFF20' : '#E2E8F0',
-            paddingHorizontal: 6,
-            paddingVertical: 4,
-          }}
-        >
-          <Text className="text-[10px] font-black text-gray-500 uppercase tracking-tighter">
-            {method}
-          </Text>
-        </View>
-      )}
-    </View>
-  </View>
-);
-
-const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: any) => {
-  const isImage = doc.uri?.toLowerCase().match(/\.(jpg|jpeg|png|webp|heic)$/) || !doc.uri?.toLowerCase().includes('.pdf');
-
-  return (
-    <TouchableOpacity 
-      onPress={() => isImage ? onImagePreview?.(doc.uri) : onOpen?.(doc.uri, doc.name)}
-      className="flex-row items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100"
-      style={{ backgroundColor: isDark ? '#FFFFFF08' : '#F9FAFB' }}
-    >
-      <View className="flex-row items-center gap-3">
-        <View className={`p-2 rounded-lg ${isImage ? 'bg-blue-50' : 'bg-red-50'}`}>
-          <Icon 
-            name={isImage ? "image-outline" : "file-pdf-box"} 
-            size={24} 
-            color={isImage ? "#2196F3" : "#FF5630"} 
-          />
-        </View>
-        <View>
-          <Text className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-            {isImage ? 'IMAGE' : 'PDF'} • {(doc.size !== undefined && doc.size !== null) ? (doc.size / 1024).toFixed(0) + ' KB' : 'Size N/A'}
-          </Text>
-        </View>
-      </View>
-      <Icon name="eye-outline" size={20} color="#637381" />
-    </TouchableOpacity>
   );
 };

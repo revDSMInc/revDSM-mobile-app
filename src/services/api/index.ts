@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../../utils/storage';
 import { ENV } from '../../config/env';
 
 /**
@@ -28,8 +28,8 @@ const axiosInstance: AxiosInstance = axios.create({
 
 // Request Interceptor: Attach Auth Token
 axiosInstance.interceptors.request.use(
-  async (config) => {
-    const token = await AsyncStorage.getItem('accessToken');
+  (config) => {
+    const token = Storage.getItem('accessToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -76,8 +76,8 @@ axiosInstance.interceptors.response.use(
 );
 
 // Helper to clear session explicitly
-const clearSession = async () => {
-  await AsyncStorage.removeItem('accessToken');
+const clearSession = () => {
+  Storage.removeItem('accessToken');
   // Add other local clear requirements here if needed
   delete axiosInstance.defaults.headers.common.Authorization;
 };
@@ -96,12 +96,12 @@ export const api = {
     axiosInstance.delete(url, config),
 };
 
-export const setSessionHeader = async (token: string | null) => {
+export const setSessionHeader = (token: string | null) => {
   if (token) {
-    await AsyncStorage.setItem('accessToken', token);
+    Storage.setItem('accessToken', token);
     axiosInstance.defaults.headers.common.Authorization = `Bearer ${token}`;
   } else {
-    await clearSession();
+    clearSession();
   }
 };
 

@@ -1,24 +1,49 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { PanResponder, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import { FlashMessage } from '../config/message';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { useUploadPaperConsentOCRMutation } from './useLeadMutation';
+import { formatUSPhoneNumber } from '../utils/phone-util';
+
+const normalizeOcrDate = (input: string) => {
+  if (!input) return '';
+  const s = String(input).trim().replace(/[-.]/g, '/');
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    const mm = String(parseInt(m[1], 10)).padStart(2, '0');
+    const dd = String(parseInt(m[2], 10)).padStart(2, '0');
+    const y = m[3];
+    const yyyy = y.length === 2 ? 2000 + parseInt(y, 10) : parseInt(y, 10);
+    return `${mm}/${dd}/${yyyy}`;
+  }
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) {
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${mm}/${dd}/${yyyy}`;
+  }
+  return s;
+};
 
 export const useRoofWaiver = (
   lead: any,
   onSubmit: (data: any) => void,
   onFinalUpload?: (pdfPath: string) => Promise<void>,
-  onSuccess?: () => void
+  onSuccess?: () => void,
+  prefilledData?: any
 ) => {
   const [formData, setFormData] = useState({
-    firstName: lead?.customerDetails?.firstName || '',
-    lastName: lead?.customerDetails?.lastName || '',
-    phoneNumber: lead?.customerDetails?.phone || '',
-    email: lead?.customerDetails?.email || '',
-    leadId: lead?.leadId || 'N/A',
+    firstName: prefilledData?.firstName ?? lead?.customerDetails?.firstName ?? '',
+    lastName: prefilledData?.lastName ?? lead?.customerDetails?.lastName ?? '',
+    phoneNumber: prefilledData?.phoneNumber ?? lead?.customerDetails?.phone ?? '',
+    email: prefilledData?.email ?? lead?.customerDetails?.email ?? '',
+    leadId: prefilledData?.leadId ?? lead?.leadId ?? 'N/A',
     repName: 'Firstrep',
     officeCode: '01',
     time: '12:00 AM',
-    date: '05/01/2025',
+    date: prefilledData?.date ?? '05/01/2025',
     address: lead?.fullAddress || '',
     consent: false,
   });
@@ -29,6 +54,24 @@ export const useRoofWaiver = (
   const [livePaths, setLivePaths] = useState<string[]>([]);
   const [currentPath, setCurrentPath] = useState('');
   const currentPathRef = useRef('');
+  const [submissionType, setSubmissionType] = useState<'digital' | 'paper'>(
+    prefilledData ? 'paper' : 'digital'
+  );
+
+  useEffect(() => {
+    if (prefilledData) {
+      setFormData((prev) => ({
+        ...prev,
+        firstName: prefilledData.firstName ?? prev.firstName,
+        lastName: prefilledData.lastName ?? prev.lastName,
+        phoneNumber: prefilledData.phoneNumber ?? prev.phoneNumber,
+        email: prefilledData.email ?? prev.email,
+        leadId: prefilledData.leadId ?? prev.leadId,
+        date: prefilledData.date ?? prev.date,
+      }));
+      setSubmissionType('paper');
+    }
+  }, [prefilledData]);
 
   const panResponder = useMemo(
     () =>
@@ -93,7 +136,7 @@ export const useRoofWaiver = (
         time: String(formData.time),
         date: String(formData.date),
         address: String(formData.address),
-        type: 'digital',
+        type: submissionType,
         file: signatureFile,
         formType: 'roof_waiver',
         consent: 'true',
@@ -128,5 +171,7 @@ export const useRoofWaiver = (
     currentPath,
     panResponder,
     handleFinalSubmit,
+    submissionType,
+    setSubmissionType,
   };
 };

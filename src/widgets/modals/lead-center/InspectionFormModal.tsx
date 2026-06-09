@@ -145,14 +145,16 @@ export const InspectionFormModal = ({
                   saveToPhotos: true,
                 },
                 (res) => {
-                  if (res.didCancel) return;
-                  if (res.errorCode) {
-                    Alert.alert('Error', res.errorMessage || 'Could not open camera');
-                    return;
-                  }
-                  if (res.assets && res.assets[0]?.uri) {
-                    updateItem(sectionId, index, 'photo', res.assets[0].uri);
-                  }
+                  setTimeout(() => {
+                    if (res.didCancel) return;
+                    if (res.errorCode) {
+                      Alert.alert('Error', res.errorMessage || 'Could not open camera');
+                      return;
+                    }
+                    if (res.assets && res.assets[0]?.uri) {
+                      updateItem(sectionId, index, 'photo', res.assets[0].uri);
+                    }
+                  }, 0);
                 }
               );
             },
@@ -169,14 +171,16 @@ export const InspectionFormModal = ({
                   selectionLimit: 1,
                 },
                 (res) => {
-                  if (res.didCancel) return;
-                  if (res.errorCode) {
-                    Alert.alert('Error', res.errorMessage || 'Could not open gallery');
-                    return;
-                  }
-                  if (res.assets && res.assets[0]?.uri) {
-                    updateItem(sectionId, index, 'photo', res.assets[0].uri);
-                  }
+                  setTimeout(() => {
+                    if (res.didCancel) return;
+                    if (res.errorCode) {
+                      Alert.alert('Error', res.errorMessage || 'Could not open gallery');
+                      return;
+                    }
+                    if (res.assets && res.assets[0]?.uri) {
+                      updateItem(sectionId, index, 'photo', res.assets[0].uri);
+                    }
+                  }, 0);
                 }
               );
             },

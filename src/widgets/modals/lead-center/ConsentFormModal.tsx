@@ -23,6 +23,7 @@ import { FlashMessage } from '../../../config/message';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
 import Pdf from 'react-native-pdf';
 import { Dimensions } from 'react-native';
+import { useUploadPaperConsentOCRMutation } from '../../../hooks/useLeadMutation';
 
 interface ConsentFormModalProps {
   visible: boolean;
@@ -34,6 +35,7 @@ interface ConsentFormModalProps {
   loading?: boolean;
   onFinalUpload?: (pdfPath: string) => Promise<void>;
   uploading?: boolean;
+  prefilledData?: any;
 }
 
 export const ConsentFormModal = ({
@@ -46,22 +48,42 @@ export const ConsentFormModal = ({
   loading,
   onFinalUpload,
   uploading,
+  prefilledData,
 }: ConsentFormModalProps) => {
   const { colors, isDark } = useTheme();
+  const [submissionType, setSubmissionType] = useState<'digital' | 'paper'>(
+    prefilledData ? 'paper' : 'digital'
+  );
+
   const [formData, setFormData] = useState({
-    firstName: lead?.customerDetails?.firstName || '',
-    lastName: lead?.customerDetails?.lastName || '',
-    phoneNumber: lead?.customerDetails?.phone || '',
-    email: lead?.customerDetails?.email || '',
-    leadId: lead?.leadId || 'N/A',
+    firstName: prefilledData?.firstName ?? lead?.customerDetails?.firstName ?? '',
+    lastName: prefilledData?.lastName ?? lead?.customerDetails?.lastName ?? '',
+    phoneNumber: prefilledData?.phoneNumber ?? lead?.customerDetails?.phone ?? '',
+    email: prefilledData?.email ?? lead?.customerDetails?.email ?? '',
+    leadId: prefilledData?.leadId ?? lead?.leadId ?? 'N/A',
     repName: 'Firstrep',
     officeCode: '01',
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    date: new Date().toISOString().split('T')[0],
+    date: prefilledData?.date ?? new Date().toISOString().split('T')[0],
     address: lead?.fullAddress || '',
     consent: false,
   });
   const [generatedPdf, setGeneratedPdf] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (prefilledData) {
+      setFormData((prev) => ({
+        ...prev,
+        firstName: prefilledData.firstName ?? prev.firstName,
+        lastName: prefilledData.lastName ?? prev.lastName,
+        phoneNumber: prefilledData.phoneNumber ?? prev.phoneNumber,
+        email: prefilledData.email ?? prev.email,
+        leadId: prefilledData.leadId ?? prev.leadId,
+        date: prefilledData.date ?? prev.date,
+      }));
+      setSubmissionType('paper');
+    }
+  }, [prefilledData]);
 
   // Signature state
   const [showSigPad, setShowSigPad] = useState(false);
@@ -158,7 +180,7 @@ export const ConsentFormModal = ({
         email: String(formData.email),
         phoneNumber: String(formData.phoneNumber),
         leadId: String(lead?.leadId || ''),
-        type: 'digital',
+        type: submissionType,
         file: signatureFile, // Reverting to signature key
         repName: String(formData.repName),
         officeCode: String(formData.officeCode),
@@ -256,15 +278,16 @@ export const ConsentFormModal = ({
     <Modal visible={visible} animationType="fade" transparent>
       <View className="flex-1 bg-black/50 justify-center px-4">
         <View className="rounded-2xl overflow-hidden shadow-2xl h-4/5">
-          {/* Header */}
           <View
             className="flex-row items-center justify-between p-4"
             style={{ backgroundColor: colors.primary.main }}
           >
             <Text className="text-white text-sm font-semibold">Customer Consent Form</Text>
-            <TouchableOpacity onPress={onPaperFallback} className="bg-white rounded-md px-2 py-0.5">
-              <Text className="text-[#1C252E] text-sm">Paper Fallback</Text>
-            </TouchableOpacity>
+            {submissionType !== 'paper' && (
+              <TouchableOpacity onPress={onPaperFallback} className="bg-white rounded-md px-2 py-0.5">
+                <Text className="text-[#1C252E] text-sm">Paper Fallback</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           <ScrollView

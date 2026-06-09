@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from './storage';
 import {
   calculateDistance,
   getScheduledDateTime,
@@ -19,8 +19,8 @@ export interface AppointmentLogPlan {
   isInRange: boolean;
 }
 
-export const persistActiveLeadId = async (leadId?: string) => {
-  if (leadId) await AsyncStorage.setItem('leadId', leadId);
+export const persistActiveLeadId = (leadId?: string) => {
+  if (leadId) Storage.setItem('leadId', leadId);
 };
 
 export const logLeadCardSelect = async (user: any, lead: any) => {

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../../../utils/storage';
 import FileViewer from 'react-native-file-viewer';
 import {
   View,
@@ -1290,7 +1290,7 @@ export const SummarySection = ({
 
         if (!downloaded) {
           // fetch fallback — includes Authorization header in case URL requires it
-          const token = await AsyncStorage.getItem('accessToken');
+          const token = Storage.getItem('accessToken');
           const res = await fetch(documentUri, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           });

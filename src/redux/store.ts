@@ -10,12 +10,12 @@ import {
   PURGE,
   REGISTER,
 } from 'redux-persist';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reduxPersistStorage } from '../utils/storage';
 import authReducer from './reducer/auth.reducer';
 
 const persistConfig = {
   key: 'root',
-  storage: AsyncStorage,
+  storage: reduxPersistStorage,
   whitelist: ['auth'], // Persist authentication state
 };
 

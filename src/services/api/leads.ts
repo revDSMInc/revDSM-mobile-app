@@ -1,6 +1,5 @@
 import api from './index';
 import { AxiosResponse } from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ENV } from '../../config/env';
 
 /**
@@ -20,6 +19,7 @@ export const LeadEndpoints = {
   delete: (id: string) => `lead/v1/delete/${id}`,
   // Production documentation additions
   images: (leadId: string) => `demo/v1/leads/${leadId}/images`,
+  updateImagePosition: (leadId: string) => `demo/v1/leads/${leadId}/images/position`,
   reset: (leadId: string) => `lead/v1/${leadId}/reset`,
   additionalSlots: (leadId: string) => `leads/${leadId}/additional-slots`,
   digitalConsent: 'consent/digital',
@@ -85,6 +85,8 @@ export const LeadService = {
     }),
   deleteImage: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.images(leadId), { data: payload }),
+  updateImagePosition: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.updateImagePosition(leadId), payload),
   deleteOutcomeDocument: (documentId: string): Promise<AxiosResponse<any>> =>
     api.delete(LeadEndpoints.outcomeDocument(documentId)),
   resetLead: (leadId: string): Promise<AxiosResponse<any>> => api.put(LeadEndpoints.reset(leadId)),

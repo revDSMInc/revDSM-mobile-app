@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../utils/storage';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -85,7 +85,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             setTimeout(() => {
               refetch();
             }, 1000);
-            await AsyncStorage.removeItem(`risk_job_${lead?._id || lead?.id}`);
+            Storage.removeItem(`risk_job_${lead?._id || lead?.id}`);
             return true;
           }
         }
@@ -116,12 +116,12 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
 
   // Initial check for existing risk job
   useEffect(() => {
-    const initJobs = async () => {
-      const savedRisk = await AsyncStorage.getItem(`risk_job_${lead?._id || lead?.id}`);
+    const initJobs = () => {
+      const savedRisk = Storage.getItem(`risk_job_${lead?._id || lead?.id}`);
       if (savedRisk) {
         setRiskJob(JSON.parse(savedRisk));
       }
-      const savedRev = await AsyncStorage.getItem(`rev_render_jobs_${lead?._id || lead?.id}`);
+      const savedRev = Storage.getItem(`rev_render_jobs_${lead?._id || lead?.id}`);
       if (savedRev) {
         setRevRenderJobs(JSON.parse(savedRev));
       }
@@ -140,7 +140,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
         console.log('[Risk] Received jobId:', jobId);
         const newJob = { jobId, progress: 0, status: 'pending', step: 'Initializing...' };
         setRiskJob(newJob);
-        await AsyncStorage.setItem(`risk_job_${lead?._id || lead?.id}`, JSON.stringify(newJob));
+        Storage.setItem(`risk_job_${lead?._id || lead?.id}`, JSON.stringify(newJob));
         pollRiskStatus(jobId);
       } else {
         setRiskJob(null);
@@ -173,7 +173,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       FlashMessage.info('Resetting report...', 'Processing');
       await LeadService.resetWeatherReport(reportId);
       setRiskJob(null);
-      await AsyncStorage.removeItem(`risk_job_${lead?._id || lead?.id}`);
+      Storage.removeItem(`risk_job_${lead?._id || lead?.id}`);
       refetch();
       FlashMessage.success('Success', 'Report reset successfully');
     } catch (err) {
@@ -185,7 +185,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     const total = payloads.length;
     const initialJobs = payloads.map((p, i) => ({ id: i, status: 'pending', payload: p, progress: 0 }));
     setRevRenderJobs(initialJobs);
-    await AsyncStorage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(initialJobs));
+    Storage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(initialJobs));
 
     FlashMessage.info(`Starting ${total} render generation(s)...`, 'RevRender');
 
@@ -255,19 +255,19 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       
       FlashMessage.info('RevRender Batch finished', 'Check results in Tools tab');
       setRevRenderJobs([]);
-      await AsyncStorage.removeItem(`rev_render_jobs_${lead?._id || lead?.id}`);
+      Storage.removeItem(`rev_render_jobs_${lead?._id || lead?.id}`);
       queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead?._id || lead?.id] });
       refetch();
     };
 
-    const updatePersistence = async () => {
+    const updatePersistence = () => {
       // Persistence update helper
       const updatedJobs = payloads.map((p, i) => ({ 
         id: i, 
         status: i < completedCount ? 'finished' : (i === completedCount ? 'running' : 'pending'),
         payload: p,
       }));
-      await AsyncStorage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(updatedJobs));
+      Storage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(updatedJobs));
     };
 
     // Run sequentially to avoid overloading if needed, or in parallel

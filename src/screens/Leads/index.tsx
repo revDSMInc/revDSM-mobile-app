@@ -63,20 +63,15 @@ export default function LeadsPage() {
     }
   }, [reopenZoneFromParams, navigation]);
 
-  // Fallback: reopen via AsyncStorage when Leads regains focus (web zoneCanvasserOpen flag)
+  // Fallback: reopen via MMKV storage when Leads regains focus (web zoneCanvasserOpen flag)
   useFocusEffect(
     useCallback(() => {
       if (reopenZoneFromParams) return undefined;
-      let cancelled = false;
-      (async () => {
-        const shouldReopen = await consumeZoneCanvasserReopen();
-        if (!cancelled && shouldReopen) {
-          setZoneCanvasserVisible(true);
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
+      const shouldReopen = consumeZoneCanvasserReopen();
+      if (shouldReopen) {
+        setZoneCanvasserVisible(true);
+      }
+      return undefined;
     }, [reopenZoneFromParams])
   );
   const [selectedLead, setSelectedLead] = useState<any>(null);

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from '../utils/storage';
 import { FlashMessage } from '../config/message';
 import { LeadService } from '../services/api/leads';
 import { ENV } from '../config/env';
@@ -122,7 +122,7 @@ export const useSubmitDigitalConsentMutation = () => {
   return useMutation({
     mutationFn: async (data: any) => {
       console.log('Starting Digital Consent Mutation with BlobUtil:', data);
-      const token = await AsyncStorage.getItem('accessToken');
+      const token = Storage.getItem('accessToken');
       const url = `${ENV.API_URL}user/consent/v1/mobile/create`
         .replace(/\/\//g, '/')
         .replace('https:/', 'https://');
@@ -205,7 +205,7 @@ export const useSubmitRoofWaiverMutation = () => {
   return useMutation({
     mutationFn: async ({ leadId, payload }: { leadId: string; payload: any }) => {
       console.log('Starting Roof Waiver Mutation with BlobUtil:', payload);
-      const token = await AsyncStorage.getItem('accessToken');
+      const token = Storage.getItem('accessToken');
       const url = `${ENV.API_URL}/lead/v1/${leadId}/mobile/waiver-form`
         .replace(/\/\//g, '/')
         .replace('https:/', 'https://');
@@ -278,7 +278,7 @@ export const useUploadPaperConsentOCRMutation = () => {
   return useMutation({
     mutationFn: async (file: any) => {
       console.log('Starting OCR Mutation with BlobUtil:', file);
-      const token = await AsyncStorage.getItem('accessToken');
+      const token = Storage.getItem('accessToken');
       const url = `${ENV.API_URL}api/v1/consent-form/upload`
         .replace(/\/\//g, '/')
         .replace('https:/', 'https://');
@@ -403,5 +403,19 @@ export const useDeleteImageMutation = () => {
       FlashMessage.success('Deleted', 'Photo removed successfully');
     },
     onError: (err: any) => FlashMessage.error('Error', err?.message || 'Failed to delete photo'),
+  });
+};
+
+export const useUpdateLeadImagePositionMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, payload }: { leadId: string; payload: any }) =>
+      LeadService.updateImagePosition(leadId, payload),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['lead', variables.leadId] });
+      FlashMessage.success('Saved', 'Photo repositioned successfully');
+    },
+    onError: (err: any) => FlashMessage.error('Error', err?.message || 'Failed to move photo'),
   });
 };

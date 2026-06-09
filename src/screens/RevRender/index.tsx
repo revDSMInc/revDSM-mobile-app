@@ -230,9 +230,26 @@ export default function RevRenderScreen() {
   );
 
   const renderGrid = () => {
+    // Collect all standard views across all groups to prevent extra/discovered view cross-pollution
+    const allStandardSubcategories = new Set<string>();
+    REV_RENDER_VIEW_GROUPS.forEach((group) => {
+      group.views.forEach((view) => {
+        allStandardSubcategories.add(view.id);
+      });
+    });
+
     const discoveredGroups = REV_RENDER_VIEW_GROUPS.map((group) => {
       const discoveredViews: any[] = [];
-      const photosInCategory = sectionImages[group.categoryId] || [];
+      
+      // Map category ID to the key stored in sectionImages
+      let targetCategory = group.categoryId;
+      if (group.categoryId === 'Front View' || group.categoryId === 'Side Views' || group.categoryId === 'Back View') {
+        targetCategory = 'Home';
+      } else if (group.categoryId === 'Gutter System') {
+        targetCategory = 'Inspection';
+      }
+      
+      const photosInCategory = sectionImages[targetCategory] || [];
 
       group.views.forEach((view) => {
         const photo = photosInCategory.find((p: any) => p.subcategory === view.id);
@@ -244,13 +261,26 @@ export default function RevRenderScreen() {
         }
       });
 
-      const matchedIds = new Set(group.views.map((v) => v.id));
       photosInCategory.forEach((p: any) => {
-        if (!matchedIds.has(p.subcategory)) {
-          discoveredViews.push({
-            ...p,
-            label: p.subcategory?.replace(/-/g, ' ') || group.categoryId,
-          });
+        if (!allStandardSubcategories.has(p.subcategory)) {
+          const subLower = p.subcategory?.toLowerCase() || '';
+          
+          // If the category is 'Home', distribute extras based on keywords to avoid duplicates across Home groups
+          if (targetCategory === 'Home') {
+            const isSide = subLower.includes('side') || subLower.includes('left') || subLower.includes('right');
+            const isBack = subLower.includes('back');
+            
+            if (group.categoryId === 'Side Views' && !isSide) return;
+            if (group.categoryId === 'Back View' && !isBack) return;
+            if (group.categoryId === 'Front View' && (isSide || isBack)) return;
+          }
+          
+          if (!discoveredViews.some(existing => existing.uri === p.uri)) {
+            discoveredViews.push({
+              ...p,
+              label: p.subcategory?.replace(/-/g, ' ') || group.categoryId,
+            });
+          }
         }
       });
 

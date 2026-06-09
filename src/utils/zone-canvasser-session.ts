@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Storage } from './storage';
 
 const ZONE_CANVASSER_OPEN_KEY = 'zoneCanvasserOpen';
 const ZONE_MAP_STATE_KEY = 'zoneMapState';
@@ -12,13 +12,13 @@ export type ZoneMapSavedState = {
 };
 
 /** Persist map camera + building so the zone map can restore after Lead Center (web sessionStorage parity). */
-export async function saveZoneMapState(state: ZoneMapSavedState): Promise<void> {
-  await AsyncStorage.setItem(ZONE_MAP_STATE_KEY, JSON.stringify(state));
+export function saveZoneMapState(state: ZoneMapSavedState): void {
+  Storage.setItem(ZONE_MAP_STATE_KEY, JSON.stringify(state));
 }
 
 /** Read saved map state without clearing (restore may retry until buildings load). */
-export async function peekZoneMapState(): Promise<ZoneMapSavedState | null> {
-  const raw = await AsyncStorage.getItem(ZONE_MAP_STATE_KEY);
+export function peekZoneMapState(): ZoneMapSavedState | null {
+  const raw = Storage.getItem(ZONE_MAP_STATE_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as ZoneMapSavedState;
@@ -27,33 +27,31 @@ export async function peekZoneMapState(): Promise<ZoneMapSavedState | null> {
   }
 }
 
-export async function clearZoneMapState(): Promise<void> {
-  await AsyncStorage.removeItem(ZONE_MAP_STATE_KEY);
+export function clearZoneMapState(): void {
+  Storage.removeItem(ZONE_MAP_STATE_KEY);
 }
 
 /** Read and clear saved map state (one-time restore). */
-export async function getAndClearZoneMapState(): Promise<ZoneMapSavedState | null> {
-  const saved = await peekZoneMapState();
-  if (saved) await clearZoneMapState();
+export function getAndClearZoneMapState(): ZoneMapSavedState | null {
+  const saved = peekZoneMapState();
+  if (saved) clearZoneMapState();
   return saved;
 }
 
 /** Flag that zone canvasser should reopen when Leads screen regains focus. */
-export async function markZoneCanvasserShouldReopen(): Promise<void> {
-  await AsyncStorage.setItem(ZONE_CANVASSER_OPEN_KEY, 'true');
+export function markZoneCanvasserShouldReopen(): void {
+  Storage.setItem(ZONE_CANVASSER_OPEN_KEY, 'true');
 }
 
 /** Check reopen flag without consuming. */
-export async function peekZoneCanvasserReopen(): Promise<boolean> {
-  const value = await AsyncStorage.getItem(ZONE_CANVASSER_OPEN_KEY);
-  return value === 'true';
+export function peekZoneCanvasserReopen(): boolean {
+  return Storage.getItem(ZONE_CANVASSER_OPEN_KEY) === 'true';
 }
 
 /** Consume reopen flag (returns true once). */
-export async function consumeZoneCanvasserReopen(): Promise<boolean> {
-  const value = await AsyncStorage.getItem(ZONE_CANVASSER_OPEN_KEY);
-  if (value === 'true') {
-    await AsyncStorage.removeItem(ZONE_CANVASSER_OPEN_KEY);
+export function consumeZoneCanvasserReopen(): boolean {
+  if (Storage.getItem(ZONE_CANVASSER_OPEN_KEY) === 'true') {
+    Storage.removeItem(ZONE_CANVASSER_OPEN_KEY);
     return true;
   }
   return false;
