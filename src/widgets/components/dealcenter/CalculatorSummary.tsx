@@ -79,6 +79,8 @@ export const CalculatorSummary = ({
   const { colors, isDark } = useTheme();
   const isLowesLead = lead?.lowesLead === true;
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
+  const [isDefaultPayment, setIsDefaultPayment] = useState(false);
 
   const rolloutEndPrice = Number(activeCalc.price) || 0;
 
@@ -113,6 +115,10 @@ export const CalculatorSummary = ({
     const indexB = CATEGORY_ORDER.indexOf(catB);
     return (indexA > -1 ? indexA : 999) - (indexB > -1 ? indexB : 999);
   });
+
+  const visibleItems = selectedCat
+    ? sortedItems.filter((i: any) => (i.category || 'Additional Services') === selectedCat)
+    : sortedItems;
 
   const handlePaymentPlanSelect = (method: string) => {
     const oldMethod = activeCalc.inputs.paymentPlan;
@@ -256,6 +262,7 @@ export const CalculatorSummary = ({
     }
   }, [showDropInput]);
 
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -348,7 +355,7 @@ export const CalculatorSummary = ({
         >
           <View className="px-5 py-6">
             <View
-              className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500 bg-green-500/10' : 'border-border'
+              className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500' : 'border-border'
                 }`}
             >
               <View className="flex-row items-center justify-between mb-6">
@@ -394,96 +401,97 @@ export const CalculatorSummary = ({
                 </TouchableOpacity>
               </View>
 
-              <View className="mb-6 bg-[#F8F7FF] rounded-[32px] border border-[#E5D9FF] p-5">
-                <View className="flex-row items-center justify-end mb-4">
-                  <View className="bg-[#E5D9FF] px-4 py-2 rounded-xl">
-                    <Text className="text-[12px] font-extrabold text-[#6B46C1] tracking-wider">
-                      {results.items.length} items
-                    </Text>
-                  </View>
+
+              {/* Divider */}
+              <View style={{ height: 1, backgroundColor: '#F1F5F9', marginBottom: 14 }} />
+
+              {/* Category filter pills — wrapping */}
+              <View style={{
+                flexDirection: 'row', flexWrap: 'wrap',
+                marginBottom: 14, gap: 8,
+              }}>
+                {uniqueCategories.map((cat: any) => {
+                  const count = categoryCounts[cat] || 0;
+                  const CATEGORY_STYLES: Record<string, { color: string; icon: string; bg: string }> = {
+                    Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+                    LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+                    Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+                    Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                    Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
+                    'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+                    Miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
+                  };
+                  const s = CATEGORY_STYLES[cat] || { color: '#637381', icon: 'list', bg: '#F4F6F8' };
+                  const isActive = selectedCat === cat;
+                  return (
+                    <TouchableOpacity
+                      key={cat}
+                      onPress={() => setSelectedCat(isActive ? null : cat)}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center',
+                        paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
+                        backgroundColor: isActive ? s.color : s.bg,
+                      }}
+                    >
+                      <Ionicons name={s.icon} size={11} color={isActive ? '#FFF' : s.color} style={{ marginRight: 4 }} />
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: isActive ? '#FFF' : s.color }}>
+                        {cat} {count}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Items */}
+              {visibleItems.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                  <Ionicons name="cube-outline" size={32} color="#CBD5E1" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginTop: 8 }}>
+                    No items in this category
+                  </Text>
                 </View>
-
-                <View className="flex-row flex-wrap gap-2 mb-4">
-                  {uniqueCategories.map((category: any) => {
-                    const count = categoryCounts[category] || 0;
-                    const categoryStyles: Record<
-                      string,
-                      { color: string; icon: string; bg: string }
-                    > = {
-                      Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
-                      LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
-                      Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
-                      Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
-                      Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
-                      'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
-                      Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
-                    };
-                    const style = categoryStyles[category] || {
-                      color: '#637381',
-                      icon: 'list',
-                      bg: '#F4F6F8',
-                    };
-
-                    return (
-                      <View
-                        key={category}
-                        className="flex-row items-center px-3 py-1.5 rounded-full"
-                        style={{ backgroundColor: style.bg }}
-                      >
-                        <Ionicons name={style.icon} size={12} color={style.color} />
-                        <Text
-                          className="ml-1.5 text-[10px] font-black tracking-tight"
-                          style={{ color: style.color }}
-                        >
-                          {category} {count}
+              ) : (
+                visibleItems.map((item: any, i: number) => {
+                  const CATEGORY_STYLES: Record<string, { color: string; icon: string; bg: string }> = {
+                    Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+                    LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+                    Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+                    Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+                    Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
+                    'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+                    Miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
+                  };
+                  const s = CATEGORY_STYLES[item.category] || { color: '#637381', icon: 'list', bg: '#F4F6F8' };
+                  const isLast = i === visibleItems.length - 1;
+                  return (
+                    <View key={i}>
+                      <View style={{
+                        flexDirection: 'row', alignItems: 'center',
+                        paddingVertical: 12,
+                      }}>
+                        <View style={{
+                          width: 36, height: 36, borderRadius: 18,
+                          backgroundColor: s.bg, alignItems: 'center', justifyContent: 'center',
+                          marginRight: 14,
+                        }}>
+                          <Ionicons name={s.icon} size={17} color={s.color} />
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E', flex: 1 }}>
+                          <Text style={{ fontWeight: '900' }}>{item.value}{item.unit || "'"}</Text>
+                          {'  '}{item.label}
                         </Text>
                       </View>
-                    );
-                  })}
-                </View>
+                      {!isLast && (
+                        <View style={{ height: 1, backgroundColor: '#F1F5F9', marginLeft: 50 }} />
+                      )}
+                    </View>
+                  );
+                })
+              )}
 
-                <View className="gap-3">
-                  {sortedItems.map((item: any, i: number) => {
-                    const categoryStyles: Record<
-                      string,
-                      { color: string; icon: string; bg: string }
-                    > = {
-                      Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
-                      LeafFilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
-                      Soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
-                      Fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
-                      Lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
-                      'Additional Services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
-                      Miscellaneous: { color: '#FFAB00', icon: 'ellipsis-horizontal-circle', bg: '#FFF8E6' },
-                    };
-                    const style = categoryStyles[item.category] || {
-                      color: '#637381',
-                      icon: 'list',
-                      bg: '#F4F6F8',
-                    };
+              {/* Divider before pricing */}
+              <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 14, marginBottom: 16 }} />
 
-                    return (
-                      <View
-                        key={i}
-                        className="flex-row items-center bg-white rounded-2xl p-4 shadow-sm border border-[#F4F6F8]"
-                      >
-                        <View
-                          className="w-10 h-10 rounded-xl items-center justify-center mr-4"
-                          style={{ backgroundColor: style.bg }}
-                        >
-                          <Ionicons name={style.icon} size={18} color={style.color} />
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-sm font-bold text-[#1C252E]">
-                            {item.value}
-                            {item.unit || "'"} {item.label}
-                          </Text>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
 
               <View className="flex-row gap-2 mb-6">
                 {[
