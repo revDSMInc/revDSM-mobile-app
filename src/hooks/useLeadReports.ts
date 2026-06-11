@@ -9,12 +9,13 @@ import { downloadPdfToDevice } from '../utils/download-utils';
 import { ENV } from '../config/env';
 
 export interface RiskJob {
-
   jobId: string;
   progress: number;
   status: string;
   step: string;
+  error?: string | null;
 }
+
 
 export const useLeadReports = (lead: any, refetch: () => void) => {
   const [secureUrls, setSecureUrls] = useState<Record<string, string>>({});
@@ -25,7 +26,12 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
 
   // Resolve secure S3 URLs for generated reports
   const refreshSecureUrls = async () => {
-    const reports = lead?.generatedReports;
+    const reports = [
+      ...(lead?.generatedReports || []),
+      ...(lead?.outcomeData?.generatedReports || []),
+      ...(lead?.leadData?.generatedReports || []),
+      ...(lead?.outcome?.generatedReports || []),
+    ];
     console.log('[Reports] refreshSecureUrls triggered. Reports count:', reports?.length || 0);
     
     if (!reports || reports.length === 0) {
@@ -75,6 +81,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             progress: data.progress,
             status: data.status,
             step: data.step,
+            error: data.error || null,
           };
           setRiskJob(updatedJob);
 
@@ -88,6 +95,14 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             Storage.removeItem(`risk_job_${lead?._id || lead?.id}`);
             return true;
           }
+
+          if (data.status === 'failed') {
+            console.warn('[Risk] Job failed:', data.error);
+            setRiskJob(null);
+            Storage.removeItem(`risk_job_${lead?._id || lead?.id}`);
+            FlashMessage.error('Report generation timed out or failed. Please try again.', 'Risk Report Failed');
+            return true;
+          }
         }
       } catch (err) {
         console.error('[Risk] Status check failed:', err);
@@ -96,6 +111,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     },
     [lead?._id, lead?.id, refetch]
   );
+
 
   // Risk Report Polling Effect
   useEffect(() => {

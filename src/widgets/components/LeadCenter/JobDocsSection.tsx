@@ -20,6 +20,7 @@ import {
   useUpdateLeadImagePositionMutation,
 } from '../../../hooks/useLeadMutation';
 import { ResultLeadModal } from '../../modals/lead-center/ResultLeadModal';
+import { CustomCameraModal } from '../../modals/CustomCameraModal';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 import Geolocation from 'react-native-geolocation-service';
 import { LeadService } from '../../../services/api/leads';
@@ -30,6 +31,7 @@ import { DocumentScannerModal } from '../../modals/job-builder/DocumentScannerMo
 import RNFS from 'react-native-fs';
 // @ts-ignore
 import base64 from 'base-64';
+import { useAuth } from '../../../hooks/useAuth';
 
 const getNativeModules = () => {
   try {
@@ -113,6 +115,7 @@ export const JobDocsSection = ({
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
 
   const submitJobMutation = useSubmitJobBuilderMutation();
   const resetLeadMutation = useResetLeadMutation();
@@ -154,6 +157,7 @@ export const JobDocsSection = ({
   const [activeTagTab, setActiveTagTab] = useState<string>('HOME');
   const [activeManageTab, setActiveManageTab] = useState<string>('HOME');
   const [isContinuousCamera, setIsContinuousCamera] = useState<boolean>(false);
+  const [customCameraVisible, setCustomCameraVisible] = useState<boolean>(false);
   const [movingImage, setMovingImage] = useState<{ image: SectionImage; categoryName: string } | null>(null);
   const [conflict, setConflict] = useState<any | null>(null);
 
@@ -436,15 +440,17 @@ export const JobDocsSection = ({
       });
     }
 
-    // Clear moving image state immediately so UI transitions instantly
-    setMovingImage(null);
-
-    // Run mutation asynchronously in the background, waiting for any pending upload first
-    waitForPendingUpload().then(() => {
-      updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload })
-        .then(() => refetch())
-        .catch((e) => console.error('Move photo in background failed', e));
-    });
+    // Await the actual upload/move mutation
+    await waitForPendingUpload();
+    try {
+      await updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload });
+      await refetch();
+    } catch (e) {
+      console.error('Move photo failed', e);
+    } finally {
+      // Clear moving image state
+      setMovingImage(null);
+    }
   };
 
   const handleUpdateContract = async (updatedOutcome: any) => {
@@ -519,17 +525,54 @@ export const JobDocsSection = ({
 
     try {
       setIsGenerating(true);
+
+      // Pre-fetch outcome documents to retrieve existing base64Data
+      let preFetchedAppendedDocs: any[] = [];
+      try {
+        const response = await LeadService.downloadOutcomeDocuments(leadId);
+        const dataObj = response.data?.data || response.data || {};
+        preFetchedAppendedDocs = [
+          ...(dataObj.agreements || []),
+          ...(dataObj.orderSheets || [])
+        ];
+      } catch (err) {
+        console.warn('[JobDocsSection] Failed to pre-fetch outcome documents', err);
+      }
+
       const filePayloads: any[] = [];
       for (let i = 0; i < pages.length; i++) {
         const p = pages[i];
+        const docNum = i + 1;
+        const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
+        const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
+        const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
+
         if (p.isNew) {
           const rawBase64 = await RNFS.readFile(p.uri, 'base64');
           const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
           filePayloads.push({
-            name: p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : `scanned_${scannerCategory}_${Date.now()}_${i}.pdf`,
+            name: documentName,
             file: `data:application/pdf;base64,${pdfBase64}`,
             type: scannerCategory,
           });
+        } else {
+          // If it's an existing document, find its base64 content
+          const docId = p.serverId || p.id || p._id;
+          const serverDoc = preFetchedAppendedDocs.find(
+            (d) => String(d._id) === String(docId)
+          );
+          if (serverDoc && serverDoc.base64Data) {
+            const cType = serverDoc.fileData?.contentType || 'application/pdf';
+            const base64Prefix = serverDoc.base64Data.startsWith('data:')
+              ? serverDoc.base64Data
+              : `data:${cType};base64,${serverDoc.base64Data}`;
+
+            filePayloads.push({
+              name: documentName,
+              file: base64Prefix,
+              type: scannerCategory,
+            });
+          }
         }
       }
 
@@ -719,23 +762,8 @@ export const JobDocsSection = ({
   };
 
   const reopenCameraContinuous = async () => {
-    if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        setIsContinuousCamera(false);
-        return;
-      }
-    }
-    launchCamera({ mediaType: 'photo', quality: 0.8, presentationStyle: 'fullScreen' }, (response) => {
-      setTimeout(() => {
-        if (response.assets?.[0]) {
-          setTaggingAsset(response.assets[0]);
-          setShowTagModal(true);
-        } else {
-          setIsContinuousCamera(false);
-        }
-      }, 0);
-    });
+    setTaggingAsset(null);
+    setShowTagModal(true);
   };
 
   const getRequiredSlotsForActiveTab = useCallback(() => {
@@ -882,6 +910,7 @@ export const JobDocsSection = ({
       const annotated = getAnnotatedSlotsForTab(tabId).filter(s => s.categoryName === section.name).length;
 
       let requiredFilled = 0;
+      let inspectionExtras = 0;
       const addSubsCount = (subs: any[] = []) => {
         subs.forEach((sub) => {
           const matchingImages = sectionImgs.filter(
@@ -896,6 +925,9 @@ export const JobDocsSection = ({
 
           if (isInspection) {
             requiredFilled += matchingImages.length;
+            if (matchingImages.length > 1) {
+              inspectionExtras += (matchingImages.length - 1);
+            }
           } else {
             if (matchingImages.length > 0) {
               requiredFilled += 1;
@@ -915,7 +947,7 @@ export const JobDocsSection = ({
         });
       }
 
-      total += baseRequired + extras + annotated;
+      total += baseRequired + extras + annotated + inspectionExtras;
       captured += requiredFilled + extras + annotated;
     });
 
@@ -1005,7 +1037,8 @@ export const JobDocsSection = ({
     const fetchDraft = async () => {
       if (!lead?._id) return;
       try {
-        const draftRes = await LeadService.getLeadDraft(lead._id);
+        const companyId = lead?.companyId || user?.companyId;
+        const draftRes = await LeadService.getLeadDraft(lead._id, companyId);
         const draftData = draftRes.data?.data || draftRes.data;
         setLeadDraft(draftData);
       } catch {
@@ -1013,7 +1046,7 @@ export const JobDocsSection = ({
       }
     };
     fetchDraft();
-  }, [lead?._id]);
+  }, [lead, user?.companyId]);
 
   useEffect(() => {
     const resolveDocs = async () => {
@@ -1041,7 +1074,7 @@ export const JobDocsSection = ({
               const finalType = doc.documentType || doc._sourceGroup;
               return {
                 uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-                name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                name: finalType === 'agreement' ? 'Agreement' : 'Order Sheet',
                 serverId: doc._id,
                 size,
                 documentType: finalType,
@@ -1086,6 +1119,16 @@ export const JobDocsSection = ({
     return globalCounts.captured;
   }, [globalCounts]);
 
+  const totalPhotosCount = useMemo(() => {
+    let count = 0;
+    IMAGE_CATEGORIES.forEach((cat) => {
+      const imgs = getImagesForSection(cat);
+      const nonAnnotated = imgs.filter(img => !img.subcategory?.toLowerCase().includes('(annotated)'));
+      count += nonAnnotated.length;
+    });
+    return count;
+  }, [getImagesForSection]);
+
   const progressPercent = useMemo(() => {
     if (displayTotal === 0) return 0;
     return Math.round((totalUploaded / displayTotal) * 100);
@@ -1114,16 +1157,11 @@ export const JobDocsSection = ({
 
       {/* Progress Bar */}
       <View className="mb-6 px-1">
-        <View className="flex-row items-center justify-between mb-3 px-1">
-          <Text className="text-sm font-semibold text-text-primary">Progress</Text>
-          <View className="flex-row gap-4">
-            <Text className="text-[13px] font-semibold" style={{ color: colors.primary.main }}>
-              {totalUploaded}/{displayTotal} Images
-            </Text>
-          </View>
-        </View>
+        <Text className="text-[14px] font-semibold mb-2.5" style={{ color: '#454F5B' }}>
+          {totalUploaded}/{displayTotal} slots • {totalPhotosCount} {totalPhotosCount === 1 ? 'photo' : 'photos'}
+        </Text>
         <View
-          className="w-full h-3 rounded-full overflow-hidden"
+          className="w-full h-1.5 rounded-full overflow-hidden"
           style={{ backgroundColor: '#919EAB1F' }}
         >
           <View
@@ -1212,7 +1250,7 @@ export const JobDocsSection = ({
             <Text className="text-white text-sm font-bold">No demo</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={handleReset}
+            onPress={() => onResultPress('reset')}
             className="flex-1 h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: '#F59E0B' }}
           >
@@ -1337,6 +1375,7 @@ export const JobDocsSection = ({
         </View>
       </Modal>
 
+
       {/* Tag Photo Modal */}
       <TagPhotoModal
         visible={showTagModal}
@@ -1362,6 +1401,7 @@ export const JobDocsSection = ({
         setShowManageModal={setShowManageModal}
         totalUploaded={totalUploaded}
         displayTotal={displayTotal}
+        totalPhotosCount={totalPhotosCount}
         insets={insets}
         sectionImages={sectionImages}
         onSectionImagesChange={onSectionImagesChange}
@@ -1391,6 +1431,7 @@ export const JobDocsSection = ({
         handleOpenPreviewTab={handleOpenPreviewTab}
         setMovingImage={setMovingImage}
         setShowTagModal={setShowTagModal}
+        setShowManageModal={setShowManageModal}
         handleDelete={handleDelete}
         getSubcategoryLabel={getSubcategoryLabel}
       />

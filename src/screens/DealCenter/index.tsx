@@ -41,6 +41,7 @@ import { AddEditJobModal } from '../../screens/JobTracker/components/AddEditJobM
 import { format } from 'date-fns';
 
 import { useDealCalculator } from '../../hooks/useDealCalculator';
+import { HorizontalDraggableTabs } from '../../widgets/components/dealcenter/HorizontalDraggableTabs';
 import { useDealOutcome } from '../../hooks/useDealOutcome';
 
 const INITIAL_JOB_STATE = {
@@ -82,6 +83,7 @@ export default function LFCalculator({ route }: any) {
   const [menuVisible, setMenuVisible] = useState<number | null>(null);
   const [trackerJobs, setTrackerJobs] = useState<any[]>([]);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [isDraggingTab, setIsDraggingTab] = useState(false);
 
   const {
     calculators,
@@ -103,6 +105,7 @@ export default function LFCalculator({ route }: any) {
     fetchCalculators,
     handleDuplicateCalculator,
     handleDeleteCalculator,
+    handleReorderCalculators,
   } = useDealCalculator(currentLead);
 
   const isFullPackage = useMemo(() => {
@@ -423,59 +426,44 @@ export default function LFCalculator({ route }: any) {
           />
           <View
             className="px-5 py-4 border-t border-border bg-card relative"
-            style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10, position: 'relative' }}
+            style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10, position: 'relative', overflow: 'visible' }}
           >
 
 
-            <View className="flex-row items-center justify-between">
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1 mr-4">
-                <View className="flex-row items-center gap-2">
-                  {calculators.map((calc, idx) => {
-                    const isWarning = calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️');
-                    const isActive = idx === activeIdx;
+            <View className="flex-row items-center justify-between" style={{ overflow: 'visible', height: 44 }}>
+              <View style={{ flex: 1, marginRight: 16, height: 44, justifyContent: 'center', overflow: isDraggingTab ? 'visible' : 'hidden' }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  scrollEnabled={!isDraggingTab}
+                  style={{ overflow: isDraggingTab ? 'visible' : 'hidden' }}
+                  contentContainerStyle={{ alignItems: 'center' }}
+                >
+                  <HorizontalDraggableTabs
+                    calculators={calculators}
+                    activeIdx={activeIdx}
+                    setActiveIdx={setActiveIdx}
+                    onReorder={handleReorderCalculators}
+                    setMenuVisible={setMenuVisible}
+                    onDragStateChange={setIsDraggingTab}
+                  />
+                </ScrollView>
+              </View>
 
-                    return (
-                      <TouchableOpacity
-                        key={idx}
-                        onPress={() => setActiveIdx(idx)}
-                        className={`px-4 h-10 rounded-xl border flex-row items-center ${isActive
-                            ? isWarning
-                              ? 'bg-amber-500 border-amber-500'
-                              : 'bg-green-500 border-green-500'
-                            : 'bg-surface border-border'
-                          }`}
-                      >
-                        <Text
-                          className={`text-[10px] font-black  ${isActive ? 'text-white' : 'text-text-secondary'
-                            }`}
-                        >
-                          {calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
-                        </Text>
-                        <TouchableOpacity onPress={() => setMenuVisible(idx)} className="ml-2">
-                          <Ionicons
-                            name="ellipsis-vertical"
-                            size={14}
-                            color={idx === activeIdx ? 'white' : '#637381'}
-                          />
-                        </TouchableOpacity>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-
-              <View className="flex-row items-center gap-2">
+              <View className="flex-row items-center gap-2" style={{ flexShrink: 0 }}>
                 <TouchableOpacity
                   onPress={handleAddNewCalculator}
-                  className="w-10 h-10 bg-surface rounded-xl items-center justify-center border border-border"
+                  style={{ width: 44, height: 44 }}
+                  className="bg-surface rounded-xl items-center justify-center border border-border"
                 >
-                  <Ionicons name="add" size={22} color={colors.text} />
+                  <Ionicons name="add" size={24} color={colors.text} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => setCurrentView('summary')}
-                  className="w-10 h-10 bg-[#2169f3] rounded-xl items-center justify-center shadow-lg shadow-slate-900/20"
+                  style={{ width: 44, height: 44 }}
+                  className="bg-[#2169f3] rounded-xl items-center justify-center shadow-lg shadow-slate-900/20"
                 >
-                  <Ionicons name="grid" size={18} color="white" />
+                  <Ionicons name="grid" size={20} color="white" />
                 </TouchableOpacity>
               </View>
             </View>

@@ -28,7 +28,7 @@ export const PricingInputField = ({
         <TextInput
           className={`flex-1 font-black text-[#101828] ${noLabel ? 'text-lg' : 'text-xl'}`}
           value={local}
-          placeholder="0.00"
+          placeholder=""
           keyboardType="numeric"
           onChangeText={setLocal}
           onBlur={() => {
@@ -157,7 +157,7 @@ export const InputField = ({
             }
           }}
           keyboardType="numeric"
-          placeholder="0"
+          placeholder=""
           placeholderTextColor="#919EAB"
         />
         <View className="flex-row items-center border-l border-[#919EAB33] pl-3 ml-2">

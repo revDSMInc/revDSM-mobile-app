@@ -115,6 +115,9 @@ export const MapGalleryModal = ({
   const [beforeUris, setBeforeUris] = useState<string[]>([]);
   const [afterUris, setAfterUris] = useState<string[]>([]);
 
+  const [newBeforeImages, setNewBeforeImages] = useState<any[]>([]);
+  const [newAfterImages, setNewAfterImages] = useState<any[]>([]);
+
   const [pendingDeletions, setPendingDeletions] = useState<any[]>([]);
   const [showPresent, setShowPresent] = useState(false);
   const [showBeforeModal, setShowBeforeModal] = useState(false);
@@ -212,6 +215,8 @@ export const MapGalleryModal = ({
     setBeforeImages(bImages);
     setAfterImages(aImages);
     setPendingDeletions([]);
+    setNewBeforeImages([]);
+    setNewAfterImages([]);
 
     // Phase 1: show fallback URLs instantly (no spinner, no delay)
     setFallbackUris(bImages, aImages);
@@ -223,6 +228,24 @@ export const MapGalleryModal = ({
   const lastJobIdRef = useRef<string | null>(null);
   const lastVisibleRef = useRef<boolean>(false);
 
+  const refreshJobImages = useCallback(async () => {
+    if (!job?.jobNumber) return;
+    try {
+      const res = await LeadService.findJobs({ jobNumber: job.jobNumber });
+      const updated = res.data?.data?.[0];
+      if (updated) {
+        const bImages = updated?.images?.beforeImages || [];
+        const aImages = updated?.images?.afterImages || [];
+        setBeforeImages(bImages);
+        setAfterImages(aImages);
+        setFallbackUris(bImages, aImages);
+        fetchSignedUrls(bImages, aImages);
+      }
+    } catch (err) {
+      console.warn('Failed to refresh job images on modal open:', err);
+    }
+  }, [job?.jobNumber, setFallbackUris, fetchSignedUrls]);
+
   useEffect(() => {
     if (visible && job) {
       const isNewJob = job._id !== lastJobIdRef.current || !lastVisibleRef.current;
@@ -231,14 +254,17 @@ export const MapGalleryModal = ({
         setAfterUris([]);
         setBeforeImages([]);
         setAfterImages([]);
+        setNewBeforeImages([]);
+        setNewAfterImages([]);
       }
       lastJobIdRef.current = job._id;
       lastVisibleRef.current = visible;
       initImages();
+      refreshJobImages();
     } else if (!visible) {
       lastVisibleRef.current = false;
     }
-  }, [visible, job?._id, job?.images?.beforeImages?.length, job?.images?.afterImages?.length, initImages]);
+  }, [visible, job?._id, initImages, refreshJobImages]);
 
   // ─── Local delete (staged until Save Changes) ────────────────────
   const handleLocalDelete = (type: 'before' | 'after', index: number) => {
@@ -261,25 +287,58 @@ export const MapGalleryModal = ({
     }
   };
 
-  // ─── Save pending deletions via correct API payload format ────────
+  // ─── Save pending deletions and new uploads ────────
   const handleSaveChanges = async () => {
-    if (pendingDeletions.length === 0) { onClose(); return; }
+    if (pendingDeletions.length === 0 && newBeforeImages.length === 0 && newAfterImages.length === 0) {
+      onClose();
+      return;
+    }
     try {
       setSaving(true);
-      const beforePaths = pendingDeletions.filter(d => d.imgType === 'before').map(d => d.filePath).filter(Boolean);
-      const afterPaths = pendingDeletions.filter(d => d.imgType === 'after').map(d => d.filePath).filter(Boolean);
-      await LeadService.deleteJobImages({
-        jobNumber: job.jobNumber,
-        companyId: job.companyId,
-        beforeImages: beforePaths,
-        afterImages: afterPaths,
-      });
+
+      // 1. Deletions
+      if (pendingDeletions.length > 0) {
+        const beforePaths = pendingDeletions.filter(d => d.imgType === 'before').map(d => d.filePath).filter(Boolean);
+        const afterPaths = pendingDeletions.filter(d => d.imgType === 'after').map(d => d.filePath).filter(Boolean);
+        await LeadService.deleteJobImages({
+          jobNumber: job.jobNumber,
+          companyId: job.companyId,
+          beforeImages: beforePaths,
+          afterImages: afterPaths,
+        });
+      }
+
+      // 2. New Before images
+      if (newBeforeImages.length > 0) {
+        const formData = new FormData();
+        formData.append('jobNumber', job.jobNumber);
+        formData.append('companyId', job.companyId);
+        newBeforeImages.forEach((file) => {
+          formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
+        });
+        await LeadService.updateBeforeImages(formData);
+      }
+
+      // 3. New After images
+      if (newAfterImages.length > 0) {
+        const formData = new FormData();
+        formData.append('jobNumber', job.jobNumber);
+        formData.append('companyId', job.companyId);
+        newAfterImages.forEach((file) => {
+          formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
+        });
+        await LeadService.updateAfterImages(formData);
+      }
+
       setPendingDeletions([]);
+      setNewBeforeImages([]);
+      setNewAfterImages([]);
       FlashMessage.success('Images updated successfully');
       onUploadSuccess?.();
       onClose();
-    } catch {
-      FlashMessage.error('Failed to delete images. Please try again.');
+    } catch (err) {
+      console.error(err);
+      FlashMessage.error('Failed to save changes. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -324,15 +383,15 @@ export const MapGalleryModal = ({
               </View>
             </View>
 
-            {/* Read-only badge */}
-            {/* {!isMyJob && (
-              <View className="mx-6 mb-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl flex-row items-center gap-2">
-                <Icon name="eye-outline" size={14} color="#94a3b8" />
-                <Text className="text-[11px] font-bold text-slate-400">View only — not your job</Text>
-              </View>
-            )} */}
-
             <ScrollView className="px-6 pb-2">
+              {(newBeforeImages.length > 0 || newAfterImages.length > 0) && (
+                <View className="flex-row items-center bg-[#E6F9FC] dark:bg-cyan-950/20 border border-[#00AEC7] p-4 rounded-[16px] mb-6 gap-3">
+                  <Icon name="information-outline" size={20} color="#00AEC7" />
+                  <Text className="flex-1 text-[13px] font-medium text-[#004B6E] dark:text-cyan-200 leading-5">
+                    New uploaded images cannot be reordered until saved. Save changes first to enable drag-and-drop.
+                  </Text>
+                </View>
+              )}
               <View className="flex-row gap-4">
                 {/* ── Before Column ── */}
                 <View className="flex-1">
@@ -349,7 +408,7 @@ export const MapGalleryModal = ({
                     )}
                   </View>
 
-                  {beforeUris.length > 0 ? (
+                  {(beforeUris.length > 0 || newBeforeImages.length > 0) ? (
                     <View className="gap-4">
                       {beforeUris.map((uri, idx) => (
                         <GalleryImage
@@ -358,6 +417,17 @@ export const MapGalleryModal = ({
                           canDelete={isMyJob && beforeUris.length > 1}
                           onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
                           onDelete={() => handleLocalDelete('before', idx)}
+                        />
+                      ))}
+                      {newBeforeImages.map((file, idx) => (
+                        <GalleryImage
+                          key={`new-before-${idx}`}
+                          uri={file.uri}
+                          canDelete={true}
+                          onExpand={() => { setViewerUri(file.uri); setViewerVisible(true); }}
+                          onDelete={() => {
+                            setNewBeforeImages(prev => prev.filter((_, i) => i !== idx));
+                          }}
                         />
                       ))}
                     </View>
@@ -397,7 +467,7 @@ export const MapGalleryModal = ({
                     )}
                   </View>
 
-                  {afterUris.length > 0 ? (
+                  {(afterUris.length > 0 || newAfterImages.length > 0) ? (
                     <View className="gap-4">
                       {afterUris.map((uri, idx) => (
                         <GalleryImage
@@ -406,6 +476,17 @@ export const MapGalleryModal = ({
                           canDelete={isMyJob && afterUris.length > 1}
                           onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
                           onDelete={() => handleLocalDelete('after', idx)}
+                        />
+                      ))}
+                      {newAfterImages.map((file, idx) => (
+                        <GalleryImage
+                          key={`new-after-${idx}`}
+                          uri={file.uri}
+                          canDelete={true}
+                          onExpand={() => { setViewerUri(file.uri); setViewerVisible(true); }}
+                          onDelete={() => {
+                            setNewAfterImages(prev => prev.filter((_, i) => i !== idx));
+                          }}
                         />
                       ))}
                     </View>
@@ -461,9 +542,14 @@ export const MapGalleryModal = ({
                     <Text className="text-[14px] font-black text-slate-700">Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    disabled={saving || pendingDeletions.length === 0}
+                    disabled={saving || (pendingDeletions.length === 0 && newBeforeImages.length === 0 && newAfterImages.length === 0)}
                     onPress={handleSaveChanges}
-                    style={{ backgroundColor: saving || pendingDeletions.length === 0 ? '#E2E8F0' : '#65C216' }}
+                    style={{
+                      backgroundColor:
+                        saving || (pendingDeletions.length === 0 && newBeforeImages.length === 0 && newAfterImages.length === 0)
+                          ? '#E2E8F0'
+                          : '#65C216'
+                    }}
                     className="p-2 rounded-xl"
                   >
                     {saving
@@ -488,26 +574,8 @@ export const MapGalleryModal = ({
         onClose={() => setShowBeforeModal(false)}
         job={job}
         existingUris={beforeUris}
-        onUploadSuccess={async () => {
-          setShowBeforeModal(false);
-          if (onUploadSuccess) {
-            onUploadSuccess();
-          } else {
-            try {
-              const res = await LeadService.findJobs({ jobNumber: job.jobNumber });
-              const updated = res.data?.data?.[0];
-              if (updated) {
-                const bImages = updated?.images?.beforeImages || [];
-                const aImages = updated?.images?.afterImages || [];
-                setBeforeImages(bImages);
-                setAfterImages(aImages);
-                setFallbackUris(bImages, aImages);
-                fetchSignedUrls(bImages, aImages);
-              }
-            } catch (err) {
-              console.error('Failed to reload job after before-image upload', err);
-            }
-          }
+        onSelectImages={(images) => {
+          setNewBeforeImages(images);
         }}
       />
 
@@ -517,26 +585,8 @@ export const MapGalleryModal = ({
         onClose={() => setShowAfterModal(false)}
         job={job}
         existingUris={afterUris}
-        onUploadSuccess={async () => {
-          setShowAfterModal(false);
-          if (onUploadSuccess) {
-            onUploadSuccess();
-          } else {
-            try {
-              const res = await LeadService.findJobs({ jobNumber: job.jobNumber });
-              const updated = res.data?.data?.[0];
-              if (updated) {
-                const bImages = updated?.images?.beforeImages || [];
-                const aImages = updated?.images?.afterImages || [];
-                setBeforeImages(bImages);
-                setAfterImages(aImages);
-                setFallbackUris(bImages, aImages);
-                fetchSignedUrls(bImages, aImages);
-              }
-            } catch (err) {
-              console.error('Failed to reload job after after-image upload', err);
-            }
-          }
+        onSelectImages={(images) => {
+          setNewAfterImages(images);
         }}
       />
 

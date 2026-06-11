@@ -25,6 +25,54 @@ import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { useLeadQuery } from '../../../hooks/useLeadQuery';
 import { SafeAreaView } from 'react-native-safe-area-context';
+// @ts-ignore
+import base64 from 'base-64';
+
+const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string => {
+  const cleanBase64 = jpegBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+  const binaryImg = base64.decode(cleanBase64);
+  const imgLength = binaryImg.length;
+
+  const obj1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+  const obj2 = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+  const obj3 = `3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 4 0 R /MediaBox [0 0 ${width} ${height}] /Contents 5 0 R >>\nendobj\n`;
+  const obj4 = "4 0 obj\n<< /ProcSet [/PDF /ImageC] /XObject << /Im1 6 0 R >> >>\nendobj\n";
+  const contentStream = `q\n${width} 0 0 ${height} 0 0 cm\n/Im1 Do\nQ\n`;
+  const obj5 = `5 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}endstream\nendobj\n`;
+  const obj6Header = `6 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgLength} >>\nstream\n`;
+  const obj6Footer = "\nendstream\nendobj\n";
+
+  const pdfHeader = "%PDF-1.3\n";
+  const offset1 = pdfHeader.length;
+  const offset2 = offset1 + obj1.length;
+  const offset3 = offset2 + obj2.length;
+  const offset4 = offset3 + obj3.length;
+  const offset5 = offset4 + obj4.length;
+  const offset6 = offset5 + obj5.length;
+  
+  const obj6FullLength = obj6Header.length + imgLength + obj6Footer.length;
+  const offsetStartXref = offset6 + obj6FullLength;
+  
+  const padOffset = (offset: number) => String(offset).padStart(10, '0');
+  
+  const xref = `xref\n0 7\n0000000000 65535 f \n${padOffset(offset1)} 00000 n \n${padOffset(offset2)} 00000 n \n${padOffset(offset3)} 00000 n \n${padOffset(offset4)} 00000 n \n${padOffset(offset5)} 00000 n \n${padOffset(offset6)} 00000 n \n`;
+  const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offsetStartXref}\n%%EOF\n`;
+  
+  const pdfBinaryString = 
+    pdfHeader +
+    obj1 +
+    obj2 +
+    obj3 +
+    obj4 +
+    obj5 +
+    obj6Header +
+    binaryImg +
+    obj6Footer +
+    xref +
+    trailer;
+    
+  return base64.encode(pdfBinaryString);
+};
 
 interface SummarySectionProps {
   jobState: any;
@@ -1742,25 +1790,55 @@ export const SummarySection = ({
             setIsGenerating(true);
             if (isDocUploadingRef) isDocUploadingRef.current = true;
 
+            // Pre-fetch outcome documents to retrieve existing base64Data
+            let preFetchedAppendedDocs: any[] = [];
+            try {
+              const response = await LeadService.downloadOutcomeDocuments(leadId);
+              const dataObj = response.data?.data || response.data || {};
+              preFetchedAppendedDocs = [
+                ...(dataObj.agreements || []),
+                ...(dataObj.orderSheets || [])
+              ];
+            } catch (err) {
+              console.warn('[Summary] Failed to pre-fetch outcome documents', err);
+            }
+
             const filePayloads: any[] = [];
             for (let i = 0; i < pages.length; i++) {
               const p = pages[i];
+              const docNum = i + 1;
+              const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
+              const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
+              const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
+
               if (p.isNew) {
-                const base64 = await RNFS.readFile(p.uri, 'base64');
+                const rawBase64 = await RNFS.readFile(p.uri, 'base64');
+                const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
                 filePayloads.push({
-                  file: `data:image/jpeg;base64,${base64}`,
-                  name: p.name || `scanned_${scannerCategory}_${Date.now()}_${i}.jpg`,
+                  name: documentName,
+                  file: `data:application/pdf;base64,${pdfBase64}`,
                   documentType: scannerCategory,
                   isNew: true,
                 });
               } else {
-                // Keep existing server file info
-                filePayloads.push({
-                  _id: p.serverId,
-                  name: p.name,
-                  documentType: scannerCategory,
-                  isNew: false,
-                });
+                // If it's an existing document, look it up in the pre-fetched documents
+                const docId = p.serverId || p.id || p._id;
+                const serverDoc = preFetchedAppendedDocs.find(
+                  (d) => String(d._id) === String(docId)
+                );
+                if (serverDoc && serverDoc.base64Data) {
+                  const cType = serverDoc.fileData?.contentType || 'application/pdf';
+                  const base64Prefix = serverDoc.base64Data.startsWith('data:')
+                    ? serverDoc.base64Data
+                    : `data:${cType};base64,${serverDoc.base64Data}`;
+
+                  filePayloads.push({
+                    name: documentName,
+                    file: base64Prefix,
+                    documentType: scannerCategory,
+                    isNew: false,
+                  });
+                }
               }
             }
 
@@ -1770,9 +1848,8 @@ export const SummarySection = ({
               status: 'Sale',
               jobBuilder: {
                 ...jobState,
-                // Only send NEW files to avoid "file is required" error for existing ones.
-                // Existing files are already on the server and deletions were handled individually in the scanner.
-                [stateField]: filePayloads.filter((p: any) => p.isNew),
+                // Send all files (including existing ones fully compiled with base64)
+                [stateField]: filePayloads,
               },
               LFCalculator: {
                 ...calculatorData,

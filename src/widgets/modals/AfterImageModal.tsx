@@ -47,6 +47,7 @@ interface AfterImageModalProps {
   job: any;
   existingUris?: string[];        // Already-uploaded server images (read-only)
   onUploadSuccess?: () => void;   // Called after a successful upload
+  onSelectImages?: (images: any[]) => void;
 }
 
 export const AfterImageModal = ({
@@ -55,6 +56,7 @@ export const AfterImageModal = ({
   job,
   existingUris = [],
   onUploadSuccess,
+  onSelectImages,
 }: AfterImageModalProps) => {
   const { isDark } = useTheme();
   const [loading, setLoading] = useState(false);
@@ -109,6 +111,11 @@ export const AfterImageModal = ({
 
   const handleUpload = async () => {
     if (newImages.length === 0) { onClose(); return; }
+    if (onSelectImages) {
+      onSelectImages(newImages);
+      onClose();
+      return;
+    }
     try {
       setLoading(true);
       const formData = new FormData();

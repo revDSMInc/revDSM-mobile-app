@@ -64,9 +64,8 @@ export default function ChatThreadsScreen({ navigation }: any) {
             customerName: (() => {
               const isSale = item.leadDetails?.status === 'sale';
               const dateStr = item.leadDetails?.leadDate ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy') : '';
-              return `${item.leadDetails?.office || ''} ${
-                isSale ? item.leadDetails?.leadId : `Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`
-              }`.trim() || 'Discussion';
+              return `${item.leadDetails?.office || ''} ${isSale ? item.leadDetails?.leadId : `Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`
+                }`.trim() || 'Discussion';
             })(),
             chatType: 'lead',
             initialParticipants: item.participants || [],

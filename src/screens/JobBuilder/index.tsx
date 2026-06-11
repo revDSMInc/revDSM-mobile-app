@@ -32,6 +32,54 @@ import { FlashMessage } from '../../config/message';
 import JobService from '../../services/api/JobService';
 import { calculateCommission } from '../../utils/calculator/commission-utils';
 import { parseSafeISO } from '../../utils/date-util';
+// @ts-ignore
+import base64 from 'base-64';
+
+const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string => {
+  const cleanBase64 = jpegBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+  const binaryImg = base64.decode(cleanBase64);
+  const imgLength = binaryImg.length;
+
+  const obj1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+  const obj2 = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+  const obj3 = `3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 4 0 R /MediaBox [0 0 ${width} ${height}] /Contents 5 0 R >>\nendobj\n`;
+  const obj4 = "4 0 obj\n<< /ProcSet [/PDF /ImageC] /XObject << /Im1 6 0 R >> >>\nendobj\n";
+  const contentStream = `q\n${width} 0 0 ${height} 0 0 cm\n/Im1 Do\nQ\n`;
+  const obj5 = `5 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}endstream\nendobj\n`;
+  const obj6Header = `6 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgLength} >>\nstream\n`;
+  const obj6Footer = "\nendstream\nendobj\n";
+
+  const pdfHeader = "%PDF-1.3\n";
+  const offset1 = pdfHeader.length;
+  const offset2 = offset1 + obj1.length;
+  const offset3 = offset2 + obj2.length;
+  const offset4 = offset3 + obj3.length;
+  const offset5 = offset4 + obj4.length;
+  const offset6 = offset5 + obj5.length;
+
+  const obj6FullLength = obj6Header.length + imgLength + obj6Footer.length;
+  const offsetStartXref = offset6 + obj6FullLength;
+
+  const padOffset = (offset: number) => String(offset).padStart(10, '0');
+
+  const xref = `xref\n0 7\n0000000000 65535 f \n${padOffset(offset1)} 00000 n \n${padOffset(offset2)} 00000 n \n${padOffset(offset3)} 00000 n \n${padOffset(offset4)} 00000 n \n${padOffset(offset5)} 00000 n \n${padOffset(offset6)} 00000 n \n`;
+  const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offsetStartXref}\n%%EOF\n`;
+
+  const pdfBinaryString =
+    pdfHeader +
+    obj1 +
+    obj2 +
+    obj3 +
+    obj4 +
+    obj5 +
+    obj6Header +
+    binaryImg +
+    obj6Footer +
+    xref +
+    trailer;
+
+  return base64.encode(pdfBinaryString);
+};
 
 
 const { width, height } = Dimensions.get('window');
@@ -198,7 +246,7 @@ export default function JobBuilderScreen() {
     try {
       setIsSaving(true);
       const stateToSave = newState || jobState;
-      
+
       const payload = {
         ...outcomeForm,
         result: 'Sale',
@@ -217,7 +265,7 @@ export default function JobBuilderScreen() {
       };
 
       await LeadService.updateLeadOutcome(leadId, payload);
-      
+
       // Clear local new files after successful manual force save
       setJobState((prev: any) => {
         const cleanedState = { ...prev };
@@ -281,21 +329,21 @@ export default function JobBuilderScreen() {
             backgroundColor: isActive
               ? '#0EA5E9'
               : isCompleted
-              ? '#10b981'
-              : step.isLocked
-              ? '#FAD9D3'
-              : isDark
-              ? '#1C1C1E'
-              : 'white',
+                ? '#10b981'
+                : step.isLocked
+                  ? '#FAD9D3'
+                  : isDark
+                    ? '#1C1C1E'
+                    : 'white',
             borderColor: isActive
               ? '#0EA5E9'
               : isCompleted
-              ? '#10b981'
-              : step.isLocked
-              ? '#FE6644'
-              : isDark
-              ? '#2C2C2E'
-              : '#e2e8f0'
+                ? '#10b981'
+                : step.isLocked
+                  ? '#FE6644'
+                  : isDark
+                    ? '#2C2C2E'
+                    : '#e2e8f0'
           }}
         >
           {step.isLocked ? (
@@ -449,43 +497,118 @@ export default function JobBuilderScreen() {
         }
       });
 
-      const getBase64Docs = async (docs: any[]) => {
-        if (!docs || docs.length === 0) return [];
-        const allFiles = docs.flatMap((doc: any) => doc.files || []);
-        const newFiles = allFiles.filter((f: any) => f.isNew && f.uri);
-
-        const results = [];
-        for (const f of newFiles) {
-          try {
-            const base64 = await RNFS.readFile(f.uri, 'base64');
-            const mimeType = f.uri.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-            results.push({
-              file: `data:${mimeType};base64,${base64}`,
-              name: f.name || 'document.jpg',
-            });
-          } catch (e) {
-            console.warn('[JobBuilder] File read failed:', f.uri, e);
-          }
+      // Pre-fetch outcome documents to retrieve existing base64Data
+      let preFetchedAppendedDocs: any[] = [];
+      try {
+        if (leadId) {
+          const response = await LeadService.downloadOutcomeDocuments(leadId);
+          const dataObj = response.data?.data || response.data || {};
+          preFetchedAppendedDocs = [
+            ...(dataObj.agreements || []),
+            ...(dataObj.orderSheets || [])
+          ];
         }
-        return results;
-      };
+      } catch (err) {
+        console.warn('[JobBuilder] Failed to pre-fetch outcome documents', err);
+      }
 
-      const [agreementsPayload, orderSheetsPayload] = await Promise.all([
-        getBase64Docs(jobState.agreements),
-        getBase64Docs(jobState.orderSheets),
-      ]);
 
+
+      // finalJobState does NOT include base64 docs — those go as top-level payload fields
       const finalJobState = {
         ...jobState,
         gutter: {
           ...jobState.gutter,
           extras: gutterExtras,
         },
-        agreements: agreementsPayload,
-        orderSheets: orderSheetsPayload,
-        status: 'submitted', // Explicitly set status to submitted for web parity
+        status: 'submitted',
       };
 
+      // ── Build top-level agreements / orderSheets arrays (web app parity) ──
+      // All scanned/local files come from jobState; server-side files come from resolvedDocuments.
+      // The web app sends docs as top-level payload.agreements / payload.orderSheets.
+
+      // Collect all flat file objects
+      const allLocalAgreementFiles = (jobState.agreements || []).flatMap((doc: any) => doc.files || []);
+      const allLocalOrderSheetFiles = (jobState.orderSheets || []).flatMap((doc: any) => doc.files || []);
+
+      // Merge with server-resolved docs, deduplicating by serverId or uri
+      const mergedAgreementFiles = [
+        ...(resolvedDocuments.agreements || []),
+        ...allLocalAgreementFiles,
+      ].filter((item, index, self) =>
+        index === self.findIndex((t) =>
+          (t.serverId && t.serverId === item.serverId) || (t.uri && t.uri === item.uri)
+        )
+      );
+
+      const mergedOrderSheetFiles = [
+        ...(resolvedDocuments.orderSheets || []),
+        ...allLocalOrderSheetFiles,
+      ].filter((item, index, self) =>
+        index === self.findIndex((t) =>
+          (t.serverId && t.serverId === item.serverId) || (t.uri && t.uri === item.uri)
+        )
+      );
+
+      // Convert each file to base64 PDF — matches web app's generatePdfFromImages/toBase64
+      // Web app sends name: '' for all docs; the backend assigns the stored filename.
+      const convertFilesToPayload = async (files: any[], docType: string) => {
+        const results: any[] = [];
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+
+          const isLocal = f.isNew || (f.uri && !f.serverId);
+          if (isLocal && f.uri) {
+            try {
+              const rawBase64 = await RNFS.readFile(f.uri, 'base64');
+              // Convert any image (jpg, jpeg, png, heic) to PDF — only skip conversion for actual PDFs
+              const lowerUri = f.uri.toLowerCase();
+              const isPdf = lowerUri.endsWith('.pdf');
+              const pdfBase64 = isPdf ? rawBase64 : convertJpegToPdf(rawBase64);
+              results.push({
+                file: `data:application/pdf;base64,${pdfBase64}`,
+                name: '',  // web app sends empty name; backend assigns the filename
+                type: docType,
+              });
+            } catch (e) {
+              console.warn('[JobBuilder] File read failed:', f.uri, e);
+            }
+          } else if (f.serverId || f.id || f._id) {
+            // Server doc — fetch base64 from pre-fetched list
+            const docId = f.serverId || f.id || f._id;
+            const serverDoc = preFetchedAppendedDocs.find(
+              (d: any) => String(d._id) === String(docId)
+            );
+            if (serverDoc?.base64Data) {
+              const cType = serverDoc.fileData?.contentType || 'application/pdf';
+              const base64Prefix = serverDoc.base64Data.startsWith('data:')
+                ? serverDoc.base64Data
+                : `data:${cType};base64,${serverDoc.base64Data}`;
+              results.push({
+                file: base64Prefix,
+                name: '',  // web app sends empty name; backend assigns the filename
+                type: docType,
+              });
+            }
+          }
+        }
+        return results;
+      };
+
+
+      let [agreementsPayload, orderSheetsPayload] = await Promise.all([
+        convertFilesToPayload(mergedAgreementFiles, 'agreement'),
+        convertFilesToPayload(mergedOrderSheetFiles, 'orderSheet'),
+      ]);
+
+      // Web app parity: for Demo, move agreements → orderSheets if orderSheets is empty
+      if (isDemo && agreementsPayload.length > 0 && orderSheetsPayload.length === 0) {
+        orderSheetsPayload = agreementsPayload;
+        agreementsPayload = [];
+      }
+
+      // Web app payload structure: agreements / orderSheets are TOP-LEVEL, not inside jobState
       const payload = {
         leadData: {
           ...outcomeForm,
@@ -504,7 +627,6 @@ export default function JobBuilderScreen() {
           appointmentId: calculatorData?.appointmentId || leadId,
           installDate: jobState.scheduleTime?.date,
           timeWindow: jobState.scheduleTime?.timeWindow,
-          // Sync financial outcome fields if they exist in outcomeForm
           originalContractPrice: outcomeForm?.originalContractPrice,
           downPayment: outcomeForm?.downPayment,
           balance: outcomeForm?.balance,
@@ -512,6 +634,9 @@ export default function JobBuilderScreen() {
           downPaymentMethod: outcomeForm?.downPaymentMethod,
         },
         jobState: finalJobState,
+        // Top-level arrays — matches web app's TabbedCalculator.js payload structure
+        agreements: agreementsPayload,
+        orderSheets: orderSheetsPayload,
       };
 
       if (leadId) {
@@ -537,40 +662,23 @@ export default function JobBuilderScreen() {
               '';
 
             const repDetails = leadData?.assignedRepDetails || {};
-            const leadNum = leadData?.leadId || leadData?.jobNumber || leadId;
+            let leadNum = leadData?.leadId;
+            if (!leadNum || String(leadNum).trim().toUpperCase() === 'N/A' || String(leadNum).trim() === '') {
+              leadNum = leadId;
+            }
             const jobNumber = buildJobNumber(repDetails, leadNum);
 
-            const customerName =
-              (leadData?.customerDetails
-                ? `${leadData.customerDetails.firstName || ''} ${leadData.customerDetails.lastName || ''}`.trim()
-                : '') ||
-              leadData?.title ||
-              outcomeForm?.customerName ||
-              'Customer';
-
-            let formattedInstallDate: string | null = null;
-            if (!isTBD && scheduleTime.date) {
-              try {
-                const parsedDate = parseSafeISO(scheduleTime.date);
-                if (parsedDate && !isNaN(parsedDate.getTime())) {
-                  formattedInstallDate = parsedDate.toISOString();
-                }
-              } catch (e) {
-                console.warn('[JobBuilder] Failed to parse installDate:', scheduleTime.date, e);
-              }
-            }
-
+            // Exactly mirrors web app's TabbedCalculator.js jobTrackerPayload
             const jobTrackerPayload = {
               jobNumber,
               salesPrice: rawPrice,
               paymentMethod: pmMethod,
-              installDate: formattedInstallDate,
+              installDate: isTBD ? null : (scheduleTime.date || null),
               soldDate: new Date().toISOString(),
               toBeDetermined: isTBD,
               commission: calculateCommission(rawPrice, pmMethod).amount,
               appointmentId: calculatorData?.appointmentId || leadId || undefined,
               calculatorId: calculatorData?._id || undefined,
-              customerName,
               isManual: false,
             };
 
@@ -681,13 +789,13 @@ export default function JobBuilderScreen() {
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.background }}>
           <View
-            style={{ 
-              paddingHorizontal: 24, 
-              paddingTop: 8, 
-              paddingBottom: 24, 
-              borderBottomWidth: 1, 
-              backgroundColor: colors.card, 
-              borderColor: colors.border 
+            style={{
+              paddingHorizontal: 24,
+              paddingTop: 8,
+              paddingBottom: 24,
+              borderBottomWidth: 1,
+              backgroundColor: colors.card,
+              borderColor: colors.border
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>

@@ -26,6 +26,13 @@ interface ContractDetailsCardProps {
   onAddDocument: (type: 'agreement' | 'orderSheet') => void;
 }
 
+const cleanNumber = (val: any): number => {
+  if (val == null || val === '') return 0;
+  const cleaned = String(val).replace(/[^0-9.-]/g, '');
+  const parsed = parseFloat(cleaned);
+  return isFinite(parsed) ? parsed : 0;
+};
+
 export const ContractDetailsCard = ({
   lead,
   outcomeData,
@@ -91,7 +98,7 @@ export const ContractDetailsCard = ({
             <>
               <DetailRow
                 label="Last Price Quoted"
-                value={`$${(Number(outcomeData?.lastPriceQuoted || outcomeData?.leadData?.lastPriceQuoted) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={`$${cleanNumber(outcomeData?.lastPriceQuoted || outcomeData?.leadData?.lastPriceQuoted).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 color="#4CBB17"
                 isDark={isDark}
               />
@@ -105,7 +112,7 @@ export const ContractDetailsCard = ({
             <>
               <DetailRow
                 label="Original Contract Price"
-                value={`$${(Number(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={`$${cleanNumber(outcomeData?.originalContractPrice || outcomeData?.leadData?.originalContractPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 color="#4CBB17"
                 isDark={isDark}
               />
@@ -113,18 +120,18 @@ export const ContractDetailsCard = ({
                 label="Down Payment"
                 value={(() => {
                   const v = outcomeData?.downPayment ?? outcomeData?.leadData?.downPayment;
-                  return (v === null || v === undefined || v === '') ? '$0.00' : '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  return (v === null || v === undefined || v === '') ? '$0.00' : '$' + cleanNumber(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 })()}
                 method={(() => {
                   const v = outcomeData?.downPayment ?? outcomeData?.leadData?.downPayment;
-                  if (v === null || v === undefined || v === '' || Number(v) === 0) return undefined;
+                  if (v === null || v === undefined || v === '' || cleanNumber(v) === 0) return undefined;
                   return outcomeData?.paymentMethod || outcomeData?.leadData?.paymentMethod;
                 })()}
                 isDark={isDark}
               />
               <DetailRow
                 label="Remaining Balance"
-                value={`$${(Number(outcomeData?.balance || outcomeData?.leadData?.balance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={`$${cleanNumber(outcomeData?.balance || outcomeData?.leadData?.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 method={outcomeData?.balancePaymentMethod || outcomeData?.leadData?.balancePaymentMethod}
                 isDark={isDark}
               />

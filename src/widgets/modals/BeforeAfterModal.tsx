@@ -5,11 +5,14 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { BeforeImageModal } from './BeforeImageModal';
 import { AfterImageModal } from './AfterImageModal';
+import { LeadService } from '../../services/api/leads';
+import { FlashMessage } from '../../config/message';
 
 interface BeforeAfterModalProps {
   visible: boolean;
@@ -27,18 +30,77 @@ export const BeforeAfterModal = ({
   const { isDark } = useTheme();
   const [showBeforeModal, setShowBeforeModal] = useState(false);
   const [showAfterModal, setShowAfterModal] = useState(false);
-  const [beforeCount, setBeforeCount] = useState(0);
-  const [afterCount, setAfterCount] = useState(0);
+  const [beforeImages, setBeforeImages] = useState<any[]>([]);
+  const [afterImages, setAfterImages] = useState<any[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [job, setJob] = useState(selectedJob);
 
   useEffect(() => {
     if (visible) {
-      setBeforeCount(0);
-      setAfterCount(0);
+      setJob(selectedJob);
+      setBeforeImages([]);
+      setAfterImages([]);
       setShowBeforeModal(false);
       setShowAfterModal(false);
-    }
-  }, [visible]);
+      setIsSaving(false);
 
+      // Fetch fresh job data to ensure updated images are shown when reopened
+      const fetchFreshJob = async () => {
+        if (!selectedJob?.jobNumber) return;
+        try {
+          const res = await LeadService.findJobs({ jobNumber: selectedJob.jobNumber });
+          const updated = res.data?.data?.[0];
+          if (updated) {
+            setJob(updated);
+          }
+        } catch (err) {
+          console.warn('Failed to fetch fresh job on modal open:', err);
+        }
+      };
+      fetchFreshJob();
+    }
+  }, [visible, selectedJob]);
+
+  const handleSaveChanges = async () => {
+    if (beforeImages.length === 0 && afterImages.length === 0) return;
+    try {
+      setIsSaving(true);
+
+      // Upload Before Images if any
+      if (beforeImages.length > 0) {
+        const formData = new FormData();
+        formData.append('jobNumber', job.jobNumber);
+        formData.append('companyId', job.companyId);
+        beforeImages.forEach((file) => {
+          formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
+        });
+        await LeadService.updateBeforeImages(formData);
+      }
+
+      // Upload After Images if any
+      if (afterImages.length > 0) {
+        const formData = new FormData();
+        formData.append('jobNumber', job.jobNumber);
+        formData.append('companyId', job.companyId);
+        afterImages.forEach((file) => {
+          formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
+        });
+        await LeadService.updateAfterImages(formData);
+      }
+
+      FlashMessage.success('Images saved successfully');
+      onUploadSuccess?.();
+      onClose();
+    } catch (error) {
+      console.error(error);
+      FlashMessage.error('Failed to save changes');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const existingBeforeUris = job?.images?.beforeImages?.map((img: any) => img.secureUrl || img.filePath) || [];
+  const existingAfterUris = job?.images?.afterImages?.map((img: any) => img.secureUrl || img.filePath) || [];
 
   return (
     <>
@@ -50,7 +112,7 @@ export const BeforeAfterModal = ({
               <View>
                 <Text className="text-[17px] font-black dark:text-white">Upload Photos</Text>
                 <Text className="text-[11px] font-bold text-slate-400">
-                  #{selectedJob?.jobNumber}
+                  #{job?.jobNumber}
                 </Text>
               </View>
               <TouchableOpacity
@@ -63,6 +125,14 @@ export const BeforeAfterModal = ({
 
             {/* Content - Two columns with plus buttons */}
             <ScrollView className="flex-1 px-4 py-6">
+              {(beforeImages.length > 0 || afterImages.length > 0) && (
+                <View className="flex-row items-center bg-[#E6F9FC] dark:bg-cyan-950/20 border border-[#00AEC7] p-4 rounded-[16px] mb-6 gap-3">
+                  <Icon name="information-outline" size={20} color="#00AEC7" />
+                  <Text className="flex-1 text-[13px] font-medium text-[#004B6E] dark:text-cyan-200 leading-5">
+                    New uploaded images cannot be reordered until saved. Save changes first to enable drag-and-drop.
+                  </Text>
+                </View>
+              )}
               <View className="flex-row gap-6">
                 {/* Before Section */}
                 <View className="flex-1">
@@ -78,9 +148,9 @@ export const BeforeAfterModal = ({
                       <Text className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mt-2">
                         Add Before
                       </Text>
-                      {beforeCount > 0 && (
+                      {beforeImages.length > 0 && (
                         <Text className="text-[10px] font-bold text-green-600 mt-1">
-                          {beforeCount} image{beforeCount > 1 ? 's' : ''} added
+                          {beforeImages.length} image{beforeImages.length > 1 ? 's' : ''} added
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -101,9 +171,9 @@ export const BeforeAfterModal = ({
                       <Text className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mt-2">
                         Add After
                       </Text>
-                      {afterCount > 0 && (
+                      {afterImages.length > 0 && (
                         <Text className="text-[10px] font-bold text-green-600 mt-1">
-                          {afterCount} image{afterCount > 1 ? 's' : ''} added
+                          {afterImages.length} image{afterImages.length > 1 ? 's' : ''} added
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -115,12 +185,34 @@ export const BeforeAfterModal = ({
             {/* Footer */}
             <View className="p-4 border-t border-slate-100 dark:border-zinc-800 flex-row gap-3">
               <TouchableOpacity
+                disabled={isSaving}
                 onPress={onClose}
                 className="flex-1 border border-slate-200 dark:border-zinc-700 py-3 rounded-lg items-center"
               >
                 <Text className="text-[13px] font-black text-slate-700 dark:text-slate-300">
-                  Done
+                  Cancel
                 </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={isSaving || (beforeImages.length === 0 && afterImages.length === 0)}
+                onPress={handleSaveChanges}
+                className={`flex-1 py-3 rounded-lg items-center justify-center ${
+                  (beforeImages.length > 0 || afterImages.length > 0) && !isSaving
+                    ? 'bg-green-600'
+                    : 'bg-slate-300 dark:bg-zinc-800'
+                }`}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Text className={`text-[13px] font-black ${
+                    (beforeImages.length > 0 || afterImages.length > 0)
+                      ? 'text-white'
+                      : 'text-slate-400 dark:text-slate-600'
+                  }`}>
+                    Save Changes
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -131,12 +223,10 @@ export const BeforeAfterModal = ({
       <BeforeImageModal
         visible={showBeforeModal}
         onClose={() => setShowBeforeModal(false)}
-        job={selectedJob}
-        existingUris={[]}
-        onUploadSuccess={() => {
-          setBeforeCount(c => c + 1);
-          setShowBeforeModal(false);
-          onUploadSuccess?.();
+        job={job}
+        existingUris={existingBeforeUris}
+        onSelectImages={(images) => {
+          setBeforeImages(images);
         }}
       />
 
@@ -144,12 +234,10 @@ export const BeforeAfterModal = ({
       <AfterImageModal
         visible={showAfterModal}
         onClose={() => setShowAfterModal(false)}
-        job={selectedJob}
-        existingUris={[]}
-        onUploadSuccess={() => {
-          setAfterCount(c => c + 1);
-          setShowAfterModal(false);
-          onUploadSuccess?.();
+        job={job}
+        existingUris={existingAfterUris}
+        onSelectImages={(images) => {
+          setAfterImages(images);
         }}
       />
     </>

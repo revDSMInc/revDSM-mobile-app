@@ -228,6 +228,7 @@ export const useDealCalculator = (lead: any) => {
         const mappedCalculators = calculatorsData.map((c: any, idx: number) => ({
           _id: c._id,
           name: c.title || `${idx + 1}`,
+          position: c.position !== undefined ? c.position : idx,
           inputs: {
             ...INITIAL_INPUTS,
             gutter5DsE: String(c.gutter5DsE || c.gutter_footage || ''),
@@ -267,6 +268,7 @@ export const useDealCalculator = (lead: any) => {
           isRolloutConfirmed: !!c.isRolloutConfirmed,
           price: c.price || 0,
           dropPrice: c.dropPrice || [],
+          downPayment: c.downPayment || 0,
         }));
 
         // Apply dynamic naming/warnings on load
@@ -282,6 +284,7 @@ export const useDealCalculator = (lead: any) => {
           if (c._id && titles[c._id]) c.name = titles[c._id];
         });
 
+        mappedCalculators.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
         setCalculators(mappedCalculators);
       }
     } catch (e) {
@@ -338,6 +341,7 @@ export const useDealCalculator = (lead: any) => {
           current.isRolloutConfirmed = patch.isRolloutConfirmed;
         if (patch.dropPrice) current.dropPrice = patch.dropPrice;
         if (patch.name) current.name = patch.name;
+        if (patch.downPayment !== undefined) current.downPayment = patch.downPayment;
         next[activeIdx] = current;
 
         const getRetailPrice = (calc: any) => {
@@ -368,6 +372,7 @@ export const useDealCalculator = (lead: any) => {
       isAutoSavingRef.current = true;
       const payload = {
         title: data.name,
+        position: data.position,
         gutter5DsE: Number(data.inputs.gutter5DsE),
         gutter6Ft1: Number(data.inputs.gutter6Ft1),
         gutter7DsE: Number(data.inputs.gutter7DsE),
@@ -391,6 +396,7 @@ export const useDealCalculator = (lead: any) => {
         paymentMethod: data.inputs.paymentPlan,
         pricemarkup: data.inputs.markup,
         price: data.price,
+        downPayment: data.downPayment,
         isRolloutConfirmed: data.isRolloutConfirmed,
         discounts: data.discounts,
         discountPercentage: Number(data.inputs.discountPercentage || 15),
@@ -551,6 +557,80 @@ export const useDealCalculator = (lead: any) => {
     }
   };
 
+  const handleReorderCalculators = useCallback(async (newCalculators: any[], newActiveIdx: number) => {
+    const updated = newCalculators.map((c, idx) => ({
+      ...c,
+      position: idx,
+    }));
+
+    const getRetailPrice = (calc: any) => {
+      const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
+        seniorVet: false,
+        preOrder: false,
+      });
+      return res.baseRetailTotal;
+    };
+    const titles = getUpdatedCalculatorTitles(updated, getRetailPrice);
+    updated.forEach((c, idx) => {
+      const key = c._id || `temp-${idx}`;
+      if (titles[key] !== undefined) c.name = titles[key];
+    });
+
+    setCalculators(updated);
+    setActiveIdx(newActiveIdx);
+
+    try {
+      await Promise.all(
+        updated.map((c, idx) => {
+          if (!c._id) return Promise.resolve();
+          const payload = {
+            title: c.name,
+            position: idx,
+            gutter5DsE: Number(c.inputs.gutter5DsE),
+            gutter6Ft1: Number(c.inputs.gutter6Ft1),
+            gutter7DsE: Number(c.inputs.gutter7DsE),
+            miters: Number(c.inputs.miters),
+            endCaps: Number(c.inputs.endCaps),
+            spoutSavers: Number(c.inputs.spoutSavers),
+            versaMaxFt1: Number(c.inputs.versaMaxFt1),
+            versaMaxFt2: Number(c.inputs.versaMaxFt2),
+            versaMaxFt3: Number(c.inputs.versaMaxFt3),
+            versa6Ft1: Number(c.inputs.versa6Ft1),
+            versa7Ft1: Number(c.inputs.versa7Ft1),
+            filter45Ft1: Number(c.inputs.filter45Ft1),
+            versa6Ft2: Number(c.inputs.versa6Ft2),
+            versa7Ft2: Number(c.inputs.versa7Ft2),
+            filter45Ft2: Number(c.inputs.filter45Ft2),
+            versa6Ft3: Number(c.inputs.versa6Ft3),
+            versa7Ft3: Number(c.inputs.versa7Ft3),
+            filter45Ft3: Number(c.inputs.filter45Ft3),
+            ckToInstallers: Number(c.inputs.ckToInstallers),
+            extraLabor: Number(c.inputs.extraLabor),
+            paymentMethod: c.inputs.paymentPlan,
+            pricemarkup: c.inputs.markup,
+            price: c.price,
+            isRolloutConfirmed: c.isRolloutConfirmed,
+            discounts: c.discounts,
+            discountPercentage: Number(c.inputs.discountPercentage || 15),
+            isDefaultDiscount: !!c.inputs.isDefaultDiscount,
+            ...Object.keys(c.extras).reduce(
+              (acc, k) => ({
+                ...acc,
+                [(extrasList as any[]).find((e: any) => e.id === k)?.apiKey || k]: Number(
+                  c.extras[k]
+                ),
+              }),
+              {}
+            ),
+          };
+          return LeadService.updateCalculator(c._id, payload);
+        })
+      );
+    } catch (e) {
+      console.warn('Failed to save reordered positions', e);
+    }
+  }, []);
+
   const handleDeleteCalculator = async (idx: number) => {
     if (calculators.length <= 1) return;
     try {
@@ -584,5 +664,6 @@ export const useDealCalculator = (lead: any) => {
     fetchCalculators,
     handleDuplicateCalculator,
     handleDeleteCalculator,
+    handleReorderCalculators,
   };
 };

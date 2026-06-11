@@ -49,6 +49,13 @@ interface OutcomeModalProps {
 
 const oneLegOptions = ['No', 'MR', 'MRS'];
 
+const cleanNum = (val: any): number => {
+  if (val == null || val === '') return 0;
+  const cleaned = String(val).replace(/[^0-9.-]/g, '');
+  const parsed = parseFloat(cleaned);
+  return isFinite(parsed) ? parsed : 0;
+};
+
 export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   visible,
   onClose,
@@ -70,9 +77,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 }) => {
   const { colors, isDark } = useTheme();
   const isLowesLead = lead?.lowesLead === true;
-  const contractPrice = Number(
-    String(outcomeForm.originalContractPrice || '0').replace(/[^0-9.]/g, '')
-  );
+  const contractPrice = cleanNum(outcomeForm.originalContractPrice);
   const downPaymentMethods = getOutcomeDownPaymentMethods(isLowesLead);
   const [expanded, setExpanded] = useState<string | null>(null);
   const flashRef = useRef<any>(null);
@@ -414,8 +419,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                           true,
                           'numeric',
                           (t) => {
-                            const dp = Number(t) || 0;
-                            const cp = Number(outcomeForm.originalContractPrice) || 0;
+                            const dp = cleanNum(t);
+                            const cp = cleanNum(outcomeForm.originalContractPrice);
                             setOutcomeForm({
                               ...outcomeForm,
                               downPayment: t,

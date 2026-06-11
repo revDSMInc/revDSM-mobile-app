@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Dimensions,
   PanResponder,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -40,7 +41,7 @@ interface SectionImage {
 export default function ImageAnnotationScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
-  const { selectedPhotos = [], lead, onSaveSuccess } = route.params || {};
+  const { selectedPhotos = [], lead, onSaveSuccess, onCancel } = route.params || {};
 
   const uploadImagesMutation = useUploadImagesMutation();
 
@@ -75,6 +76,20 @@ export default function ImageAnnotationScreen() {
       });
     }
   }, [currentPhoto?.uri]);
+
+  useEffect(() => {
+    const backAction = () => {
+      handleBackPress();
+      return true;
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction
+    );
+
+    return () => backHandler.remove();
+  }, [strokesMap, textsMap, onCancel]);
 
   const canvasLayout = useMemo(() => {
     if (!containerLayout || !imageSize) {
@@ -466,6 +481,7 @@ export default function ImageAnnotationScreen() {
 
     if (photosToProcess.length === 0) {
       setIsSaving(false);
+      onCancel?.();
       navigation.goBack();
       return;
     }
@@ -585,6 +601,7 @@ export default function ImageAnnotationScreen() {
   const uploadProcessedImages = async (results: any[]) => {
     if (results.length === 0) {
       setIsSaving(false);
+      onCancel?.();
       navigation.goBack();
       return;
     }
@@ -608,8 +625,11 @@ export default function ImageAnnotationScreen() {
       console.warn('Could not get location for annotated photos', error);
     }
     
-    // Process uploads in parallel!
-    const uploadPromises = results.map(async (res) => {
+    // Process uploads sequentially to prevent backend database write race conditions
+    for (let i = 0; i < results.length; i++) {
+      const res = results[i];
+      setSaveProgressText(`Uploading annotated image ${i + 1} of ${results.length}...`);
+      
       const orig = res.originalPhoto;
       const annotatedSubcategory = `${orig.subcategory} (Annotated)`;
       
@@ -634,8 +654,8 @@ export default function ImageAnnotationScreen() {
 
       try {
         await uploadImagesMutation.mutateAsync({ leadId: lead._id, formData });
-      } catch (uploadError) {
-        console.error('Failed to upload annotated image:', uploadError);
+      } catch (uploadError: any) {
+        console.error('Failed to upload annotated image:', uploadError?.response?.data || uploadError?.message || uploadError);
       }
       
       try {
@@ -644,9 +664,7 @@ export default function ImageAnnotationScreen() {
       } catch (cleanupError) {
         console.warn('Failed to delete temp file:', cleanupError);
       }
-    });
-
-    await Promise.all(uploadPromises);
+    }
 
     setIsSaving(false);
     onSaveSuccess?.();
@@ -664,11 +682,15 @@ export default function ImageAnnotationScreen() {
           {
             text: 'Discard',
             style: 'destructive',
-            onPress: () => navigation.goBack(),
+            onPress: () => {
+              onCancel?.();
+              navigation.goBack();
+            },
           },
         ]
       );
     } else {
+      onCancel?.();
       navigation.goBack();
     }
   };

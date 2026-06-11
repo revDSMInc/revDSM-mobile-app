@@ -199,6 +199,15 @@ export const CalculatorSummary = ({
     setCalculators
   );
 
+  const [showLockedDetails, setShowLockedDetails] = useState(false);
+  const [showPreOrderDownPaymentInput, setShowPreOrderDownPaymentInput] = useState(activeCalc.downPayment > 0);
+  const [preOrderDownPayment, setPreOrderDownPayment] = useState(activeCalc.downPayment || 0);
+
+  useEffect(() => {
+    setPreOrderDownPayment(activeCalc.downPayment || 0);
+    setShowPreOrderDownPaymentInput(!!activeCalc.downPayment && activeCalc.downPayment > 0);
+  }, [activeCalc._id, activeCalc.downPayment]);
+
   const isSaved = Number(activeCalc.price) > 0;
   const screensCount = Number(activeCalc.inputs.ckToInstallers) || 0;
   const endPrice = Number(activeCalc.price) || 0;
@@ -214,7 +223,9 @@ export const CalculatorSummary = ({
     (activeCalc.dropPrice || []).length > 0
       ? activeCalc.dropPrice[activeCalc.dropPrice.length - 1]
       : null;
-  const effectiveEndPrice = activeDrop ? activeDrop.dropedPrice : endPrice;
+  const acceptedDrop = (activeCalc.dropPrice || []).find((d: any) => d.status === 'accepted');
+  // Always show the original rollout end price — dropouts do NOT change this value
+  const effectiveEndPrice = endPrice;
   const priceWithScreens =
     (effectiveEndPrice > 0 ? effectiveEndPrice : results.total) + screensCount * 75;
 
@@ -520,44 +531,71 @@ export const CalculatorSummary = ({
                 >
                   Rollout End Price
                 </Text>
-                <View
-                  className={`flex-row items-center bg-card border rounded-2xl px-4 h-16 shadow-sm ${error
-                    ? 'border-red-500'
-                    : activeDrop
-                      ? 'border-green-500'
-                      : isSaved
-                        ? 'border-green-500'
-                        : 'border-border'
-                    }`}
-                >
-                  <Text
-                    className={`text-xl font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
-                      }`}
+                {activeCalc.isRolloutConfirmed ? (
+                  <TouchableOpacity
+                    onPress={() => setShowLockedDetails((prev) => !prev)}
+                    className="flex-row items-center justify-between bg-card border-2 border-green-500 rounded-2xl px-4 h-16 shadow-sm"
                   >
-                    $
-                  </Text>
-                  <TextInput
-                    className={`flex-1 font-black text-lg ${activeDrop || activeCalc.isRolloutConfirmed
-                      ? 'text-green-600'
-                      : 'text-text-primary'
-                      }`}
-                    value={activeDrop || activeCalc.isRolloutConfirmed ? String(effectiveEndPrice || '') : priceText}
-                    placeholder="Enter End Price"
-                    placeholderTextColor="#919EAB"
-                    keyboardType="numeric"
-                    editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
-                    onChangeText={handlePriceChange}
-                    onEndEditing={handlePriceBlur}
-                  />
-                  {activeDrop || activeCalc.isRolloutConfirmed ? (
-                    <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
-                      <Ionicons name="lock-closed" size={12} color="#16A34A" />
-                      <Text className="text-[10px] font-black text-green-600  ml-1.5 tracking-wider">
-                        LOCKED
+                    <View className="flex-row items-center">
+                      <Text className="text-xl font-black text-green-600 mr-2">$</Text>
+                      <Text className="text-xl font-black text-green-600">
+                        {String(effectiveEndPrice || '')}
                       </Text>
                     </View>
-                  ) : null}
-                </View>
+                    <View className="flex-row items-center gap-2">
+                      <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
+                        <Ionicons name="lock-closed" size={12} color="#16A34A" />
+                        <Text className="text-[10px] font-black text-green-600  ml-1.5 tracking-wider">
+                          LOCKED
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name={showLockedDetails ? 'chevron-up' : 'chevron-down'}
+                        size={16}
+                        color="#16A34A"
+                      />
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <View
+                    className={`flex-row items-center bg-card border rounded-2xl px-4 h-16 shadow-sm ${error
+                      ? 'border-red-500'
+                      : activeDrop
+                        ? 'border-green-500'
+                        : isSaved
+                          ? 'border-green-500'
+                          : 'border-border'
+                      }`}
+                  >
+                    <Text
+                      className={`text-xl font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
+                        }`}
+                    >
+                      $
+                    </Text>
+                    <TextInput
+                      className={`flex-1 font-black text-lg ${activeDrop || activeCalc.isRolloutConfirmed
+                        ? 'text-green-600'
+                        : 'text-text-primary'
+                        }`}
+                      value={activeDrop || activeCalc.isRolloutConfirmed ? String(effectiveEndPrice || '') : priceText}
+                      placeholder="Enter End Price"
+                      placeholderTextColor="#919EAB"
+                      keyboardType="numeric"
+                      editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
+                      onChangeText={handlePriceChange}
+                      onEndEditing={handlePriceBlur}
+                    />
+                    {activeDrop ? (
+                      <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
+                        <Ionicons name="lock-closed" size={12} color="#16A34A" />
+                        <Text className="text-[10px] font-black text-green-600  ml-1.5 tracking-wider">
+                          LOCKED
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
                 {error && !showDropInput && (
                   <Text className="text-[10px] font-bold text-red-500 mt-2 ml-1 ">{error}</Text>
                 )}
@@ -566,8 +604,9 @@ export const CalculatorSummary = ({
 
             </View>
 
-            {/* New Result Section - Only show when price is entered and NOT confirmed */}
-            {endPrice > 0 && !error && !activeCalc.isRolloutConfirmed && (
+            {/* New Result Section - Only show when price is entered and NOT confirmed, OR if locked and dropdown is open */}
+            {((endPrice > 0 && !error && !activeCalc.isRolloutConfirmed) ||
+              (activeCalc.isRolloutConfirmed && showLockedDetails)) && (
               <View className="mt-8">
                 {/* Target Price Card */}
                 <View className="bg-card rounded-3xl border border-border shadow-sm overflow-hidden mb-6">
@@ -705,9 +744,78 @@ export const CalculatorSummary = ({
                         </Text>
                       </View>
 
+                      {preOrderDownPayment > 0 && (
+                        <>
+                          <View className="flex-row justify-between mb-2">
+                            <Text className="text-[10px] font-medium text-green-600">Down Payment</Text>
+                            <Text className="text-[10px] font-black text-green-600">
+                              -{fCurrency(preOrderDownPayment)}
+                            </Text>
+                          </View>
+                          <View style={{ height: 1, borderStyle: 'dashed', borderWidth: 0.5, borderColor: '#CBD5E1', marginBottom: 12 }} />
+                        </>
+                      )}
+
+                      {!showPreOrderDownPaymentInput ? (
+                        <TouchableOpacity
+                          onPress={() => setShowPreOrderDownPaymentInput(true)}
+                          className="mt-2 mb-4 py-2 border border-dashed border-[#2196F3] rounded-xl items-center justify-center flex-row gap-1 bg-[#2196F3]/5"
+                        >
+                          <Ionicons name="add" size={14} color="#2196F3" />
+                          <Text className="text-[10px] font-bold text-[#2196F3]">
+                            {preOrderDownPayment > 0 ? `Down Payment: ${fCurrency(preOrderDownPayment)}` : 'Add Down Payment'}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View className="mt-2 mb-4 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex-row items-center justify-between min-h-[40px]">
+                          <View className="flex-row items-center flex-1">
+                            <Text className="text-xs font-bold text-slate-500 mr-1">$</Text>
+                            <TextInput
+                              className="text-xs font-black text-slate-800 p-0 flex-1"
+                              keyboardType="numeric"
+                              value={preOrderDownPayment > 0 ? String(preOrderDownPayment) : ''}
+                              placeholder="Down Payment"
+                              placeholderTextColor="#919EAB"
+                              style={{ paddingVertical: 0, height: 24 }}
+                              onChangeText={(t) => {
+                                const val = Number(t.replace(/[^0-9]/g, ''));
+                                setPreOrderDownPayment(val);
+                              }}
+                              onBlur={async () => {
+                                updateActive({ downPayment: preOrderDownPayment });
+                                try {
+                                  await LeadService.updateCalculator(activeCalc._id, { downPayment: preOrderDownPayment });
+                                } catch (err) {
+                                  console.warn('Failed to save down payment', err);
+                                }
+                                if (preOrderDownPayment === 0) {
+                                  setShowPreOrderDownPaymentInput(false);
+                                }
+                              }}
+                            />
+                          </View>
+                          {preOrderDownPayment > 0 && (
+                            <TouchableOpacity
+                              onPress={async () => {
+                                setPreOrderDownPayment(0);
+                                setShowPreOrderDownPaymentInput(false);
+                                updateActive({ downPayment: 0 });
+                                try {
+                                  await LeadService.updateCalculator(activeCalc._id, { downPayment: 0 });
+                                } catch (err) {
+                                  console.warn('Failed to clear down payment', err);
+                                }
+                              }}
+                            >
+                              <Ionicons name="close-circle" size={14} color="#FF5630" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      )}
+
                       <View className="items-center">
                         <Text className="text-lg font-black text-blue-400 mb-1">
-                          {fCurrency(calculateMonthly(preOrderGrandTotal))}/mo
+                          {fCurrency(calculateMonthly(preOrderGrandTotal - preOrderDownPayment))}/mo
                         </Text>
                         <Text className="text-[8px] text-text-secondary text-center px-2">
                           {paymentPlans[activeCalc.inputs.paymentPlan]?.label ||

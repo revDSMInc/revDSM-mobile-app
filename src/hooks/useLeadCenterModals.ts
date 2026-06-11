@@ -107,14 +107,14 @@ export const useLeadCenterModals = (
           riskJob?.status === 'completed' || riskJob?.progress === 100
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
-        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || extra, 'Risk Report');
+        handleOpenPdf(jobUrl || secureUrls[existing?.reportPath || ''] || existing?.fileUrl || extra, 'Risk Report');
       } else if (toolId === 'risk-download') {
         const existing = findReport('risk_report');
         const jobUrl =
           riskJob?.status === 'completed' || riskJob?.progress === 100
             ? LeadService.getRiskDownloadUrl(riskJob.jobId)
             : null;
-        const targetUrl = jobUrl || secureUrls[existing?.reportPath || ''] || extra;
+        const targetUrl = jobUrl || secureUrls[existing?.reportPath || ''] || existing?.fileUrl || extra;
         downloadPdfToDevice(targetUrl, 'Risk Report');
       } else if (toolId === 'risk-reset') {
         handlers.handleResetRiskReport?.(extra);

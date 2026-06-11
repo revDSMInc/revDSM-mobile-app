@@ -27,6 +27,7 @@ export const LockedCalculatorView = ({
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
   const rolloutEndPrice = Number(active?.price) || 0;
+  const acceptedDrop = (active?.dropPrice || []).find((d: any) => d.status === 'accepted');
 
   /* ── Derived data ── */
   const categoryCounts: Record<string, number> = {};
@@ -242,27 +243,54 @@ export const LockedCalculatorView = ({
 
         {/* Rollout End Price + LOCKED badge */}
         <View style={{
-          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-          backgroundColor: '#F0FDF4', borderRadius: 14,
-          paddingHorizontal: 16, paddingVertical: 12,
-          borderWidth: 1, borderColor: '#86EFAC',
+          backgroundColor: '#F0FDF4', borderRadius: 20,
+          borderWidth: 2, borderColor: '#4CBB17',
+          padding: 16,
         }}>
-          <View>
-            <Text style={{ fontSize: 9, fontWeight: '900', color: '#15803D', letterSpacing: 1, marginBottom: 2 }}>
-              Rollout End Price
-            </Text>
-            <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>
-              {rolloutEndPrice > 0 ? fmt(rolloutEndPrice) : '—'}
-            </Text>
+          {/* Rollout End Price Row */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View>
+              <Text style={{ fontSize: 10, fontWeight: '900', color: '#15803D', letterSpacing: 1, marginBottom: 2 }}>
+                Rollout End Price
+              </Text>
+              <Text style={{ fontSize: 24, fontWeight: '900', color: '#15803D' }}>
+                {rolloutEndPrice > 0 ? fmt(rolloutEndPrice) : '—'}
+              </Text>
+            </View>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              backgroundColor: '#DCFCE7', paddingHorizontal: 14, paddingVertical: 7,
+              borderRadius: 20,
+            }}>
+              <Ionicons name="lock-closed" size={12} color="#D97706" style={{ marginRight: 5 }} />
+              <Text style={{ fontSize: 12, fontWeight: '900', color: '#15803D', letterSpacing: 0.5 }}>LOCKED</Text>
+            </View>
           </View>
-          <View style={{
-            flexDirection: 'row', alignItems: 'center',
-            backgroundColor: '#DCFCE7', paddingHorizontal: 14, paddingVertical: 7,
-            borderRadius: 20, borderWidth: 1, borderColor: '#86EFAC',
-          }}>
-            <Ionicons name="lock-closed" size={12} color="#15803D" style={{ marginRight: 5 }} />
-            <Text style={{ fontSize: 12, fontWeight: '900', color: '#15803D', letterSpacing: 0.5 }}>LOCKED</Text>
-          </View>
+
+          {acceptedDrop && (
+            <>
+              <View style={{ height: 1, backgroundColor: isDark ? '#FFFFFF10' : '#E2E8F0', marginVertical: 12 }} />
+              {/* Updated End Price Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View>
+                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#15803D', letterSpacing: 1, marginBottom: 2 }}>
+                    Updated End Price
+                  </Text>
+                  <Text style={{ fontSize: 24, fontWeight: '900', color: '#15803D' }}>
+                    {fmt(acceptedDrop.dropedPrice)}
+                  </Text>
+                </View>
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  backgroundColor: '#DCFCE7', paddingHorizontal: 14, paddingVertical: 7,
+                  borderRadius: 20,
+                }}>
+                  <Ionicons name="lock-closed" size={12} color="#D97706" style={{ marginRight: 5 }} />
+                  <Text style={{ fontSize: 12, fontWeight: '900', color: '#15803D', letterSpacing: 0.5 }}>LOCKED</Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
       </ScrollView>
     </View>

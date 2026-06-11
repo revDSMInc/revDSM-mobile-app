@@ -506,34 +506,22 @@ export const INSPECTION_ISSUES = {
 // Rev Render view groups (same structure as web app REV_RENDER_VIEW_GROUPS)
 export const REV_RENDER_VIEW_GROUPS = [
   {
-    sectionLabel: 'FRONT VIEWS',
-    categoryId: 'Front View',
+    sectionLabel: 'HOME',
+    categoryId: 'home',
     views: [
-      { id: 'front-image', label: 'Front of Home' },
+      { id: 'front-image', label: 'Front' },
       { id: 'front-left', label: 'Front-Left' },
       { id: 'front-right', label: 'Front-Right' },
-    ],
-  },
-  {
-    sectionLabel: 'SIDE VIEWS',
-    categoryId: 'Side Views',
-    views: [
-      { id: 'right-side', label: 'Right Side' },
       { id: 'left-side', label: 'Left Side' },
-    ],
-  },
-  {
-    sectionLabel: 'BACK VIEWS',
-    categoryId: 'Back View',
-    views: [
+      { id: 'right-side', label: 'Right Side' },
       { id: 'back-image', label: 'Back of Home' },
       { id: 'back-left', label: 'Back-Left' },
       { id: 'back-right', label: 'Back-Right' },
     ],
   },
   {
-    sectionLabel: 'Gutter system',
-    categoryId: 'Gutter System',
+    sectionLabel: 'INSPECTION',
+    categoryId: 'inspection',
     views: [
       { id: 'inside-k-style-gutter-run', label: 'Inside K-Style Gutter run' },
       { id: 'inside-box-gutter-run', label: 'Inside Box Gutter run' },
@@ -542,7 +530,7 @@ export const REV_RENDER_VIEW_GROUPS = [
   },
   {
     sectionLabel: 'MEASUREMENTS',
-    categoryId: 'Measurements',
+    categoryId: 'measurements',
     views: [
       { id: 'k-styler-gutter-width-measurement', label: 'K Style Gutter Width Measurement' },
       { id: 'box-gutter-width-measurement', label: 'Box gutter width measurement' },
@@ -554,24 +542,78 @@ export const REV_RENDER_VIEW_GROUPS = [
     ],
   },
   {
-    sectionLabel: 'MISCELLANEOUS',
-    categoryId: 'Miscellaneous',
-    views: [
-      { id: 'pool-screens', label: 'Pool screens' },
-      { id: 'misc-1', label: 'Miscellaneous 1' },
-      { id: 'misc-2', label: 'Miscellaneous 2' },
-      { id: 'misc-3', label: 'Miscellaneous 3' },
-      { id: 'misc-4', label: 'Miscellaneous 4' },
-    ],
-  },
-  {
     sectionLabel: 'ROOFLINE OBSERVATION',
-    categoryId: 'Roofline Observation',
+    categoryId: 'roofline-observation',
     views: [
       { id: 'roof-edge-left-side', label: 'Roof Edge — Left Side' },
       { id: 'roof-edge-right-side', label: 'Roof Edge — Right Side' },
       { id: 'roof-penetration-vent-area', label: 'Roof Penetration / Vent Area' },
       { id: 'general-roof-surface-condition', label: 'General Roof Surface Condition' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOF INSPECTION — Granule Loss',
+    categoryId: 'roof-inspection',
+    views: [
+      { id: 'bare-spots-on-shingles', label: 'Bare Spots on Shingles' },
+      { id: 'granules-in-gutters', label: 'Granules in Gutters' },
+      { id: 'granules-at-downspout', label: 'Granules at Downspout' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOF INSPECTION — Curling & Cracking',
+    categoryId: 'roof-inspection',
+    views: [
+      { id: 'curling-edges', label: 'Curling Edges' },
+      { id: 'cracked-surface', label: 'Cracked Surface' },
+      { id: 'curling-corner', label: 'Curling Corner' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOF INSPECTION — Blistering & Buckling',
+    categoryId: 'roof-inspection',
+    views: [
+      { id: 'blistered-shingles', label: 'Blistered Shingles' },
+      { id: 'buckled-shingles', label: 'Buckled Shingles' },
+      { id: 'lifted-shingle-field', label: 'Lifted Shingle Field' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOF INSPECTION — Missing or Loose',
+    categoryId: 'roof-inspection',
+    views: [
+      { id: 'missing-shingle-gap', label: 'Missing Shingle Gap' },
+      { id: 'slipped-shingle', label: 'Slipped Shingle' },
+      { id: 'loose-shingle-edge', label: 'Loose Shingle Edge' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOF INSPECTION — Algae & Streaks',
+    categoryId: 'roof-inspection',
+    views: [
+      { id: 'dark-streaks', label: 'Dark Streaks' },
+      { id: 'algae-coverage', label: 'Algae Coverage' },
+      { id: 'streak-pattern', label: 'Streak Pattern' },
+    ],
+  },
+  {
+    sectionLabel: 'ROOF INSPECTION — Flashing & Pipe Boot',
+    categoryId: 'roof-inspection',
+    views: [
+      { id: 'cracked-pipe-boot', label: 'Cracked Pipe Boot' },
+      { id: 'tarred-flashing', label: 'Tarred Flashing' },
+      { id: 'missing-flashing', label: 'Missing Flashing' },
+    ],
+  },
+  {
+    sectionLabel: 'MISCELLANEOUS',
+    categoryId: 'miscellaneous',
+    views: [
+      { id: 'pool-screens', label: 'Pool screens' },
+      { id: 'misc-1', label: 'Misc 1' },
+      { id: 'misc-2', label: 'Misc 2' },
+      { id: 'misc-3', label: 'Misc 3' },
+      { id: 'misc-4', label: 'Misc 4' },
     ],
   },
 ];

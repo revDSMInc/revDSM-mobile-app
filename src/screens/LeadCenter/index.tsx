@@ -11,6 +11,7 @@ import {
   StatusBar,
   Modal,
   BackHandler,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -67,6 +68,7 @@ import { useLeadCenterData } from '../../hooks/useLeadCenterData';
 import { useLeadReports } from '../../hooks/useLeadReports';
 import { useLeadCenterModals } from '../../hooks/useLeadCenterModals';
 import { InspectionFormModal } from '../../widgets/modals/lead-center/InspectionFormModal';
+import { downloadPdfToDevice } from '../../utils/download-utils';
 
 const SubModalWrap = ({
   visible,
@@ -586,13 +588,30 @@ export default function LeadCenterPage() {
       } as any);
 
       await reportMutation.mutateAsync(uploadData);
-      handleOpenPdf(pdfPath, 'Inspection Report');
       toggleModal('showInspectionModal', false);
       FlashMessage.success('Success', 'Inspection report generated and uploaded.');
       refetch();
+      handleOpenPdf(pdfPath, 'Inspection Report');
+
+      setTimeout(() => {
+        Alert.alert(
+          'Download Report',
+          'Would you like to download the generated inspection report to your device?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Download',
+              onPress: () => {
+                downloadPdfToDevice(pdfPath, 'Inspection Report');
+              },
+            },
+          ]
+        );
+      }, 500);
     } catch (e: any) {
       console.error('Inspection Submit Error:', e);
       FlashMessage.show(e.message || 'Error generating inspection report', 'danger');
+      throw e; // rethrow so that local isGenerating state in the modal resets correctly
     }
   };
 

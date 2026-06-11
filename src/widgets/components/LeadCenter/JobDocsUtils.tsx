@@ -77,7 +77,7 @@ export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: an
       className="flex-row items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100"
       style={{ backgroundColor: isDark ? '#FFFFFF08' : '#F9FAFB' }}
     >
-      <View className="flex-row items-center gap-3">
+      <View className="flex-row items-center gap-3" style={{ flex: 1 }}>
         <View className={`p-2 rounded-lg ${isImage ? 'bg-blue-50' : 'bg-red-50'}`}>
           <Icon
             name={isImage ? "image-outline" : "file-pdf-box"}

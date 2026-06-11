@@ -10,7 +10,7 @@ export interface JobEntry {
   soldDate: string;
   toBeDetermined: boolean;
   commission: number;
-  customerName: string;
+  customerName?: string;
   title?: string;
   isManual: boolean;
   appointmentId?: string;

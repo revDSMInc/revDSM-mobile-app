@@ -7,9 +7,12 @@ import {
   ScrollView,
   Image,
   Alert,
+  StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
+import { CustomCameraModal } from '../../modals/CustomCameraModal';
 
 interface TagPhotoModalProps {
   visible: boolean;
@@ -26,7 +29,7 @@ interface TagPhotoModalProps {
   getImagesForSection: (sectionOrNameOrId: any) => any[];
   handleUpload: (catName: string, idx: number, asset: any, groupName?: string) => Promise<void> | void;
   handleDelete: (category: string, image: any) => Promise<void> | void;
-  handleMovePhoto: (catName: string, idx: number, groupName?: string) => Promise<void> | void;
+  handleMovePhoto: (catName: string, idx: number, groupName?: string) => Promise<void>;
   isContinuousCamera: boolean;
   setIsContinuousCamera: (val: boolean) => void;
   reopenCameraContinuous: () => void;
@@ -35,6 +38,7 @@ interface TagPhotoModalProps {
   setShowManageModal: (show: boolean) => void;
   totalUploaded: number;
   displayTotal: number;
+  totalPhotosCount?: number;
   insets: any;
   sectionImages: { [key: string]: any[] };
   onSectionImagesChange: (images: { [key: string]: any[] }) => void;
@@ -91,6 +95,7 @@ export const TagPhotoModal = ({
   setShowManageModal,
   totalUploaded,
   displayTotal,
+  totalPhotosCount,
   insets,
   sectionImages,
   onSectionImagesChange,
@@ -99,14 +104,19 @@ export const TagPhotoModal = ({
 }: TagPhotoModalProps) => {
   const [showExtraPicker, setShowExtraPicker] = useState(false);
   const [showFullScreenPreview, setShowFullScreenPreview] = useState(false);
+  const [customCameraVisible, setCustomCameraVisible] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     if (!visible) {
       setConflict(null);
       setShowExtraPicker(false);
       setShowFullScreenPreview(false);
+      setCustomCameraVisible(false);
+    } else if (isContinuousCamera && !taggingAsset && !movingImage) {
+      setCustomCameraVisible(true);
     }
-  }, [visible, setConflict]);
+  }, [visible, setConflict, isContinuousCamera, taggingAsset, movingImage]);
 
   const renderConflictScreen = () => {
     if (!conflict) return null;
@@ -192,10 +202,14 @@ export const TagPhotoModal = ({
     };
 
     const handleKeepBothOption = () => {
+      // Clear conflict first so the extra picker screen is rendered
+      // (conflict takes priority in the render conditional, so we must clear it)
+      setConflict(null);
       setShowExtraPicker(true);
     };
 
     const handleDiscardOption = async () => {
+      const wasMoving = !!movingImage;
       Alert.alert(
         'Discard Existing Photo',
         'Are you sure you want to permanently delete the existing photo?',
@@ -206,8 +220,9 @@ export const TagPhotoModal = ({
             style: 'destructive',
             onPress: async () => {
               try {
+                setIsProcessing(true);
                 await handleDelete(slot.categoryName, existingImage);
-                if (movingImage) {
+                if (wasMoving) {
                   await handleMovePhoto(slot.categoryName, slot.idx, slot.name);
                 } else {
                   await handleUpload(slot.categoryName, slot.idx, taggingAsset, slot.name);
@@ -215,8 +230,15 @@ export const TagPhotoModal = ({
                 }
                 setConflict(null);
                 onClose();
+                if (wasMoving) {
+                  setShowManageModal(true);
+                } else if (isContinuousCamera) {
+                  setCustomCameraVisible(true);
+                }
               } catch (error) {
                 console.error('Discard option failed', error);
+              } finally {
+                setIsProcessing(false);
               }
             },
           },
@@ -224,100 +246,7 @@ export const TagPhotoModal = ({
       );
     };
 
-    if (showExtraPicker) {
-      const EXTRA_CATEGORIES = [
-        { id: 'home', name: 'Home', label: 'Home', icon: 'home-outline' },
-        { id: 'inspection', name: 'Inspection', label: 'Inspection', icon: 'layers-outline' },
-        { id: 'measurements', name: 'Measurements', label: 'Measurements', icon: 'ruler' },
-        { id: 'miscellaneous', name: 'Miscellaneous', label: 'Misc', icon: 'dots-horizontal' },
-      ];
 
-      const handleSelectExtraCategory = async (cat: any) => {
-        const targetCatName = cat.name;
-        const catObjLocal = IMAGE_CATEGORIES.find((c) => c.name === targetCatName);
-        const existingImagesLocal = getImagesForSection(targetCatName);
-        const requiredCountLocal = catObjLocal?.subCategories?.length || 0;
-        const extraCountLocal = existingImagesLocal.filter((img) =>
-          img.subcategory?.includes(`${targetCatName} - Image`) ||
-          img.subcategory?.includes(`${targetCatName} - Extra`)
-        ).length;
-
-        if (movingImage) {
-          await handleMovePhoto(targetCatName, requiredCountLocal + extraCountLocal, undefined);
-        } else {
-          await handleUpload(targetCatName, requiredCountLocal + extraCountLocal, taggingAsset, undefined);
-          setTaggingAsset(null);
-        }
-        setConflict(null);
-        setShowExtraPicker(false);
-        onClose();
-      };
-
-      return (
-        <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top > 0 ? insets.top : 16, paddingBottom: insets.bottom }}>
-          <View className="flex-row items-center justify-between px-4 pt-4 pb-4 border-b border-white/10 bg-[#0D1F1A]">
-            <TouchableOpacity
-              onPress={() => {
-                onClose();
-                setConflict(null);
-                setShowExtraPicker(false);
-              }}
-            >
-              <Icon name="close" size={24} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-            <Text className="text-white font-extrabold text-[10px] tracking-widest uppercase opacity-60">
-              {`${totalUploaded}/${displayTotal} slots | ${totalUploaded} photos`}
-            </Text>
-          </View>
-
-          <ScrollView className="flex-1 px-4 pt-4" contentContainerStyle={{ paddingBottom: 40 }}>
-            <TouchableOpacity
-              onPress={() => setShowExtraPicker(false)}
-              className="flex-row items-center mb-4"
-            >
-              <Icon name="chevron-left" size={20} color="#72BD00" />
-              <Text className="text-[#72BD00] font-black text-xs ml-1">Back</Text>
-            </TouchableOpacity>
-
-            <View className="flex-row items-center p-4 bg-white/5 border border-white/10 rounded-2xl mb-5">
-              {incomingUri && (
-                <Image
-                  source={{ uri: incomingUri }}
-                  className="w-14 h-14 rounded-xl mr-3 bg-black/40"
-                  resizeMode="cover"
-                />
-              )}
-              <View className="flex-1">
-                <Text className="text-slate-400 font-extrabold text-[10px] tracking-wider uppercase mb-1">
-                  TAGGING AS EXTRA
-                </Text>
-                <Text className="text-white font-bold text-sm">
-                  Which category is this extra of?
-                </Text>
-              </View>
-            </View>
-
-            <View className="flex-col">
-              {EXTRA_CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat.id}
-                  onPress={() => handleSelectExtraCategory(cat)}
-                  className="flex-row items-center justify-between p-4 bg-[#132B23] border border-white/10 rounded-2xl mb-3"
-                >
-                  <View className="flex-row items-center">
-                    <Icon name={cat.icon} size={20} color="rgba(255,255,255,0.6)" style={{ marginRight: 12 }} />
-                    <Text className="text-white font-bold text-sm">{cat.label}</Text>
-                  </View>
-                  <View className="px-2.5 py-1.5 border border-[#72BD00]/30 bg-[#72BD00]/10 rounded-lg">
-                    <Text className="text-[#72BD00] font-black text-[9px] tracking-wider">+ EXTRA</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </ScrollView>
-        </View>
-      );
-    }
 
     return (
       <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top > 0 ? insets.top : 16, paddingBottom: insets.bottom }}>
@@ -334,7 +263,7 @@ export const TagPhotoModal = ({
             <Icon name="close" size={24} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
           <Text className="text-white font-extrabold text-[10px] tracking-widest uppercase opacity-60">
-            {`${totalUploaded}/${displayTotal} slots | ${totalUploaded} photos`}
+            {`${totalUploaded}/${displayTotal} slots | ${totalPhotosCount ?? totalUploaded} photos`}
           </Text>
         </View>
 
@@ -437,6 +366,120 @@ export const TagPhotoModal = ({
     );
   };
 
+  const renderExtraPickerScreen = () => {
+    const EXTRA_CATEGORIES = [
+      { id: 'home', name: 'Home', label: 'Home', icon: 'home-outline' },
+      { id: 'inspection', name: 'Inspection', label: 'Inspection', icon: 'layers-outline' },
+      { id: 'measurements', name: 'Measurements', label: 'Measurements', icon: 'ruler' },
+      { id: 'miscellaneous', name: 'Miscellaneous', label: 'Misc', icon: 'dots-horizontal' },
+    ];
+
+    const handleSelectExtraCategory = async (cat: any) => {
+      const targetCatName = cat.name;
+      const catObjLocal = IMAGE_CATEGORIES.find((c) => c.name === targetCatName);
+      const existingImagesLocal = getImagesForSection(targetCatName);
+      const requiredCountLocal = catObjLocal?.subCategories?.length || 0;
+      const extraCountLocal = existingImagesLocal.filter((img) =>
+        img.subcategory?.includes(`${targetCatName} - Image`) ||
+        img.subcategory?.includes(`${targetCatName} - Extra`)
+      ).length;
+
+      const wasMoving = !!movingImage;
+      try {
+        setIsProcessing(true);
+        if (wasMoving) {
+          await handleMovePhoto(targetCatName, requiredCountLocal + extraCountLocal, undefined);
+        } else {
+          await handleUpload(targetCatName, requiredCountLocal + extraCountLocal, taggingAsset, undefined);
+          setTaggingAsset(null);
+        }
+        setConflict(null);
+        setShowExtraPicker(false);
+        if (wasMoving || !isContinuousCamera) {
+          onClose();
+        }
+        if (wasMoving) {
+          setShowManageModal(true);
+        } else if (isContinuousCamera) {
+          setCustomCameraVisible(true);
+        }
+      } catch (error) {
+        console.error('Select extra category failed', error);
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+
+    const incomingUri = taggingAsset
+      ? (taggingAsset.uri || taggingAsset.image?.uri)
+      : (movingImage ? movingImage.image.uri : null);
+
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top > 0 ? insets.top : 16, paddingBottom: insets.bottom }}>
+        <View className="flex-row items-center justify-between px-4 pt-4 pb-4 border-b border-white/10 bg-[#0D1F1A]">
+          <TouchableOpacity
+            onPress={() => {
+              onClose();
+              setConflict(null);
+              setShowExtraPicker(false);
+            }}
+          >
+            <Icon name="close" size={24} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+          <Text className="text-white font-extrabold text-[10px] tracking-widest uppercase opacity-60">
+            {`${totalUploaded}/${displayTotal} slots | ${totalPhotosCount ?? totalUploaded} photos`}
+          </Text>
+        </View>
+
+        <ScrollView className="flex-1 px-4 pt-4" contentContainerStyle={{ paddingBottom: 40 }}>
+          <TouchableOpacity
+            onPress={() => setShowExtraPicker(false)}
+            className="flex-row items-center mb-4"
+          >
+            <Icon name="chevron-left" size={20} color="#72BD00" />
+            <Text className="text-[#72BD00] font-black text-xs ml-1">Back</Text>
+          </TouchableOpacity>
+
+          <View className="flex-row items-center p-4 bg-white/5 border border-white/10 rounded-2xl mb-5">
+            {incomingUri && (
+              <Image
+                source={{ uri: incomingUri }}
+                className="w-14 h-14 rounded-xl mr-3 bg-black/40"
+                resizeMode="cover"
+              />
+            )}
+            <View className="flex-1">
+              <Text className="text-slate-400 font-extrabold text-[10px] tracking-wider uppercase mb-1">
+                TAGGING AS EXTRA
+              </Text>
+              <Text className="text-white font-bold text-sm">
+                Which category is this extra of?
+              </Text>
+            </View>
+          </View>
+
+          <View className="flex-col">
+            {EXTRA_CATEGORIES.map((cat) => (
+              <TouchableOpacity
+                key={cat.id}
+                onPress={() => handleSelectExtraCategory(cat)}
+                className="flex-row items-center justify-between p-4 bg-[#132B23] border border-white/10 rounded-2xl mb-3"
+              >
+                <View className="flex-row items-center">
+                  <Icon name={cat.icon} size={20} color="rgba(255,255,255,0.6)" style={{ marginRight: 12 }} />
+                  <Text className="text-white font-bold text-sm">{cat.label}</Text>
+                </View>
+                <View className="px-2.5 py-1.5 border border-[#72BD00]/30 bg-[#72BD00]/10 rounded-lg">
+                  <Text className="text-[#72BD00] font-black text-[9px] tracking-wider">+ EXTRA</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+      </View>
+    );
+  };
+
   const renderTaggingSlots = () => {
     const catIds = getCategoryIdsForTab(activeTagTab);
     const slots: any[] = [];
@@ -452,10 +495,10 @@ export const TagPhotoModal = ({
           const existingImage = sectionImgs.find((img) => img.subcategory === sub.name);
           const inspectionImageCount = isInspectionTab
             ? sectionImgs.filter(
-                (img) =>
-                  img.subcategory === sub.name ||
-                  img.subcategory?.startsWith(`${sub.name} - Extra`)
-              ).length
+              (img) =>
+                img.subcategory === sub.name ||
+                img.subcategory?.startsWith(`${sub.name} - Extra`)
+            ).length
             : 0;
 
           slots.push({
@@ -482,6 +525,38 @@ export const TagPhotoModal = ({
       }
     });
 
+    let orderedSlots = [...slots];
+    const isHomeTab = activeTagTab === 'HOME';
+    if (isHomeTab) {
+      const findSlot = (id: string) => slots.find((s) => s.id === id);
+
+      const backLeft = findSlot('back-left');
+      const backImage = findSlot('back-image');
+      const backRight = findSlot('back-right');
+      const leftSide = findSlot('left-side');
+      const rightSide = findSlot('right-side');
+      const frontLeft = findSlot('front-left');
+      const frontImage = findSlot('front-image');
+      const frontRight = findSlot('front-right');
+
+      if (backImage) backImage.displayName = 'Back';
+      if (frontImage) frontImage.displayName = 'Front';
+
+      orderedSlots = [
+        backLeft,
+        backImage,
+        backRight,
+        leftSide,
+        { id: 'spacer-home', isSpacer: true, displayName: 'HOME' },
+        rightSide,
+        frontLeft,
+        frontImage,
+        frontRight,
+      ].filter(Boolean);
+    }
+
+    const slotWidth = isHomeTab ? 'w-[31%]' : 'w-[48%]';
+
     return (
       <ScrollView className="flex-1 px-4 mt-2">
         {isInspectionTab && (
@@ -493,13 +568,29 @@ export const TagPhotoModal = ({
           </View>
         )}
         <View className="flex-row flex-wrap justify-between pb-10">
-          {slots.map((slot, i) => {
-            const isInspFilled = isInspectionTab && slot.inspectionImageCount > 0;
+          {orderedSlots.map((slot, i) => {
+            if (slot.isSpacer) {
+              return (
+                <View
+                  key="spacer-home"
+                  className="w-[31%] py-3 px-2 mb-3 items-center justify-center min-h-[50px]"
+                >
+                  <Text className="text-white/40 text-[11px] font-black tracking-widest text-center">
+                    {slot.displayName}
+                  </Text>
+                </View>
+              );
+            }
+
+            const isFilled = isInspectionTab ? slot.inspectionImageCount > 0 : !!slot.existingImage;
             const isMoveSource = !!(
               movingImage &&
               slot.categoryName?.toLowerCase() === movingImage.categoryName?.toLowerCase() &&
               slot.name?.trim().toLowerCase() === movingImage.image?.subcategory?.trim().toLowerCase()
             );
+
+            const displayName = slot.displayName || slot.name;
+            const textToShow = (isHomeTab && isFilled) ? `✓ ${displayName}` : displayName;
 
             return (
               <TouchableOpacity
@@ -524,16 +615,28 @@ export const TagPhotoModal = ({
                           subcategory: slot.name,
                         },
                       };
-                      updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload }).then(() => refetch());
-                      onClose();
-                      setMovingImage(null);
-                      setShowManageModal(true);
+                      setIsProcessing(true);
+                      waitForPendingUpload()
+                        .then(() => updateImagePositionMutation.mutateAsync({ leadId: lead._id, payload }))
+                        .then(() => refetch())
+                        .then(() => {
+                          setIsProcessing(false);
+                          setMovingImage(null);
+                          onClose();
+                          setShowManageModal(true);
+                        })
+                        .catch((err: any) => {
+                          console.error('Inspection move failed', err);
+                          setIsProcessing(false);
+                        });
                     } else {
-                      onClose();
+                      if (!isContinuousCamera) {
+                        onClose();
+                      }
                       setTaggingAsset(null);
                       handleUpload(slot.categoryName, slot.idx, taggingAsset, slot.name);
                       if (isContinuousCamera) {
-                        setTimeout(() => { reopenCameraContinuous(); }, 500);
+                        setCustomCameraVisible(true);
                       }
                     }
                   } else if (slot.existingImage) {
@@ -544,16 +647,26 @@ export const TagPhotoModal = ({
                     });
                   } else {
                     if (movingImage) {
-                      handleMovePhoto(slot.categoryName, slot.idx, slot.name);
-                      onClose();
+                      // Moving a displaced photo to its new slot
+                      setIsProcessing(true);
+                      handleMovePhoto(slot.categoryName, slot.idx, slot.name)
+                        .then(() => {
+                          setIsProcessing(false);
+                          onClose();
+                          setShowManageModal(true);
+                        })
+                        .catch((err: any) => {
+                          console.error('Move photo failed', err);
+                          setIsProcessing(false);
+                        });
                     } else {
-                      onClose();
+                      if (!isContinuousCamera) {
+                        onClose();
+                      }
                       setTaggingAsset(null);
                       handleUpload(slot.categoryName, slot.idx, taggingAsset, slot.name);
                       if (isContinuousCamera) {
-                        setTimeout(() => {
-                          reopenCameraContinuous();
-                        }, 500);
+                        setCustomCameraVisible(true);
                       }
                     }
                   }
@@ -561,98 +674,67 @@ export const TagPhotoModal = ({
                 style={{
                   backgroundColor: isMoveSource
                     ? 'rgba(245, 158, 11, 0.15)'
-                    : isInspFilled
-                    ? 'rgba(59, 130, 246, 0.15)'
-                    : slot.existingImage
-                    ? 'rgba(114, 189, 0, 0.2)'
-                    : 'rgba(255, 255, 255, 0.05)',
+                    : isFilled
+                      ? '#4CBB17'
+                      : 'rgba(255, 255, 255, 0.05)',
                   borderColor: isMoveSource
                     ? '#F59E0B'
-                    : isInspFilled
-                    ? '#3B82F6'
-                    : slot.existingImage
-                    ? '#72BD00'
-                    : 'rgba(255, 255, 255, 0.1)',
+                    : isFilled
+                      ? '#4CBB17'
+                      : 'rgba(255, 255, 255, 0.1)',
                   borderWidth: 1.5,
                   position: 'relative',
                 }}
-                className="w-[48%] py-3 px-2 rounded-xl mb-3 items-center justify-center min-h-[50px]"
+                className={`${slotWidth} py-3 px-2 rounded-xl mb-3 items-center justify-center min-h-[50px]`}
               >
-                <Text
-                  className={
-                    isMoveSource
-                      ? "text-[#F59E0B] text-[11px] font-black text-center"
-                      : "text-white text-[11px] font-black text-center"
-                  }
-                  numberOfLines={2}
-                >
-                  {slot.name}
-                </Text>
-                {isInspectionTab ? (
-                  <View className="flex-row items-center mt-1">
-                    <Icon name="plus-circle-outline" size={10} color="#60A5FA" style={{ marginRight: 3 }} />
-                    <Text className="text-[9px] font-black text-blue-400 tracking-widest">
-                      {slot.inspectionImageCount > 0 ? `ADD  (${slot.inspectionImageCount})` : 'ADD FIRST'}
+                {isInspectionTab && isFilled ? (
+                  <View className="flex-row items-center justify-center">
+                    <View style={{ backgroundColor: 'white', borderRadius: 9, width: 18, height: 18, alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
+                      <Text style={{ color: '#4CBB17', fontWeight: 'bold', fontSize: 10 }}>
+                        {slot.inspectionImageCount}
+                      </Text>
+                    </View>
+                    <Text className="text-white text-[11px] font-black text-center" numberOfLines={2}>
+                      {textToShow}
                     </Text>
                   </View>
-                ) : isMoveSource ? (
+                ) : (
+                  <Text
+                    className={
+                      isMoveSource
+                        ? "text-[#F59E0B] text-[11px] font-black text-center"
+                        : "text-white text-[11px] font-black text-center"
+                    }
+                    numberOfLines={2}
+                  >
+                    {textToShow}
+                  </Text>
+                )}
+                {isMoveSource && (
                   <Text className="text-[8px] font-black text-[#F59E0B] mt-1 tracking-widest text-center">
                     FROM
                   </Text>
-                ) : (
-                  slot.existingImage && (
-                    <Text className="text-[8px] font-black text-[#72BD00] mt-1 tracking-widest text-center">
-                      REPLACE
-                    </Text>
-                  )
                 )}
               </TouchableOpacity>
             );
           })}
 
-          {catIds.map((catId) => {
-            const section = IMAGE_CATEGORIES.find((c) => c.id === catId);
-            if (!section) return null;
-
-            const existingImages = getImagesForSection(section);
-            const requiredCount = section.subCategories?.length || 0;
-            const extraCount = existingImages.filter((img) =>
-              img.subcategory?.includes(`${section.name} - Image`) ||
-              img.subcategory?.includes(`${section.name} - Extra`)
-            ).length;
-
-            return (
-              <TouchableOpacity
-                key={`extra-tag-${catId}`}
-                onPress={() => {
-                  const asset = taggingAsset;
-                  if (movingImage) {
-                    handleMovePhoto(section.name, requiredCount + extraCount);
-                    onClose();
-                  } else {
-                    onClose();
-                    setTaggingAsset(null);
-                    handleUpload(section.name, requiredCount + extraCount, asset);
-                    if (isContinuousCamera) {
-                      setTimeout(() => {
-                        reopenCameraContinuous();
-                      }, 500);
-                    }
-                  }
-                }}
-                style={{
-                  backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                  borderColor: 'rgba(245, 158, 11, 0.3)',
-                  borderWidth: 1.5,
-                }}
-                className="w-[48%] py-3 px-2 rounded-xl mb-3 items-center justify-center min-h-[50px]"
-              >
-                <Text className="text-[#F59E0B] text-[11px] font-black text-center">
-                  + Extra {section.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+          <TouchableOpacity
+            onPress={() => {
+              setShowExtraPicker(true);
+            }}
+            style={{
+              backgroundColor: 'transparent',
+              borderColor: '#4CBB17',
+              borderWidth: 2,
+              borderStyle: 'dashed',
+            }}
+            className="w-full py-3 px-2 rounded-xl mb-3 items-center justify-center min-h-[50px]"
+          >
+            <Text className="text-[#4CBB17] text-[12px] font-black text-center">
+              + Tag as Extra
+            </Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     );
@@ -665,11 +747,11 @@ export const TagPhotoModal = ({
   const handleQuickDiscard = () => {
     if (taggingAsset) {
       setTaggingAsset(null);
-      onClose();
-      setIsContinuousCamera(false);
-      setTimeout(() => {
-        reopenCameraContinuous();
-      }, 300);
+      if (isContinuousCamera) {
+        setCustomCameraVisible(true);
+      } else {
+        onClose();
+      }
     } else if (movingImage) {
       setMovingImage(null);
       onClose();
@@ -677,9 +759,19 @@ export const TagPhotoModal = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false}>
+    <Modal visible={visible} animationType="none" transparent={false}>
+      {isProcessing && (
+        <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13, 31, 26, 0.85)', zIndex: 99999, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#72BD00" />
+          <Text style={{ color: 'white', fontWeight: '800', fontSize: 12, marginTop: 12, letterSpacing: 1 }}>
+            MOVING PHOTO...
+          </Text>
+        </View>
+      )}
       {conflict ? (
         renderConflictScreen()
+      ) : showExtraPicker ? (
+        renderExtraPickerScreen()
       ) : (
         <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top > 0 ? insets.top : 16, paddingBottom: insets.bottom }}>
           <View className="flex-row items-center justify-between px-4 pt-4 pb-4 border-b border-white/10 bg-[#0D1F1A]">
@@ -697,7 +789,7 @@ export const TagPhotoModal = ({
               <Icon name="close" size={24} color="rgba(255,255,255,0.7)" />
             </TouchableOpacity>
             <Text className="text-white font-extrabold text-[10px] tracking-widest uppercase opacity-60">
-              {totalUploaded}/{displayTotal} SLOTS | {totalUploaded} {totalUploaded === 1 ? 'PHOTO' : 'PHOTOS'}
+              {totalUploaded}/{displayTotal} SLOTS | {totalPhotosCount ?? totalUploaded} {(totalPhotosCount ?? totalUploaded) === 1 ? 'PHOTO' : 'PHOTOS'}
             </Text>
           </View>
 
@@ -756,37 +848,41 @@ export const TagPhotoModal = ({
 
           {/* Active Image Preview Block */}
           {activePreviewUri && (
-            <TouchableOpacity
-              onPress={() => setShowFullScreenPreview(true)}
-              className="h-[180px] w-full bg-black relative justify-center items-center overflow-hidden"
-            >
-              <Image
-                source={{ uri: activePreviewUri }}
-                className="w-full h-full absolute"
-                resizeMode="cover"
-              />
-              <View className="absolute inset-0 bg-black/25" />
-
-              <View className="absolute bottom-4 left-4 bg-black/50 px-2 py-1 rounded">
+            <View className="h-[200px] w-full bg-black flex-row relative">
+              {/* Left Column */}
+              <View className="flex-1 justify-end p-4">
                 <Text className="text-white text-[10px] font-black uppercase tracking-wider">
                   Tag this photo below
                 </Text>
               </View>
 
-              <View className="absolute bottom-4 right-4 bg-black/50 px-2 py-1 rounded">
-                <Text className="text-white text-[10px] font-black uppercase tracking-wider">
-                  TAP TO EXPAND
-                </Text>
-              </View>
-
+              {/* Middle Column (Image) */}
               <TouchableOpacity
-                onPress={handleQuickDiscard}
-                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-black/60 items-center justify-center"
-                style={{ zIndex: 999 }}
+                onPress={() => setShowFullScreenPreview(true)}
+                className="w-[150px] h-full justify-center items-center"
               >
-                <Icon name="delete-outline" size={18} color="#EF4444" />
+                <Image
+                  source={{ uri: activePreviewUri }}
+                  className="w-full h-full"
+                  resizeMode="cover"
+                />
               </TouchableOpacity>
-            </TouchableOpacity>
+
+              {/* Right Column */}
+              <View className="flex-1 justify-between items-end p-4">
+                <TouchableOpacity
+                  onPress={handleQuickDiscard}
+                  style={{ zIndex: 999 }}
+                >
+                  <Icon name="delete-outline" size={24} color="white" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowFullScreenPreview(true)}>
+                  <Text className="text-white text-[10px] font-black uppercase tracking-wider text-right">
+                    TAP TO EXPAND
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           )}
 
           {/* Slots scroll view */}
@@ -843,6 +939,20 @@ export const TagPhotoModal = ({
           </View>
         </View>
       </Modal>
+
+      <CustomCameraModal
+        visible={customCameraVisible}
+        onClose={() => {
+          setCustomCameraVisible(false);
+          if (isContinuousCamera) {
+            onClose();
+          }
+        }}
+        onCapture={(asset) => {
+          setCustomCameraVisible(false);
+          setTaggingAsset(asset);
+        }}
+      />
     </Modal>
   );
 };

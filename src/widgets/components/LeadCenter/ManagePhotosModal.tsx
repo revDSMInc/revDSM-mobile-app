@@ -34,6 +34,7 @@ interface ManagePhotosModalProps {
   handleOpenPreviewTab: (uri: string) => void;
   setMovingImage: (img: any) => void;
   setShowTagModal: (show: boolean) => void;
+  setShowManageModal?: (show: boolean) => void;
   handleDelete: (category: string, image: any) => void;
   getSubcategoryLabel: (cat: string, sub: string) => string;
 }
@@ -67,6 +68,7 @@ export const ManagePhotosModal = ({
   handleOpenPreviewTab,
   setMovingImage,
   setShowTagModal,
+  setShowManageModal,
   handleDelete,
   getSubcategoryLabel,
 }: ManagePhotosModalProps) => {
@@ -507,21 +509,6 @@ export const ManagePhotosModal = ({
                                 <View className="flex-row items-center mt-2.5">
                                   <TouchableOpacity
                                     onPress={() => {
-                                      setMovingImage({
-                                        image: slot.image,
-                                        categoryName: slot.categoryName
-                                      });
-                                      onClose();
-                                      setShowTagModal(true);
-                                    }}
-                                    className="flex-1 border border-[#72BD00] rounded-xl py-2 flex-row items-center justify-center mr-2"
-                                  >
-                                    <Icon name="subdirectory-arrow-left" size={12} color="#72BD00" style={{ marginRight: 4 }} />
-                                    <Text className="text-[#72BD00] font-bold text-[10px]">Move</Text>
-                                  </TouchableOpacity>
-
-                                  <TouchableOpacity
-                                    onPress={() => {
                                       Alert.alert(
                                         'Delete Image',
                                         'Are you sure want to delete this image?',
@@ -535,9 +522,10 @@ export const ManagePhotosModal = ({
                                         ]
                                       );
                                     }}
-                                    className="border border-[#EF4444]/40 rounded-xl p-2 items-center justify-center"
+                                    className="flex-1 border border-[#EF4444]/40 rounded-xl py-2 flex-row items-center justify-center"
                                   >
-                                    <Icon name="trash-can-outline" size={12} color="#EF4444" />
+                                    <Icon name="trash-can-outline" size={12} color="#EF4444" style={{ marginRight: 4 }} />
+                                    <Text className="text-[#EF4444] font-bold text-[10px]">Delete</Text>
                                   </TouchableOpacity>
                                 </View>
                               )}
@@ -566,6 +554,12 @@ export const ManagePhotosModal = ({
                     setSelectedAnnotationPhotos([]);
                     setIsAnnotationSelectMode(false);
                     refetch();
+                    setShowManageModal?.(true);
+                  },
+                  onCancel: () => {
+                    setSelectedAnnotationPhotos([]);
+                    setIsAnnotationSelectMode(false);
+                    setShowManageModal?.(true);
                   }
                 });
               }}

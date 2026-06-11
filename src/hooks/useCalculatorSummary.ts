@@ -109,7 +109,8 @@ export const useCalculatorSummary = (
         ...activeCalc.inputs,
         ...activeCalc.extras,
         title: activeCalc.name,
-        price: status === 'accepted' ? num : activeCalc.price,
+        // Always keep the original rollout end price — do NOT overwrite it with the drop price
+        price: activeCalc.price,
         isRolloutConfirmed: true,
         dropPrice: updatedDrops,
       };
@@ -121,7 +122,8 @@ export const useCalculatorSummary = (
 
       updateActive({
         dropPrice: updatedDrops,
-        price: status === 'accepted' ? num : activeCalc.price,
+        // Preserve original rollout end price regardless of dropout status
+        price: activeCalc.price,
         isRolloutConfirmed: true,
         inputs: {
           ...activeCalc.inputs,

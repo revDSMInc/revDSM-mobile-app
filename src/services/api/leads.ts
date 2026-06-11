@@ -58,6 +58,7 @@ export const LeadEndpoints = {
     download: (jobId: string) => `pdf-reports/v1/job/${jobId}/download`,
     reset: (reportId: string) => `pdf-reports/v1/weather/report/${reportId}/reset`,
   },
+  downloadOutcomeDocuments: (leadId: string) => `lead/v1/${leadId}/outcome/documents/download`,
 };
 
 export const LeadService = {
@@ -74,8 +75,12 @@ export const LeadService = {
     api.get(LeadEndpoints.outcome(leadId)),
   getLeadOutcome: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.outcome(leadId)),
+  downloadOutcomeDocuments: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.downloadOutcomeDocuments(leadId)),
   submitJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.jobBuilder(leadId), payload),
+  updateJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.jobBuilder(leadId), payload),
   updateLeadOutcome: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.outcome(leadId), payload),
 
@@ -193,8 +198,8 @@ export const LeadService = {
     api.post(LeadEndpoints.leadDraft.upsert(leadId), payload),
   updateLeadDraft: (draftId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.patch(LeadEndpoints.leadDraft.update(draftId), payload),
-  getLeadDraft: (leadId: string): Promise<AxiosResponse<any>> =>
-    api.get(LeadEndpoints.leadDraft.get(leadId)),
+  getLeadDraft: (leadId: string, companyId?: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.leadDraft.get(leadId), companyId ? { headers: { companyId } } : undefined),
 
   deleteRevRenderRun: (runId: string, payload?: { reason: string }): Promise<AxiosResponse<any>> =>
     api.delete(`/rev-render/v1/runs/${runId}`, { data: payload }),

@@ -14,7 +14,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS } from '../../constants/lead-center';
+import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS, IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { RootStackParamList } from '../../navigation';
 
 type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
@@ -230,43 +230,101 @@ export default function RevRenderScreen() {
   );
 
   const renderGrid = () => {
+    const isMatchingView = (p: any, viewId: string, categoryId: string) => {
+      if (p.subcategory === viewId) return true;
+      const category = IMAGE_CATEGORIES.find(
+        (c) => c.id === categoryId || c.name.toLowerCase() === categoryId?.toLowerCase()
+      );
+      if (!category) return false;
+      let subCatObj = category.subCategories?.find(s => s.id === viewId || s.name === viewId);
+      if (!subCatObj && category.cardGroups) {
+        for (const group of category.cardGroups) {
+          subCatObj = group.subCategories?.find(s => s.id === viewId || s.name === viewId);
+          if (subCatObj) break;
+        }
+      }
+      if (subCatObj) {
+        return p.subcategory === subCatObj.id || p.subcategory === subCatObj.name;
+      }
+      return false;
+    };
+
     // Collect all standard views across all groups to prevent extra/discovered view cross-pollution
     const allStandardSubcategories = new Set<string>();
     REV_RENDER_VIEW_GROUPS.forEach((group) => {
       group.views.forEach((view) => {
         allStandardSubcategories.add(view.id);
+        const category = IMAGE_CATEGORIES.find(
+          (c) => c.id === group.categoryId || c.name.toLowerCase() === group.categoryId?.toLowerCase()
+        );
+        if (category) {
+          let subCatObj = category.subCategories?.find(s => s.id === view.id);
+          if (!subCatObj && category.cardGroups) {
+            for (const g of category.cardGroups) {
+              subCatObj = g.subCategories?.find(s => s.id === view.id);
+              if (subCatObj) break;
+            }
+          }
+          if (subCatObj) {
+            allStandardSubcategories.add(subCatObj.name);
+            allStandardSubcategories.add(subCatObj.id);
+          }
+        }
       });
     });
 
-    const discoveredGroups = REV_RENDER_VIEW_GROUPS.map((group) => {
+    // 1. Process each group individually first
+    let renderGroups = REV_RENDER_VIEW_GROUPS.map((group) => {
       const discoveredViews: any[] = [];
       
-      // Map category ID to the key stored in sectionImages
-      let targetCategory = group.categoryId;
+      // Map category ID to the key stored in sectionImages dynamically
+      const matchingCategory = IMAGE_CATEGORIES.find(
+        (c) => c.id === group.categoryId || c.name.toLowerCase() === group.categoryId?.toLowerCase()
+      );
+      let targetCategory = matchingCategory ? matchingCategory.name : group.categoryId;
+
+      // Fallback for legacy static group categoryIds
       if (group.categoryId === 'Front View' || group.categoryId === 'Side Views' || group.categoryId === 'Back View') {
         targetCategory = 'Home';
       } else if (group.categoryId === 'Gutter System') {
         targetCategory = 'Inspection';
       }
       
-      const photosInCategory = sectionImages[targetCategory] || [];
+      const photosInCategory = (sectionImages[targetCategory] || []).filter(
+        (p: any) => !p.subcategory?.toLowerCase().includes('(annotated)')
+      );
 
+      // Add standard views
       group.views.forEach((view) => {
-        const photo = photosInCategory.find((p: any) => p.subcategory === view.id);
-        if (photo) {
+        const matchingPhotos = photosInCategory.filter((p: any) => isMatchingView(p, view.id, group.categoryId));
+        matchingPhotos.forEach((photo: any) => {
           discoveredViews.push({
             ...photo,
             label: view.label,
           });
-        }
+        });
       });
 
+      return { ...group, discoveredViews, targetCategory };
+    });
+
+    // 2. Distribute extras/uncategorized photos without duplicates
+    const accountedPhotoUris = new Set<string>();
+    renderGroups.forEach((group) => {
+      group.discoveredViews.forEach((v) => accountedPhotoUris.add(v.uri));
+    });
+
+    renderGroups.forEach((group) => {
+      const photosInCategory = (sectionImages[group.targetCategory] || []).filter(
+        (p: any) => !p.subcategory?.toLowerCase().includes('(annotated)')
+      );
+      
       photosInCategory.forEach((p: any) => {
-        if (!allStandardSubcategories.has(p.subcategory)) {
+        if (!allStandardSubcategories.has(p.subcategory) && !accountedPhotoUris.has(p.uri)) {
           const subLower = p.subcategory?.toLowerCase() || '';
           
-          // If the category is 'Home', distribute extras based on keywords to avoid duplicates across Home groups
-          if (targetCategory === 'Home') {
+          // If the category is 'Home', distribute extras based on keywords
+          if (group.targetCategory === 'Home') {
             const isSide = subLower.includes('side') || subLower.includes('left') || subLower.includes('right');
             const isBack = subLower.includes('back');
             
@@ -275,17 +333,42 @@ export default function RevRenderScreen() {
             if (group.categoryId === 'Front View' && (isSide || isBack)) return;
           }
           
-          if (!discoveredViews.some(existing => existing.uri === p.uri)) {
-            discoveredViews.push({
-              ...p,
-              label: p.subcategory?.replace(/-/g, ' ') || group.categoryId,
-            });
-          }
+          group.discoveredViews.push({
+            ...p,
+            label: p.subcategory?.replace(/-/g, ' ') || group.categoryId,
+          });
+          accountedPhotoUris.add(p.uri);
         }
       });
+    });
 
-      return { ...group, discoveredViews };
-    }).filter((g) => g.discoveredViews.length > 0);
+    // 3. Merge roofline-observation and roof-inspection into a single 'ROOFLINE' group
+    const roofGroupIds = ['roof-inspection', 'roofline-observation'];
+    const roofGroups = renderGroups.filter((g) => roofGroupIds.includes(g.categoryId));
+    if (roofGroups.length > 0) {
+      const mergedViews: any[] = [];
+      const seenMergedUris = new Set<string>();
+      roofGroups.forEach((g) => {
+        g.discoveredViews.forEach((v) => {
+          if (!seenMergedUris.has(v.uri)) {
+            mergedViews.push(v);
+            seenMergedUris.add(v.uri);
+          }
+        });
+      });
+
+      renderGroups = renderGroups.filter((g) => !roofGroupIds.includes(g.categoryId));
+      if (mergedViews.length > 0) {
+        renderGroups.push({
+          sectionLabel: 'ROOFLINE',
+          categoryId: 'roofline',
+          views: [],
+          discoveredViews: mergedViews,
+        } as any);
+      }
+    }
+
+    const discoveredGroups = renderGroups.filter((g) => g.discoveredViews.length > 0);
 
     return (
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
@@ -679,7 +762,9 @@ export default function RevRenderScreen() {
     );
   };
 
-  const hasPhotos = Object.values(sectionImages || {}).flat().length > 0;
+  const hasPhotos = Object.values(sectionImages || {})
+    .flat()
+    .filter((p: any) => !p.subcategory?.toLowerCase().includes('(annotated)')).length > 0;
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: isDark ? colors.background : '#fff' }}>

@@ -137,11 +137,12 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
   // ── Auto-compute balance ────────────────────────────────────────────────────
   React.useEffect(() => {
-    const price = Number(formData.originalContractPrice) || 0;
-    const dp = Number(formData.downPayment) || 0;
+    const price = normalise(formData.originalContractPrice) || 0;
+    const dp = normalise(formData.downPayment) || 0;
     const newBalance = Math.max(0, price - dp);
-    if (newBalance !== Number(formData.balance)) {
-      setFormData((prev) => ({ ...prev, balance: String(newBalance) }));
+    const currentBalance = normalise(formData.balance) || 0;
+    if (newBalance !== currentBalance) {
+      setFormData((prev) => ({ ...prev, balance: fmt(newBalance) }));
     }
   }, [formData.originalContractPrice, formData.downPayment]);
 
@@ -285,6 +286,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   // ── Schedule confirm ───────────────────────────────────────────────────────
   const handleScheduleConfirm = async (data: any) => {
     setLoading(true);
+    const leadId = lead?._id || lead?.id;
+    if (!leadId) return;
+
     try {
       let apiDate = data.date;
       if (data.date && data.date !== 'TBD') {
@@ -294,28 +298,54 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           apiDate = `${m}/${d}/${y}`;
         }
       }
-      const payload = {
+
+      // Fetch existing job state to preserve other fields
+      let existingJobState: any = {};
+      let existingLeadData: any = {};
+      try {
+        const current = await LeadService.getJobBuilder(leadId);
+        const inner = current?.data?.data || current?.data || current || {};
+        existingJobState = inner?.jobBuilder || inner?.jobState || {};
+        existingLeadData = inner?.leadData || {};
+      } catch (err) {
+        console.warn('Could not fetch existing job builder state:', err);
+      }
+
+      const editedLeadData = {
+        ...existingLeadData,
         installDate: apiDate,
         timeWindow: data.timeWindow,
-        leadData: { ...lead?.leadData, installDate: apiDate, timeWindow: data.timeWindow },
-        jobBuilder: {
-          ...lead?.jobBuilder,
-          scheduleTime: {
-            customerName: `${lead?.customerDetails?.firstName} ${lead?.customerDetails?.lastName}`,
-            date: apiDate,
-            timeWindow: data.timeWindow,
-            reason: data.reason || '',
-          },
+      };
+
+      const editedJobState = {
+        ...existingJobState,
+        scheduleTime: {
+          customerName: `${lead?.customerDetails?.firstName} ${lead?.customerDetails?.lastName}`,
+          date: apiDate,
+          timeWindow: data.timeWindow,
+          reason: data.reason || '',
         },
+      };
+
+      // Non-sale or no change: save directly
+      await LeadService.submitJobBuilder(leadId, {
+        leadData: editedLeadData,
+        jobState: editedJobState,
+      });
+
+      const outcomePayload = {
+        installDate: apiDate,
+        timeWindow: data.timeWindow,
+        leadData: editedLeadData,
+        jobBuilder: editedJobState,
         result: lead?.result || lead?.status || outcomeData?.result || '',
         status: lead?.status || lead?.result || outcomeData?.status || '',
       };
-      await onUpdate(payload);
+      await onUpdate(outcomePayload);
 
       // Sync with JobTracker if it exists
       try {
         const jobs = await JobService.getJobs();
-        const leadId = lead?._id || outcomeData?.leadId;
         const apptId = lead?.appointmentId || outcomeData?.appointmentId || leadId;
         const calcId = lead?.calculatorId || outcomeData?.calculatorId || outcomeData?.selectedCalculatorId;
         const jobNum = lead?.jobNumber || outcomeData?.jobNumber || lead?.leadData?.jobNumber || outcomeData?.leadData?.jobNumber;

@@ -17,9 +17,10 @@ interface RiskReportModalProps {
   visible: boolean;
   onClose: () => void;
   lead: any;
+  refetch?: () => void;
 }
 
-export const RiskReportModal = ({ visible, onClose, lead }: RiskReportModalProps) => {
+export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportModalProps) => {
   const { colors } = useTheme();
   const [loadingStep, setLoadingStep] = useState<number>(0);
   const [logs, setLogs] = useState<string[]>([]);
@@ -100,6 +101,7 @@ export const RiskReportModal = ({ visible, onClose, lead }: RiskReportModalProps
       await uploadReport.mutateAsync(formData);
 
       addLog(`🎉 Complete! Your report is now available in Job Docs.`);
+      refetch?.();
       setTimeout(() => {
         setLoadingStep(0);
         onClose();

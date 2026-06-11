@@ -12,6 +12,7 @@ import {
   Pressable,
   Platform,
   PermissionsAndroid,
+  ActivityIndicator,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -64,6 +65,7 @@ export const InspectionFormModal = ({
   loading,
 }: InspectionFormModalProps) => {
   const { colors } = useTheme();
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const [name, setName] = useState(
     `${lead?.customerDetails?.firstName || ''} ${lead?.customerDetails?.lastName || ''}`.trim()
@@ -196,7 +198,9 @@ export const InspectionFormModal = ({
   };
 
   const handleSubmit = async () => {
+    if (isGenerating) return;
     try {
+      setIsGenerating(true);
       const payload: any = {
         name,
         email,
@@ -231,9 +235,11 @@ export const InspectionFormModal = ({
       });
 
       payload.leadId = lead?._id || lead?.id;
-      onSubmit(payload);
+      await onSubmit(payload);
     } catch (err) {
       console.error('Inspection Submit Error:', err);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -400,14 +406,15 @@ export const InspectionFormModal = ({
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleSubmit}
-              disabled={loading}
+              disabled={isGenerating}
               style={[
                 styles.submitBtn,
-                { backgroundColor: colors.primary.main, opacity: loading ? 0.6 : 1 },
+                { backgroundColor: colors.primary.main, opacity: isGenerating ? 0.6 : 1, flexDirection: 'row' },
               ]}
             >
+              {isGenerating && <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />}
               <Text style={styles.submitBtnText}>
-                {loading ? 'Submitting...' : 'Submit Report'}
+                {isGenerating ? 'Generating...' : 'Generate Report'}
               </Text>
             </TouchableOpacity>
           </View>

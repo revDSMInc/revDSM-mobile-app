@@ -112,23 +112,11 @@ export const AppointmentSchedulerModal = ({
 
   const handleAcceptSlot = () => {
     setIsTBD(false);
-    const data = {
-      date: format(selectedDate, 'M/d/yyyy'),
-      timeWindow: windows[timeSlotIdx].value,
-      customerName,
-    };
-    onConfirm(data);
     setView('success');
   };
 
   const handleConfirmTBDStep = () => {
     setIsTBD(true);
-    const data = {
-      date: 'TBD',
-      reason: tbdReason,
-      customerName,
-    };
-    onConfirm(data);
     setView('success');
   };
 
@@ -422,7 +410,22 @@ export const AppointmentSchedulerModal = ({
                 </View>
 
                 {isEdit ? (
-                  <TouchableOpacity onPress={handleModalClose} style={{ width: '100%' }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const data = isTBD ? {
+                        date: 'TBD',
+                        reason: tbdReason,
+                        customerName,
+                      } : {
+                        date: format(selectedDate, 'M/d/yyyy'),
+                        timeWindow: windows[timeSlotIdx].value,
+                        customerName,
+                      };
+                      onConfirm(data);
+                      handleModalClose();
+                    }}
+                    style={{ width: '100%' }}
+                  >
                     <View 
                       style={{ 
                         height: 64, 
