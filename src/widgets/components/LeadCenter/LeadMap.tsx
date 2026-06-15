@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -30,7 +30,12 @@ import { ReferralModal } from '../../modals/ReferralModal';
 
 
 
-const markerImg = require('../../../assets/images/map/marker.png');
+const MARKER_IMAGES = {
+  default: require('../../../assets/images/map/marker-green.png'),
+  searched: require('../../../assets/images/map/marker-red.png'),
+  favorite: require('../../../assets/images/map/marker-amber.png'),
+  selected: require('../../../assets/images/map/marker-selected.png'),
+};
 
 const { width, height } = Dimensions.get('window');
 
@@ -60,6 +65,47 @@ interface LeadMapProps {
   isHeatMapFilter?: boolean;
   onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral') => void;
 }
+
+/**
+ * Memoized single-lead marker. React.memo with custom comparator means this
+ * component NEVER re-renders during map pan/zoom (when only selectedLeadPoint
+ * or other parent state changes). Only re-renders when its own props change:
+ * marker image source, heatmap visibility, or the stable onPress callback.
+ * This eliminates the JS diffing overhead that caused lag with 3,000+ markers.
+ */
+const LeadMarkerMemo = React.memo(
+  ({
+    job,
+    markerSource,
+    isHeatMap,
+    onPress,
+  }: {
+    job: any;
+    markerSource: any;
+    isHeatMap: boolean;
+    onPress: (job: any, e: any) => void;
+  }) => {
+    if (!job?.location?.coordinates) return null;
+    const lat = job.location.coordinates[1];
+    const lng = job.location.coordinates[0];
+    return (
+      <Marker
+        coordinate={{ latitude: lat, longitude: lng }}
+        onPress={(e) => onPress(job, e)}
+        image={markerSource}
+        anchor={{ x: 0.5, y: 1 }}
+        zIndex={1}
+        opacity={isHeatMap ? 0 : 1}
+        tracksViewChanges={false}
+      />
+    );
+  },
+  (prev, next) =>
+    prev.markerSource === next.markerSource &&
+    prev.isHeatMap === next.isHeatMap &&
+    prev.onPress === next.onPress
+);
+
 
 export const LeadMap = ({
   currentLead,
@@ -119,9 +165,14 @@ export const LeadMap = ({
 
   // When externalLeads change (MapDetail refreshed data after referral/gallery action),
   // bump the version so markers remount fresh and tintColors update.
+  const prevLeadsHashRef = useRef('');
   useEffect(() => {
     if (externalLeads) {
-      setDataVersion((v) => v + 1);
+      const currentHash = externalLeads.map(l => `${l._id}-${l.isFavourite || l.isFavorite}`).join(',');
+      if (prevLeadsHashRef.current !== currentHash) {
+        prevLeadsHashRef.current = currentHash;
+        setDataVersion((v) => v + 1);
+      }
     } else {
       // Standalone mode — fetch our own data
       fetchAllJobs();
@@ -177,12 +228,6 @@ export const LeadMap = ({
     onToggleFilter,
   ]);
 
-  // ─── filteredLeads is synchronous (useMemo) ───────────────────────────────
-  // CRITICAL: Do NOT use useState + useEffect here. Two async state updates
-  // (allLeads → filteredLeads) cause React Native Maps to render markers in two
-  // passes, creating phantom duplicate markers that can't be tapped.
-  const [displayedLeads, setDisplayedLeads] = useState<any[]>([]);
-
   const filteredLeads = useMemo(() => {
     let result = [...allLeads];
 
@@ -194,8 +239,7 @@ export const LeadMap = ({
         if (num >= 30000 && num <= 30032) return false;
       }
 
-      // 2. Favorite Filter
-      if (isFavoriteOnly && !(item.isFavorite || item.isFavourite)) return false;
+
 
       // 3. My Jobs Filter
       if (isMyJobsOnly) {
@@ -223,22 +267,77 @@ export const LeadMap = ({
     return result;
   }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads]);
 
-  // Sync displayedLeads with filteredLeads - direct sync without clearing
-  // The filterKey on the Fragment will force remount when filters change
-  useEffect(() => {
-    setDisplayedLeads(filteredLeads);
+  // ─── Spatial grid index ───────────────────────────────────────────────────
+  // Divides all leads into 0.1° grid cells (~11km each). Built once per filter
+  // change. Viewport query = look up only intersecting cells → O(1) not O(n).
+  const CELL_SIZE = 0.1;
+  const spatialIndex = useMemo(() => {
+    const grid = new Map<string, any[]>();
+    filteredLeads.forEach(job => {
+      if (!job.location?.coordinates) return;
+      const lat = job.location.coordinates[1];
+      const lng = job.location.coordinates[0];
+      const key = `${Math.floor(lat / CELL_SIZE)},${Math.floor(lng / CELL_SIZE)}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key)!.push(job);
+    });
+    return grid;
   }, [filteredLeads]);
+
+  // ─── Viewport region — updated ONLY after pan/zoom ends ──────────────────
+  // Never updates during active gesture so zero JS work while dragging.
+  const [viewportRegion, setViewportRegion] = useState({
+    ...TAMPA_COORDS,
+    latitudeDelta: 0.0922,
+    longitudeDelta: 0.0421,
+  });
+
+  // ─── Visible leads — only markers within 2× the current viewport ─────────
+  // At any zoom level, only ~20-200 markers are ever in view.
+  // MAX_VISIBLE caps render at low zoom (zoomed far out = many cells visible).
+  const MAX_VISIBLE = 400;
+  const visibleLeads = useMemo(() => {
+    const { latitude, longitude, latitudeDelta, longitudeDelta } = viewportRegion;
+    const PAD = 2.0; // prefetch 2× viewport → markers ready before user pans to edge
+    const minLat = latitude - (latitudeDelta * PAD / 2);
+    const maxLat = latitude + (latitudeDelta * PAD / 2);
+    const minLng = longitude - (longitudeDelta * PAD / 2);
+    const maxLng = longitude + (longitudeDelta * PAD / 2);
+
+    const minCLat = Math.floor(minLat / CELL_SIZE);
+    const maxCLat = Math.floor(maxLat / CELL_SIZE);
+    const minCLng = Math.floor(minLng / CELL_SIZE);
+    const maxCLng = Math.floor(maxLng / CELL_SIZE);
+
+    const result: any[] = [];
+    for (let clat = minCLat; clat <= maxCLat; clat++) {
+      for (let clng = minCLng; clng <= maxCLng; clng++) {
+        if (result.length >= MAX_VISIBLE) break;
+        const cell = spatialIndex.get(`${clat},${clng}`);
+        if (cell) result.push(...cell);
+      }
+      if (result.length >= MAX_VISIBLE) break;
+    }
+
+    // Always include selected lead even if outside viewport
+    if (selectedLead?._id && !result.some(j => j._id === selectedLead._id)) {
+      result.push(selectedLead);
+    }
+
+    return result;
+  }, [spatialIndex, viewportRegion, selectedLead?._id]);
 
   // Sync heatmap state when toggle changes
   useEffect(() => {
     if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
   }, [isHeatMapActive]);
 
-  // filterKey changes on every filter toggle OR data refresh.
-  // This forces a clean remount of ALL markers, which:
-  //   (a) eliminates stale tintColor (yellow staying after filter off)
-  //   (b) prevents phantom duplicates from prior async renders
-  const filterKey = `${isFavoriteOnly}-${isReferralOnly}-${isMyJobsOnly}-${isHeatMapActive}-${dataVersion}`;
+  // filterKey changes on every filter toggle.
+  // This forces a clean remount of ALL markers, which prevents phantom duplicates from prior async renders,
+  // but does not include dataVersion so that updating/favoriting single leads does not trigger a full remount.
+  const filterKey = `${isFavoriteOnly}-${isReferralOnly}-${isMyJobsOnly}-${isHeatMapActive}`;
+
+  const [isMapMoving, setIsMapMoving] = useState(false);
 
 
   useEffect(() => {
@@ -266,13 +365,6 @@ export const LeadMap = ({
 
   useEffect(() => {
     if (currentLead?.location?.coordinates) {
-      const coords = currentLead.location.coordinates;
-      mapRef.current?.animateToRegion({
-        latitude: coords[1],
-        longitude: coords[0],
-        latitudeDelta: 0.02,
-        longitudeDelta: 0.02,
-      }, 1000);
       if (currentLead._id) {
         setSelectedLead(currentLead);
       }
@@ -300,11 +392,12 @@ export const LeadMap = ({
     }
   }, [focusLead]);
 
-  const startTracking = () => {
+  const startTracking = (forceAnimate = false) => {
     const successCallback = (position: any) => {
       const { latitude, longitude } = position.coords;
       setUserLocation({ latitude, longitude });
 
+      // Always animate to user's current location when opening map or clicking GPS
       mapRef.current?.animateToRegion({
         latitude,
         longitude,
@@ -331,6 +424,7 @@ export const LeadMap = ({
   };
 
   const [selectedLeadPoint, setSelectedLeadPoint] = useState<{ x: number, y: number } | null>(null);
+  const [cardHeight, setCardHeight] = useState(380);
 
   const updateSelectedPoint = async () => {
     if (selectedLead?.location?.coordinates && mapRef.current) {
@@ -341,7 +435,7 @@ export const LeadMap = ({
         });
         setSelectedLeadPoint(point);
       } catch (e) {
-        console.log('Error getting point:', e);
+        // ignore
       }
     } else {
       setSelectedLeadPoint(null);
@@ -349,26 +443,29 @@ export const LeadMap = ({
   };
 
   useEffect(() => {
-    // Initial update
     updateSelectedPoint();
-    // Retry after animation stabilization
-    const timer = setTimeout(updateSelectedPoint, 500);
+    const timer = setTimeout(updateSelectedPoint, 150);
     return () => clearTimeout(timer);
   }, [selectedLead]);
 
   useEffect(() => {
-    if (selectedLead && !displayedLeads.some(job => job._id === selectedLead._id)) {
+    if (selectedLead && !filteredLeads.some(job => job._id === selectedLead._id)) {
       setSelectedLead(null);
     }
-  }, [displayedLeads, selectedLead]);
+  }, [filteredLeads, selectedLead]);
 
   const handleToggleFavorite = async (job: any) => {
     const nextValue = !(job.isFavourite || job.isFavorite);
     try {
       await LeadService.toggleFavourite(job._id, nextValue);
 
-      // Optimistic update: mutate internalLeads if we own the data,
-      // or bump dataVersion to force a remount when using externalLeads.
+      // Mutate the lead object inside allLeads array in-place so both internal/external lists and clicked markers reference the fresh state!
+      const target = allLeads.find((l) => l._id === job._id);
+      if (target) {
+        target.isFavourite = nextValue;
+        target.isFavorite = nextValue;
+      }
+
       if (!externalLeads) {
         setInternalLeads((prev: any[]) =>
           prev.map((l) =>
@@ -376,7 +473,8 @@ export const LeadMap = ({
           )
         );
       }
-      // Always bump version so filterKey changes → markers remount → tintColor resets
+
+      // Always bump version so markers rerender and update their colors
       setDataVersion((v) => v + 1);
 
       if (selectedLead && selectedLead._id === job._id) {
@@ -398,20 +496,20 @@ export const LeadMap = ({
     if (event && event.stopPropagation) {
       event.stopPropagation();
     }
-    
+
     const coords = lead.location?.coordinates;
     if (!coords) return;
 
     if (selectedLead?._id === lead._id) {
-       setSelectedLead(null);
+      setSelectedLead(null);
     } else {
-       setSelectedLead(lead);
-       mapRef.current?.animateToRegion({
-         latitude: coords[1],
-         longitude: coords[0],
-         latitudeDelta: 0.01,
-         longitudeDelta: 0.01,
-       }, 800);
+      setSelectedLead(lead);
+      mapRef.current?.animateToRegion({
+        latitude: coords[1] + 0.003, // shift center north to center card vertically
+        longitude: coords[0],
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      }, 800);
     }
   };
 
@@ -420,12 +518,12 @@ export const LeadMap = ({
 
     const start = `${userLocation.longitude},${userLocation.latitude}`;
     const end = `${currentLead.location.coordinates[0]},${currentLead.location.coordinates[1]}`;
-    
+
     try {
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start};${end}?geometries=geojson&access_token=${ENV.MAPBOX_ACCESS_TOKEN}`;
       const response = await fetch(url);
       const data = await response.json();
-      
+
       if (data.routes && data.routes.length > 0) {
         const coords = data.routes[0].geometry.coordinates.map((c: any) => ({
           longitude: c[0],
@@ -447,14 +545,14 @@ export const LeadMap = ({
   }, [showRoute, userLocation, currentLead]);
 
   const heatmapPoints = useMemo(() => {
-    return displayedLeads
+    return filteredLeads
       .filter((l: any) => l.location?.coordinates)
       .map((l: any) => ({
         latitude: l.location.coordinates[1],
         longitude: l.location.coordinates[0],
         weight: (l.price || 0) / 1000 || 1,
       }));
-  }, [displayedLeads]);
+  }, [filteredLeads]);
 
   // Haversine formula to compute great-circle distance in kilometers
   const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -464,9 +562,9 @@ export const LeadMap = ({
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos(lat1 * (Math.PI / 180)) *
-        Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c; // Distance in km
   };
@@ -482,14 +580,47 @@ export const LeadMap = ({
   useEffect(() => {
     if (currentLead?.latitude && currentLead?.longitude) {
       console.log('[SearchLocation] Search location set to:', { lat: currentLead.latitude, lng: currentLead.longitude });
-      console.log('[SearchLocation] Total markers displayed:', displayedLeads.length);
-      const nearbyMarkers = displayedLeads.filter(job => {
+      console.log('[SearchLocation] Total markers displayed:', filteredLeads.length);
+      const nearbyMarkers = filteredLeads.filter(job => {
         if (!job.location?.coordinates) return false;
         return isNearSearchedLocation(job.location.coordinates[1], job.location.coordinates[0]);
       });
       console.log('[SearchLocation] Markers within 2km of search location:', nearbyMarkers.length, nearbyMarkers.map((m: any) => m.jobNumber));
     }
-  }, [currentLead?.latitude, currentLead?.longitude]);
+  }, [currentLead?.latitude, currentLead?.longitude, filteredLeads]);
+
+  // ─── Optimised marker rendering ───────────────────────────────────────────
+  // handleMarkerClickRef: a ref-backed stable callback so stableMarkerPress
+  // never changes identity, preventing LeadMarkerMemo from re-rendering when
+  // selectedLead (captured inside handleMarkerClick) changes.
+  const handleMarkerClickRef = useRef<(job: any, e?: any) => void>(handleMarkerClick);
+  handleMarkerClickRef.current = handleMarkerClick;
+  const stableMarkerPress = useCallback((job: any, e: any) => {
+    handleMarkerClickRef.current(job, e);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — stability guaranteed via ref
+
+  // All lead markers pre-computed. Only recalculates when data/filter changes,
+  // NOT when selectedLeadPoint/selectedLead changes — zero diffing during pan.
+  const markerElements = useMemo(() => {
+    return visibleLeads.map((job) => {
+      if (!job.location?.coordinates) return null;
+      const isFavJob = job.isFavorite || job.isFavourite;
+      const markerSource =
+        isFavJob ? MARKER_IMAGES.favorite : MARKER_IMAGES.default;
+      return (
+        <LeadMarkerMemo
+          key={job._id}
+          job={job}
+          markerSource={markerSource}
+          isHeatMap={isHeatMap}
+          onPress={stableMarkerPress}
+        />
+      );
+    });
+  }, [visibleLeads, isHeatMap, stableMarkerPress, dataVersion]);
+
+
 
   return (
     <View
@@ -524,11 +655,14 @@ export const LeadMap = ({
           }
 
           currentRegion.current = r;
-          updateSelectedPoint();
+          if (!isMapMoving) {
+            setIsMapMoving(true);
+          }
         }}
         onRegionChangeComplete={(r) => {
           currentRegion.current = r;
-          updateSelectedPoint();
+          setIsMapMoving(false);
+          setViewportRegion(r);
 
           // Snap back and re-enable scrolling after gesture was killed
           if (isOutOfBoundsRef.current) {
@@ -549,6 +683,7 @@ export const LeadMap = ({
               setMapScrollEnabled(true);
             }, 300);
           }
+          updateSelectedPoint();
         }}
         onPress={() => {
           if (markerPressedRef.current) {
@@ -592,70 +727,15 @@ export const LeadMap = ({
           />
         )}
 
-         {/* Individual Markers */}
-         <React.Fragment key={filterKey}>
-           {displayedLeads.map((job) => {
-             if (!job.location?.coordinates) return null;
-             const isSelected = selectedLead?._id === job._id;
-             const uid = (user as any)?._id || (user as any)?.id;
-             const isOwner = isJobOwner(job, uid);
-             const hasActiveReferral = job.jobReferrals?.some((r: any) => r.referralToggle === true);
-             const isFavJob = job.isFavorite || job.isFavourite;
-             const jobLat = job.location.coordinates[1];
-             const jobLng = job.location.coordinates[0];
-             const nearSearchedLocation = isNearSearchedLocation(jobLat, jobLng);
-
-             // Marker color logic (matching web app):
-             // 1. If near searched location → red
-             // 2. Else if favorite filter active AND job is favorite → amber/yellow
-             // 3. Otherwise → no tint (green)
-             const tintColor = nearSearchedLocation
-               ? '#FF0000'   // red for searched location
-               : (isFavoriteOnly && isFavJob)
-               ? '#F59E0B'   // amber for favorite filter
-               : undefined;  // no tint — use original green PNG
-
-             return (
-               <Marker
-                 key={`${job._id}-${isSelected}-${tintColor || 'none'}-${dataVersion}`}
-                 coordinate={{
-                   latitude: jobLat,
-                   longitude: jobLng,
-                 }}
-                 onPress={(e) => handleMarkerClick(job, e)}
-                 tracksViewChanges={isSelected}
-                 anchor={{ x: 0.5, y: 1 }}
-                 zIndex={isSelected ? 100 : 1}
-                 opacity={isHeatMap ? 0 : 1}
-               >
-                 <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                   <Image
-                     source={markerImg}
-                     style={{
-                       width: 36,
-                       height: 44,
-                       ...(tintColor ? { tintColor } : {}),
-                     }}
-                     resizeMode="contain"
-                   />
-                   {/* Selected ring */}
-                   {isSelected && (
-                     <View style={{
-                       position: 'absolute',
-                       top: -4,
-                       width: 44,
-                       height: 44,
-                       borderRadius: 22,
-                       borderWidth: 2.5,
-                       borderColor: '#4CBB17',
-                       backgroundColor: 'transparent',
-                     }} />
-                   )}
-                 </View>
-               </Marker>
-             );
-           })}
-         </React.Fragment>
+        {/* Lead Markers — ALL leads rendered as memoized native Markers.
+             filterKey on the Fragment forces a complete atomic remount of ALL markers
+             when any filter or data version changes. This prevents the ghost/phantom
+             marker effect that occurs when React incrementally adds/removes markers
+             during filter transitions. During pan/zoom (filterKey unchanged),
+             LeadMarkerMemo's custom comparator skips all 3,000 markers entirely. */}
+        <React.Fragment key={filterKey}>
+          {markerElements}
+        </React.Fragment>
         {/* User Location Marker */}
         {userLocation && (
           <Marker
@@ -699,19 +779,20 @@ export const LeadMap = ({
         )}
       </MapView>
 
+
       {/* Anchored Interactive Job Card (InfoWindow Style but fully interactive) */}
-      {/* Anchored Interactive Job Card (InfoWindow Style but fully interactive) */}
-      {selectedLead && selectedLeadPoint && (
-        <View 
+      {selectedLead && selectedLeadPoint && !isMapMoving && (
+        <View
           style={{
             position: 'absolute',
             left: selectedLeadPoint.x - 140, // Centered horizontally (280 / 2)
-            top: selectedLeadPoint.y - 325, // Positioned above the marker
+            top: selectedLeadPoint.y - cardHeight - 110, // Sit above the 100px tall marker + 10px triangle
             zIndex: 1000,
           }}
           pointerEvents="auto"
         >
-          <View 
+          <View
+            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
             style={{
               backgroundColor: isDark ? '#1E1E1E' : 'white',
               borderRadius: 20,
@@ -731,10 +812,6 @@ export const LeadMap = ({
               onClose={() => setSelectedLead(null)}
               isMyJob={isJobOwner(selectedLead, (user as any)?._id || (user as any)?.id)}
               onReferencePress={() => {
-                // If a parent handler exists (e.g. MapDetail), use it.
-                // MapDetail's handler opens a ReferralModal with onSuccess={fetchLeads},
-                // which refreshes externalLeads → allLeads → instant fresh data.
-                // Only fall back to internal modal in standalone (no parent) mode.
                 if (onReferencePress) {
                   onReferencePress(selectedLead);
                 } else {
@@ -755,9 +832,9 @@ export const LeadMap = ({
               }}
               onFavoritePress={handleToggleFavorite}
             />
-            
+
             {/* Anchor Triangle */}
-            <View 
+            <View
               style={{
                 position: 'absolute',
                 bottom: -10,
@@ -820,7 +897,7 @@ export const LeadMap = ({
       {/* Bottom Right Controls (GPS & Zoom) */}
       <View className="absolute bottom-10 right-6 flex-row items-end gap-3" style={{ zIndex: 10 }}>
         <TouchableOpacity
-          onPress={startTracking}
+          onPress={() => startTracking(true)}
           className="w-12 h-12 rounded-full bg-[#4cbb17] items-center justify-center shadow-xl"
         >
           <Icon name="crosshairs-gps" size={24} color="white" />

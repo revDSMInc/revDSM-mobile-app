@@ -212,7 +212,6 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
                             {name}
                           </Text>
                           <View className="flex-row items-center mt-1">
-                            <View className="w-2 h-2 rounded-full bg-emerald-500 mr-2" />
                             <Text
                               className="text-[10px] font-black opacity-40 tracking-widest"
                               style={{ color: colors.text }}
@@ -221,9 +220,6 @@ export const ParticipantsModal = ({ visible, onClose, chatId, leadId, isChannel 
                             </Text>
                           </View>
                         </View>
-                        <TouchableOpacity className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800/50 items-center justify-center">
-                          <Icon name="chatbubble-outline" size={18} color={colors.primary.main} />
-                        </TouchableOpacity>
                       </View>
                     );
                   })

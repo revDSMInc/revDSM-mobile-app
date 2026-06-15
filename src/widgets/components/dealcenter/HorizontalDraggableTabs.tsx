@@ -6,6 +6,7 @@ import {
   PanResponder,
   Animated,
   StyleSheet,
+  LayoutAnimation,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
@@ -48,173 +49,91 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   const activeCalcId = calculators[activeIdx]?._id;
 
   const getTabPanResponder = (index: number) => {
-    let hasMoved = false;
-
     return PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 12 || Math.abs(gestureState.dy) > 12;
+        return Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10;
       },
       onPanResponderGrant: () => {
         setDraggingIdx(index);
         setDropAnimatingIdx(null);
-        panX.setValue(0);
-        panY.setValue(0);
-        hasMoved = false;
         onDragStateChange?.(true);
-        // Reset all shifts
-        shiftAnims.current.forEach(anim => anim.setValue(0));
       },
       onPanResponderMove: (_, gestureState) => {
-        if (Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5) {
-          hasMoved = true;
-        }
         panX.setValue(gestureState.dx);
         panY.setValue(gestureState.dy);
 
         const draggedLayout = layouts.current[index];
-        if (!draggedLayout) return;
+        if (draggedLayout) {
+          const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx;
 
-        const gap = 8;
-        const shiftDistance = draggedLayout.width + gap;
-
-        // Shift neighboring tabs dynamically
-        calculators.forEach((_, i) => {
-          if (i === index) return;
-
-          const currentLayout = layouts.current[i];
-          if (!currentLayout) return;
-
-          let toValue = 0;
-
-          if (i > index) {
-            const midpoint = currentLayout.x + currentLayout.width / 2;
-            const draggedRightEdge = draggedLayout.x + draggedLayout.width + gestureState.dx;
-            if (draggedRightEdge > midpoint) {
-              toValue = -shiftDistance;
-            }
-          } else {
-            const midpoint = currentLayout.x + currentLayout.width / 2;
-            const draggedLeftEdge = draggedLayout.x + gestureState.dx;
-            if (draggedLeftEdge < midpoint) {
-              toValue = shiftDistance;
-            }
-          }
-
-          Animated.spring(shiftAnims.current[i], {
-            toValue,
-            useNativeDriver: true,
-            tension: 100,
-            friction: 12,
-          }).start();
-        });
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (!hasMoved) {
-          // Normal Tap
-          setActiveIdx(index);
-          setDraggingIdx(null);
-          onDragStateChange?.(false);
-        } else {
-          const draggedLayout = layouts.current[index];
-          let targetIdx = index;
-
-          if (draggedLayout) {
-            const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx;
-            
-            // Find target index
-            for (let i = 0; i < calculators.length; i++) {
-              if (i === index) continue;
-              const layout = layouts.current[i];
-              if (layout) {
-                const layoutCenterX = layout.x + layout.width / 2;
-                if (i < index && currentCenterX < layoutCenterX) {
-                  targetIdx = i;
-                  break;
-                } else if (i > index && currentCenterX > layoutCenterX) {
-                  targetIdx = i;
-                }
+          for (let i = 0; i < calculators.length; i++) {
+            if (i === index) continue;
+            const layout = layouts.current[i];
+            if (layout) {
+              const layoutCenterX = layout.x + layout.width / 2;
+              if (i < index && currentCenterX < layoutCenterX) {
+                shiftAnims.current[i].setValue(draggedLayout.width + 8);
+              } else if (i > index && currentCenterX > layoutCenterX) {
+                shiftAnims.current[i].setValue(-(draggedLayout.width + 8));
+              } else {
+                shiftAnims.current[i].setValue(0);
               }
             }
           }
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        const draggedLayout = layouts.current[index];
+        let targetIdx = index;
 
-          if (targetIdx !== index && draggedLayout && layouts.current[targetIdx]) {
-            // Reorder array
-            const updated = [...calculators];
-            const [removed] = updated.splice(index, 1);
-            updated.splice(targetIdx, 0, removed);
-
-            // Compute correct offset to prevent visual jumping
-            const oldX = draggedLayout.x;
-            const newX = layouts.current[targetIdx].x;
-            const diffX = oldX - newX;
-
-            // Set the animation starting values relative to the new layout position
-            panX.setValue(gestureState.dx + diffX);
-            panY.setValue(gestureState.dy);
-
-            // Lock drop animating state to run slide animation
-            setDropAnimatingIdx(targetIdx);
-            setDraggingIdx(null);
-            onDragStateChange?.(false);
-
-            // Apply state updates by finding the active calculator's new index by reference
-            const activeCalc = calculators[activeIdx];
-            const newActiveIdx = updated.indexOf(activeCalc);
-            onReorder(updated, newActiveIdx >= 0 ? newActiveIdx : 0);
-
-            // Animate tab into new slot smoothly
-            Animated.parallel([
-              Animated.spring(panX, {
-                toValue: 0,
-                useNativeDriver: true,
-                tension: 110,
-                friction: 12,
-              }),
-              Animated.spring(panY, {
-                toValue: 0,
-                useNativeDriver: true,
-                tension: 110,
-                friction: 12,
-              }),
-              ...shiftAnims.current.map(anim =>
-                Animated.spring(anim, {
-                  toValue: 0,
-                  useNativeDriver: true,
-                  tension: 110,
-                  friction: 12,
-                })
-              ),
-            ]).start(() => {
-              setDropAnimatingIdx(null);
-            });
-          } else {
-            // Dragged back to original position
-            setDraggingIdx(null);
-            onDragStateChange?.(false);
-            Animated.parallel([
-              Animated.spring(panX, {
-                toValue: 0,
-                useNativeDriver: true,
-                tension: 110,
-                friction: 12,
-              }),
-              Animated.spring(panY, {
-                toValue: 0,
-                useNativeDriver: true,
-                tension: 110,
-                friction: 12,
-              }),
-              ...shiftAnims.current.map(anim =>
-                Animated.spring(anim, {
-                  toValue: 0,
-                  useNativeDriver: true,
-                  tension: 110,
-                  friction: 12,
-                })
-              ),
-            ]).start();
+        if (draggedLayout) {
+          const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx;
+          
+          for (let i = 0; i < calculators.length; i++) {
+            if (i === index) continue;
+            const layout = layouts.current[i];
+            if (layout) {
+              const layoutCenterX = layout.x + layout.width / 2;
+              if (i < index && currentCenterX < layoutCenterX) {
+                targetIdx = i;
+                break;
+              } else if (i > index && currentCenterX > layoutCenterX) {
+                targetIdx = i;
+              }
+            }
           }
+        }
+
+        if (targetIdx !== index && draggedLayout && layouts.current[targetIdx]) {
+          const updated = [...calculators];
+          const [removed] = updated.splice(index, 1);
+          updated.splice(targetIdx, 0, removed);
+
+          const activeCalc = calculators[activeIdx];
+          const newActiveIdx = updated.indexOf(activeCalc);
+
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          
+          setDraggingIdx(null);
+          setDropAnimatingIdx(null);
+          onDragStateChange?.(false);
+          panX.setValue(0);
+          panY.setValue(0);
+          shiftAnims.current.forEach(anim => anim.setValue(0));
+          
+          onReorder(updated, newActiveIdx >= 0 ? newActiveIdx : 0);
+        } else {
+          setDraggingIdx(null);
+          setDropAnimatingIdx(null);
+          onDragStateChange?.(false);
+          Animated.parallel([
+            Animated.spring(panX, { toValue: 0, useNativeDriver: true, tension: 110, friction: 12 }),
+            Animated.spring(panY, { toValue: 0, useNativeDriver: true, tension: 110, friction: 12 }),
+            ...shiftAnims.current.map(anim =>
+              Animated.spring(anim, { toValue: 0, useNativeDriver: true, tension: 110, friction: 12 })
+            ),
+          ]).start();
         }
       },
       onPanResponderTerminate: () => {
@@ -222,19 +141,10 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
         setDropAnimatingIdx(null);
         onDragStateChange?.(false);
         Animated.parallel([
-          Animated.spring(panX, {
-            toValue: 0,
-            useNativeDriver: true,
-          }),
-          Animated.spring(panY, {
-            toValue: 0,
-            useNativeDriver: true,
-          }),
+          Animated.spring(panX, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(panY, { toValue: 0, useNativeDriver: true }),
           ...shiftAnims.current.map(anim =>
-            Animated.spring(anim, {
-              toValue: 0,
-              useNativeDriver: true,
-            })
+            Animated.spring(anim, { toValue: 0, useNativeDriver: true })
           ),
         ]).start();
       },
@@ -288,7 +198,9 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
               animatedStyle as any,
             ]}
           >
-            <View
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => setActiveIdx(idx)}
               style={[
                 styles.tab,
                 isActive
@@ -334,7 +246,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                   color={isActive ? '#FFFFFF' : '#637381'}
                 />
               </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           </Animated.View>
         );
       })}

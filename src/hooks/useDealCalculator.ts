@@ -269,6 +269,7 @@ export const useDealCalculator = (lead: any) => {
           price: c.price || 0,
           dropPrice: c.dropPrice || [],
           downPayment: c.downPayment || 0,
+          appointmentId: c.appointmentId || apptId,
         }));
 
         // Apply dynamic naming/warnings on load
@@ -328,7 +329,7 @@ export const useDealCalculator = (lead: any) => {
   ]);
 
   const updateActive = useCallback(
-    (patch: any) => {
+    (patch: any, bypassAutoSave: boolean = false) => {
       setCalculators((prev) => {
         const next = [...prev];
         if (!next[activeIdx]) return prev;
@@ -357,7 +358,11 @@ export const useDealCalculator = (lead: any) => {
           if (titles[key]) c.name = titles[key];
         });
 
-        isPendingSave.current = true;
+        if (bypassAutoSave) {
+          isPendingSave.current = false;
+        } else {
+          isPendingSave.current = true;
+        }
         latestActiveRef.current = next[activeIdx];
         return next;
       });
@@ -370,6 +375,34 @@ export const useDealCalculator = (lead: any) => {
     try {
       setIsAutoSaving(true);
       isAutoSavingRef.current = true;
+
+      let rawDrops = (data.dropPrice || []).map(({ _clientId, ...rest }: any) => rest);
+      const targetApptId = data.appointmentId || appointmentId;
+      if (targetApptId) {
+        try {
+          const calcRes = await LeadService.getCalculators(targetApptId);
+          const calculatorsData = calcRes.data?.data || calcRes.data || [];
+          const matched = calculatorsData.find((c: any) => c._id === data._id);
+          if (matched && matched.dropPrice) {
+            rawDrops = rawDrops.map((dp: any) => {
+              if (!dp._id) {
+                const matchedDbDrop = matched.dropPrice.find(
+                  (dbDp: any) =>
+                    Number(dbDp.dropedPrice) === Number(dp.dropedPrice) &&
+                    dbDp.status === dp.status
+                );
+                if (matchedDbDrop) {
+                  return { ...dp, _id: matchedDbDrop._id };
+                }
+              }
+              return dp;
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to resolve dropPrice _ids in saveCalculator', err);
+        }
+      }
+
       const payload = {
         title: data.name,
         position: data.position,
@@ -401,6 +434,7 @@ export const useDealCalculator = (lead: any) => {
         discounts: data.discounts,
         discountPercentage: Number(data.inputs.discountPercentage || 15),
         isDefaultDiscount: !!data.inputs.isDefaultDiscount,
+        dropPrice: rawDrops,
         ...Object.keys(data.extras).reduce(
           (acc, k) => ({
             ...acc,
@@ -459,6 +493,9 @@ export const useDealCalculator = (lead: any) => {
     if (!apptId) return;
     try {
       setLoading(true);
+      if (isPendingSave.current && latestActiveRef.current) {
+        await saveCalculator(latestActiveRef.current);
+      }
       const leadName = `${lead.customerDetails?.firstName || ''} ${
         lead.customerDetails?.lastName || ''
       }`.trim();
@@ -475,27 +512,13 @@ export const useDealCalculator = (lead: any) => {
         ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
         price: 0,
       };
-      const res = await LeadService.createCalculator(apptId, fullPayload);
-      const newC = res.data?.data || res.data;
-
-      if (newC) {
-        setCalculators((prev) => {
-          const newList = [
-            ...prev,
-            {
-              _id: newC._id,
-              name: newC.title || '.',
-              inputs: { ...INITIAL_INPUTS, paymentPlan: defaultPay },
-              extras: INITIAL_EXTRAS,
-              discounts: { seniorVet: false, preOrder: false },
-              price: 0,
-            },
-          ];
-          // Set active index to the newly added item
-          setActiveIdx(newList.length - 1);
-          return newList;
-        });
-      }
+      await LeadService.createCalculator(apptId, fullPayload);
+      
+      await fetchCalculators();
+      setCalculators((prev) => {
+        setActiveIdx(prev.length - 1);
+        return prev;
+      });
     } catch (e) {
       console.error('Failed to add calculator', e);
     } finally {
@@ -509,9 +532,12 @@ export const useDealCalculator = (lead: any) => {
 
     try {
       setLoading(true);
+      if (isPendingSave.current && latestActiveRef.current) {
+        await saveCalculator(latestActiveRef.current);
+      }
       const duplicate = calculators[idx];
 
-      const res = await LeadService.createCalculator(apptId, {
+      await LeadService.createCalculator(apptId, {
         title: `${duplicate.name} (Copy)`,
         ...duplicate.inputs,
         ...duplicate.extras,
@@ -519,37 +545,12 @@ export const useDealCalculator = (lead: any) => {
         pricemarkup: duplicate.inputs.markup,
         price: 0,
       });
-      const newC = res.data?.data || res.data;
 
-      const newList = [
-        ...calculators,
-        {
-          inputs: duplicate.inputs,
-          extras: duplicate.extras,
-          discounts: duplicate.discounts,
-          _id: newC._id,
-          name: newC.title,
-          price: 0,
-          dropPrice: [],
-          isRolloutConfirmed: false,
-        },
-      ];
-
-      const getRetailPrice = (calc: any) => {
-        const r = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
-          seniorVet: false,
-          preOrder: false,
-        });
-        return r.baseRetailTotal;
-      };
-      const titles = getUpdatedCalculatorTitles(newList, getRetailPrice);
-      newList.forEach((c, idx) => {
-        const key = c._id || `temp-${idx}`;
-        if (titles[key]) c.name = titles[key];
+      await fetchCalculators();
+      setCalculators((prev) => {
+        setActiveIdx(prev.length - 1);
+        return prev;
       });
-
-      setCalculators(newList);
-      setActiveIdx(newList.length - 1);
     } catch (e) {
       console.warn('Failed to duplicate', e);
     } finally {

@@ -27,7 +27,9 @@ export const LockedCalculatorView = ({
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
   const rolloutEndPrice = Number(active?.price) || 0;
-  const acceptedDrop = (active?.dropPrice || []).find((d: any) => d.status === 'accepted');
+  const drops = active?.dropPrice || [];
+  // Show the last drop price added regardless of its status (accepted or declined)
+  const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
 
   /* ── Derived data ── */
   const categoryCounts: Record<string, number> = {};
@@ -104,7 +106,7 @@ export const LockedCalculatorView = ({
           </View>
         </View>
 
-        {/* ── Warning Banner (hidden when opened from Summary) ── */}
+        {/* ── Warning Banner ── */}
         {showWarning && (
           <View style={{
             backgroundColor: '#FFFBEB',
@@ -119,14 +121,13 @@ export const LockedCalculatorView = ({
           </View>
         )}
 
-        {/* ── ONE single container wrapping name + pills + items ── */}
+        {/* ── ONE card: name + pills + items + tiles + prices ── */}
         <View style={{
           backgroundColor: '#FFFFFF',
           borderWidth: 1.5,
           borderColor: '#4CBB17',
           borderRadius: 20,
-          overflow: 'hidden',
-          marginBottom: 16,
+          paddingBottom: 16,
         }}>
           {/* Calculator name */}
           <View style={{ paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
@@ -135,13 +136,10 @@ export const LockedCalculatorView = ({
             </Text>
           </View>
 
-          {/* Category filter pills — wrapping (no horizontal scroll) */}
+          {/* Category filter pills */}
           <View style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            paddingHorizontal: 14,
-            paddingBottom: 14,
-            gap: 8,
+            flexDirection: 'row', flexWrap: 'wrap',
+            paddingHorizontal: 14, paddingBottom: 14, gap: 8,
           }}>
             {uniqueCategories.map((cat: string) => {
               const s = CATEGORY_STYLES[cat] || { color: '#637381', icon: 'list', bg: '#F4F6F8' };
@@ -166,7 +164,7 @@ export const LockedCalculatorView = ({
             })}
           </View>
 
-          {/* Flat item rows — all inside the same container, divided by thin lines */}
+          {/* Item rows */}
           {visibleItems.length === 0 ? (
             <View style={{ alignItems: 'center', paddingVertical: 28 }}>
               <Ionicons name="cube-outline" size={32} color="#CBD5E1" />
@@ -179,22 +177,14 @@ export const LockedCalculatorView = ({
               const s = CATEGORY_STYLES[item.category] || { color: '#637381', icon: 'list', bg: '#F4F6F8' };
               return (
                 <View key={i}>
-                  {/* Top divider before each item (replaces individual borders) */}
                   <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
-                  <View style={{
-                    flexDirection: 'row', alignItems: 'center',
-                    paddingHorizontal: 18, paddingVertical: 13,
-                  }}>
-                    {/* Circular icon */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 13 }}>
                     <View style={{
                       width: 38, height: 38, borderRadius: 19,
-                      backgroundColor: s.bg,
-                      alignItems: 'center', justifyContent: 'center',
-                      marginRight: 14,
+                      backgroundColor: s.bg, alignItems: 'center', justifyContent: 'center', marginRight: 14,
                     }}>
                       <Ionicons name={s.icon} size={18} color={s.color} />
                     </View>
-                    {/* Quantity + label */}
                     <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
                       <Text style={{ fontWeight: '900' }}>{item.value}{item.unit || "'"}</Text>
                       {'  '}{item.label}
@@ -204,93 +194,90 @@ export const LockedCalculatorView = ({
               );
             })
           )}
-          {/* Bottom padding inside container */}
-          <View style={{ height: 8 }} />
-        </View>
 
-        {/* ── Pricing section — scrollable at the bottom, NOT fixed ── */}
-        {/* COST / LIST / TOTAL boxes */}
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-          {[
-            { label: 'COST', value: results.price50, highlight: false },
-            { label: 'LIST', value: results.price65, highlight: false },
-            { label: 'TOTAL', value: results.price100, highlight: true },
-          ].map((tier, i) => (
-            <View
-              key={i}
-              style={{
-                flex: 1, alignItems: 'center', paddingVertical: 12,
-                borderRadius: 14, borderWidth: 1,
-                backgroundColor: tier.highlight ? '#DCFCE7' : '#F8FAFC',
-                borderColor: tier.highlight ? '#86EFAC' : '#E2E8F0',
-              }}
-            >
-              <Text style={{
-                fontSize: 9, fontWeight: '900', letterSpacing: 1, marginBottom: 4,
-                color: tier.highlight ? '#15803D' : '#94A3B8',
-              }}>
-                {tier.label}
-              </Text>
-              <Text style={{
-                fontSize: 15, fontWeight: '900',
-                color: tier.highlight ? '#15803D' : '#1C252E',
-              }}>
-                {fmt(tier.value)}
-              </Text>
-            </View>
-          ))}
-        </View>
+          {/* Divider before pricing */}
+          <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />
 
-        {/* Rollout End Price + LOCKED badge */}
-        <View style={{
-          backgroundColor: '#F0FDF4', borderRadius: 20,
-          borderWidth: 2, borderColor: '#4CBB17',
-          padding: 16,
-        }}>
-          {/* Rollout End Price Row */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View>
-              <Text style={{ fontSize: 10, fontWeight: '900', color: '#15803D', letterSpacing: 1, marginBottom: 2 }}>
-                Rollout End Price
-              </Text>
-              <Text style={{ fontSize: 24, fontWeight: '900', color: '#15803D' }}>
-                {rolloutEndPrice > 0 ? fmt(rolloutEndPrice) : '—'}
-              </Text>
-            </View>
-            <View style={{
-              flexDirection: 'row', alignItems: 'center',
-              backgroundColor: '#DCFCE7', paddingHorizontal: 14, paddingVertical: 7,
-              borderRadius: 20,
-            }}>
-              <Ionicons name="lock-closed" size={12} color="#D97706" style={{ marginRight: 5 }} />
-              <Text style={{ fontSize: 12, fontWeight: '900', color: '#15803D', letterSpacing: 0.5 }}>LOCKED</Text>
-            </View>
+          {/* COST / PAR / RETAIL tiles — inside the card */}
+          <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
+            {[
+              { label: 'COST', value: results.price50, isRetail: false },
+              { label: 'PAR', value: results.price65, isRetail: false },
+              { label: 'RETAIL', value: results.price100, isRetail: true },
+            ].map((tier, i) => (
+              <View
+                key={i}
+                style={{
+                  flex: 1, alignItems: 'center', paddingVertical: 10,
+                  borderRadius: 12, borderWidth: tier.isRetail ? 1.5 : 1,
+                  borderColor: tier.isRetail ? '#4CBB17' : '#E2E8F0',
+                }}
+              >
+                <Text style={{
+                  fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4,
+                  color: tier.isRetail ? '#94A3B8' : '#94A3B8', textTransform: 'uppercase',
+                }}>
+                  {tier.label}
+                </Text>
+                <Text style={{ fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#444c97' : '#1C252E' }}>
+                  ${Math.round(tier.value).toLocaleString()}
+                </Text>
+              </View>
+            ))}
           </View>
 
-          {acceptedDrop && (
-            <>
-              <View style={{ height: 1, backgroundColor: isDark ? '#FFFFFF10' : '#E2E8F0', marginVertical: 12 }} />
-              {/* Updated End Price Row */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View>
-                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#15803D', letterSpacing: 1, marginBottom: 2 }}>
-                    Updated End Price
-                  </Text>
-                  <Text style={{ fontSize: 24, fontWeight: '900', color: '#15803D' }}>
-                    {fmt(acceptedDrop.dropedPrice)}
-                  </Text>
-                </View>
-                <View style={{
-                  flexDirection: 'row', alignItems: 'center',
-                  backgroundColor: '#DCFCE7', paddingHorizontal: 14, paddingVertical: 7,
-                  borderRadius: 20,
-                }}>
-                  <Ionicons name="lock-closed" size={12} color="#D97706" style={{ marginRight: 5 }} />
-                  <Text style={{ fontSize: 12, fontWeight: '900', color: '#15803D', letterSpacing: 0.5 }}>LOCKED</Text>
-                </View>
+          {/* Price sub-card — Rollout End Price + Updated End Price */}
+          <View style={{
+            marginHorizontal: 14,
+            backgroundColor: '#F0FDF4',
+            borderRadius: 14,
+            borderWidth: 1.5,
+            borderColor: '#4CBB17',
+            overflow: 'hidden',
+          }}>
+            {/* Rollout End Price row */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              paddingHorizontal: 16, paddingVertical: 14,
+            }}>
+              <View>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748B', marginBottom: 2 }}>
+                  Rollout End Price
+                </Text>
+                <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>
+                  {rolloutEndPrice > 0 ? fmt(rolloutEndPrice) : '—'}
+                </Text>
               </View>
-            </>
-          )}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="lock-closed" size={14} color="#ffb300" style={{ marginRight: 4 }} />
+                <Text style={{ fontSize: 11, fontWeight: '900', color: '#4baf51', letterSpacing: 0.5 }}>LOCKED</Text>
+              </View>
+            </View>
+
+            {/* Updated End Price row (only if drops exist) */}
+            {lastDrop && (
+              <>
+                <View style={{ height: 1, backgroundColor: '#BBF7D0' }} />
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                  paddingHorizontal: 16, paddingVertical: 14,
+                }}>
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748B', marginBottom: 2 }}>
+                      Updated End Price
+                    </Text>
+                    <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>
+                      {fmt(lastDrop.dropedPrice)}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="lock-closed" size={14} color="#ffb300" style={{ marginRight: 4 }} />
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#4baf51', letterSpacing: 0.5 }}>LOCKED</Text>
+                  </View>
+                </View>
+              </>
+            )}
+          </View>
         </View>
       </ScrollView>
     </View>

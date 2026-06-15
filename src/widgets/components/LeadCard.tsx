@@ -7,6 +7,8 @@ import {
   Animated,
   Alert,
   StyleSheet,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import type { Lead } from '../../config/types/lead';
@@ -404,6 +406,7 @@ export function LeadCard({
   const { colors, isDark } = useTheme();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
   const archiveMutation = useArchiveLeadMutation();
   const deleteMutation = useDeleteLeadMutation();
   const resetMutation = useResetLeadMutation();
@@ -560,7 +563,7 @@ export function LeadCard({
             {/* Archive button (not shown in archived view) */}
             {!isArchived && (
               <TouchableOpacity
-                onPress={handleArchive}
+                onPress={() => setShowArchiveModal(true)}
                 disabled={archiveMutation.isPending}
                 className="w-9 h-9 rounded-full items-center justify-center bg-[#FFAB00]"
               >
@@ -732,6 +735,115 @@ export function LeadCard({
         onCancel={() => setShowDeleteModal(false)}
         onClose={() => setShowDeleteModal(false)}
       />
+
+      {/* ── Archive Confirmation Modal ─────────────────────────────────── */}
+      <Modal
+        visible={showArchiveModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowArchiveModal(false)}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+          onPress={() => setShowArchiveModal(false)}
+        >
+          <Pressable
+            style={{
+              width: '100%',
+              maxWidth: 340,
+              borderRadius: 24,
+              padding: 24,
+              backgroundColor: isDark ? '#1C1C1E' : '#fff',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.15,
+              shadowRadius: 20,
+              elevation: 8,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: '900',
+                marginBottom: 8,
+                textAlign: 'left',
+                color: isDark ? '#fff' : '#1e293b',
+              }}
+            >
+              Archive this lead?
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: '500',
+                marginBottom: 24,
+                textAlign: 'left',
+                color: isDark ? '#94a3b8' : '#64748b',
+              }}
+            >
+              Lead will move to Archived tab.
+            </Text>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => {
+                  setShowArchiveModal(false);
+                  handleArchive();
+                }}
+                style={{
+                  backgroundColor: '#4cbb17',
+                  paddingVertical: 10,
+                  paddingHorizontal: 18,
+                  borderRadius: 12,
+                  marginRight: 10,
+                }}
+              >
+                <Text
+                  style={{
+                    color: '#fff',
+                    fontSize: 14,
+                    fontWeight: 'bold',
+                  }}
+                >
+                  Confirm
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowArchiveModal(false)}
+                style={{
+                  backgroundColor: isDark ? '#1C1C1E' : '#fff',
+                  borderWidth: 1,
+                  borderColor: isDark ? '#334155' : '#e2e8f0',
+                  paddingVertical: 10,
+                  paddingHorizontal: 18,
+                  borderRadius: 12,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 'bold',
+                    color: isDark ? '#fff' : '#334155',
+                  }}
+                >
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <MapSelectionModal
         visible={showMapModal}

@@ -159,10 +159,10 @@ export const MapFiltersModal = ({
         style={{ flex: 1 }}
       >
         <View className="flex-1 bg-black/40 justify-center px-8">
-          <View className="bg-white rounded-[24px] p-5 shadow-2xl relative">
+          <View className="bg-white rounded-[24px] p-5 shadow-2xl relative" style={{ transform: [{ translateY: 30 }] }}>
             <TouchableOpacity
               onPress={onClose}
-              className="absolute right-4 top-4 z-30 p-2"
+              className="absolute right-2 top-4 z-30 p-2"
             >
               <Icon name="close" size={24} color="#64748b" />
             </TouchableOpacity>
@@ -329,15 +329,6 @@ export const MapFiltersModal = ({
                       keyboardShouldPersistTaps="always"
                       showsVerticalScrollIndicator={true}
                     >
-                      <TouchableOpacity
-                        className="p-4 border-b border-slate-50"
-                        onPress={() => {
-                          setLocalFilters({ ...localFilters, radius: 0 });
-                          setShowRadiusDropdown(false);
-                        }}
-                      >
-                        <Text className="font-bold text-[13px] text-slate-400">Select Distance</Text>
-                      </TouchableOpacity>
                       {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((val) => (
                         <TouchableOpacity
                           key={val}
@@ -475,7 +466,14 @@ export const MapFiltersModal = ({
 
                   <Icon name="star" size={24} color="#FFA500" />
                   <TouchableOpacity
-                    onPress={() => setLocalFilters({ ...localFilters, isFavoriteOnly: !localFilters.isFavoriteOnly })}
+                    onPress={() => {
+                      const nextFav = !localFilters.isFavoriteOnly;
+                      const nextFilters = { ...localFilters, isFavoriteOnly: nextFav, jobNumber: searchText };
+                      setLocalFilters(nextFilters);
+                      onApply(nextFilters);
+                      setSearchResults([]);
+                      onClose();
+                    }}
                     className="w-11 h-6 rounded-full px-1 justify-center"
                     style={{ backgroundColor: localFilters.isFavoriteOnly ? colors.primary.main : '#e2e8f0' }}
                   >

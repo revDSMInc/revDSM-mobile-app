@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
+  Dimensions,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -77,6 +78,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   const [livePaths, setLivePaths] = useState<string[]>([]);
   const [currentPath, setCurrentPath] = useState('');
   const currentPathRef = useRef('');
+  const [padLayout, setPadLayout] = useState({ width: Dimensions.get('window').width - 64, height: 260 });
 
   const panResponder = useMemo(
     () =>
@@ -484,7 +486,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
                   </View>
                 ) : (
                   <View style={{ flex: 1, width: '100%', backgroundColor: '#F8FAFC' }}>
-                    <Svg width="100%" height="100%">
+                    <Svg width="100%" height="100%" viewBox={`0 0 ${padLayout.width} ${padLayout.height}`} preserveAspectRatio="xMidYMid meet">
                       {savedPaths.map((p, i) => (
                         <Path
                           key={i}
@@ -601,6 +603,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
                     style={styles.sigPad}
                     {...panResponder.panHandlers}
                     onStartShouldSetResponder={() => true}
+                    onLayout={(e) => setPadLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
                   >
                     <Svg width="100%" height="100%" pointerEvents="none">
                       {livePaths.map((p, i) => (

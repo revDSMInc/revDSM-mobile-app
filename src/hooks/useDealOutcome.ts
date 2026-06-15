@@ -81,11 +81,15 @@ export const useDealOutcome = (
 
   const handleStatusSelect = (status: 'demo' | 'sale') => {
     setOutcomeStatus(status);
-    const latestDrop =
-      (activeCalculator.dropPrice || []).length > 0
-        ? activeCalculator.dropPrice[activeCalculator.dropPrice.length - 1].dropedPrice
-        : activeCalculator.price;
-    const final = Number(latestDrop) || results.total || 0;
+
+    const drops = activeCalculator?.dropPrice || [];
+    const targetDrop = drops.find((d: any) => d.status === 'accepted') || drops[drops.length - 1];
+
+    const latestDrop = targetDrop?.dropedPrice || activeCalculator?.price;
+    const final = Number(latestDrop) || results?.total || 0;
+    const dp = targetDrop?.downPayment ? String(targetDrop.downPayment) : '';
+    const balanceVal = status === 'sale' ? String(Math.max(0, final - (Number(dp) || 0))) : '';
+
     const isLowesLead = lead?.lowesLead === true;
     const planKey = getDefaultPaymentMethod(
       isLowesLead,
@@ -95,19 +99,19 @@ export const useDealOutcome = (
       planKey === 'mcVisaDscvr'
         ? 'card'
         : planKey === 'lowes_cc'
-        ? 'lowes_cc'
-        : ['check', 'amex', 'lowes_ach'].includes(planKey)
-        ? planKey
-        : isLowesLead
-        ? 'lowes_ach'
-        : 'check';
+          ? 'lowes_cc'
+          : ['check', 'amex', 'lowes_ach'].includes(planKey)
+            ? planKey
+            : isLowesLead
+              ? 'lowes_ach'
+              : 'check';
 
     setOutcomeForm({
       ...outcomeForm,
       lastPriceQuoted: status === 'demo' ? String(final) : '',
       originalContractPrice: status === 'sale' ? String(final) : '',
-      downPayment: '',
-      balance: status === 'sale' ? String(final) : '',
+      downPayment: status === 'sale' ? dp : '',
+      balance: balanceVal,
       downPaymentMethod: dpMethod,
       balancePaymentMethod: planKey,
     });
@@ -136,16 +140,54 @@ export const useDealOutcome = (
       setLoading(true);
 
       // Build the LFCalculator payload — always required with a title
-      const lfCalculatorPayload = activeCalculator && Object.keys(activeCalculator).length > 0
+      let lfCalculatorPayload = activeCalculator && Object.keys(activeCalculator).length > 0
         ? {
-            ...activeCalculator,
-            title: (activeCalculator?.title && String(activeCalculator.title).trim())
-              ? activeCalculator.title
-              : 'Job Builder Estimate',
-            appointmentId: activeCalculator?.appointmentId || appointmentId,
-            createdBy: user?._id || user?.id || activeCalculator?.createdBy,
-          }
+          ...activeCalculator,
+          title: (activeCalculator?.title && String(activeCalculator.title).trim())
+            ? activeCalculator.title
+            : 'Job Builder Estimate',
+          appointmentId: activeCalculator?.appointmentId || appointmentId,
+          createdBy: user?._id || user?.id || activeCalculator?.createdBy,
+        }
         : undefined;
+
+      // Fetch latest calculator from server to resolve missing _ids in dropPrice for LFCalculator
+      if (lfCalculatorPayload && lfCalculatorPayload._id) {
+        try {
+          const apptId = appointmentId || lfCalculatorPayload.appointmentId;
+          if (apptId) {
+            const calcRes = await LeadService.getCalculators(apptId);
+            const calculatorsData = calcRes.data?.data || calcRes.data || [];
+            const matched = calculatorsData.find((c: any) => c._id === lfCalculatorPayload._id);
+            if (matched && matched.dropPrice) {
+              lfCalculatorPayload.dropPrice = (lfCalculatorPayload.dropPrice || []).map((dp: any) => {
+                const apiShape = {
+                  ...(dp._id ? { _id: dp._id } : {}),
+                  dropedPrice: Number(dp.dropedPrice ?? dp.price),
+                  status: dp.status ?? (dp.secured ? 'accepted' : 'declined'),
+                  paymentMethod: dp.paymentMethod,
+                  downPayment: dp.downPayment ?? 0,
+                  balance: dp.balance ?? 0,
+                  addedPlans: dp.addedPlans || [],
+                };
+                if (!apiShape._id) {
+                  const matchedDbDrop = matched.dropPrice.find(
+                    (dbDp: any) =>
+                      Number(dbDp.dropedPrice) === Number(apiShape.dropedPrice) &&
+                      dbDp.status === apiShape.status
+                  );
+                  if (matchedDbDrop) {
+                    apiShape._id = matchedDbDrop._id;
+                  }
+                }
+                return apiShape;
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to resolve dropPrice _ids in handleFinishOutcome', err);
+        }
+      }
 
       // Update outcome: only touch status/result/LFCalculator/calculator references.
       // DO NOT send jobBuilder here — the web app never overwrites the existing jobBuilder

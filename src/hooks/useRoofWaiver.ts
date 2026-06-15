@@ -157,6 +157,12 @@ export const useRoofWaiver = (
     }
   };
 
+  const clearSig = () => {
+    setLivePaths([]);
+    setCurrentPath('');
+    currentPathRef.current = '';
+  };
+
   return {
     formData,
     setFormData,
@@ -173,5 +179,6 @@ export const useRoofWaiver = (
     handleFinalSubmit,
     submissionType,
     setSubmissionType,
+    clearSig,
   };
 };

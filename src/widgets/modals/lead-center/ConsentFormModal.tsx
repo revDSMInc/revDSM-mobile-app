@@ -91,6 +91,7 @@ export const ConsentFormModal = ({
   const [livePaths, setLivePaths] = useState<string[]>([]);
   const [currentPath, setCurrentPath] = useState('');
   const currentPathRef = React.useRef('');
+  const [padLayout, setPadLayout] = useState({ width: Dimensions.get('window').width - 64, height: 260 });
 
   const panResponder = useMemo(
     () =>
@@ -340,9 +341,9 @@ export const ConsentFormModal = ({
                   </View>
                 ) : (
                   <View className="flex-1 w-full bg-slate-50">
-                    <Svg width="100%" height="100%">
+                    <Svg width="100%" height="100%" viewBox={`0 0 ${padLayout.width} ${padLayout.height}`} preserveAspectRatio="xMidYMid meet">
                       {savedPaths.map((p, i) => (
-                        <Path key={i} d={p} stroke="black" strokeWidth={3} fill="none" />
+                        <Path key={i} d={p} stroke="black" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
                       ))}
                     </Svg>
                   </View>
@@ -512,6 +513,7 @@ export const ConsentFormModal = ({
                   style={styles.sigPad}
                   {...panResponder.panHandlers}
                   onStartShouldSetResponder={() => true}
+                  onLayout={(e) => setPadLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
                 >
                   <Svg width="100%" height="100%" pointerEvents="none">
                     {livePaths.map((p, i) => (

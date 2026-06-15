@@ -113,6 +113,8 @@ export const LeadService = {
     api.post('/rev-render/v1/generate', payload, { timeout: 120000 }),
   getRevRenderRuns: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(`/rev-render/v1/runs?leadId=${leadId}`),
+  getRevRenderBatchStatus: (batchId: string): Promise<AxiosResponse<any>> =>
+    api.get(`/rev-render/v1/batches/${batchId}`),
   createAppointment: (payload: any): Promise<AxiosResponse<any>> =>
     api.post('/appointments', payload),
   getAppointmentsByDate: (date: string): Promise<AxiosResponse<any>> =>

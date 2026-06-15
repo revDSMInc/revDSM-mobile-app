@@ -11,8 +11,13 @@ import {
   Image,
   Dimensions,
 } from 'react-native';
-import { Camera, useCameraDevice } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraFormat } from 'react-native-vision-camera';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import Reanimated, { useSharedValue, useAnimatedProps, runOnJS, withSpring } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const ReanimatedCamera = Reanimated.createAnimatedComponent(Camera);
 
 interface CustomCameraModalProps {
   visible: boolean;
@@ -44,15 +49,57 @@ export const CustomCameraModal = ({
     height: number;
   } | null>(null);
 
-  const device = useCameraDevice('back');
+  const insets = useSafeAreaInsets();
+
+  const device = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle-camera', 'wide-angle-camera', 'telephoto-camera'] });
+  const format = useCameraFormat(device, [
+    { photoAspectRatio: 4 / 3 },
+    { videoAspectRatio: 4 / 3 },
+    { photoResolution: 'max' },
+    { videoResolution: 'max' }
+  ]);
   const cameraRef = useRef<Camera>(null);
   const countdownScale = useRef(new Animated.Value(1)).current;
   const timerIntervalRef = useRef<any>(null);
 
-  const [zoomFactor, setZoomFactor] = useState<1 | 2 | 3>(1);
   const minZoom = device?.minZoom ?? 1;
   const maxZoom = device?.maxZoom ?? 8;
-  const currentZoom = Math.min(minZoom * zoomFactor, maxZoom);
+  const neutralZoom = device?.neutralZoom ?? minZoom;
+  const isUltrawideSupported = neutralZoom > minZoom;
+
+  const zoom = useSharedValue(neutralZoom);
+  const startZoom = useSharedValue(neutralZoom);
+  const [activeZoomLevel, setActiveZoomLevel] = useState(neutralZoom);
+
+  useEffect(() => {
+    if (device) {
+      const defaultZoom = device.neutralZoom ?? device.minZoom ?? 1;
+      zoom.value = defaultZoom;
+      startZoom.value = defaultZoom;
+      setActiveZoomLevel(defaultZoom);
+    }
+  }, [device?.id]); // reset when device changes
+
+  const updateActiveZoomLevel = (val: number) => {
+    setActiveZoomLevel(val);
+  };
+
+  const pinchGesture = Gesture.Pinch()
+    .onBegin(() => {
+      startZoom.value = zoom.value;
+    })
+    .onUpdate((e) => {
+      let newZoom = startZoom.value * e.scale;
+      newZoom = Math.max(Math.min(newZoom, maxZoom), minZoom);
+      zoom.value = newZoom;
+    })
+    .onEnd(() => {
+      runOnJS(updateActiveZoomLevel)(zoom.value);
+    });
+
+  const animatedProps = useAnimatedProps(() => ({
+    zoom: zoom.value,
+  }), [zoom]);
 
   // Request permissions
   useEffect(() => {
@@ -79,7 +126,9 @@ export const CustomCameraModal = ({
       setCapturedAsset(null);
       setIsCapturing(false);
       setCountdown(null);
-      setZoomFactor(1);
+      zoom.value = neutralZoom;
+      startZoom.value = neutralZoom;
+      setActiveZoomLevel(neutralZoom);
     }
     return () => {
       if (timerIntervalRef.current) {
@@ -163,7 +212,7 @@ export const CustomCameraModal = ({
       setCapturedAsset(asset);
     } catch (error) {
       console.log('Failed to capture photo, falling back to mock asset (normal on Simulator):', error);
-      
+
       const mockAsset = {
         uri: 'https://picsum.photos/800/600',
         fileName: `mock_photo_${Date.now()}.jpg`,
@@ -171,7 +220,7 @@ export const CustomCameraModal = ({
         width: 800,
         height: 600,
       };
-      
+
       setCapturedAsset(mockAsset);
     } finally {
       setIsCapturing(false);
@@ -192,21 +241,40 @@ export const CustomCameraModal = ({
 
   if (!visible) return null;
 
+  const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+  const viewfinderHeight = screenWidth * (4 / 3);
+  const viewfinderTop = insets.top + 20;
+
   return (
     <View style={[StyleSheet.absoluteFill, { zIndex: 9999, backgroundColor: 'black' }]}>
-      {/* 16:9 Viewfinder background layer */}
+      {/* 4:3 Viewfinder centered container */}
       {hasPermission === true && device && !capturedAsset && (
-        <View style={StyleSheet.absoluteFill}>
-          <Camera
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            device={device}
-            isActive={visible && !capturedAsset}
-            photo={true}
-            zoom={currentZoom}
-            resizeMode="cover"
-            outputOrientation="device"
-          />
+        <View style={{
+          position: 'absolute',
+          top: viewfinderTop,
+          left: 0,
+          width: screenWidth,
+          height: viewfinderHeight,
+          overflow: 'hidden',
+          backgroundColor: 'black',
+        }}>
+          <GestureHandlerRootView style={{ flex: 1 }}>
+            <GestureDetector gesture={pinchGesture}>
+              <View style={StyleSheet.absoluteFill}>
+                <ReanimatedCamera
+                  ref={cameraRef as any}
+                  style={StyleSheet.absoluteFill}
+                  device={device}
+                  format={format}
+                  isActive={visible && !capturedAsset}
+                  photo={true}
+                  animatedProps={animatedProps}
+                  resizeMode="cover"
+                  outputOrientation="preview"
+                />
+              </View>
+            </GestureDetector>
+          </GestureHandlerRootView>
 
           {/* COUNTDOWN OVERLAY */}
           {countdown !== null && (
@@ -224,7 +292,7 @@ export const CustomCameraModal = ({
         </View>
       )}
 
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }} pointerEvents="box-none">
         {hasPermission === false && (
           <View style={styles.center}>
             <Text style={styles.errorText}>Camera permission is required.</Text>
@@ -235,24 +303,32 @@ export const CustomCameraModal = ({
         )}
 
         {hasPermission === true && device && (
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1 }} pointerEvents="box-none">
             {/* PHOTO PREVIEW STATE */}
             {capturedAsset ? (
               <View style={styles.previewContainer}>
-                <View style={styles.previewImageWrapper}>
+                <View style={{
+                  position: 'absolute',
+                  top: viewfinderTop,
+                  left: 0,
+                  width: screenWidth,
+                  height: viewfinderHeight,
+                  overflow: 'hidden',
+                  backgroundColor: 'black',
+                }}>
                   <Image
                     source={{ uri: capturedAsset.uri }}
                     style={StyleSheet.absoluteFillObject}
                     resizeMode="cover"
                   />
                 </View>
-                
+
                 {/* Translucent overlay matching native iOS preview */}
-                <View style={styles.previewBottomBar}>
+                <View style={[styles.previewBottomBar, { position: 'absolute', top: viewfinderTop + viewfinderHeight, bottom: 0, left: 0, right: 0, backgroundColor: 'black', justifyContent: 'space-between', alignItems: 'center', paddingTop: 24, paddingBottom: 40 }]}>
                   <TouchableOpacity onPress={handleRetake} style={styles.previewButton}>
                     <Text style={styles.previewButtonText}>Retake</Text>
                   </TouchableOpacity>
-                  
+
                   <TouchableOpacity onPress={handleUsePhoto} style={styles.previewButton}>
                     <Text style={[styles.previewButtonText, styles.usePhotoText]}>Use Photo</Text>
                   </TouchableOpacity>
@@ -260,9 +336,9 @@ export const CustomCameraModal = ({
               </View>
             ) : (
               /* ACTIVE CAMERA STATE */
-              <View style={{ flex: 1, justifyContent: 'space-between' }}>
+              <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
                 {/* TOP BAR CONTROLS (iOS Style) */}
-                <View style={styles.iosTopBar}>
+                <View style={[styles.iosTopBar, { position: 'absolute', top: 0, left: 0, right: 0, height: viewfinderTop, backgroundColor: 'black', zIndex: 10 }]}>
                   <TouchableOpacity onPress={onClose} style={styles.iosIconButton} disabled={isCapturing}>
                     <Icon name="close" size={28} color="white" />
                   </TouchableOpacity>
@@ -274,8 +350,8 @@ export const CustomCameraModal = ({
                         flash === 'on'
                           ? 'flash'
                           : flash === 'auto'
-                          ? 'flash-auto'
-                          : 'flash-off'
+                            ? 'flash-auto'
+                            : 'flash-off'
                       }
                       size={24}
                       color={flash === 'off' ? 'white' : '#FFD607'}
@@ -297,30 +373,35 @@ export const CustomCameraModal = ({
                   </TouchableOpacity>
                 </View>
 
-                {/* Spacer block to let viewfinder show through */}
-                <View style={{ flex: 1 }} />
-
                 {/* BOTTOM CONTROL SECTION (iOS Style) */}
-                <View style={styles.iosBottomSection}>
+                <View style={[styles.iosBottomSection, { position: 'absolute', top: viewfinderTop + viewfinderHeight, bottom: 0, left: 0, right: 0, backgroundColor: 'black', zIndex: 10, paddingVertical: 12 }]}>
                   {/* ZOOM PILLS BAR (above shutter) */}
                   <View style={styles.iosZoomContainer}>
+                    {isUltrawideSupported && (
+                      <TouchableOpacity
+                        onPress={() => { zoom.value = withSpring(minZoom); setActiveZoomLevel(minZoom); }}
+                        style={[styles.iosZoomButton, activeZoomLevel < neutralZoom && styles.iosZoomButtonActive]}
+                      >
+                        <Text style={[styles.iosZoomText, activeZoomLevel < neutralZoom && styles.iosZoomTextActive]}>0.5x</Text>
+                      </TouchableOpacity>
+                    )}
                     <TouchableOpacity
-                      onPress={() => setZoomFactor(1)}
-                      style={[styles.iosZoomButton, zoomFactor === 1 && styles.iosZoomButtonActive]}
+                      onPress={() => { zoom.value = withSpring(neutralZoom); setActiveZoomLevel(neutralZoom); }}
+                      style={[styles.iosZoomButton, activeZoomLevel >= neutralZoom && activeZoomLevel < neutralZoom * 2 && styles.iosZoomButtonActive]}
                     >
-                      <Text style={[styles.iosZoomText, zoomFactor === 1 && styles.iosZoomTextActive]}>1x</Text>
+                      <Text style={[styles.iosZoomText, activeZoomLevel >= neutralZoom && activeZoomLevel < neutralZoom * 2 && styles.iosZoomTextActive]}>1x</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => setZoomFactor(2)}
-                      style={[styles.iosZoomButton, zoomFactor === 2 && styles.iosZoomButtonActive]}
+                      onPress={() => { zoom.value = withSpring(neutralZoom * 2); setActiveZoomLevel(neutralZoom * 2); }}
+                      style={[styles.iosZoomButton, activeZoomLevel >= neutralZoom * 2 && activeZoomLevel < neutralZoom * 3 && styles.iosZoomButtonActive]}
                     >
-                      <Text style={[styles.iosZoomText, zoomFactor === 2 && styles.iosZoomTextActive]}>2x</Text>
+                      <Text style={[styles.iosZoomText, activeZoomLevel >= neutralZoom * 2 && activeZoomLevel < neutralZoom * 3 && styles.iosZoomTextActive]}>2x</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => setZoomFactor(3)}
-                      style={[styles.iosZoomButton, zoomFactor === 3 && styles.iosZoomButtonActive]}
+                      onPress={() => { zoom.value = withSpring(neutralZoom * 3); setActiveZoomLevel(neutralZoom * 3); }}
+                      style={[styles.iosZoomButton, activeZoomLevel >= neutralZoom * 3 && styles.iosZoomButtonActive]}
                     >
-                      <Text style={[styles.iosZoomText, zoomFactor === 3 && styles.iosZoomTextActive]}>3x</Text>
+                      <Text style={[styles.iosZoomText, activeZoomLevel >= neutralZoom * 3 && styles.iosZoomTextActive]}>3x</Text>
                     </TouchableOpacity>
                   </View>
 

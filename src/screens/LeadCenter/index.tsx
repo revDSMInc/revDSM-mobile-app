@@ -12,7 +12,9 @@ import {
   Modal,
   BackHandler,
   Alert,
+  PermissionsAndroid,
 } from 'react-native';
+import Geolocation from 'react-native-geolocation-service';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Storage } from '../../utils/storage';
@@ -190,6 +192,62 @@ export default function LeadCenterPage() {
       setActiveTab(route.params.tab as TabType);
     }
   }, [route.params?.tab]);
+
+  useEffect(() => {
+    if (!user?._id) return;
+
+    const prefetchMapJobs = async () => {
+      try {
+        if (Platform.OS === 'ios') {
+          await Geolocation.requestAuthorization('whenInUse');
+        } else {
+          await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        }
+
+        Geolocation.getCurrentPosition(
+          async (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const latKey = parseFloat(lat.toFixed(2));
+            const lngKey = parseFloat(lng.toFixed(2));
+            const radius = 0;
+
+            console.log('[LeadCenter Prefetch] Prefetching map jobs (all markers):', lat, lng);
+            await queryClient.prefetchQuery({
+              queryKey: ['mapJobs', latKey, lngKey, radius],
+              queryFn: async () => {
+                const res = await LeadService.findJobs({});
+                return res.data?.data || [];
+              },
+              staleTime: 1000 * 60 * 5,
+            });
+            console.log('[LeadCenter Prefetch] Map jobs prefetched successfully.');
+          },
+          (err) => {
+            console.log('[LeadCenter Prefetch] Location error, prefetching with Tampa default:', err);
+            const lat = 27.9506;
+            const lng = -82.4572;
+            const latKey = 27.95;
+            const lngKey = -82.46;
+            const radius = 0;
+            queryClient.prefetchQuery({
+              queryKey: ['mapJobs', latKey, lngKey, radius],
+              queryFn: async () => {
+                const res = await LeadService.findJobs({});
+                return res.data?.data || [];
+              },
+              staleTime: 1000 * 60 * 5,
+            });
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 10000 }
+        );
+      } catch (e) {
+        console.warn('[LeadCenter Prefetch] Prefetch failed:', e);
+      }
+    };
+
+    prefetchMapJobs();
+  }, [user?._id, queryClient]);
 
   const [loading, setLoading] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);

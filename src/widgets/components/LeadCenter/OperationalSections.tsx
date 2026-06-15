@@ -111,17 +111,17 @@ export const ToolsSection = ({
         </View>
 
         {/* Progress Bar for RevRender */}
-        {revRenderJobs.length > 0 && (
+        {revRenderJobs.some((j: any) => j.status !== 'completed' && j.status !== 'failed') && (
           <View className="mb-4">
             <View className="flex-row justify-between items-center mb-1.5">
               <Text className="text-[10px] font-black text-slate-400">
-                {Math.round((revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100)}%
+                {Math.round(revRenderJobs.reduce((acc: number, j: any) => acc + (j.progress || 0), 0) / revRenderJobs.length)}%
               </Text>
             </View>
             <View className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
               <View
                 className="h-full bg-[#2EDE56] shadow-sm shadow-[#2EDE56CC]"
-                style={{ width: `${(revRenderJobs.filter((j: any) => j.status === 'completed').length / revRenderJobs.length) * 100}%` }}
+                style={{ width: `${Math.round(revRenderJobs.reduce((acc: number, j: any) => acc + (j.progress || 0), 0) / revRenderJobs.length)}%` }}
               />
             </View>
           </View>

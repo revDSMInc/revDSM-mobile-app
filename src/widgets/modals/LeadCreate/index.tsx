@@ -93,6 +93,7 @@ export default function LeadCreateModal({
   const scrollViewRef = useRef<ScrollView>(null);
   const flashRef = useRef<any>(null);
   const [addressFieldY, setAddressFieldY] = useState(0);
+  const [lfSyncBoxY, setLfSyncBoxY] = useState(0);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
@@ -281,9 +282,18 @@ export default function LeadCreateModal({
       return;
     }
 
-    if (!fromZone && !form.phone) {
-      showError('Missing Info', 'Phone number is required');
-      return;
+    const rawPhone = (form.phone || '').replace(/\D/g, '');
+    if (!fromZone) {
+      if (!form.phone || rawPhone.length !== 11) {
+        showError('Invalid Phone', 'Please enter a complete 10-digit phone number');
+        return;
+      }
+    } else {
+      // If fromZone is true, phone is optional, but if entered, it must be complete
+      if (rawPhone.length > 1 && rawPhone.length !== 11) {
+        showError('Invalid Phone', 'Please enter a complete 10-digit phone number');
+        return;
+      }
     }
 
     // Email validation (optional but must be valid if provided)
@@ -699,6 +709,7 @@ export default function LeadCreateModal({
 
               {form.leadType === 'lf_lead' && (
                 <View
+                  onLayout={(e) => setLfSyncBoxY(e.nativeEvent.layout.y)}
                   className="p-5 rounded-[24px] border mb-6"
                   style={{
                     backgroundColor: isDark ? colors.surface : '#fff',
@@ -729,12 +740,18 @@ export default function LeadCreateModal({
                     onChangeText={(t) => setForm({ ...form, lfLeadId: t })}
                     placeholder="Enter ID"
                     keyboardType="numeric"
+                    onFocus={() => {
+                      scrollViewRef.current?.scrollTo({ y: lfSyncBoxY, animated: true });
+                    }}
                   />
                   <CustomInput
                     label="Lead Code*"
                     value={form.leadCode}
                     onChangeText={(t) => setForm({ ...form, leadCode: t })}
                     placeholder="Enter Code"
+                    onFocus={() => {
+                      scrollViewRef.current?.scrollTo({ y: lfSyncBoxY + 60, animated: true });
+                    }}
                   />
 
                   <View className="mt-4">
@@ -751,7 +768,7 @@ export default function LeadCreateModal({
                     >
                       {['9am', '11am', '1pm', '3pm', '5pm', '7pm'].map((time) => (
                         <TouchableOpacity
-                          key={time}
+                           key={time}
                           onPress={() => setForm({ ...form, lfLeadTime: time })}
                           className="px-5 py-2.5 rounded-xl mr-3"
                           style={{
@@ -779,7 +796,7 @@ export default function LeadCreateModal({
                             {(() => {
                               const match = time.match(/^(\d+)(am|pm)$/i);
                               if (match) {
-                                return `${match[1]}:00 ${match[2].toUpperCase()}`;
+                                  return `${match[1]}:00 ${match[2].toUpperCase()}`;
                               }
                               return time.toUpperCase();
                             })()}
@@ -795,6 +812,9 @@ export default function LeadCreateModal({
                     placeholder="MM-DD-YYYY"
                     rightIcon="calendar-outline"
                     onRightIconPress={() => setShowDatePicker(true)}
+                    onFocus={() => {
+                      scrollViewRef.current?.scrollTo({ y: lfSyncBoxY + 180, animated: true });
+                    }}
                   />
 
                   {showDatePicker && (

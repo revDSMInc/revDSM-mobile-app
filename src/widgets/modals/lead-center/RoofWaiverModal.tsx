@@ -51,6 +51,8 @@ export const RoofWaiverModal = ({
 }: RoofWaiverModalProps) => {
   const { colors } = useTheme();
 
+  const [padLayout, setPadLayout] = useState({ width: Dimensions.get('window').width - 64, height: 260 });
+
   const {
     formData,
     setFormData,
@@ -65,6 +67,7 @@ export const RoofWaiverModal = ({
     panResponder,
     handleFinalSubmit,
     submissionType,
+    clearSig,
   } = useRoofWaiver(lead, onSubmit, onFinalUpload, onClose, prefilledData);
 
   const openSigPad = () => {
@@ -212,9 +215,9 @@ export const RoofWaiverModal = ({
                   </View>
                 ) : (
                   <View style={{ flex: 1, width: '100%', backgroundColor: '#F8FAFC' }}>
-                    <Svg width="100%" height="100%">
+                    <Svg width="100%" height="100%" viewBox={`0 0 ${padLayout.width} ${padLayout.height}`} preserveAspectRatio="xMidYMid meet">
                       {savedPaths.map((p, i) => (
-                        <Path key={i} d={p} stroke="black" strokeWidth={3} fill="none" />
+                        <Path key={i} d={p} stroke="black" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
                       ))}
                     </Svg>
                   </View>
@@ -289,7 +292,6 @@ export const RoofWaiverModal = ({
                 zIndex: 1000,
               }}
             >
-              {/* PDF Preview Header */}
               <View
                 style={{
                   flexDirection: 'row',
@@ -329,7 +331,6 @@ export const RoofWaiverModal = ({
                 </TouchableOpacity>
               </View>
 
-              {/* Live PDF Viewer */}
               <View
                 style={{
                   flex: 1,
@@ -361,7 +362,6 @@ export const RoofWaiverModal = ({
                 />
               </View>
 
-              {/* Action Bar */}
               <View
                 style={{
                   padding: 16,
@@ -451,8 +451,9 @@ export const RoofWaiverModal = ({
           panResponder={panResponder}
           livePaths={livePaths}
           currentPath={currentPath}
-          clearSig={() => setLivePaths([])}
+          clearSig={clearSig}
           saveSig={saveSig}
+          onPadLayout={(e: any) => setPadLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
         />
       </View>
     </Modal>

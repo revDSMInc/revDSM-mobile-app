@@ -84,6 +84,7 @@ export default function LFCalculator({ route }: any) {
   const [trackerJobs, setTrackerJobs] = useState<any[]>([]);
   const [showTooltip, setShowTooltip] = useState(false);
   const [isDraggingTab, setIsDraggingTab] = useState(false);
+  const tabsScrollViewRef = useRef<ScrollView>(null);
 
   const {
     calculators,
@@ -107,6 +108,15 @@ export default function LFCalculator({ route }: any) {
     handleDeleteCalculator,
     handleReorderCalculators,
   } = useDealCalculator(currentLead);
+
+  useEffect(() => {
+    if (activeIdx >= 0 && calculators.length > 0) {
+      // Auto-scroll so the active tab is in view
+      const tabWidth = 90;
+      const targetOffset = Math.max(0, (activeIdx - 1) * tabWidth);
+      tabsScrollViewRef.current?.scrollTo({ x: targetOffset, animated: true });
+    }
+  }, [activeIdx, calculators.length]);
 
   const isFullPackage = useMemo(() => {
     if (!active) return false;
@@ -433,6 +443,7 @@ export default function LFCalculator({ route }: any) {
             <View className="flex-row items-center justify-between" style={{ overflow: 'visible', height: 44 }}>
               <View style={{ flex: 1, marginRight: 16, height: 44, justifyContent: 'center', overflow: isDraggingTab ? 'visible' : 'hidden' }}>
                 <ScrollView
+                  ref={tabsScrollViewRef}
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   scrollEnabled={!isDraggingTab}

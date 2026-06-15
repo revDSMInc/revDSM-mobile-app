@@ -24,6 +24,46 @@ const getCostPriceForCalc = (calc: any, isLowesLead?: boolean): number => {
   return Math.round(price50);
 };
 
+/**
+ * Maps a raw API drop entry to our local DropEntry shape.
+ * This is the single place that translates API → local, mirroring the web.
+ */
+const mapApiDrop = (dp: any, calcPaymentMethod: string): DropEntry => ({
+  _id: dp._id,
+  price: dp.dropedPrice,
+  secured: dp.status === 'accepted',
+  declined: dp.status === 'declined',
+  paymentMethod: dp.paymentMethod || calcPaymentMethod,
+  downPayment: dp.downPayment ?? 0,
+  balance: dp.balance ?? 0,
+  addedPlans: dp.addedPlans || [],
+});
+
+/**
+ * Converts our local DropEntry back to the API payload shape.
+ * Never includes _clientId — only includes _id when the server has already assigned one.
+ */
+const dropEntryToPayload = (dp: DropEntry) => ({
+  ...(dp._id ? { _id: dp._id } : {}),
+  dropedPrice: Number(dp.price),
+  status: dp.secured ? 'accepted' : 'declined',
+  paymentMethod: dp.paymentMethod,
+  downPayment: dp.downPayment ?? 0,
+  balance: dp.balance ?? 0,
+  addedPlans: dp.addedPlans || [],
+});
+
+interface DropEntry {
+  _id?: string;
+  price: number;
+  secured: boolean;
+  declined: boolean;
+  paymentMethod: string;
+  downPayment: number;
+  balance: number;
+  addedPlans: string[];
+}
+
 export const useCalculatorSummary = (
   activeCalc: any,
   results: any,
@@ -45,7 +85,33 @@ export const useCalculatorSummary = (
   const [currentDiscount, setCurrentDiscount] = useState(
     Number(activeCalc.inputs.discountPercentage) || 15
   );
+
+  // --- WEB-PARITY: Local droppedPrices state, always initialized from API ---
+  // This is the single source of truth for drop entries on this calculator.
+  // Keyed by activeCalc._id so switching tabs always uses fresh data.
+  const [droppedPrices, setDroppedPrices] = useState<DropEntry[]>(() =>
+    (activeCalc.dropPrice || []).map((dp: any) =>
+      mapApiDrop(dp, activeCalc.inputs?.paymentPlan || 'check')
+    )
+  );
+
+  // Reinitialize from API whenever the active calculator changes OR its dropPrice array changes.
+  // "Replace entirely from API — never merge with stale local state" (mirrors web).
+  useEffect(() => {
+    setDroppedPrices(
+      (activeCalc.dropPrice || []).map((dp: any) =>
+        mapApiDrop(dp, activeCalc.inputs?.paymentPlan || 'check')
+      )
+    );
+  }, [activeCalc._id, activeCalc.dropPrice]);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  // --- Display modal state ---
   const [displayDrop, setDisplayDrop] = useState<any>(null);
+  // Index-based targeting: same as web's existingDropIndex
+  const [displayDropIndex, setDisplayDropIndex] = useState<number>(-1);
+
   const [downPayment, setDownPayment] = useState(0);
   const [showDownPaymentInput, setShowDownPaymentInput] = useState(false);
   const [addedPlans, setAddedPlans] = useState<string[]>([]);
@@ -62,7 +128,85 @@ export const useCalculatorSummary = (
     setPriceText(activeCalc.price ? String(activeCalc.price) : '');
   }, [activeCalc._id]);
 
-  const handleAddDrop = async (status = 'declined') => {
+  /** Builds and sends the dropPrice payload to the server. */
+  const saveDropPriceToServer = async (updatedDrops: DropEntry[], extraPayload?: any) => {
+    setIsSaving(true);
+    try {
+      let resolvedDrops = updatedDrops.map(dropEntryToPayload);
+      const targetApptId = activeCalc.appointmentId;
+      if (targetApptId) {
+        try {
+          const calcRes = await LeadService.getCalculators(targetApptId);
+          const calculatorsData = calcRes.data?.data || calcRes.data || [];
+          const matched = calculatorsData.find((c: any) => c._id === activeCalc._id);
+          if (matched && matched.dropPrice) {
+            resolvedDrops = resolvedDrops.map((dp: any) => {
+              if (!dp._id) {
+                const matchedDbDrop = matched.dropPrice.find(
+                  (dbDp: any) =>
+                    Number(dbDp.dropedPrice) === Number(dp.dropedPrice) &&
+                    dbDp.status === dp.status
+                );
+                if (matchedDbDrop) {
+                  return { ...dp, _id: matchedDbDrop._id };
+                }
+              }
+              return dp;
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to resolve dropPrice _ids before updateCalculator in saveDropPriceToServer', err);
+        }
+      }
+
+      const payload: any = {
+        ...activeCalc.inputs,
+        ...activeCalc.extras,
+        title: activeCalc.name,
+        price: activeCalc.price,
+        isRolloutConfirmed: true,
+        dropPrice: resolvedDrops,
+        ...extraPayload,
+      };
+      const res = await LeadService.updateCalculator(activeCalc._id, payload);
+
+      const serverCalc = res.data?.data || res.data;
+      let finalDropPrice = serverCalc?.dropPrice;
+      if (!finalDropPrice && targetApptId) {
+        try {
+          const calcRes = await LeadService.getCalculators(targetApptId);
+          const calculatorsData = calcRes.data?.data || calcRes.data || [];
+          const matched = calculatorsData.find((c: any) => c._id === activeCalc._id);
+          if (matched && matched.dropPrice) {
+            finalDropPrice = matched.dropPrice;
+          }
+        } catch (err) {
+          console.warn('Failed to fetch latest calculators in saveDropPriceToServer', err);
+        }
+      }
+
+      if (finalDropPrice) {
+        const newDrops = finalDropPrice.map((dp: any) =>
+          mapApiDrop(dp, activeCalc.inputs?.paymentPlan || 'check')
+        );
+        setDroppedPrices(newDrops);
+        updateActive({
+          dropPrice: finalDropPrice,
+        }, true);
+      }
+
+      if (refresh) await refresh();
+    } catch (e) {
+      console.warn('Failed to save drop price', e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ----------------------------------------------------------------
+  // handleAddDrop — mirrors web's "new entry" branch in handleSecurePrice
+  // ----------------------------------------------------------------
+  const handleAddDrop = async (status: 'accepted' | 'declined' = 'declined') => {
     const num = Number(dropValue.replace(/[^0-9.]/g, ''));
     const costPrice = Math.round(results.price50);
     const endPrice = Number(activeCalc.price) || 0;
@@ -72,18 +216,15 @@ export const useCalculatorSummary = (
       setError(`Drop price cannot be less than cost ($${costPrice.toLocaleString()})`);
       return;
     }
-
     if (endPrice > 0 && num > endPrice) {
       setError(`Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`);
       return;
     }
-
     const methodValidation = validatePriceForPaymentMethod(num, dropPaymentMethod);
     if (!methodValidation.isValid) {
       setError(methodValidation.message);
       return;
     }
-
     if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && num < WF_HIGH_MIN_PRICE) {
       setError(
         `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}.`
@@ -92,72 +233,158 @@ export const useCalculatorSummary = (
     }
 
     try {
-      const newDrop = {
-        dropedPrice: num,
-        status,
-        paymentMethod: dropPaymentMethod,
-        downPayment,
-        addedPlans,
-      };
+      let updatedDrops: DropEntry[];
 
-      const updatedDrops = (activeCalc.dropPrice || []).map((d: any) =>
-        status === 'accepted' ? { ...d, status: 'declined' } : d
+      // --- WEB PARITY: Deduplication check ---
+      // If a declined entry with the same price already exists, update it in-place
+      // instead of appending a duplicate (mirrors web's existingDeclinedIndex logic).
+      const existingDeclinedIndex = droppedPrices.findIndex(
+        (item) => !item.secured && Number(item.price) === num
       );
-      updatedDrops.push(newDrop);
 
-      const payload: any = {
-        ...activeCalc.inputs,
-        ...activeCalc.extras,
-        title: activeCalc.name,
-        // Always keep the original rollout end price — do NOT overwrite it with the drop price
-        price: activeCalc.price,
-        isRolloutConfirmed: true,
-        dropPrice: updatedDrops,
-      };
-
-      if (status === 'accepted') {
-        payload.paymentPlan = dropPaymentMethod;
-        payload.paymentMethod = dropPaymentMethod;
+      if (existingDeclinedIndex !== -1) {
+        updatedDrops = droppedPrices.map((item, idx) => {
+          if (idx === existingDeclinedIndex) {
+            return {
+              ...item,
+              secured: status === 'accepted',
+              declined: status !== 'accepted',
+              paymentMethod: dropPaymentMethod,
+              downPayment,
+              balance: num - downPayment,
+              addedPlans,
+            };
+          }
+          // Enforce single-accepted rule
+          if (status === 'accepted' && item.secured) {
+            return { ...item, secured: false, declined: true };
+          }
+          return item;
+        });
+      } else {
+        // Truly new price — demote any existing accepted entry, then append
+        const newEntry: DropEntry = {
+          price: num,
+          secured: status === 'accepted',
+          declined: status !== 'accepted',
+          paymentMethod: dropPaymentMethod,
+          downPayment,
+          balance: num - downPayment,
+          addedPlans,
+        };
+        updatedDrops = [
+          ...droppedPrices.map((item) =>
+            status === 'accepted' && item.secured ? { ...item, secured: false, declined: true } : item
+          ),
+          newEntry,
+        ];
       }
 
+      // Optimistic local update
+      setDroppedPrices(updatedDrops);
       updateActive({
-        dropPrice: updatedDrops,
-        // Preserve original rollout end price regardless of dropout status
+        dropPrice: updatedDrops.map(dropEntryToPayload),
         price: activeCalc.price,
         isRolloutConfirmed: true,
         inputs: {
           ...activeCalc.inputs,
           paymentPlan: status === 'accepted' ? dropPaymentMethod : activeCalc.inputs.paymentPlan,
         },
-      });
+      }, true);
 
-      await LeadService.updateCalculator(activeCalc._id, payload);
       setShowDropModal(false);
       setDropValue('');
       setSelectedPlan(null);
+
+      const extraPayload: any = {};
+      if (status === 'accepted') {
+        extraPayload.paymentPlan = dropPaymentMethod;
+        extraPayload.paymentMethod = dropPaymentMethod;
+      }
+      await saveDropPriceToServer(updatedDrops, extraPayload);
     } catch (e) {
       console.warn('Failed to add drop', e);
     }
   };
 
-  const handleUnselectDrop = async (index: number) => {
+  // ----------------------------------------------------------------
+  // handleDisplayDropAction — mirrors web's "update existing" branch
+  // Uses index-based targeting (most reliable, same as web).
+  // ----------------------------------------------------------------
+  const handleDisplayDropAction = async (status: 'accepted' | 'declined') => {
+    if (displayDropIndex === -1) return;
+
     try {
-      const updatedDrops = (activeCalc.dropPrice || []).map((drop: any, i: number) => {
-        if (i === index) return { ...drop, status: 'declined' };
-        return drop;
+      const targetId = displayDrop?._id;
+      // Match by _id if available, otherwise fall back to index
+      const targetIdx = droppedPrices.findIndex((item, idx) => {
+        if (targetId && item._id === targetId) return true;
+        if (!targetId && idx === displayDropIndex) return true;
+        return false;
       });
 
-      const payload = {
-        ...activeCalc.inputs,
-        ...activeCalc.extras,
-        title: activeCalc.name,
-        price: activeCalc.price,
-        isRolloutConfirmed: true,
-        dropPrice: updatedDrops,
-      };
+      if (targetIdx === -1) return;
 
-      updateActive({ dropPrice: updatedDrops });
-      await LeadService.updateCalculator(activeCalc._id, payload);
+      const updatedDrops = droppedPrices.map((item, idx) => {
+        if (idx === targetIdx) {
+          return {
+            ...item,
+            secured: status === 'accepted',
+            declined: status !== 'accepted',
+            downPayment: downPayment,
+            balance: (item.price) - downPayment,
+            paymentMethod: selectedPlan || item.paymentMethod,
+            addedPlans,
+          };
+        }
+        // Enforce single-accepted rule
+        if (status === 'accepted' && item.secured) {
+          return { ...item, secured: false, declined: true };
+        }
+        return item;
+      });
+
+      // Optimistic local update
+      setDroppedPrices(updatedDrops);
+      updateActive({
+        dropPrice: updatedDrops.map(dropEntryToPayload),
+        inputs: {
+          ...activeCalc.inputs,
+          paymentPlan:
+            status === 'accepted'
+              ? selectedPlan || droppedPrices[targetIdx]?.paymentMethod
+              : activeCalc.inputs.paymentPlan,
+        },
+      }, true);
+
+      setDisplayDrop(null);
+      setDisplayDropIndex(-1);
+
+      const extraPayload: any = {};
+      if (status === 'accepted') {
+        const method = selectedPlan || droppedPrices[targetIdx]?.paymentMethod;
+        extraPayload.paymentPlan = method;
+        extraPayload.paymentMethod = method;
+      }
+      await saveDropPriceToServer(updatedDrops, extraPayload);
+
+      if (status === 'accepted') {
+        setShowResultModal(true);
+      }
+    } catch (e) {
+      console.warn('Failed to update drop', e);
+    }
+  };
+
+  const handleUnselectDrop = async (index: number) => {
+    try {
+      const updatedDrops = droppedPrices.map((drop, i) =>
+        i === index ? { ...drop, secured: false, declined: true } : drop
+      );
+
+      setDroppedPrices(updatedDrops);
+      updateActive({ dropPrice: updatedDrops.map(dropEntryToPayload) }, true);
+      await saveDropPriceToServer(updatedDrops);
     } catch (e) {
       console.warn('Failed to unselect drop', e);
     }
@@ -165,7 +392,6 @@ export const useCalculatorSummary = (
 
   // Called on every keystroke — only updates local display string, no save
   const handlePriceChange = (val: string) => {
-    // Strip non-numeric characters except decimal point
     const cleaned = val.replace(/[^0-9.]/g, '');
     setPriceText(cleaned);
     if (error) setError(null);
@@ -258,10 +484,7 @@ export const useCalculatorSummary = (
         setCalculators((prev: any) =>
           prev.map((calc: any) => {
             if (calc.price > 0 && !calc.isRolloutConfirmed) {
-              return {
-                ...calc,
-                isRolloutConfirmed: true,
-              };
+              return { ...calc, isRolloutConfirmed: true };
             }
             return calc;
           })
@@ -309,14 +532,23 @@ export const useCalculatorSummary = (
     setCurrentDiscount,
     handleAddDrop,
     handleUnselectDrop,
+    handleDisplayDropAction,
     handlePriceChange,
     handlePriceBlur,
     priceText,
     handleConfirmAll,
     calculateMonthly,
     handleDiscountChange,
+    // Drop display state
     displayDrop,
     setDisplayDrop,
+    displayDropIndex,
+    setDisplayDropIndex,
+    // Local droppedPrices (web-parity)
+    droppedPrices,
+    setDroppedPrices,
+    isSaving,
+    // Down payment
     downPayment,
     setDownPayment,
     showDownPaymentInput,

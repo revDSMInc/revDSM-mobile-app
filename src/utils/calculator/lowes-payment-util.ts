@@ -118,7 +118,7 @@ export function getDropAddPlanCategories(isLowesLead: boolean): PaymentPlanCateg
       },
     ];
   }
-  return getRolloutPaymentCategories(false);
+  return getRolloutPaymentCategories(false).filter(cat => cat.title !== 'Basic Options');
 }
 
 /** Outcome modal down-payment methods (web contract-details basic vs lowesBasic). */

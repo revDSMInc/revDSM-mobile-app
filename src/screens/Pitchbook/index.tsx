@@ -173,15 +173,32 @@ export default function PitchbookScreen() {
   const [pdfPreviewData, setPdfPreviewData] = useState({ url: '', title: '' });
 
   const riskReports = useMemo(() => {
-    const outcome = fullLeadData?.outcome || fullLeadData || lead;
-    const reports = outcome?.generatedReports || lead?.generatedReports || [];
-    return Array.isArray(reports)
-      ? reports.filter((report: any) => {
-        const name = report?.reportName || '';
-        const type = report?.reportType || '';
-        return name.toLowerCase().includes('risk') || type.toLowerCase().includes('risk');
-      })
-      : [];
+    const activeLead = fullLeadData || lead;
+    const reports = [
+      ...(activeLead?.generatedReports || []),
+      ...(activeLead?.outcomeData?.generatedReports || []),
+      ...(activeLead?.leadData?.generatedReports || []),
+      ...(activeLead?.outcome?.generatedReports || []),
+      ...(lead?.generatedReports || []),
+      ...(lead?.outcomeData?.generatedReports || []),
+      ...(lead?.leadData?.generatedReports || []),
+      ...(lead?.outcome?.generatedReports || []),
+    ];
+    
+    const uniqueMap = new Map();
+    reports.forEach((report: any) => {
+      const key = report?._id || report?.reportName || report?.url || report?.filePath;
+      if (key && !uniqueMap.has(key)) {
+        uniqueMap.set(key, report);
+      }
+    });
+    const uniqueReports = Array.from(uniqueMap.values());
+
+    return uniqueReports.filter((report: any) => {
+      const name = report?.reportName || '';
+      const type = report?.reportType || '';
+      return name.toLowerCase().includes('risk') || type.toLowerCase().includes('risk');
+    });
   }, [fullLeadData, lead]);
 
   const handleDownloadReport = async (report: any, index: number, isDownload: boolean = false) => {
@@ -400,7 +417,7 @@ export default function PitchbookScreen() {
 
               {activeToolTab === 'risk' && (
                 <RiskContent
-                  lead={fullLeadData?.outcome || lead}
+                  lead={lead}
                   refetch={refetch}
                   reports={riskReports}
                   onDownload={handleDownloadReport}

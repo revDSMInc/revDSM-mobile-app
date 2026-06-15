@@ -12,6 +12,7 @@ export const SignaturePad = ({
   currentPath,
   clearSig,
   saveSig,
+  onPadLayout,
 }: any) => {
   if (!showSigPad) return null;
   return (
@@ -31,6 +32,7 @@ export const SignaturePad = ({
             style={styles.sigPad}
             {...panResponder.panHandlers}
             onStartShouldSetResponder={() => true}
+            onLayout={onPadLayout}
           >
             <Svg width="100%" height="100%" pointerEvents="none">
               {livePaths.map((p: any, i: number) => (

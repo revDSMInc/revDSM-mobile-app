@@ -94,7 +94,7 @@ export const CustomInput = memo(
 
 const styles = StyleSheet.create({
   container: { marginBottom: 16 },
-  input: { flex: 1, fontSize: 12, paddingLeft: 12 },
+  input: { flex: 1, fontSize: 12, paddingLeft: 12, paddingVertical: 0, textAlignVertical: 'center' },
   iconButton: { width: 44, height: '100%', justifyContent: 'center', alignItems: 'center' },
 });
 

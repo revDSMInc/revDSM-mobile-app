@@ -11,6 +11,7 @@ import {
   Dimensions,
   Modal,
   PermissionsAndroid,
+  FlatList,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 
@@ -29,6 +30,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { format } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashMessage } from '../../config/message';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const { width, height } = Dimensions.get('window');
 
@@ -57,6 +59,8 @@ const getDistanceInMiles = (lat1: number, lon1: number, lat2: number, lon2: numb
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
+
+const EMPTY_LEADS: any[] = [];
 
 const getRegionDeltaForRadiusMiles = (latitude: number, radiusMiles: number) => {
   // latitude: ~69 miles per degree. Use diameter (radius * 2) to fit full range.
@@ -110,6 +114,7 @@ export default function MapDetailScreen() {
     longitude: number;
     latitudeDelta?: number;
     longitudeDelta?: number;
+    _forceTimestamp?: number;
   } | null>(null);
   const [sortOption, setSortOption] = useState<'price_asc' | 'price_desc' | 'date_asc' | 'date_desc'>('date_desc');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
@@ -126,7 +131,7 @@ export default function MapDetailScreen() {
     // Get initial location for API call
     const requestLocation = async () => {
       if (Platform.OS === 'ios') {
-        Geolocation.requestAuthorization('whenInUse');
+        await Geolocation.requestAuthorization('whenInUse');
       } else {
         await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
       }
@@ -135,7 +140,11 @@ export default function MapDetailScreen() {
         (pos) => {
           setUserLocation(pos.coords);
         },
-        (err) => console.log('Location error:', err),
+        (err) => {
+          console.log('Location error:', err);
+          // Fallback to Tampa coords so leads still fetch on failure
+          setUserLocation({ latitude: 27.9506, longitude: -82.4572 });
+        },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
       );
     };
@@ -143,47 +152,50 @@ export default function MapDetailScreen() {
     requestLocation();
   }, []);
 
+  const queryClient = useQueryClient();
+  const latKey = userLocation ? parseFloat(userLocation.latitude.toFixed(2)) : 27.95;
+  const lngKey = userLocation ? parseFloat(userLocation.longitude.toFixed(2)) : -82.46;
+  const radiusVal = filters.radius;
+
+  const { data: queryLeads, isLoading: queryLoading, refetch: refetchQuery } = useQuery({
+    queryKey: ['mapJobs', latKey, lngKey, radiusVal],
+    queryFn: async () => {
+      const payload: any = {};
+      if (radiusVal > 0 && userLocation) {
+        payload.radiusInMiles = radiusVal;
+        payload.latitude = userLocation.latitude;
+        payload.longitude = userLocation.longitude;
+      }
+      console.log('[MapDetail DEBUG] Calling LeadService.findJobs via useQuery with payload:', payload);
+      const res = await LeadService.findJobs(payload);
+      return res.data?.data || [];
+    },
+    enabled: !!userLocation && !!user?._id,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+
+  // Sync queryLeads to leads state
   useEffect(() => {
-    fetchLeads();
-  }, [filters.radius, filters.isFavoriteOnly, userLocation]);
+    const activeLeads = queryLeads || EMPTY_LEADS;
+    setLeads(activeLeads);
+    if (selectedJob?._id) {
+      const updatedJob = activeLeads.find((job: any) => job._id === selectedJob._id);
+      if (updatedJob) {
+        setSelectedJob(updatedJob);
+      }
+    }
+  }, [queryLeads]);
 
-   const fetchLeads = async () => {
-     if (!user?._id) {
-       console.log('[MapDetail DEBUG] fetchLeads aborted because user?._id is falsy:', user?._id);
-       return;
-     }
-     try {
-       setLoading(true);
-       
-       // Default to Tampa coordinates if user is elsewhere (web parity)
-       const payload: any = {
-         radiusInMiles: filters.radius || 50,
-         isFavorite: filters.isFavoriteOnly,
-         latitude: userLocation?.latitude || 27.9506, 
-         longitude: userLocation?.longitude || -82.4572,
-       };
-       
-       console.log('[MapDetail DEBUG] Calling LeadService.findJobs with payload:', payload);
-       const res = await LeadService.findJobs(payload);
-       const data = res.data?.data || [];
-       console.log('[MapDetail DEBUG] LeadService.findJobs response count:', data.length);
-       setLeads(data);
-       
-       // Update selectedJob if it exists in the new data
-       if (selectedJob?._id) {
-         const updatedJob = data.find((job: any) => job._id === selectedJob._id);
-         if (updatedJob) {
-           setSelectedJob(updatedJob);
-         }
-       }
-     } catch (err) {
-       console.error('[MapDetail DEBUG] Fetch Leads Error:', err);
-     } finally {
-       setLoading(false);
-     }
-   };
+  // Maintain loading state compatible with the UI spinner
+  useEffect(() => {
+    setLoading(queryLoading);
+  }, [queryLoading]);
 
-  const filteredLeads = useMemo(() => {
+  const fetchLeads = async () => {
+    refetchQuery();
+  };
+
+  const baseFilteredLeads = useMemo(() => {
     console.log('[MapDetail DEBUG] Recalculating filteredLeads. leads.length:', leads.length, 'myJobsOnly:', filters.myJobsOnly, 'user ID:', user?._id || user?.id);
     let result = [...leads];
     // 1. Filter out specific job number range (Web parity)
@@ -207,9 +219,6 @@ export default function MapDetailScreen() {
         const matchesAddress = item.fullAddress?.toLowerCase().includes(search);
         if (!matchesJob && !matchesAddress) return false;
       }
-
-      // Favorites
-      if (filters.isFavoriteOnly && !(item.isFavorite || item.isFavourite)) return false;
 
       // Referral Filter (match web app logic)
       if (filters.isReferralOnly) {
@@ -263,8 +272,12 @@ export default function MapDetailScreen() {
     });
 
     console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', result.length);
+    return result;
+  }, [leads, filters, user]);
+
+  const filteredLeads = useMemo(() => {
     // Apply Sorting
-    return result.sort((a, b) => {
+    return [...baseFilteredLeads].sort((a, b) => {
       if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
       if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
       
@@ -274,18 +287,18 @@ export default function MapDetailScreen() {
       if (sortOption === 'date_asc') return timeA - timeB;
       return timeB - timeA; // date_desc
     });
-  }, [leads, filters, sortOption, user]);
+  }, [baseFilteredLeads, sortOption]);
 
   // Automatic navigation to searched job or location (Web Parity)
   useEffect(() => {
     if (filters.centerCoords) {
       const radius = filters.radius || 0;
-      if (radius > 0) {
-        const deltas = getRegionDeltaForRadiusMiles(filters.centerCoords.latitude, radius);
-        setCenterCoords({ ...filters.centerCoords, ...deltas });
-      } else {
-        setCenterCoords(filters.centerCoords);
-      }
+      const deltas = radius > 0 ? getRegionDeltaForRadiusMiles(filters.centerCoords.latitude, radius) : {};
+      setCenterCoords({
+        ...filters.centerCoords,
+        ...deltas,
+        _forceTimestamp: Date.now() // force new object reference on every apply
+      });
       setJumpLead(null); // Clear selected lead if we are jumping to a general area
     } else {
       setCenterCoords(null);
@@ -301,7 +314,7 @@ export default function MapDetailScreen() {
         setJumpLead(null);
       }
     }
-  }, [filters.jobNumber, filteredLeads, filters.centerCoords]);
+  }, [filters.jobNumber, filteredLeads, filters]);
 
   useEffect(() => {
     // Distance result feedback for location-based radius searches only.
@@ -415,8 +428,15 @@ export default function MapDetailScreen() {
             </View>
 
 
-            <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
-              {filteredLeads.map((job) => {
+            <FlatList
+              data={filteredLeads}
+              keyExtractor={(job) => job._id}
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={5}
+              removeClippedSubviews={Platform.OS === 'android'}
+              contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
+              renderItem={({ item: job }) => {
                 const dateStr = job.installationDate 
                   ? format(new Date(job.installationDate), 'MM/dd/yyyy')
                   : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
@@ -426,10 +446,11 @@ export default function MapDetailScreen() {
                   (job.address && typeof job.address === 'object' 
                     ? [job.address.houseNumber, job.address.streetName, job.address.city, job.address.state, job.address.zip].filter(Boolean).join(', ')
                     : 'N/A');
+
+                const isOwner = isJobOwner(job, user?._id || user?.id);
                   
                 return (
                   <TouchableOpacity 
-                    key={job._id}
                     onPress={() => {
                       setJumpLead({...job});
                       setIsListView(false);
@@ -461,8 +482,6 @@ export default function MapDetailScreen() {
                             <Icon name="image-multiple-outline" size={22} color="#2EDE56" />
                           </TouchableOpacity>
                         )}
-
-
                       </View>
 
                       {/* Card Body - Grid Layout */}
@@ -488,21 +507,22 @@ export default function MapDetailScreen() {
                       </View>
 
                       {/* Rep Footer */}
-                      <View>
-                        <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rep</Text>
-                        <View className="flex-row items-center">
-                          <Icon name="account-circle-outline" size={18} color="#2EDE56" />
-                          <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
-                            {job.salesRep?.fullName || job.salesRep?.firstName || job.salesRepName || job.salesRep || job.userName || 'Unknown'}
-                          </Text>
-
+                      {isOwner && (
+                        <View>
+                          <Text className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rep</Text>
+                          <View className="flex-row items-center">
+                            <Icon name="account-circle-outline" size={18} color="#2EDE56" />
+                            <Text className="text-[14px] font-bold text-slate-700 dark:text-zinc-300 ml-1">
+                              {job.salesRep?.fullName || job.salesRep?.firstName || job.salesRepName || job.salesRep || job.userName || 'Unknown'}
+                            </Text>
+                          </View>
                         </View>
-                      </View>
+                      )}
                     </View>
                   </TouchableOpacity>
                 );
-              })}
-            </ScrollView>
+              }}
+            />
           </View>
         )}
       </View>
