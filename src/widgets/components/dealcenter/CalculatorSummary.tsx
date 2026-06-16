@@ -296,7 +296,7 @@ export const CalculatorSummary = ({
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      <View className="flex-1 bg-background">
+      <View className={`flex-1 ${isJobBuilderSubmitted ? 'bg-surface' : 'bg-background'}`}>
         {/* Top Header & Tabs */}
         <View className="px-5 pt-4 pb-2 border-b border-border bg-card flex-row items-center">
           <TouchableOpacity
@@ -307,6 +307,7 @@ export const CalculatorSummary = ({
           </TouchableOpacity>
 
           <View
+            pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'}
             className={`flex-1 flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}
           >
             {calculators.length <= 3 ? (
@@ -383,6 +384,7 @@ export const CalculatorSummary = ({
         >
           <View className="px-5 py-6">
             <View
+              pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'}
               className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500' : 'border-border'
                 }`}
             >
@@ -638,7 +640,7 @@ export const CalculatorSummary = ({
             {/* New Result Section - Only show when price is entered and NOT confirmed, OR if locked and dropdown is open */}
             {((endPrice > 0 && !error && !activeCalc.isRolloutConfirmed) ||
               (activeCalc.isRolloutConfirmed && showLockedDetails)) && (
-                <View className="mt-8">
+                <View pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'} className="mt-8">
                   {/* Target Price Card */}
                   <View className="bg-card rounded-3xl border border-border shadow-sm overflow-hidden mb-6">
                     <View className="flex-row">
@@ -891,7 +893,7 @@ export const CalculatorSummary = ({
 
                 {/* Drops List and Input positioned below the main card */}
                 {droppedPrices && droppedPrices.length > 0 && (
-                  <View className="mt-8">
+                  <View pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'} className="mt-8">
                     {droppedPrices.map((drop: any, idx: number) => {
                       const isSecured = drop.secured;
                       return (
@@ -1238,14 +1240,16 @@ export const CalculatorSummary = ({
                 </TouchableOpacity>
               </View>
 
-              <ScrollView className="p-4" showsVerticalScrollIndicator={false}>
+              <ScrollView className="px-4 pt-3 pb-4" showsVerticalScrollIndicator={false}>
                 {getRolloutPaymentCategories(isLowesLead).map((cat) => (
-                  <View key={cat.title} className="mb-4">
-                    <View className={`px-4 py-2 mb-2 rounded-lg ${cat.bg}`}>
-                      <Text className={`text-[10px] font-black tracking-widest ${cat.text}`}>
-                        {cat.title}
-                      </Text>
-                    </View>
+                  <View key={cat.title} className={cat.title ? 'mb-4' : 'mb-2'}>
+                    {!!cat.title && (
+                      <View className={`px-4 py-2 mb-2 rounded-lg ${cat.bg}`}>
+                        <Text className={`text-[10px] font-black tracking-widest ${cat.text}`}>
+                          {cat.title}
+                        </Text>
+                      </View>
+                    )}
                     {cat.plans.map((key) => {
                       const plan = paymentPlans[key];
                       if (!plan) return null;
@@ -1294,7 +1298,7 @@ export const CalculatorSummary = ({
               </ScrollView>
               <TouchableOpacity
                 onPress={() => setShowPaymentPicker(false)}
-                className="mt-5 h-14 bg-slate-900 rounded-2xl items-center justify-center"
+                className="mx-4 mb-4 h-14 bg-slate-900 rounded-2xl items-center justify-center"
               >
                 <Text className="text-white font-black text-sm ">Close</Text>
               </TouchableOpacity>

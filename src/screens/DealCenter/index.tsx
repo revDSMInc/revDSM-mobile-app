@@ -312,7 +312,7 @@ export default function LFCalculator({ route }: any) {
   const handleResetJobBuilder = () => {
     Alert.alert(
       'Reset Job Builder',
-      'This will reset the job builder for this rollout. Are you sure?',
+      'Are you sure you want to reset this lead result? This will clear the current result and allow you to re-enter the lead',
       [
         { text: 'Cancel', style: 'cancel' },
         {

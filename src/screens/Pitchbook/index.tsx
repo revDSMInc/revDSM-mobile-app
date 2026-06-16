@@ -31,8 +31,12 @@ import { ENV } from '../../config/env';
 
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { downloadPdfToDevice } from '../../utils/download-utils';
+import { storage } from '../../utils/storage';
 
 const { width } = Dimensions.get('window');
+
+// Persisted slide position per lead, so the pitchbook resumes where the rep left off.
+const progressKey = (leadId?: string | null) => `pitchbook-progress-${leadId || 'default'}`;
 
 const CATEGORIES = [
   { id: 'leafFilter_story', label: 'LeafFilter Story' },
@@ -51,10 +55,26 @@ export default function PitchbookScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const { lead } = (route.params as any) || {};
+  const leadId = lead?._id || lead?.id || null;
+
+  // Restore the last viewed slide for this lead (if any).
+  const savedProgress = useMemo(() => {
+    try {
+      const raw = storage.getString(progressKey(leadId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.category === 'string' && typeof parsed.slideIndex === 'number') {
+        return parsed as { category: string; slideIndex: number };
+      }
+    } catch (e) {}
+    return null;
+  }, [leadId]);
 
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
-  const [activeCategory, setActiveCategory] = useState('leafFilter_story');
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [activeCategory, setActiveCategory] = useState(
+    savedProgress?.category || 'leafFilter_story'
+  );
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(savedProgress?.slideIndex || 0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState('inspection');
@@ -97,6 +117,16 @@ export default function PitchbookScreen() {
     }
     return count;
   }, [activeCategory, currentSlideIndex]);
+
+  // Persist the current slide position for this lead whenever it changes.
+  useEffect(() => {
+    try {
+      storage.set(
+        progressKey(leadId),
+        JSON.stringify({ category: activeCategory, slideIndex: currentSlideIndex })
+      );
+    } catch (e) {}
+  }, [leadId, activeCategory, currentSlideIndex]);
 
   const fetchSecureImages = async (photos: any[]) => {
     if (!photos?.length) return;

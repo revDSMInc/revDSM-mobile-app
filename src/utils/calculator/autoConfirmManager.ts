@@ -93,12 +93,12 @@ export const autoConfirmManager = {
       if (keys.length === 0) return;
 
       const now = Date.now();
-      const fiveMinutesMs = 5 * 60 * 1000;
+      const tenMinutesMs = 10 * 60 * 1000;
 
       for (const calcId of keys) {
         const item = queue[calcId];
-        if (now - item.timestamp >= fiveMinutesMs) {
-          console.log(`[AutoConfirmManager] 5 minutes elapsed for calculator ${calcId}. Confirming automatically...`);
+        if (now - item.timestamp >= tenMinutesMs) {
+          console.log(`[AutoConfirmManager] 10 minutes elapsed for calculator ${calcId}. Confirming automatically...`);
           
           try {
             const payload: any = {

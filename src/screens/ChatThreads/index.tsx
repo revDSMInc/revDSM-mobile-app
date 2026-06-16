@@ -248,6 +248,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
                   name={mainTab === 'myleads' ? 'chatbubble-ellipses-outline' : 'people-outline'}
                   size={52}
                   color={colors.textSecondary}
+                  style={{ opacity: 0.4 }}
                 />
                 <Text
                   className="mt-4 text-xs text-center"
