@@ -184,7 +184,7 @@ export default function PitchbookScreen() {
       ...(lead?.leadData?.generatedReports || []),
       ...(lead?.outcome?.generatedReports || []),
     ];
-    
+
     const uniqueMap = new Map();
     reports.forEach((report: any) => {
       const key = report?._id || report?.reportName || report?.url || report?.filePath;
@@ -458,7 +458,7 @@ export default function PitchbookScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background">
+    <SafeAreaView className="flex-1 bg-white">
       <Header onNavigate={(r) => navigation.navigate(r as any)} />
 
       {/* Pitch Book Toolbar */}
@@ -540,7 +540,7 @@ export default function PitchbookScreen() {
                     setActiveCategory(cat.id);
                     setCurrentSlideIndex(0);
                   }}
-                  className="mr-5 py-3"
+                  className="mr-5 pt-3 pb-1"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
                     borderBottomColor: colors.primary.main,
@@ -607,7 +607,7 @@ export default function PitchbookScreen() {
         </View>
 
         {/* Navigation & Progress */}
-        <View className="px-5 pt-4 mb-4 bg-background shadow-sm border-t border-border">
+        <View className="px-5 pt-4 mb-4 bg-background border-t border-border">
           <View className="flex-row items-center mb-3">
             <Text className="text-text-secondary text-xs mr-2">
               {currentGlobalPageNumber} of {totalGlobalPages}
@@ -625,13 +625,13 @@ export default function PitchbookScreen() {
               />
             </View>
           </View>
-          <View className="flex-row gap-3">
+          <View className="flex-row gap-4">
             <TouchableOpacity
               onPress={handlePrev}
               disabled={currentGlobalPageNumber === 1}
               className={`flex-1 flex-row gap-1 items-center justify-center py-2 rounded-lg`}
               style={{
-                backgroundColor: currentGlobalPageNumber === 1 ? '#919EABCC' : colors.primary.main,
+                backgroundColor: currentGlobalPageNumber === 1 ? '#637381' : colors.primary.main,
               }}
             >
               <IonIcon name="chevron-back" size={16} color="white" />
@@ -643,7 +643,7 @@ export default function PitchbookScreen() {
               className={`flex-1 flex-row gap-1 items-center justify-center py-2 rounded-lg`}
               style={{
                 backgroundColor:
-                  currentGlobalPageNumber === totalGlobalPages ? '#919EABCC' : colors.primary.main,
+                  currentGlobalPageNumber === totalGlobalPages ? '#637381' : colors.primary.main,
               }}
             >
               <Text className="text-white font-bold text-sm">Next</Text>

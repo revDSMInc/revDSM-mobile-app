@@ -155,10 +155,8 @@ export const ConsentFormModal = ({
     }
 
     try {
-      const signaturePaths = savedPaths.join(' ');
-
       const svgContent = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-        <svg width="500" height="200" viewBox="0 0 500 200" xmlns="http://www.w3.org/2000/svg">
+        <svg width="500" height="260" viewBox="0 0 320 260" xmlns="http://www.w3.org/2000/svg">
           ${savedPaths
             .map(
               (p) =>
@@ -284,11 +282,16 @@ export const ConsentFormModal = ({
             style={{ backgroundColor: colors.primary.main }}
           >
             <Text className="text-white text-sm font-semibold">Customer Consent Form</Text>
-            {submissionType !== 'paper' && (
-              <TouchableOpacity onPress={onPaperFallback} className="bg-white rounded-md px-2 py-0.5">
-                <Text className="text-[#1C252E] text-sm">Paper Fallback</Text>
+            <View className="flex-row items-center gap-3">
+              {submissionType !== 'paper' && (
+                <TouchableOpacity onPress={onPaperFallback} className="bg-white rounded-md px-2 py-0.5">
+                  <Text className="text-[#1C252E] text-sm">Paper Fallback</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={onClose}>
+                <Icon name="close" size={22} color="white" />
               </TouchableOpacity>
-            )}
+            </View>
           </View>
 
           <ScrollView

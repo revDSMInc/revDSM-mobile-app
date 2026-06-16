@@ -106,6 +106,11 @@ export const TagPhotoModal = ({
   const [showFullScreenPreview, setShowFullScreenPreview] = useState(false);
   const [customCameraVisible, setCustomCameraVisible] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [localVisible, setLocalVisible] = useState(visible);
+
+  useEffect(() => {
+    setLocalVisible(visible);
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -758,8 +763,36 @@ export const TagPhotoModal = ({
     }
   };
 
+  if (!localVisible) {
+    return null;
+  }
+
+  if (isContinuousCamera && !taggingAsset && !movingImage) {
+    return (
+      <Modal visible={localVisible} animationType="none" transparent={false}>
+        <View style={{ flex: 1, backgroundColor: '#0D1F1A', justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#72BD00" />
+          <CustomCameraModal
+            visible={customCameraVisible}
+            onClose={() => {
+              setLocalVisible(false);
+              setCustomCameraVisible(false);
+              if (isContinuousCamera) {
+                onClose();
+              }
+            }}
+            onCapture={(asset) => {
+              setCustomCameraVisible(false);
+              setTaggingAsset(asset);
+            }}
+          />
+        </View>
+      </Modal>
+    );
+  }
+
   return (
-    <Modal visible={visible} animationType="none" transparent={false}>
+    <Modal visible={localVisible} animationType="none" transparent={false}>
       {isProcessing && (
         <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13, 31, 26, 0.85)', zIndex: 99999, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#72BD00" />
@@ -777,6 +810,7 @@ export const TagPhotoModal = ({
           <View className="flex-row items-center justify-between px-4 pt-4 pb-4 border-b border-white/10 bg-[#0D1F1A]">
             <TouchableOpacity
               onPress={() => {
+                setLocalVisible(false);
                 onClose();
                 setTaggingAsset(null);
                 setMovingImage(null);

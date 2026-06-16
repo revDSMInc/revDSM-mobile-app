@@ -6,9 +6,11 @@ import {
   PanResponder,
   Animated,
   StyleSheet,
-  LayoutAnimation,
+  ScrollView,
+  Dimensions,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
 
 interface HorizontalDraggableTabsProps {
   calculators: any[];
@@ -17,6 +19,8 @@ interface HorizontalDraggableTabsProps {
   onReorder: (newOrder: any[], newActiveIdx: number) => void;
   setMenuVisible: (idx: number) => void;
   onDragStateChange?: (isDragging: boolean) => void;
+  tabsScrollViewRef?: React.RefObject<ScrollView | null>;
+  scrollXRef?: React.MutableRefObject<number>;
 }
 
 export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = ({
@@ -26,10 +30,10 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   onReorder,
   setMenuVisible,
   onDragStateChange,
+  tabsScrollViewRef,
+  scrollXRef,
 }) => {
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
-  // We keep a temporary drop-animating state to run the smooth slide animation after release
-  const [dropAnimatingIdx, setDropAnimatingIdx] = useState<number | null>(null);
 
   const panX = useRef(new Animated.Value(0)).current;
   const panY = useRef(new Animated.Value(0)).current;
@@ -48,34 +52,109 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   // Active calculator tracking
   const activeCalcId = calculators[activeIdx]?._id;
 
+  const longPressTimer = useRef<any>(null);
+  const isDraggingActiveRef = useRef<boolean>(false);
+  const autoScrollTimer = useRef<any>(null);
+  const initialScrollX = useRef<number>(0);
+
+  const startAutoScroll = (speed: number) => {
+    if (autoScrollTimer.current) {
+      if (autoScrollTimer.current.speed === speed) return;
+      clearInterval(autoScrollTimer.current.timer);
+    }
+
+    const timer = setInterval(() => {
+      if (tabsScrollViewRef?.current && scrollXRef) {
+        const nextX = Math.max(0, scrollXRef.current + speed);
+        scrollXRef.current = nextX;
+        tabsScrollViewRef.current.scrollTo({ x: nextX, animated: false });
+      }
+    }, 16);
+
+    autoScrollTimer.current = { timer, speed };
+  };
+
+  const stopAutoScroll = () => {
+    if (autoScrollTimer.current) {
+      clearInterval(autoScrollTimer.current.timer);
+      autoScrollTimer.current = null;
+    }
+  };
+
+  const hasPanResponderCapturedRef = useRef<boolean>(false);
+
   const getTabPanResponder = (index: number) => {
     return PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10;
+      onMoveShouldSetPanResponder: () => {
+        return isDraggingActiveRef.current;
+      },
+      onMoveShouldSetPanResponderCapture: () => {
+        return isDraggingActiveRef.current;
       },
       onPanResponderGrant: () => {
-        setDraggingIdx(index);
-        setDropAnimatingIdx(null);
-        onDragStateChange?.(true);
+        hasPanResponderCapturedRef.current = true;
       },
       onPanResponderMove: (_, gestureState) => {
+        if (!isDraggingActiveRef.current) {
+          return;
+        }
+
         panX.setValue(gestureState.dx);
         panY.setValue(gestureState.dy);
 
+        // Auto-scroll logic near horizontal edges
+        const screenWidth = Dimensions.get('window').width;
+        const leftThreshold = 60;
+        const rightThreshold = screenWidth - 100;
+
+        if (gestureState.moveX < leftThreshold) {
+          startAutoScroll(-8);
+        } else if (gestureState.moveX > rightThreshold) {
+          startAutoScroll(8);
+        } else {
+          stopAutoScroll();
+        }
+
         const draggedLayout = layouts.current[index];
         if (draggedLayout) {
-          const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx;
+          const scrollDelta = scrollXRef ? (scrollXRef.current - initialScrollX.current) : 0;
+          const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx + scrollDelta;
 
+          // Find closest target index
+          let targetIdx = index;
+          let minDistance = Infinity;
+          for (let i = 0; i < calculators.length; i++) {
+            const layout = layouts.current[i];
+            if (layout) {
+              const layoutCenterX = layout.x + layout.width / 2;
+              const dist = Math.abs(currentCenterX - layoutCenterX);
+              if (dist < minDistance) {
+                minDistance = dist;
+                targetIdx = i;
+              }
+            }
+          }
+
+          // Shifting tabs:
           for (let i = 0; i < calculators.length; i++) {
             if (i === index) continue;
             const layout = layouts.current[i];
             if (layout) {
-              const layoutCenterX = layout.x + layout.width / 2;
-              if (i < index && currentCenterX < layoutCenterX) {
-                shiftAnims.current[i].setValue(draggedLayout.width + 8);
-              } else if (i > index && currentCenterX > layoutCenterX) {
-                shiftAnims.current[i].setValue(-(draggedLayout.width + 8));
+              if (index < targetIdx) {
+                // Dragging right
+                if (i > index && i <= targetIdx) {
+                  shiftAnims.current[i].setValue(-(draggedLayout.width + 8));
+                } else {
+                  shiftAnims.current[i].setValue(0);
+                }
+              } else if (index > targetIdx) {
+                // Dragging left
+                if (i >= targetIdx && i < index) {
+                  shiftAnims.current[i].setValue(draggedLayout.width + 8);
+                } else {
+                  shiftAnims.current[i].setValue(0);
+                }
               } else {
                 shiftAnims.current[i].setValue(0);
               }
@@ -83,22 +162,32 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           }
         }
       },
+      onPanResponderTerminationRequest: () => !isDraggingActiveRef.current,
       onPanResponderRelease: (_, gestureState) => {
+        if (longPressTimer.current) {
+          clearTimeout(longPressTimer.current);
+          longPressTimer.current = null;
+        }
+
+        tabsScrollViewRef?.current?.setNativeProps({ scrollEnabled: true });
+
+        isDraggingActiveRef.current = false;
+        stopAutoScroll();
         const draggedLayout = layouts.current[index];
         let targetIdx = index;
 
         if (draggedLayout) {
-          const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx;
+          const scrollDelta = scrollXRef ? (scrollXRef.current - initialScrollX.current) : 0;
+          const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx + scrollDelta;
           
+          let minDistance = Infinity;
           for (let i = 0; i < calculators.length; i++) {
-            if (i === index) continue;
             const layout = layouts.current[i];
             if (layout) {
               const layoutCenterX = layout.x + layout.width / 2;
-              if (i < index && currentCenterX < layoutCenterX) {
-                targetIdx = i;
-                break;
-              } else if (i > index && currentCenterX > layoutCenterX) {
+              const dist = Math.abs(currentCenterX - layoutCenterX);
+              if (dist < minDistance) {
+                minDistance = dist;
                 targetIdx = i;
               }
             }
@@ -113,10 +202,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           const activeCalc = calculators[activeIdx];
           const newActiveIdx = updated.indexOf(activeCalc);
 
-          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-          
           setDraggingIdx(null);
-          setDropAnimatingIdx(null);
           onDragStateChange?.(false);
           panX.setValue(0);
           panY.setValue(0);
@@ -124,29 +210,36 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           
           onReorder(updated, newActiveIdx >= 0 ? newActiveIdx : 0);
         } else {
-          setDraggingIdx(null);
-          setDropAnimatingIdx(null);
-          onDragStateChange?.(false);
           Animated.parallel([
             Animated.spring(panX, { toValue: 0, useNativeDriver: true, tension: 110, friction: 12 }),
             Animated.spring(panY, { toValue: 0, useNativeDriver: true, tension: 110, friction: 12 }),
             ...shiftAnims.current.map(anim =>
               Animated.spring(anim, { toValue: 0, useNativeDriver: true, tension: 110, friction: 12 })
             ),
-          ]).start();
+          ]).start(() => {
+            setDraggingIdx(null);
+            onDragStateChange?.(false);
+          });
         }
       },
       onPanResponderTerminate: () => {
-        setDraggingIdx(null);
-        setDropAnimatingIdx(null);
-        onDragStateChange?.(false);
+        if (longPressTimer.current) {
+          clearTimeout(longPressTimer.current);
+          longPressTimer.current = null;
+        }
+        tabsScrollViewRef?.current?.setNativeProps({ scrollEnabled: true });
+        isDraggingActiveRef.current = false;
+        stopAutoScroll();
         Animated.parallel([
           Animated.spring(panX, { toValue: 0, useNativeDriver: true }),
           Animated.spring(panY, { toValue: 0, useNativeDriver: true }),
           ...shiftAnims.current.map(anim =>
             Animated.spring(anim, { toValue: 0, useNativeDriver: true })
           ),
-        ]).start();
+        ]).start(() => {
+          setDraggingIdx(null);
+          onDragStateChange?.(false);
+        });
       },
     });
   };
@@ -157,7 +250,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
         const isWarning = calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️');
         const isActive = idx === activeIdx;
         const isCurrentlyDragging = idx === draggingIdx;
-        const isDropAnimating = idx === dropAnimatingIdx;
 
         let animatedStyle = {};
 
@@ -172,11 +264,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
             shadowRadius: 8,
             elevation: 12,
           };
-        } else if (isDropAnimating) {
-          animatedStyle = {
-            transform: [{ translateX: panX }, { translateY: panY }],
-            zIndex: 999,
-          };
         } else {
           animatedStyle = {
             transform: [{ translateX: shiftAnims.current[idx] || 0 }],
@@ -184,11 +271,9 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           };
         }
 
-        const dragHandleColor = isActive ? '#FFFFFF' : '#637381';
-
         return (
           <Animated.View
-            key={calc._id || calc.name || `tab-key-${idx}`}
+            key={`${calc._id || calc.name || `tab-key-${idx}`}-${draggingIdx !== null ? 'dragging' : 'idle'}`}
             onLayout={(event) => {
               layouts.current[idx] = event.nativeEvent.layout;
             }}
@@ -200,7 +285,28 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           >
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() => setActiveIdx(idx)}
+              onPressIn={() => {
+                hasPanResponderCapturedRef.current = false;
+              }}
+              onLongPress={() => {
+                isDraggingActiveRef.current = true;
+                initialScrollX.current = scrollXRef ? scrollXRef.current : 0;
+                setDraggingIdx(idx);
+                onDragStateChange?.(true);
+              }}
+              delayLongPress={500}
+              onPressOut={() => {
+                if (!hasPanResponderCapturedRef.current && isDraggingActiveRef.current) {
+                  isDraggingActiveRef.current = false;
+                  setDraggingIdx(null);
+                  onDragStateChange?.(false);
+                }
+              }}
+              onPress={() => {
+                if (!isDraggingActiveRef.current) {
+                  setActiveIdx(idx);
+                }
+              }}
               style={[
                 styles.tab,
                 isActive
@@ -211,29 +317,13 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                 isCurrentlyDragging && styles.draggingTab,
               ]}
             >
-              {/* Drag Handle Grid */}
-              <View style={styles.dragHandle}>
-                <View style={styles.dragHandleCol}>
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                </View>
-                <View style={styles.dragHandleCol}>
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                  <View style={[styles.dragHandleDot, { backgroundColor: dragHandleColor }]} />
-                </View>
-              </View>
-
               <Text
                 style={[
                   styles.tabText,
                   isActive ? styles.activeTabText : styles.inactiveTabText,
                 ]}
               >
-                {calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
+                {!getCalculatorBaseName(calc) ? '' : calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
               </Text>
               <TouchableOpacity
                 onPress={() => setMenuVisible(idx)}

@@ -7,15 +7,16 @@ import {
   TextInput,
   Modal,
   Pressable,
-  KeyboardAvoidingView,
   Platform,
   StyleSheet,
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { useAnimatedStyle, SharedValue, LinearTransition, SlideOutLeft, FadeOut } from 'react-native-reanimated';
+import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import {
   validatePriceForPaymentMethod,
@@ -332,7 +333,7 @@ export const CalculatorSummary = ({
                         className={`font-black  ${calculators.length > 1 ? 'text-[10px]' : 'text-sm'
                           } ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'}`}
                       >
-                        {calc.name || `R${idx + 1}`}
+                        {!getCalculatorBaseName(calc) ? '' : calc.name || `R${idx + 1}`}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -362,7 +363,7 @@ export const CalculatorSummary = ({
                           className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
                             }`}
                         >
-                          {calc.name || `Rollout ${idx + 1}`}
+                          {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -378,6 +379,7 @@ export const CalculatorSummary = ({
           className="flex-1"
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 60 }}
         >
           <View className="px-5 py-6">
             <View
@@ -405,9 +407,18 @@ export const CalculatorSummary = ({
                   <Text className="text-sm font-medium text-text-primary">Payment Method</Text>
                   <View className="flex-row items-center gap-2">
                     <Text className="text-xs text-text-secondary">Set as Default</Text>
-                    <View className="w-8 h-5 bg-green-500 rounded-full items-end justify-center px-1">
+                    <TouchableOpacity
+                      onPress={() => {
+                        const nextVal = !activeCalc.isDefaultPayment;
+                        updateActive({ isDefaultPayment: nextVal });
+                        handleSave();
+                      }}
+                      className={`w-8 h-5 rounded-full justify-center px-1 ${
+                        activeCalc.isDefaultPayment ? 'bg-green-500 items-end' : 'bg-slate-300 items-start'
+                      }`}
+                    >
                       <View className="w-3 h-3 bg-white rounded-full" />
-                    </View>
+                    </TouchableOpacity>
                   </View>
                 </View>
                 <TouchableOpacity
@@ -583,13 +594,13 @@ export const CalculatorSummary = ({
                       }`}
                   >
                     <Text
-                      className={`text-xl font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
+                      className={`text-base font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
                         }`}
                     >
                       $
                     </Text>
                     <TextInput
-                      className={`flex-1 font-black text-lg ${activeDrop || activeCalc.isRolloutConfirmed
+                      className={`flex-1 font-black text-base ${activeDrop || activeCalc.isRolloutConfirmed
                         ? 'text-green-600'
                         : 'text-text-primary'
                         }`}
@@ -600,6 +611,11 @@ export const CalculatorSummary = ({
                       editable={!activeCalc.isRolloutConfirmed && !activeDrop && !isJobBuilderSubmitted}
                       onChangeText={handlePriceChange}
                       onEndEditing={handlePriceBlur}
+                      onFocus={() => {
+                        setTimeout(() => {
+                          scrollViewRef.current?.scrollToEnd({ animated: true });
+                        }, 100);
+                      }}
                     />
                     {activeDrop ? (
                       <View className="flex-row items-center bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
@@ -795,6 +811,14 @@ export const CalculatorSummary = ({
                                 onChangeText={(t) => {
                                   const val = Number(t.replace(/[^0-9]/g, ''));
                                   setPreOrderDownPayment(val);
+                                  setTimeout(() => {
+                                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                                  }, 50);
+                                }}
+                                onFocus={() => {
+                                  setTimeout(() => {
+                                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                                  }, 100);
                                 }}
                                 onBlur={async () => {
                                   updateActive({ downPayment: preOrderDownPayment });

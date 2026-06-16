@@ -73,6 +73,7 @@ export default function LFCalculator({ route }: any) {
   const [currentLead, setCurrentLead] = useState(route.params?.lead);
   const onRefresh = route.params?.onRefresh;
   const onClose = () => navigation.goBack();
+  const isLowesLead = currentLead?.lowesLead === true;
 
   const [currentView, setCurrentView] = useState<
     'form' | 'summary' | 'picker' | 'result' | 'outcome'
@@ -85,6 +86,13 @@ export default function LFCalculator({ route }: any) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [isDraggingTab, setIsDraggingTab] = useState(false);
   const tabsScrollViewRef = useRef<ScrollView>(null);
+  const scrollXRef = useRef(0);
+
+  useEffect(() => {
+    navigation.setOptions({
+      gestureEnabled: false,
+    });
+  }, [navigation]);
 
   const {
     calculators,
@@ -412,6 +420,46 @@ export default function LFCalculator({ route }: any) {
         </View>
       )}
 
+      {/* Unified Fixed Header with Back Button and Title (Only shown in Form View) */}
+      {currentView === 'form' && (
+        <View className="px-5 pt-4 pb-3 flex-row items-center justify-between border-b border-border bg-card">
+          <View className="flex-row items-center">
+            <TouchableOpacity
+              onPress={onClose}
+              className="mr-3 p-1 items-center justify-center w-8 h-8 border border-border rounded-lg"
+            >
+              <Feather
+                name="arrow-left"
+                size={14}
+                color={isDark ? colors.text : colors.textSecondary}
+              />
+            </TouchableOpacity>
+            <View>
+              <Text className="text-lg font-black text-text-primary">
+                {currentLead?.customerDetails?.firstName
+                  ? `${currentLead.customerDetails.firstName} ${currentLead.customerDetails.lastName}`
+                  : currentLead?.title || 'Lead Center'}{' '}
+                <Text className="text-lg font-black text-text-primary">
+                  - {currentLead?.leadTime || ''} Lead
+                </Text>
+              </Text>
+              <View className="flex-row items-center mt-0.5">
+                {isAutoSaving ? (
+                  <View className="flex-row items-center">
+                    <ActivityIndicator size={8} color="#4CBB17" />
+                    <Text className="text-[10px] font-black text-green-600  ml-1">Syncing...</Text>
+                  </View>
+                ) : lastUpdatedAt ? (
+                  <Text className="text-[10px] font-bold text-text-secondary ">
+                    Last updated at {lastUpdatedAt}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
+
       {currentView === 'form' && (
         <>
           <CalculatorForm
@@ -447,6 +495,10 @@ export default function LFCalculator({ route }: any) {
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   scrollEnabled={!isDraggingTab}
+                  onScroll={(e) => {
+                    scrollXRef.current = e.nativeEvent.contentOffset.x;
+                  }}
+                  scrollEventThrottle={16}
                   style={{ overflow: isDraggingTab ? 'visible' : 'hidden' }}
                   contentContainerStyle={{ alignItems: 'center' }}
                 >
@@ -457,6 +509,8 @@ export default function LFCalculator({ route }: any) {
                     onReorder={handleReorderCalculators}
                     setMenuVisible={setMenuVisible}
                     onDragStateChange={setIsDraggingTab}
+                    tabsScrollViewRef={tabsScrollViewRef}
+                    scrollXRef={scrollXRef}
                   />
                 </ScrollView>
               </View>
@@ -787,19 +841,21 @@ export default function LFCalculator({ route }: any) {
                 padding: 8,
               }}
             >
-              <TouchableOpacity
-                onPress={() => {
-                  if (menuVisible !== null) {
-                    handleDuplicateCalculator(menuVisible).then(() => setMenuVisible(null));
-                  }
-                }}
-                className="flex-row items-center p-3 rounded-xl"
-              >
-                <Feather name="copy" size={18} color={isDark ? '#919EAB' : '#637381'} />
-                <Text className="ml-3 text-sm font-semibold" style={{ color: colors.text }}>
-                  Duplicate
-                </Text>
-              </TouchableOpacity>
+              {menuVisible !== null && calculators[menuVisible]?.name !== '.' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    if (menuVisible !== null) {
+                      handleDuplicateCalculator(menuVisible).then(() => setMenuVisible(null));
+                    }
+                  }}
+                  className="flex-row items-center p-3 rounded-xl"
+                >
+                  <Feather name="copy" size={18} color={isDark ? '#919EAB' : '#637381'} />
+                  <Text className="ml-3 text-sm font-semibold" style={{ color: colors.text }}>
+                    Duplicate
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {calculators.length > 1 && (
                 <TouchableOpacity
@@ -838,6 +894,7 @@ export default function LFCalculator({ route }: any) {
           fetchTrackerJobs(); // Refresh the list
         }}
         job={prefilledJob as any}
+        isLowesLead={isLowesLead}
       />
     </ModalContainer>
   );

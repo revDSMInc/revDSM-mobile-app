@@ -147,11 +147,16 @@ export const RoofWaiverModal = ({
         <View style={styles.card}>
           <View style={[styles.header, { backgroundColor: colors.primary.main }]}>
             <Text style={styles.headerTitle}>Roof Waiver Form</Text>
-            <TouchableOpacity onPress={onPaperFallback} style={styles.paperFallbackBtn}>
-              <Text style={styles.paperFallbackText}>
-                {submissionType === 'paper' ? 'Rescan Paper' : 'Paper Fallback'}
-              </Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <TouchableOpacity onPress={onPaperFallback} style={styles.paperFallbackBtn}>
+                <Text style={styles.paperFallbackText}>
+                  {submissionType === 'paper' ? 'Rescan Paper' : 'Paper Fallback'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose}>
+                <Icon name="close" size={22} color="white" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {submissionType === 'paper' && (

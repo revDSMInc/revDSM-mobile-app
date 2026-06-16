@@ -76,31 +76,31 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!validateEmail(email.trim())) {
+    if (!validateEmail(email)) {
       FlashMessage.error('Invalid Email', 'Please enter a valid email address');
       return;
     }
 
     try {
-      const res: any = await loginMutation.mutateAsync({ 
-        email: email.trim(), 
+      const res: any = await loginMutation.mutateAsync({
+        email: email,
         password,
         lat: location?.lat,
         long: location?.long
       });
 
-      
+
       if (res?.twoFactorRequired) {
         if (res.method === 'authenticator') {
-          navigation.navigate('AuthenticatorOTP', { 
-            email: email.trim(), 
+          navigation.navigate('AuthenticatorOTP', {
+            email: email,
             password,
             lat: location?.lat,
             long: location?.long
           });
         } else {
-          navigation.navigate('EmailOTP', { 
-            email: email.trim(), 
+          navigation.navigate('EmailOTP', {
+            email: email,
             password,
             lat: location?.lat,
             long: location?.long
@@ -108,7 +108,14 @@ export default function LoginScreen() {
         }
       }
     } catch (err: any) {
-      FlashMessage.error('Login Failed', err?.message || 'Invalid credentials');
+      const backendMsg = err?.message || err?.response?.data?.message || '';
+      let cleanMsg = 'Invalid email or password';
+      if (backendMsg.toLowerCase().includes('password') || backendMsg.toLowerCase().includes('credential') || backendMsg.toLowerCase().includes('unauthorized') || backendMsg.toLowerCase().includes('not found')) {
+        cleanMsg = 'Incorrect email or password';
+      } else if (backendMsg) {
+        cleanMsg = backendMsg;
+      }
+      FlashMessage.error('Login Failed', cleanMsg);
     }
   };
 
@@ -137,7 +144,7 @@ export default function LoginScreen() {
               </Text>
               <CustomInput
                 label="Email"
-                placeholder="Enter Your Email"
+                placeholder="Enter your email"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"

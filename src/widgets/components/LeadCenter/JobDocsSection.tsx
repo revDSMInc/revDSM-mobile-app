@@ -488,16 +488,16 @@ export const JobDocsSection = ({
     const offset4 = offset3 + obj3.length;
     const offset5 = offset4 + obj4.length;
     const offset6 = offset5 + obj5.length;
-    
+
     const obj6FullLength = obj6Header.length + imgLength + obj6Footer.length;
     const offsetStartXref = offset6 + obj6FullLength;
-    
+
     const padOffset = (offset: number) => String(offset).padStart(10, '0');
-    
+
     const xref = `xref\n0 7\n0000000000 65535 f \n${padOffset(offset1)} 00000 n \n${padOffset(offset2)} 00000 n \n${padOffset(offset3)} 00000 n \n${padOffset(offset4)} 00000 n \n${padOffset(offset5)} 00000 n \n${padOffset(offset6)} 00000 n \n`;
     const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offsetStartXref}\n%%EOF\n`;
-    
-    const pdfBinaryString = 
+
+    const pdfBinaryString =
       pdfHeader +
       obj1 +
       obj2 +
@@ -509,7 +509,7 @@ export const JobDocsSection = ({
       obj6Footer +
       xref +
       trailer;
-      
+
     return base64.encode(pdfBinaryString);
   };
 
@@ -1156,7 +1156,7 @@ export const JobDocsSection = ({
       />
 
       {/* Progress Bar */}
-      <View className="mb-6 px-1">
+      <View className="mb-3 mt-2 px-1">
         <Text className="text-[14px] font-semibold mb-2.5" style={{ color: '#454F5B' }}>
           {totalUploaded}/{displayTotal} slots • {totalPhotosCount} {totalPhotosCount === 1 ? 'photo' : 'photos'}
         </Text>
@@ -1202,12 +1202,29 @@ export const JobDocsSection = ({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setShowDownloadModal(true)}
+          onPress={() => {
+            if (totalUploaded === 0) {
+              Alert.alert('No Photos', 'There are no photos to download.');
+            } else {
+              setShowDownloadModal(true);
+            }
+          }}
           className="w-full py-4 rounded-xl items-center justify-center flex-row border"
-          style={{ borderColor: '#72BD00', backgroundColor: 'transparent' }}
+          style={{
+            borderColor: totalUploaded > 0 ? '#72BD00' : '#919EAB33',
+            backgroundColor: 'transparent'
+          }}
         >
-          <Icon name="download" size={20} color="#72BD00" style={{ marginRight: 8 }} />
-          <Text className="font-bold text-sm text-[#72BD00]">
+          <Icon
+            name="download"
+            size={20}
+            color={totalUploaded > 0 ? '#72BD00' : '#919EAB'}
+            style={{ marginRight: 8 }}
+          />
+          <Text
+            className="font-bold text-sm"
+            style={{ color: totalUploaded > 0 ? '#72BD00' : '#919EAB' }}
+          >
             Download Images ({totalUploaded})
           </Text>
         </TouchableOpacity>

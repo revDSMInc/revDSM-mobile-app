@@ -13,13 +13,14 @@ import {
   Modal,
 } from 'react-native';
 
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout, Polygon } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout, Polygon, Geojson } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Geolocation from 'react-native-geolocation-service';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useLeadsData } from '../../../hooks/useLeadsData';
 import { LeadService } from '../../../services/api/leads';
+import { FlashMessage } from '../../../config/message';
 import { ENV } from '../../../config/env';
 import { MapJobCard } from './MapJobCard';
 import { useAuth } from '../../../hooks/useAuth';
@@ -66,46 +67,35 @@ interface LeadMapProps {
   onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral') => void;
 }
 
-/**
- * Memoized single-lead marker. React.memo with custom comparator means this
- * component NEVER re-renders during map pan/zoom (when only selectedLeadPoint
- * or other parent state changes). Only re-renders when its own props change:
- * marker image source, heatmap visibility, or the stable onPress callback.
- * This eliminates the JS diffing overhead that caused lag with 3,000+ markers.
- */
-const LeadMarkerMemo = React.memo(
-  ({
-    job,
-    markerSource,
-    isHeatMap,
-    onPress,
-  }: {
-    job: any;
-    markerSource: any;
-    isHeatMap: boolean;
-    onPress: (job: any, e: any) => void;
-  }) => {
-    if (!job?.location?.coordinates) return null;
-    const lat = job.location.coordinates[1];
-    const lng = job.location.coordinates[0];
+
+
+interface MemoizedGeojsonOverlayProps {
+  geojson: any;
+  color: string;
+  tracksViewChanges: boolean;
+  onPress: (event: any) => void;
+}
+
+const MemoizedGeojsonOverlay = React.memo(
+  ({ geojson, color, tracksViewChanges, onPress }: MemoizedGeojsonOverlayProps) => {
     return (
-      <Marker
-        coordinate={{ latitude: lat, longitude: lng }}
-        onPress={(e) => onPress(job, e)}
-        image={markerSource}
-        anchor={{ x: 0.5, y: 1 }}
-        zIndex={1}
-        opacity={isHeatMap ? 0 : 1}
-        tracksViewChanges={false}
+      <Geojson
+        geojson={geojson}
+        color={color}
+        tracksViewChanges={tracksViewChanges}
+        onPress={onPress}
       />
     );
   },
-  (prev, next) =>
-    prev.markerSource === next.markerSource &&
-    prev.isHeatMap === next.isHeatMap &&
-    prev.onPress === next.onPress
+  (prev, next) => {
+    return (
+      prev.geojson === next.geojson &&
+      prev.color === next.color &&
+      prev.onPress === next.onPress &&
+      prev.tracksViewChanges === next.tracksViewChanges
+    );
+  }
 );
-
 
 export const LeadMap = ({
   currentLead,
@@ -261,71 +251,65 @@ export const LeadMap = ({
         }
       }
 
+      // 5. Favorite Job Filter
+      if (isFavoriteOnly) {
+        const isFav = item.isFavorite === true || item.isFavourite === true;
+        if (!isFav) return false;
+      }
+
       return true;
     });
 
     return result;
   }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads]);
 
-  // ─── Spatial grid index ───────────────────────────────────────────────────
-  // Divides all leads into 0.1° grid cells (~11km each). Built once per filter
-  // change. Viewport query = look up only intersecting cells → O(1) not O(n).
-  const CELL_SIZE = 0.1;
-  const spatialIndex = useMemo(() => {
-    const grid = new Map<string, any[]>();
+  // ─── Separate favorite and default leads ──────────────────────────────────
+  const { favoriteLeads, defaultLeads } = useMemo(() => {
+    const favorites: any[] = [];
+    const defaults: any[] = [];
     filteredLeads.forEach(job => {
-      if (!job.location?.coordinates) return;
-      const lat = job.location.coordinates[1];
-      const lng = job.location.coordinates[0];
-      const key = `${Math.floor(lat / CELL_SIZE)},${Math.floor(lng / CELL_SIZE)}`;
-      if (!grid.has(key)) grid.set(key, []);
-      grid.get(key)!.push(job);
-    });
-    return grid;
-  }, [filteredLeads]);
-
-  // ─── Viewport region — updated ONLY after pan/zoom ends ──────────────────
-  // Never updates during active gesture so zero JS work while dragging.
-  const [viewportRegion, setViewportRegion] = useState({
-    ...TAMPA_COORDS,
-    latitudeDelta: 0.0922,
-    longitudeDelta: 0.0421,
-  });
-
-  // ─── Visible leads — only markers within 2× the current viewport ─────────
-  // At any zoom level, only ~20-200 markers are ever in view.
-  // MAX_VISIBLE caps render at low zoom (zoomed far out = many cells visible).
-  const MAX_VISIBLE = 400;
-  const visibleLeads = useMemo(() => {
-    const { latitude, longitude, latitudeDelta, longitudeDelta } = viewportRegion;
-    const PAD = 2.0; // prefetch 2× viewport → markers ready before user pans to edge
-    const minLat = latitude - (latitudeDelta * PAD / 2);
-    const maxLat = latitude + (latitudeDelta * PAD / 2);
-    const minLng = longitude - (longitudeDelta * PAD / 2);
-    const maxLng = longitude + (longitudeDelta * PAD / 2);
-
-    const minCLat = Math.floor(minLat / CELL_SIZE);
-    const maxCLat = Math.floor(maxLat / CELL_SIZE);
-    const minCLng = Math.floor(minLng / CELL_SIZE);
-    const maxCLng = Math.floor(maxLng / CELL_SIZE);
-
-    const result: any[] = [];
-    for (let clat = minCLat; clat <= maxCLat; clat++) {
-      for (let clng = minCLng; clng <= maxCLng; clng++) {
-        if (result.length >= MAX_VISIBLE) break;
-        const cell = spatialIndex.get(`${clat},${clng}`);
-        if (cell) result.push(...cell);
+      const isFavJob = job.isFavorite || job.isFavourite;
+      if (isFavJob && isFavoriteOnly) {
+        favorites.push(job);
+      } else {
+        defaults.push(job);
       }
-      if (result.length >= MAX_VISIBLE) break;
-    }
+    });
+    return { favoriteLeads: favorites, defaultLeads: defaults };
+  }, [filteredLeads, isFavoriteOnly]);
 
-    // Always include selected lead even if outside viewport
-    if (selectedLead?._id && !result.some(j => j._id === selectedLead._id)) {
-      result.push(selectedLead);
-    }
+  // ─── Create native GeoJSON objects ─────────────────────────────────────────
+  const favoriteGeoJson = useMemo(() => {
+    return {
+      type: 'FeatureCollection' as const,
+      features: favoriteLeads
+        .filter(job => job.location?.coordinates && job.location.coordinates.length >= 2)
+        .map(job => ({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])]
+          },
+          properties: job
+        }))
+    };
+  }, [favoriteLeads]);
 
-    return result;
-  }, [spatialIndex, viewportRegion, selectedLead?._id]);
+  const defaultGeoJson = useMemo(() => {
+    return {
+      type: 'FeatureCollection' as const,
+      features: defaultLeads
+        .filter(job => job.location?.coordinates && job.location.coordinates.length >= 2)
+        .map(job => ({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])]
+          },
+          properties: job
+        }))
+    };
+  }, [defaultLeads]);
 
   // Sync heatmap state when toggle changes
   useEffect(() => {
@@ -383,10 +367,10 @@ export const LeadMap = ({
     if (focusLead?.location?.coordinates) {
       const coords = focusLead.location.coordinates;
       mapRef.current?.animateToRegion({
-        latitude: coords[1],
+        latitude: coords[1] + 0.003, // shift center north to center card vertically matching marker click
         longitude: coords[0],
-        latitudeDelta: 0.02,
-        longitudeDelta: 0.02,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
       }, 1000);
       setSelectedLead(focusLead);
     }
@@ -424,6 +408,7 @@ export const LeadMap = ({
   };
 
   const [selectedLeadPoint, setSelectedLeadPoint] = useState<{ x: number, y: number } | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [cardHeight, setCardHeight] = useState(380);
 
   const updateSelectedPoint = async () => {
@@ -458,6 +443,12 @@ export const LeadMap = ({
     const nextValue = !(job.isFavourite || job.isFavorite);
     try {
       await LeadService.toggleFavourite(job._id, nextValue);
+
+      if (nextValue) {
+        FlashMessage.success('Job is added to favourite');
+      } else {
+        FlashMessage.info('Job is removed from favourite');
+      }
 
       // Mutate the lead object inside allLeads array in-place so both internal/external lists and clicked markers reference the fresh state!
       const target = allLeads.find((l) => l._id === job._id);
@@ -509,7 +500,7 @@ export const LeadMap = ({
         longitude: coords[0],
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
-      }, 800);
+      }, 300);
     }
   };
 
@@ -589,38 +580,14 @@ export const LeadMap = ({
     }
   }, [currentLead?.latitude, currentLead?.longitude, filteredLeads]);
 
-  // ─── Optimised marker rendering ───────────────────────────────────────────
-  // handleMarkerClickRef: a ref-backed stable callback so stableMarkerPress
-  // never changes identity, preventing LeadMarkerMemo from re-rendering when
-  // selectedLead (captured inside handleMarkerClick) changes.
+
   const handleMarkerClickRef = useRef<(job: any, e?: any) => void>(handleMarkerClick);
   handleMarkerClickRef.current = handleMarkerClick;
-  const stableMarkerPress = useCallback((job: any, e: any) => {
-    handleMarkerClickRef.current(job, e);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — stability guaranteed via ref
 
-  // All lead markers pre-computed. Only recalculates when data/filter changes,
-  // NOT when selectedLeadPoint/selectedLead changes — zero diffing during pan.
-  const markerElements = useMemo(() => {
-    return visibleLeads.map((job) => {
-      if (!job.location?.coordinates) return null;
-      const isFavJob = job.isFavorite || job.isFavourite;
-      const markerSource =
-        isFavJob ? MARKER_IMAGES.favorite : MARKER_IMAGES.default;
-      return (
-        <LeadMarkerMemo
-          key={job._id}
-          job={job}
-          markerSource={markerSource}
-          isHeatMap={isHeatMap}
-          onPress={stableMarkerPress}
-        />
-      );
-    });
-  }, [visibleLeads, isHeatMap, stableMarkerPress, dataVersion]);
-
-
+  const stableMarkerPress = useCallback((event: any) => {
+    const job = event.feature.properties;
+    handleMarkerClickRef.current(job);
+  }, []);
 
   return (
     <View
@@ -662,7 +629,6 @@ export const LeadMap = ({
         onRegionChangeComplete={(r) => {
           currentRegion.current = r;
           setIsMapMoving(false);
-          setViewportRegion(r);
 
           // Snap back and re-enable scrolling after gesture was killed
           if (isOutOfBoundsRef.current) {
@@ -733,9 +699,24 @@ export const LeadMap = ({
              marker effect that occurs when React incrementally adds/removes markers
              during filter transitions. During pan/zoom (filterKey unchanged),
              LeadMarkerMemo's custom comparator skips all 3,000 markers entirely. */}
-        <React.Fragment key={filterKey}>
-          {markerElements}
-        </React.Fragment>
+        {!isHeatMap && defaultLeads.length > 0 && (
+          <MemoizedGeojsonOverlay
+            key={`default-${filterKey}`}
+            geojson={defaultGeoJson}
+            color="#4CBB17"
+            tracksViewChanges={false}
+            onPress={stableMarkerPress}
+          />
+        )}
+        {!isHeatMap && favoriteLeads.length > 0 && (
+          <MemoizedGeojsonOverlay
+            key={`fav-${filterKey}`}
+            geojson={favoriteGeoJson}
+            color="#e1921d"
+            tracksViewChanges={false}
+            onPress={stableMarkerPress}
+          />
+        )}
         {/* User Location Marker */}
         {userLocation && (
           <Marker
@@ -780,13 +761,12 @@ export const LeadMap = ({
       </MapView>
 
 
-      {/* Anchored Interactive Job Card (InfoWindow Style but fully interactive) */}
-      {selectedLead && selectedLeadPoint && !isMapMoving && (
+      {selectedLead && selectedLeadPoint && (
         <View
           style={{
             position: 'absolute',
             left: selectedLeadPoint.x - 140, // Centered horizontally (280 / 2)
-            top: selectedLeadPoint.y - cardHeight - 110, // Sit above the 100px tall marker + 10px triangle
+            top: selectedLeadPoint.y - cardHeight - 58, // Sit above the 40px tall marker + 10px triangle + 8px gap
             zIndex: 1000,
           }}
           pointerEvents="auto"
@@ -796,7 +776,7 @@ export const LeadMap = ({
             style={{
               backgroundColor: isDark ? '#1E1E1E' : 'white',
               borderRadius: 20,
-              padding: 0,
+              padding: loadingDetail ? 20 : 0,
               width: 280,
               shadowColor: '#000',
               shadowOffset: { width: 0, height: 10 },
@@ -805,33 +785,45 @@ export const LeadMap = ({
               elevation: 20,
               borderWidth: 1,
               borderColor: isDark ? '#333' : '#f1f5f9',
+              minHeight: loadingDetail ? 100 : undefined,
+              justifyContent: 'center',
+              alignItems: 'center',
             }}
           >
-            <MapJobCard
-              job={selectedLead}
-              onClose={() => setSelectedLead(null)}
-              isMyJob={isJobOwner(selectedLead, (user as any)?._id || (user as any)?.id)}
-              onReferencePress={() => {
-                if (onReferencePress) {
-                  onReferencePress(selectedLead);
-                } else {
+            {loadingDetail ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <ActivityIndicator size="small" color="#4CBB17" />
+                <Text style={{ color: isDark ? '#ffffff' : '#1C252E', fontSize: 12, fontWeight: '700' }}>
+                  Loading Job details...
+                </Text>
+              </View>
+            ) : (
+              <MapJobCard
+                job={selectedLead}
+                onClose={() => setSelectedLead(null)}
+                isMyJob={isJobOwner(selectedLead, (user as any)?._id || (user as any)?.id)}
+                onReferencePress={() => {
+                  if (onReferencePress) {
+                    onReferencePress(selectedLead);
+                  } else {
+                    setGalleryJob(selectedLead);
+                    setShowReferral(true);
+                  }
+                }}
+                onCameraPress={() => {
                   setGalleryJob(selectedLead);
-                  setShowReferral(true);
-                }
-              }}
-              onCameraPress={() => {
-                setGalleryJob(selectedLead);
-                setShowUpload(true);
-              }}
-              onGalleryPress={() => {
-                if (onGalleryPress) onGalleryPress(selectedLead);
-                else {
-                  setGalleryJob(selectedLead);
-                  setShowGallery(true);
-                }
-              }}
-              onFavoritePress={handleToggleFavorite}
-            />
+                  setShowUpload(true);
+                }}
+                onGalleryPress={() => {
+                  if (onGalleryPress) onGalleryPress(selectedLead);
+                  else {
+                    setGalleryJob(selectedLead);
+                    setShowGallery(true);
+                  }
+                }}
+                onFavoritePress={handleToggleFavorite}
+              />
+            )}
 
             {/* Anchor Triangle */}
             <View
@@ -856,15 +848,17 @@ export const LeadMap = ({
       )}
 
 
-      {/* Right Side Vertical Controls (Back + Toggles) */}
-      <View className="absolute bottom-[120px] right-5 gap-3 items-center" style={{ zIndex: 10 }}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          className="w-12 h-12 rounded-full bg-[#4cbb17] items-center justify-center shadow-xl mb-2"
-        >
-          <Icon name="arrow-left" size={24} color="white" />
-        </TouchableOpacity>
+      {/* Back Button on Top Left Corner */}
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        className="absolute top-5 left-5 w-12 h-12 rounded-full bg-[#4cbb17] items-center justify-center shadow-xl"
+        style={{ zIndex: 20 }}
+      >
+        <Icon name="arrow-left" size={24} color="white" />
+      </TouchableOpacity>
 
+      {/* Right Side Vertical Controls (Toggles) */}
+      <View className="absolute bottom-[120px] right-5 gap-3 items-center" style={{ zIndex: 10 }}>
         <View className="gap-2">
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },

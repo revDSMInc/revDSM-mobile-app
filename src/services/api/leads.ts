@@ -206,6 +206,9 @@ export const LeadService = {
   deleteRevRenderRun: (runId: string, payload?: { reason: string }): Promise<AxiosResponse<any>> =>
     api.delete(`/rev-render/v1/runs/${runId}`, { data: payload }),
 
+  updateCalculatorsSetting: (payload: any): Promise<AxiosResponse<any>> =>
+    api.put('company/user/update-default-lf-calculator-settings', payload),
+
   // Comms (SMS / Email)
   sendSms: (payload: { body: string; to: string; leadId: string }): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.comms.sms, payload),

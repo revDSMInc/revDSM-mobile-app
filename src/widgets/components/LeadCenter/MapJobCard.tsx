@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import IonIcon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { format } from 'date-fns';
 
@@ -68,7 +69,7 @@ export const MapJobCard = ({
   const formattedDate = job.installationDate
     ? format(new Date(job.installationDate), 'MM/dd/yyyy')
     : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
-    : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
+      : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
 
   return (
     <View
@@ -160,7 +161,7 @@ export const MapJobCard = ({
 
         {/* Action Row */}
         <View className="flex-row items-center gap-3">
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => onFavoritePress?.(job)}
             className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
           >
@@ -177,21 +178,21 @@ export const MapJobCard = ({
               onPress={() => onGalleryPress?.(job)}
               className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
             >
-              <Icon name="image-multiple-outline" size={20} color="#10b981" />
+              <IonIcon name="image" size={20} color="#333333" />
             </TouchableOpacity>
           )}
 
           {/* Upload: Only for Owner and if no images yet */}
-          {isMyJob && 
-           !(job.images?.beforeImages?.length > 0) && 
-           !(job.images?.afterImages?.length > 0) && (
-            <TouchableOpacity
-              onPress={() => onCameraPress?.(job)}
-              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-            >
-              <Icon name="cloud-upload-outline" size={20} color="#3b82f6" />
-            </TouchableOpacity>
-          )}
+          {isMyJob &&
+            !(job.images?.beforeImages?.length > 0) &&
+            !(job.images?.afterImages?.length > 0) && (
+              <TouchableOpacity
+                onPress={() => onCameraPress?.(job)}
+                className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+              >
+                <Icon name="camera" size={20} color="#000000ff" />
+              </TouchableOpacity>
+            )}
 
 
           {/* Reference: Always for Owner, Only if exists for others */}

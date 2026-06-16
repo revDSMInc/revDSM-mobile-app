@@ -312,10 +312,10 @@ export default function LeadCenterPage() {
       const res = await ocrMutation.mutateAsync(fileData);
       const parsedData = parseOcrData(res);
       setPrefilledOcrData(parsedData);
-      
+
       const targetForm = activeFallbackForm;
       setActiveFallbackForm(null);
-      
+
       if (targetForm === 'consent') {
         toggleModal('showConsentModal', true);
       } else if (targetForm === 'roof_waiver') {
@@ -788,7 +788,7 @@ export default function LeadCenterPage() {
         >
           <View className="px-4">
             <View className="flex-row gap-[30%] mb-4">
-              <View className="flex-col gap-3">
+              <View className="flex-col gap-4">
                 <Text className="text-sm" style={{ color: colors.primary.main }}>
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
@@ -876,7 +876,7 @@ export default function LeadCenterPage() {
                 </View>
               </View>
             </View>
-            <TouchableOpacity onPress={() => setShowMapModal(true)} className="flex-row items-center mb-3">
+            <TouchableOpacity onPress={() => setShowMapModal(true)} className="flex-row items-center mb-4">
               <Ionicon
                 name="location-sharp"
                 size={14}
@@ -888,7 +888,7 @@ export default function LeadCenterPage() {
             </TouchableOpacity>
           </View>
           <View
-            className="flex-row px-4"
+            className="flex-row px-4 mb-1"
             style={{ backgroundColor: isDark ? colors.surface : colors.background }}
           >
             <View className="flex-1 flex-row gap-3 rounded-xl">

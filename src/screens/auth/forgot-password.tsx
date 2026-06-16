@@ -48,7 +48,7 @@ export default function ForgotPasswordScreen() {
     try {
       const response = await AuthService.getCompanyNames(email.trim());
       const data = response.data?.data?.data || response.data?.data || [];
-      
+
       if (data.length === 0) {
         FlashMessage.error('Not Found', 'No company associated with this email address');
         setCompanies([]);
@@ -77,8 +77,8 @@ export default function ForgotPasswordScreen() {
     try {
       await AuthService.forgotPassword(email.trim(), selectedCompany.companyId);
       FlashMessage.success('Email Sent', 'Please check your inbox for reset instructions');
-      
-      navigation.navigate('ResetPassword', { 
+
+      navigation.navigate('ResetPassword', {
         email: email.trim(),
         companyId: selectedCompany.companyId,
         companyName: selectedCompany.companyName
@@ -127,7 +127,7 @@ export default function ForgotPasswordScreen() {
               <View className="mb-4">
                 <CustomInput
                   label="Email"
-                  placeholder="Enter Your Email"
+                  placeholder="Enter your email"
                   value={email}
                   onChangeText={(t) => {
                     setEmail(t);
@@ -136,7 +136,7 @@ export default function ForgotPasswordScreen() {
                   }}
                   keyboardType="email-address"
                   autoCapitalize="none"
-                  rightIcon={checkingEmail ? undefined : "search"}
+                  rightIcon={checkingEmail ? undefined : "mail"}
                   onRightIconPress={fetchCompanies}
                   onSubmitEditing={fetchCompanies}
                 />
@@ -184,7 +184,7 @@ export default function ForgotPasswordScreen() {
                   <Icon name="close" size={24} color="#637381" />
                 </TouchableOpacity>
               </View>
-              
+
               <FlatList
                 data={companies}
                 keyExtractor={(item) => item.companyId}
@@ -194,15 +194,13 @@ export default function ForgotPasswordScreen() {
                       setSelectedCompany(item);
                       setShowCompanyModal(false);
                     }}
-                    className={`p-4 rounded-xl mb-3 flex-row items-center justify-between ${
-                      selectedCompany?.companyId === item.companyId 
-                        ? 'bg-[#43A756]10 border border-[#43A756]' 
-                        : 'bg-[#F4F6F8]'
-                    }`}
+                    className={`p-4 rounded-xl mb-3 flex-row items-center justify-between ${selectedCompany?.companyId === item.companyId
+                      ? 'bg-[#43A756]10 border border-[#43A756]'
+                      : 'bg-[#F4F6F8]'
+                      }`}
                   >
-                    <Text className={`font-semibold ${
-                      selectedCompany?.companyId === item.companyId ? 'text-[#43A756]' : 'text-black'
-                    }`}>
+                    <Text className={`font-semibold ${selectedCompany?.companyId === item.companyId ? 'text-[#43A756]' : 'text-black'
+                      }`}>
                       {item.companyName}
                     </Text>
                     {selectedCompany?.companyId === item.companyId && (

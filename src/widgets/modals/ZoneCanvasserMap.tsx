@@ -1,6 +1,7 @@
 import React from 'react';
-import { Modal, View } from 'react-native';
+import { Modal, View, TouchableOpacity, StatusBar } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../common/MainHeader';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
@@ -86,23 +87,26 @@ export default function ZoneCanvasserMap({
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaProvider>
-        <SafeAreaView
+        <View
           className="flex-1"
           style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
         >
-        <Header
-          onFilterPress={() => z.setSearchModalVisible(true)}
-          onNavigate={(route: string) => {
-            if (route === 'Leads') {
-              onClose();
-            } else {
-              onClose();
-              setTimeout(() => {
-                navigation.navigate(route);
-              }, 400);
-            }
-          }}
-        />
+        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+        <SafeAreaView edges={['top']} style={{ backgroundColor: '#ffffff' }}>
+          <Header
+            onFilterPress={() => z.setSearchModalVisible(true)}
+            onNavigate={(route: string) => {
+              if (route === 'Leads') {
+                onClose();
+              } else {
+                onClose();
+                setTimeout(() => {
+                  navigation.navigate(route);
+                }, 400);
+              }
+            }}
+          />
+        </SafeAreaView>
 
         {z.isDrawingMode && <DrawingInfoBanner drawType={z.drawType} />}
 
@@ -115,6 +119,15 @@ export default function ZoneCanvasserMap({
             onLocationSelected={z.navigateToSearchLocation}
             isProcessing={z.isProcessing}
           />
+          {/* Back Button on Top Left Corner of Map */}
+          <TouchableOpacity
+            onPress={onClose}
+            className="absolute top-5 left-5 w-11 h-11 rounded-full bg-[#4CBB17] items-center justify-center shadow-md"
+            style={{ zIndex: 20 }}
+          >
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+
           <MapCanvas
             mapRef={z.mapRef}
             mapType={z.mapType}
@@ -204,7 +217,7 @@ export default function ZoneCanvasserMap({
           onGoBackEdit={z.handleGoBackEdit}
           onStartAppointment={handleStartAppointment}
         />
-        </SafeAreaView>
+        </View>
       </SafeAreaProvider>
     </Modal>
   );

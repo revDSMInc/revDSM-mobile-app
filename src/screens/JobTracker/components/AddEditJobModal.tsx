@@ -24,6 +24,7 @@ interface Props {
   onClose: () => void;
   onSuccess: () => void;
   job?: JobEntry | null;
+  isLowesLead?: boolean;
 }
 
 const basicKeys = ['check', 'mcVisaDscvr', 'amex'];
@@ -52,43 +53,47 @@ const lowesOptions = Object.keys(paymentPlans)
   .filter((k) => k.startsWith('lowes_'))
   .map((k) => ({ label: paymentPlans[k]?.label || k, value: k }));
 
-const PAYMENT_GROUPS = [
-  {
-    title: 'Basic Options',
-    bg: '#F8FAFC',
-    options: basicOptions,
-  },
-  {
-    title: 'GreenSky Plans',
-    bg: '#d9ead3',
-    options: greenskyOptions,
-  },
-  {
-    title: 'Wells Fargo Plans',
-    bg: '#f4cccc',
-    options: wfNormalOptions,
-  },
-  {
-    title: 'Wells Fargo Plans (Jobs over $7,500)',
-    bg: '#f4cccc',
-    options: wfOver7500Options,
-  },
-  {
-    title: 'Concora Credit',
-    bg: '#c9daf8',
-    options: concoraOptions,
-  },
-  {
-    title: "Lowe's Plans",
-    bg: '#e6f7ff',
-    options: lowesOptions,
-  },
-].filter((g) => g.options.length > 0);
-
-const ALL_PAYMENT_METHODS = PAYMENT_GROUPS.flatMap((g) => g.options);
-
-export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => {
+export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead = false }: Props) => {
   const { colors, isDark } = useTheme();
+
+  // Dynamically group payment methods based on isLowesLead, matching rollout summary
+  const PAYMENT_GROUPS = isLowesLead
+    ? [
+        {
+          title: "Lowe's Plans",
+          bg: '#e6f7ff',
+          options: lowesOptions,
+        },
+      ]
+    : [
+        {
+          title: 'Basic Options',
+          bg: '#F8FAFC',
+          options: basicOptions,
+        },
+        {
+          title: 'GreenSky Plans',
+          bg: '#d9ead3',
+          options: greenskyOptions,
+        },
+        {
+          title: 'Wells Fargo Plans',
+          bg: '#f4cccc',
+          options: wfNormalOptions,
+        },
+        {
+          title: 'Wells Fargo Plans (Jobs over $7,500)',
+          bg: '#f4cccc',
+          options: wfOver7500Options,
+        },
+        {
+          title: 'Concora Credit',
+          bg: '#c9daf8',
+          options: concoraOptions,
+        },
+      ].filter((g) => g.options.length > 0);
+
+  const ALL_PAYMENT_METHODS = PAYMENT_GROUPS.flatMap((g) => g.options);
 
   const [formData, setFormData] = useState<Partial<JobEntry>>({
     jobNumber: '',
@@ -172,8 +177,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
         installDate: formData.toBeDetermined
           ? null
           : formData.installDate
-          ? new Date(formData.installDate).toISOString()
-          : null,
+            ? new Date(formData.installDate).toISOString()
+            : null,
         soldDate: formData.soldDate
           ? new Date(formData.soldDate).toISOString()
           : new Date().toISOString(),
@@ -286,60 +291,60 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
               </TouchableOpacity>
 
               {showPicker && (
-                <View
-                  style={[
-                    styles.pickerList,
-                    { backgroundColor: colors.card, borderColor: colors.border },
-                  ]}
-                >
-                  <ScrollView 
-                    style={{ maxHeight: 300 }} 
-                    showsVerticalScrollIndicator={true}
-                    nestedScrollEnabled={true}
-                  >
-                    {PAYMENT_GROUPS.map((group) => (
-                      <View key={group.title}>
-                        <View
-                          style={[
-                            styles.pickerHeader,
-                            { backgroundColor: group.bg },
-                          ]}
-                        >
-                          <Text style={[styles.pickerHeaderText, { color: '#919EAB' }]}>
-                            {group.title}
-                          </Text>
-                        </View>
-                        {group.options.map((method) => (
-                          <TouchableOpacity
-                            key={method.value}
-                            className="py-4 px-4"
-                            style={{
-                              backgroundColor:
-                                formData.paymentMethod === method.value
-                                  ? '#4CBB1710'
-                                  : 'transparent',
-                            }}
-                            onPress={() => {
-                              setFormData({ ...formData, paymentMethod: method.value });
-                              setShowPicker(false);
-                            }}
-                          >
-                            <Text
-                              style={{
-                                color:
-                                  formData.paymentMethod === method.value ? '#4CBB17' : colors.text,
-                                fontWeight: '600',
-                                fontSize: 13,
-                              }}
-                            >
-                              {method.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
+                <Modal visible={showPicker} transparent animationType="fade">
+                  <View style={styles.overlay}>
+                    <View className="bg-white rounded-[32px] overflow-hidden max-h-[80%] shadow-2xl">
+                      <View className="p-6 border-b border-slate-100 flex-row justify-between items-center bg-slate-50">
+                        <Text className="text-lg font-black text-slate-900">Select Payment Method</Text>
+                        <TouchableOpacity onPress={() => setShowPicker(false)} className="p-2">
+                          <Icon name="close" size={24} color="#637381" />
+                        </TouchableOpacity>
                       </View>
-                    ))}
-                  </ScrollView>
-                </View>
+                      <ScrollView className="p-4" showsVerticalScrollIndicator={false}>
+                        {PAYMENT_GROUPS.map((group) => (
+                          <View key={group.title} className="mb-4">
+                            <View className="px-4 py-2 mb-2 rounded-lg" style={{ backgroundColor: group.bg }}>
+                              <Text className="text-[10px] font-black tracking-widest text-slate-900">
+                                {group.title}
+                              </Text>
+                            </View>
+                            {group.options.map((method) => (
+                              <TouchableOpacity
+                                key={method.value}
+                                className="px-4 py-3.5 mb-2 rounded-xl border border-slate-200"
+                                style={{
+                                  backgroundColor:
+                                    formData.paymentMethod === method.value
+                                      ? '#4CBB1710'
+                                      : 'white',
+                                  borderColor:
+                                    formData.paymentMethod === method.value
+                                      ? '#4CBB17'
+                                      : 'rgba(145,158,171,0.24)',
+                                }}
+                                onPress={() => {
+                                  setFormData({ ...formData, paymentMethod: method.value });
+                                  setShowPicker(false);
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color:
+                                      formData.paymentMethod === method.value ? '#4CBB17' : colors.text,
+                                    fontWeight: '600',
+                                    fontSize: 13,
+                                  }}
+                                >
+                                  {method.label}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  </View>
+                </Modal>
               )}
             </View>
 
@@ -379,9 +384,9 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                 }}
                 style={[
                   styles.fieldBox,
-                  { 
-                    borderColor: (!formData.toBeDetermined && !formData.installDate) ? '#EF4444' : colors.border, 
-                    opacity: formData.toBeDetermined ? 0.5 : 1 
+                  {
+                    borderColor: (!formData.toBeDetermined && !formData.installDate) ? '#EF4444' : colors.border,
+                    opacity: formData.toBeDetermined ? 0.5 : 1
                   },
                 ]}
               >
@@ -400,19 +405,20 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
 
             {/* TBD Install Date */}
             <View className="flex-row items-center mb-10 px-1">
-              <Switch
-                value={formData.toBeDetermined}
-                onValueChange={(v) =>
-                  setFormData({
-                    ...formData,
-                    toBeDetermined: v,
-                    installDate: v ? null : formData.installDate,
-                  })
+              <TouchableOpacity
+                onPress={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    toBeDetermined: !prev.toBeDetermined,
+                    installDate: !prev.toBeDetermined ? null : prev.installDate,
+                  }))
                 }
-                trackColor={{ true: '#4CBB17', false: '#F4F6F8' }}
-                thumbColor="#fff"
-                style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
-              />
+                className={`w-7 h-4 rounded-full justify-center px-0.5 ${
+                  formData.toBeDetermined ? 'bg-green-500 items-end' : 'bg-slate-300 items-start'
+                }`}
+              >
+                <View className="w-3 h-3 bg-white rounded-full" />
+              </TouchableOpacity>
               <Text className="text-[14px] font-black ml-3" style={{ color: '#1C252E' }}>
                 TBD Install Date
               </Text>
@@ -449,7 +455,7 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
             )}
 
             {/* Action Buttons */}
-            <View className="flex-row gap-3 mb-10 justify-end items-center">
+            <View className="flex-row gap-3 justify-end items-center">
               <TouchableOpacity
                 onPress={onClose}
                 className="flex-1 h-12 items-center justify-center rounded-xl border-2 border-[#919EAB33]"
@@ -465,8 +471,8 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job }: Props) => 
                   {loading
                     ? '...'
                     : job?.id || job?._id
-                    ? 'Update Job'
-                    : 'Add to Job Tracker'}
+                      ? 'Update Job'
+                      : 'Add to Job Tracker'}
                 </Text>
               </TouchableOpacity>
             </View>

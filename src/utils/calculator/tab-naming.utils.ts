@@ -188,7 +188,10 @@ export const getUpdatedCalculatorTitles = (
     isRolloutConfirmed: calc.isRolloutConfirmed,
     inputs: calc.inputs,
     extras: calc.extras,
+    globalIndex: idx,
   }));
+
+  const emptyCount = processed.filter(item => !item.baseName).length;
 
   const groups: any = {};
   processed.forEach((item) => {
@@ -214,9 +217,13 @@ export const getUpdatedCalculatorTitles = (
     group.forEach((item: any) => {
       const isDuplicatePrice = priceCounts[item.price] > 1;
 
-      // If it's an empty calculator (no items), don't show warning
+      // If it's an empty calculator (no items)
       if (!item.baseName) {
-        finalTitles[item._id] = '';
+        if (emptyCount > 1) {
+          finalTitles[item._id] = `Rollout ${item.globalIndex + 1}`;
+        } else {
+          finalTitles[item._id] = '';
+        }
         return;
       }
 

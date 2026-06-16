@@ -23,13 +23,6 @@ export function MapControlsPanel({
   return (
     <View className="absolute bottom-6 right-4 items-end gap-3">
       <TouchableOpacity
-        onPress={onClose}
-        className="w-11 h-11 rounded-full bg-[#4CBB17] items-center justify-center shadow-md"
-      >
-        <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
-      </TouchableOpacity>
-
-      <TouchableOpacity
         onPress={onLocate}
         className="w-11 h-11 rounded-full bg-[#4CBB17] items-center justify-center shadow-md"
       >

@@ -15,7 +15,7 @@ export const ModalContainer = ({
   const { colors, isDark } = useTheme();
   return (
     <SafeAreaView
-      style={[{ flex: 1, backgroundColor: isDark ? colors.background : '#F4F6F8' }, style]}
+      style={[{ flex: 1, backgroundColor: isDark ? colors.background : '#ffffffff' }, style]}
     >
       {children}
     </SafeAreaView>

@@ -170,7 +170,7 @@ export default function MapDetailScreen() {
       const res = await LeadService.findJobs(payload);
       return res.data?.data || [];
     },
-    enabled: !!userLocation && !!user?._id,
+    enabled: !!user?._id,
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
@@ -239,6 +239,12 @@ export default function MapDetailScreen() {
         const isMine = isJobOwner(item, uid);
         console.log('[MapDetail DEBUG] MyJobsOnly check for job:', item.jobNumber, 'user uid:', uid, 'isMine:', isMine);
         if (!isMine) return false;
+      }
+
+      // Favorite Only
+      if (filters.isFavoriteOnly) {
+        const isFav = item.isFavorite === true || item.isFavourite === true;
+        if (!isFav) return false;
       }
 
       // Price Range
@@ -331,14 +337,17 @@ export default function MapDetailScreen() {
   }, [filters.centerCoords, filters.radius, filteredLeads.length]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
+    <View style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
       
       {/* Global Common Header with Map Tools */}
-      <Header 
-        onNavigate={(r) => navigation.navigate(r)} 
-        onFilterPress={() => setShowFiltersModal(true)}
-        onListPress={() => setIsListView(!isListView)}
-      />
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <SafeAreaView edges={['top']} style={{ backgroundColor: '#ffffff' }}>
+        <Header 
+          onNavigate={(r) => navigation.navigate(r)} 
+          onFilterPress={() => setShowFiltersModal(true)}
+          onListPress={() => setIsListView(!isListView)}
+        />
+      </SafeAreaView>
 
       <View style={{ flex: 1 }}>
         <LeadMap 
@@ -373,7 +382,7 @@ export default function MapDetailScreen() {
         />
 
         {isListView && (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#121212' : '#F4F6F8' ,zIndex:10000}]}>
+          <SafeAreaView edges={['bottom']} style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#121212' : '#F4F6F8' ,zIndex:10000}]}>
             {/* List Toolbar */}
             <View className="px-5 py-4 flex-row items-center justify-between bg-white dark:bg-black/20 border-b border-slate-100 dark:border-zinc-800 z-50">
               <View className="flex-1 mr-4">
@@ -523,7 +532,7 @@ export default function MapDetailScreen() {
                 );
               }}
             />
-          </View>
+          </SafeAreaView>
         )}
       </View>
 
@@ -582,7 +591,7 @@ export default function MapDetailScreen() {
           <ActivityIndicator size="large" color="#4CBB17" />
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

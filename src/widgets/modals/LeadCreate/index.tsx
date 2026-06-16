@@ -19,6 +19,7 @@ import { GlobalKeyboardAvoidingView } from '../../common/keyboard/GlobalKeyboard
 import { CustomInput } from '../../common/CustomInput';
 import { CustomButton } from '../../common/CustomButton';
 import { FlashMessage } from '../../../config/message';
+import { validateName } from '../../../utils/validation';
 import { useCreateLeadMutation } from '../../../hooks/useLeadMutation';
 import Geolocation from 'react-native-geolocation-service';
 import axios from 'axios';
@@ -282,6 +283,16 @@ export default function LeadCreateModal({
       return;
     }
 
+    if (!validateName(form.firstName)) {
+      showError('Invalid First Name', 'First Name must contain only letters, hyphens, or apostrophes (no spaces).');
+      return;
+    }
+
+    if (!validateName(form.lastName)) {
+      showError('Invalid Last Name', 'Last Name must contain only letters, hyphens, or apostrophes (no spaces).');
+      return;
+    }
+
     const rawPhone = (form.phone || '').replace(/\D/g, '');
     if (!fromZone) {
       if (!form.phone || rawPhone.length !== 11) {
@@ -313,71 +324,71 @@ export default function LeadCreateModal({
     try {
       const payload = isLF
         ? {
-            leadType: 'lfLead',
-            lfLeadId: form.lfLeadId,
-            leadCode: form.leadCode,
-            lfLeadDate: (() => {
-              // Parse MM-DD-YYYY
-              const parts = form.lfLeadDate.split('-');
-              if (parts.length !== 3) return new Date().toISOString();
-              const m = parseInt(parts[0]) - 1;
-              const d = parseInt(parts[1]);
-              const y = parseInt(parts[2]);
-              const date = new Date(y, m, d);
-              const now = new Date();
-              date.setHours(
-                now.getHours(),
-                now.getMinutes(),
-                now.getSeconds(),
-                now.getMilliseconds()
-              );
-              return date.toISOString();
-            })(),
-            lfLeadTime: form.lfLeadTime,
-            fullAddress: form.address,
-            location: location
-              ? {
-                  type: 'Point',
-                  coordinates: [location.longitude, location.latitude],
-                }
-              : undefined,
-            customer: {
-              firstName: form.firstName,
-              lastName: form.lastName,
-              phone: form.phone,
-              email: form.email,
-              address: form.address,
-            },
-          }
+          leadType: 'lfLead',
+          lfLeadId: form.lfLeadId,
+          leadCode: form.leadCode,
+          lfLeadDate: (() => {
+            // Parse MM-DD-YYYY
+            const parts = form.lfLeadDate.split('-');
+            if (parts.length !== 3) return new Date().toISOString();
+            const m = parseInt(parts[0]) - 1;
+            const d = parseInt(parts[1]);
+            const y = parseInt(parts[2]);
+            const date = new Date(y, m, d);
+            const now = new Date();
+            date.setHours(
+              now.getHours(),
+              now.getMinutes(),
+              now.getSeconds(),
+              now.getMilliseconds()
+            );
+            return date.toISOString();
+          })(),
+          lfLeadTime: form.lfLeadTime,
+          fullAddress: form.address,
+          location: location
+            ? {
+              type: 'Point',
+              coordinates: [location.longitude, location.latitude],
+            }
+            : undefined,
+          customer: {
+            firstName: form.firstName.trim(),
+            lastName: form.lastName.trim(),
+            phone: form.phone,
+            email: form.email,
+            address: form.address,
+          },
+        }
         : {
-            leadType: 'selfGen',
-            repId: user?._id || user?.id,
-            fullAddress: form.address,
-            lowesLead: form.lowesLead === true,
-            location: location
-              ? {
-                  type: 'Point',
-                  coordinates: [location.longitude, location.latitude],
-                }
-              : undefined,
-            customer: {
-              firstName: form.firstName,
-              lastName: form.lastName,
-              ...(form.phone ? { phone: form.phone } : {}),
-              email: form.email,
-              address: form.address,
-            },
-            ...(fromZone && {
-              zoneId,
-              buildingId,
-              latitude: location?.latitude,
-              longitude: location?.longitude,
-            }),
-          };
+          leadType: 'selfGen',
+          repId: user?._id || user?.id,
+          fullAddress: form.address,
+          lowesLead: form.lowesLead === true,
+          location: location
+            ? {
+              type: 'Point',
+              coordinates: [location.longitude, location.latitude],
+            }
+            : undefined,
+          customer: {
+            firstName: form.firstName.trim(),
+            lastName: form.lastName.trim(),
+            ...(form.phone ? { phone: form.phone } : {}),
+            email: form.email,
+            address: form.address,
+          },
+          ...(fromZone && {
+            zoneId,
+            buildingId,
+            latitude: location?.latitude,
+            longitude: location?.longitude,
+          }),
+        };
       console.log(payload, 'lf lead creation');
       const response = await createLeadMutation.mutateAsync(payload);
       showSuccess('Success', 'Lead created successfully');
-      
+
       const createdLead = fromZone ? {
         ...(response?.data?.lead || response?.data || response),
         ...payload,
@@ -475,11 +486,15 @@ export default function LeadCreateModal({
 
               <View style={{ marginTop: 4 }}>
                 <Text
-                  className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2"
+                  className="text-sm font-semibold mb-2"
+                  style={{ color: colors.text }}
                 >
                   Lowe&apos;s Lead
                 </Text>
-                <View className="flex-row gap-3">
+                <View
+                  className="flex-row gap-3 p-1 rounded-2xl"
+                  style={{ backgroundColor: isDark ? 'rgba(0,0,0,0.1)' : colors.grey[200] }}
+                >
                   {[
                     { label: 'No', value: false },
                     { label: 'Yes', value: true },
@@ -487,7 +502,7 @@ export default function LeadCreateModal({
                     <TouchableOpacity
                       key={opt.label}
                       onPress={() => setForm({ ...form, lowesLead: opt.value })}
-                      className="flex-1 py-3 items-center rounded-xl border"
+                      className="flex-1 py-3 items-center rounded-xl"
                       style={{
                         backgroundColor:
                           form.lowesLead === opt.value
@@ -495,18 +510,25 @@ export default function LeadCreateModal({
                               ? colors.surface
                               : '#fff'
                             : 'transparent',
+                        borderWidth: 1,
                         borderColor:
-                          form.lowesLead === opt.value ? colors.primary.main : colors.border,
+                          form.lowesLead === opt.value ? `${colors.primary.main}25` : 'transparent',
+                        shadowColor: form.lowesLead === opt.value ? '#000' : 'transparent',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: form.lowesLead === opt.value ? 0.08 : 0,
+                        shadowRadius: 2,
+                        elevation: form.lowesLead === opt.value ? 1 : 0,
                       }}
                     >
                       <Text
+                        className="text-[11px] font-black"
                         style={{
-                          fontWeight: '700',
                           color:
                             form.lowesLead === opt.value ? colors.primary.main : colors.textSecondary,
+                          opacity: form.lowesLead === opt.value ? 1 : 0.4,
                         }}
                       >
-                        {opt.label}
+                        {opt.label.toUpperCase()}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -515,7 +537,8 @@ export default function LeadCreateModal({
 
               {/* Address Section */}
               <View onLayout={(e) => setAddressFieldY(e.nativeEvent.layout.y)}>
-                <Text className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">
+                <Text className="text-sm font-semibold mb-2"
+                  style={{ color: colors.text }}>
                   Full Address*
                 </Text>
                 <View style={{ position: 'relative', zIndex: 1000 }}>
@@ -660,8 +683,8 @@ export default function LeadCreateModal({
               {!fromZone && (
                 <View className="mt-4 mb-6">
                   <Text
-                    className="text-[10px] font-black tracking-widest uppercase mb-3"
-                    style={{ color: colors.textSecondary, opacity: 0.6 }}
+                    className="text-sm font-semibold mb-2"
+                    style={{ color: colors.text }}
                   >
                     Lead Classification
                   </Text>
@@ -721,18 +744,6 @@ export default function LeadCreateModal({
                     elevation: 1,
                   }}
                 >
-                  <View className="flex-row items-center mb-4">
-                    <View
-                      className="w-1.5 h-6 rounded-full mr-3"
-                      style={{ backgroundColor: colors.primary.main }}
-                    />
-                    <Text
-                      className="text-[10px] font-black tracking-widest uppercase"
-                      style={{ color: colors.primary.main }}
-                    >
-                      Lead Force Synchronization
-                    </Text>
-                  </View>
 
                   <CustomInput
                     label="Lead ID*"
@@ -754,7 +765,7 @@ export default function LeadCreateModal({
                     }}
                   />
 
-                  <View className="mt-4">
+                  <View className="mt-4 mb-2">
                     <Text
                       className="text-[11px] font-bold mb-3"
                       style={{ color: colors.textSecondary }}
@@ -768,7 +779,7 @@ export default function LeadCreateModal({
                     >
                       {['9am', '11am', '1pm', '3pm', '5pm', '7pm'].map((time) => (
                         <TouchableOpacity
-                           key={time}
+                          key={time}
                           onPress={() => setForm({ ...form, lfLeadTime: time })}
                           className="px-5 py-2.5 rounded-xl mr-3"
                           style={{
@@ -776,8 +787,8 @@ export default function LeadCreateModal({
                               form.lfLeadTime === time
                                 ? `${colors.primary.main}15`
                                 : isDark
-                                ? 'rgba(255,255,255,0.05)'
-                                : colors.grey[200],
+                                  ? 'rgba(255,255,255,0.05)'
+                                  : colors.grey[200],
                             borderWidth: 1,
                             borderColor:
                               form.lfLeadTime === time ? colors.primary.main : 'transparent',
@@ -796,7 +807,7 @@ export default function LeadCreateModal({
                             {(() => {
                               const match = time.match(/^(\d+)(am|pm)$/i);
                               if (match) {
-                                  return `${match[1]}:00 ${match[2].toUpperCase()}`;
+                                return `${match[1]}:00 ${match[2].toUpperCase()}`;
                               }
                               return time.toUpperCase();
                             })()}
@@ -848,7 +859,7 @@ export default function LeadCreateModal({
                 title="Save & Submit Lead"
                 onPress={handleSubmit}
                 loading={createLeadMutation.isPending}
-                style={{ marginTop: 12, marginBottom: 40 }}
+                style={{ marginTop: 12 }}
               />
 
               {/* Spacer for Address Suggestions when Keyboard is open */}

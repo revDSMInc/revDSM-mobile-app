@@ -6,6 +6,7 @@ import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
+import { autoConfirmManager } from '../utils/calculator/autoConfirmManager';
 
 export function useAppInitialization() {
   const dispatch = useDispatch();
@@ -38,6 +39,11 @@ export function useAppInitialization() {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    const cleanup = autoConfirmManager.startAutoConfirmScheduler();
+    return () => cleanup();
+  }, []);
 
   return { initialize };
 }

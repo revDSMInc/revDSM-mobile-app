@@ -94,7 +94,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
         style={{ borderColor: colors.border }}
       >
         <View className="flex-row items-center">
-          <Text className="text-xs font-semibold" style={{ color: colors.text }}>
+          <Text className="text-lg font-black" style={{ color: colors.text }}>
             Recent Leads
           </Text>
         </View>
@@ -246,12 +246,11 @@ export default function ChatThreadsScreen({ navigation }: any) {
               <>
                 <Icon
                   name={mainTab === 'myleads' ? 'chatbubble-ellipses-outline' : 'people-outline'}
-                  size={64}
+                  size={52}
                   color={colors.textSecondary}
-                  style={{ opacity: 0.15 }}
                 />
                 <Text
-                  className="mt-4 font-black text-xs tracking-widest opacity-40 text-center"
+                  className="mt-4 text-xs text-center"
                   style={{ color: colors.textSecondary }}
                 >
                   No {mainTab === 'myleads' ? 'Leads Conversations' : 'Channels'} found

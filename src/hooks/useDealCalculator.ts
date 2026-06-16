@@ -6,7 +6,9 @@ import { pricing, extrasList, extrasList50 } from '../utils/calculator/pricing-d
 import { paymentPlans } from '../utils/calculator/payment-plans';
 import { getDefaultPaymentMethod } from '../utils/calculator/lowes-payment-util';
 import { LeadService } from '../services/api/leads';
-import { Alert } from 'react-native';
+import { Alert, DeviceEventEmitter } from 'react-native';
+import { useAuth } from './useAuth';
+import { autoConfirmManager } from '../utils/calculator/autoConfirmManager';
 
 const INITIAL_INPUTS = {
   gutter5DsE: '',
@@ -40,6 +42,7 @@ const INITIAL_INPUTS = {
 const INITIAL_EXTRAS = extrasList.reduce((acc: any, curr) => ({ ...acc, [curr.id]: '' }), {});
 
 export const useDealCalculator = (lead: any) => {
+  const { user } = useAuth();
   const isLowesLead = lead?.lowesLead === true;
   const [calculators, setCalculators] = useState<any[]>([
     {
@@ -210,11 +213,13 @@ export const useDealCalculator = (lead: any) => {
         const leadName = `${activeLead.customerDetails?.firstName || ''} ${
           activeLead.customerDetails?.lastName || ''
         }`.trim();
+        const defaultPay = user?.defaultPaymentMethod || (isLowesLead ? 'lowes_ach' : 'check');
         const fullPayload = {
           title: leadName || '.',
           position: 1,
           ...INITIAL_INPUTS,
-          paymentMethod: 'check',
+          paymentPlan: defaultPay,
+          paymentMethod: defaultPay,
           pricemarkup: '100',
           ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
           price: 0,
@@ -266,6 +271,7 @@ export const useDealCalculator = (lead: any) => {
             preOrder: c.discounts?.preOrder || false,
           },
           isRolloutConfirmed: !!c.isRolloutConfirmed,
+          isDefaultPayment: !!c.isDefaultPayment,
           price: c.price || 0,
           dropPrice: c.dropPrice || [],
           downPayment: c.downPayment || 0,
@@ -287,8 +293,11 @@ export const useDealCalculator = (lead: any) => {
 
         mappedCalculators.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
         setCalculators(mappedCalculators);
+        return mappedCalculators;
       }
+      return [];
     } catch (e) {
+      return [];
     } finally {
       setLoading(false);
     }
@@ -299,6 +308,19 @@ export const useDealCalculator = (lead: any) => {
       fetchCalculators();
     }
   }, [lead?._id]);
+
+  useEffect(() => {
+    calculators.forEach((calc) => {
+      autoConfirmManager.registerPendingConfirm(calc);
+    });
+  }, [calculators]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('calculatorAutoConfirmed', () => {
+      fetchCalculators();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const activeCalc = calculators[activeIdx];
@@ -340,6 +362,8 @@ export const useDealCalculator = (lead: any) => {
         if (patch.price !== undefined) current.price = patch.price;
         if (patch.isRolloutConfirmed !== undefined)
           current.isRolloutConfirmed = patch.isRolloutConfirmed;
+        if (patch.isDefaultPayment !== undefined)
+          current.isDefaultPayment = patch.isDefaultPayment;
         if (patch.dropPrice) current.dropPrice = patch.dropPrice;
         if (patch.name) current.name = patch.name;
         if (patch.downPayment !== undefined) current.downPayment = patch.downPayment;
@@ -431,6 +455,7 @@ export const useDealCalculator = (lead: any) => {
         price: data.price,
         downPayment: data.downPayment,
         isRolloutConfirmed: data.isRolloutConfirmed,
+        isDefaultPayment: data.isDefaultPayment,
         discounts: data.discounts,
         discountPercentage: Number(data.inputs.discountPercentage || 15),
         isDefaultDiscount: !!data.inputs.isDefaultDiscount,
@@ -501,7 +526,7 @@ export const useDealCalculator = (lead: any) => {
       }`.trim();
       const initialTitle = leadName || `${calculators.length + 1}`;
 
-      const defaultPay = getDefaultPaymentMethod(isLowesLead);
+      const defaultPay = user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead);
       const fullPayload = {
         title: '.',
         position: calculators.length,
@@ -514,11 +539,10 @@ export const useDealCalculator = (lead: any) => {
       };
       await LeadService.createCalculator(apptId, fullPayload);
       
-      await fetchCalculators();
-      setCalculators((prev) => {
-        setActiveIdx(prev.length - 1);
-        return prev;
-      });
+      const newCalcs = await fetchCalculators();
+      if (newCalcs && newCalcs.length > 0) {
+        setActiveIdx(newCalcs.length - 1);
+      }
     } catch (e) {
       console.error('Failed to add calculator', e);
     } finally {
@@ -537,20 +561,33 @@ export const useDealCalculator = (lead: any) => {
       }
       const duplicate = calculators[idx];
 
+      // Only copy the payment plan from the source if isDefaultPayment is toggled as default,
+      // otherwise, default to the user's default payment method or standard default.
+      // We check if the duplicate's paymentPlan matches the defaultPaymentMethod to see if it should copy,
+      // or if there is a default toggle state. Since isDefaultPayment is local to CalculatorSummary,
+      // let's check user?.defaultPaymentMethod or getDefaultPaymentMethod. Or if duplicate.inputs.paymentPlan is used.
+      // Wait, the requirement says: "only if the set as default then add same payment method but the user will itself add the rollout end price himself and then confirm it or the timer will get active".
+      // Let's resolve the payment method to use for duplicate:
+      const defaultPay = user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead);
+      const paymentPlanToUse = duplicate.isDefaultPayment || (duplicate.inputs.paymentPlan === defaultPay)
+        ? duplicate.inputs.paymentPlan
+        : defaultPay;
+
       await LeadService.createCalculator(apptId, {
         title: `${duplicate.name} (Copy)`,
         ...duplicate.inputs,
         ...duplicate.extras,
-        paymentMethod: duplicate.inputs.paymentPlan,
+        paymentPlan: paymentPlanToUse,
+        paymentMethod: paymentPlanToUse,
         pricemarkup: duplicate.inputs.markup,
         price: 0,
+        isRolloutConfirmed: false,
       });
 
-      await fetchCalculators();
-      setCalculators((prev) => {
-        setActiveIdx(prev.length - 1);
-        return prev;
-      });
+      const newCalcs = await fetchCalculators();
+      if (newCalcs && newCalcs.length > 0) {
+        setActiveIdx(newCalcs.length - 1);
+      }
     } catch (e) {
       console.warn('Failed to duplicate', e);
     } finally {
@@ -611,6 +648,7 @@ export const useDealCalculator = (lead: any) => {
             pricemarkup: c.inputs.markup,
             price: c.price,
             isRolloutConfirmed: c.isRolloutConfirmed,
+            isDefaultPayment: c.isDefaultPayment,
             discounts: c.discounts,
             discountPercentage: Number(c.inputs.discountPercentage || 15),
             isDefaultDiscount: !!c.inputs.isDefaultDiscount,

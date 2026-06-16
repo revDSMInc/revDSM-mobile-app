@@ -21,6 +21,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { AuthService } from '../../services/api/auth';
+import { validatePassword } from '../../utils/validation';
 
 export default function ResetPasswordScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -77,7 +78,7 @@ export default function ResetPasswordScreen() {
 
   const handleUpdatePassword = async () => {
     const otpCode = otp.join('');
-    
+
     if (otpCode.length < 6) {
       FlashMessage.error('Invalid Code', 'Please enter the 6-digit code');
       return;
@@ -85,6 +86,27 @@ export default function ResetPasswordScreen() {
 
     if (!password) {
       FlashMessage.error('Missing Info', 'Please enter a new password');
+      return;
+    }
+
+    if (password.length < 8) {
+      FlashMessage.error('Weak Password', 'Password must be at least 8 characters long');
+      return;
+    }
+    if (!/[A-Z]/.test(password)) {
+      FlashMessage.error('Weak Password', 'Password must contain at least 1 uppercase letter');
+      return;
+    }
+    if (!/[a-z]/.test(password)) {
+      FlashMessage.error('Weak Password', 'Password must contain at least 1 lowercase letter');
+      return;
+    }
+    if (!/\d/.test(password)) {
+      FlashMessage.error('Weak Password', 'Password must contain at least 1 number');
+      return;
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
+      FlashMessage.error('Weak Password', 'Password must contain at least 1 special character');
       return;
     }
 
@@ -104,7 +126,14 @@ export default function ResetPasswordScreen() {
       FlashMessage.success('Success', 'Password reset successfully');
       navigation.navigate('Login');
     } catch (err: any) {
-      FlashMessage.error('Reset Failed', err?.response?.data?.message || 'Could not reset password');
+      const serverMsg = err?.message || err?.response?.data?.message || '';
+      let errorMsg = serverMsg || 'Could not reset password';
+
+      if (serverMsg.toLowerCase().includes('expired') || serverMsg.toLowerCase().includes('expire')) {
+        errorMsg = 'The verification code has expired. Please request a new code.';
+      }
+
+      FlashMessage.error('Reset Failed', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -112,7 +141,7 @@ export default function ResetPasswordScreen() {
 
   const handleResend = async () => {
     if (countdown > 0 || resending) return;
-    
+
     setResending(true);
     try {
       await AuthService.forgotPassword(email, companyId);
@@ -236,7 +265,7 @@ export default function ResetPasswordScreen() {
                   Don't have a code?{' '}
                   <Text
                     className="font-bold"
-                    style={{ 
+                    style={{
                       color: (countdown > 0 || resending) ? '#919EAB' : '#00C853',
                       fontWeight: '700'
                     }}
@@ -253,7 +282,7 @@ export default function ResetPasswordScreen() {
               >
                 <Icon name="chevron-back" size={16} color={colors.text} />
                 <Text className="text-sm font-bold ml-1" style={{ color: colors.text }}>
-                  Return to sign in
+                  Return to login
                 </Text>
               </TouchableOpacity>
             </View>

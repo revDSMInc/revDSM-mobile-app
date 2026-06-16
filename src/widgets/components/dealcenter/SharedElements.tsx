@@ -33,7 +33,9 @@ export const PricingInputField = ({
           onChangeText={setLocal}
           onBlur={() => {
             const num = Number(local.replace(/[^0-9.]/g, ''));
-            onSave(num);
+            setTimeout(() => {
+              onSave(num);
+            }, 100);
           }}
         />
         {confirmed && !noLabel && (
@@ -152,8 +154,10 @@ export const InputField = ({
             const normValue = String(value === undefined || value === null ? '' : value).trim();
             const normValClean = normValue === '0' || normValue === '0.00' ? '' : normValue;
             if (normLocal !== normValClean) {
-              if (isExtra) onUpdate({ extras: { [keyName]: localValue } });
-              else onUpdate({ inputs: { [keyName]: localValue } });
+              setTimeout(() => {
+                if (isExtra) onUpdate({ extras: { [keyName]: localValue } });
+                else onUpdate({ inputs: { [keyName]: localValue } });
+              }, 100);
             }
           }}
           keyboardType="numeric"
