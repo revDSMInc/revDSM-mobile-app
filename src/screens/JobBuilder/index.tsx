@@ -132,8 +132,50 @@ export default function JobBuilderScreen() {
 
   const [jobState, setJobState] = useState(initialJobState || {});
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { data: leadData } = useLeadQuery(leadId || '');
+
+  const getJobBuilderHeaderNumber = useCallback(() => {
+    const shortenOfficeName = (name: any) => {
+      if (!name || typeof name !== 'string') return '';
+      const words = name.trim().split(' ');
+      if (words.length === 1) {
+        return name.length <= 3
+          ? name.toUpperCase()
+          : name.slice(0, 3).toUpperCase();
+      }
+      return words
+        .map((w) => w[0])
+        .join('')
+        .toUpperCase();
+    };
+
+    const officeDetails = leadData?.assignedRepDetails?.office?.[0];
+    let officeName =
+      typeof officeDetails === 'string' ? officeDetails : officeDetails?.name;
+
+    if (!officeName && user?.office) {
+      officeName =
+        typeof user.office === 'object'
+          ? user.office.name || user.office.officeName
+          : user.office;
+    }
+
+    const shortName = shortenOfficeName(officeName) || 'N/A';
+
+    let rawId = outcomeForm?.leadId || outcomeForm?.leadID || leadData?.leadId || leadId || 'N/A';
+    let displayId = '';
+
+    if (rawId && typeof rawId === 'string' && rawId.length > 8) {
+      displayId = rawId.slice(-5).toUpperCase();
+    } else {
+      displayId = rawId;
+    }
+
+    return `${shortName}${displayId}`;
+  }, [leadData, user, outcomeForm, leadId]);
+
   const availableStepsInfo = useMemo(() => getAvailableSteps(calculatorData), [calculatorData]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -162,7 +204,6 @@ export default function JobBuilderScreen() {
   const activeStep = availableStepsInfo[currentStepIndex];
 
   // Auto-save logic
-  const { user } = useAuth();
 
   const sentImageIds = useRef(new Set());
   const isExitingRef = useRef(false);
@@ -497,23 +538,6 @@ export default function JobBuilderScreen() {
         }
       });
 
-      // Pre-fetch outcome documents to retrieve existing base64Data
-      let preFetchedAppendedDocs: any[] = [];
-      try {
-        if (leadId) {
-          const response = await LeadService.downloadOutcomeDocuments(leadId);
-          const dataObj = response.data?.data || response.data || {};
-          preFetchedAppendedDocs = [
-            ...(dataObj.agreements || []),
-            ...(dataObj.orderSheets || [])
-          ];
-        }
-      } catch (err) {
-        console.warn('[JobBuilder] Failed to pre-fetch outcome documents', err);
-      }
-
-
-
       // finalJobState does NOT include base64 docs — those go as top-level payload fields
       const finalJobState = {
         ...jobState,
@@ -525,41 +549,24 @@ export default function JobBuilderScreen() {
       };
 
       // ── Build top-level agreements / orderSheets arrays (web app parity) ──
-      // All scanned/local files come from jobState; server-side files come from resolvedDocuments.
+      // All scanned/local files come from jobState.
       // The web app sends docs as top-level payload.agreements / payload.orderSheets.
 
-      // Collect all flat file objects
-      const allLocalAgreementFiles = (jobState.agreements || []).flatMap((doc: any) => doc.files || []);
-      const allLocalOrderSheetFiles = (jobState.orderSheets || []).flatMap((doc: any) => doc.files || []);
+      // Collect all local new file objects (only ones with isNew === true)
+      const allLocalAgreementFiles = (jobState.agreements || [])
+        .flatMap((doc: any) => doc.files || [])
+        .filter((f: any) => f.isNew === true);
+      const allLocalOrderSheetFiles = (jobState.orderSheets || [])
+        .flatMap((doc: any) => doc.files || [])
+        .filter((f: any) => f.isNew === true);
 
-      // Merge with server-resolved docs, deduplicating by serverId or uri
-      const mergedAgreementFiles = [
-        ...(resolvedDocuments.agreements || []),
-        ...allLocalAgreementFiles,
-      ].filter((item, index, self) =>
-        index === self.findIndex((t) =>
-          (t.serverId && t.serverId === item.serverId) || (t.uri && t.uri === item.uri)
-        )
-      );
-
-      const mergedOrderSheetFiles = [
-        ...(resolvedDocuments.orderSheets || []),
-        ...allLocalOrderSheetFiles,
-      ].filter((item, index, self) =>
-        index === self.findIndex((t) =>
-          (t.serverId && t.serverId === item.serverId) || (t.uri && t.uri === item.uri)
-        )
-      );
-
-      // Convert each file to base64 PDF — matches web app's generatePdfFromImages/toBase64
+      // Convert each new file to base64 PDF — matches web app's generatePdfFromImages/toBase64
       // Web app sends name: '' for all docs; the backend assigns the stored filename.
       const convertFilesToPayload = async (files: any[], docType: string) => {
         const results: any[] = [];
         for (let i = 0; i < files.length; i++) {
           const f = files[i];
-
-          const isLocal = f.isNew || (f.uri && !f.serverId);
-          if (isLocal && f.uri) {
+          if (f.uri) {
             try {
               const rawBase64 = await RNFS.readFile(f.uri, 'base64');
               // Convert any image (jpg, jpeg, png, heic) to PDF — only skip conversion for actual PDFs
@@ -574,32 +581,14 @@ export default function JobBuilderScreen() {
             } catch (e) {
               console.warn('[JobBuilder] File read failed:', f.uri, e);
             }
-          } else if (f.serverId || f.id || f._id) {
-            // Server doc — fetch base64 from pre-fetched list
-            const docId = f.serverId || f.id || f._id;
-            const serverDoc = preFetchedAppendedDocs.find(
-              (d: any) => String(d._id) === String(docId)
-            );
-            if (serverDoc?.base64Data) {
-              const cType = serverDoc.fileData?.contentType || 'application/pdf';
-              const base64Prefix = serverDoc.base64Data.startsWith('data:')
-                ? serverDoc.base64Data
-                : `data:${cType};base64,${serverDoc.base64Data}`;
-              results.push({
-                file: base64Prefix,
-                name: '',  // web app sends empty name; backend assigns the filename
-                type: docType,
-              });
-            }
           }
         }
         return results;
       };
 
-
       let [agreementsPayload, orderSheetsPayload] = await Promise.all([
-        convertFilesToPayload(mergedAgreementFiles, 'agreement'),
-        convertFilesToPayload(mergedOrderSheetFiles, 'orderSheet'),
+        convertFilesToPayload(allLocalAgreementFiles, 'agreement'),
+        convertFilesToPayload(allLocalOrderSheetFiles, 'orderSheet'),
       ]);
 
       // Web app parity: for Demo, move agreements → orderSheets if orderSheets is empty
@@ -661,12 +650,11 @@ export default function JobBuilderScreen() {
               leadData?.paymentMethod ||
               '';
 
-            const repDetails = leadData?.assignedRepDetails || {};
-            let leadNum = leadData?.leadId;
+            const jobNumber = getJobBuilderHeaderNumber();
+            let leadNum = outcomeForm?.leadId || outcomeForm?.leadID || leadData?.leadId;
             if (!leadNum || String(leadNum).trim().toUpperCase() === 'N/A' || String(leadNum).trim() === '') {
               leadNum = leadId;
             }
-            const jobNumber = buildJobNumber(repDetails, leadNum);
 
             // Exactly mirrors web app's TabbedCalculator.js jobTrackerPayload
             const jobTrackerPayload = {
@@ -680,6 +668,7 @@ export default function JobBuilderScreen() {
               appointmentId: calculatorData?.appointmentId || leadId || undefined,
               calculatorId: calculatorData?._id || undefined,
               isManual: false,
+              leadId: leadNum,
             };
 
             await JobService.createJob(jobTrackerPayload);
@@ -801,45 +790,7 @@ export default function JobBuilderScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <View>
                 <Text style={{ fontSize: 18, fontWeight: '900', color: colors.text }}>
-                  {(() => {
-                    const shortenOfficeName = (name: any) => {
-                      if (!name || typeof name !== 'string') return '';
-                      const words = name.trim().split(' ');
-                      if (words.length === 1) {
-                        return name.length <= 3
-                          ? name.toUpperCase()
-                          : name.slice(0, 3).toUpperCase();
-                      }
-                      return words
-                        .map((w) => w[0])
-                        .join('')
-                        .toUpperCase();
-                    };
-
-                    const officeDetails = leadData?.assignedRepDetails?.office?.[0];
-                    let officeName =
-                      typeof officeDetails === 'string' ? officeDetails : officeDetails?.name;
-
-                    if (!officeName && user?.office) {
-                      officeName =
-                        typeof user.office === 'object'
-                          ? user.office.name || user.office.officeName
-                          : user.office;
-                    }
-
-                    const shortName = shortenOfficeName(officeName) || 'N/A';
-
-                    let rawId = leadData?.leadId || leadId || 'N/A';
-                    let displayId = '';
-
-                    if (rawId && typeof rawId === 'string' && rawId.length > 8) {
-                      displayId = rawId.slice(-5).toUpperCase();
-                    } else {
-                      displayId = rawId;
-                    }
-
-                    return `${shortName}${displayId}`;
-                  })()}{' '}
+                  {getJobBuilderHeaderNumber()}{' '}
                   {isSaving && '• Saving...'}
                 </Text>
               </View>
@@ -859,7 +810,7 @@ export default function JobBuilderScreen() {
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
           >
             <View style={{ flex: 1, backgroundColor: colors.background }}>
               {renderActiveSection()}

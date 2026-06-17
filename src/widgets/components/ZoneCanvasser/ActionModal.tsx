@@ -6,6 +6,7 @@ import {
   ScrollView,
   TextInput,
   Platform,
+  Modal,
 } from 'react-native';
 import DateTimePicker, {
   type DateTimePickerEvent,
@@ -309,22 +310,30 @@ function FollowUpDateField({
       </TouchableOpacity>
 
       {open && Platform.OS === 'ios' && (
-        <View className="mt-2 border border-slate-200 rounded-lg overflow-hidden bg-white">
-          <DateTimePicker
-            value={value}
-            mode="date"
-            display="inline"
-            minimumDate={minimumDate}
-            themeVariant="light"
-            onChange={onChange}
-          />
+        <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
           <TouchableOpacity
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+            activeOpacity={1}
             onPress={onClose}
-            className="py-3 border-t border-slate-100 items-center bg-slate-50"
           >
-            <Text className="text-slate-800 font-semibold text-sm">Done</Text>
+            <TouchableOpacity activeOpacity={1} className="w-full bg-white rounded-2xl overflow-hidden shadow-2xl p-4">
+              <DateTimePicker
+                value={value}
+                mode="date"
+                display="inline"
+                minimumDate={minimumDate}
+                themeVariant="light"
+                onChange={onChange}
+              />
+              <TouchableOpacity
+                onPress={onClose}
+                className="mt-4 py-3 rounded-xl items-center bg-slate-800"
+              >
+                <Text className="text-white font-semibold text-sm">Done</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
           </TouchableOpacity>
-        </View>
+        </Modal>
       )}
     </View>
   );

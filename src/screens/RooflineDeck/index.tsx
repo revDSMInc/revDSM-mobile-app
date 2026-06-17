@@ -31,14 +31,18 @@ import { useLeadReports } from '../../hooks/useLeadReports';
 import YearDropdown from '../../widgets/components/YearDropdown';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { ENV } from '../../config/env';
+import { storage } from '../../utils/storage';
 
 
 const { width } = Dimensions.get('window');
 
+// Persisted slide position per lead, so the roofline deck resumes where the rep left off.
+const progressKey = (leadId?: string | null) => `rooflinedeck-progress-${leadId || 'default'}`;
+
 const CATEGORIES = [
-  { id: 'problems',      label: 'Problems'      },
-  { id: 'understanding', label: 'Understanding'  },
-  { id: 'solution',      label: 'Solution'       },
+  { id: 'problems', label: 'Problems' },
+  { id: 'understanding', label: 'Understanding' },
+  { id: 'solution', label: 'Solution' },
 ];
 
 export default function RooflineDeckScreen() {
@@ -49,15 +53,41 @@ export default function RooflineDeckScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const { lead } = (route.params as any) || {};
+  const leadId = lead?._id || lead?.id || null;
+
+  // Restore the last viewed slide for this lead (if any).
+  const savedProgress = useMemo(() => {
+    try {
+      const raw = storage.getString(progressKey(leadId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.category === 'string' && typeof parsed.slideIndex === 'number') {
+        return parsed as { category: string; slideIndex: number };
+      }
+    } catch (e) { }
+    return null;
+  }, [leadId]);
 
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
-  const [activeCategory, setActiveCategory] = useState('problems');
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [activeCategory, setActiveCategory] = useState(
+    savedProgress?.category || 'problems'
+  );
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(savedProgress?.slideIndex || 0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
+
+  // Persist the current slide position for this lead whenever it changes.
+  useEffect(() => {
+    try {
+      storage.set(
+        progressKey(leadId),
+        JSON.stringify({ category: activeCategory, slideIndex: currentSlideIndex })
+      );
+    } catch (e) { }
+  }, [leadId, activeCategory, currentSlideIndex]);
   const [secureImages, setSecureImages] = useState<Record<string, any[]>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -185,7 +215,7 @@ export default function RooflineDeckScreen() {
       ...(lead?.leadData?.generatedReports || []),
       ...(lead?.outcome?.generatedReports || []),
     ];
-    
+
     const uniqueMap = new Map();
     reports.forEach((report: any) => {
       const key = report?._id || report?.reportName || report?.url || report?.filePath;
@@ -541,7 +571,7 @@ export default function RooflineDeckScreen() {
                     setActiveCategory(cat.id);
                     setCurrentSlideIndex(0);
                   }}
-                  className="mr-5 py-3"
+                  className="mr-5 pt-3 pb-1"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
                     borderBottomColor: colors.primary.main,
@@ -608,7 +638,7 @@ export default function RooflineDeckScreen() {
         </View>
 
         {/* Navigation & Progress */}
-        <View className="px-5 pt-4 mb-4 bg-background shadow-sm border-t border-border">
+        <View className="px-5 pt-4 mb-4 bg-background border-t border-border">
           <View className="flex-row items-center mb-3">
             <Text className="text-text-secondary text-xs mr-2">
               {currentGlobalPageNumber} of {totalGlobalPages}
@@ -705,11 +735,11 @@ export default function RooflineDeckScreen() {
                 <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
                   {/* Image */}
                   {currentCategoryImages[currentSlideIndex] && (
-                      <Image
-                        source={currentCategoryImages[currentSlideIndex]}
-                        style={{ width: '100%', height: '100%' }}
-                        resizeMode="contain"
-                      />
+                    <Image
+                      source={currentCategoryImages[currentSlideIndex]}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="contain"
+                    />
                   )}
 
                   {/* ── Overlay: page counter top-left ── */}
@@ -1056,11 +1086,11 @@ export default function RooflineDeckScreen() {
                     </Text>
                   </TouchableOpacity>
                 )}
+              </View>
             </View>
-          </View>
-        )}
-        {renderInteractiveTools()}
-      </Modal>
+          )}
+          {renderInteractiveTools()}
+        </Modal>
 
         {!isFullscreen && renderInteractiveTools()}
 

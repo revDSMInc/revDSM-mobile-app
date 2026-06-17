@@ -1,10 +1,26 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { PanResponder, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
-import { FlashMessage } from '../config/message';
-import { launchImageLibrary } from 'react-native-image-picker';
-import { useUploadPaperConsentOCRMutation } from './useLeadMutation';
+import { FlashMessage as GlobalFlashMessage } from '../config/message';
 import { formatUSPhoneNumber } from '../utils/phone-util';
+import { useAuth } from './useAuth';
+import RNFlashMessage from 'react-native-flash-message';
+
+const formatLeadTime = (leadTime: string) => {
+  if (!leadTime || leadTime === 'N/A') return '';
+  const timeStr = leadTime.toLowerCase().trim();
+  const isPM = timeStr.includes('pm');
+  const timeMatch = timeStr.match(/(\d+)/);
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1], 10);
+    if (isPM && hours !== 12) hours += 12;
+    if (!isPM && hours === 12) hours = 0;
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours > 12 ? hours - 12 : hours === 0 ? 12 : hours;
+    return `${displayHours.toString().padStart(2, '0')}:00 ${period}`;
+  }
+  return leadTime;
+};
 
 const normalizeOcrDate = (input: string) => {
   if (!input) return '';
@@ -31,19 +47,124 @@ export const useRoofWaiver = (
   lead: any,
   onSubmit: (data: any) => void,
   onFinalUpload?: (pdfPath: string) => Promise<void>,
-  onSuccess?: () => void,
-  prefilledData?: any
+  onClose?: () => void,
+  prefilledData?: any,
+  flashRef?: React.RefObject<RNFlashMessage | null>
 ) => {
+  const { user } = useAuth();
+
+  const FlashMessage = {
+    success: (title: string, description: string = '') => {
+      if (flashRef?.current) {
+        flashRef.current.showMessage({
+          message: title,
+          description,
+          type: 'success',
+          icon: 'success',
+          duration: 3000,
+          floating: true,
+          style: { zIndex: 9999, elevation: 9999 },
+        });
+      } else {
+        GlobalFlashMessage.success(title, description);
+      }
+    },
+    error: (title: string, description: string = 'Something went wrong') => {
+      if (flashRef?.current) {
+        flashRef.current.showMessage({
+          message: title,
+          description,
+          type: 'danger',
+          icon: 'danger',
+          duration: 4000,
+          floating: true,
+          style: { zIndex: 9999, elevation: 9999 },
+        });
+      } else {
+        GlobalFlashMessage.error(title, description);
+      }
+    },
+    show: (title: string, description: string = '', type: any = 'info') => {
+      if (flashRef?.current) {
+        flashRef.current.showMessage({
+          message: title,
+          description,
+          type,
+          icon: type,
+          duration: 3000,
+          floating: true,
+          style: { zIndex: 9999, elevation: 9999 },
+        });
+      } else {
+        GlobalFlashMessage.show(title, description, type);
+      }
+    },
+  };
+
+  const getInitialRepName = () => {
+    return prefilledData?.repName ?? (user ? `${user.firstName} ${user.lastName}`.trim() : 'Firstrep');
+  };
+
+  const getInitialTime = () => {
+    const rawTime = prefilledData?.time ?? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return rawTime.replace(/\u202f/g, ' ').replace(/\s+/g, ' ');
+  };
+
+  const getInitialDate = () => {
+    if (prefilledData?.date) {
+      const dateStr = prefilledData.date;
+      if (dateStr.includes('-')) {
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+          const [yyyy, mm, dd] = parts;
+          return `${mm}/${dd}/${yyyy}`;
+        }
+      } else if (dateStr.includes('/')) {
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+          const [part1, part2, part3] = parts;
+          if (parseInt(part1, 10) > 12) {
+            // It is DD/MM/YYYY, convert to MM/DD/YYYY
+            return `${part2}/${part1}/${part3}`;
+          } else {
+            // Already MM/DD/YYYY or ambiguous
+            return `${part1}/${part2}/${part3}`;
+          }
+        }
+      }
+      return prefilledData.date;
+    }
+    const targetDate = new Date();
+    const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(targetDate.getDate()).padStart(2, '0');
+    const yyyy = targetDate.getFullYear();
+    return `${mm}/${dd}/${yyyy}`;
+  };
+
+  const getInitialOfficeCode = () => {
+    if (prefilledData?.officeCode) return prefilledData.officeCode;
+    if (!user) return '01';
+    if (user.officeCode) return user.officeCode;
+    if (Array.isArray(user.office) && user.office[0]?.code) return user.office[0].code;
+    if (user.office && typeof user.office === 'object') {
+      if (user.office.code) return user.office.code;
+      if (user.office.officeCode) return user.office.officeCode;
+    }
+    if (Array.isArray(user.office) && user.office[0]?.officeCode) return user.office[0].officeCode;
+    if (user.officeId) return user.officeId;
+    return '01';
+  };
+
   const [formData, setFormData] = useState({
     firstName: prefilledData?.firstName ?? lead?.customerDetails?.firstName ?? '',
     lastName: prefilledData?.lastName ?? lead?.customerDetails?.lastName ?? '',
-    phoneNumber: prefilledData?.phoneNumber ?? lead?.customerDetails?.phone ?? '',
+    phoneNumber: formatUSPhoneNumber(prefilledData?.phoneNumber ?? lead?.customerDetails?.phone ?? ''),
     email: prefilledData?.email ?? lead?.customerDetails?.email ?? '',
     leadId: prefilledData?.leadId ?? lead?.leadId ?? 'N/A',
-    repName: 'Firstrep',
-    officeCode: '01',
-    time: '12:00 AM',
-    date: prefilledData?.date ?? '05/01/2025',
+    repName: getInitialRepName(),
+    officeCode: getInitialOfficeCode(),
+    time: getInitialTime(),
+    date: getInitialDate(),
     address: lead?.fullAddress || '',
     consent: false,
   });
@@ -59,12 +180,32 @@ export const useRoofWaiver = (
   );
 
   useEffect(() => {
+    if (user) {
+      setFormData((prev) => ({
+        ...prev,
+        repName: prefilledData?.repName ?? `${user.firstName} ${user.lastName}`.trim(),
+        officeCode: prefilledData?.officeCode ?? (() => {
+          if (user.officeCode) return user.officeCode;
+          if (Array.isArray(user.office) && user.office[0]?.code) return user.office[0].code;
+          if (user.office && typeof user.office === 'object') {
+            if (user.office.code) return user.office.code;
+            if (user.office.officeCode) return user.office.officeCode;
+          }
+          if (Array.isArray(user.office) && user.office[0]?.officeCode) return user.office[0].officeCode;
+          if (user.officeId) return user.officeId;
+          return '01';
+        })(),
+      }));
+    }
+  }, [user, prefilledData]);
+
+  useEffect(() => {
     if (prefilledData) {
       setFormData((prev) => ({
         ...prev,
         firstName: prefilledData.firstName ?? prev.firstName,
         lastName: prefilledData.lastName ?? prev.lastName,
-        phoneNumber: prefilledData.phoneNumber ?? prev.phoneNumber,
+        phoneNumber: formatUSPhoneNumber(prefilledData.phoneNumber ?? prev.phoneNumber),
         email: prefilledData.email ?? prev.email,
         leadId: prefilledData.leadId ?? prev.leadId,
         date: prefilledData.date ?? prev.date,
@@ -103,6 +244,14 @@ export const useRoofWaiver = (
   );
 
   const handleFinalSubmit = async () => {
+    if (!formData.firstName || !formData.firstName.trim()) {
+      FlashMessage.error('Validation Error', 'First name is required.');
+      return;
+    }
+    if (!formData.phoneNumber || !formData.phoneNumber.replace(/\D/g, '')) {
+      FlashMessage.error('Validation Error', 'Phone number is required.');
+      return;
+    }
     if (!formData.email || !formData.email.includes('@')) {
       FlashMessage.error('Validation Error', 'A valid email address is required.');
       return;
@@ -127,27 +276,38 @@ export const useRoofWaiver = (
         name: 'signature.svg',
         type: 'image/svg+xml',
       };
+      const formatDateToYmd = (dateStr: string) => {
+        if (!dateStr) return '';
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+          const [mm, dd, yyyy] = parts;
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return dateStr;
+      };
+
+      const rawPhone = String(formData.phoneNumber).replace(/\D/g, '');
+      const finalPhone = rawPhone.length === 11 && rawPhone.startsWith('1') ? rawPhone.slice(1) : rawPhone;
+
       const res = await onSubmit({
         fullName: `${formData.firstName} ${formData.lastName}`.trim(),
-        phoneNumber: String(formData.phoneNumber),
+        phoneNumber: finalPhone,
         email: String(formData.email),
         leadId: String(lead?.leadId || ''),
         repName: String(formData.repName),
         officeCode: String(formData.officeCode),
         time: String(formData.time),
-        date: String(formData.date),
+        date: formatDateToYmd(String(formData.date)),
         address: String(formData.address),
         type: submissionType,
         file: signatureFile,
-        formType: 'roof_waiver',
-        consent: 'true',
       });
       if (typeof res === 'string') {
         if (onFinalUpload) {
           await onFinalUpload(res);
         }
-        if (onSuccess) {
-          onSuccess();
+        if (onClose) {
+          onClose();
         }
       }
     } catch (error: any) {

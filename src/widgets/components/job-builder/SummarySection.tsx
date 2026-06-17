@@ -1786,60 +1786,34 @@ export const SummarySection = ({
             return;
           }
 
+          // Only submit pages that are newly added — existing pages are already on the server
+          const newPages = pages.filter((p) => p.isNew === true);
+
+          if (newPages.length === 0) {
+            // Nothing new to upload — just close
+            setScannerOpen(false);
+            return;
+          }
+
           try {
             setIsGenerating(true);
             if (isDocUploadingRef) isDocUploadingRef.current = true;
 
-            // Pre-fetch outcome documents to retrieve existing base64Data
-            let preFetchedAppendedDocs: any[] = [];
-            try {
-              const response = await LeadService.downloadOutcomeDocuments(leadId);
-              const dataObj = response.data?.data || response.data || {};
-              preFetchedAppendedDocs = [
-                ...(dataObj.agreements || []),
-                ...(dataObj.orderSheets || [])
-              ];
-            } catch (err) {
-              console.warn('[Summary] Failed to pre-fetch outcome documents', err);
-            }
-
             const filePayloads: any[] = [];
-            for (let i = 0; i < pages.length; i++) {
-              const p = pages[i];
-              const docNum = i + 1;
+            for (let i = 0; i < newPages.length; i++) {
+              const p = newPages[i];
               const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
-              const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
+              const defaultName = `${cleanCategoryName}_${Date.now()}_${i + 1}.pdf`;
               const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
 
-              if (p.isNew) {
-                const rawBase64 = await RNFS.readFile(p.uri, 'base64');
-                const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
-                filePayloads.push({
-                  name: documentName,
-                  file: `data:application/pdf;base64,${pdfBase64}`,
-                  documentType: scannerCategory,
-                  isNew: true,
-                });
-              } else {
-                // If it's an existing document, look it up in the pre-fetched documents
-                const docId = p.serverId || p.id || p._id;
-                const serverDoc = preFetchedAppendedDocs.find(
-                  (d) => String(d._id) === String(docId)
-                );
-                if (serverDoc && serverDoc.base64Data) {
-                  const cType = serverDoc.fileData?.contentType || 'application/pdf';
-                  const base64Prefix = serverDoc.base64Data.startsWith('data:')
-                    ? serverDoc.base64Data
-                    : `data:${cType};base64,${serverDoc.base64Data}`;
-
-                  filePayloads.push({
-                    name: documentName,
-                    file: base64Prefix,
-                    documentType: scannerCategory,
-                    isNew: false,
-                  });
-                }
-              }
+              const rawBase64 = await RNFS.readFile(p.uri, 'base64');
+              const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
+              filePayloads.push({
+                name: documentName,
+                file: `data:application/pdf;base64,${pdfBase64}`,
+                documentType: scannerCategory,
+                isNew: true,
+              });
             }
 
             const outcomePayload: any = {
@@ -1848,7 +1822,7 @@ export const SummarySection = ({
               status: 'Sale',
               jobBuilder: {
                 ...jobState,
-                // Send all files (including existing ones fully compiled with base64)
+                // Only append the newly scanned files
                 [stateField]: filePayloads,
               },
               LFCalculator: {

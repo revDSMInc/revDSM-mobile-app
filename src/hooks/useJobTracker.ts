@@ -68,25 +68,27 @@ export const useJobTracker = (selectedYear: number) => {
         j.jobNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         j.customerName?.toLowerCase().includes(searchQuery.toLowerCase());
 
-      const jobDate = parseISO(j.soldDate);
-      const isJobDateValid = isValid(jobDate);
+      const jobDate = j.soldDate ? parseISO(j.soldDate) : null;
+      const isJobDateValid = jobDate ? isValid(jobDate) : false;
 
       // 1. Year Filter: Only applies if no specific Sold Date filter is selected
-      const matchYear = !soldDateFilter && isJobDateValid && jobDate.getFullYear() === selectedYear;
+      const matchYear = !soldDateFilter && isJobDateValid && jobDate && jobDate.getFullYear() === selectedYear;
 
       // 2. Sold Date Filter: Exact day match
       let matchSoldDate = true;
       if (soldDateFilter) {
         // soldDateFilter is in 'yyyy-MM-dd' format from the CustomDatePicker
         const filterDate = parseISO(soldDateFilter);
-        if (isValid(filterDate) && isJobDateValid) {
+        if (isValid(filterDate) && isJobDateValid && jobDate) {
           matchSoldDate =
             jobDate.getFullYear() === filterDate.getFullYear() &&
             jobDate.getMonth() === filterDate.getMonth() &&
             jobDate.getDate() === filterDate.getDate();
-        } else {
+        } else if (jobDate && isJobDateValid) {
           // Fallback to string includes if dates aren't fully valid for some reason
           matchSoldDate = format(jobDate, 'MM/dd/yyyy').includes(soldDateFilter);
+        } else {
+          matchSoldDate = false;
         }
       }
 
@@ -122,15 +124,15 @@ export const useJobTracker = (selectedYear: number) => {
 
     // Sort filteredJobs by soldDate descending (latest first)
     const sortedJobs = [...filteredJobs].sort((a, b) => {
-      const dateA = new Date(a.soldDate).getTime();
-      const dateB = new Date(b.soldDate).getTime();
+      const dateA = a.soldDate ? new Date(a.soldDate).getTime() : 0;
+      const dateB = b.soldDate ? new Date(b.soldDate).getTime() : 0;
       return dateB - dateA;
     });
 
     sortedJobs.forEach((job) => {
       earnings += job.commission || 0;
-      const date = parseISO(job.soldDate);
-      if (isValid(date)) {
+      const date = job.soldDate ? parseISO(job.soldDate) : null;
+      if (date && isValid(date)) {
         const key = format(date, 'MMMM yyyy');
         if (!groups[key]) groups[key] = [];
         groups[key].push(job);

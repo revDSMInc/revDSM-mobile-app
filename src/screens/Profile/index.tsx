@@ -218,7 +218,7 @@ export default function ProfilePage() {
     setLoading(true);
     try {
       const isUploadingImage = formData.avatarUrl && (formData.avatarUrl.startsWith('file://') || formData.avatarUrl.startsWith('content://'));
-      
+
       let payload: any;
       const headers: any = {};
 
@@ -232,7 +232,7 @@ export default function ProfilePage() {
         data.append('city', formData.city);
         data.append('street', formData.street);
         data.append('zipCode', formData.zipCode);
-        
+
         if (formData.password && formData.password.trim() !== '') {
           data.append('password', formData.password);
         }
@@ -246,7 +246,7 @@ export default function ProfilePage() {
           name: fileName,
           type: fileType,
         } as any);
-        
+
         payload = data;
         headers['Content-Type'] = 'multipart/form-data';
       } else {
@@ -260,7 +260,7 @@ export default function ProfilePage() {
           street: formData.street,
           zipCode: formData.zipCode,
         };
-        
+
         if (formData.password && formData.password.trim() !== '') {
           payload.password = formData.password;
         }
@@ -268,7 +268,7 @@ export default function ProfilePage() {
 
       const res = await SettingsService.updateProfile(payload, headers);
 
-      
+
       // Check for backend-specific success code if returned as 200 OK body
       if (res.data?.code && res.data.code !== 200) {
         throw res.data;
@@ -280,10 +280,10 @@ export default function ProfilePage() {
       if (updatedUser?.profilePicture) {
         await resolveAvatarUrl(updatedUser.profilePicture);
       }
-      
+
       // Refresh global user state to sync across app
       await refreshUser();
-      
+
       // Check if the user's profilePicture needs resolving, then update Redux
       const freshUser = store.getState().auth.user;
       const pic = freshUser?.profilePicture;
@@ -295,7 +295,7 @@ export default function ProfilePage() {
           }));
         }
       }
-      
+
       Alert.alert('Success', 'Profile updated successfully', [
         {
           text: 'OK',
@@ -333,15 +333,15 @@ export default function ProfilePage() {
 
       if (result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        
+
         // Check file size (max 3.1 MB as mentioned in UI)
         if (asset.fileSize && asset.fileSize > 3100000) {
           Alert.alert('Error', 'Image size exceeds 3.1 MB limit');
           return;
         }
 
-        setFormData({ 
-          ...formData, 
+        setFormData({
+          ...formData,
           avatarUrl: asset.uri || '',
           avatarAsset: asset
         });
@@ -382,9 +382,9 @@ export default function ProfilePage() {
     try {
       const res = await SettingsService.setupEmail();
       setEmailModalVisible(false);
-      
+
       const setupData = res.data?.data;
-      
+
       if (setupData?.backupCodes) {
         setBackupCodes(setupData.backupCodes);
         setBackupCodesModalVisible(true);
@@ -426,7 +426,7 @@ export default function ProfilePage() {
     try {
       const res = await SettingsService.regenerateBackupCodes();
       const codes = res.data?.data?.backupCodes || res.data?.data;
-      
+
       if (Array.isArray(codes)) {
         setBackupCodes(codes);
         setBackupCodesModalVisible(true);
@@ -451,13 +451,13 @@ export default function ProfilePage() {
     try {
       const fileName = 'revdsm_backup_codes.txt';
       const content = backupCodes.join('\n');
-      
+
       if (Platform.OS === 'android') {
         const path = `${ReactNativeBlobUtil.fs.dirs.DownloadDir}/${fileName}`;
-        
+
         // Write the file first
         await ReactNativeBlobUtil.fs.writeFile(path, content, 'utf8');
-        
+
         // Add to Download Manager to make it appear in the Downloads app and notifications
         ReactNativeBlobUtil.android.addCompleteDownload({
           title: fileName,
@@ -466,14 +466,14 @@ export default function ProfilePage() {
           path: path,
           showNotification: true,
         });
-        
+
         // No alert as requested
       } else {
 
         // On iOS, we write to a temp file and share it so user can "Save to Files"
         const path = `${RNFS.TemporaryDirectoryPath}/${fileName}`;
         await RNFS.writeFile(path, content, 'utf8');
-        
+
         await Share.share({
           url: `file://${path}`,
           title: 'Save Backup Codes',
@@ -589,9 +589,8 @@ export default function ProfilePage() {
             >
               <TouchableOpacity
                 onPress={() => setActiveTab('profile')}
-                className={`flex-1 flex-row items-center justify-center py-3.5 rounded-xl ${
-                  activeTab === 'profile' ? 'bg-[#72BD00]' : ''
-                }`}
+                className={`flex-1 flex-row items-center justify-center py-3.5 rounded-xl ${activeTab === 'profile' ? 'bg-[#4CBB17]' : ''
+                  }`}
               >
                 <Icon
                   name="person"
@@ -600,9 +599,8 @@ export default function ProfilePage() {
                   className="mr-2"
                 />
                 <Text
-                  className={`font-black  tracking-widest text-[11px] ${
-                    activeTab === 'profile' ? 'text-white' : ''
-                  }`}
+                  className={`font-black  tracking-widest text-[11px] ${activeTab === 'profile' ? 'text-white' : ''
+                    }`}
                   style={{ color: activeTab === 'profile' ? '#fff' : colors.textSecondary }}
                 >
                   Profile
@@ -610,9 +608,8 @@ export default function ProfilePage() {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setActiveTab('2fa')}
-                className={`flex-1 flex-row items-center justify-center py-3.5 rounded-xl ${
-                  activeTab === '2fa' ? 'bg-[#72BD00]' : ''
-                }`}
+                className={`flex-1 flex-row items-center justify-center py-3.5 rounded-xl ${activeTab === '2fa' ? 'bg-[#4CBB17]' : ''
+                  }`}
               >
                 <Icon
                   name="shield-checkmark"
@@ -621,9 +618,8 @@ export default function ProfilePage() {
                   className="mr-2"
                 />
                 <Text
-                  className={`font-black  tracking-widest text-[11px] ${
-                    activeTab === '2fa' ? 'text-white' : ''
-                  }`}
+                  className={`font-black  tracking-widest text-[11px] ${activeTab === '2fa' ? 'text-white' : ''
+                    }`}
                   style={{ color: activeTab === '2fa' ? '#fff' : colors.textSecondary }}
                 >
                   2FA settings
@@ -644,7 +640,7 @@ export default function ProfilePage() {
               >
                 <TouchableOpacity
                   onPress={handlePickImage}
-                  className="w-24 h-24 rounded-full items-center justify-center overflow-hidden border-2 border-dashed border-gray-300"
+                  className="w-28 h-28 rounded-full items-center justify-center overflow-hidden border-2 border-dashed border-gray-300"
                   style={{ backgroundColor: isDark ? colors.background : '#F8FAFC' }}
                 >
                   {imageLoading ? (
@@ -855,7 +851,7 @@ export default function ProfilePage() {
                       <Text className="text-[11px] font-bold text-slate-400 mb-6 leading-4">
                         Use backup codes to sign in if you lose access to your 2FA method
                       </Text>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={handleRegenerateBackupCodes}
                         className="bg-slate-50 py-3 px-4 rounded-xl items-center border border-slate-100"
                       >
@@ -872,7 +868,7 @@ export default function ProfilePage() {
                       <Text className="text-[11px] font-bold text-slate-400 mb-6 leading-4">
                         Manage devices that can skip 2FA verification for 10 days
                       </Text>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={fetchTrustedDevices}
                         className="bg-slate-50 py-3 px-4 rounded-xl items-center border border-slate-100"
                       >
@@ -888,7 +884,7 @@ export default function ProfilePage() {
                           Disabling 2FA will make your account less secure. All trusted devices will also be revoked.
                         </Text>
                       </View>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={handleToggle2FA}
                         disabled={loading}
                         className="bg-white border border-amber-200 py-3 px-6 rounded-xl items-center mt-2"
@@ -988,13 +984,13 @@ export default function ProfilePage() {
               </View>
 
               <View className="p-6 flex-row gap-4">
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setEmailModalVisible(false)}
                   className="flex-1 py-4 items-center"
                 >
                   <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
                 </TouchableOpacity>
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={handleConfirmEnableEmail}
                   disabled={loading}
                   className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
@@ -1043,14 +1039,14 @@ export default function ProfilePage() {
                 </View>
 
                 <View className="flex-row gap-3 mt-6">
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     onPress={handleCopyBackupCodes}
                     className="flex-1 flex-row items-center justify-center py-4 bg-white border border-slate-200 rounded-2xl"
                   >
                     <Icon name="copy-outline" size={16} color="#475569" />
                     <Text className="ml-2 font-black text-[10px] text-slate-600 tracking-widest">COPY CODES</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     onPress={handleDownloadBackupCodes}
                     className="flex-1 flex-row items-center justify-center py-4 bg-white border border-slate-200 rounded-2xl"
                   >
@@ -1061,7 +1057,7 @@ export default function ProfilePage() {
               </View>
 
               <View className="p-6 bg-slate-50 items-center">
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => {
                     setBackupCodesModalVisible(false);
                     fetchTfaSettings();
@@ -1113,13 +1109,13 @@ export default function ProfilePage() {
               </View>
 
               <View className="p-6 flex-row gap-4">
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setDisableModalVisible(false)}
                   className="flex-1 py-4 items-center"
                 >
                   <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
                 </TouchableOpacity>
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={handleConfirmDisable}
                   disabled={loading}
                   className="flex-[1.5] bg-red-600 py-4 rounded-2xl items-center shadow-lg shadow-red-100"
@@ -1147,120 +1143,120 @@ export default function ProfilePage() {
                   <Text className="text-xl font-black text-slate-900 tracking-tighter">Setup Authenticator</Text>
                 </View>
 
-              {/* Stepper Header */}
-              <View className="flex-row items-center mb-8 px-2">
-                <View className="flex-row items-center">
-                  <View className={`w-6 h-6 rounded-full items-center justify-center ${authStep >= 0 ? 'bg-slate-900' : 'bg-slate-200'}`}>
-                    <Text className="text-[10px] font-black text-white">1</Text>
-                  </View>
-                  <Text className={`ml-2 text-[11px] font-black ${authStep === 0 ? 'text-slate-900' : 'text-slate-400'}`}>Scan QR Code</Text>
-                </View>
-                <View className="flex-1 h-[1px] bg-slate-100 mx-4" />
-                <View className="flex-row items-center">
-                  <View className={`w-6 h-6 rounded-full items-center justify-center ${authStep >= 1 ? 'bg-slate-900' : 'bg-slate-200'}`}>
-                    <Text className="text-[10px] font-black text-white">2</Text>
-                  </View>
-                  <Text className={`ml-2 text-[11px] font-black ${authStep === 1 ? 'text-slate-900' : 'text-slate-400'}`}>Verify Code</Text>
-                </View>
-              </View>
-
-              {authStep === 0 ? (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  <View className="bg-[#E0F2FE] p-4 rounded-2xl flex-row items-center mb-6 border border-[#BAE6FD]">
-                    <Icon name="information-circle" size={20} color="#0284C7" />
-                    <View className="ml-3 flex-1">
-                      <Text className="text-[11px] font-bold text-[#0369A1] leading-4">
-                        1. Download Google Authenticator or similar app{'\n'}
-                        2. Scan the QR code below or enter the key manually{'\n'}
-                        3. Click "Next" to verify the code
-                      </Text>
+                {/* Stepper Header */}
+                <View className="flex-row items-center mb-8 px-2">
+                  <View className="flex-row items-center">
+                    <View className={`w-6 h-6 rounded-full items-center justify-center ${authStep >= 0 ? 'bg-slate-900' : 'bg-slate-200'}`}>
+                      <Text className="text-[10px] font-black text-white">1</Text>
                     </View>
+                    <Text className={`ml-2 text-[11px] font-black ${authStep === 0 ? 'text-slate-900' : 'text-slate-400'}`}>Scan QR Code</Text>
                   </View>
-
-                  <View className="items-center mb-6">
-                    <View className="p-4 bg-white border border-slate-100 rounded-3xl shadow-sm">
-                      {authQrCode ? (
-                        <Image source={{ uri: authQrCode }} style={{ width: 180, height: 180 }} />
-                      ) : (
-                        <ActivityIndicator color="#000" />
-                      )}
+                  <View className="flex-1 h-[1px] bg-slate-100 mx-4" />
+                  <View className="flex-row items-center">
+                    <View className={`w-6 h-6 rounded-full items-center justify-center ${authStep >= 1 ? 'bg-slate-900' : 'bg-slate-200'}`}>
+                      <Text className="text-[10px] font-black text-white">2</Text>
                     </View>
+                    <Text className={`ml-2 text-[11px] font-black ${authStep === 1 ? 'text-slate-900' : 'text-slate-400'}`}>Verify Code</Text>
                   </View>
+                </View>
 
-                  <View className="mb-8">
-                    <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Can't scan? Enter key manually:</Text>
-                    <View className="flex-row gap-2">
-                      <View className="flex-1 bg-slate-50 border border-slate-100 px-4 py-3 rounded-xl justify-center">
-                        <Text className="text-[12px] font-black text-slate-700 tracking-wider" numberOfLines={1}>{authSecret}</Text>
+                {authStep === 0 ? (
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                    <View className="bg-[#E0F2FE] p-4 rounded-2xl flex-row items-center mb-6 border border-[#BAE6FD]">
+                      <Icon name="information-circle" size={20} color="#0284C7" />
+                      <View className="ml-3 flex-1">
+                        <Text className="text-[11px] font-bold text-[#0369A1] leading-4">
+                          1. Download Google Authenticator or similar app{'\n'}
+                          2. Scan the QR code below or enter the key manually{'\n'}
+                          3. Click "Next" to verify the code
+                        </Text>
                       </View>
-                      <TouchableOpacity 
-                        onPress={handleCopySecret}
-                        className="bg-slate-900 px-4 py-3 rounded-xl items-center justify-center"
+                    </View>
+
+                    <View className="items-center mb-6">
+                      <View className="p-4 bg-white border border-slate-100 rounded-3xl shadow-sm">
+                        {authQrCode ? (
+                          <Image source={{ uri: authQrCode }} style={{ width: 180, height: 180 }} />
+                        ) : (
+                          <ActivityIndicator color="#000" />
+                        )}
+                      </View>
+                    </View>
+
+                    <View className="mb-8">
+                      <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Can't scan? Enter key manually:</Text>
+                      <View className="flex-row gap-2">
+                        <View className="flex-1 bg-slate-50 border border-slate-100 px-4 py-3 rounded-xl justify-center">
+                          <Text className="text-[12px] font-black text-slate-700 tracking-wider" numberOfLines={1}>{authSecret}</Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={handleCopySecret}
+                          className="bg-slate-900 px-4 py-3 rounded-xl items-center justify-center"
+                        >
+                          <Icon name="copy" size={18} color="white" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <View className="flex-row gap-4">
+                      <TouchableOpacity
+                        onPress={() => setAuthModalVisible(false)}
+                        className="flex-1 py-4 items-center"
                       >
-                        <Icon name="copy" size={18} color="white" />
+                        <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setAuthStep(1)}
+                        className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
+                      >
+                        <Text className="font-black text-[11px] text-white tracking-widest">NEXT</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
+                  </ScrollView>
+                ) : (
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                    <View className="bg-[#E0F2FE] p-4 rounded-2xl flex-row items-center mb-8 border border-[#BAE6FD]">
+                      <Icon name="information-circle" size={20} color="#0284C7" />
+                      <Text className="ml-3 flex-1 text-[11px] font-bold text-[#0369A1] leading-4">
+                        Enter the 6-digit code from your authenticator app to verify the setup.
+                      </Text>
+                    </View>
 
-                  <View className="flex-row gap-4">
-                    <TouchableOpacity 
-                      onPress={() => setAuthModalVisible(false)}
-                      className="flex-1 py-4 items-center"
-                    >
-                      <Text className="font-black text-[11px] text-slate-500 tracking-widest">CANCEL</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={() => setAuthStep(1)}
-                      className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
-                    >
-                      <Text className="font-black text-[11px] text-white tracking-widest">NEXT</Text>
-                    </TouchableOpacity>
-                  </View>
-                </ScrollView>
-              ) : (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  <View className="bg-[#E0F2FE] p-4 rounded-2xl flex-row items-center mb-8 border border-[#BAE6FD]">
-                    <Icon name="information-circle" size={20} color="#0284C7" />
-                    <Text className="ml-3 flex-1 text-[11px] font-bold text-[#0369A1] leading-4">
-                      Enter the 6-digit code from your authenticator app to verify the setup.
-                    </Text>
-                  </View>
+                    <CustomInput
+                      label="Verification Code"
+                      placeholder="000 000"
+                      value={authCode}
+                      onChangeText={(t) => setAuthCode(t.replace(/[^0-9]/g, ''))}
+                      keyboardType="numeric"
+                      maxLength={6}
+                    />
 
-                  <CustomInput
-                    label="Verification Code"
-                    placeholder="000 000"
-                    value={authCode}
-                    onChangeText={(t) => setAuthCode(t.replace(/[^0-9]/g, ''))}
-                    keyboardType="numeric"
-                    maxLength={6}
-                  />
-
-                  <View className="flex-row gap-4 mt-8">
-                    <TouchableOpacity 
-                      onPress={() => setAuthStep(0)}
-                      className="flex-1 py-4 items-center"
-                    >
-                      <Text className="font-black text-[11px] text-slate-500 tracking-widest">BACK</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={handleVerifyAuthenticator}
-                      disabled={loading || authCode.length !== 6}
-                      className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
-                      style={{ opacity: loading || authCode.length !== 6 ? 0.6 : 1 }}
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="white" size="small" />
-                      ) : (
-                        <Text className="font-black text-[11px] text-white tracking-widest">VERIFY & ENABLE</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </ScrollView>
-              )}
-            </View>
-          </GlobalKeyboardAvoidingView>
-        </View>
-      </Modal>
+                    <View className="flex-row gap-4 mt-8">
+                      <TouchableOpacity
+                        onPress={() => setAuthStep(0)}
+                        className="flex-1 py-4 items-center"
+                      >
+                        <Text className="font-black text-[11px] text-slate-500 tracking-widest">BACK</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={handleVerifyAuthenticator}
+                        disabled={loading || authCode.length !== 6}
+                        className="flex-[1.5] bg-slate-900 py-4 rounded-2xl items-center shadow-lg shadow-slate-200"
+                        style={{ opacity: loading || authCode.length !== 6 ? 0.6 : 1 }}
+                      >
+                        {loading ? (
+                          <ActivityIndicator color="white" size="small" />
+                        ) : (
+                          <Text className="font-black text-[11px] text-white tracking-widest">VERIFY & ENABLE</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                )}
+              </View>
+            </GlobalKeyboardAvoidingView>
+          </View>
+        </Modal>
 
 
         {/* 5. Trusted Devices Modal */}
@@ -1298,10 +1294,10 @@ export default function ProfilePage() {
                       {trustedDevices.map((device: any) => (
                         <View key={device.id || device._id || device.deviceId} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex-row items-center">
                           <View className="w-10 h-10 rounded-xl bg-white items-center justify-center border border-slate-100">
-                            <Icon 
-                              name={device.userAgent?.toLowerCase().includes('mobile') || device.browser?.toLowerCase().includes('mobile') ? 'phone-portrait' : 'desktop'} 
-                              size={20} 
-                              color="#4F46E5" 
+                            <Icon
+                              name={device.userAgent?.toLowerCase().includes('mobile') || device.browser?.toLowerCase().includes('mobile') ? 'phone-portrait' : 'desktop'}
+                              size={20}
+                              color="#4F46E5"
                             />
                           </View>
                           <View className="ml-4 flex-1">
@@ -1315,7 +1311,7 @@ export default function ProfilePage() {
                                 </View>
                               )}
                             </View>
-                            
+
                             <View className="mt-1 gap-y-0.5">
                               {device.trustedAt && (
                                 <Text className="text-[9px] font-bold text-slate-400">
@@ -1335,7 +1331,7 @@ export default function ProfilePage() {
                               <Text className="text-[9px] font-bold text-slate-400">IP: {device.ipAddress || 'Unknown IP'}</Text>
                             </View>
                           </View>
-                          <TouchableOpacity 
+                          <TouchableOpacity
                             onPress={() => handleRevokeDevice(device.deviceId || device.id || device._id)}
                             disabled={revokingDeviceId === (device.deviceId || device.id || device._id)}
                             className="p-2 ml-2"
@@ -1354,7 +1350,7 @@ export default function ProfilePage() {
               </View>
 
               <View className="p-6 bg-slate-50">
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setTrustedDevicesModalVisible(false)}
                   className="w-full bg-slate-900 py-4 rounded-2xl items-center"
                 >
@@ -1374,9 +1370,8 @@ function MethodRadio({ label, sub, selected, onPress, colors }: any) {
   return (
     <TouchableOpacity onPress={onPress} className="flex-row items-center mb-6">
       <View
-        className={`w-5 h-5 rounded-full border-2 items-center justify-center ${
-          selected ? 'border-[#00A76F]' : 'border-gray-300'
-        }`}
+        className={`w-5 h-5 rounded-full border-2 items-center justify-center ${selected ? 'border-[#00A76F]' : 'border-gray-300'
+          }`}
       >
         {selected && <View className="w-2.5 h-2.5 rounded-full bg-[#00A76F]" />}
       </View>

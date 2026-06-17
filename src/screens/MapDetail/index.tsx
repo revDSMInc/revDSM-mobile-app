@@ -34,17 +34,32 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const { width, height } = Dimensions.get('window');
 
-const isJobOwner = (item: any, uid: string | undefined): boolean => {
-  if (!uid || !item) return false;
-  return !!(
+const isJobOwner = (item: any, user: any): boolean => {
+  if (!user || !item) return false;
+  const uid = typeof user === 'string' ? user : (user._id || user.id);
+  if (!uid) return false;
+
+  const matchesId = !!(
     item.salesRepId === uid ||
     item.salesRep === uid ||
-    (item.salesRep && typeof item.salesRep === 'object' && item.salesRep._id === uid) ||
-    (item.salesRep && typeof item.salesRep === 'object' && item.salesRep.id === uid) ||
+    (item.salesRep && typeof item.salesRep === 'object' && (item.salesRep._id === uid || item.salesRep.id === uid)) ||
     item.assignedRepId === uid ||
-    (item.assignedRep && typeof item.assignedRep === 'object' && item.assignedRep._id === uid) ||
-    (item.assignedRep && typeof item.assignedRep === 'object' && item.assignedRep.id === uid)
+    (item.assignedRep && typeof item.assignedRep === 'object' && (item.assignedRep._id === uid || item.assignedRep.id === uid))
   );
+  if (matchesId) return true;
+
+  if (typeof user === 'object') {
+    const repName = (item.salesRepName || item.userName || (typeof item.salesRep === 'string' ? item.salesRep : ''))?.toLowerCase().trim();
+    if (repName) {
+      const userFullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase().trim();
+      const userFirstName = (user.firstName || '').toLowerCase().trim();
+      if (userFullName && (repName === userFullName || repName === userFirstName)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 };
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -222,8 +237,7 @@ export default function MapDetailScreen() {
 
       // Referral Filter (match web app logic)
       if (filters.isReferralOnly) {
-        const uid = user?._id || user?.id;
-        const isMine = isJobOwner(item, uid);
+        const isMine = isJobOwner(item, user);
         const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
         if (!hasReferrals) return false;
 
@@ -235,9 +249,8 @@ export default function MapDetailScreen() {
 
       // My Jobs Only
       if (filters.myJobsOnly) {
-        const uid = user?._id || user?.id;
-        const isMine = isJobOwner(item, uid);
-        console.log('[MapDetail DEBUG] MyJobsOnly check for job:', item.jobNumber, 'user uid:', uid, 'isMine:', isMine);
+        const isMine = isJobOwner(item, user);
+        console.log('[MapDetail DEBUG] MyJobsOnly check for job:', item.jobNumber, 'user uid:', user?._id || user?.id, 'isMine:', isMine);
         if (!isMine) return false;
       }
 
@@ -277,8 +290,13 @@ export default function MapDetailScreen() {
       return true;
     });
 
-    console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', result.length);
-    return result;
+    const processed = result.map((item) => ({
+      ...item,
+      _timestamp: new Date(item.installationDate || item.createdAt || 0).getTime(),
+    }));
+
+    console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', processed.length);
+    return processed;
   }, [leads, filters, user]);
 
   const filteredLeads = useMemo(() => {
@@ -286,10 +304,10 @@ export default function MapDetailScreen() {
     return [...baseFilteredLeads].sort((a, b) => {
       if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
       if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
-      
-      const timeA = new Date(a.installationDate || a.createdAt || 0).getTime();
-      const timeB = new Date(b.installationDate || b.createdAt || 0).getTime();
-      
+
+      const timeA = a._timestamp || 0;
+      const timeB = b._timestamp || 0;
+
       if (sortOption === 'date_asc') return timeA - timeB;
       return timeB - timeA; // date_desc
     });
@@ -338,33 +356,48 @@ export default function MapDetailScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: isDark ? '#121212' : '#F4F6F8' }}>
-      
+
       {/* Global Common Header with Map Tools */}
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar barStyle={'light-content'} backgroundColor="#ffffff" />
       <SafeAreaView edges={['top']} style={{ backgroundColor: '#ffffff' }}>
-        <Header 
-          onNavigate={(r) => navigation.navigate(r)} 
+        <Header
+          onNavigate={(r) => navigation.navigate(r)}
           onFilterPress={() => setShowFiltersModal(true)}
           onListPress={() => setIsListView(!isListView)}
         />
       </SafeAreaView>
 
       <View style={{ flex: 1 }}>
-        <LeadMap 
-          currentLead={centerCoords ?? currentLead} 
+        <LeadMap
+          currentLead={centerCoords ?? currentLead}
           focusLead={jumpLead}
-          fullScreen 
-          leads={filteredLeads}
+          fullScreen
+          leads={baseFilteredLeads}
           isFavoriteFilter={filters.isFavoriteOnly}
           isReferralFilter={filters.isReferralOnly}
           isMyJobsFilter={filters.myJobsOnly}
           isHeatMapFilter={filters.isHeatMap}
+          searchedJobNumber={filters.jobNumber}
           onToggleFilter={(type) => {
             setFilters((prev) => {
               if (type === 'heatmap') return { ...prev, isHeatMap: !prev.isHeatMap };
               if (type === 'myjobs') return { ...prev, myJobsOnly: !prev.myJobsOnly };
               if (type === 'referral') return { ...prev, isReferralOnly: !prev.isReferralOnly };
+              if (type === 'favorite') return { ...prev, isFavoriteOnly: !prev.isFavoriteOnly };
               return prev;
+            });
+          }}
+          onFavoriteToggle={(jobId, isFav) => {
+            setLeads((prev) =>
+              prev.map((l) =>
+                l._id === jobId ? { ...l, isFavourite: isFav, isFavorite: isFav } : l
+              )
+            );
+            queryClient.setQueryData(['mapJobs', latKey, lngKey, radiusVal], (old: any) => {
+              if (!old) return old;
+              return old.map((l: any) =>
+                l._id === jobId ? { ...l, isFavourite: isFav, isFavorite: isFav } : l
+              );
             });
           }}
           onGalleryPress={(job) => {
@@ -382,7 +415,7 @@ export default function MapDetailScreen() {
         />
 
         {isListView && (
-          <SafeAreaView edges={['bottom']} style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#121212' : '#F4F6F8' ,zIndex:10000}]}>
+          <SafeAreaView edges={['bottom']} style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#121212' : '#F4F6F8', zIndex: 10000 }]}>
             {/* List Toolbar */}
             <View className="px-5 py-4 flex-row items-center justify-between bg-white dark:bg-black/20 border-b border-slate-100 dark:border-zinc-800 z-50">
               <View className="flex-1 mr-4">
@@ -390,7 +423,7 @@ export default function MapDetailScreen() {
                   Order By
                 </Text>
                 <View className="relative">
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     onPress={() => setShowSortDropdown(!showSortDropdown)}
                     className="flex-row items-center justify-between bg-slate-50 dark:bg-zinc-800 px-4 py-2.5 rounded-xl border border-slate-100 dark:border-zinc-700"
                   >
@@ -401,7 +434,7 @@ export default function MapDetailScreen() {
                   </TouchableOpacity>
 
                   {showSortDropdown && (
-                    <View 
+                    <View
                       className="absolute top-12 left-0 right-0 bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-zinc-800 p-2 z-[1000]"
                       style={{ elevation: 20 }}
                     >
@@ -424,14 +457,14 @@ export default function MapDetailScreen() {
                 </View>
               </View>
               <View className="flex-row gap-2 mt-4">
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setIsListView(false)}
                   className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 items-center justify-center border border-slate-100 dark:border-zinc-700 shadow-sm"
                 >
-                   <Icon name="map-marker-outline" size={22} color="#94a3b8" />
+                  <Icon name="map-marker-outline" size={22} color="#94a3b8" />
                 </TouchableOpacity>
                 <TouchableOpacity className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 items-center justify-center border border-slate-100 dark:border-zinc-700 shadow-sm">
-                   <Icon name="menu" size={22} color="#2EDE56" />
+                  <Icon name="menu" size={22} color="#2EDE56" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -446,22 +479,22 @@ export default function MapDetailScreen() {
               removeClippedSubviews={Platform.OS === 'android'}
               contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
               renderItem={({ item: job }) => {
-                const dateStr = job.installationDate 
+                const dateStr = job.installationDate
                   ? format(new Date(job.installationDate), 'MM/dd/yyyy')
                   : job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy')
-                  : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
-                
-                const addressStr = typeof job.fullAddress === 'string' ? job.fullAddress : 
-                  (job.address && typeof job.address === 'object' 
+                    : job.createdAt ? format(new Date(job.createdAt), 'MM/dd/yyyy') : 'N/A';
+
+                const addressStr = typeof job.fullAddress === 'string' ? job.fullAddress :
+                  (job.address && typeof job.address === 'object'
                     ? [job.address.houseNumber, job.address.streetName, job.address.city, job.address.state, job.address.zip].filter(Boolean).join(', ')
                     : 'N/A');
 
-                const isOwner = isJobOwner(job, user?._id || user?.id);
-                  
+                 const isOwner = isJobOwner(job, user);
+
                 return (
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     onPress={() => {
-                      setJumpLead({...job});
+                      setJumpLead({ ...job });
                       setIsListView(false);
                     }}
                     activeOpacity={0.7}
@@ -481,7 +514,7 @@ export default function MapDetailScreen() {
                           <Text className="text-[13px] font-black text-[#2EDE56]">#{job.jobNumber}</Text>
                         </View>
                         {(job.images?.beforeImages?.length > 0 || job.images?.afterImages?.length > 0) && (
-                          <TouchableOpacity 
+                          <TouchableOpacity
                             onPress={() => {
                               setSelectedJob(job);
                               setShowGalleryModal(true);
@@ -561,7 +594,7 @@ export default function MapDetailScreen() {
       <MapGalleryModal
         visible={showGalleryModal}
         job={selectedJob}
-        isMyJob={isJobOwner(selectedJob, user?._id || user?.id)}
+        isMyJob={isJobOwner(selectedJob, user)}
         onClose={() => setShowGalleryModal(false)}
         onUploadSuccess={fetchLeads}
       />
@@ -574,7 +607,7 @@ export default function MapDetailScreen() {
         onClose={() => setShowReferralModal(false)}
         selectedJob={selectedJob}
         onSuccess={fetchLeads}
-        isMyJob={isJobOwner(selectedJob, user?._id || user?.id)}
+        isMyJob={isJobOwner(selectedJob, user)}
       />
 
 

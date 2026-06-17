@@ -321,6 +321,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                 style={[
                   styles.tabText,
                   isActive ? styles.activeTabText : styles.inactiveTabText,
+                  isCurrentlyDragging && styles.draggingTabText,
                 ]}
               >
                 {!getCalculatorBaseName(calc) ? '' : calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
@@ -333,7 +334,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                 <Ionicons
                   name="ellipsis-vertical"
                   size={14}
-                  color={isActive ? '#FFFFFF' : '#637381'}
+                  color={isCurrentlyDragging ? '#22C55E' : isActive ? '#FFFFFF' : '#637381'}
                 />
               </TouchableOpacity>
             </TouchableOpacity>
@@ -387,6 +388,9 @@ const styles = StyleSheet.create({
   },
   inactiveTabText: {
     color: '#637381',
+  },
+  draggingTabText: {
+    color: '#22C55E',
   },
   dragHandle: {
     flexDirection: 'row',

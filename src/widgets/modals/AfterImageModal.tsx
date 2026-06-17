@@ -29,12 +29,12 @@ const ThumbSkeleton = () => {
 const Thumb = ({ uri, onDelete }: { uri: string; onDelete?: () => void }) => {
   const [loaded, setLoaded] = useState(false);
   return (
-    <View className="w-[30%] aspect-square rounded-xl overflow-hidden bg-slate-100 relative">
+    <View className="w-20 h-20 rounded-xl overflow-hidden bg-slate-100 relative">
       {!loaded && <ThumbSkeleton />}
       <Image source={{ uri }} style={{ width: '100%', height: '100%', opacity: loaded ? 1 : 0 }} resizeMode="cover" onLoad={() => setLoaded(true)} onError={() => setLoaded(true)} />
       {loaded && onDelete && (
-        <TouchableOpacity onPress={onDelete} className="absolute top-1 right-1 bg-red-500 rounded-full p-1">
-          <Icon name="close" size={14} color="white" />
+        <TouchableOpacity onPress={onDelete} className="absolute top-1 right-1 bg-black rounded-full p-0.5 shadow-sm">
+          <Icon name="close" size={12} color="white" />
         </TouchableOpacity>
       )}
     </View>
@@ -61,10 +61,23 @@ export const AfterImageModal = ({
   const { isDark } = useTheme();
   const [loading, setLoading] = useState(false);
   const [newImages, setNewImages] = useState<any[]>([]);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [imageToDeleteIndex, setImageToDeleteIndex] = useState<number | null>(null);
 
   React.useEffect(() => {
-    if (visible) setNewImages([]);
+    if (visible) {
+      setNewImages([]);
+      setDeleteConfirmVisible(false);
+      setImageToDeleteIndex(null);
+    }
   }, [visible]);
+
+  const allImages = React.useMemo(() => {
+    return [
+      ...existingUris.map((uri) => ({ isExisting: true, uri })),
+      ...newImages.map((file, idx) => ({ isExisting: false, uri: file.uri, index: idx })),
+    ];
+  }, [existingUris, newImages]);
 
   const handleAddImage = async (useCamera: boolean) => {
     if (useCamera && Platform.OS === 'android') {
@@ -106,7 +119,16 @@ export const AfterImageModal = ({
     if (existingUris.length > 0 && totalAfterDelete < 1) {
       FlashMessage.warning('At least 1 image is required.'); return;
     }
-    setNewImages(prev => prev.filter((_, i) => i !== index));
+    setImageToDeleteIndex(index);
+    setDeleteConfirmVisible(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (imageToDeleteIndex !== null) {
+      setNewImages(prev => prev.filter((_, i) => i !== imageToDeleteIndex));
+    }
+    setDeleteConfirmVisible(false);
+    setImageToDeleteIndex(null);
   };
 
   const handleUpload = async () => {
@@ -136,95 +158,103 @@ export const AfterImageModal = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View className="flex-1 justify-end bg-black/60">
-        <View className="bg-white dark:bg-zinc-900 rounded-t-[40px] h-[85%]">
-          {/* Header */}
-          <View className="p-4 border-b border-slate-100 dark:border-zinc-800 flex-row justify-between items-center">
-            <Text className="text-[17px] font-black dark:text-white">After Images</Text>
-            <TouchableOpacity onPress={onClose} className="p-1.5 bg-slate-100 dark:bg-zinc-800 rounded-full">
-              <Icon name="close" size={20} color={isDark ? 'white' : 'black'} />
-            </TouchableOpacity>
-          </View>
-
-          {loading ? (
-            <View className="flex-1 items-center justify-center">
-              <ActivityIndicator size="large" color="#4CBB17" />
-              <Text className="mt-4 font-bold text-slate-400 text-[12px]">Uploading...</Text>
-            </View>
-          ) : (
-            <ScrollView className="flex-1 px-4 py-4">
-              {/* Existing server images (read-only) */}
-              {existingUris.length > 0 && (
-                <View className="mb-4">
-                  <Text className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-widest">
-                    Existing ({existingUris.length})
-                  </Text>
-                  <View className="flex-row flex-wrap gap-2 mb-2">
-                    {existingUris.map((uri, idx) => (
-                      <Thumb key={`existing-${idx}`} uri={uri} />
+    <>
+      <Modal visible={visible} animationType="fade" transparent>
+        <View className="flex-1 justify-center items-center bg-black/60 px-4">
+          <View className="bg-white rounded-[32px] p-6 w-[90%] max-w-sm shadow-2xl">
+            {/* Title */}
+            <Text className="text-[20px] font-black text-[#1C252E] mb-6">Upload After Images</Text>
+            
+            {/* Subheader */}
+            <Text className="text-[14px] font-bold text-slate-800 mb-3">After Images</Text>
+            
+            {/* Dashed Border Container */}
+            <View className="border border-dashed border-slate-300 rounded-[20px] p-4 w-full min-h-[120px] justify-center mb-6">
+              {allImages.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} className="w-full mb-3">
+                  <View className="flex-row items-center gap-3">
+                    {allImages.map((file, idx) => (
+                      <Thumb key={idx} uri={file.uri} onDelete={file.isExisting ? undefined : () => handleDeleteNew(file.index)} />
                     ))}
                   </View>
+                </ScrollView>
+              ) : (
+                <View className="items-center justify-center mb-3 py-4">
+                  <Icon name="image-outline" size={36} color="#cbd5e1" />
+                  <Text className="text-[12px] text-slate-400 mt-2 font-bold">No images selected</Text>
                 </View>
               )}
+              
+              <TouchableOpacity
+                onPress={() => {
+                  Alert.alert(
+                    'Add Image',
+                    'Choose a source',
+                    [
+                      { text: 'Camera', onPress: () => handleAddImage(true) },
+                      { text: 'Gallery', onPress: () => handleAddImage(false) },
+                      { text: 'Cancel', style: 'cancel' }
+                    ]
+                  );
+                }}
+                className="flex-row items-center justify-center py-2"
+              >
+                <Icon name="plus" size={16} color="#1C252E" />
+                <Text className="ml-1.5 font-black text-slate-800 text-sm">Add More After Images</Text>
+              </TouchableOpacity>
+            </View>
 
-              {/* Newly picked images */}
-              <Text className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-widest">
-                Add New After Images
-              </Text>
-              {newImages.length > 0 && (
-                <View className="flex-row flex-wrap gap-2 mb-4">
-                  {newImages.map((file, idx) => (
-                    <Thumb key={`new-${idx}`} uri={file.uri} onDelete={() => handleDeleteNew(idx)} />
-                  ))}
-                </View>
-              )}
-
-              {newImages.length === 0 && existingUris.length === 0 && (
-                <View className="bg-slate-50 dark:bg-zinc-800 p-6 rounded-xl items-center mb-4">
-                  <Icon name="image-off-outline" size={32} color="#cbd5e1" />
-                  <Text className="text-[12px] text-slate-400 mt-2 font-bold">No images yet</Text>
-                </View>
-              )}
-
-              {/* Add buttons */}
-              <View className="flex-row gap-2 mt-2">
-                <TouchableOpacity
-                  onPress={() => handleAddImage(true)}
-                  className="flex-1 bg-slate-50 dark:bg-zinc-800 py-3 rounded-lg border border-slate-100 dark:border-zinc-700 flex-row items-center justify-center gap-2"
-                >
-                  <Icon name="camera" size={18} color="#4CBB17" />
-                  <Text className="text-[12px] font-bold text-slate-700 dark:text-slate-300">Camera</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => handleAddImage(false)}
-                  className="flex-1 bg-slate-50 dark:bg-zinc-800 py-3 rounded-lg border border-slate-100 dark:border-zinc-700 flex-row items-center justify-center gap-2"
-                >
-                  <Icon name="image-plus" size={18} color="#4CBB17" />
-                  <Text className="text-[12px] font-bold text-slate-700 dark:text-slate-300">Gallery</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={{ height: 40 }} />
-            </ScrollView>
-          )}
-
-          {/* Footer */}
-          <View className="p-4 border-t border-slate-100 dark:border-zinc-800 flex-row gap-3">
-            <TouchableOpacity onPress={onClose} className="flex-1 border border-slate-200 dark:border-zinc-700 py-3 rounded-lg items-center">
-              <Text className="text-[13px] font-black text-slate-700 dark:text-slate-300">Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              disabled={loading || newImages.length === 0}
-              onPress={handleUpload}
-              className={`flex-1 py-3 rounded-lg items-center ${newImages.length > 0 && !loading ? 'bg-green-600' : 'bg-slate-300'}`}
-            >
-              {loading ? <ActivityIndicator size="small" color="white" /> : (
-                <Text className="text-[13px] font-black text-white">Upload ({newImages.length})</Text>
-              )}
-            </TouchableOpacity>
+            {/* Footer Buttons */}
+            <View className="flex-row justify-end gap-3">
+              <TouchableOpacity
+                onPress={onClose}
+                className="px-4 py-2.5 rounded-xl justify-center items-center"
+              >
+                <Text className="font-bold text-[#1C252E] text-sm">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={loading || newImages.length === 0}
+                onPress={handleUpload}
+                className="px-5 py-2.5 rounded-xl justify-center items-center"
+                style={{ backgroundColor: newImages.length > 0 && !loading ? '#2EDE56' : '#E2E8F0' }}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Text className={`font-bold text-sm ${newImages.length > 0 ? 'text-white' : 'text-slate-400'}`}>Upload</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
+
+      {/* Confirm Delete Modal */}
+      <Modal visible={deleteConfirmVisible} transparent animationType="fade">
+        <View className="flex-1 justify-center items-center bg-black/60 px-4">
+          <View className="bg-white rounded-[32px] p-6 w-[90%] max-w-sm shadow-2xl">
+            <Text className="text-[18px] font-black text-[#1C252E] mb-2">Confirm Delete</Text>
+            <Text className="text-slate-600 text-sm mb-6 leading-5">Are you sure you want to delete this image?</Text>
+            <View className="flex-row justify-end gap-3">
+              <TouchableOpacity
+                onPress={() => {
+                  setDeleteConfirmVisible(false);
+                  setImageToDeleteIndex(null);
+                }}
+                className="px-4 py-2.5 rounded-xl justify-center items-center"
+              >
+                <Text className="font-bold text-[#1C252E] text-sm">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleConfirmDelete}
+                className="bg-[#FF5630] px-5 py-2.5 rounded-xl justify-center items-center"
+              >
+                <Text className="text-white font-bold text-sm">Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 };

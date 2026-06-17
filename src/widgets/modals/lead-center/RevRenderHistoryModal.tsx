@@ -186,7 +186,7 @@ export const RevRenderHistoryModal = ({
           <View style={styles.header}>
             <View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.headerTitle}>Render #{runs.length - currentIndex}</Text>
+                <Text style={styles.headerTitle}>Render #{currentIndex + 1}</Text>
                 {(currentRun?.runId || currentRun?._id) && (
                   <TouchableOpacity onPress={handleDeletePress} style={{ marginLeft: 12 }}>
                     <Icon name="trash-can-outline" size={22} color="#FF5630" />

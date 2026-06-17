@@ -82,6 +82,7 @@ export default function LFCalculator({ route }: any) {
   const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [showJobBuilder, setShowJobBuilder] = useState(false);
   const [menuVisible, setMenuVisible] = useState<number | null>(null);
+  const [deleteConfirmIdx, setDeleteConfirmIdx] = useState<number | null>(null);
   const [trackerJobs, setTrackerJobs] = useState<any[]>([]);
   const [showTooltip, setShowTooltip] = useState(false);
   const [isDraggingTab, setIsDraggingTab] = useState(false);
@@ -861,7 +862,8 @@ export default function LFCalculator({ route }: any) {
                 <TouchableOpacity
                   onPress={() => {
                     if (menuVisible !== null) {
-                      handleDeleteCalculator(menuVisible).then(() => setMenuVisible(null));
+                      setDeleteConfirmIdx(menuVisible);
+                      setMenuVisible(null);
                     }
                   }}
                   className="flex-row items-center p-3 rounded-xl"
@@ -885,6 +887,64 @@ export default function LFCalculator({ route }: any) {
         </Modal>
       )}
       <LoadingOverlay visible={loading} message={loadingMessage} />
+
+      {/* Delete Calculator Confirmation Modal */}
+      <Modal
+        transparent
+        visible={deleteConfirmIdx !== null}
+        animationType="fade"
+        onRequestClose={() => setDeleteConfirmIdx(null)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+          onPress={() => setDeleteConfirmIdx(null)}
+        >
+          <Pressable
+            style={{
+              width: '100%',
+              maxWidth: 340,
+              backgroundColor: isDark ? '#1C252E' : 'white',
+              borderRadius: 24,
+              padding: 24,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.2,
+              shadowRadius: 20,
+              elevation: 10,
+            }}
+          >
+            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#FF563020', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Feather name="trash-2" size={22} color="#FF5630" />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '900', color: isDark ? '#fff' : '#1C252E', marginBottom: 8 }}>
+              Delete Calculator?
+            </Text>
+            <Text style={{ fontSize: 14, color: isDark ? '#919EAB' : '#637381', marginBottom: 24, lineHeight: 20 }}>
+              {deleteConfirmIdx !== null && calculators[deleteConfirmIdx]
+                ? `Are you sure you want to delete "${calculators[deleteConfirmIdx].name || `Rollout ${deleteConfirmIdx + 1}`}"? This action cannot be undone.`
+                : 'Are you sure you want to delete this calculator? This action cannot be undone.'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => setDeleteConfirmIdx(null)}
+                style={{ flex: 1, height: 48, borderRadius: 14, borderWidth: 1.5, borderColor: isDark ? '#2D3748' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: isDark ? '#919EAB' : '#637381' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (deleteConfirmIdx !== null) {
+                    handleDeleteCalculator(deleteConfirmIdx).then(() => setDeleteConfirmIdx(null));
+                  }
+                }}
+                style={{ flex: 1, height: 48, borderRadius: 14, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '900', color: 'white' }}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <AddEditJobModal
         visible={showAddJobModal}

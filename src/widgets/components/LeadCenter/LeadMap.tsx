@@ -46,10 +46,34 @@ const TAMPA_COORDS = {
   longitude: -82.4572,
 };
 
-// Match web app logic exactly - ONLY check salesRepId
-const isJobOwner = (item: any, uid: string | undefined): boolean => {
-  if (!uid || !item) return false;
-  return item.salesRepId === uid;
+// Match web app logic exactly - check salesRepId and name-based properties
+const isJobOwner = (item: any, user: any): boolean => {
+  if (!user || !item) return false;
+  const uid = typeof user === 'string' ? user : (user._id || user.id);
+  if (!uid) return false;
+
+  const matchesId = !!(
+    item.salesRepId === uid ||
+    item.salesRep === uid ||
+    (item.salesRep && typeof item.salesRep === 'object' && (item.salesRep._id === uid || item.salesRep.id === uid)) ||
+    (item.salesRep && typeof item.salesRep === 'object' && (item.salesRep.id === uid)) ||
+    item.assignedRepId === uid ||
+    (item.assignedRep && typeof item.assignedRep === 'object' && (item.assignedRep._id === uid || item.assignedRep.id === uid))
+  );
+  if (matchesId) return true;
+
+  if (typeof user === 'object') {
+    const repName = (item.salesRepName || item.userName || (typeof item.salesRep === 'string' ? item.salesRep : ''))?.toLowerCase().trim();
+    if (repName) {
+      const userFullName = `${user.firstName || ''} ${user.lastName || ''}`.toLowerCase().trim();
+      const userFirstName = (user.firstName || '').toLowerCase().trim();
+      if (userFullName && (repName === userFullName || repName === userFirstName)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 };
 
 interface LeadMapProps {
@@ -64,7 +88,9 @@ interface LeadMapProps {
   isReferralFilter?: boolean;
   isMyJobsFilter?: boolean;
   isHeatMapFilter?: boolean;
-  onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral') => void;
+  onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral' | 'favorite') => void;
+  searchedJobNumber?: string;
+  onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
 }
 
 
@@ -110,6 +136,8 @@ export const LeadMap = ({
   isMyJobsFilter,
   isHeatMapFilter,
   onToggleFilter,
+  searchedJobNumber,
+  onFavoriteToggle,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
@@ -233,15 +261,13 @@ export const LeadMap = ({
 
       // 3. My Jobs Filter
       if (isMyJobsOnly) {
-        const uid = (user as any)?._id || (user as any)?.id;
-        const isOwner = isJobOwner(item, uid);
+        const isOwner = isJobOwner(item, user);
         if (!isOwner) return false;
       }
 
       // 4. Reference Filter (match web app logic)
       if (isReferralOnly) {
-        const uid = (user as any)?._id || (user as any)?.id;
-        const isMine = isJobOwner(item, uid);
+        const isMine = isJobOwner(item, user);
         const hasReferrals = item.jobReferrals && item.jobReferrals.length > 0;
         if (!hasReferrals) return false;
 
@@ -263,22 +289,47 @@ export const LeadMap = ({
     return result;
   }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads]);
 
-  // ─── Separate favorite and default leads ──────────────────────────────────
-  const { favoriteLeads, defaultLeads } = useMemo(() => {
+  // ─── Separate searched, favorite and default leads ────────────────────────
+  const { searchedLeads, favoriteLeads, defaultLeads } = useMemo(() => {
+    const searched: any[] = [];
     const favorites: any[] = [];
     const defaults: any[] = [];
+
     filteredLeads.forEach(job => {
-      const isFavJob = job.isFavorite || job.isFavourite;
-      if (isFavJob && isFavoriteOnly) {
-        favorites.push(job);
+      const isSearchedJob = searchedJobNumber && job.jobNumber &&
+        job.jobNumber.toLowerCase().trim().includes(searchedJobNumber.toLowerCase().trim());
+
+      if (isSearchedJob) {
+        searched.push(job);
       } else {
-        defaults.push(job);
+        const isFavJob = job.isFavorite || job.isFavourite;
+        if (isFavJob && isFavoriteOnly) {
+          favorites.push(job);
+        } else {
+          defaults.push(job);
+        }
       }
     });
-    return { favoriteLeads: favorites, defaultLeads: defaults };
-  }, [filteredLeads, isFavoriteOnly]);
+    return { searchedLeads: searched, favoriteLeads: favorites, defaultLeads: defaults };
+  }, [filteredLeads, isFavoriteOnly, searchedJobNumber]);
 
   // ─── Create native GeoJSON objects ─────────────────────────────────────────
+  const searchedGeoJson = useMemo(() => {
+    return {
+      type: 'FeatureCollection' as const,
+      features: searchedLeads
+        .filter(job => job.location?.coordinates && job.location.coordinates.length >= 2)
+        .map(job => ({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])]
+          },
+          properties: job
+        }))
+    };
+  }, [searchedLeads]);
+
   const favoriteGeoJson = useMemo(() => {
     return {
       type: 'FeatureCollection' as const,
@@ -319,7 +370,7 @@ export const LeadMap = ({
   // filterKey changes on every filter toggle.
   // This forces a clean remount of ALL markers, which prevents phantom duplicates from prior async renders,
   // but does not include dataVersion so that updating/favoriting single leads does not trigger a full remount.
-  const filterKey = `${isFavoriteOnly}-${isReferralOnly}-${isMyJobsOnly}-${isHeatMapActive}`;
+  const filterKey = `${isFavoriteOnly}-${isReferralOnly}-${isMyJobsOnly}-${isHeatMapActive}-${searchedJobNumber || ''}`;
 
   const [isMapMoving, setIsMapMoving] = useState(false);
 
@@ -455,6 +506,10 @@ export const LeadMap = ({
       if (target) {
         target.isFavourite = nextValue;
         target.isFavorite = nextValue;
+      }
+
+      if (onFavoriteToggle) {
+        onFavoriteToggle(job._id, nextValue);
       }
 
       if (!externalLeads) {
@@ -694,14 +749,11 @@ export const LeadMap = ({
         )}
 
         {/* Lead Markers — ALL leads rendered as memoized native Markers.
-             filterKey on the Fragment forces a complete atomic remount of ALL markers
-             when any filter or data version changes. This prevents the ghost/phantom
-             marker effect that occurs when React incrementally adds/removes markers
-             during filter transitions. During pan/zoom (filterKey unchanged),
-             LeadMarkerMemo's custom comparator skips all 3,000 markers entirely. */}
+             Stable keys on the MemoizedGeojsonOverlay components prevent fully unmounting/remounting
+             the children (which parses and renders 3,000+ points on the map), resulting in quick, smooth filters. */}
         {!isHeatMap && defaultLeads.length > 0 && (
           <MemoizedGeojsonOverlay
-            key={`default-${filterKey}`}
+            key="default-geojson-overlay"
             geojson={defaultGeoJson}
             color="#4CBB17"
             tracksViewChanges={false}
@@ -710,9 +762,18 @@ export const LeadMap = ({
         )}
         {!isHeatMap && favoriteLeads.length > 0 && (
           <MemoizedGeojsonOverlay
-            key={`fav-${filterKey}`}
+            key="fav-geojson-overlay"
             geojson={favoriteGeoJson}
-            color="#e1921d"
+            color="#FFA500"
+            tracksViewChanges={false}
+            onPress={stableMarkerPress}
+          />
+        )}
+        {!isHeatMap && searchedLeads.length > 0 && (
+          <MemoizedGeojsonOverlay
+            key="searched-geojson-overlay"
+            geojson={searchedGeoJson}
+            color="#2390ff"
             tracksViewChanges={false}
             onPress={stableMarkerPress}
           />
@@ -801,7 +862,7 @@ export const LeadMap = ({
               <MapJobCard
                 job={selectedLead}
                 onClose={() => setSelectedLead(null)}
-                isMyJob={isJobOwner(selectedLead, (user as any)?._id || (user as any)?.id)}
+                isMyJob={isJobOwner(selectedLead, user)}
                 onReferencePress={() => {
                   if (onReferencePress) {
                     onReferencePress(selectedLead);
@@ -863,10 +924,11 @@ export const LeadMap = ({
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
             { active: 'MJ', inactive: 'AJ', id: 'MJ-1', type: 'myjobs' as const },
-            { active: 'RF', inactive: 'DEF', id: 'RF-2', type: 'referral' as const }
+            { active: 'RF', inactive: 'DEF', id: 'RF-2', type: 'referral' as const },
+            { active: 'FV', inactive: 'star', id: 'FV-3', type: 'favorite' as const }
           ].map((btn) => {
             const isFilterActive = onToggleFilter
-              ? (btn.type === 'heatmap' ? isHeatMapActive : btn.type === 'myjobs' ? isMyJobsOnly : isReferralOnly)
+              ? (btn.type === 'heatmap' ? isHeatMapActive : btn.type === 'myjobs' ? isMyJobsOnly : btn.type === 'referral' ? isReferralOnly : isFavoriteOnly)
               : activeFilters.includes(btn.id);
             return (
               <MapToggleSwitch
@@ -931,7 +993,7 @@ export const LeadMap = ({
       <MapGalleryModal
         visible={showGallery}
         job={galleryJob}
-        isMyJob={isJobOwner(galleryJob, (user as any)?._id || (user as any)?.id)}
+        isMyJob={isJobOwner(galleryJob, user)}
         onClose={() => setShowGallery(false)}
         onUploadSuccess={fetchAllJobs}
       />
@@ -962,7 +1024,7 @@ export const LeadMap = ({
             setDataVersion((v) => v + 1);
           }
         }}
-        isMyJob={isJobOwner(galleryJob, (user as any)?._id || (user as any)?.id)}
+        isMyJob={isJobOwner(galleryJob, user)}
       />
     </View>
   );

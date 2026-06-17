@@ -46,7 +46,7 @@ export const LeadEndpoints = {
   leadDraft: {
     upsert: (leadId: string) => `lead/v1/${leadId}/drafts`,
     get: (leadId: string) => `lead/v1/${leadId}/draft`,
-    update: (draftId: string) => `lead/v1/draft/${draftId}`,
+    update: (draftId: string) => `lead/v1/drafts/${draftId}`,
   },
   comms: {
     sms: 'comms/v1/sms',

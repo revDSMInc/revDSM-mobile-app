@@ -113,7 +113,7 @@ export const useChatThreads = (
       today.setHours(0, 0, 0, 0);
       result = result.filter((c) => new Date(c.leadDetails?.createdAt) >= today);
     } else if (statusFilter === 'unresultedleads') {
-      const nonResulted = ['lfLead', 'selfGenerated', 'scheduled', 'issued', 'confirmed', 'confirmedIssued'];
+      const nonResulted = ['lfLead', 'lf', 'selfGenerated', 'scheduled', 'issued', 'confirmed', 'confirmedIssued', 'preview'];
       result = result.filter((c) => nonResulted.includes(c.leadDetails?.status || ''));
     } else if (statusFilter === 'pendinginstall') {
       const now = new Date();
@@ -142,6 +142,13 @@ export const useChatThreads = (
     }
 
     if (filterUnread) result = result.filter((c) => c.unreadCount > 0);
+
+    // Sort by most recent date descending (on top basis of date)
+    result.sort((a, b) => {
+      const timeA = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || a.leadDetails?.createdAt || 0).getTime();
+      const timeB = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || b.leadDetails?.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
 
     return result;
   }, [chats, searchQuery, statusFilter, filterUnread]);

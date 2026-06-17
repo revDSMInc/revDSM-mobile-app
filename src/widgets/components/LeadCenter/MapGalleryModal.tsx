@@ -72,12 +72,6 @@ const GalleryImage = React.memo(({ uri, onExpand, onDelete, canDelete }: {
       />
       {imgLoaded && (
         <>
-          <TouchableOpacity
-            onPress={onExpand}
-            className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/40 items-center justify-center"
-          >
-            <Icon name="dots-grid" size={16} color="white" />
-          </TouchableOpacity>
           {canDelete && onDelete && (
             <TouchableOpacity
               onPress={onDelete}
@@ -124,6 +118,13 @@ export const MapGalleryModal = ({
   const [showAfterModal, setShowAfterModal] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
+  const [viewerImgLoaded, setViewerImgLoaded] = useState(false);
+
+  useEffect(() => {
+    setViewerImgLoaded(false);
+  }, [viewerUri]);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [imageToDelete, setImageToDelete] = useState<{ type: 'before' | 'after'; index: number } | null>(null);
 
   // Gesture state for full-screen viewer
   const scale = useSharedValue(1);
@@ -287,6 +288,51 @@ export const MapGalleryModal = ({
     }
   };
 
+  const confirmDeleteDirect = (type: 'before' | 'after', index: number) => {
+    if (type === 'before' && beforeUris.length <= 1) {
+      FlashMessage.warning('At least 1 before image is required.');
+      return;
+    }
+    if (type === 'after' && afterUris.length <= 1) {
+      FlashMessage.warning('At least 1 after image is required.');
+      return;
+    }
+    setImageToDelete({ type, index });
+    setDeleteConfirmVisible(true);
+  };
+
+  const handleDeleteDirect = async () => {
+    if (!imageToDelete) return;
+    const { type, index } = imageToDelete;
+    setDeleteConfirmVisible(false);
+    try {
+      setSaving(true);
+      const img = type === 'before' ? beforeImages[index] : afterImages[index];
+      const filePath = img.filePath || img.s3url || img.secureUrl || img;
+      await LeadService.deleteJobImages({
+        jobNumber: job.jobNumber,
+        companyId: job.companyId,
+        beforeImages: type === 'before' ? [filePath] : [],
+        afterImages: type === 'after' ? [filePath] : [],
+      });
+      if (type === 'before') {
+        setBeforeUris(prev => prev.filter((_, i) => i !== index));
+        setBeforeImages(prev => prev.filter((_, i) => i !== index));
+      } else {
+        setAfterUris(prev => prev.filter((_, i) => i !== index));
+        setAfterImages(prev => prev.filter((_, i) => i !== index));
+      }
+      FlashMessage.success('Image deleted successfully');
+      onUploadSuccess?.();
+    } catch (err) {
+      console.error('Direct delete failed:', err);
+      FlashMessage.error('Failed to delete image. Please try again.');
+    } finally {
+      setSaving(false);
+      setImageToDelete(null);
+    }
+  };
+
   // ─── Save pending deletions and new uploads ────────
   const handleSaveChanges = async () => {
     if (pendingDeletions.length === 0 && newBeforeImages.length === 0 && newAfterImages.length === 0) {
@@ -374,9 +420,6 @@ export const MapGalleryModal = ({
                 {signingUrls && (
                   <ActivityIndicator size="small" color="#94a3b8" />
                 )}
-                <TouchableOpacity onPress={initImages} className="p-2">
-                  <Icon name="refresh" size={20} color="#64748b" />
-                </TouchableOpacity>
                 <TouchableOpacity onPress={onClose} className="p-1">
                   <Icon name="close" size={24} color="#64748b" />
                 </TouchableOpacity>
@@ -416,7 +459,7 @@ export const MapGalleryModal = ({
                           uri={uri}
                           canDelete={isMyJob && beforeUris.length > 1}
                           onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
-                          onDelete={() => handleLocalDelete('before', idx)}
+                          onDelete={() => confirmDeleteDirect('before', idx)}
                         />
                       ))}
                       {newBeforeImages.map((file, idx) => (
@@ -475,7 +518,7 @@ export const MapGalleryModal = ({
                           uri={uri}
                           canDelete={isMyJob && afterUris.length > 1}
                           onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
-                          onDelete={() => handleLocalDelete('after', idx)}
+                          onDelete={() => confirmDeleteDirect('after', idx)}
                         />
                       ))}
                       {newAfterImages.map((file, idx) => (
@@ -564,6 +607,33 @@ export const MapGalleryModal = ({
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* Delete Confirmation Modal */}
+            <Modal visible={deleteConfirmVisible} transparent animationType="fade">
+              <View className="flex-1 justify-center items-center bg-black/60 px-4">
+                <View className="bg-white rounded-[32px] p-6 w-[90%] max-w-sm shadow-2xl">
+                  <Text className="text-[18px] font-black text-[#1C252E] mb-2">Confirm Delete</Text>
+                  <Text className="text-slate-600 text-sm mb-6 leading-5">Are you sure you want to delete this image?</Text>
+                  <View className="flex-row justify-end gap-3">
+                    <TouchableOpacity
+                      onPress={() => {
+                        setDeleteConfirmVisible(false);
+                        setImageToDelete(null);
+                      }}
+                      className="px-4 py-2.5 rounded-xl justify-center items-center"
+                    >
+                      <Text className="font-bold text-[#1C252E] text-sm">Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleDeleteDirect}
+                      className="bg-[#FF5630] px-5 py-2.5 rounded-xl justify-center items-center"
+                    >
+                      <Text className="text-white font-bold text-sm">Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
           </View>
         </View>
       </Modal>
@@ -615,13 +685,20 @@ export const MapGalleryModal = ({
               <Icon name="close" size={30} color="white" />
             </TouchableOpacity>
             {viewerUri && (
-              <GestureDetector gesture={composedGesture}>
-                <Animated.Image
-                  source={{ uri: viewerUri }}
-                  style={[{ width: '100%', height: '100%' }, animatedStyle]}
-                  resizeMode="contain"
-                />
-              </GestureDetector>
+              <>
+                {!viewerImgLoaded && (
+                  <ActivityIndicator size="large" color="#65C216" style={{ position: 'absolute' }} />
+                )}
+                <GestureDetector gesture={composedGesture}>
+                  <Animated.Image
+                    source={{ uri: viewerUri }}
+                    style={[{ width: '100%', height: '100%', opacity: viewerImgLoaded ? 1 : 0 }, animatedStyle]}
+                    resizeMode="contain"
+                    onLoad={() => setViewerImgLoaded(true)}
+                    onError={() => setViewerImgLoaded(true)}
+                  />
+                </GestureDetector>
+              </>
             )}
           </View>
         </GestureHandlerRootView>

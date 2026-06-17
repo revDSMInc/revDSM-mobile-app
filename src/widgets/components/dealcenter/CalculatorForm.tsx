@@ -96,6 +96,7 @@ export const LockedCalculatorView = ({
           borderColor: '#4CBB17',
           borderRadius: 20,
           paddingBottom: 16,
+
         }}>
           {/* Calculator name */}
           <View style={{ paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>

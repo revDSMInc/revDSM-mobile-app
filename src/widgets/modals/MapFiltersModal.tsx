@@ -180,9 +180,9 @@ export const MapFiltersModal = ({
                     className="w-[85px] h-full items-center justify-center flex-row px-2"
                     style={{ backgroundColor: colors.primary.main }}
                   >
-                    <Icon name={searchType === 'location' ? "map-marker" : "pound"} size={18} color="white" />
+                    <Icon name={searchType === 'location' ? "map-marker" : ""} size={18} color="white" />
                     <Text className="text-white font-bold text-[12px] ml-1 uppercase">
-                      {searchType === 'location' ? 'Loc' : 'Job#'}
+                      {searchType === 'location' ? 'Loc' : 'Job #'}
                     </Text>
                     <Icon name={showTypeDropdown ? "chevron-up" : "chevron-down"} size={14} color="white" className="ml-1" />
                   </TouchableOpacity>
@@ -228,6 +228,8 @@ export const MapFiltersModal = ({
                       className="p-3 border-b border-slate-50 flex-row items-center"
                       onPress={() => {
                         setSearchType('location');
+                        setSearchText('');
+                        setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
                         setShowTypeDropdown(false);
                         setSearchResults([]);
                       }}
@@ -239,13 +241,13 @@ export const MapFiltersModal = ({
                       className="p-3 flex-row items-center"
                       onPress={() => {
                         setSearchType('job');
+                        setSearchText('');
                         setShowTypeDropdown(false);
                         setSearchResults([]);
-                        // Clear location coordinates when switching search modes
-                        setLocalFilters((prev) => ({ ...prev, centerCoords: undefined }));
+                        // Clear location coordinates and radius when switching search modes
+                        setLocalFilters((prev) => ({ ...prev, centerCoords: undefined, radius: 0 }));
                       }}
                     >
-                      <Icon name="pound" size={16} color="#64748b" />
                       <Text className="ml-2 font-bold text-[12px] text-slate-700">Job #</Text>
                     </TouchableOpacity>
                   </View>
@@ -463,31 +465,6 @@ export const MapFiltersModal = ({
                   >
                     <View className={`w-4 h-4 bg-white rounded-full ${localFilters.myJobsOnly ? 'self-end' : 'self-start'}`} />
                   </TouchableOpacity>
-
-                  <Icon name="star" size={24} color="#FFA500" />
-                  <TouchableOpacity
-                    onPress={() => {
-                      const nextFav = !localFilters.isFavoriteOnly;
-                      const nextFilters = { ...localFilters, isFavoriteOnly: nextFav, jobNumber: searchText };
-                      setLocalFilters(nextFilters);
-                      onApply(nextFilters);
-                      setSearchResults([]);
-                      onClose();
-                    }}
-                    className="w-11 h-6 rounded-full px-1 justify-center"
-                    style={{ backgroundColor: localFilters.isFavoriteOnly ? colors.primary.main : '#e2e8f0' }}
-                  >
-                    <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isFavoriteOnly ? 'self-end' : 'self-start'}`} />
-                  </TouchableOpacity>
-
-                  {/* <Icon name="account-group" size={24} color="#4CBB17" />
-                <TouchableOpacity 
-                  onPress={() => setLocalFilters({ ...localFilters, isReferralOnly: !localFilters.isReferralOnly })}
-                  className="w-11 h-6 rounded-full px-1 justify-center"
-                  style={{ backgroundColor: localFilters.isReferralOnly ? colors.primary.main : '#e2e8f0' }}
-                >
-                  <View className={`w-4 h-4 bg-white rounded-full ${localFilters.isReferralOnly ? 'self-end' : 'self-start'}`} />
-                </TouchableOpacity> */}
                 </View>
 
                 <TouchableOpacity

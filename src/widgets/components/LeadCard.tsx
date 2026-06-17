@@ -63,7 +63,7 @@ interface LeadState {
 const CARD_COLOR = {
   ACTIVE: '#ff6b35',   // Orange  — Start Appointment
   PROGRESS: '#6fcf97', // Green   — Resume Appointment
-  OFFSITE: '#9e9e9e',  // Gray    — Review Appointment
+  OFFSITE: '#637381',  // Gray    — Review Appointment
   UPCOMING: '#2196f3', // Blue    — Preview Appointment
 };
 
@@ -497,7 +497,7 @@ export function LeadCard({
   return (
     <TouchableOpacity
       activeOpacity={0.9}
-      onPress={handleCardPress}
+      onPress={() => { }}
       className="mb-4 rounded-2xl overflow-hidden border-2"
       style={{
         backgroundColor: isResulted
@@ -524,7 +524,7 @@ export function LeadCard({
           >
             <Text style={{ fontSize: 16, fontWeight: '900', color: '#084f93', letterSpacing: 0 }}>
               L
-              <Text style={{ fontSize: 13, fontWeight: '900', color: '#084f93', letterSpacing: -2 }}>OWE&apos;s</Text>
+              <Text style={{ fontSize: 13, fontWeight: '900', color: '#084f93', letterSpacing: -0.8 }}>OWE&apos;s</Text>
             </Text>
           </View>
         )}

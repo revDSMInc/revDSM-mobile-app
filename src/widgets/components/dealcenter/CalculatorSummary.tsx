@@ -381,6 +381,7 @@ export const CalculatorSummary = ({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 60 }}
+          style={isJobBuilderSubmitted ? { opacity: 0.6 } : undefined}
         >
           <View className="px-5 py-6">
             <View
@@ -596,16 +597,23 @@ export const CalculatorSummary = ({
                       }`}
                   >
                     <Text
-                      className={`text-base font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'
-                        }`}
+                      className={`font-black mr-2 ${activeDrop || isSaved ? 'text-green-600' : 'text-text-secondary'}`}
+                      style={{ fontSize: 16, lineHeight: 20 }}
                     >
                       $
                     </Text>
                     <TextInput
-                      className={`flex-1 font-black text-base ${activeDrop || activeCalc.isRolloutConfirmed
+                      className={`flex-1 font-black p-0 ${activeDrop || activeCalc.isRolloutConfirmed
                         ? 'text-green-600'
                         : 'text-text-primary'
                         }`}
+                      style={{
+                        fontSize: 16,
+                        padding: 0,
+                        margin: 0,
+                        height: 24,
+                        textAlignVertical: 'center',
+                      }}
                       value={activeDrop || activeCalc.isRolloutConfirmed ? String(effectiveEndPrice || '') : priceText}
                       placeholder="Enter End Price"
                       placeholderTextColor="#919EAB"
@@ -658,23 +666,25 @@ export const CalculatorSummary = ({
                             Pre Order {'\n'} Discount
                           </Text>
                           <View className="flex-row items-center">
-                            <Text className="text-[8px] font-bold text-text-secondary mr-1 ">
+                            <Text className="text-[8px] font-bold text-text-secondary mr-1.5">
                               Default
                             </Text>
                             <TouchableOpacity
-                              onPress={() =>
+                              onPress={() => {
+                                const nextVal = !activeCalc.inputs.isDefaultDiscount;
                                 updateActive({
                                   inputs: {
-                                    isDefaultDiscount: !activeCalc.inputs.isDefaultDiscount,
+                                    isDefaultDiscount: nextVal,
                                   },
-                                })
-                              }
-                              className={`w-7 h-4 rounded-full items-center justify-center px-0.5 ${activeCalc.inputs.isDefaultDiscount
+                                });
+                                handleSave();
+                              }}
+                              className={`w-8 h-5 rounded-full justify-center px-1 ${activeCalc.inputs.isDefaultDiscount
                                 ? 'bg-green-500 items-end'
-                                : 'bg-surface items-start'
+                                : 'bg-slate-300 items-start'
                                 }`}
                             >
-                              <View className="w-3 h-3 bg-card rounded-full" />
+                              <View className="w-3 h-3 bg-white rounded-full shadow-sm" />
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -1457,27 +1467,31 @@ export const CalculatorSummary = ({
             }
           };
 
-          const handleCurrentDecline = async () => {
+          const handleCurrentDecline = () => {
             const price = currentDropPrice;
+            // Close drop modal immediately and show declined modal right away
+            if (showDropModal) setShowDropModal(false);
+            if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
+            setDeclinedPrice(price);
+            // Run the async save in the background
             if (isDisplayMode) {
-              await handleDisplayDropAction('declined');
+              handleDisplayDropAction('declined').catch((e) => console.warn('handleDisplayDropAction decline error', e));
             } else {
-              await handleAddDrop('declined');
-              setShowDropModal(false);
+              handleAddDrop('declined').catch((e) => console.warn('handleAddDrop decline error', e));
             }
-            setTimeout(() => {
-              setDeclinedPrice(price);
-            }, 400);
           };
 
-          const handleCurrentAccept = async () => {
-            if (isDisplayMode) {
-              await handleDisplayDropAction('accepted');
-            } else {
-              await handleAddDrop('accepted');
-              setShowDropModal(false);
-            }
+          const handleCurrentAccept = () => {
+            // Close drop modal immediately and show result modal right away
+            if (showDropModal) setShowDropModal(false);
+            if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
             setShowResultModal(true);
+            // Run the async save in the background
+            if (isDisplayMode) {
+              handleDisplayDropAction('accepted').catch((e) => console.warn('handleDisplayDropAction accept error', e));
+            } else {
+              handleAddDrop('accepted').catch((e) => console.warn('handleAddDrop accept error', e));
+            }
           };
 
           return (

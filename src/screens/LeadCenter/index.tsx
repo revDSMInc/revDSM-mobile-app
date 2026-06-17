@@ -95,7 +95,7 @@ const SubModalWrap = ({
   >
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar
-        barStyle={isDark ? 'light-content' : 'dark-content'}
+        barStyle={'light-content'}
         backgroundColor="transparent"
         translucent
         animated={false}
@@ -112,6 +112,10 @@ export default function LeadCenterPage() {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+
+  const [isConsentGenerating, setIsConsentGenerating] = useState(false);
+  const [isWaiverGenerating, setIsWaiverGenerating] = useState(false);
+  const [isInspectionGenerating, setIsInspectionGenerating] = useState(false);
 
   const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted } =
     route.params || {};
@@ -440,10 +444,8 @@ export default function LeadCenterPage() {
       leadId: lead._id,
       chatId: lead.chatId || '',
       customerName: (() => {
-        const isSale = lead.status === 'sale';
         const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
-        return `${lead.office || ''} ${isSale ? lead.leadId : `Lead ${dateStr} - ${lead.leadId || 'N/A'}`
-          }`.trim() || 'Discussion';
+        return `${lead.office || ''} Lead ${dateStr} - ${lead.leadId || 'N/A'}`.trim() || 'Discussion';
       })(),
     });
   };
@@ -520,9 +522,28 @@ export default function LeadCenterPage() {
   const revRenderMutation = useGenerateRevRenderMutation();
 
   const handleConsentSubmit = async (data: any) => {
-    const res = await consentMutation.mutateAsync(data);
-    await refetch();
-    return res;
+    toggleModal('showConsentModal', false);
+    setIsConsentGenerating(true);
+    try {
+      const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
+      await refetch();
+      if (typeof res === 'string') {
+        await finalizeUploadMutation.mutateAsync({
+          leadId: lead?._id,
+          pdfPath: res,
+          reportType: 'consent_form',
+        });
+        await refetch();
+        setTimeout(() => refetch(), 1000);
+        setTimeout(() => refetch(), 3000);
+      }
+      return res;
+    } catch (err) {
+      console.error('Consent Submit Error:', err);
+      FlashMessage.show('Error submitting consent form', 'danger');
+    } finally {
+      setIsConsentGenerating(false);
+    }
   };
 
   const handleCustomerSubmit = async (data: { firstName: string; lastName: string; phone: string; email: string }) => {
@@ -570,14 +591,33 @@ export default function LeadCenterPage() {
   };
 
   const handleWaiverSubmit = async (data: any) => {
-    const res = await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });
-    await refetch();
-    return res;
+    toggleModal('showWaiverModal', false);
+    setIsWaiverGenerating(true);
+    try {
+      const res = await waiverMutation.mutateAsync({ leadId: lead?._id, payload: data });
+      await refetch();
+      if (typeof res === 'string') {
+        await finalizeUploadMutation.mutateAsync({
+          leadId: lead?._id,
+          pdfPath: res,
+          reportType: 'waiver_form',
+        });
+        await refetch();
+        setTimeout(() => refetch(), 1000);
+        setTimeout(() => refetch(), 3000);
+      }
+      return res;
+    } catch (err) {
+      console.error('Waiver Submit Error:', err);
+      FlashMessage.show('Error submitting roof waiver', 'danger');
+    } finally {
+      setIsWaiverGenerating(false);
+    }
   };
 
-
-
   const handleInspectionSubmit = async (data: any) => {
+    toggleModal('showInspectionModal', false);
+    setIsInspectionGenerating(true);
     try {
       FlashMessage.info('Generating inspection report...', 'Generating');
       const token = Storage.getItem('accessToken');
@@ -632,8 +672,6 @@ export default function LeadCenterPage() {
         throw new Error('Generated file is not a valid PDF.');
       }
 
-      handleOpenPdf(pdfPath, 'Inspection Report');
-
       const uploadData = new FormData();
       const finalLeadId = lead?._id || lead?.id || lead?.leadId;
       uploadData.append('leadId', finalLeadId);
@@ -646,10 +684,10 @@ export default function LeadCenterPage() {
       } as any);
 
       await reportMutation.mutateAsync(uploadData);
-      toggleModal('showInspectionModal', false);
       FlashMessage.success('Success', 'Inspection report generated and uploaded.');
-      refetch();
-      handleOpenPdf(pdfPath, 'Inspection Report');
+      await refetch();
+      setTimeout(() => refetch(), 1000);
+      setTimeout(() => refetch(), 3000);
 
       setTimeout(() => {
         Alert.alert(
@@ -669,7 +707,8 @@ export default function LeadCenterPage() {
     } catch (e: any) {
       console.error('Inspection Submit Error:', e);
       FlashMessage.show(e.message || 'Error generating inspection report', 'danger');
-      throw e; // rethrow so that local isGenerating state in the modal resets correctly
+    } finally {
+      setIsInspectionGenerating(false);
     }
   };
 
@@ -882,13 +921,13 @@ export default function LeadCenterPage() {
                 size={14}
                 color="#72BD00"
               />
-              <Text className="ml-1 text-xs font-semibold " style={{ color: colors.primary.main }}>
+              <Text className="ml-1 text-xs font-semibold " style={{ color: "#72BD00" }}>
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
               </Text>
             </TouchableOpacity>
           </View>
           <View
-            className="flex-row px-4 mb-1"
+            className="flex-row px-4 mb-2 mt-1"
             style={{ backgroundColor: isDark ? colors.surface : colors.background }}
           >
             <View className="flex-1 flex-row gap-3 rounded-xl">
@@ -936,6 +975,10 @@ export default function LeadCenterPage() {
                 secureUrls={secureUrls}
                 riskJob={riskJob}
                 revRenderJobs={revRenderJobs}
+                isConsentGenerating={isConsentGenerating}
+                isWaiverGenerating={isWaiverGenerating}
+                isInspectionGenerating={isInspectionGenerating}
+                isCalculatorLoading={loading}
                 onAction={(toolId: string, extra: any) => {
                   if (toolId === 'revrender') {
                     navigation.navigate('RevRender', {
@@ -957,8 +1000,142 @@ export default function LeadCenterPage() {
                   }
                 }}
                 onShowJobBuilder={handleShowJobBuilder}
-                onShowCalculator={() => {
-                  navigation.navigate('DealCenter', { lead });
+                onShowCalculator={async () => {
+                  try {
+                    setLoading(true);
+                    let activeLead = leadRef.current || lead;
+                    if (!activeLead?.leadId || !activeLead?.customerDetails?.firstName) {
+                      await refetch();
+                      activeLead = leadRef.current || lead;
+                    }
+                    if (!activeLead?._id) throw new Error('Lead ID is missing');
+
+                    const dateStr =
+                      activeLead.leadDate || activeLead.appointmentDate || activeLead.date || new Date().toISOString();
+                    const finalLeadDate = activeLead.leadDate
+                      ? activeLead.leadDate
+                      : dateStr.split('T')[0] + 'T00:00:00+05:00';
+
+                    let res = await LeadService.getAppointments({ lead_date: finalLeadDate });
+                    let appointments = res.data?.data || res.data || [];
+                    const targetTitle =
+                      activeLead.title ||
+                      `${activeLead.customerDetails?.firstName || ''} ${activeLead.customerDetails?.lastName || ''}`.trim() ||
+                      'test user';
+
+                    const findMyAppt = (list: any[]) =>
+                      list.find(
+                        (a: any) =>
+                          a.selfGenLeadId === activeLead._id ||
+                          a.leadId === activeLead._id ||
+                          a._id === activeLead.appointmentId ||
+                          a.id === activeLead.appointmentId ||
+                          a.title?.trim().toLowerCase() === targetTitle.trim().toLowerCase()
+                      );
+                    let myAppt = findMyAppt(appointments);
+
+                    if (!myAppt) {
+                      await LeadService.createAppointment({
+                        title: targetTitle,
+                        address: activeLead.customerDetails?.address || 'N/A',
+                        leadId: activeLead.leadId || 'N/A',
+                        selfGenLeadId: activeLead._id,
+                      });
+                      res = await LeadService.getAppointments({ lead_date: finalLeadDate });
+                      appointments = res.data?.data || res.data || [];
+                      myAppt = findMyAppt(appointments);
+                    }
+
+                    if (!myAppt) throw new Error('Appointment could not be resolved or created.');
+
+                    const apptId = myAppt._id;
+                    const calcRes = await LeadService.getCalculators(apptId);
+                    let calculatorsData = calcRes.data?.data || calcRes.data || [];
+
+                    if (calculatorsData.length === 0) {
+                      const isLowesLead = activeLead.lowesLead === true;
+                      const defaultPay = user?.defaultPaymentMethod || (isLowesLead ? 'lowes_ach' : 'check');
+
+                      const INITIAL_INPUTS = {
+                        gutter5DsE: '',
+                        gutter6Ft1: '',
+                        gutter7DsE: '',
+                        miters: '',
+                        endCaps: '',
+                        spoutSavers: '',
+                        versaMaxFt1: '',
+                        versaMaxFt2: '',
+                        versaMaxFt3: '',
+                        versa6Ft1: '',
+                        versa7Ft1: '',
+                        filter45Ft1: '',
+                        versa6Ft2: '',
+                        versa7Ft2: '',
+                        filter45Ft2: '',
+                        versa6Ft3: '',
+                        versa7Ft3: '',
+                        filter45Ft3: '',
+                        ckToInstallers: '',
+                        extraLabor: '',
+                        markup: '100',
+                        paymentPlan: defaultPay,
+                        price: 0,
+                        isLocked: false,
+                        discountPercentage: 15,
+                        isDefaultDiscount: true,
+                      };
+
+                      const INITIAL_EXTRAS = {
+                        lighting1stStory: '',
+                        lighting2ndStory: '',
+                        lighting3rdStory: '',
+                        lightingControlBox: '',
+                        foamInserts: '',
+                        screenRemoval: '',
+                        fasciaBoard: '',
+                        soffitRepairs: '',
+                        dripEdge: '',
+                        tuckPointing: '',
+                        cappingWrapping: '',
+                        underDecking: '',
+                        heatCable: '',
+                        waterMitigation: '',
+                        otherFees: '',
+                        commercialPremium: '',
+                        ladderSurcharge: '',
+                      };
+
+                      const leadName = `${activeLead.customerDetails?.firstName || ''} ${activeLead.customerDetails?.lastName || ''
+                        }`.trim();
+                      const fullPayload = {
+                        title: leadName || '.',
+                        position: 1,
+                        ...INITIAL_INPUTS,
+                        paymentPlan: defaultPay,
+                        paymentMethod: defaultPay,
+                        pricemarkup: '100',
+                        ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
+                        price: 0,
+                      };
+                      await LeadService.createCalculator(apptId, fullPayload);
+                      const reCalcRes = await LeadService.getCalculators(apptId);
+                      calculatorsData = reCalcRes.data?.data || reCalcRes.data || [];
+                    }
+
+                    if (calculatorsData.length === 0) {
+                      throw new Error('Calculator data is empty.');
+                    }
+
+                    setLoading(false);
+                    navigation.navigate('DealCenter', { lead });
+                  } catch (err) {
+                    setLoading(false);
+                    Alert.alert(
+                      'Calculator Error',
+                      'Failed to load calculator data. Please check your network connection and try again.'
+                    );
+                    console.warn('Failed to pre-initialize calculator:', err);
+                  }
                 }}
                 onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
                 onShowRooflineDeck={() => navigation.navigate('RooflineDeck', { lead })}

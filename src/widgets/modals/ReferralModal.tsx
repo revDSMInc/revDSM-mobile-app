@@ -380,15 +380,17 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                 </View>
  
                 <View className="flex-row items-center justify-end mb-6">
-                  <Switch
-                    value={form.referralToggle}
-                    onValueChange={(v) => {
-                      if (mode !== 'VIEW') setForm({...form, referralToggle: v});
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (mode !== 'VIEW') setForm({...form, referralToggle: !form.referralToggle});
                     }}
                     disabled={isViewMode}
-                    trackColor={{ false: '#e2e8f0', true: '#4CBB17' }}
-                    thumbColor="white"
-                  />
+                    className={`w-8 h-5 rounded-full justify-center px-1 ${
+                      form.referralToggle ? 'bg-green-500 items-end' : 'bg-slate-300 items-start'
+                    }`}
+                  >
+                    <View className="w-3.5 h-3.5 rounded-full bg-white shadow-sm" />
+                  </TouchableOpacity>
                   <Text className="ml-3 text-[14px] font-bold text-slate-400">Reference</Text>
                 </View>
               </View>

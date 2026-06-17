@@ -62,10 +62,8 @@ export default function ChatThreadsScreen({ navigation }: any) {
             leadId: item.leadDetails?._id,
             chatId: item._id || item.id,
             customerName: (() => {
-              const isSale = item.leadDetails?.status === 'sale';
               const dateStr = item.leadDetails?.leadDate ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy') : '';
-              return `${item.leadDetails?.office || ''} ${isSale ? item.leadDetails?.leadId : `Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`
-                }`.trim() || 'Discussion';
+              return `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() || 'Discussion';
             })(),
             chatType: 'lead',
             initialParticipants: item.participants || [],
@@ -239,16 +237,16 @@ export default function ChatThreadsScreen({ navigation }: any) {
         renderItem={renderItem}
         ListFooterComponent={<SafeBottomSpacer height={40} />}
         ListEmptyComponent={
-          <View className="py-20 items-center">
+          <View className="pt-[30%] items-center">
             {loading ? (
               <ActivityIndicator color={colors.primary.main} />
             ) : (
               <>
                 <Icon
                   name={mainTab === 'myleads' ? 'chatbubble-ellipses-outline' : 'people-outline'}
-                  size={52}
+                  size={64}
                   color={colors.textSecondary}
-                  style={{ opacity: 0.4 }}
+                  style={{ opacity: 0.7 }}
                 />
                 <Text
                   className="mt-4 text-xs text-center"

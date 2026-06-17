@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated, StyleSheet } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface MapToggleSwitchProps {
   value: boolean;
@@ -44,7 +45,13 @@ export const MapToggleSwitch = ({
       >
         <Animated.View style={[styles.background, { backgroundColor }]}>
           <View style={styles.labelsContainer}>
-            {!value && <Text style={styles.labelInactive}>{inactiveLabel}</Text>}
+            {!value && (
+              inactiveLabel === 'star' ? (
+                <Icon name="star" size={13} color="#FFA500" style={styles.iconInactive} />
+              ) : (
+                <Text style={styles.labelInactive}>{inactiveLabel}</Text>
+              )
+            )}
             {value && <Text style={styles.labelActive}>{activeLabel}</Text>}
           </View>
 
@@ -100,6 +107,10 @@ const styles = StyleSheet.create({
     color: '#64748b',
     position: 'absolute',
     bottom: 10,
+  },
+  iconInactive: {
+    position: 'absolute',
+    bottom: 8,
   },
   circle: {
     width: 26,

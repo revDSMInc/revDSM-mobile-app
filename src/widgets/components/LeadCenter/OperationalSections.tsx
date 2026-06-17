@@ -17,9 +17,14 @@ export const ToolsSection = ({
   onShowPitchbook,
   onShowRooflineDeck,
   revRenderJobs = [],
+  isConsentGenerating,
+  isWaiverGenerating,
+  isInspectionGenerating,
+  isCalculatorLoading,
 }: any) => {
   const { colors, isDark } = useTheme();
   const { data: runs, isLoading, refetch: refetchRuns } = useRevRenderRunsQuery(lead?._id || '');
+  const orderedRuns = React.useMemo(() => (runs ? [...runs].reverse() : []), [runs]);
 
   const [historyModal, setHistoryModal] = useState({ visible: false, index: 0 });
   const [selectedYear, setSelectedYear] = useState(3);
@@ -66,12 +71,14 @@ export const ToolsSection = ({
         icon={consentReport ? 'file-check' : 'file-document-edit'}
         onPress={handleConsentPress}
         isGenerated={!!consentReport}
+        isLoading={isConsentGenerating}
       />
       <ToolCard
         title="Deal Center"
         desc="Gutter measurements helper"
         icon="handshake"
         onPress={onShowCalculator}
+        isLoading={isCalculatorLoading}
       />
       <TouchableOpacity
         onPress={() => onAction('revrender')}
@@ -130,10 +137,10 @@ export const ToolsSection = ({
         {isLoading ? (
           <View className="flex-row">
             {[1, 2, 3].map((i) => (
-              <View
+              <PulsingSkeleton
                 key={i}
-                className="w-20 h-16 rounded-xl mr-3 bg-slate-200 animate-pulse"
-                style={{ backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }}
+                isDark={isDark}
+                label=""
               />
             ))}
           </View>
@@ -144,8 +151,8 @@ export const ToolsSection = ({
               <PulsingSkeleton key={`skeleton-${idx}`} isDark={isDark} />
             ))}
 
-            {runs && runs.length > 0 ? (
-              runs.map((run: any, idx: number) => (
+            {orderedRuns && orderedRuns.length > 0 ? (
+              orderedRuns.map((run: any, idx: number) => (
                 <TouchableOpacity
                   key={idx}
                   onPress={() => setHistoryModal({ visible: true, index: idx })}
@@ -275,48 +282,34 @@ export const ToolsSection = ({
           </Text>
         )}
       </View>
-      <View
-        className="p-3 rounded-lg flex-col mb-4 border"
-        style={{
-          borderColor: '#919EAB33',
-          backgroundColor: colors.background,
+      <ToolCard
+        title="Inspection Report"
+        desc={inspectionReport ? 'View Inspection PDF' : 'Generate inspection report'}
+        icon={inspectionReport ? 'file-check' : 'clipboard-text'}
+        onPress={() => {
+          if (inspectionReport) {
+            onAction('inspection-preview', secureUrls[inspectionReport.reportPath] || inspectionReport.fileUrl);
+          } else {
+            onAction('inspection');
+          }
         }}
-      >
-        <View className="flex-row justify-between items-center">
-          <View
-            className="w-8 h-8 rounded-full items-center justify-center"
-            style={{ backgroundColor: '#919EAB1F' }}
-          >
-            <Icon name="clipboard-text" size={16} color={'#637381'} />
-          </View>
-          <View className="flex-1 ml-4">
-            <Text className="text-sm font-semibold" style={{ color: '#1C252E' }}>
-              Inspection Report
-            </Text>
-          </View>
-          <View className="flex-row items-center gap-3">
-            <TouchableOpacity
-              onPress={() => onAction('inspection')}
-              className="w-8 h-8 rounded-full items-center justify-center"
-              style={{ backgroundColor: colors.primary.main }}
-            >
-              <Icon name="plus" size={16} color={'#ffffff'} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+        onDownload={inspectionReport ? () => onAction('inspection-download', secureUrls[inspectionReport.reportPath] || inspectionReport.fileUrl) : undefined}
+        isGenerated={!!inspectionReport}
+        isLoading={isInspectionGenerating}
+      />
       <ToolCard
         title="Roof Waiver"
         desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
         icon={waiverReport ? 'file-check' : 'home-roof'}
         onPress={handleWaiverPress}
         isGenerated={!!waiverReport}
+        isLoading={isWaiverGenerating}
       />
 
       <RevRenderHistoryModal
         visible={historyModal.visible}
         onClose={() => setHistoryModal({ ...historyModal, visible: false })}
-        runs={runs || []}
+        runs={orderedRuns}
         initialIndex={historyModal.index}
         leadId={lead?._id}
         onDeleteSuccess={refetchRuns}
@@ -325,7 +318,7 @@ export const ToolsSection = ({
   );
 };
 
-const PulsingSkeleton = ({ isDark }: { isDark: boolean }) => {
+const PulsingSkeleton = ({ isDark, label = 'AI\nRendering' }: { isDark: boolean; label?: string }) => {
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -353,7 +346,9 @@ const PulsingSkeleton = ({ isDark }: { isDark: boolean }) => {
         opacity: opacity
       }}
     >
-      <Text className="text-[8px] font-black text-slate-400 uppercase tracking-tighter text-center">AI{"\n"}Rendering</Text>
+      {label ? (
+        <Text className="text-[8px] font-black text-slate-400 uppercase tracking-tighter text-center">{label}</Text>
+      ) : null}
     </Animated.View>
   );
 };
@@ -383,7 +378,7 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 };
 
 
-const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated }: any) => {
+const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
   const { colors, isDark } = useTheme();
   return (
     <View
@@ -391,14 +386,19 @@ const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated }: any) 
       style={{
         borderColor: '#919EAB33',
         backgroundColor: isDark ? colors.surface : colors.background,
+        opacity: isLoading ? 0.6 : 1,
       }}
     >
-      <TouchableOpacity onPress={onPress} className="flex-1 flex-row items-center">
+      <TouchableOpacity onPress={onPress} disabled={isLoading} className="flex-1 flex-row items-center">
         <View
           className="w-8 h-8 rounded-full items-center justify-center"
           style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
         >
-          <Icon name={icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
+          {isLoading ? (
+            <ActivityIndicator size="small" color={colors.primary.main} />
+          ) : (
+            <Icon name={icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
+          )}
         </View>
         <View className="flex-1 ml-4">
           <Text
@@ -408,14 +408,17 @@ const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated }: any) 
             {title}
           </Text>
         </View>
-        {isGenerated && (
+        {isLoading && (
+          <ActivityIndicator size="small" color={colors.primary.main} style={{ marginRight: 8 }} />
+        )}
+        {isGenerated && !isLoading && (
           <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2">
             <Text className="text-[10px] font-semibold text-violet-700">Already Generated</Text>
           </View>
         )}
       </TouchableOpacity>
 
-      {onDownload && (
+      {onDownload && !isLoading && (
         <TouchableOpacity
           onPress={onDownload}
           className="w-8 h-8 rounded-full items-center justify-center bg-emerald-500"

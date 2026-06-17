@@ -62,7 +62,7 @@ export const ContractDetailsCard = ({
       className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 overflow-hidden"
       style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
     >
-      {leadDraft?.status?.toLowerCase() === 'pending' ? (
+      {(leadDraft?.showStatus === true || leadDraft?.showStatus === 'true') ? (
         <View className="bg-[#F4B400] py-2.5 items-center justify-center px-4">
           <Text className="text-[#1C252E] font-black text-xs tracking-widest uppercase text-center">
             SALE - PENDING CUSTOMER SIGNATURE

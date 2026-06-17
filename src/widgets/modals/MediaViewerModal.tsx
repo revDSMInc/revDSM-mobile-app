@@ -60,6 +60,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   useTheme();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
   const [paused] = useState(false);
   const videoRef = useRef<any>(null);
 
@@ -95,8 +96,11 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   ).current;
 
   useEffect(() => {
-    if (isVisible) translateY.setValue(0);
-  }, [isVisible, translateY]);
+    if (isVisible) {
+      translateY.setValue(0);
+      setImageLoading(true);
+    }
+  }, [isVisible, translateY, mediaUri]);
 
   // ─── Permissions ────────────────────────────────────────────────────────────
   const hasAndroidPermission = async () => {
@@ -149,6 +153,20 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
       }
     }
 
+    const saveToCameraRollWithRetry = async (tag: string, type: 'photo' | 'video', retries = 2, delayMs = 1000) => {
+      for (let i = 0; i <= retries; i++) {
+        try {
+          await CameraRoll.saveAsset(tag, { type });
+          return true;
+        } catch (err) {
+          if (i === retries) throw err;
+          console.log(`Save attempt ${i + 1} failed, retrying in ${delayMs}ms...`, err);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      return false;
+    };
+
     setLoading(true);
     try {
       const ext = mediaType === 'image' ? 'jpg' : 'mp4';
@@ -156,7 +174,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
       const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri);
       const rawPath = res.path();
       const saveTag = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
-      await CameraRoll.saveAsset(saveTag, { type: mediaType === 'image' ? 'photo' : 'video' });
+      await saveToCameraRollWithRetry(saveTag, mediaType === 'image' ? 'photo' : 'video');
       Alert.alert('Success', 'Saved to gallery!');
     } catch (err) {
       console.error('Save failed:', err);
@@ -207,11 +225,23 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
           className="justify-center items-center"
         >
           {mediaType === 'image' ? (
-            <Image
-              source={{ uri: mediaUri }}
-              style={{ width: SCREEN_WIDTH, height: '100%' }}
-              resizeMode="contain"
-            />
+            <View className="justify-center items-center relative w-full h-full">
+              <Image
+                source={{ uri: mediaUri }}
+                style={{ width: SCREEN_WIDTH, height: '100%' }}
+                resizeMode="contain"
+                onLoadStart={() => setImageLoading(true)}
+                onLoadEnd={() => setImageLoading(false)}
+              />
+              {imageLoading && (
+                <ActivityIndicator
+                  size="large"
+                  color="#ffffff"
+                  className="absolute"
+                  style={{ position: 'absolute' }}
+                />
+              )}
+            </View>
           ) : (
             <View style={{ width: SCREEN_WIDTH, height: '100%' }}>
               {Video ? (

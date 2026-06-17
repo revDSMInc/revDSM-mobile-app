@@ -15,13 +15,14 @@ import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
 import Svg, { Path } from 'react-native-svg';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
-import { FlashMessage } from '../../../config/message';
+import { FlashMessage as GlobalFlashMessage } from '../../../config/message';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
-import { Share, ActivityIndicator } from 'react-native';
+import { Share, ActivityIndicator, Linking } from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
 import Pdf from 'react-native-pdf';
 import { Dimensions } from 'react-native';
+import RNFlashMessage from 'react-native-flash-message';
 
 interface RoofWaiverModalProps {
   visible: boolean;
@@ -51,6 +52,43 @@ export const RoofWaiverModal = ({
 }: RoofWaiverModalProps) => {
   const { colors } = useTheme();
 
+  const flashRef = React.useRef<RNFlashMessage>(null);
+  const FlashMessage = {
+    success: (title: string, description: string = '') => {
+      flashRef.current?.showMessage({
+        message: title,
+        description,
+        type: 'success',
+        icon: 'success',
+        duration: 3000,
+        floating: true,
+        style: { zIndex: 9999, elevation: 9999 },
+      });
+    },
+    error: (title: string, description: string = 'Something went wrong') => {
+      flashRef.current?.showMessage({
+        message: title,
+        description,
+        type: 'danger',
+        icon: 'danger',
+        duration: 4000,
+        floating: true,
+        style: { zIndex: 9999, elevation: 9999 },
+      });
+    },
+    show: (title: string, description: string = '', type: any = 'info') => {
+      flashRef.current?.showMessage({
+        message: title,
+        description,
+        type,
+        icon: type,
+        duration: 3000,
+        floating: true,
+        style: { zIndex: 9999, elevation: 9999 },
+      });
+    },
+  };
+
   const [padLayout, setPadLayout] = useState({ width: Dimensions.get('window').width - 64, height: 260 });
 
   const {
@@ -68,7 +106,7 @@ export const RoofWaiverModal = ({
     handleFinalSubmit,
     submissionType,
     clearSig,
-  } = useRoofWaiver(lead, onSubmit, onFinalUpload, onClose, prefilledData);
+  } = useRoofWaiver(lead, onSubmit, onFinalUpload, onClose, prefilledData, flashRef);
 
   const openSigPad = () => {
     setLivePaths([...savedPaths]);
@@ -191,18 +229,18 @@ export const RoofWaiverModal = ({
               </Text>
             </View>
 
-            {renderField('First Name', formData.firstName, 'firstName', undefined, true)}
-            {renderField('Phone Number', formData.phoneNumber, 'phoneNumber', undefined, true)}
-            {renderField('Email Address', formData.email, 'email', undefined, true)}
-            {renderField('Lead ID', formData.leadId, 'leadId')}
-            {renderField('Rep Name', formData.repName, 'repName')}
-            {renderField('Office Code', formData.officeCode, 'officeCode')}
-            {renderField('Time', formData.time, 'time', 'clock-outline')}
-            {renderField('Date', formData.date, 'date', 'calendar-range')}
-            {renderField('Address', formData.address, 'address', undefined, true)}
+            {renderField('First Name*', formData.firstName, 'firstName', undefined, true)}
+            {renderField('Phone Numberß*', formData.phoneNumber, 'phoneNumber', undefined, true)}
+            {renderField('Email Address*', formData.email, 'email', undefined, true)}
+            {renderField('Lead ID*', formData.leadId, 'leadId')}
+            {renderField('Rep Name*', formData.repName, 'repName')}
+            {renderField('Office Code*', formData.officeCode, 'officeCode')}
+            {renderField('Time*', formData.time, 'time', 'clock-outline')}
+            {renderField('Date*', formData.date, 'date', 'calendar-range')}
+            {renderField('Address*', formData.address, 'address', undefined, true)}
 
             <View style={styles.signatureSection}>
-              <Text style={styles.signatureLabel}>Customer Signature</Text>
+              <Text style={styles.signatureLabel}>Customer Signature *</Text>
               <TouchableOpacity
                 onPress={openSigPad}
                 activeOpacity={0.8}
@@ -230,11 +268,9 @@ export const RoofWaiverModal = ({
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              onPress={() => setFormData((p) => ({ ...p, consent: !p.consent }))}
-              style={styles.checkboxRow}
-            >
-              <View
+            <View style={styles.checkboxRow}>
+              <TouchableOpacity
+                onPress={() => setFormData((p) => ({ ...p, consent: !p.consent }))}
                 style={[
                   styles.checkbox,
                   {
@@ -244,14 +280,18 @@ export const RoofWaiverModal = ({
                 ]}
               >
                 {formData.consent && <MaterialIcon name="check" size={14} color="white" />}
-              </View>
+              </TouchableOpacity>
               <View>
-                <Text style={styles.checkboxText}>I agree to electronic Signature.</Text>
-                <Text style={[styles.checkboxLinks, { color: colors.primary.main }]}>
-                  Privacy Policy | LeafFilter
-                </Text>
+                <TouchableOpacity onPress={() => setFormData((p) => ({ ...p, consent: !p.consent }))}>
+                  <Text style={styles.checkboxText}>I agree to electronic Signature.</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => Linking.openURL('https://leafhome.trusthub.com/privacypolicy')}>
+                  <Text style={[styles.checkboxLinks, { color: colors.primary.main }]}>
+                    Privacy Policy | LeafFilter
+                  </Text>
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
+            </View>
 
             <View style={styles.footerRow}>
               <TouchableOpacity onPress={onClose} style={styles.cancelBtn}>
@@ -460,6 +500,7 @@ export const RoofWaiverModal = ({
           saveSig={saveSig}
           onPadLayout={(e: any) => setPadLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
         />
+        <RNFlashMessage ref={flashRef} position="top" />
       </View>
     </Modal>
   );

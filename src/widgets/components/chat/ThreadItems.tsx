@@ -19,10 +19,10 @@ export function MainTabOption({ label, active, onPress, count }: any) {
       style={
         active
           ? {
-              backgroundColor: isDark ? '#1e293b' : '#ffffff',
-              borderBottomWidth: 2,
-              borderColor: isDark ? '#1e293b' : colors.primary.main,
-            }
+            backgroundColor: isDark ? '#1e293b' : '#ffffff',
+            borderBottomWidth: 2,
+            borderColor: isDark ? '#1e293b' : colors.primary.main,
+          }
           : {}
       }
     >
@@ -93,10 +93,9 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
   const { colors, isDark } = useTheme();
   const { leadDetails, unreadCount, recentMessages, lastMessageAt } = chat;
 
-  const isSale = leadDetails?.status === 'sale';
   const dateStr = leadDetails?.leadDate ? format(new Date(leadDetails.leadDate), 'MM.dd.yy') : '';
   const heading =
-    `${leadDetails?.office || ''} ${isSale ? leadDetails?.leadId : `Lead ${dateStr}`}`.trim() ||
+    `${leadDetails?.office || ''} Lead ${dateStr}`.trim() ||
     'Discussion';
 
   const lastMsg = recentMessages?.[0];
@@ -116,8 +115,8 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
               ? 'rgba(37,99,235,0.1)'
               : '#ffffff'
             : isDark
-            ? '#0f172a'
-            : '#ffffff',
+              ? '#0f172a'
+              : '#ffffff',
         borderWidth: unreadCount > 0 ? 0 : 1,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },

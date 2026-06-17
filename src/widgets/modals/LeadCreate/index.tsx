@@ -33,7 +33,7 @@ import { format } from 'date-fns';
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSuccess: (createdLead?: any) => void;
+  onSuccess: (createdLead?: any, leadType?: 'selfGen' | 'lf_lead') => void;
   user: any;
   fromZone?: boolean;
   zoneId?: string;
@@ -322,6 +322,7 @@ export default function LeadCreateModal({
     }
 
     try {
+      Keyboard.dismiss();
       const payload = isLF
         ? {
           leadType: 'lfLead',
@@ -395,11 +396,16 @@ export default function LeadCreateModal({
         status: 'selfGenerated',
       } : null;
 
-      onSuccess(createdLead);
-      onClose();
+      onSuccess(createdLead, form.leadType);
+      handleClose();
     } catch (err: any) {
       showError('Error', err?.message || 'Failed to create lead');
     }
+  };
+
+  const handleClose = () => {
+    Keyboard.dismiss();
+    onClose();
   };
 
   return (
@@ -430,7 +436,7 @@ export default function LeadCreateModal({
                 Fill in the customer details below
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} className="p-2">
+            <TouchableOpacity onPress={handleClose} className="p-2">
               <Text className="text-3xl font-light" style={{ color: colors.textSecondary }}>
                 ×
               </Text>

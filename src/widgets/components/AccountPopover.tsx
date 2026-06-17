@@ -62,7 +62,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
               className="p-3 rounded-2xl"
             >
               <Text
-                className="text-[13px] font-black  tracking-widest"
+                className="text-[13px] font-medium  tracking-widest"
                 style={{ color: colors.text }}
               >
                 Account Settings
@@ -77,7 +77,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
               className="p-3 rounded-2xl"
             >
               <Text
-                className="text-[13px] font-black  tracking-widest"
+                className="text-[13px] font-medium  tracking-widest"
                 style={{ color: colors.text }}
               >
                 Job Tracker
@@ -92,7 +92,7 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
               className={`p-3 rounded-2xl ${hasLmsPermission ? '' : 'opacity-40'}`}
             >
               <Text
-                className="text-[13px] font-black  tracking-widest"
+                className="text-[13px] font-medium tracking-widest"
                 style={{ color: colors.text }}
               >
                 My Learning
@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
   },
   container: {
     width: 224,
-    borderRadius: 24,
+    borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },

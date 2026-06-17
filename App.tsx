@@ -1,6 +1,6 @@
 import './global.css';
 import React from 'react';
-import { Text, TextInput, View, StyleSheet, StatusBar } from 'react-native';
+import { Text, TextInput, View, StyleSheet, StatusBar, Platform } from 'react-native';
 
 // Professional Global Font Injection for RN 0.84+
 // This ensures Public Sans is the baseline for EVERYTHING.
@@ -24,7 +24,7 @@ const applyGlobalFont = (Component: any) => {
 applyGlobalFont(Text);
 applyGlobalFont(TextInput);
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Provider as ReduxProvider } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from './src/redux/store';
@@ -42,14 +42,31 @@ import { queryClient } from './src/services/api/queryClient';
 function AppContent() {
   useAppInitialization();
   const { isDark, colors } = useTheme();
+  const insets = useSafeAreaInsets();
   // Connect the global socket once — persists across all screens
   useSocketManager();
+
+  const statusBarBg = isDark ? colors.background : '#101828';
+
   return (
     <QueryClientProvider client={queryClient}>
       <StatusBar
-        barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={colors.background}
+        barStyle="light-content"
+        backgroundColor={statusBarBg}
       />
+      {Platform.OS === 'ios' && (
+        <View
+          style={{
+            height: insets.top,
+            backgroundColor: statusBarBg,
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+          }}
+        />
+      )}
       <NavigationContainer>
         <RootNavigator />
       </NavigationContainer>

@@ -15,6 +15,7 @@ export interface JobEntry {
   isManual: boolean;
   appointmentId?: string;
   calculatorId?: string;
+  leadId?: string;
   status?: 'unpaid' | 'paid' | 'cancelled' | 'bank decline';
 }
 

@@ -12,6 +12,7 @@ interface PendingConfirmItem {
   paymentMethod?: string;
   pricemarkup?: string;
   discounts?: any;
+  retryCount?: number;
 }
 
 const STORAGE_KEY = 'REV_DSM_PENDING_CONFIRM_CALCULATORS';
@@ -29,7 +30,7 @@ const saveQueue = (queue: Record<string, PendingConfirmItem>) => {
   try {
     storage.set(STORAGE_KEY, JSON.stringify(queue));
   } catch (e) {
-    console.error('[AutoConfirmManager] Failed to save queue to MMKV', e);
+    console.warn('[AutoConfirmManager] Failed to save queue to MMKV', e);
   }
 };
 
@@ -54,6 +55,7 @@ export const autoConfirmManager = {
           paymentMethod: calc.inputs?.paymentPlan || calc.paymentMethod || 'check',
           pricemarkup: calc.inputs?.markup || calc.pricemarkup || '100',
           discounts: calc.discounts || {},
+          retryCount: 0,
         };
         saveQueue(queue);
         console.log(`[AutoConfirmManager] Registered calculator ${calc._id} for auto-confirmation at ${new Date(queue[calc._id].timestamp).toLocaleTimeString()}`);
@@ -127,12 +129,21 @@ export const autoConfirmManager = {
             DeviceEventEmitter.emit('calculatorAutoConfirmed', { calculatorId: calcId });
             console.log(`[AutoConfirmManager] Successfully auto-confirmed calculator ${calcId}.`);
           } catch (err: any) {
-            console.error(`[AutoConfirmManager] Failed to auto-confirm calculator ${calcId}:`, err);
-            // If calculator is deleted (404), remove it from queue
-            if (err?.response?.status === 404 || err?.status === 404) {
+            console.warn(`[AutoConfirmManager] Failed to auto-confirm calculator ${calcId}:`, err?.message || err);
+            
+            // Increment retry count
+            item.retryCount = (item.retryCount || 0) + 1;
+            
+            // If retry limit reached (e.g., 3), or if it's a validation error (400) or auth/not found error
+            const status = err?.response?.status || err?.status;
+            if (item.retryCount >= 3 || status === 400 || status === 401 || status === 403 || status === 404) {
               delete queue[calcId];
               saveQueue(queue);
-              console.log(`[AutoConfirmManager] Calculator ${calcId} returned 404. Removed from queue.`);
+              console.log(`[AutoConfirmManager] Calculator ${calcId} auto-confirm failed permanently (status: ${status}, retries: ${item.retryCount}). Removed from queue.`);
+            } else {
+              // Save updated retry count back to queue
+              queue[calcId] = item;
+              saveQueue(queue);
             }
           }
         }

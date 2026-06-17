@@ -184,8 +184,7 @@ export const MapJobCard = ({
 
           {/* Upload: Only for Owner and if no images yet */}
           {isMyJob &&
-            !(job.images?.beforeImages?.length > 0) &&
-            !(job.images?.afterImages?.length > 0) && (
+            !(job.images?.beforeImages?.length > 0 && job.images?.afterImages?.length > 0) && (
               <TouchableOpacity
                 onPress={() => onCameraPress?.(job)}
                 className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"

@@ -323,6 +323,11 @@ export const useDealCalculator = (lead: any) => {
   }, []);
 
   useEffect(() => {
+    const cleanup = autoConfirmManager.startAutoConfirmScheduler();
+    return () => cleanup();
+  }, []);
+
+  useEffect(() => {
     const activeCalc = calculators[activeIdx];
     if (!activeCalc) return;
     const extras = activeCalc.extras || {};
@@ -362,8 +367,19 @@ export const useDealCalculator = (lead: any) => {
         if (patch.price !== undefined) current.price = patch.price;
         if (patch.isRolloutConfirmed !== undefined)
           current.isRolloutConfirmed = patch.isRolloutConfirmed;
-        if (patch.isDefaultPayment !== undefined)
+        if (patch.isDefaultPayment !== undefined) {
           current.isDefaultPayment = patch.isDefaultPayment;
+          if (patch.isDefaultPayment === true) {
+            next.forEach((c, idx) => {
+              if (idx !== activeIdx) {
+                c.isDefaultPayment = false;
+                if (c._id) {
+                  saveCalculator(c);
+                }
+              }
+            });
+          }
+        }
         if (patch.dropPrice) current.dropPrice = patch.dropPrice;
         if (patch.name) current.name = patch.name;
         if (patch.downPayment !== undefined) current.downPayment = patch.downPayment;
@@ -526,13 +542,20 @@ export const useDealCalculator = (lead: any) => {
       }`.trim();
       const initialTitle = leadName || `${calculators.length + 1}`;
 
-      const defaultPay = user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead);
+      const defaultCalc = calculators.find((c) => c.isDefaultPayment);
+      const defaultPay = defaultCalc ? defaultCalc.inputs?.paymentPlan : (user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead));
+      const shouldSetDefaultToggle = defaultCalc ? true : false;
+
+      const positions = calculators.map((c) => c.position ?? 0);
+      const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
+
       const fullPayload = {
         title: '.',
-        position: calculators.length,
+        position: nextPosition,
         ...INITIAL_INPUTS,
         paymentPlan: defaultPay,
         paymentMethod: defaultPay,
+        isDefaultPayment: shouldSetDefaultToggle,
         pricemarkup: '100',
         ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
         price: 0,
@@ -554,31 +577,61 @@ export const useDealCalculator = (lead: any) => {
     const apptId = appointmentId || lead.appointmentId || lead.latestAppointment?._id || lead._id;
     if (!apptId) return;
 
+    const duplicate = calculators[idx];
+
+    // If there is already a duplicate warning name (e.g. contains ⚠️), block duplication
+    const hasWarnings = duplicate?.name && duplicate.name.includes('⚠️');
+    if (hasWarnings) {
+      Alert.alert('Validation Error', 'LFCalculator title must be unique within this appointment for the current user');
+      return;
+    }
+    
+    const hasInputs = [
+      'gutter5DsE', 'gutter6Ft1', 'gutter7DsE', 'miters', 'endCaps', 'spoutSavers',
+      'versaMaxFt1', 'versaMaxFt2', 'versaMaxFt3', 'versa6Ft1', 'versa7Ft1', 'filter45Ft1',
+      'versa6Ft2', 'versa7Ft2', 'filter45Ft2', 'versa6Ft3', 'versa7Ft3', 'filter45Ft3',
+      'ckToInstallers', 'extraLabor'
+    ].some(key => {
+      const val = duplicate?.inputs?.[key];
+      return val && Number(val) > 0;
+    });
+
+    const hasExtras = Object.values(duplicate?.extras || {}).some(val => {
+      return val && Number(val) > 0;
+    });
+
+    const hasValues = hasInputs || hasExtras;
+
+    if (!duplicate || !hasValues) {
+      Alert.alert('Validation Error', 'LFCalculator title must be unique within this appointment for the current user');
+      return;
+    }
+
     try {
       setLoading(true);
       if (isPendingSave.current && latestActiveRef.current) {
         await saveCalculator(latestActiveRef.current);
       }
-      const duplicate = calculators[idx];
 
-      // Only copy the payment plan from the source if isDefaultPayment is toggled as default,
-      // otherwise, default to the user's default payment method or standard default.
-      // We check if the duplicate's paymentPlan matches the defaultPaymentMethod to see if it should copy,
-      // or if there is a default toggle state. Since isDefaultPayment is local to CalculatorSummary,
-      // let's check user?.defaultPaymentMethod or getDefaultPaymentMethod. Or if duplicate.inputs.paymentPlan is used.
-      // Wait, the requirement says: "only if the set as default then add same payment method but the user will itself add the rollout end price himself and then confirm it or the timer will get active".
-      // Let's resolve the payment method to use for duplicate:
-      const defaultPay = user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead);
-      const paymentPlanToUse = duplicate.isDefaultPayment || (duplicate.inputs.paymentPlan === defaultPay)
-        ? duplicate.inputs.paymentPlan
-        : defaultPay;
+      // Check if there is an existing default calculator settings
+      const defaultCalc = calculators.find((c) => c.isDefaultPayment);
+      const defaultPay = defaultCalc ? defaultCalc.inputs?.paymentPlan : (user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead));
+
+      // Inherit paymentPlan and default status
+      const paymentPlanToUse = defaultCalc ? defaultPay : (duplicate?.inputs?.paymentPlan || defaultPay);
+      const isDefaultPaymentToUse = defaultCalc ? true : (duplicate?.isDefaultPayment || false);
+
+      const positions = calculators.map((c) => c.position ?? 0);
+      const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
 
       await LeadService.createCalculator(apptId, {
         title: `${duplicate.name} (Copy)`,
+        position: nextPosition,
         ...duplicate.inputs,
         ...duplicate.extras,
         paymentPlan: paymentPlanToUse,
         paymentMethod: paymentPlanToUse,
+        isDefaultPayment: isDefaultPaymentToUse,
         pricemarkup: duplicate.inputs.markup,
         price: 0,
         isRolloutConfirmed: false,
@@ -675,9 +728,81 @@ export const useDealCalculator = (lead: any) => {
     try {
       setLoading(true);
       await LeadService.deleteCalculator(calculators[idx]._id);
-      setCalculators((prev) => prev.filter((_, i) => i !== idx));
+      
+      setCalculators((prev) => {
+        const remaining = prev.filter((_, i) => i !== idx);
+        
+        // Re-calculate pricing/names to clear duplicate warning signs if no duplicate exists anymore
+        const getRetailPrice = (calc: any) => {
+          const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
+            seniorVet: false,
+            preOrder: false,
+          });
+          return res.baseRetailTotal;
+        };
+        const titles = getUpdatedCalculatorTitles(remaining, getRetailPrice);
+        remaining.forEach((c, i) => {
+          const key = c._id || `temp-${i}`;
+          if (titles[key] !== undefined) c.name = titles[key];
+        });
+
+        // Save new positions and names to database
+        Promise.all(
+          remaining.map((c, i) => {
+            if (!c._id) return Promise.resolve();
+            const payload = {
+              title: c.name,
+              position: i,
+              gutter5DsE: Number(c.inputs.gutter5DsE),
+              gutter6Ft1: Number(c.inputs.gutter6Ft1),
+              gutter7DsE: Number(c.inputs.gutter7DsE),
+              miters: Number(c.inputs.miters),
+              endCaps: Number(c.inputs.endCaps),
+              spoutSavers: Number(c.inputs.spoutSavers),
+              versaMaxFt1: Number(c.inputs.versaMaxFt1),
+              versaMaxFt2: Number(c.inputs.versaMaxFt2),
+              versaMaxFt3: Number(c.inputs.versaMaxFt3),
+              versa6Ft1: Number(c.inputs.versa6Ft1),
+              versa7Ft1: Number(c.inputs.versa7Ft1),
+              filter45Ft1: Number(c.inputs.filter45Ft1),
+              versa6Ft2: Number(c.inputs.versa6Ft2),
+              versa7Ft2: Number(c.inputs.versa7Ft2),
+              filter45Ft2: Number(c.inputs.filter45Ft2),
+              versa6Ft3: Number(c.inputs.versa6Ft3),
+              versa7Ft3: Number(c.inputs.versa7Ft3),
+              filter45Ft3: Number(c.inputs.filter45Ft3),
+              ckToInstallers: Number(c.inputs.ckToInstallers),
+              extraLabor: Number(c.inputs.extraLabor),
+              paymentMethod: c.inputs.paymentPlan,
+              pricemarkup: c.inputs.markup,
+              price: c.price,
+              isRolloutConfirmed: c.isRolloutConfirmed,
+              isDefaultPayment: c.isDefaultPayment,
+              discounts: c.discounts,
+              discountPercentage: Number(c.inputs.discountPercentage || 15),
+              isDefaultDiscount: !!c.inputs.isDefaultDiscount,
+              ...Object.keys(c.extras).reduce(
+                (acc, k) => ({
+                  ...acc,
+                  [(extrasList as any[]).find((e: any) => e.id === k)?.apiKey || k]: Number(
+                    c.extras[k]
+                  ),
+                }),
+                {}
+              ),
+            };
+            return LeadService.updateCalculator(c._id, payload);
+          })
+        ).catch((err) => {
+          console.warn('Failed to update remaining calculators after deletion', err);
+        });
+
+        return remaining;
+      });
+
       setActiveIdx(0);
     } catch (e) {
+      console.warn('Delete calculator failed', e);
     } finally {
       setLoading(false);
     }

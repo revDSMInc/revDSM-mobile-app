@@ -127,20 +127,25 @@ export const useSubmitDigitalConsentMutation = () => {
         .replace(/\/\//g, '/')
         .replace('https:/', 'https://');
 
+      const normalizedData = data.payload ? { ...data.payload } : { ...data };
+
       const body: any[] = [];
-      Object.keys(data).forEach((key) => {
-        if ((key === 'file' || key === 'signature') && data[key]?.uri) {
-          const cleanPath = data[key].uri.replace('file://', '');
+      Object.keys(normalizedData).forEach((key) => {
+        if ((key === 'file' || key === 'signature') && normalizedData[key]?.uri) {
+          const cleanPath = normalizedData[key].uri.replace('file://', '');
           body.push({
             name: key,
-            filename: data[key].name || 'signature.svg',
-            type: data[key].type || 'image/svg+xml',
+            filename: normalizedData[key].name || 'signature.svg',
+            type: normalizedData[key].type || 'image/svg+xml',
             data: ReactNativeBlobUtil.wrap(cleanPath),
           });
         } else {
-          body.push({ name: key, data: String(data[key]) });
+          body.push({ name: key, data: String(normalizedData[key]) });
         }
       });
+
+      console.log('Consent Request URL:', url);
+      console.log('Consent Request Body keys/values:', body.map(b => b.name === 'signature' || b.name === 'file' ? { name: b.name, filename: b.filename } : b));
 
       const fetchConfig = {
         fileCache: true,

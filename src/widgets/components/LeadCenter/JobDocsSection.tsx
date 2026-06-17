@@ -523,57 +523,32 @@ export const JobDocsSection = ({
       return;
     }
 
+    // Only submit pages that are newly added — existing pages are already on the server
+    const newPages = pages.filter((p) => p.isNew === true);
+
+    if (newPages.length === 0) {
+      // Nothing new to upload, just close the scanner
+      setScannerOpen(false);
+      return;
+    }
+
     try {
       setIsGenerating(true);
 
-      // Pre-fetch outcome documents to retrieve existing base64Data
-      let preFetchedAppendedDocs: any[] = [];
-      try {
-        const response = await LeadService.downloadOutcomeDocuments(leadId);
-        const dataObj = response.data?.data || response.data || {};
-        preFetchedAppendedDocs = [
-          ...(dataObj.agreements || []),
-          ...(dataObj.orderSheets || [])
-        ];
-      } catch (err) {
-        console.warn('[JobDocsSection] Failed to pre-fetch outcome documents', err);
-      }
-
       const filePayloads: any[] = [];
-      for (let i = 0; i < pages.length; i++) {
-        const p = pages[i];
-        const docNum = i + 1;
+      for (let i = 0; i < newPages.length; i++) {
+        const p = newPages[i];
         const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
-        const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
+        const defaultName = `${cleanCategoryName}_${Date.now()}_${i + 1}.pdf`;
         const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
 
-        if (p.isNew) {
-          const rawBase64 = await RNFS.readFile(p.uri, 'base64');
-          const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
-          filePayloads.push({
-            name: documentName,
-            file: `data:application/pdf;base64,${pdfBase64}`,
-            type: scannerCategory,
-          });
-        } else {
-          // If it's an existing document, find its base64 content
-          const docId = p.serverId || p.id || p._id;
-          const serverDoc = preFetchedAppendedDocs.find(
-            (d) => String(d._id) === String(docId)
-          );
-          if (serverDoc && serverDoc.base64Data) {
-            const cType = serverDoc.fileData?.contentType || 'application/pdf';
-            const base64Prefix = serverDoc.base64Data.startsWith('data:')
-              ? serverDoc.base64Data
-              : `data:${cType};base64,${serverDoc.base64Data}`;
-
-            filePayloads.push({
-              name: documentName,
-              file: base64Prefix,
-              type: scannerCategory,
-            });
-          }
-        }
+        const rawBase64 = await RNFS.readFile(p.uri, 'base64');
+        const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
+        filePayloads.push({
+          name: documentName,
+          file: `data:application/pdf;base64,${pdfBase64}`,
+          type: scannerCategory,
+        });
       }
 
       const payload = {
@@ -641,7 +616,10 @@ export const JobDocsSection = ({
       return;
     }
 
+    let permissionRequested = false;
+
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
+      permissionRequested = true;
       const version = Number(Platform.Version);
       if (version >= 33) {
         const granted = await PermissionsAndroid.requestMultiple([
@@ -672,6 +650,7 @@ export const JobDocsSection = ({
         try {
           const status = await iosReadGalleryPermission('addOnly');
           if (status !== 'granted' && status !== 'limited') {
+            permissionRequested = true;
             const requestStatus = await iosRequestAddOnlyGalleryPermission();
             if (requestStatus !== 'granted' && requestStatus !== 'limited') {
               Alert.alert('Permission Denied', 'Photo Library permission is required to save photos.');
@@ -682,6 +661,11 @@ export const JobDocsSection = ({
           console.error('Failed to check/request iOS photo library permission:', error);
         }
       }
+    }
+
+    if (permissionRequested) {
+      // Small delay to allow native modules to synchronize permission state
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
     }
 
     setIsDownloading(true);
@@ -704,6 +688,20 @@ export const JobDocsSection = ({
       return;
     }
 
+    const saveToCameraRollWithRetry = async (tag: string, type: 'photo' | 'video', retries = 2, delayMs = 1000) => {
+      for (let i = 0; i <= retries; i++) {
+        try {
+          await CameraRoll.saveAsset(tag, { type });
+          return true;
+        } catch (err) {
+          if (i === retries) throw err;
+          console.log(`Save attempt ${i + 1} failed, retrying in ${delayMs}ms...`, err);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      return false;
+    };
+
     let completedCount = 0;
     let successCount = 0;
 
@@ -723,7 +721,7 @@ export const JobDocsSection = ({
 
         if (localPath) {
           const saveTag = localPath.startsWith('file://') ? localPath : `file://${localPath}`;
-          await CameraRoll.saveAsset(saveTag, { type: 'photo' });
+          await saveToCameraRollWithRetry(saveTag, 'photo');
           successCount++;
         }
       } catch (err) {

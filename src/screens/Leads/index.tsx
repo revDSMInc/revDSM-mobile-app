@@ -35,6 +35,7 @@ import type { Lead } from '../../config/types/lead';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import Clipboard from '../../assets/svgs/icons/clipboard';
 import Feather from 'react-native-vector-icons/Feather';
+import MaterialDesignIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome5';
 import Geolocation from 'react-native-geolocation-service';
 import { PermissionsAndroid } from 'react-native';
@@ -192,9 +193,8 @@ export default function LeadsPage() {
     const q = searchQuery.toLowerCase();
 
     const filtered = leads.filter((l) => {
-      const name = `${l.customerDetails?.firstName || ''} ${
-        l.customerDetails?.lastName || ''
-      }`.toLowerCase();
+      const name = `${l.customerDetails?.firstName || ''} ${l.customerDetails?.lastName || ''
+        }`.toLowerCase();
       return (
         name.includes(q) ||
         l.fullAddress?.toLowerCase().includes(q) ||
@@ -212,6 +212,7 @@ export default function LeadsPage() {
   }, [leads, searchQuery]);
 
   const workMutation = useWorkLeadMutation();
+  const [navigatingLeadId, setNavigatingLeadId] = useState<string | null>(null);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -221,6 +222,7 @@ export default function LeadsPage() {
 
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
+    setNavigatingLeadId(item._id!);
     await logLeadCardSelect(user, item);
 
     try {
@@ -235,6 +237,8 @@ export default function LeadsPage() {
       console.log('Action Error:', err);
       await persistActiveLeadId(item._id);
       navigation.navigate('LeadCenter', { lead: item });
+    } finally {
+      setNavigatingLeadId(null);
     }
   };
 
@@ -245,7 +249,7 @@ export default function LeadsPage() {
       {/* Search Bar & Add Button */}
       <View
         className="px-4 pt-6 pb-3 flex-row items-center"
-        // style={{ borderBottomColor: isDark ? colors.border : '#F4F6F8' }}
+      // style={{ borderBottomColor: isDark ? colors.border : '#F4F6F8' }}
       >
         <View
           className="flex-1 py-2 rounded-lg flex-row items-center px-3"
@@ -264,17 +268,26 @@ export default function LeadsPage() {
             className="flex-1 ml-2 text-xs"
             style={{ color: colors.text }}
           />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} className="p-1 rounded-full bg-text-secondary">
+              <Feather
+                name="x"
+                size={12}
+                color={"white"}
+              />
+            </TouchableOpacity>
+          )}
         </View>
         <View
-          className="rounded-2xl flex-col h-full px-2 ml-3 items-center py-1"
+          className="rounded-lg flex-col h-full px-2 ml-3 items-center py-1"
           style={{
             backgroundColor: isDark ? colors.surface : '#8E33FF14',
           }}
         >
-          <Text className="text-sm font-medium" style={{ color: '#8E33FF' }}>
+          <Text className="text-sm font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
             {filteredLeads.length}
           </Text>
-          <Text className="text-sm font-medium" style={{ color: '#8E33FF' }}>
+          <Text className="text-sm font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
             Leads
           </Text>
         </View>
@@ -388,13 +401,10 @@ export default function LeadsPage() {
       )}
 
       {currentTab === 'rehash' ? (
-        <View className="flex-1 items-center justify-center pt-[30%]">
-          <Feather name="tool" size={48} color={colors.textSecondary} />
-          <Text className="text-base font-semibold mt-4" style={{ color: colors.text }}>
-            Coming Soon
-          </Text>
-          <Text className="text-xs text-center mt-2 px-8" style={{ color: colors.textSecondary }}>
-            This feature is under development and will be available soon.
+        <View className="flex-1 items-center pt-[30%]">
+          <MaterialDesignIcon name="briefcase-off-outline" style={{ opacity: 0.7 }} size={64} color={colors.textSecondary} />
+          <Text className="text-xs text-center mt-4" style={{ color: colors.textSecondary }}>
+            No jobs available
           </Text>
         </View>
       ) : loading ? (
@@ -414,7 +424,7 @@ export default function LeadsPage() {
               isArchived={
                 currentTab === 'selfGen' && selfGenSubTab === 'archived'
               }
-              actionLoading={workMutation.isPending && selectedLead?._id === item._id}
+              actionLoading={navigatingLeadId === item._id}
               onPress={() => handleActionPress(item)}
               onPitchbookPress={() => {
                 if (user?._id) {
@@ -425,9 +435,8 @@ export default function LeadsPage() {
                     meta: {
                       leadId: item._id,
                       contactPerson:
-                        `${item.customerDetails?.firstName || ''} ${
-                          item.customerDetails?.lastName || ''
-                        }`.trim() || 'N/A',
+                        `${item.customerDetails?.firstName || ''} ${item.customerDetails?.lastName || ''
+                          }`.trim() || 'N/A',
                       address: item.fullAddress || 'N/A',
                       action: 'view_pitchbook',
                     },
@@ -475,7 +484,16 @@ export default function LeadsPage() {
       <LeadCreateModal
         visible={createModalVisible}
         onClose={() => setCreateModalVisible(false)}
-        onSuccess={onRefresh}
+        onSuccess={(createdLead, leadType) => {
+          onRefresh();
+          if (leadType === 'selfGen') {
+            setCurrentTab('selfGen');
+            setSelfGenSubTab('today');
+          } else if (leadType === 'lf_lead') {
+            setCurrentTab('issued');
+            setIssuedSubTab('today');
+          }
+        }}
         user={user}
       />
 

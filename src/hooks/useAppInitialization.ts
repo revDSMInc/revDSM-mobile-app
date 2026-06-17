@@ -1,12 +1,14 @@
 import { useEffect, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
+import { Platform, PermissionsAndroid } from 'react-native';
+import { Camera } from 'react-native-vision-camera';
+import Geolocation from 'react-native-geolocation-service';
 import { Storage } from '../utils/storage';
 import { migrateAsyncStorageToMMKV } from '../utils/migrate-storage';
 import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
-import { autoConfirmManager } from '../utils/calculator/autoConfirmManager';
 
 export function useAppInitialization() {
   const dispatch = useDispatch();
@@ -15,6 +17,57 @@ export function useAppInitialization() {
     try {
       // Run one-time migration from AsyncStorage → MMKV on first boot
       await migrateAsyncStorageToMMKV();
+
+      // Request Permissions (Location, Camera, and Photo)
+      try {
+        if (Platform.OS === 'android') {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+          );
+        } else {
+          await Geolocation.requestAuthorization('whenInUse');
+        }
+      } catch (err) {
+        console.log('Error requesting location permission on init:', err);
+      }
+
+      try {
+        const cameraPermission = await Camera.getCameraPermissionStatus();
+        if (cameraPermission !== 'granted') {
+          await Camera.requestCameraPermission();
+        }
+      } catch (err) {
+        console.log('Error requesting camera permission on init:', err);
+      }
+
+      try {
+        if (Platform.OS === 'android') {
+          if (Number(Platform.Version) >= 33) {
+            await PermissionsAndroid.requestMultiple([
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+            ]);
+          } else {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+            );
+          }
+        } else if (Platform.OS === 'ios') {
+          try {
+            const cameraRollModule = require('@react-native-camera-roll/camera-roll');
+            if (cameraRollModule && cameraRollModule.iosReadGalleryPermission && cameraRollModule.iosRequestAddOnlyGalleryPermission) {
+              const status = await cameraRollModule.iosReadGalleryPermission('addOnly');
+              if (status !== 'granted' && status !== 'limited') {
+                await cameraRollModule.iosRequestAddOnlyGalleryPermission();
+              }
+            }
+          } catch (e) {
+            console.log('CameraRoll helper not available or failed:', e);
+          }
+        }
+      } catch (err) {
+        console.log('Error requesting gallery permission on init:', err);
+      }
 
       const accessToken = Storage.getItem('accessToken');
       if (accessToken) {
@@ -40,10 +93,7 @@ export function useAppInitialization() {
     initialize();
   }, [initialize]);
 
-  useEffect(() => {
-    const cleanup = autoConfirmManager.startAutoConfirmScheduler();
-    return () => cleanup();
-  }, []);
+
 
   return { initialize };
 }

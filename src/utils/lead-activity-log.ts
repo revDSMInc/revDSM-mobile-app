@@ -89,7 +89,7 @@ export function planStartAppointment(lead: any, userLocation: UserLocation): App
   return {
     logModule,
     shouldCallWork,
-    shouldCreateChat: logModule === 'lead_check_in',
+    shouldCreateChat: !isResumeLead,
     isInRange,
   };
 }
@@ -115,7 +115,7 @@ export function planZoneCanvasserStartAppointment(
   return {
     logModule,
     shouldCallWork,
-    shouldCreateChat: logModule === 'lead_check_in',
+    shouldCreateChat: workflowState !== 'resume',
     isInRange,
   };
 }
@@ -169,13 +169,15 @@ export async function executeStartAppointmentFlow(
   if (plan.shouldCallWork && userId && leadId) {
     const res = await workMutation.mutateAsync({ leadId, userId });
     workCalled = true;
+
+    if (plan.shouldCreateChat) {
+      ChatService.createChatForLead(leadId).catch((e) =>
+        console.warn('[Chat] Auto-creation failed:', e)
+      );
+    }
+
     if (plan.logModule) {
       await logLeadActionClick(user, plan.logModule, lead);
-      if (plan.shouldCreateChat) {
-        ChatService.createChatForLead(leadId).catch((e) =>
-          console.warn('[Chat] Auto-creation failed:', e)
-        );
-      }
     }
     const workData = res.data?.data || res.data;
     if (workData) {

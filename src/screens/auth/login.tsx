@@ -109,11 +109,20 @@ export default function LoginScreen() {
       }
     } catch (err: any) {
       const backendMsg = err?.message || err?.response?.data?.message || '';
-      let cleanMsg = 'Invalid email or password';
-      if (backendMsg.toLowerCase().includes('password') || backendMsg.toLowerCase().includes('credential') || backendMsg.toLowerCase().includes('unauthorized') || backendMsg.toLowerCase().includes('not found')) {
-        cleanMsg = 'Incorrect email or password';
-      } else if (backendMsg) {
-        cleanMsg = backendMsg;
+      let cleanMsg = 'Incorrect email or password';
+      if (backendMsg) {
+        const lowerMsg = backendMsg.toLowerCase();
+        if (
+          lowerMsg.includes('password') ||
+          lowerMsg.includes('credential') ||
+          lowerMsg.includes('unauthorized') ||
+          lowerMsg.includes('not found') ||
+          lowerMsg.includes('validation')
+        ) {
+          cleanMsg = 'Incorrect email or password';
+        } else {
+          cleanMsg = backendMsg;
+        }
       }
       FlashMessage.error('Login Failed', cleanMsg);
     }
