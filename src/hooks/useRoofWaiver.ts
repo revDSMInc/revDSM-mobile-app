@@ -43,6 +43,30 @@ const normalizeOcrDate = (input: string) => {
   return s;
 };
 
+const formatToMMDDYYYY = (dateStr: string) => {
+  if (!dateStr) return '';
+  let cleanStr = dateStr.trim().replace(/,/g, ' ').replace(/\s+/g, '/').replace(/-+/g, '/');
+  const parts = cleanStr.split('/');
+  if (parts.length === 3) {
+    let [part1, part2, part3] = parts;
+    part1 = part1.trim().padStart(2, '0');
+    part2 = part2.trim().padStart(2, '0');
+    part3 = part3.trim();
+    if (part3.length === 2) {
+      part3 = '20' + part3;
+    }
+    if (part1.length === 4) {
+      return `${part2}/${part3}/${part1}`;
+    }
+    if (parseInt(part1, 10) > 12) {
+      return `${part2}/${part1}/${part3}`;
+    } else {
+      return `${part1}/${part2}/${part3}`;
+    }
+  }
+  return dateStr;
+};
+
 export const useRoofWaiver = (
   lead: any,
   onSubmit: (data: any) => void,
@@ -112,27 +136,7 @@ export const useRoofWaiver = (
 
   const getInitialDate = () => {
     if (prefilledData?.date) {
-      const dateStr = prefilledData.date;
-      if (dateStr.includes('-')) {
-        const parts = dateStr.split('-');
-        if (parts.length === 3) {
-          const [yyyy, mm, dd] = parts;
-          return `${mm}/${dd}/${yyyy}`;
-        }
-      } else if (dateStr.includes('/')) {
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const [part1, part2, part3] = parts;
-          if (parseInt(part1, 10) > 12) {
-            // It is DD/MM/YYYY, convert to MM/DD/YYYY
-            return `${part2}/${part1}/${part3}`;
-          } else {
-            // Already MM/DD/YYYY or ambiguous
-            return `${part1}/${part2}/${part3}`;
-          }
-        }
-      }
-      return prefilledData.date;
+      return formatToMMDDYYYY(prefilledData.date);
     }
     const targetDate = new Date();
     const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
@@ -208,7 +212,7 @@ export const useRoofWaiver = (
         phoneNumber: formatUSPhoneNumber(prefilledData.phoneNumber ?? prev.phoneNumber),
         email: prefilledData.email ?? prev.email,
         leadId: prefilledData.leadId ?? prev.leadId,
-        date: prefilledData.date ?? prev.date,
+        date: prefilledData.date ? formatToMMDDYYYY(prefilledData.date) : prev.date,
       }));
       setSubmissionType('paper');
     }

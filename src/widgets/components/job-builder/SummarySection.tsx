@@ -113,6 +113,7 @@ export const SummarySection = ({
   const [outcomeData, setOutcomeData] = useState<any>(null);
   const [previewImage, setPreviewImage] = useState<{ uri: string; name: string } | null>(null);
   const [pdfPreview, setPdfPreview] = useState({ visible: false, uri: '', title: '' });
+  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
 
   const isAppointmentSet = !!jobState.scheduleTime?.date;
   const stableIsEdit = useMemo(() => isAppointmentSet, [schedulerOpen]);
@@ -1286,8 +1287,10 @@ export const SummarySection = ({
     }
   };
 
-  const handleOpenDocument = async (file: any) => {
+  const handleOpenDocument = async (file: any, index: number) => {
     if (!file.uri) return;
+    const fileId = file.serverId || file.id || `${file.documentType || 'doc'}-${index}`;
+    setOpeningDocId(fileId);
 
     try {
       let documentUri = file.uri;
@@ -1324,7 +1327,18 @@ export const SummarySection = ({
         extension = extension.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
         const sanitizedName = (file.name || 'document').replace(/[^a-zA-Z0-9]/g, '_');
-        const localPath = `${RNFS.CachesDirectoryPath}/${sanitizedName}_${Date.now()}.${extension}`;
+        const fileKey = file.serverId || file.id || `${index}`;
+        const localPath = `${RNFS.CachesDirectoryPath}/${sanitizedName}_${fileKey}.${extension}`;
+
+        const fileExists = await RNFS.exists(localPath);
+        if (fileExists) {
+          if (isPdf) {
+            setPdfPreview({ visible: true, uri: localPath, title: file.name || 'PDF Preview' });
+          } else {
+            setPreviewImage({ uri: `file://${localPath}`, name: file.name || 'Document Preview' });
+          }
+          return;
+        }
 
         // Try RNFS download first; fall back to fetch+write if DNS fails (common on Android emulator)
         let downloaded = false;
@@ -1369,6 +1383,8 @@ export const SummarySection = ({
     } catch (error) {
       console.error('[Summary] Failed to open document:', error);
       Alert.alert('Error', 'Could not open this document. It may still be processing or the network is unavailable.');
+    } finally {
+      setOpeningDocId(null);
     }
   };
 
@@ -1578,7 +1594,7 @@ export const SummarySection = ({
                   >
                     {/* Tap area to preview */}
                     <Pressable
-                      onPress={() => handleOpenDocument(file)}
+                      onPress={() => handleOpenDocument(file, i)}
                       style={StyleSheet.absoluteFill}
                     >
                       {isPdf ? (
@@ -1607,12 +1623,17 @@ export const SummarySection = ({
                               setThumbLoadingMap((prev) => ({ ...prev, [thumbKey]: false }))
                             }
                           />
-                          {isLoading && (
+                      {isLoading && (
                             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9' }}>
                               <ActivityIndicator size="small" color="#00B8D9" />
                             </View>
                           )}
                         </>
+                      )}
+                      {openingDocId === (file.serverId || file.id || `${file.documentType || type || 'doc'}-${i}`) && (
+                        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.7)', zIndex: 20 }}>
+                          <ActivityIndicator size="small" color={type === 'agreement' ? '#ef4444' : '#00B8D9'} />
+                        </View>
                       )}
                     </Pressable>
 

@@ -284,17 +284,12 @@ export const ToolsSection = ({
       </View>
       <ToolCard
         title="Inspection Report"
-        desc={inspectionReport ? 'View Inspection PDF' : 'Generate inspection report'}
-        icon={inspectionReport ? 'file-check' : 'clipboard-text'}
+        desc="Generate inspection report"
+        icon="clipboard-text"
         onPress={() => {
-          if (inspectionReport) {
-            onAction('inspection-preview', secureUrls[inspectionReport.reportPath] || inspectionReport.fileUrl);
-          } else {
-            onAction('inspection');
-          }
+          onAction('inspection');
         }}
-        onDownload={inspectionReport ? () => onAction('inspection-download', secureUrls[inspectionReport.reportPath] || inspectionReport.fileUrl) : undefined}
-        isGenerated={!!inspectionReport}
+        isGenerated={false}
         isLoading={isInspectionGenerating}
       />
       <ToolCard

@@ -20,9 +20,37 @@ const CATEGORY_ORDER = [
   'Gutters', 'LeafFilter', 'Soffit', 'Fascia', 'Lighting', 'Additional Services', 'Miscellaneous',
 ];
 
+const isCalculatorIdentical = (c1: any, c2: any) => {
+  if (!c1 || !c2) return false;
+  const inputs1 = c1.inputs || {};
+  const inputs2 = c2.inputs || {};
+  const compareInputKeys = [
+    'gutter5DsE', 'gutter6Ft1', 'gutter7DsE', 'miters', 'endCaps', 'spoutSavers',
+    'versaMaxFt1', 'versa6Ft1', 'versa7Ft1', 'filter45Ft1',
+    'versa6Ft2', 'versa7Ft2', 'filter45Ft2', 'versa6Ft3', 'versa7Ft3', 'filter45Ft3',
+    'ckToInstallers', 'extraLabor', 'paymentPlan', 'markup', 'discountPercentage'
+  ];
+  for (const key of compareInputKeys) {
+    const val1 = inputs1[key] === undefined || inputs1[key] === null ? '' : String(inputs1[key]).trim();
+    const val2 = inputs2[key] === undefined || inputs2[key] === null ? '' : String(inputs2[key]).trim();
+    if (val1 !== val2) return false;
+  }
+  const extras1 = c1.extras || {};
+  const extras2 = c2.extras || {};
+  const extraKeys = new Set([...Object.keys(extras1), ...Object.keys(extras2)]);
+  const ignoreKeys = ['_id', 'id', 'createdAt', 'updatedAt'];
+  for (const key of extraKeys) {
+    if (ignoreKeys.includes(key)) continue;
+    const val1 = extras1[key] === undefined || extras1[key] === null ? '' : String(extras1[key]).trim();
+    const val2 = extras2[key] === undefined || extras2[key] === null ? '' : String(extras2[key]).trim();
+    if (val1 !== val2) return false;
+  }
+  return true;
+};
+
 export const LockedCalculatorView = ({
   inputs, extras, results, active, lead, onClose, isDark, colors, isAutoSaving, lastUpdatedAt,
-  showWarning = true,
+  showWarning = true, calculators = [],
 }: any) => {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -30,6 +58,11 @@ export const LockedCalculatorView = ({
   const drops = active?.dropPrice || [];
   // Show the last drop price added regardless of its status (accepted or declined)
   const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
+
+  const isDuplicate = (calculators || []).some((c: any) => {
+    if (!active || c._id === active._id) return false;
+    return isCalculatorIdentical(active, c);
+  });
 
   /* ── Derived data ── */
   const categoryCounts: Record<string, number> = {};
@@ -85,6 +118,21 @@ export const LockedCalculatorView = ({
             <Ionicons name="lock-closed" size={16} color="#D97706" style={{ marginRight: 10 }} />
             <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#92400E', lineHeight: 18 }}>
               Rollout price confirmed — this calculator is locked and cannot be edited. You can duplicate job tab or create new for easy editing for new job scope.
+            </Text>
+          </View>
+        )}
+
+        {/* ── Duplicate warning sign banner ── */}
+        {isDuplicate && (
+          <View style={{
+            backgroundColor: '#FFFBEB',
+            borderWidth: 1, borderColor: '#FDE68A',
+            borderRadius: 14, padding: 14, marginBottom: 14,
+            flexDirection: 'row', alignItems: 'center',
+          }}>
+            <Ionicons name="warning" size={16} color="#D97706" style={{ marginRight: 10 }} />
+            <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#92400E', lineHeight: 18 }}>
+              This calculator is completely identical in form values to another calculator.
             </Text>
           </View>
         )}
@@ -273,6 +321,7 @@ export const CalculatorForm = ({
   isAutoSaving,
   lastUpdatedAt,
   readOnly = false,
+  calculators = [],
 }: any) => {
   const guardedUpdate = (patch: any) => {
     if (readOnly) return;
@@ -323,6 +372,11 @@ export const CalculatorForm = ({
   ].some((k) => Number(extras[k]) > 0);
   const hasAdditionalData = Number(inputs.extraLabor) > 0 || Number(inputs.ckToInstallers) > 0;
 
+  const isDuplicate = (calculators || []).some((c: any) => {
+    if (!active || c._id === active._id) return false;
+    return isCalculatorIdentical(active, c);
+  });
+
   /* ── If locked, render the read-only locked view ── */
   if (readOnly) {
     return (
@@ -337,6 +391,7 @@ export const CalculatorForm = ({
         colors={colors}
         isAutoSaving={isAutoSaving}
         lastUpdatedAt={lastUpdatedAt}
+        calculators={calculators}
       />
     );
   }
@@ -352,6 +407,19 @@ export const CalculatorForm = ({
         <ScrollView className="flex-1 bg-background" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View className="px-5 pt-6 pb-10">
 
+            {isDuplicate && (
+              <View style={{
+                backgroundColor: '#FFFBEB',
+                borderWidth: 1, borderColor: '#FDE68A',
+                borderRadius: 14, padding: 14, marginBottom: 14,
+                flexDirection: 'row', alignItems: 'center',
+              }}>
+                <Ionicons name="warning" size={16} color="#D97706" style={{ marginRight: 10 }} />
+                <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#92400E', lineHeight: 18 }}>
+                  This calculator is completely identical in form values to another calculator.
+                </Text>
+              </View>
+            )}
             <Section
               title="Gutters"
               id="gutters"

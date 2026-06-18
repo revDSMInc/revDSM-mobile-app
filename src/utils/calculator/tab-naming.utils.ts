@@ -229,7 +229,9 @@ export const getUpdatedCalculatorTitles = (
 
       // Confirmed rollouts never show as warnings, even if duplicates exist
       if (isDuplicatePrice && !item.isRolloutConfirmed) {
-        finalTitles[item._id] = `⚠️ ${item.baseName} ⚠️`;
+        const priceIndex = uniquePriceLevels.indexOf(item.price);
+        const suffix = getSizingSuffix(priceIndex, uniquePriceLevels.length);
+        finalTitles[item._id] = `⚠️ ${item.baseName}${suffix} ⚠️`;
       } else {
         // Unique price: Assign suffix based on price rank
         if (uniquePriceLevels.length > 1) {

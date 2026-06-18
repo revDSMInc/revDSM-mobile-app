@@ -39,6 +39,8 @@ import { useCalculatorSummary } from '../../../hooks/useCalculatorSummary';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { BlurView } from '@react-native-community/blur';
 import { LoadingOverlay } from '../../modals/DealCenter/OutcomeModal';
+import { useAuth } from '../../../hooks/useAuth';
+import { SettingsService } from '../../../services/api/SettingsService';
 
 const getOrdinal = (n: number) => {
   const j = n % 10,
@@ -54,6 +56,34 @@ const alpha = (hex: string, opacity: number) => {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+};
+
+const isCalculatorIdentical = (c1: any, c2: any) => {
+  if (!c1 || !c2) return false;
+  const inputs1 = c1.inputs || {};
+  const inputs2 = c2.inputs || {};
+  const compareInputKeys = [
+    'gutter5DsE', 'gutter6Ft1', 'gutter7DsE', 'miters', 'endCaps', 'spoutSavers',
+    'versaMaxFt1', 'versa6Ft1', 'versa7Ft1', 'filter45Ft1',
+    'versa6Ft2', 'versa7Ft2', 'filter45Ft2', 'versa6Ft3', 'versa7Ft3', 'filter45Ft3',
+    'ckToInstallers', 'extraLabor', 'paymentPlan', 'markup', 'discountPercentage'
+  ];
+  for (const key of compareInputKeys) {
+    const val1 = inputs1[key] === undefined || inputs1[key] === null ? '' : String(inputs1[key]).trim();
+    const val2 = inputs2[key] === undefined || inputs2[key] === null ? '' : String(inputs2[key]).trim();
+    if (val1 !== val2) return false;
+  }
+  const extras1 = c1.extras || {};
+  const extras2 = c2.extras || {};
+  const extraKeys = new Set([...Object.keys(extras1), ...Object.keys(extras2)]);
+  const ignoreKeys = ['_id', 'id', 'createdAt', 'updatedAt'];
+  for (const key of extraKeys) {
+    if (ignoreKeys.includes(key)) continue;
+    const val1 = extras1[key] === undefined || extras1[key] === null ? '' : String(extras1[key]).trim();
+    const val2 = extras2[key] === undefined || extras2[key] === null ? '' : String(extras2[key]).trim();
+    if (val1 !== val2) return false;
+  }
+  return true;
 };
 
 export const CalculatorSummary = ({
@@ -79,10 +109,16 @@ export const CalculatorSummary = ({
   handleResetJobBuilder,
 }: any) => {
   const { colors, isDark } = useTheme();
+  const { user, refreshUser } = useAuth();
   const isLowesLead = lead?.lowesLead === true;
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
-  const [isDefaultPayment, setIsDefaultPayment] = useState(false);
+
+  // Derived from user preference — mirrors web's useEffect logic:
+  // isDefaultPayment = (user.defaultPaymentMethod === activeCalc.inputs.paymentPlan)
+  const isDefaultPayment =
+    !!user?.defaultPaymentMethod &&
+    user.defaultPaymentMethod === activeCalc.inputs?.paymentPlan;
 
   const rolloutEndPrice = Number(activeCalc.price) || 0;
 
@@ -151,6 +187,9 @@ export const CalculatorSummary = ({
 
     updateActive({ inputs: { paymentPlan: method } });
     handleSave();
+    if (isDefaultPayment && activeCalc.isRolloutConfirmed) {
+      propagateDefaultPaymentPlan(method);
+    }
     setShowPaymentPicker(false);
   };
   const dpInputRef = useRef<TextInput>(null);
@@ -195,6 +234,7 @@ export const CalculatorSummary = ({
     setAddedPlans,
     tempPlan,
     setTempPlan,
+    propagateDefaultPaymentPlan,
   } = useCalculatorSummary(
     activeCalc,
     results,
@@ -234,7 +274,17 @@ export const CalculatorSummary = ({
   // Source of truth: jobBuilderState is freshly fetched from the API via useDealOutcome,
   // matching the actual lead payload: lead.jobBuilder.status === 'submitted' && lead.jobBuilder.calculatorId
   // We prioritize the API-fetched jobBuilderState to avoid stale data from the lead object.
-  const isJobBuilderSubmitted = jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted';
+  const resultedCalculatorId = jobBuilderState?.calculatorId || lead?.jobBuilder?.calculatorId;
+  const isJobBuilderSubmitted =
+    (jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted') &&
+    !!resultedCalculatorId &&
+    String(activeCalc?._id) === String(resultedCalculatorId);
+
+  // Job was submitted from a DIFFERENT calculator — this tab should be dimmed & non-interactive
+  const isJobSubmittedOnOtherCalc =
+    (jobBuilderState?.status === 'submitted' || lead?.jobBuilder?.status === 'submitted') &&
+    !!resultedCalculatorId &&
+    String(activeCalc?._id) !== String(resultedCalculatorId);
 
   // If endPrice is 0, use results.total (Retail) as the base.
   // Note: results.total already includes screens, so we don't add them again in the fallback case.
@@ -258,13 +308,7 @@ export const CalculatorSummary = ({
 
   const isDuplicate = calculators.some((c: any, idx: number) => {
     if (idx === activeIdx) return false;
-    const sameGutter =
-      c.inputs?.gutter5DsE === activeCalc.inputs?.gutter5DsE &&
-      c.inputs?.gutter6Ft1 === activeCalc.inputs?.gutter6Ft1 &&
-      c.inputs?.gutter7DsE === activeCalc.inputs?.gutter7DsE;
-    const samePlan = c.inputs?.paymentPlan === activeCalc.inputs?.paymentPlan;
-    const sameMarkup = c.inputs?.markup === activeCalc.inputs?.markup;
-    return sameGutter && samePlan && sameMarkup;
+    return isCalculatorIdentical(activeCalc, c);
   });
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -307,13 +351,17 @@ export const CalculatorSummary = ({
           </TouchableOpacity>
 
           <View
-            pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'}
+            pointerEvents="auto"
             className={`flex-1 flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}
           >
             {calculators.length <= 3 ? (
               <View className="flex-1 flex-row">
                 {calculators.map((calc: any, idx: number) => {
                   const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
+                  const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
+                    if (idx === cIdx) return false;
+                    return isCalculatorIdentical(calc, c);
+                  });
                   return (
                     <TouchableOpacity
                       key={idx}
@@ -326,6 +374,14 @@ export const CalculatorSummary = ({
                           name="lock-closed"
                           size={10}
                           color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
+                          style={{ marginRight: 4 }}
+                        />
+                      )}
+                      {isTabDuplicate && (
+                        <Ionicons
+                          name="warning"
+                          size={10}
+                          color="#FF990F"
                           style={{ marginRight: 4 }}
                         />
                       )}
@@ -344,6 +400,10 @@ export const CalculatorSummary = ({
               <ScrollView ref={summaryTabsScrollViewRef} horizontal showsHorizontalScrollIndicator={false} className="flex-1">
                 {calculators.map((calc: any, idx: number) => {
                   const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
+                  const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
+                    if (idx === cIdx) return false;
+                    return isCalculatorIdentical(calc, c);
+                  });
                   return (
                     <TouchableOpacity
                       key={idx}
@@ -357,6 +417,14 @@ export const CalculatorSummary = ({
                             name="lock-closed"
                             size={12}
                             color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
+                            style={{ marginRight: 6 }}
+                          />
+                        )}
+                        {isTabDuplicate && (
+                          <Ionicons
+                            name="warning"
+                            size={12}
+                            color="#FF990F"
                             style={{ marginRight: 6 }}
                           />
                         )}
@@ -381,16 +449,24 @@ export const CalculatorSummary = ({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 60 }}
-          style={isJobBuilderSubmitted ? { opacity: 0.6 } : undefined}
+          style={(isJobBuilderSubmitted || isJobSubmittedOnOtherCalc) ? { opacity: 0.6 } : undefined}
         >
           <View className="px-5 py-6">
             <View
-              pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'}
+              pointerEvents={(isJobBuilderSubmitted || isJobSubmittedOnOtherCalc) ? 'none' : 'auto'}
               className={`bg-card rounded-3xl p-5 border-2 ${isSaved ? 'border-green-500' : 'border-border'
                 }`}
             >
               <View className="flex-row items-center justify-between mb-6">
-                <Text className="text-xs font-semibold text-text-primary">{activeCalc.name}</Text>
+                <View className="flex-row items-center gap-2">
+                  <Text className="text-xs font-semibold text-text-primary">{activeCalc.name}</Text>
+                  {isDuplicate && (
+                    <View className="bg-amber-500/10 px-2 py-0.5 rounded-md flex-row items-center border border-amber-500/20">
+                      <Ionicons name="warning" size={10} color="#FF990F" />
+                      <Text className="text-[8px] font-black text-[#FF990F] ml-1">IDENTICAL TO ANOTHER CALCULATOR</Text>
+                    </View>
+                  )}
+                </View>
                 {activeCalc.isRolloutConfirmed ? (
                   <View className="bg-green-600 px-2 py-1 rounded-md flex-row items-center">
                     <Ionicons name="lock-closed" size={10} color="white" />
@@ -411,14 +487,26 @@ export const CalculatorSummary = ({
                   <View className="flex-row items-center gap-2">
                     <Text className="text-xs text-text-secondary">Set as Default</Text>
                     <TouchableOpacity
-                      onPress={() => {
-                        const nextVal = !activeCalc.isDefaultPayment;
+                      onPress={async () => {
+                        const nextVal = !isDefaultPayment;
+                        // Update the calculator-level flag locally
                         updateActive({ isDefaultPayment: nextVal });
                         handleSave();
+                        // Mirror web: persist to user preference API and refresh user profile
+                        try {
+                          await SettingsService.updateCalculatorsSetting({
+                            defaultPaymentMethod: nextVal ? activeCalc.inputs.paymentPlan : null,
+                          });
+                          await refreshUser();
+                        } catch (e) {
+                          console.warn('Failed to update default payment setting', e);
+                        }
+                        if (nextVal && activeCalc.isRolloutConfirmed && activeCalc.inputs?.paymentPlan) {
+                          propagateDefaultPaymentPlan(activeCalc.inputs.paymentPlan);
+                        }
                       }}
-                      className={`w-8 h-5 rounded-full justify-center px-1 ${
-                        activeCalc.isDefaultPayment ? 'bg-green-500 items-end' : 'bg-slate-300 items-start'
-                      }`}
+                      className={`w-8 h-5 rounded-full justify-center px-1 ${isDefaultPayment ? 'bg-green-500 items-end' : 'bg-slate-300 items-start'
+                        }`}
                     >
                       <View className="w-3 h-3 bg-white rounded-full" />
                     </TouchableOpacity>
@@ -648,7 +736,7 @@ export const CalculatorSummary = ({
             {/* New Result Section - Only show when price is entered and NOT confirmed, OR if locked and dropdown is open */}
             {((endPrice > 0 && !error && !activeCalc.isRolloutConfirmed) ||
               (activeCalc.isRolloutConfirmed && showLockedDetails)) && (
-                <View pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'} className="mt-8">
+                <View pointerEvents={(isJobBuilderSubmitted || isJobSubmittedOnOtherCalc) ? 'none' : 'auto'} className="mt-8">
                   {/* Target Price Card */}
                   <View className="bg-card rounded-3xl border border-border shadow-sm overflow-hidden mb-6">
                     <View className="flex-row">
@@ -787,8 +875,8 @@ export const CalculatorSummary = ({
                           </Text>
                         </View>
 
-                        {preOrderDownPayment > 0 && (
-                          <>
+                        {(preOrderDownPayment > 0 || showPreOrderDownPaymentInput) ? (
+                          <View style={{ opacity: preOrderDownPayment > 0 ? 1 : 0 }}>
                             <View className="flex-row justify-between mb-2">
                               <Text className="text-[10px] font-medium text-green-600">Down Payment</Text>
                               <Text className="text-[10px] font-black text-green-600">
@@ -796,8 +884,8 @@ export const CalculatorSummary = ({
                               </Text>
                             </View>
                             <View style={{ height: 1, borderStyle: 'dashed', borderWidth: 0.5, borderColor: '#CBD5E1', marginBottom: 12 }} />
-                          </>
-                        )}
+                          </View>
+                        ) : null}
 
                         {!showPreOrderDownPaymentInput ? (
                           <TouchableOpacity
@@ -823,15 +911,13 @@ export const CalculatorSummary = ({
                                 onChangeText={(t) => {
                                   const val = Number(t.replace(/[^0-9]/g, ''));
                                   setPreOrderDownPayment(val);
-                                  setTimeout(() => {
-                                    scrollViewRef.current?.scrollToEnd({ animated: true });
-                                  }, 50);
                                 }}
                                 onFocus={() => {
                                   setTimeout(() => {
-                                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                                    scrollViewRef.current?.scrollTo({ y: 10, animated: true });
                                   }, 100);
                                 }}
+
                                 onBlur={async () => {
                                   updateActive({ downPayment: preOrderDownPayment });
                                   try {
@@ -903,7 +989,7 @@ export const CalculatorSummary = ({
 
                 {/* Drops List and Input positioned below the main card */}
                 {droppedPrices && droppedPrices.length > 0 && (
-                  <View pointerEvents={isJobBuilderSubmitted ? 'none' : 'auto'} className="mt-8">
+                  <View pointerEvents={(isJobBuilderSubmitted || isJobSubmittedOnOtherCalc) ? 'none' : 'auto'} className="mt-8">
                     {droppedPrices.map((drop: any, idx: number) => {
                       const isSecured = drop.secured;
                       return (
@@ -1092,10 +1178,13 @@ export const CalculatorSummary = ({
                 )}
 
                 {/* Bottom Action Buttons per Screenshot */}
-                <View className="flex-row gap-4 mb-20">
+                <View
+                  className="flex-row gap-4 mb-20"
+                  pointerEvents={isJobSubmittedOnOtherCalc ? 'none' : 'auto'}
+                >
                   {/* Drop button — disabled when job builder has been submitted */}
                   <TouchableOpacity
-                    disabled={isJobBuilderSubmitted}
+                    disabled={isJobBuilderSubmitted || isJobSubmittedOnOtherCalc}
                     onPress={() => {
                       if (showDropInput) {
                         const num = Number(dropValue.replace(/[^0-9.]/g, ''));
@@ -1574,11 +1663,24 @@ export const CalculatorSummary = ({
                             <Text className="text-[10px] font-black text-slate-900 absolute -top-2 left-3 bg-white px-1">
                               Down Payment
                             </Text>
-                            <View className="flex-row items-center">
-                              <Text className="text-sm font-bold text-slate-900 mr-1">$</Text>
+                            <View className="flex-row items-center h-6">
+                              <Text
+                                className="text-base font-bold text-slate-900 mr-1"
+                                style={{ includeFontPadding: false, textAlignVertical: 'center' }}
+                              >
+                                $
+                              </Text>
                               <TextInput
                                 ref={dpInputRef}
-                                className="flex-1 h-8 font-black text-base text-slate-900 p-0"
+                                className="flex-1 font-bold text-base text-slate-900 p-0"
+                                style={{
+                                  padding: 0,
+                                  paddingVertical: 0,
+                                  margin: 0,
+                                  textAlignVertical: 'center',
+                                  includeFontPadding: false,
+                                  top: -4,
+                                }}
                                 keyboardType="numeric"
                                 value={String(currentDownPayment || '')}
                                 onChangeText={(t) => handleCurrentSetDownPayment(Number(t.replace(/[^0-9]/g, '')))}
@@ -1592,9 +1694,17 @@ export const CalculatorSummary = ({
                             <Text className="text-[10px] font-black text-slate-400 absolute -top-2 left-3 bg-white px-1">
                               Balance
                             </Text>
-                            <View className="flex-row items-center">
-                              <Text className="text-sm font-bold text-slate-400 mr-1">$</Text>
-                              <Text className="text-base font-black text-slate-400">
+                            <View className="flex-row items-center h-6">
+                              <Text
+                                className="text-base font-bold text-slate-400 mr-1"
+                                style={{ includeFontPadding: false, textAlignVertical: 'center', lineHeight: 24 }}
+                              >
+                                $
+                              </Text>
+                              <Text
+                                className="text-base font-bold text-slate-400"
+                                style={{ includeFontPadding: false, textAlignVertical: 'center', lineHeight: 24 }}
+                              >
                                 {Math.max(0, currentDropPrice - currentDownPayment).toLocaleString()}
                               </Text>
                             </View>

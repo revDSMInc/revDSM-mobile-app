@@ -40,11 +40,36 @@ import FontAwesome from 'react-native-vector-icons/FontAwesome5';
 import Geolocation from 'react-native-geolocation-service';
 import { PermissionsAndroid } from 'react-native';
 import { consumeZoneCanvasserReopen } from '../../utils/zone-canvasser-session';
+import { useQueryClient } from '@tanstack/react-query';
+import { LeadService } from '../../services/api/leads';
 
 export default function LeadsPage() {
+  const queryClient = useQueryClient();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute<RouteProp<RootStackParamList, 'Leads'>>();
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (!user?._id) return;
+    const prefetchMapJobs = async () => {
+      try {
+        console.log('[LeadsPage Prefetch] Prefetching map jobs (all)...');
+        await queryClient.prefetchQuery({
+          queryKey: ['mapJobs', 'all'],
+          queryFn: async () => {
+            const res = await LeadService.findJobs({});
+            return res.data?.data || [];
+          },
+          staleTime: 1000 * 60 * 5,
+        });
+        console.log('[LeadsPage Prefetch] Prefetch successful.');
+      } catch (e) {
+        console.warn('[LeadsPage Prefetch] Failed:', e);
+      }
+    };
+    prefetchMapJobs();
+  }, [user?._id, queryClient]);
+
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
 

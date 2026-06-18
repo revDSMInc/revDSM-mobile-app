@@ -177,7 +177,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
     () =>
       JSON.stringify({
         url: publicLink,
-        docTitle: 'Contract Amendment',
+        docTitle: 'Contract Amendment Required',
         firstName: customerFirstName.trim(),
         lastName: customerLastName.trim(),
       }),
@@ -237,14 +237,6 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
           to,
           leadId,
         });
-      }
-
-      if (draftId) {
-        try {
-          await LeadService.updateLeadDraft(draftId, { status: 'pending' });
-        } catch (draftErr) {
-          console.warn('Failed to update draft status to pending:', draftErr);
-        }
       }
 
       Alert.alert(

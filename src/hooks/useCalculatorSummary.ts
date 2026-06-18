@@ -428,17 +428,58 @@ export const useCalculatorSummary = (
     updateActive({ price: num });
     handleSave();
   };
+  const propagateDefaultPaymentPlan = async (paymentPlanToPropagate: string) => {
+    try {
+      const promises = calculators.map((calc: any) => {
+        if (calc._id === activeCalc._id) return Promise.resolve();
+        const payload = {
+          ...calc.inputs,
+          ...calc.extras,
+          title: calc.name,
+          paymentMethod: paymentPlanToPropagate,
+          paymentPlan: paymentPlanToPropagate,
+          pricemarkup: calc.inputs.markup,
+          price: calc.price,
+          isRolloutConfirmed: calc.isRolloutConfirmed,
+          isDefaultPayment: true,
+        };
+        return LeadService.updateCalculator(calc._id, payload);
+      });
+      await Promise.all(promises);
+      if (setCalculators) {
+        setCalculators((prev: any) =>
+          prev.map((calc: any) => {
+            return {
+              ...calc,
+              isDefaultPayment: true,
+              inputs: {
+                ...calc.inputs,
+                paymentPlan: paymentPlanToPropagate,
+              },
+            };
+          })
+        );
+      }
+      if (refresh) await refresh();
+    } catch (err) {
+      console.warn('Failed to propagate default payment method', err);
+    }
+  };
 
   const handleConfirmAll = async () => {
     try {
       setIsConfirming(true);
+
+      const defaultCalc = calculators.find((c: any) => c.isDefaultPayment || (c._id === activeCalc._id && activeCalc.isDefaultPayment));
+      const shouldPropagate = !!defaultCalc && !!defaultCalc.inputs?.paymentPlan;
+      const targetPaymentPlan = defaultCalc?.inputs?.paymentPlan || activeCalc.inputs?.paymentPlan;
 
       for (const calc of calculators) {
         if (calc.isRolloutConfirmed) continue;
         const enteredPrice = Number(calc.price) || 0;
         if (enteredPrice <= 0) continue;
 
-        const activeMethod = calc.inputs?.paymentPlan || calc.paymentMethod || 'check';
+        const activeMethod = shouldPropagate ? targetPaymentPlan : (calc.inputs?.paymentPlan || calc.paymentMethod || 'check');
         const costPrice = getCostPriceForCalc(calc, isLowesLead);
 
         if (enteredPrice < costPrice) {
@@ -463,17 +504,36 @@ export const useCalculatorSummary = (
       }
 
       const promises = calculators.map((calc: any) => {
+        const isCurrentActive = calc._id === activeCalc._id;
+        const currentIsDefault = isCurrentActive ? activeCalc.isDefaultPayment : calc.isDefaultPayment;
+        const currentPaymentPlan = isCurrentActive ? activeCalc.inputs.paymentPlan : calc.inputs.paymentPlan;
+
         if (calc.price > 0 && !calc.isRolloutConfirmed) {
           const payload = {
             ...calc.inputs,
             ...calc.extras,
             title: calc.name,
-            paymentMethod: calc.inputs.paymentPlan,
+            paymentMethod: shouldPropagate ? targetPaymentPlan : currentPaymentPlan,
+            paymentPlan: shouldPropagate ? targetPaymentPlan : currentPaymentPlan,
             pricemarkup: calc.inputs.markup,
             price: calc.price,
             isRolloutConfirmed: true,
             seniorVet: calc.discounts?.seniorVet,
             preOrder: calc.discounts?.preOrder,
+            isDefaultPayment: shouldPropagate ? true : currentIsDefault,
+          };
+          return LeadService.updateCalculator(calc._id, payload);
+        } else if (shouldPropagate) {
+          const payload = {
+            ...calc.inputs,
+            ...calc.extras,
+            title: calc.name,
+            paymentMethod: targetPaymentPlan,
+            paymentPlan: targetPaymentPlan,
+            pricemarkup: calc.inputs.markup,
+            price: calc.price,
+            isRolloutConfirmed: calc.isRolloutConfirmed,
+            isDefaultPayment: true,
           };
           return LeadService.updateCalculator(calc._id, payload);
         }
@@ -483,8 +543,29 @@ export const useCalculatorSummary = (
       if (setCalculators) {
         setCalculators((prev: any) =>
           prev.map((calc: any) => {
+            const isCurrentActive = calc._id === activeCalc._id;
+            const updatedPaymentPlan = shouldPropagate ? targetPaymentPlan : (isCurrentActive ? activeCalc.inputs.paymentPlan : calc.inputs.paymentPlan);
+            const updatedIsDefault = shouldPropagate ? true : (isCurrentActive ? activeCalc.isDefaultPayment : calc.isDefaultPayment);
+            
             if (calc.price > 0 && !calc.isRolloutConfirmed) {
-              return { ...calc, isRolloutConfirmed: true };
+              return {
+                ...calc,
+                isRolloutConfirmed: true,
+                isDefaultPayment: updatedIsDefault,
+                inputs: {
+                  ...calc.inputs,
+                  paymentPlan: updatedPaymentPlan,
+                },
+              };
+            } else if (shouldPropagate) {
+              return {
+                ...calc,
+                isDefaultPayment: true,
+                inputs: {
+                  ...calc.inputs,
+                  paymentPlan: targetPaymentPlan,
+                },
+              };
             }
             return calc;
           })
@@ -539,6 +620,7 @@ export const useCalculatorSummary = (
     handleConfirmAll,
     calculateMonthly,
     handleDiscountChange,
+    propagateDefaultPaymentPlan,
     // Drop display state
     displayDrop,
     setDisplayDrop,

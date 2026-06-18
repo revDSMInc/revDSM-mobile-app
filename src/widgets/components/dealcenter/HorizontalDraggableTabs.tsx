@@ -23,6 +23,34 @@ interface HorizontalDraggableTabsProps {
   scrollXRef?: React.MutableRefObject<number>;
 }
 
+const isCalculatorIdentical = (c1: any, c2: any) => {
+  if (!c1 || !c2) return false;
+  const inputs1 = c1.inputs || {};
+  const inputs2 = c2.inputs || {};
+  const compareInputKeys = [
+    'gutter5DsE', 'gutter6Ft1', 'gutter7DsE', 'miters', 'endCaps', 'spoutSavers',
+    'versaMaxFt1', 'versa6Ft1', 'versa7Ft1', 'filter45Ft1',
+    'versa6Ft2', 'versa7Ft2', 'filter45Ft2', 'versa6Ft3', 'versa7Ft3', 'filter45Ft3',
+    'ckToInstallers', 'extraLabor', 'paymentPlan', 'markup', 'discountPercentage'
+  ];
+  for (const key of compareInputKeys) {
+    const val1 = inputs1[key] === undefined || inputs1[key] === null ? '' : String(inputs1[key]).trim();
+    const val2 = inputs2[key] === undefined || inputs2[key] === null ? '' : String(inputs2[key]).trim();
+    if (val1 !== val2) return false;
+  }
+  const extras1 = c1.extras || {};
+  const extras2 = c2.extras || {};
+  const extraKeys = new Set([...Object.keys(extras1), ...Object.keys(extras2)]);
+  const ignoreKeys = ['_id', 'id', 'createdAt', 'updatedAt'];
+  for (const key of extraKeys) {
+    if (ignoreKeys.includes(key)) continue;
+    const val1 = extras1[key] === undefined || extras1[key] === null ? '' : String(extras1[key]).trim();
+    const val2 = extras2[key] === undefined || extras2[key] === null ? '' : String(extras2[key]).trim();
+    if (val1 !== val2) return false;
+  }
+  return true;
+};
+
 export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = ({
   calculators,
   activeIdx,
@@ -160,6 +188,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
               }
             }
           }
+
         }
       },
       onPanResponderTerminationRequest: () => !isDraggingActiveRef.current,
@@ -247,7 +276,11 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   return (
     <View style={styles.container}>
       {calculators.map((calc, idx) => {
-        const isWarning = calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️');
+        const isDuplicate = calculators.some((otherCalc, otherIdx) => {
+          if (idx === otherIdx) return false;
+          return isCalculatorIdentical(calc, otherCalc);
+        });
+        const isWarning = (calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️')) || isDuplicate;
         const isActive = idx === activeIdx;
         const isCurrentlyDragging = idx === draggingIdx;
 
@@ -317,6 +350,14 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                 isCurrentlyDragging && styles.draggingTab,
               ]}
             >
+              {isDuplicate && (
+                <Ionicons
+                  name="warning"
+                  size={12}
+                  color={isActive ? '#FFFFFF' : '#FF990F'}
+                  style={{ marginRight: 6 }}
+                />
+              )}
               <Text
                 style={[
                   styles.tabText,

@@ -198,7 +198,7 @@ export const useDealCalculator = (lead: any) => {
           res = await LeadService.getAppointments({ lead_date: finalLeadDate });
           appointments = res.data?.data || res.data || [];
           myAppt = findMyAppt(appointments);
-        } catch (err: any) {}
+        } catch (err: any) { }
       }
 
       if (!myAppt) return;
@@ -210,9 +210,8 @@ export const useDealCalculator = (lead: any) => {
       let calculatorsData = calcRes.data?.data || calcRes.data || [];
 
       if (calculatorsData.length === 0) {
-        const leadName = `${activeLead.customerDetails?.firstName || ''} ${
-          activeLead.customerDetails?.lastName || ''
-        }`.trim();
+        const leadName = `${activeLead.customerDetails?.firstName || ''} ${activeLead.customerDetails?.lastName || ''
+          }`.trim();
         const defaultPay = user?.defaultPaymentMethod || (isLowesLead ? 'lowes_ach' : 'check');
         const fullPayload = {
           title: leadName || '.',
@@ -537,9 +536,8 @@ export const useDealCalculator = (lead: any) => {
       if (isPendingSave.current && latestActiveRef.current) {
         await saveCalculator(latestActiveRef.current);
       }
-      const leadName = `${lead.customerDetails?.firstName || ''} ${
-        lead.customerDetails?.lastName || ''
-      }`.trim();
+      const leadName = `${lead.customerDetails?.firstName || ''} ${lead.customerDetails?.lastName || ''
+        }`.trim();
       const initialTitle = leadName || `${calculators.length + 1}`;
 
       const defaultCalc = calculators.find((c) => c.isDefaultPayment);
@@ -561,7 +559,7 @@ export const useDealCalculator = (lead: any) => {
         price: 0,
       };
       await LeadService.createCalculator(apptId, fullPayload);
-      
+
       const newCalcs = await fetchCalculators();
       if (newCalcs && newCalcs.length > 0) {
         setActiveIdx(newCalcs.length - 1);
@@ -578,34 +576,7 @@ export const useDealCalculator = (lead: any) => {
     if (!apptId) return;
 
     const duplicate = calculators[idx];
-
-    // If there is already a duplicate warning name (e.g. contains ⚠️), block duplication
-    const hasWarnings = duplicate?.name && duplicate.name.includes('⚠️');
-    if (hasWarnings) {
-      Alert.alert('Validation Error', 'LFCalculator title must be unique within this appointment for the current user');
-      return;
-    }
-    
-    const hasInputs = [
-      'gutter5DsE', 'gutter6Ft1', 'gutter7DsE', 'miters', 'endCaps', 'spoutSavers',
-      'versaMaxFt1', 'versaMaxFt2', 'versaMaxFt3', 'versa6Ft1', 'versa7Ft1', 'filter45Ft1',
-      'versa6Ft2', 'versa7Ft2', 'filter45Ft2', 'versa6Ft3', 'versa7Ft3', 'filter45Ft3',
-      'ckToInstallers', 'extraLabor'
-    ].some(key => {
-      const val = duplicate?.inputs?.[key];
-      return val && Number(val) > 0;
-    });
-
-    const hasExtras = Object.values(duplicate?.extras || {}).some(val => {
-      return val && Number(val) > 0;
-    });
-
-    const hasValues = hasInputs || hasExtras;
-
-    if (!duplicate || !hasValues) {
-      Alert.alert('Validation Error', 'LFCalculator title must be unique within this appointment for the current user');
-      return;
-    }
+    if (!duplicate) return;
 
     try {
       setLoading(true);
@@ -624,17 +595,96 @@ export const useDealCalculator = (lead: any) => {
       const positions = calculators.map((c) => c.position ?? 0);
       const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
 
-      await LeadService.createCalculator(apptId, {
-        title: `${duplicate.name} (Copy)`,
+      const cleanBaseName = duplicate.name
+        .replace(/⚠️/g, '')
+        .replace(/\s\((SM|MD|LG|XL|XXL(-[0-9])?)\)$/i, '')
+        .trim();
+      const warningTitle = `⚠️ ${cleanBaseName} ⚠️`;
+
+      const dataExcludingKeys: any = {
+        title: warningTitle,
         position: nextPosition,
-        ...duplicate.inputs,
-        ...duplicate.extras,
+        gutter5DsE: duplicate.inputs.gutter5DsE,
+        gutter6Ft1: duplicate.inputs.gutter6Ft1,
+        gutter7DsE: duplicate.inputs.gutter7DsE,
+        miters: duplicate.inputs.miters,
+        endCaps: duplicate.inputs.endCaps,
+        spoutSavers: duplicate.inputs.spoutSavers,
+        versaMaxFt1: duplicate.inputs.versaMaxFt1,
+        versaMaxFt2: duplicate.inputs.versaMaxFt2,
+        versaMaxFt3: duplicate.inputs.versaMaxFt3,
+        versa6Ft1: duplicate.inputs.versa6Ft1,
+        versa7Ft1: duplicate.inputs.versa7Ft1,
+        filter45Ft1: duplicate.inputs.filter45Ft1,
+        versa6Ft2: duplicate.inputs.versa6Ft2,
+        versa7Ft2: duplicate.inputs.versa7Ft2,
+        filter45Ft2: duplicate.inputs.filter45Ft2,
+        versa6Ft3: duplicate.inputs.versa6Ft3,
+        versa7Ft3: duplicate.inputs.versa7Ft3,
+        filter45Ft3: duplicate.inputs.filter45Ft3,
+        ckToInstallers: duplicate.inputs.ckToInstallers,
+        extraLabor: duplicate.inputs.extraLabor,
+
+        // Send snake_case keys as well to ensure backend compatibility
+        gutter_footage: duplicate.inputs.gutter5DsE,
+        gutter_6_footage: duplicate.inputs.gutter6Ft1,
+        gutter_7_footage: duplicate.inputs.gutter7DsE,
+        end_caps: duplicate.inputs.endCaps,
+        spout_savers: duplicate.inputs.spoutSavers,
+        versa_max_footage: duplicate.inputs.versaMaxFt1,
+        versa_6_footage: duplicate.inputs.versa6Ft1,
+        versa_7_footage: duplicate.inputs.versa7Ft1,
+        filter_45_footage: duplicate.inputs.filter45Ft1,
+        versa_6_footage_2: duplicate.inputs.versa6Ft2,
+        versa_7_footage_2: duplicate.inputs.versa7Ft2,
+        filter_45_footage_2: duplicate.inputs.filter45Ft2,
+        versa_6_footage_3: duplicate.inputs.versa6Ft3,
+        versa_7_footage_3: duplicate.inputs.versa7Ft3,
+        filter_45_footage_3: duplicate.inputs.filter45Ft3,
+        check_to_installers: duplicate.inputs.ckToInstallers,
+        extra_labor_hours: duplicate.inputs.extraLabor,
+
         paymentPlan: paymentPlanToUse,
         paymentMethod: paymentPlanToUse,
-        isDefaultPayment: isDefaultPaymentToUse,
         pricemarkup: duplicate.inputs.markup,
-        price: 0,
+        price: '',
         isRolloutConfirmed: false,
+        isDefaultPayment: isDefaultPaymentToUse,
+        discounts: duplicate.discounts,
+        discountPercentage: duplicate.inputs.discountPercentage,
+        isDefaultDiscount: duplicate.inputs.isDefaultDiscount,
+        ...Object.keys(duplicate.extras || {}).reduce((acc: any, k) => {
+          const matchingExtra = (extrasList as any[]).find((e: any) => e.id === k || e.apiKey === k);
+          if (matchingExtra) {
+            acc[matchingExtra.id] = duplicate.extras[k];
+            if (matchingExtra.apiKey) {
+              acc[matchingExtra.apiKey] = duplicate.extras[k];
+            }
+          } else {
+            acc[k] = duplicate.extras[k];
+          }
+          return acc;
+        }, {}),
+      };
+
+      await LeadService.createCalculator(apptId, {
+        ...dataExcludingKeys,
+        originalCalculatorId: duplicate._id || duplicate.id,
+        duplicateLog: {
+          user_id: user?._id || user?.id,
+          created_by: user?._id || user?.id,
+          module_type: 'calculator',
+          actionType: 'duplicate',
+          meta: {
+            leadId: lead?._id || lead?.id,
+            sourceCalculatorId: duplicate._id,
+            sourceCalculatorTitle: duplicate.name,
+            newCalculatorTitle: warningTitle,
+            appointmentId: apptId,
+            position: nextPosition,
+            action: 'calculator_duplicated',
+          },
+        },
       });
 
       const newCalcs = await fetchCalculators();
@@ -728,10 +778,10 @@ export const useDealCalculator = (lead: any) => {
     try {
       setLoading(true);
       await LeadService.deleteCalculator(calculators[idx]._id);
-      
+
       setCalculators((prev) => {
         const remaining = prev.filter((_, i) => i !== idx);
-        
+
         // Re-calculate pricing/names to clear duplicate warning signs if no duplicate exists anymore
         const getRetailPrice = (calc: any) => {
           const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {

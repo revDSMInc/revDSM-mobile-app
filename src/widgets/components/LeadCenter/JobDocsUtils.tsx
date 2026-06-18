@@ -69,11 +69,26 @@ export const DetailRow = ({ label, value, color, method, isDark }: any) => (
 );
 
 export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: any) => {
+  const [opening, setOpening] = useState(false);
   const isImage = doc.uri?.toLowerCase().match(/\.(jpg|jpeg|png|webp|heic)$/) || !doc.uri?.toLowerCase().includes('.pdf');
+
+  const handlePress = async () => {
+    if (opening) return;
+    setOpening(true);
+    try {
+      if (isImage) {
+        await onImagePreview?.(doc.uri);
+      } else {
+        await onOpen?.(doc.uri, doc.name);
+      }
+    } finally {
+      setTimeout(() => setOpening(false), 800);
+    }
+  };
 
   return (
     <TouchableOpacity
-      onPress={() => isImage ? onImagePreview?.(doc.uri) : onOpen?.(doc.uri, doc.name)}
+      onPress={handlePress}
       className="flex-row items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100"
       style={{ backgroundColor: isDark ? '#FFFFFF08' : '#F9FAFB' }}
     >
@@ -98,7 +113,11 @@ export const DocumentItem = ({ doc, isDark, colors, onOpen, onImagePreview }: an
           </Text>
         </View>
       </View>
-      <Icon name="eye-outline" size={20} color="#637381" />
+      {opening ? (
+        <ActivityIndicator size="small" color={colors.primary.main} />
+      ) : (
+        <Icon name="eye-outline" size={20} color="#637381" />
+      )}
     </TouchableOpacity>
   );
 };

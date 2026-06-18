@@ -270,7 +270,11 @@ export default function LFCalculator({ route }: any) {
   });
 
   const loading = calcLoading || outcomeLoading;
-  const isJobBuilderSubmitted = jobState?.status === 'submitted' || currentLead?.jobBuilder?.status === 'submitted';
+  const resultedCalculatorId = jobState?.calculatorId || currentLead?.jobBuilder?.calculatorId;
+  const isJobBuilderSubmitted =
+    (jobState?.status === 'submitted' || currentLead?.jobBuilder?.status === 'submitted') &&
+    !!resultedCalculatorId &&
+    String(active?._id) === String(resultedCalculatorId);
 
   const openPicker = () => {
     setPrevView(currentView as 'form' | 'summary');
@@ -482,6 +486,7 @@ export default function LFCalculator({ route }: any) {
             colors={colors}
             isAutoSaving={isAutoSaving}
             lastUpdatedAt={lastUpdatedAt}
+            calculators={calculators}
           />
           <View
             className="px-5 py-4 border-t border-border bg-card relative"

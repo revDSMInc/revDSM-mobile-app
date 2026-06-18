@@ -32,6 +32,7 @@ import RNFS from 'react-native-fs';
 // @ts-ignore
 import base64 from 'base-64';
 import { useAuth } from '../../../hooks/useAuth';
+import SocketManager from '../../../services/SocketManager';
 
 const getNativeModules = () => {
   try {
@@ -523,7 +524,7 @@ export const JobDocsSection = ({
       return;
     }
 
-    // Only submit pages that are newly added — existing pages are already on the server
+    // Only submit pages if there are newly added pages
     const newPages = pages.filter((p) => p.isNew === true);
 
     if (newPages.length === 0) {
@@ -535,20 +536,54 @@ export const JobDocsSection = ({
     try {
       setIsGenerating(true);
 
+      // Pre-fetch outcome documents to retrieve existing base64Data
+      let preFetchedAppendedDocs: any[] = [];
+      try {
+        const response = await LeadService.downloadOutcomeDocuments(leadId);
+        const dataObj = response.data?.data || response.data || {};
+        preFetchedAppendedDocs = [
+          ...(dataObj.agreements || []),
+          ...(dataObj.orderSheets || [])
+        ];
+      } catch (err) {
+        console.warn('[JobDocsSection] Failed to pre-fetch outcome documents', err);
+      }
+
       const filePayloads: any[] = [];
-      for (let i = 0; i < newPages.length; i++) {
-        const p = newPages[i];
+      for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        const docNum = i + 1;
         const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
-        const defaultName = `${cleanCategoryName}_${Date.now()}_${i + 1}.pdf`;
+        const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
         const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
 
-        const rawBase64 = await RNFS.readFile(p.uri, 'base64');
-        const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
-        filePayloads.push({
-          name: documentName,
-          file: `data:application/pdf;base64,${pdfBase64}`,
-          type: scannerCategory,
-        });
+        if (p.isNew) {
+          const rawBase64 = await RNFS.readFile(p.uri, 'base64');
+          const pdfBase64 = p.uri.endsWith('.pdf') ? rawBase64 : convertJpegToPdf(rawBase64);
+          filePayloads.push({
+            name: documentName,
+            file: `data:application/pdf;base64,${pdfBase64}`,
+            type: scannerCategory,
+          });
+        } else {
+          // If it's an existing document, find its base64 content
+          const docId = p.serverId || p.id || p._id;
+          const serverDoc = preFetchedAppendedDocs.find(
+            (d) => String(d._id) === String(docId)
+          );
+          if (serverDoc && serverDoc.base64Data) {
+            const cType = serverDoc.fileData?.contentType || 'application/pdf';
+            const base64Prefix = serverDoc.base64Data.startsWith('data:')
+              ? serverDoc.base64Data
+              : `data:${cType};base64,${serverDoc.base64Data}`;
+
+            filePayloads.push({
+              name: documentName,
+              file: base64Prefix,
+              type: scannerCategory,
+            });
+          }
+        }
       }
 
       const payload = {
@@ -696,7 +731,7 @@ export const JobDocsSection = ({
         } catch (err) {
           if (i === retries) throw err;
           console.log(`Save attempt ${i + 1} failed, retrying in ${delayMs}ms...`, err);
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         }
       }
       return false;
@@ -1031,20 +1066,52 @@ export const JobDocsSection = ({
     return labels[status] || lead?.status || 'Resulted';
   };
 
+  const fetchDraft = useCallback(async () => {
+    if (!lead?._id) return;
+    try {
+      const companyId = lead?.companyId || user?.companyId;
+      const draftRes = await LeadService.getLeadDraft(lead._id, companyId);
+      const draftData = draftRes.data?.data || draftRes.data;
+      setLeadDraft(draftData);
+    } catch {
+      setLeadDraft(null);
+    }
+  }, [lead?._id, lead?.companyId, user?.companyId]);
+
   useEffect(() => {
-    const fetchDraft = async () => {
-      if (!lead?._id) return;
-      try {
-        const companyId = lead?.companyId || user?.companyId;
-        const draftRes = await LeadService.getLeadDraft(lead._id, companyId);
-        const draftData = draftRes.data?.data || draftRes.data;
-        setLeadDraft(draftData);
-      } catch {
-        setLeadDraft(null);
-      }
-    };
     fetchDraft();
-  }, [lead, user?.companyId]);
+  }, [fetchDraft]);
+
+  useEffect(() => {
+    const leadId = lead?._id;
+    if (!leadId) return;
+
+    // Join the room for real-time draft updates
+    console.log('[Socket] Joining lead draft room:', leadId);
+    SocketManager.emit('join-lead-draft', leadId);
+
+    // Set up listener
+    const unsubscribe = SocketManager.on('lead-draft-update', (payload: any) => {
+      if (!payload || String(payload.leadId) !== String(leadId)) return;
+
+      console.log('[Socket] lead-draft-update payload received:', payload);
+
+      if (payload.draft !== undefined) {
+        setLeadDraft(payload.draft ?? null);
+      }
+
+      if (payload.lead && typeof payload.lead === 'object') {
+        // Trigger a fresh fetch of the lead to update the UI instantly
+        refetch();
+      }
+    });
+
+    return () => {
+      console.log('[Socket] Leaving lead draft room:', leadId);
+      SocketManager.emit('leave-lead-draft', leadId);
+      unsubscribe();
+    };
+  }, [lead?._id, refetch]);
 
   useEffect(() => {
     const resolveDocs = async () => {
@@ -1310,10 +1377,15 @@ export const JobDocsSection = ({
         onClose={() => {
           setShowEditModal(false);
           refetch();
+          fetchDraft();
         }}
         outcomeData={outcomeData}
         lead={lead}
         onUpdate={handleUpdateContract}
+        onSendSuccess={() => {
+          refetch();
+          fetchDraft();
+        }}
       />
 
       {/* Result Modal Wrapper */}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Modal, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, Pressable, StyleSheet, Alert } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -15,9 +15,26 @@ export function AccountPopover({ visible, onClose, onNavigate }: AccountPopoverP
 
   const hasLmsPermission = user?.permissions?.LMS?.includes('view_lms') || false;
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     onClose();
-    await logout();
+    Alert.alert(
+      'Logout',
+      'Are you sure want to Logout?',
+      [
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            await logout();
+          },
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   return (

@@ -538,6 +538,21 @@ export default function JobBuilderScreen() {
         }
       });
 
+      // Pre-fetch outcome documents to retrieve existing base64Data
+      let preFetchedAppendedDocs: any[] = [];
+      try {
+        if (leadId) {
+          const response = await LeadService.downloadOutcomeDocuments(leadId);
+          const dataObj = response.data?.data || response.data || {};
+          preFetchedAppendedDocs = [
+            ...(dataObj.agreements || []),
+            ...(dataObj.orderSheets || [])
+          ];
+        }
+      } catch (err) {
+        console.warn('[JobBuilder] Failed to pre-fetch outcome documents', err);
+      }
+
       // finalJobState does NOT include base64 docs — those go as top-level payload fields
       const finalJobState = {
         ...jobState,
@@ -549,24 +564,40 @@ export default function JobBuilderScreen() {
       };
 
       // ── Build top-level agreements / orderSheets arrays (web app parity) ──
-      // All scanned/local files come from jobState.
+      // All scanned/local files come from jobState; server-side files come from resolvedDocuments.
       // The web app sends docs as top-level payload.agreements / payload.orderSheets.
 
-      // Collect all local new file objects (only ones with isNew === true)
-      const allLocalAgreementFiles = (jobState.agreements || [])
-        .flatMap((doc: any) => doc.files || [])
-        .filter((f: any) => f.isNew === true);
-      const allLocalOrderSheetFiles = (jobState.orderSheets || [])
-        .flatMap((doc: any) => doc.files || [])
-        .filter((f: any) => f.isNew === true);
+      // Collect all flat file objects
+      const allLocalAgreementFiles = (jobState.agreements || []).flatMap((doc: any) => doc.files || []);
+      const allLocalOrderSheetFiles = (jobState.orderSheets || []).flatMap((doc: any) => doc.files || []);
 
-      // Convert each new file to base64 PDF — matches web app's generatePdfFromImages/toBase64
+      // Merge with server-resolved docs, deduplicating by serverId or uri
+      const mergedAgreementFiles = [
+        ...(resolvedDocuments.agreements || []),
+        ...allLocalAgreementFiles,
+      ].filter((item, index, self) =>
+        index === self.findIndex((t) =>
+          (t.serverId && t.serverId === item.serverId) || (t.uri && t.uri === item.uri)
+        )
+      );
+
+      const mergedOrderSheetFiles = [
+        ...(resolvedDocuments.orderSheets || []),
+        ...allLocalOrderSheetFiles,
+      ].filter((item, index, self) =>
+        index === self.findIndex((t) =>
+          (t.serverId && t.serverId === item.serverId) || (t.uri && t.uri === item.uri)
+        )
+      );
+
+      // Convert each file to base64 PDF — matches web app's generatePdfFromImages/toBase64
       // Web app sends name: '' for all docs; the backend assigns the stored filename.
       const convertFilesToPayload = async (files: any[], docType: string) => {
         const results: any[] = [];
         for (let i = 0; i < files.length; i++) {
           const f = files[i];
-          if (f.uri) {
+          const isLocal = f.isNew || (f.uri && !f.serverId);
+          if (isLocal && f.uri) {
             try {
               const rawBase64 = await RNFS.readFile(f.uri, 'base64');
               // Convert any image (jpg, jpeg, png, heic) to PDF — only skip conversion for actual PDFs
@@ -581,14 +612,31 @@ export default function JobBuilderScreen() {
             } catch (e) {
               console.warn('[JobBuilder] File read failed:', f.uri, e);
             }
+          } else if (f.serverId || f.id || f._id) {
+            // Server doc — fetch base64 from pre-fetched list
+            const docId = f.serverId || f.id || f._id;
+            const serverDoc = preFetchedAppendedDocs.find(
+              (d: any) => String(d._id) === String(docId)
+            );
+            if (serverDoc?.base64Data) {
+              const cType = serverDoc.fileData?.contentType || 'application/pdf';
+              const base64Prefix = serverDoc.base64Data.startsWith('data:')
+                ? serverDoc.base64Data
+                : `data:${cType};base64,${serverDoc.base64Data}`;
+              results.push({
+                file: base64Prefix,
+                name: '',  // web app sends empty name; backend assigns the filename
+                type: docType,
+              });
+            }
           }
         }
         return results;
       };
 
       let [agreementsPayload, orderSheetsPayload] = await Promise.all([
-        convertFilesToPayload(allLocalAgreementFiles, 'agreement'),
-        convertFilesToPayload(allLocalOrderSheetFiles, 'orderSheet'),
+        convertFilesToPayload(mergedAgreementFiles, 'agreement'),
+        convertFilesToPayload(mergedOrderSheetFiles, 'orderSheet'),
       ]);
 
       // Web app parity: for Demo, move agreements → orderSheets if orderSheets is empty

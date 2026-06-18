@@ -66,6 +66,7 @@ export const InspectionFormModal = ({
 }: InspectionFormModalProps) => {
   const { colors } = useTheme();
   const [isGenerating, setIsGenerating] = useState(false);
+  const isLoading = !!(isGenerating || loading);
 
   const [name, setName] = useState(
     `${lead?.customerDetails?.firstName || ''} ${lead?.customerDetails?.lastName || ''}`.trim()
@@ -84,6 +85,7 @@ export const InspectionFormModal = ({
   });
 
   const addItem = (sectionId: SectionKey) => {
+    if (isLoading) return;
     setSections((prev) => ({
       ...prev,
       [sectionId]: [...prev[sectionId], makeEmptyItem()],
@@ -91,6 +93,7 @@ export const InspectionFormModal = ({
   };
 
   const removeItem = (sectionId: SectionKey, index: number) => {
+    if (isLoading) return;
     setSections((prev) => {
       const updated = [...prev[sectionId]];
       updated.splice(index, 1);
@@ -104,6 +107,7 @@ export const InspectionFormModal = ({
     field: keyof IssueItem,
     value: string | null
   ) => {
+    if (isLoading) return;
     setSections((prev) => {
       const updated = [...prev[sectionId]];
       updated[index] = { ...updated[index], [field]: value };
@@ -112,6 +116,7 @@ export const InspectionFormModal = ({
   };
 
   const handleCapture = (sectionId: SectionKey, index: number) => {
+    if (isLoading) return;
     console.log('Tapped Photo Box:', sectionId, index);
     setTimeout(() => {
       Alert.alert(
@@ -198,7 +203,7 @@ export const InspectionFormModal = ({
   };
 
   const handleSubmit = async () => {
-    if (isGenerating) return;
+    if (isLoading) return;
     try {
       setIsGenerating(true);
       const payload: any = {
@@ -253,10 +258,11 @@ export const InspectionFormModal = ({
       <View style={styles.floatingLabel}>
         <Text style={styles.floatingLabelText}>{label}</Text>
       </View>
-      <View style={styles.fieldBox}>
+      <View style={[styles.fieldBox, isLoading && { opacity: 0.6 }]}>
         <TextInput
           value={value}
           onChangeText={(t) => {
+            if (isLoading) return;
             const formatted = label === 'Phone' ? formatUSPhoneNumber(t) : t;
             onChange(formatted);
           }}
@@ -265,6 +271,7 @@ export const InspectionFormModal = ({
           keyboardType={keyboardType}
           style={styles.fieldInput}
           maxLength={label === 'Phone' ? 17 : undefined}
+          editable={!isLoading}
         />
       </View>
     </View>
@@ -284,8 +291,11 @@ export const InspectionFormModal = ({
           <View key={idx} style={styles.issueCard}>
             {/* Photo Upload Box */}
             <Pressable
-              onPress={() => handleCapture(sectionId, idx)}
-              style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+              onPress={() => {
+                if (isLoading) return;
+                handleCapture(sectionId, idx);
+              }}
+              style={({ pressed }) => [{ opacity: isLoading ? 0.6 : (pressed ? 0.6 : 1) }]}
             >
               <View
                 style={[
@@ -315,11 +325,13 @@ export const InspectionFormModal = ({
               sectionId={sectionId}
               value={item.issue}
               onSelect={(val: string, desc?: string) => {
+                if (isLoading) return;
                 updateItem(sectionId, idx, 'issue', val);
                 if (desc) {
                   updateItem(sectionId, idx, 'description', desc);
                 }
               }}
+              disabled={isLoading}
             />
 
             {/* Description Field */}
@@ -328,16 +340,24 @@ export const InspectionFormModal = ({
                 <Text style={styles.floatingLabelText}>Description</Text>
               </View>
               <View
-                style={[styles.fieldBox, { height: 80, alignItems: 'flex-start', paddingTop: 12 }]}
+                style={[
+                  styles.fieldBox,
+                  { height: 80, alignItems: 'flex-start', paddingTop: 12 },
+                  isLoading && { opacity: 0.6 },
+                ]}
               >
                 <TextInput
                   value={item.description}
-                  onChangeText={(t) => updateItem(sectionId, idx, 'description', t)}
+                  onChangeText={(t) => {
+                    if (isLoading) return;
+                    updateItem(sectionId, idx, 'description', t);
+                  }}
                   placeholder="Additional details..."
                   placeholderTextColor="#919EAB"
                   style={[styles.fieldInput, { textAlignVertical: 'top' }]}
                   multiline={true}
                   numberOfLines={3}
+                  editable={!isLoading}
                 />
               </View>
             </View>
@@ -347,17 +367,24 @@ export const InspectionFormModal = ({
         {/* Add / Remove Row */}
         <View style={styles.addRemoveRow}>
           <Pressable
-            onPress={() => addItem(sectionId)}
+            onPress={() => {
+              if (isLoading) return;
+              addItem(sectionId);
+            }}
             className="flex-row items-center"
-            style={({ pressed }) => [styles.addPhotoBtn, { opacity: pressed ? 0.6 : 1 }]}
+            style={({ pressed }) => [styles.addPhotoBtn, { opacity: isLoading ? 0.4 : (pressed ? 0.6 : 1) }]}
           >
             <Icon name="plus" size={14} color={colors.primary.main} />
             <Text style={[styles.addPhotoBtnText, { color: colors.primary.main }]}>Add Item</Text>
           </Pressable>
           {items.length > 1 && (
             <TouchableOpacity
-              onPress={() => removeItem(sectionId, items.length - 1)}
-              style={styles.removeBtn}
+              onPress={() => {
+                if (isLoading) return;
+                removeItem(sectionId, items.length - 1);
+              }}
+              disabled={isLoading}
+              style={[styles.removeBtn, { opacity: isLoading ? 0.4 : 1 }]}
             >
               <Icon name="trash-can-outline" size={14} color="#FF4842" />
               <Text style={styles.removeBtnText}>Remove</Text>
@@ -376,7 +403,12 @@ export const InspectionFormModal = ({
           <View style={[styles.header, { backgroundColor: colors.primary.main }]}>
             <Text style={styles.headerTitle}>Inspection Report</Text>
             <TouchableOpacity
-              onPress={onClose}
+              onPress={() => {
+                if (isLoading) return;
+                onClose();
+              }}
+              disabled={isLoading}
+              style={isLoading && { opacity: 0.5 }}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Icon name="close" size={24} color="white" />
@@ -401,20 +433,27 @@ export const InspectionFormModal = ({
 
           {/* Footer */}
           <View style={styles.footer}>
-            <TouchableOpacity onPress={onClose} style={styles.cancelBtn}>
+            <TouchableOpacity
+              onPress={() => {
+                if (isLoading) return;
+                onClose();
+              }}
+              disabled={isLoading}
+              style={[styles.cancelBtn, isLoading && { opacity: 0.5 }]}
+            >
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleSubmit}
-              disabled={isGenerating}
+              disabled={isLoading}
               style={[
                 styles.submitBtn,
-                { backgroundColor: colors.primary.main, opacity: isGenerating ? 0.6 : 1, flexDirection: 'row' },
+                { backgroundColor: colors.primary.main, opacity: isLoading ? 0.6 : 1, flexDirection: 'row' },
               ]}
             >
-              {isGenerating && <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />}
+              {isLoading && <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />}
               <Text style={styles.submitBtnText}>
-                {isGenerating ? 'Generating...' : 'Generate Report'}
+                {isLoading ? 'Generating...' : 'Generate Report'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -600,7 +639,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const IssueDropdown = ({ sectionId, value, onSelect }: any) => {
+const IssueDropdown = ({ sectionId, value, onSelect, disabled }: any) => {
   const { colors } = useTheme();
   const [showOptions, setShowOptions] = useState(false);
   const [layout, setLayout] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -638,13 +677,14 @@ const IssueDropdown = ({ sectionId, value, onSelect }: any) => {
         <View style={styles.floatingLabel}>
           <Text style={styles.floatingLabelText}>Issue</Text>
         </View>
-        <View style={styles.fieldBox}>
+        <View style={[styles.fieldBox, disabled && { opacity: 0.6 }]}>
           <TextInput
             value={value}
             onChangeText={onSelect}
             placeholder="Describe the issue"
             placeholderTextColor="#919EAB"
             style={styles.fieldInput}
+            editable={!disabled}
           />
         </View>
       </View>
@@ -655,10 +695,15 @@ const IssueDropdown = ({ sectionId, value, onSelect }: any) => {
     <View style={[styles.fieldWrap, { marginTop: 12, marginBottom: 12 }]}>
       <TouchableOpacity
         ref={triggerRef}
-        onPress={onOpen}
+        onPress={() => {
+          if (disabled) return;
+          onOpen();
+        }}
+        disabled={disabled}
         activeOpacity={0.7}
         style={[
           styles.fieldBox,
+          disabled && { opacity: 0.6 },
           showOptions && {
             borderBottomLeftRadius: 0,
             borderBottomRightRadius: 0,

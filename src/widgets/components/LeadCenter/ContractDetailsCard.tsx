@@ -57,12 +57,15 @@ export const ContractDetailsCard = ({
   const statusStr = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isDemo = statusStr === 'demo' || statusStr === 'demonosale';
 
+  const draftStatus = String(leadDraft?.status || '').toLowerCase();
+  const showPendingDraft = draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');
+
   return (
     <View
       className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 overflow-hidden"
       style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
     >
-      {(leadDraft?.showStatus === true || leadDraft?.showStatus === 'true') ? (
+      {showPendingDraft ? (
         <View className="bg-[#F4B400] py-2.5 items-center justify-center px-4">
           <Text className="text-[#1C252E] font-black text-xs tracking-widest uppercase text-center">
             SALE - PENDING CUSTOMER SIGNATURE

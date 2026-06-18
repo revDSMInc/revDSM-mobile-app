@@ -202,51 +202,24 @@ export default function LeadCenterPage() {
 
     const prefetchMapJobs = async () => {
       try {
+        console.log('[LeadCenter Prefetch] Prefetching map jobs (all)...');
+        queryClient.prefetchQuery({
+          queryKey: ['mapJobs', 'all'],
+          queryFn: async () => {
+            const res = await LeadService.findJobs({});
+            return res.data?.data || [];
+          },
+          staleTime: 1000 * 60 * 5,
+        });
+
+        // Request location permissions asynchronously in background
         if (Platform.OS === 'ios') {
           await Geolocation.requestAuthorization('whenInUse');
         } else {
           await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
         }
-
-        Geolocation.getCurrentPosition(
-          async (pos) => {
-            const lat = pos.coords.latitude;
-            const lng = pos.coords.longitude;
-            const latKey = parseFloat(lat.toFixed(2));
-            const lngKey = parseFloat(lng.toFixed(2));
-            const radius = 0;
-
-            console.log('[LeadCenter Prefetch] Prefetching map jobs (all markers):', lat, lng);
-            await queryClient.prefetchQuery({
-              queryKey: ['mapJobs', latKey, lngKey, radius],
-              queryFn: async () => {
-                const res = await LeadService.findJobs({});
-                return res.data?.data || [];
-              },
-              staleTime: 1000 * 60 * 5,
-            });
-            console.log('[LeadCenter Prefetch] Map jobs prefetched successfully.');
-          },
-          (err) => {
-            console.log('[LeadCenter Prefetch] Location error, prefetching with Tampa default:', err);
-            const lat = 27.9506;
-            const lng = -82.4572;
-            const latKey = 27.95;
-            const lngKey = -82.46;
-            const radius = 0;
-            queryClient.prefetchQuery({
-              queryKey: ['mapJobs', latKey, lngKey, radius],
-              queryFn: async () => {
-                const res = await LeadService.findJobs({});
-                return res.data?.data || [];
-              },
-              staleTime: 1000 * 60 * 5,
-            });
-          },
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 10000 }
-        );
       } catch (e) {
-        console.warn('[LeadCenter Prefetch] Prefetch failed:', e);
+        console.warn('[LeadCenter Prefetch] Location/Prefetch error:', e);
       }
     };
 
@@ -616,7 +589,6 @@ export default function LeadCenterPage() {
   };
 
   const handleInspectionSubmit = async (data: any) => {
-    toggleModal('showInspectionModal', false);
     setIsInspectionGenerating(true);
     try {
       FlashMessage.info('Generating inspection report...', 'Generating');
@@ -689,21 +661,9 @@ export default function LeadCenterPage() {
       setTimeout(() => refetch(), 1000);
       setTimeout(() => refetch(), 3000);
 
-      setTimeout(() => {
-        Alert.alert(
-          'Download Report',
-          'Would you like to download the generated inspection report to your device?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Download',
-              onPress: () => {
-                downloadPdfToDevice(pdfPath, 'Inspection Report');
-              },
-            },
-          ]
-        );
-      }, 500);
+      // Directly download the report
+      downloadPdfToDevice(pdfPath, 'Inspection Report');
+      toggleModal('showInspectionModal', false);
     } catch (e: any) {
       console.error('Inspection Submit Error:', e);
       FlashMessage.show(e.message || 'Error generating inspection report', 'danger');
@@ -1248,7 +1208,7 @@ export default function LeadCenterPage() {
           onClose={() => toggleModal('showInspectionModal', false)}
           onSubmit={handleInspectionSubmit}
           lead={lead}
-          loading={reportMutation.isPending}
+          loading={isInspectionGenerating}
         />
       )}
 

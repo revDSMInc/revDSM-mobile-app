@@ -172,8 +172,15 @@ export default function MapDetailScreen() {
   const lngKey = userLocation ? parseFloat(userLocation.longitude.toFixed(2)) : -82.46;
   const radiusVal = filters.radius;
 
+  const queryKey = useMemo(() => {
+    if (radiusVal > 0 && userLocation) {
+      return ['mapJobs', latKey, lngKey, radiusVal];
+    }
+    return ['mapJobs', 'all'];
+  }, [latKey, lngKey, radiusVal, userLocation]);
+
   const { data: queryLeads, isLoading: queryLoading, refetch: refetchQuery } = useQuery({
-    queryKey: ['mapJobs', latKey, lngKey, radiusVal],
+    queryKey,
     queryFn: async () => {
       const payload: any = {};
       if (radiusVal > 0 && userLocation) {
@@ -393,7 +400,7 @@ export default function MapDetailScreen() {
                 l._id === jobId ? { ...l, isFavourite: isFav, isFavorite: isFav } : l
               )
             );
-            queryClient.setQueryData(['mapJobs', latKey, lngKey, radiusVal], (old: any) => {
+            queryClient.setQueryData(queryKey, (old: any) => {
               if (!old) return old;
               return old.map((l: any) =>
                 l._id === jobId ? { ...l, isFavourite: isFav, isFavorite: isFav } : l

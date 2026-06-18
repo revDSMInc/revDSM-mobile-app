@@ -31,6 +31,7 @@ interface EditContractDetailsModalProps {
   outcomeData: any;
   onUpdate: (payload: any) => Promise<void>;
   lead: any;
+  onSendSuccess?: () => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   outcomeData,
   onUpdate,
   lead,
+  onSendSuccess,
 }) => {
   const { colors, isDark } = useTheme();
 
@@ -87,6 +89,11 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
   // ── Form state ─────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+  const [preFetchedDocs, setPreFetchedDocs] = useState<{ agreements: any[]; orderSheets: any[] }>({
+    agreements: [],
+    orderSheets: [],
+  });
   const [formData, setFormData] = useState({
     originalContractPrice: '0',
     downPayment: '0',
@@ -96,6 +103,35 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     lastPriceQuoted: '0',
     reason: '',
   });
+
+  // Helper to convert pre-fetched documents to payload format
+  const getDocsPayload = () => {
+    const agreementsPayload = (preFetchedDocs.agreements || []).map((doc: any) => {
+      const cType = doc.fileData?.contentType || 'application/pdf';
+      const base64Prefix = doc.base64Data?.startsWith('data:')
+        ? doc.base64Data
+        : `data:${cType};base64,${doc.base64Data || ''}`;
+      return {
+        file: base64Prefix,
+        name: doc.name || '',
+        type: 'agreement',
+      };
+    });
+
+    const orderSheetsPayload = (preFetchedDocs.orderSheets || []).map((doc: any) => {
+      const cType = doc.fileData?.contentType || 'application/pdf';
+      const base64Prefix = doc.base64Data?.startsWith('data:')
+        ? doc.base64Data
+        : `data:${cType};base64,${doc.base64Data || ''}`;
+      return {
+        file: base64Prefix,
+        name: doc.name || '',
+        type: 'orderSheet',
+      };
+    });
+
+    return { agreementsPayload, orderSheetsPayload };
+  };
 
   // ── Amendment state ────────────────────────────────────────────────────────
   const [amendmentOpen, setAmendmentOpen] = useState(false);
@@ -132,6 +168,26 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       setAmendmentOpen(false);
       setAmendmentChanges([]);
       setDraftId(null);
+
+      // Pre-fetch S3 documents
+      const leadId = lead?._id || lead?.id;
+      if (leadId) {
+        setLoadingDocs(true);
+        LeadService.downloadOutcomeDocuments(leadId)
+          .then((response) => {
+            const dataObj = response.data?.data || response.data || {};
+            setPreFetchedDocs({
+              agreements: dataObj.agreements || [],
+              orderSheets: dataObj.orderSheets || [],
+            });
+          })
+          .catch((err) => {
+            console.warn('[EditContractDetailsModal] Failed to pre-fetch documents:', err);
+          })
+          .finally(() => {
+            setLoadingDocs(false);
+          });
+      }
     }
   }, [visible, outcomeData, lead]);
 
@@ -188,9 +244,12 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
       // 3. Non-sale: save directly (no amendment required)
       if (!isSale) {
+        const { agreementsPayload, orderSheetsPayload } = getDocsPayload();
         await LeadService.submitJobBuilder(leadId, {
           leadData: editedLeadData,
           jobState: existingJobState,
+          agreements: agreementsPayload,
+          orderSheets: orderSheetsPayload,
         });
         await onUpdate(editedLeadData);
         onClose();
@@ -258,9 +317,12 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     if (!pending?.leadId) return;
     setAmendmentSubmitting(true);
     try {
+      const { agreementsPayload, orderSheetsPayload } = getDocsPayload();
       await LeadService.submitJobBuilder(pending.leadId, {
         leadData: pending.editedLeadData,
         jobState: pending.existingJobState,
+        agreements: agreementsPayload,
+        orderSheets: orderSheetsPayload,
       });
       if (draftId) {
         try {
@@ -328,9 +390,12 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       };
 
       // Non-sale or no change: save directly
+      const { agreementsPayload, orderSheetsPayload } = getDocsPayload();
       await LeadService.submitJobBuilder(leadId, {
         leadData: editedLeadData,
         jobState: editedJobState,
+        agreements: agreementsPayload,
+        orderSheets: orderSheetsPayload,
       });
 
       const outcomePayload = {
@@ -673,262 +738,273 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                 maxHeight: '85%',
               }}
             >
-              {/* ─── Menu View ──────────────────────────────────────────── */}
-              {view === 'menu' && (
-                <View style={{ padding: 32 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-                    <View>
-                      <Text style={{ fontSize: 20, fontWeight: '900', color: isDark ? '#FFF' : '#1C252E' }}>
-                        Edit Contract Details
-                      </Text>
-                      <Text style={{ fontSize: 14, color: '#637381', fontWeight: '500', marginTop: 2 }}>
-                        Select what to edit
-                      </Text>
-                    </View>
-                    <TouchableOpacity onPress={onClose}>
-                      <Icon name="close" size={24} color="#637381" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Contract Pricing row */}
-                  <TouchableOpacity
-                    onPress={() => setView('pricing')}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingVertical: 20,
-                      borderBottomWidth: 1,
-                      borderBottomColor: isDark ? '#FFFFFF10' : '#F4F6F8',
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: isDark ? '#FFF' : '#1C252E' }}>
-                      Contract Pricing
-                    </Text>
-                    <Icon name="chevron-right" size={24} color="#637381" />
-                  </TouchableOpacity>
-
-                  {/* Schedule Date row — only for Sale */}
-                  {isSale && (
-                    <TouchableOpacity
-                      onPress={() => setSchedulerOpen(true)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        paddingVertical: 20,
-                      }}
-                    >
-                      <View>
-                        <Text style={{ fontSize: 16, fontWeight: '700', color: isDark ? '#FFF' : '#1C252E' }}>
-                          Schedule Date
-                        </Text>
-                        <Text style={{ fontSize: 12, color: '#637381', marginTop: 2 }}>
-                          {(() => {
-                            const schedule =
-                              outcomeData?.jobBuilder?.scheduleTime ||
-                              outcomeData?.jobState?.scheduleTime ||
-                              outcomeData?.leadData?.scheduleTime;
-                            const date =
-                              schedule?.date ||
-                              outcomeData?.installDate ||
-                              outcomeData?.leadData?.installDate;
-                            const time =
-                              schedule?.timeWindow ||
-                              outcomeData?.timeWindow ||
-                              outcomeData?.leadData?.timeWindow;
-                            if (!date) return 'Not Scheduled';
-                            if (date === 'TBD') return 'TBD';
-                            const dateObj = new Date(date);
-                            if (!isNaN(dateObj.getTime())) {
-                              const formatted = dateObj.toLocaleDateString('en-US', {
-                                month: 'numeric',
-                                day: 'numeric',
-                                year: 'numeric',
-                              });
-                              return `${formatted}${time ? ` • ${time}` : ''}`;
-                            }
-                            return `${date}${time ? ` • ${time}` : ''}`;
-                          })()}
-                        </Text>
-                      </View>
-                      <Icon name="chevron-right" size={24} color="#637381" />
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Close button */}
-                  <TouchableOpacity
-                    onPress={onClose}
-                    style={{
-                      marginTop: 24,
-                      height: 56,
-                      backgroundColor: '#4CBB17',
-                      borderRadius: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Close</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* ─── Pricing View ────────────────────────────────────────── */}
-              {view === 'pricing' && (
-                <ScrollView
-                  ref={scrollRef}
-                  contentContainerStyle={{ padding: 32, paddingBottom: 40 }}
-                  showsVerticalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  nestedScrollEnabled
-                >
-                  {/* Header */}
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <Text style={{ fontSize: 20, fontWeight: '900', color: isDark ? '#FFF' : '#1C252E' }}>
-                      Edit Contract Pricing
-                    </Text>
-                    <TouchableOpacity onPress={() => setView('menu')}>
-                      <Icon name="close" size={24} color="#637381" />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={{ fontSize: 14, color: '#637381', fontWeight: '500', marginBottom: 28 }}>
-                    All financial terms
+              {loadingDocs ? (
+                <View style={{ padding: 40, alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator size="large" color="#4CBB17" />
+                  <Text style={{ marginTop: 16, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}>
+                    Loading documents...
                   </Text>
-
-                  {/* ── Demo fields ─────────────────────────────────────── */}
-                  {isDemo && (
-                    <>
-                      {/* Last Price Quoted */}
-                      <View style={{ marginBottom: 20 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                          Last Price Quoted
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#E5E7EB', paddingHorizontal: 16, height: 56 }}>
-                          <Text style={{ color: '#637381', marginRight: 8, fontSize: 18 }}>$</Text>
-                          <TextInput
-                            value={formData.lastPriceQuoted}
-                            onChangeText={(t) => setFormData({ ...formData, lastPriceQuoted: t })}
-                            keyboardType="numeric"
-                            style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
-                          />
-                        </View>
-                      </View>
-
-                      {/* Reason */}
-                      <View style={{ marginBottom: 20, zIndex: 100 }}>
-                        {renderDropdown('Reason', formData.reason || 'Select Reason', demoReasons.map((r) => ({ label: r, value: r })), 'reason', 100)}
-                      </View>
-                    </>
-                  )}
-
-                  {/* ── Sale fields ──────────────────────────────────────── */}
-                  {!isDemo && (
-                    <>
-                      {/* Original Contract Price */}
-                      <View style={{ marginBottom: 20 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                          Original Contract Price
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#E5E7EB', paddingHorizontal: 16, height: 56 }}>
-                          <Text style={{ color: '#637381', marginRight: 8, fontSize: 18 }}>$</Text>
-                          <TextInput
-                            value={formData.originalContractPrice}
-                            onChangeText={(t) => setFormData({ ...formData, originalContractPrice: t })}
-                            keyboardType="numeric"
-                            style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
-                          />
-                        </View>
-                      </View>
-
-                      {/* Down Payment group */}
-                      <View style={{ borderWidth: 1, borderColor: isDark ? '#FFFFFF15' : '#919EAB33', borderRadius: 16, padding: 16, marginBottom: 20 }}>
-                        <View style={{ marginBottom: 16 }}>
-                          <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                            Down Payment
+                </View>
+              ) : (
+                <>
+                  {/* ─── Menu View ──────────────────────────────────────────── */}
+                  {view === 'menu' && (
+                    <View style={{ padding: 32 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+                        <View>
+                          <Text style={{ fontSize: 20, fontWeight: '900', color: isDark ? '#FFF' : '#1C252E' }}>
+                            Edit Contract Details
                           </Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#919EAB33', paddingHorizontal: 12, height: 48 }}>
-                            <Text style={{ color: '#637381', marginRight: 8 }}>$</Text>
-                            <TextInput
-                              value={formData.downPayment}
-                              onChangeText={(t) => setFormData({ ...formData, downPayment: t })}
-                              keyboardType="numeric"
-                              style={{ flex: 1, fontWeight: '700', fontSize: 14, color: isDark ? '#FFF' : '#1C252E' }}
-                            />
-                          </View>
-                        </View>
-                        {renderDropdown(
-                          'Payment Method',
-                          downPaymentMethods.find((m) => m.value === formData.downPaymentMethod)?.label || 'Select',
-                          downPaymentMethods,
-                          'downPaymentMethod',
-                          90
-                        )}
-                      </View>
-
-                      {/* Balance group */}
-                      <View style={{ borderWidth: 1, borderColor: isDark ? '#FFFFFF15' : '#919EAB33', borderRadius: 16, padding: 16, marginBottom: 20 }}>
-                        <View style={{ marginBottom: 16 }}>
-                          <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                            Balance (auto-calculated)
+                          <Text style={{ fontSize: 14, color: '#637381', fontWeight: '500', marginTop: 2 }}>
+                            Select what to edit
                           </Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F4F6F8', borderRadius: 12, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#919EAB33', paddingHorizontal: 12, height: 48 }}>
-                            <Text style={{ color: '#637381', marginRight: 8 }}>$</Text>
-                            <TextInput
-                              value={formData.balance}
-                              editable={false}
-                              style={{ flex: 1, fontWeight: '700', fontSize: 14, color: '#637381' }}
-                            />
-                          </View>
                         </View>
-                        {renderBalanceDropdown(80)}
+                        <TouchableOpacity onPress={onClose}>
+                          <Icon name="close" size={24} color="#637381" />
+                        </TouchableOpacity>
                       </View>
-                    </>
-                  )}
 
-                  {/* Buttons */}
-                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-                    <TouchableOpacity
-                      onPress={() => setView('menu')}
-                      style={{
-                        flex: 1,
-                        height: 56,
-                        borderRadius: 16,
-                        borderWidth: 1,
-                        borderColor: isDark ? '#FFFFFF20' : '#E2E8F0',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <Text style={{ fontWeight: '900', fontSize: 14, color: '#637381' }}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={handleSavePricing}
-                      disabled={loading}
-                      style={{
-                        flex: 1.5,
-                        height: 56,
-                        backgroundColor: '#4CBB17',
-                        borderRadius: 16,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        opacity: loading ? 0.6 : 1,
-                        shadowColor: '#4CBB17',
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowOpacity: 0.3,
-                        shadowRadius: 8,
-                        elevation: 6,
-                      }}
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="white" />
-                      ) : (
-                        <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
-                          Save Changes
+                      {/* Contract Pricing row */}
+                      <TouchableOpacity
+                        onPress={() => setView('pricing')}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 20,
+                          borderBottomWidth: 1,
+                          borderBottomColor: isDark ? '#FFFFFF10' : '#F4F6F8',
+                        }}
+                      >
+                        <Text style={{ fontSize: 16, fontWeight: '700', color: isDark ? '#FFF' : '#1C252E' }}>
+                          Contract Pricing
                         </Text>
+                        <Icon name="chevron-right" size={24} color="#637381" />
+                      </TouchableOpacity>
+
+                      {/* Schedule Date row — only for Sale */}
+                      {isSale && (
+                        <TouchableOpacity
+                          onPress={() => setSchedulerOpen(true)}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingVertical: 20,
+                          }}
+                        >
+                          <View>
+                            <Text style={{ fontSize: 16, fontWeight: '700', color: isDark ? '#FFF' : '#1C252E' }}>
+                              Schedule Date
+                            </Text>
+                            <Text style={{ fontSize: 12, color: '#637381', marginTop: 2 }}>
+                              {(() => {
+                                const schedule =
+                                  outcomeData?.jobBuilder?.scheduleTime ||
+                                  outcomeData?.jobState?.scheduleTime ||
+                                  outcomeData?.leadData?.scheduleTime;
+                                const date =
+                                  schedule?.date ||
+                                  outcomeData?.installDate ||
+                                  outcomeData?.leadData?.installDate;
+                                const time =
+                                  schedule?.timeWindow ||
+                                  outcomeData?.timeWindow ||
+                                  outcomeData?.leadData?.timeWindow;
+                                if (!date) return 'Not Scheduled';
+                                if (date === 'TBD') return 'TBD';
+                                const dateObj = new Date(date);
+                                if (!isNaN(dateObj.getTime())) {
+                                  const formatted = dateObj.toLocaleDateString('en-US', {
+                                    month: 'numeric',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                  });
+                                  return `${formatted}${time ? ` • ${time}` : ''}`;
+                                }
+                                return `${date}${time ? ` • ${time}` : ''}`;
+                              })()}
+                            </Text>
+                          </View>
+                          <Icon name="chevron-right" size={24} color="#637381" />
+                        </TouchableOpacity>
                       )}
-                    </TouchableOpacity>
-                  </View>
-                </ScrollView>
+
+                      {/* Close button */}
+                      <TouchableOpacity
+                        onPress={onClose}
+                        style={{
+                          marginTop: 24,
+                          height: 56,
+                          backgroundColor: '#4CBB17',
+                          borderRadius: 16,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Close</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* ─── Pricing View ────────────────────────────────────────── */}
+                  {view === 'pricing' && (
+                    <ScrollView
+                      ref={scrollRef}
+                      contentContainerStyle={{ padding: 32, paddingBottom: 40 }}
+                      showsVerticalScrollIndicator={false}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      {/* Header */}
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 20, fontWeight: '900', color: isDark ? '#FFF' : '#1C252E' }}>
+                          Edit Contract Pricing
+                        </Text>
+                        <TouchableOpacity onPress={() => setView('menu')}>
+                          <Icon name="close" size={24} color="#637381" />
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={{ fontSize: 14, color: '#637381', fontWeight: '500', marginBottom: 28 }}>
+                        All financial terms
+                      </Text>
+
+                      {/* ── Demo fields ─────────────────────────────────────── */}
+                      {isDemo && (
+                        <>
+                          {/* Last Price Quoted */}
+                          <View style={{ marginBottom: 20 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                              Last Price Quoted
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#E5E7EB', paddingHorizontal: 16, height: 56 }}>
+                              <Text style={{ color: '#637381', marginRight: 8, fontSize: 18 }}>$</Text>
+                              <TextInput
+                                value={formData.lastPriceQuoted}
+                                onChangeText={(t) => setFormData({ ...formData, lastPriceQuoted: t })}
+                                keyboardType="numeric"
+                                style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
+                              />
+                            </View>
+                          </View>
+
+                          {/* Reason */}
+                          <View style={{ marginBottom: 20, zIndex: 100 }}>
+                            {renderDropdown('Reason', formData.reason || 'Select Reason', demoReasons.map((r) => ({ label: r, value: r })), 'reason', 100)}
+                          </View>
+                        </>
+                      )}
+
+                      {/* ── Sale fields ──────────────────────────────────────── */}
+                      {!isDemo && (
+                        <>
+                          {/* Original Contract Price */}
+                          <View style={{ marginBottom: 20 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                              Original Contract Price
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#E5E7EB', paddingHorizontal: 16, height: 56 }}>
+                              <Text style={{ color: '#637381', marginRight: 8, fontSize: 18 }}>$</Text>
+                              <TextInput
+                                value={formData.originalContractPrice}
+                                onChangeText={(t) => setFormData({ ...formData, originalContractPrice: t })}
+                                keyboardType="numeric"
+                                style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
+                              />
+                            </View>
+                          </View>
+
+                          {/* Down Payment group */}
+                          <View style={{ borderWidth: 1, borderColor: isDark ? '#FFFFFF15' : '#919EAB33', borderRadius: 16, padding: 16, marginBottom: 20 }}>
+                            <View style={{ marginBottom: 16 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                                Down Payment
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#919EAB33', paddingHorizontal: 12, height: 48 }}>
+                                <Text style={{ color: '#637381', marginRight: 8 }}>$</Text>
+                                <TextInput
+                                  value={formData.downPayment}
+                                  onChangeText={(t) => setFormData({ ...formData, downPayment: t })}
+                                  keyboardType="numeric"
+                                  style={{ flex: 1, fontWeight: '700', fontSize: 14, color: isDark ? '#FFF' : '#1C252E' }}
+                                />
+                              </View>
+                            </View>
+                            {renderDropdown(
+                              'Payment Method',
+                              downPaymentMethods.find((m) => m.value === formData.downPaymentMethod)?.label || 'Select',
+                              downPaymentMethods,
+                              'downPaymentMethod',
+                              90
+                            )}
+                          </View>
+
+                          {/* Balance group */}
+                          <View style={{ borderWidth: 1, borderColor: isDark ? '#FFFFFF15' : '#919EAB33', borderRadius: 16, padding: 16, marginBottom: 20 }}>
+                            <View style={{ marginBottom: 16 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '900', color: '#637381', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                                Balance (auto-calculated)
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#FFFFFF05' : '#F4F6F8', borderRadius: 12, borderWidth: 1, borderColor: isDark ? '#FFFFFF10' : '#919EAB33', paddingHorizontal: 12, height: 48 }}>
+                                <Text style={{ color: '#637381', marginRight: 8 }}>$</Text>
+                                <TextInput
+                                  value={formData.balance}
+                                  editable={false}
+                                  style={{ flex: 1, fontWeight: '700', fontSize: 14, color: '#637381' }}
+                                />
+                              </View>
+                            </View>
+                            {renderBalanceDropdown(80)}
+                          </View>
+                        </>
+                      )}
+
+                      {/* Buttons */}
+                      <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+                        <TouchableOpacity
+                          onPress={() => setView('menu')}
+                          style={{
+                            flex: 1,
+                            height: 56,
+                            borderRadius: 16,
+                            borderWidth: 1,
+                            borderColor: isDark ? '#FFFFFF20' : '#E2E8F0',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ fontWeight: '900', fontSize: 14, color: '#637381' }}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={handleSavePricing}
+                          disabled={loading}
+                          style={{
+                            flex: 1.5,
+                            height: 56,
+                            backgroundColor: '#4CBB17',
+                            borderRadius: 16,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: loading ? 0.6 : 1,
+                            shadowColor: '#4CBB17',
+                            shadowOffset: { width: 0, height: 4 },
+                            shadowOpacity: 0.3,
+                            shadowRadius: 8,
+                            elevation: 6,
+                          }}
+                        >
+                          {loading ? (
+                            <ActivityIndicator color="white" />
+                          ) : (
+                            <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>
+                              Save Changes
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </ScrollView>
+                  )}
+                </>
               )}
             </View>
           </View>
@@ -967,6 +1043,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           setAmendmentOpen(false);
           setAmendmentChanges([]);
           onClose();
+          onSendSuccess?.();
         }}
         changes={amendmentChanges}
         onSubmitAmendment={handleAmendmentSubmit}

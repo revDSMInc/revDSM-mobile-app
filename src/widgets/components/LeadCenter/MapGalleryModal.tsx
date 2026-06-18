@@ -431,7 +431,7 @@ export const MapGalleryModal = ({
                 <View className="flex-row items-center bg-[#E6F9FC] dark:bg-cyan-950/20 border border-[#00AEC7] p-4 rounded-[16px] mb-6 gap-3">
                   <Icon name="information-outline" size={20} color="#00AEC7" />
                   <Text className="flex-1 text-[13px] font-medium text-[#004B6E] dark:text-cyan-200 leading-5">
-                    New uploaded images cannot be reordered until saved. Save changes first to enable drag-and-drop.
+                    New uploaded images cannot be reordered until saved. Save changes first.
                   </Text>
                 </View>
               )}

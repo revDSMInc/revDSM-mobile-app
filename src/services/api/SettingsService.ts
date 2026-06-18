@@ -24,4 +24,11 @@ export const SettingsService = {
     api.put('/user/update', data, { headers }),
   updateCompanyProfile: (data: any): Promise<AxiosResponse<any>> =>
     api.put('/company/update/profile', data),
+
+  // Calculator Default Settings (mirrors web's updateCalculatorsSetting)
+  updateCalculatorsSetting: (data: {
+    defaultPaymentMethod?: string | null;
+    defaultPercentage?: number | null;
+  }): Promise<AxiosResponse<any>> =>
+    api.put('/company/user/update-default-lf-calculator-settings', data),
 };
