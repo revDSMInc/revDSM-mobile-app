@@ -32,6 +32,7 @@ import { ENV } from '../../config/env';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
+import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 
 const { width } = Dimensions.get('window');
 
@@ -127,6 +128,10 @@ export default function PitchbookScreen() {
       );
     } catch (e) {}
   }, [leadId, activeCategory, currentSlideIndex]);
+
+  useEffect(() => {
+    prepareHaptic('impact');
+  }, []);
 
   const fetchSecureImages = async (photos: any[]) => {
     if (!photos?.length) return;
@@ -261,6 +266,7 @@ export default function PitchbookScreen() {
   };
 
   const handleNext = () => {
+    triggerLightTap();
     if (currentSlideIndex < currentCategoryImages.length - 1) {
       setCurrentSlideIndex(currentSlideIndex + 1);
     } else {
@@ -273,6 +279,7 @@ export default function PitchbookScreen() {
   };
 
   const handlePrev = () => {
+    triggerLightTap();
     if (currentSlideIndex > 0) {
       setCurrentSlideIndex(currentSlideIndex - 1);
     } else {
@@ -488,8 +495,7 @@ export default function PitchbookScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <Header onNavigate={(r) => navigation.navigate(r as any)} />
+    <SafeAreaView className="flex-1 bg-white" edges={['bottom', 'left', 'right']}>
 
       {/* Pitch Book Toolbar */}
       <View className="flex-row items-center justify-between px-4 pt-6 bg-background">

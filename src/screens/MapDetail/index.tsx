@@ -15,13 +15,13 @@ import {
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
 import { LeadMap } from '../../widgets/components/LeadCenter/LeadMap';
 import { RootStackParamList } from '../../navigation';
-import { Header } from '../../widgets/common/MainHeader';
+import { Header, useHeader } from '../../widgets/common/MainHeader';
 import { MapFiltersModal, FilterState } from '../../widgets/modals/MapFiltersModal';
 import { MapGalleryModal } from '../../widgets/components/LeadCenter/MapGalleryModal';
 import { ReferralModal } from '../../widgets/modals/ReferralModal';
@@ -98,6 +98,8 @@ export default function MapDetailScreen() {
   const route = useRoute<RouteProp<RootStackParamList, 'MapDetail'>>();
   const { currentLead } = route.params || {};
 
+  const { setHeaderActions } = useHeader();
+
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<any>(null);
@@ -106,6 +108,23 @@ export default function MapDetailScreen() {
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number, longitude: number } | null>(null);
+
+  const [isListView, setIsListView] = useState(false);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      setHeaderActions({
+        onFilterPress: () => setShowFiltersModal(true),
+        onListPress: () => setIsListView(prev => !prev),
+      });
+      return () => {
+        setHeaderActions({
+          onFilterPress: null,
+          onListPress: null,
+        });
+      };
+    }, [isListView])
+  );
 
   const [filters, setFilters] = useState<FilterState>({
     jobNumber: '',
@@ -122,7 +141,6 @@ export default function MapDetailScreen() {
     showRoute: false,
   });
 
-  const [isListView, setIsListView] = useState(false);
   const [jumpLead, setJumpLead] = useState<any>(null);
   const [centerCoords, setCenterCoords] = useState<{
     latitude: number;
@@ -379,13 +397,6 @@ export default function MapDetailScreen() {
 
       {/* Global Common Header with Map Tools */}
       <StatusBar barStyle={'light-content'} backgroundColor="#ffffff" />
-      <SafeAreaView edges={['top']} style={{ backgroundColor: '#ffffff' }}>
-        <Header
-          onNavigate={(r) => navigation.navigate(r)}
-          onFilterPress={() => setShowFiltersModal(true)}
-          onListPress={() => setIsListView(!isListView)}
-        />
-      </SafeAreaView>
 
       <View style={{ flex: 1 }}>
         <LeadMap

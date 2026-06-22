@@ -14,6 +14,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 import { CustomCameraModal } from '../../modals/CustomCameraModal';
 
+import { triggerSuccess } from '../../../utils/haptics';
+
 interface TagPhotoModalProps {
   visible: boolean;
   onClose: () => void;
@@ -601,6 +603,7 @@ export const TagPhotoModal = ({
               <TouchableOpacity
                 key={`${slot.categoryName}-${slot.id}-${i}`}
                 onPress={() => {
+                  triggerSuccess();
                   if (isMoveSource) {
                     onClose();
                     setMovingImage(null);

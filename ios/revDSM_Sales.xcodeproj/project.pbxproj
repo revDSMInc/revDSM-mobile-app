@@ -15,6 +15,7 @@
 		43360991809541B5836783B8 /* PublicSans-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = CDCD8CF8478240E48C7F7804 /* PublicSans-ExtraBold.ttf */; };
 		482C6395E8BCA9046941C418 /* libPods-revDSM_Sales.a in Frameworks */ = {isa = PBXBuildFile; fileRef = B2186A1F8F004CDDE1C82990 /* libPods-revDSM_Sales.a */; };
 		4B7394E262E938570DF7FED5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		526A0DF22FE94DB6001CFA8C /* RNHapticFeedback.m in Sources */ = {isa = PBXBuildFile; fileRef = 526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */; };
 		52CA88BD2FD6D3890054DEBF /* UITextView+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */; };
 		52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */ = {isa = PBXBuildFile; fileRef = 52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */; };
 		60B4407C44E5461B87E537B7 /* PublicSans-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C9322F957A5D4516A981DD92 /* PublicSans-Light.ttf */; };
@@ -33,6 +34,8 @@
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = revDSM_Sales/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		25DD889537424F1BAB509994 /* PublicSans-Black.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-Black.ttf"; path = "../src/assets/fonts/PublicSans-Black.ttf"; sourceTree = "<group>"; };
 		2D8CB56EC0634351A0683404 /* PublicSans-SemiBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "PublicSans-SemiBold.ttf"; path = "../src/assets/fonts/PublicSans-SemiBold.ttf"; sourceTree = "<group>"; };
+		526A0DF02FE94DB6001CFA8C /* RNHapticFeedback.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RNHapticFeedback.h; sourceTree = "<group>"; };
+		526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RNHapticFeedback.m; sourceTree = "<group>"; };
 		52CA88BA2FD6D3890054DEBF /* UITextField+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextField+DoneButton.m"; sourceTree = "<group>"; };
 		52CA88BB2FD6D3890054DEBF /* UITextView+DoneButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "UITextView+DoneButton.m"; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = revDSM_Sales/AppDelegate.swift; sourceTree = "<group>"; };
@@ -64,6 +67,8 @@
 		13B07FAE1A68108700A75B9A /* revDSM_Sales */ = {
 			isa = PBXGroup;
 			children = (
+				526A0DF02FE94DB6001CFA8C /* RNHapticFeedback.h */,
+				526A0DF12FE94DB6001CFA8C /* RNHapticFeedback.m */,
 				52CA88BC2FD6D3890054DEBF /* RNKeyboardToolbar */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
@@ -315,6 +320,7 @@
 				52CA88BD2FD6D3890054DEBF /* UITextView+DoneButton.m in Sources */,
 				52CA88BE2FD6D3890054DEBF /* UITextField+DoneButton.m in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				526A0DF22FE94DB6001CFA8C /* RNHapticFeedback.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

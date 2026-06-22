@@ -723,16 +723,8 @@ export default function LeadCenterPage() {
     <>
       <SafeAreaView
         style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.background }]}
+        edges={['bottom', 'left', 'right']}
       >
-        <Header
-          onNavigate={(route) => {
-            if (route === 'Leads' && fromZoneCanvasser) {
-              navigation.navigate('Leads', { reopenZoneCanvasser: true });
-              return;
-            }
-            navigation.navigate(route);
-          }}
-        />
 
         <ImageGridModal
           visible={showInspectionGrid}

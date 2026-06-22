@@ -185,8 +185,6 @@ export default function JobTrackerPage() {
 
   return (
     <View style={[styles.root, { backgroundColor: isDark ? colors.background : '#FAF9F6' }]}>
-      <View style={{ height: insets.top, backgroundColor: isDark ? colors.surface : '#FAF9F6' }} />
-      <Header onNavigate={(route) => navigation.navigate(route)} />
 
       <ScrollView
         className="flex-1"

@@ -10,8 +10,7 @@ export default function LearningPage() {
   const navigation = useNavigation<any>();
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
-      <Header onNavigate={(route) => navigation.navigate(route)} />
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['bottom', 'left', 'right']}>
       <View className="flex-1 items-center justify-center -mt-20">
         <Text className="text-[60px] opacity-40">📚</Text>
         <Text className="text-xl font-black  tracking-widest mt-6" style={{ color: colors.text }}>

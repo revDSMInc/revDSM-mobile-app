@@ -17,6 +17,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, SharedValue, LinearTransition, SlideOutLeft, FadeOut } from 'react-native-reanimated';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import {
@@ -254,14 +255,30 @@ export const CalculatorSummary = ({
   const [displayShowDownPaymentInput, setDisplayShowDownPaymentInput] = useState(false);
   const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
   const summaryTabsScrollViewRef = useRef<ScrollView>(null);
+  const tabLayouts = useRef<Record<number, { x: number; width: number }>>({});
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
-  useEffect(() => {
-    if (activeIdx >= 0 && calculators.length > 0) {
-      const tabWidth = 90;
-      const targetOffset = Math.max(0, (activeIdx - 1) * tabWidth);
+  const centerTab = (idx: number) => {
+    const layout = tabLayouts.current[idx];
+    if (layout && scrollViewWidth > 0) {
+      const targetOffset = Math.max(0, layout.x - (scrollViewWidth - layout.width) / 2);
       summaryTabsScrollViewRef.current?.scrollTo({ x: targetOffset, animated: true });
     }
-  }, [activeIdx, calculators.length]);
+  };
+
+  useEffect(() => {
+    centerTab(activeIdx);
+  }, [activeIdx, scrollViewWidth]);
+
+  const onTabLayout = (idx: number, event: any) => {
+    const { x, width } = event.nativeEvent.layout;
+    tabLayouts.current[idx] = { x, width };
+    if (idx === activeIdx) {
+      centerTab(idx);
+    }
+  };
 
   useEffect(() => {
     setPreOrderDownPayment(activeCalc.downPayment || 0);
@@ -398,48 +415,84 @@ export const CalculatorSummary = ({
                 })}
               </View>
             ) : (
-              <ScrollView ref={summaryTabsScrollViewRef} horizontal showsHorizontalScrollIndicator={false} className="flex-1">
-                {calculators.map((calc: any, idx: number) => {
-                  const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
-                  const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
-                    if (idx === cIdx) return false;
-                    return isCalculatorIdentical(calc, c);
-                  });
-                  return (
-                    <TouchableOpacity
-                      key={idx}
-                      onPress={() => setActiveIdx(idx)}
-                      className={`flex-row items-center h-full px-4 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
-                        }`}
-                    >
-                      <View className="flex-row items-center">
-                        {isLocked && (
-                          <Ionicons
-                            name="lock-closed"
-                            size={12}
-                            color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
-                            style={{ marginRight: 6 }}
-                          />
-                        )}
-                        {isTabDuplicate && (
-                          <Ionicons
-                            name="warning"
-                            size={12}
-                            color="#FF990F"
-                            style={{ marginRight: 6 }}
-                          />
-                        )}
-                        <Text
-                          className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
-                            }`}
-                        >
-                          {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              <View className="flex-1 relative flex-row items-center h-full">
+                <ScrollView
+                  ref={summaryTabsScrollViewRef}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  className="flex-1"
+                  scrollEventThrottle={16}
+                  onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
+                  onContentSizeChange={(w) => setContentWidth(w)}
+                  onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+                >
+                  {calculators.map((calc: any, idx: number) => {
+                    const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
+                    const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
+                      if (idx === cIdx) return false;
+                      return isCalculatorIdentical(calc, c);
+                    });
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        onPress={() => setActiveIdx(idx)}
+                        onLayout={(e) => onTabLayout(idx, e)}
+                        className={`flex-row items-center h-full px-4 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                          }`}
+                      >
+                        <View className="flex-row items-center">
+                          {isLocked && (
+                            <Ionicons
+                              name="lock-closed"
+                              size={12}
+                              color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
+                              style={{ marginRight: 6 }}
+                            />
+                          )}
+                          {isTabDuplicate && (
+                            <Ionicons
+                              name="warning"
+                              size={12}
+                              color="#FF990F"
+                              style={{ marginRight: 6 }}
+                            />
+                          )}
+                          <Text
+                            className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
+                              }`}
+                          >
+                            {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Left Blur/Fade Overlay */}
+                {scrollOffset > 5 && (
+                  <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
+                    <BlurView
+                      style={StyleSheet.absoluteFill}
+                      blurType={isDark ? 'dark' : 'light'}
+                      blurAmount={5}
+                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                    />
+                  </View>
+                )}
+
+                {/* Right Blur/Fade Overlay */}
+                {scrollOffset + scrollViewWidth < contentWidth - 5 && (
+                  <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
+                    <BlurView
+                      style={StyleSheet.absoluteFill}
+                      blurType={isDark ? 'dark' : 'light'}
+                      blurAmount={5}
+                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                    />
+                  </View>
+                )}
+              </View>
             )}
           </View>
         </View>
@@ -1381,15 +1434,15 @@ export const CalculatorSummary = ({
                           >
                             {plan.label}
                           </Text>
-                          {plan.minPrice && (
+                          {plan.minPrice && belowMin && (
                             <Text
-                              className={`text-[10px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
+                              className={`text-[10px] font-bold mt-1 ${belowMin ? 'text-slate-800' : 'text-slate-400'
                                 }`}
                             >
                               Requires ${plan.minPrice?.toLocaleString()}+
-                              {rolloutEndPrice > 0
+                              {/* {rolloutEndPrice > 0
                                 ? ` (current: $${rolloutEndPrice.toLocaleString()})`
-                                : ' — enter end price first'}
+                                : ' — enter end price first'} */}
                             </Text>
                           )}
                         </TouchableOpacity>

@@ -32,6 +32,7 @@ import YearDropdown from '../../widgets/components/YearDropdown';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { ENV } from '../../config/env';
 import { storage } from '../../utils/storage';
+import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 
 
 const { width } = Dimensions.get('window');
@@ -88,6 +89,11 @@ export default function RooflineDeckScreen() {
       );
     } catch (e) { }
   }, [leadId, activeCategory, currentSlideIndex]);
+
+  useEffect(() => {
+    prepareHaptic('impact');
+  }, []);
+
   const [secureImages, setSecureImages] = useState<Record<string, any[]>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -262,6 +268,7 @@ export default function RooflineDeckScreen() {
   };
 
   const handleNext = () => {
+    triggerLightTap();
     if (currentSlideIndex < currentCategoryImages.length - 1) {
       setCurrentSlideIndex(currentSlideIndex + 1);
     } else {
@@ -274,6 +281,7 @@ export default function RooflineDeckScreen() {
   };
 
   const handlePrev = () => {
+    triggerLightTap();
     if (currentSlideIndex > 0) {
       setCurrentSlideIndex(currentSlideIndex - 1);
     } else {
@@ -489,8 +497,7 @@ export default function RooflineDeckScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background">
-      <Header onNavigate={(r) => navigation.navigate(r as any)} />
+    <SafeAreaView className="flex-1 bg-background" edges={['bottom', 'left', 'right']}>
 
       {/* Roofline Deck Toolbar */}
       <View className="flex-row items-center justify-between px-4 pt-6 bg-background">
