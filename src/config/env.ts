@@ -1,5 +1,5 @@
 // Centralised config — update API_URL to match your environment
-const API_URL = 'https://api.revdsm.com/';
+const API_URL = 'https://dev-api.revdsm.com/';
 
 const getS3Bucket = (url: string): string => {
   if (url.includes('dev-api') || url.includes('staging-api')) {
@@ -17,7 +17,7 @@ export const ENV = {
   GOOGLE_MAPS_API_KEY: 'AIzaSyBT3b_a8aWTuI0l9wqjhiT7lSgV_36pkUg',
   APIFY_API_TOKEN: 'apify_api_D5hrRBM3VW3uamrDWgSu7KvkE83tY54wQrTM',
   WEATHER_API_KEY: 'e121ca1bd2b740f493472510252304',
-  MAPBOX_ACCESS_TOKEN: 'sk.eyJ1IjoiaGFyaXNhZnphbDUwMyIsImEiOiJjbW96eHR3N20wenBnMnBzZndwNHB6emluIn0.5h7D3VueNAnwKfSnyuIWvg',
+  MAPBOX_ACCESS_TOKEN: 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcDFiNHM2eTAzOWkycnB6bzZibHdxMjIifQ.fk5Yn1dJLMZql8HQPZqxiA',
   S3_BUCKET,
   S3_BASE_URL,
 } as const;

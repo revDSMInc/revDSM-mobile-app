@@ -8,6 +8,14 @@ require Pod::Executable.execute_command('node', ['-p',
 platform :ios, '15.1'   # CHANGED from min_ios_version_supported
 prepare_react_native_project!
 
+# @rnmapbox/maps — use the official Mapbox Maps SDK implementation.
+# NOTE: the Mapbox iOS SDK is downloaded from Mapbox's private registry, which
+# requires a secret download token in ~/.netrc:
+#   machine api.mapbox.com
+#     login mapbox
+#     password sk.<your-secret-download-token>
+$RNMapboxMapsImpl = 'mapbox'
+
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
   Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
@@ -18,6 +26,10 @@ rn_maps_path = '../node_modules/react-native-maps'
 pod 'react-native-maps/Google', :path => rn_maps_path
 
 config = use_native_modules!
+
+pre_install do |installer|
+  $RNMapboxMaps.pre_install(installer) if defined?($RNMapboxMaps)
+end
 
 target 'revDSM_Sales' do
   
@@ -39,6 +51,8 @@ post_install do |installer|
     config[:reactNativePath],
     :mac_catalyst_enabled => false,
   )
+
+  $RNMapboxMaps.post_install(installer) if defined?($RNMapboxMaps)
 
   installer.pods_project.targets.each do |target|
     target.build_configurations.each do |build_config|

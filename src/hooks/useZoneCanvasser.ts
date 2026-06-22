@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Alert } from 'react-native';
-import MapView, { Region } from 'react-native-maps';
+import { MapView, Camera } from '@rnmapbox/maps';
+import type { Region } from 'react-native-maps';
 import Geolocation from 'react-native-geolocation-service';
 import axios from 'axios';
 
@@ -28,6 +29,7 @@ import type {
 
 export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 'visible' | 'user'>) {
   const mapRef = useRef<MapView>(null);
+  const cameraRef = useRef<Camera>(null);
   const mapRegionRef = useRef<Region | null>(null);
   const hasRestoredRef = useRef(false);
   const pendingRestoreRef = useRef<Awaited<ReturnType<typeof peekZoneMapState>>>(null);
@@ -85,6 +87,17 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     }
   }, []);
 
+  /** Animate the Mapbox camera to a react-native-maps-style Region (lat/lng + deltas). */
+  const animateToRegion = useCallback((region: Region, duration = 500) => {
+    const latDelta = region.latitudeDelta > 0 ? region.latitudeDelta : 0.05;
+    const zoom = Math.max(0, Math.min(20, Math.log2(360 / latDelta)));
+    cameraRef.current?.setCamera({
+      centerCoordinate: [region.longitude, region.latitude],
+      zoomLevel: zoom,
+      animationDuration: duration,
+    });
+  }, []);
+
   const handleGetCurrentLocation = useCallback(() => {
     Geolocation.getCurrentPosition(
       (position) => {
@@ -97,7 +110,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
           longitudeDelta: 0.00421,
         };
         setInitialRegion(region);
-        mapRef.current?.animateToRegion(region, 500);
+        animateToRegion(region, 500);
       },
       () => {
         setInitialRegion({
@@ -109,7 +122,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
     );
-  }, []);
+  }, [animateToRegion]);
 
   useEffect(() => {
     if (!visible) {
@@ -279,7 +292,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
       });
 
       setTimeout(() => {
-        mapRef.current?.animateToRegion(region, 400);
+        animateToRegion(region, 400);
       }, 350);
     })();
 
@@ -290,7 +303,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
   const navigateToSearchLocation = useCallback((coords: MapCoordinate) => {
     setSearchCoords(coords);
-    mapRef.current?.animateToRegion(
+    animateToRegion(
       {
         latitude: coords.latitude,
         longitude: coords.longitude,
@@ -300,26 +313,28 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
       500
     );
     setSearchModalVisible(false);
-  }, []);
+  }, [animateToRegion]);
 
-  const handleZoom = (zoomIn: boolean) => {
-    mapRef.current?.getCamera().then((camera) => {
-      if (camera?.zoom !== undefined) {
-        mapRef.current?.animateCamera({ zoom: camera.zoom + (zoomIn ? 1 : -1) }, { duration: 300 });
-      } else if (camera?.altitude !== undefined) {
-        mapRef.current?.animateCamera(
-          { altitude: camera.altitude * (zoomIn ? 0.5 : 2) },
-          { duration: 300 }
+  const handleZoom = async (zoomIn: boolean) => {
+    try {
+      const zoom = await mapRef.current?.getZoom();
+      if (zoom != null) {
+        cameraRef.current?.zoomTo(
+          Math.max(0, Math.min(20, zoom + (zoomIn ? 1 : -1))),
+          300
         );
       }
-    });
+    } catch (err) {
+      console.warn('Zoom error:', err);
+    }
   };
 
   const handleTouchStart = async (e: any) => {
     if (!isDrawingMode || drawType !== 'rectangle') return;
     const { locationX, locationY } = e.nativeEvent;
     try {
-      const coord = await mapRef.current?.coordinateForPoint({ x: locationX, y: locationY });
+      const point = await mapRef.current?.getCoordinateFromView([locationX, locationY]);
+      const coord = point ? { latitude: point[1], longitude: point[0] } : null;
       if (coord) {
         setStartPoint({ x: locationX, y: locationY, coord });
         setDrawCoordinates([coord]);
@@ -339,7 +354,8 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     
     isConvertingRef.current = true;
     try {
-      const currentCoord = await mapRef.current?.coordinateForPoint({ x: locationX, y: locationY });
+      const point = await mapRef.current?.getCoordinateFromView([locationX, locationY]);
+      const currentCoord = point ? { latitude: point[1], longitude: point[0] } : null;
       if (currentCoord && startPoint.coord) {
         const corner1 = startPoint.coord;
         const corner2 = currentCoord;
@@ -712,6 +728,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
   return {
     mapRef,
+    cameraRef,
     mapType,
     setMapType,
     userLocation,

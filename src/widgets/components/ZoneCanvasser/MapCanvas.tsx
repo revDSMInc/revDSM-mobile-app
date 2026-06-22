@@ -1,8 +1,19 @@
 import React, { useMemo, useState, useCallback, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
-import MapView, { Marker, Polygon, Polyline, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import Mapbox, {
+  MapView,
+  Camera,
+  ShapeSource,
+  FillLayer,
+  LineLayer,
+  CircleLayer,
+  MarkerView,
+  UserLocation,
+} from '@rnmapbox/maps';
+import type { Region } from 'react-native-maps';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type Supercluster from 'supercluster';
+import { ENV } from '../../../config/env';
 import {
   clusterBuildings,
   getClusterExpansionZoom,
@@ -11,8 +22,12 @@ import type { MapCoordinate, ZoneCanvasserBuilding } from '../../../types/zone-c
 import { BuildingMapMarker } from './BuildingMapMarker';
 import { ClusterMapMarker } from './ClusterMapMarker';
 
+// Mapbox access token (idempotent — safe to set from multiple map screens).
+Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
+
 type Props = {
   mapRef: React.RefObject<MapView | null>;
+  cameraRef: React.RefObject<Camera | null>;
   mapType: 'standard' | 'satellite';
   initialRegion: any;
   isDrawingMode: boolean;
@@ -37,29 +52,35 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.0421,
 };
 
-function getZonePolygonCoords(zone: any): MapCoordinate[] {
-  if (zone.geoJSON?.geometry?.coordinates) {
-    return zone.geoJSON.geometry.coordinates[0].map((coord: any) => ({
-      latitude: coord[1],
-      longitude: coord[0],
-    }));
-  }
-  if (zone.coordinates) {
-    return zone.coordinates.map((coord: any) => ({
-      latitude: coord[0],
-      longitude: coord[1],
-    }));
-  }
-  return [];
+/** Region latitudeDelta → Mapbox zoom level. */
+function regionToZoomLevel(region: Region): number {
+  const latDelta = region.latitudeDelta > 0 ? region.latitudeDelta : 0.0922;
+  return Math.max(0, Math.min(20, Math.log2(360 / latDelta)));
 }
 
-/** Convert Leaflet zoom to react-native-maps latitudeDelta (zoomToBoundsOnClick parity). */
-function zoomToLatitudeDelta(zoom: number): number {
-  return 360 / Math.pow(2, zoom);
+/** Zone polygon as a closed ring of [lng, lat] pairs for Mapbox. */
+function getZoneRing(zone: any): [number, number][] {
+  let ring: [number, number][] = [];
+  if (zone.geoJSON?.geometry?.coordinates) {
+    // geoJSON coordinates are already [lng, lat]
+    ring = zone.geoJSON.geometry.coordinates[0].map(
+      (c: any) => [c[0], c[1]] as [number, number]
+    );
+  } else if (zone.coordinates) {
+    // zone.coordinates are [lat, lng]
+    ring = zone.coordinates.map((c: any) => [c[1], c[0]] as [number, number]);
+  }
+  if (ring.length >= 3) {
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
+  }
+  return ring;
 }
 
 export function MapCanvas({
   mapRef,
+  cameraRef,
   mapType,
   initialRegion,
   isDrawingMode,
@@ -82,12 +103,57 @@ export function MapCanvas({
   );
   const clusterIndexRef = useRef<Supercluster | null>(null);
 
+  const cameraDefault = useMemo(() => {
+    const r: Region = initialRegion ?? DEFAULT_REGION;
+    return {
+      centerCoordinate: [r.longitude, r.latitude] as [number, number],
+      zoomLevel: regionToZoomLevel(r),
+    };
+  }, [initialRegion]);
+
   const handleRegionChangeComplete = useCallback(
     (region: Region) => {
       setMapRegion(region);
       onRegionChangeComplete?.(region);
     },
     [onRegionChangeComplete]
+  );
+
+  // Mapbox fires onCameraChanged/onMapIdle instead of onRegionChangeComplete.
+  // Synthesize a react-native-maps Region (center + deltas) from the camera
+  // bounds so the existing supercluster logic keeps working unchanged.
+  const handleMapIdle = useCallback(
+    async (state: any) => {
+      try {
+        let region: Region | null = null;
+        const props = state?.properties;
+        if (props?.bounds?.ne && props?.bounds?.sw && props?.center) {
+          const ne = props.bounds.ne; // [lng, lat]
+          const sw = props.bounds.sw; // [lng, lat]
+          region = {
+            latitude: props.center[1],
+            longitude: props.center[0],
+            latitudeDelta: Math.abs(ne[1] - sw[1]),
+            longitudeDelta: Math.abs(ne[0] - sw[0]),
+          };
+        } else if (mapRef.current) {
+          const bounds = await mapRef.current.getVisibleBounds(); // [[neLng,neLat],[swLng,swLat]]
+          const center = await mapRef.current.getCenter(); // [lng, lat]
+          if (bounds && center) {
+            region = {
+              latitude: center[1],
+              longitude: center[0],
+              latitudeDelta: Math.abs(bounds[0][1] - bounds[1][1]),
+              longitudeDelta: Math.abs(bounds[0][0] - bounds[1][0]),
+            };
+          }
+        }
+        if (region) handleRegionChangeComplete(region);
+      } catch (err) {
+        // ignore — keep last region
+      }
+    },
+    [handleRegionChangeComplete, mapRef]
   );
 
   const clusteredMarkers = useMemo(() => {
@@ -107,30 +173,95 @@ export function MapCanvas({
         const centerLng =
           buildings.reduce((s, b) => s + b.position[1], 0) / buildings.length;
 
-        mapRef.current?.animateToRegion(
-          {
-            latitude: centerLat,
-            longitude: centerLng,
-            latitudeDelta: zoomToLatitudeDelta(expansionZoom + 1),
-            longitudeDelta: zoomToLatitudeDelta(expansionZoom + 1),
-          },
-          400
-        );
+        cameraRef.current?.setCamera({
+          centerCoordinate: [centerLng, centerLat],
+          zoomLevel: Math.min(20, expansionZoom + 1),
+          animationDuration: 400,
+        });
         return;
       }
 
-      const coords = buildings.map((b) => ({
-        latitude: b.position[0],
-        longitude: b.position[1],
-      }));
-      if (coords.length > 0) {
-        mapRef.current?.fitToCoordinates(coords, {
-          edgePadding: { top: 100, right: 60, bottom: 120, left: 60 },
-          animated: true,
+      if (buildings.length > 0) {
+        let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+        buildings.forEach((b) => {
+          minLat = Math.min(minLat, b.position[0]);
+          maxLat = Math.max(maxLat, b.position[0]);
+          minLng = Math.min(minLng, b.position[1]);
+          maxLng = Math.max(maxLng, b.position[1]);
         });
+        cameraRef.current?.fitBounds(
+          [maxLng, maxLat],
+          [minLng, minLat],
+          [100, 60, 120, 60],
+          400
+        );
       }
     },
-    [mapRef]
+    [cameraRef]
+  );
+
+  // Polygon-mode taps come through Mapbox as a GeoJSON feature; adapt to the
+  // { nativeEvent: { coordinate } } shape the hook's handleMapPress expects.
+  const handleMapboxPress = useCallback(
+    (feature: any) => {
+      const c = feature?.geometry?.coordinates;
+      if (!c) return;
+      onMapPress({ nativeEvent: { coordinate: { latitude: c[1], longitude: c[0] } } });
+    },
+    [onMapPress]
+  );
+
+  // ─── Zones → FillLayer + LineLayer ─────────────────────────────────────────
+  const zonesById = useRef<Map<string, any>>(new Map());
+  const zonesFC = useMemo(() => {
+    const map = new Map<string, any>();
+    const features = (Array.isArray(zones) ? zones : [])
+      .map((zone) => {
+        const ring = getZoneRing(zone);
+        if (ring.length < 4) return null; // need closed ring (>=3 distinct + closure)
+        const id = String(zone._id || zone.zoneId);
+        map.set(id, zone);
+        return {
+          type: 'Feature' as const,
+          id,
+          properties: { id, color: zone.color || '#99FFB1' },
+          geometry: { type: 'Polygon' as const, coordinates: [ring] },
+        };
+      })
+      .filter(Boolean) as any[];
+    zonesById.current = map;
+    return { type: 'FeatureCollection' as const, features };
+  }, [zones]);
+
+  const handleZonePress = useCallback(
+    (event: any) => {
+      const id = event?.features?.[0]?.properties?.id;
+      const zone = id ? zonesById.current.get(id) : null;
+      if (zone) onPolygonPress(zone);
+    },
+    [onPolygonPress]
+  );
+
+  // ─── Draft drawing geometry ────────────────────────────────────────────────
+  const draftLineCoords = useMemo(
+    () =>
+      drawCoordinates
+        .filter((c) => c?.latitude != null && c?.longitude != null)
+        .map((c) => [c.longitude, c.latitude] as [number, number]),
+    [drawCoordinates]
+  );
+
+  const draftDotsFC = useMemo(
+    () => ({
+      type: 'FeatureCollection' as const,
+      features: draftLineCoords.map((coordinates, idx) => ({
+        type: 'Feature' as const,
+        id: `draft-dot-${idx}`,
+        properties: {},
+        geometry: { type: 'Point' as const, coordinates },
+      })),
+    }),
+    [draftLineCoords]
   );
 
   return (
@@ -145,105 +276,129 @@ export function MapCanvas({
       >
         <MapView
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFillObject}
-          mapType={mapType}
-          initialRegion={initialRegion}
-          onPress={onMapPress}
-          onRegionChangeComplete={handleRegionChangeComplete}
-          showsUserLocation
-          showsMyLocationButton={false}
+          styleURL={mapType === 'satellite' ? Mapbox.StyleURL.SatelliteStreet : Mapbox.StyleURL.Street}
+          onPress={handleMapboxPress}
+          onMapIdle={handleMapIdle}
+          scaleBarEnabled={false}
+          logoEnabled={true}
+          attributionEnabled={true}
           scrollEnabled={!rectangleDrawing}
           zoomEnabled={!rectangleDrawing}
           pitchEnabled={!rectangleDrawing}
           rotateEnabled={!rectangleDrawing}
         >
-          {isDrawingMode && drawCoordinates.length > 0 && (
-            <>
-              <Polyline
-                key="draft-polyline"
-                coordinates={drawCoordinates}
-                strokeColor="#FF5630"
-                strokeWidth={3}
+          <Camera ref={cameraRef} defaultSettings={cameraDefault} />
+          <UserLocation visible={true} />
+
+          {/* Saved zones */}
+          {!isDrawingMode && zonesFC.features.length > 0 && (
+            <ShapeSource id="zones-source" shape={zonesFC} onPress={handleZonePress}>
+              <FillLayer
+                id="zones-fill"
+                style={{ fillColor: ['get', 'color'], fillOpacity: 0.19 }}
               />
-              {drawCoordinates.length >= 3 && (
-                <Polygon
-                  key="draft-polygon"
-                  coordinates={drawCoordinates}
-                  fillColor="rgba(255, 86, 48, 0.2)"
-                  strokeColor="#FF5630"
-                  strokeWidth={1}
-                />
+              <LineLayer
+                id="zones-line"
+                style={{ lineColor: ['get', 'color'], lineWidth: 2 }}
+              />
+            </ShapeSource>
+          )}
+
+          {/* Draft drawing (in-progress zone) */}
+          {isDrawingMode && draftLineCoords.length > 0 && (
+            <>
+              {draftLineCoords.length >= 3 && (
+                <ShapeSource
+                  id="draft-fill-source"
+                  shape={{
+                    type: 'Feature',
+                    properties: {},
+                    geometry: {
+                      type: 'Polygon',
+                      coordinates: [[...draftLineCoords, draftLineCoords[0]]],
+                    },
+                  }}
+                >
+                  <FillLayer
+                    id="draft-fill"
+                    style={{ fillColor: 'rgba(255, 86, 48, 0.2)' }}
+                  />
+                </ShapeSource>
               )}
-              {drawType === 'polygon' && drawCoordinates.map((coord, idx) =>
-                coord?.latitude != null && coord?.longitude != null ? (
-                  <Marker
-                    key={`draft-dot-${idx}`}
-                    coordinate={coord}
-                    anchor={{ x: 0.5, y: 0.5 }}
-                    tracksViewChanges={false}
-                  >
-                    <View style={styles.draftDot} />
-                  </Marker>
-                ) : null
+              <ShapeSource
+                id="draft-line-source"
+                shape={{
+                  type: 'Feature',
+                  properties: {},
+                  geometry: { type: 'LineString', coordinates: draftLineCoords },
+                }}
+              >
+                <LineLayer
+                  id="draft-line"
+                  style={{ lineColor: '#FF5630', lineWidth: 3, lineCap: 'round', lineJoin: 'round' }}
+                />
+              </ShapeSource>
+              {drawType === 'polygon' && (
+                <ShapeSource id="draft-dots-source" shape={draftDotsFC}>
+                  <CircleLayer
+                    id="draft-dots"
+                    style={{
+                      circleRadius: 6,
+                      circleColor: '#FF5630',
+                      circleStrokeWidth: 2,
+                      circleStrokeColor: '#FFFFFF',
+                    }}
+                  />
+                </ShapeSource>
               )}
             </>
           )}
 
-          {!isDrawingMode &&
-            Array.isArray(zones) &&
-            zones.map((zone) => {
-              const polygonCoords = getZonePolygonCoords(zone);
-              if (polygonCoords.length < 3) return null;
-              return (
-                <Polygon
-                  key={zone._id || zone.zoneId}
-                  coordinates={polygonCoords}
-                  fillColor={`${zone.color || '#99FFB1'}30`}
-                  strokeColor={zone.color || '#99FFB1'}
-                  strokeWidth={2}
-                  tappable
-                  onPress={() => onPolygonPress(zone)}
-                />
-              );
-            })}
-
+          {/* Search-location marker */}
           {searchCoords && !isDrawingMode && (
-            <Marker coordinate={searchCoords} anchor={{ x: 0.5, y: 1 }}>
+            <MarkerView
+              coordinate={[searchCoords.longitude, searchCoords.latitude]}
+              anchor={{ x: 0.5, y: 1 }}
+              allowOverlap={true}
+            >
               <MaterialCommunityIcons name="map-marker" size={36} color="#e53935" />
-            </Marker>
+            </MarkerView>
           )}
 
+          {/* Building + cluster markers */}
           {!isDrawingMode &&
             clusteredMarkers.map((item) => {
               if (item.kind === 'single') {
                 const building = item.building;
                 return (
-                  <Marker
+                  <MarkerView
                     key={`building-${building.id}-${building.leadStatus || 'none'}`}
-                    coordinate={{
-                      latitude: building.position[0],
-                      longitude: building.position[1],
-                    }}
-                    onPress={() => onBuildingPress(building)}
+                    coordinate={[building.position[1], building.position[0]]}
                     anchor={{ x: 0.5, y: 0.5 }}
-                    tracksViewChanges={false}
+                    allowOverlap={true}
                   >
-                    <BuildingMapMarker status={building.leadStatus} />
-                  </Marker>
+                    <TouchableOpacity activeOpacity={0.8} onPress={() => onBuildingPress(building)}>
+                      <BuildingMapMarker status={building.leadStatus} />
+                    </TouchableOpacity>
+                  </MarkerView>
                 );
               }
 
               return (
-                <Marker
+                <MarkerView
                   key={`cluster-${item.clusterId}`}
-                  coordinate={{ latitude: item.latitude, longitude: item.longitude }}
-                  onPress={() => handleClusterPress(item.clusterId, item.buildings)}
+                  coordinate={[item.longitude, item.latitude]}
                   anchor={{ x: 0.5, y: 0.5 }}
-                  tracksViewChanges={true}
+                  allowOverlap={true}
                 >
-                  <ClusterMapMarker count={item.count} size={item.size} />
-                </Marker>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => handleClusterPress(item.clusterId, item.buildings)}
+                  >
+                    <ClusterMapMarker count={item.count} size={item.size} />
+                  </TouchableOpacity>
+                </MarkerView>
               );
             })}
         </MapView>
@@ -251,14 +406,3 @@ export function MapCanvas({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  draftDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#FF5630',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-});

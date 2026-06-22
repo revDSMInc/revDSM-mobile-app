@@ -130,6 +130,7 @@ export default function ZoneCanvasserMap({
 
           <MapCanvas
             mapRef={z.mapRef}
+            cameraRef={z.cameraRef}
             mapType={z.mapType}
             initialRegion={z.initialRegion}
             isDrawingMode={z.isDrawingMode}

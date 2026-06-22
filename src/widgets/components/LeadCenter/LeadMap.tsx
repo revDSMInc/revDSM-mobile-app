@@ -13,7 +13,16 @@ import {
   Modal,
 } from 'react-native';
 
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Heatmap, Callout, Polygon, Geojson } from 'react-native-maps';
+import Mapbox, {
+  MapView,
+  Camera,
+  ShapeSource,
+  SymbolLayer,
+  HeatmapLayer,
+  LineLayer,
+  MarkerView,
+  Images,
+} from '@rnmapbox/maps';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Geolocation from 'react-native-geolocation-service';
 import { useNavigation } from '@react-navigation/native';
@@ -29,7 +38,8 @@ import { MapToggleSwitch } from '../../common/MapToggleSwitch';
 import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
 import { ReferralModal } from '../../modals/ReferralModal';
 
-
+// Mapbox uses an access token initialized once at module load.
+Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
 
 const MARKER_IMAGES = {
   default: require('../../../assets/images/map/marker-green.png'),
@@ -44,6 +54,13 @@ const { width, height } = Dimensions.get('window');
 const TAMPA_COORDS = {
   latitude: 27.9506,
   longitude: -82.4572,
+};
+
+// Boundary lock — same bounds as the web app Leaflet MAP_BOUNDS.
+// Mapbox uses [longitude, latitude] order. SW [15, -180] NE [85, -40].
+const MAP_BOUNDS = {
+  ne: [-40, 85] as [number, number],
+  sw: [-180, 15] as [number, number],
 };
 
 // Match web app logic exactly - check salesRepId and name-based properties
@@ -93,36 +110,6 @@ interface LeadMapProps {
   onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
 }
 
-
-
-interface MemoizedGeojsonOverlayProps {
-  geojson: any;
-  color: string;
-  tracksViewChanges: boolean;
-  onPress: (event: any) => void;
-}
-
-const MemoizedGeojsonOverlay = React.memo(
-  ({ geojson, color, tracksViewChanges, onPress }: MemoizedGeojsonOverlayProps) => {
-    return (
-      <Geojson
-        geojson={geojson}
-        color={color}
-        tracksViewChanges={tracksViewChanges}
-        onPress={onPress}
-      />
-    );
-  },
-  (prev, next) => {
-    return (
-      prev.geojson === next.geojson &&
-      prev.color === next.color &&
-      prev.onPress === next.onPress &&
-      prev.tracksViewChanges === next.tracksViewChanges
-    );
-  }
-);
-
 export const LeadMap = ({
   currentLead,
   focusLead,
@@ -144,14 +131,14 @@ export const LeadMap = ({
   const { colors, isDark } = useTheme();
   const [isFetching, setIsFetching] = useState(false);
   const { user } = useAuth();
-  const mapRef = useRef<MapView>(null);
-  const isInternalMove = useRef(false);
+  const mapViewRef = useRef<MapView>(null);
+  const cameraRef = useRef<Camera>(null);
+  const zoomRef = useRef(10); // tracks current zoom for +/- buttons
 
   // ─── Data source ─────────────────────────────────────────────────────────
   // `internalLeads` is only used when no externalLeads prop is provided
   // (standalone LeadMap without MapDetail). When MapDetail passes `leads`,
   // we use that directly — synchronously — with NO intermediate setState.
-  // This eliminates the async render gap that caused phantom duplicate markers.
   const [internalLeads, setInternalLeads] = useState<any[]>([]);
   const [dataVersion, setDataVersion] = useState(0); // increments on every data refresh
 
@@ -163,7 +150,7 @@ export const LeadMap = ({
       const res = await LeadService.findJobs({});
       const jobs = res.data?.data || [];
       setInternalLeads(jobs);
-      setDataVersion((v) => v + 1); // force marker remount after data refresh
+      setDataVersion((v) => v + 1);
 
       // Refresh active selections to show new images/referrals immediately
       if (selectedLead?._id) {
@@ -182,7 +169,7 @@ export const LeadMap = ({
   };
 
   // When externalLeads change (MapDetail refreshed data after referral/gallery action),
-  // bump the version so markers remount fresh and tintColors update.
+  // bump the version so markers re-render and colors update.
   const prevLeadsHashRef = useRef('');
   useEffect(() => {
     if (externalLeads) {
@@ -203,24 +190,12 @@ export const LeadMap = ({
   const [isHeatMap, setIsHeatMap] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
-  const [routeCoordinates, setRouteCoordinates] = useState<any[]>([]);
+  const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
   const [showGallery, setShowGallery] = useState(false);
   const [galleryJob, setGalleryJob] = useState<any>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [showReferral, setShowReferral] = useState(false);
   const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-3']);
-
-  // Boundary lock — same bounds as the web app Leaflet MAP_BOUNDS
-  // SW [15, -180]  NE [85, -40]
-  const [mapScrollEnabled, setMapScrollEnabled] = useState(true);
-  const isOutOfBoundsRef = useRef(false);
-
-  const [region, setRegion] = useState({
-    ...TAMPA_COORDS,
-    latitudeDelta: 0.0922,
-    longitudeDelta: 0.0421,
-  });
-  const currentRegion = useRef(region);
 
   const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => {
     if (onToggleFilter) {
@@ -257,8 +232,6 @@ export const LeadMap = ({
         if (num >= 30000 && num <= 30032) return false;
       }
 
-
-
       // 3. My Jobs Filter
       if (isMyJobsOnly) {
         const isOwner = isJobOwner(item, user);
@@ -287,7 +260,7 @@ export const LeadMap = ({
     });
 
     return result;
-  }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads]);
+  }, [allLeads, user, isMyJobsOnly, isReferralOnly, isFavoriteOnly, externalLeads, dataVersion]);
 
   // ─── Separate searched, favorite and default leads ────────────────────────
   const { searchedLeads, favoriteLeads, defaultLeads } = useMemo(() => {
@@ -313,67 +286,65 @@ export const LeadMap = ({
     return { searchedLeads: searched, favoriteLeads: favorites, defaultLeads: defaults };
   }, [filteredLeads, isFavoriteOnly, searchedJobNumber]);
 
-  // ─── Create native GeoJSON objects ─────────────────────────────────────────
-  const searchedGeoJson = useMemo(() => {
-    return {
-      type: 'FeatureCollection' as const,
-      features: searchedLeads
-        .filter(job => job.location?.coordinates && job.location.coordinates.length >= 2)
-        .map(job => ({
-          type: 'Feature' as const,
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])]
-          },
-          properties: job
-        }))
-    };
-  }, [searchedLeads]);
+  // Fast lookup of a job by id — markers only carry the id in their GeoJSON
+  // properties (Mapbox flattens/serializes feature properties), so we resolve
+  // the full lead object on press from this map.
+  const leadsByIdRef = useRef<Map<string, any>>(new Map());
+  useMemo(() => {
+    const m = new Map<string, any>();
+    filteredLeads.forEach(j => m.set(j._id, j));
+    leadsByIdRef.current = m;
+    return m;
+  }, [filteredLeads]);
 
-  const favoriteGeoJson = useMemo(() => {
-    return {
-      type: 'FeatureCollection' as const,
-      features: favoriteLeads
-        .filter(job => job.location?.coordinates && job.location.coordinates.length >= 2)
-        .map(job => ({
-          type: 'Feature' as const,
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])]
-          },
-          properties: job
-        }))
-    };
-  }, [favoriteLeads]);
+  // ─── Combined GeoJSON for all job markers ──────────────────────────────────
+  // One FeatureCollection with a `category` property so a single CircleLayer can
+  // color each point. CircleLayer renders thousands of points smoothly.
+  const markersGeoJson = useMemo(() => {
+    const toFeature = (job: any, category: string) => ({
+      type: 'Feature' as const,
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])],
+      },
+      properties: { id: job._id, category },
+    });
 
-  const defaultGeoJson = useMemo(() => {
+    const hasCoords = (job: any) => job.location?.coordinates && job.location.coordinates.length >= 2;
+
     return {
       type: 'FeatureCollection' as const,
-      features: defaultLeads
-        .filter(job => job.location?.coordinates && job.location.coordinates.length >= 2)
-        .map(job => ({
+      features: [
+        ...defaultLeads.filter(hasCoords).map(j => toFeature(j, 'default')),
+        ...favoriteLeads.filter(hasCoords).map(j => toFeature(j, 'favorite')),
+        ...searchedLeads.filter(hasCoords).map(j => toFeature(j, 'searched')),
+      ],
+    };
+  }, [defaultLeads, favoriteLeads, searchedLeads]);
+
+  // ─── Heatmap GeoJSON ───────────────────────────────────────────────────────
+  // Each point carries a numeric `weight` derived from price, matching the
+  // previous Google heatmap weighting.
+  const heatmapGeoJson = useMemo(() => {
+    return {
+      type: 'FeatureCollection' as const,
+      features: filteredLeads
+        .filter((l: any) => l.location?.coordinates && l.location.coordinates.length >= 2)
+        .map((l: any) => ({
           type: 'Feature' as const,
           geometry: {
             type: 'Point' as const,
-            coordinates: [Number(job.location.coordinates[0]), Number(job.location.coordinates[1])]
+            coordinates: [Number(l.location.coordinates[0]), Number(l.location.coordinates[1])],
           },
-          properties: job
-        }))
+          properties: { weight: (l.price || 0) / 1000 || 1 },
+        })),
     };
-  }, [defaultLeads]);
+  }, [filteredLeads]);
 
   // Sync heatmap state when toggle changes
   useEffect(() => {
     if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
   }, [isHeatMapActive]);
-
-  // filterKey changes on every filter toggle.
-  // This forces a clean remount of ALL markers, which prevents phantom duplicates from prior async renders,
-  // but does not include dataVersion so that updating/favoriting single leads does not trigger a full remount.
-  const filterKey = `${isFavoriteOnly}-${isReferralOnly}-${isMyJobsOnly}-${isHeatMapActive}-${searchedJobNumber || ''}`;
-
-  const [isMapMoving, setIsMapMoving] = useState(false);
-
 
   useEffect(() => {
     requestLocationPermission();
@@ -382,7 +353,7 @@ export const LeadMap = ({
   const requestLocationPermission = async () => {
     if (Platform.OS === 'ios') {
       try {
-        const auth = await Geolocation.requestAuthorization('whenInUse');
+        await Geolocation.requestAuthorization('whenInUse');
         startTracking();
       } catch (err) {
         console.log('Error requesting iOS location permission:', err);
@@ -405,24 +376,22 @@ export const LeadMap = ({
       }
     } else if (currentLead?.latitude && currentLead?.longitude) {
       // Handle direct coordinate objects — used for location search navigation from MapFiltersModal
-      mapRef.current?.animateToRegion({
-        latitude: currentLead.latitude,
-        longitude: currentLead.longitude,
-        latitudeDelta: currentLead.latitudeDelta || 0.05,
-        longitudeDelta: currentLead.longitudeDelta || 0.05,
-      }, 800);
+      cameraRef.current?.setCamera({
+        centerCoordinate: [currentLead.longitude, currentLead.latitude],
+        zoomLevel: 13,
+        animationDuration: 800,
+      });
     }
   }, [currentLead]);
 
   useEffect(() => {
     if (focusLead?.location?.coordinates) {
       const coords = focusLead.location.coordinates;
-      mapRef.current?.animateToRegion({
-        latitude: coords[1] + 0.003, // shift center north to center card vertically matching marker click
-        longitude: coords[0],
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }, 1000);
+      cameraRef.current?.setCamera({
+        centerCoordinate: [Number(coords[0]), Number(coords[1]) + 0.003],
+        zoomLevel: 14,
+        animationDuration: 1000,
+      });
       setSelectedLead(focusLead);
     }
   }, [focusLead]);
@@ -433,11 +402,10 @@ export const LeadMap = ({
       setUserLocation({ latitude, longitude });
 
       // Always animate to user's current location when opening map or clicking GPS
-      mapRef.current?.animateToRegion({
-        latitude,
-        longitude,
-        latitudeDelta: 0.05,
-        longitudeDelta: 0.05,
+      cameraRef.current?.setCamera({
+        centerCoordinate: [longitude, latitude],
+        zoomLevel: 13,
+        animationDuration: 600,
       });
     };
 
@@ -463,13 +431,13 @@ export const LeadMap = ({
   const [cardHeight, setCardHeight] = useState(380);
 
   const updateSelectedPoint = async () => {
-    if (selectedLead?.location?.coordinates && mapRef.current) {
+    if (selectedLead?.location?.coordinates && mapViewRef.current) {
       try {
-        const point = await mapRef.current.pointForCoordinate({
-          latitude: selectedLead.location.coordinates[1],
-          longitude: selectedLead.location.coordinates[0],
-        });
-        setSelectedLeadPoint(point);
+        const point = await mapViewRef.current.getPointInView([
+          Number(selectedLead.location.coordinates[0]),
+          Number(selectedLead.location.coordinates[1]),
+        ]);
+        if (point) setSelectedLeadPoint({ x: point[0], y: point[1] });
       } catch (e) {
         // ignore
       }
@@ -520,7 +488,7 @@ export const LeadMap = ({
         );
       }
 
-      // Always bump version so markers rerender and update their colors
+      // Always bump version so markers re-render and update their colors
       setDataVersion((v) => v + 1);
 
       if (selectedLead && selectedLead._id === job._id) {
@@ -535,13 +503,8 @@ export const LeadMap = ({
     }
   };
 
-
-
-  const handleMarkerClick = (lead: any, event?: any) => {
+  const handleMarkerClick = (lead: any) => {
     markerPressedRef.current = true;
-    if (event && event.stopPropagation) {
-      event.stopPropagation();
-    }
 
     const coords = lead.location?.coordinates;
     if (!coords) return;
@@ -550,14 +513,31 @@ export const LeadMap = ({
       setSelectedLead(null);
     } else {
       setSelectedLead(lead);
-      mapRef.current?.animateToRegion({
-        latitude: coords[1] + 0.003, // shift center north to center card vertically
-        longitude: coords[0],
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }, 300);
+      cameraRef.current?.setCamera({
+        centerCoordinate: [Number(coords[0]), Number(coords[1]) + 0.003], // shift center north to center card vertically
+        zoomLevel: Math.max(zoomRef.current, 13),
+        animationDuration: 300,
+      });
     }
   };
+
+  const handleMarkerClickRef = useRef<(job: any) => void>(handleMarkerClick);
+  handleMarkerClickRef.current = handleMarkerClick;
+
+  const onMarkerPress = useCallback((event: any) => {
+    const feature = event?.features?.[0];
+    const id = feature?.properties?.id;
+    const job = id ? leadsByIdRef.current.get(id) : null;
+    if (job) handleMarkerClickRef.current(job);
+  }, []);
+
+  const handleMapPress = useCallback(() => {
+    if (markerPressedRef.current) {
+      markerPressedRef.current = false;
+      return;
+    }
+    setSelectedLead(null);
+  }, []);
 
   const fetchRoute = async () => {
     if (!userLocation || !currentLead?.location?.coordinates) return;
@@ -571,10 +551,10 @@ export const LeadMap = ({
       const data = await response.json();
 
       if (data.routes && data.routes.length > 0) {
-        const coords = data.routes[0].geometry.coordinates.map((c: any) => ({
-          longitude: c[0],
-          latitude: c[1],
-        }));
+        // Mapbox LineLayer expects [lng, lat] coordinate pairs.
+        const coords: [number, number][] = data.routes[0].geometry.coordinates.map(
+          (c: any) => [c[0], c[1]] as [number, number]
+        );
         setRouteCoordinates(coords);
       }
     } catch (error) {
@@ -589,16 +569,6 @@ export const LeadMap = ({
       setRouteCoordinates([]);
     }
   }, [showRoute, userLocation, currentLead]);
-
-  const heatmapPoints = useMemo(() => {
-    return filteredLeads
-      .filter((l: any) => l.location?.coordinates)
-      .map((l: any) => ({
-        latitude: l.location.coordinates[1],
-        longitude: l.location.coordinates[0],
-        weight: (l.price || 0) / 1000 || 1,
-      }));
-  }, [filteredLeads]);
 
   // Haversine formula to compute great-circle distance in kilometers
   const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -635,14 +605,11 @@ export const LeadMap = ({
     }
   }, [currentLead?.latitude, currentLead?.longitude, filteredLeads]);
 
-
-  const handleMarkerClickRef = useRef<(job: any, e?: any) => void>(handleMarkerClick);
-  handleMarkerClickRef.current = handleMarkerClick;
-
-  const stableMarkerPress = useCallback((event: any) => {
-    const job = event.feature.properties;
-    handleMarkerClickRef.current(job);
-  }, []);
+  const handleZoom = (delta: number) => {
+    const next = Math.min(Math.max(zoomRef.current + delta, 0), 20);
+    zoomRef.current = next;
+    cameraRef.current?.zoomTo(next, 300);
+  };
 
   return (
     <View
@@ -655,133 +622,119 @@ export const LeadMap = ({
       }}
     >
       <MapView
-        ref={mapRef}
-        provider={PROVIDER_GOOGLE}
+        ref={mapViewRef}
         style={StyleSheet.absoluteFillObject}
-        initialRegion={region}
-        maxZoomLevel={20}
-        scrollEnabled={mapScrollEnabled}
-        onRegionChange={(r) => {
-          // Boundary lock: same as Leaflet maxBoundsViscosity=1.0
-          // The instant the center crosses the US/Canada border, kill the gesture
-          // by flipping scrollEnabled=false. Can't use animateToRegion here
-          // because the native gesture overrides it while the finger is down.
-          const MIN_LAT = 15, MAX_LAT = 85, MIN_LNG = -180, MAX_LNG = -40;
-          const isOut =
-            r.latitude < MIN_LAT || r.latitude > MAX_LAT ||
-            r.longitude < MIN_LNG || r.longitude > MAX_LNG;
-
-          if (isOut && !isOutOfBoundsRef.current) {
-            isOutOfBoundsRef.current = true;
-            setMapScrollEnabled(false); // kills the active drag gesture immediately
-          }
-
-          currentRegion.current = r;
-          if (!isMapMoving) {
-            setIsMapMoving(true);
-          }
+        styleURL={isDark ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street}
+        scaleBarEnabled={false}
+        logoEnabled={true}
+        compassEnabled={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
+        onPress={handleMapPress}
+        onCameraChanged={(e: any) => {
+          if (e?.properties?.zoom != null) zoomRef.current = e.properties.zoom;
         }}
-        onRegionChangeComplete={(r) => {
-          currentRegion.current = r;
-          setIsMapMoving(false);
-
-          // Snap back and re-enable scrolling after gesture was killed
-          if (isOutOfBoundsRef.current) {
-            const MIN_LAT = 15, MAX_LAT = 85, MIN_LNG = -180, MAX_LNG = -40;
-            const clampedLat = Math.min(Math.max(r.latitude, MIN_LAT), MAX_LAT);
-            const clampedLng = Math.min(Math.max(r.longitude, MIN_LNG), MAX_LNG);
-            mapRef.current?.animateToRegion(
-              {
-                latitude: clampedLat,
-                longitude: clampedLng,
-                latitudeDelta: r.latitudeDelta,
-                longitudeDelta: r.longitudeDelta,
-              },
-              250
-            );
-            setTimeout(() => {
-              isOutOfBoundsRef.current = false;
-              setMapScrollEnabled(true);
-            }, 300);
-          }
+        onMapIdle={() => {
           updateSelectedPoint();
         }}
-        onPress={() => {
-          if (markerPressedRef.current) {
-            markerPressedRef.current = false;
-            return;
-          }
-          setSelectedLead(null);
-        }}
-        customMapStyle={isDark ? darkMapStyle : []}
-        onMapReady={() => {
-          // Matches Leaflet MAP_BOUNDS: SW [15,-180], NE [85,-40]
-          mapRef.current?.setMapBoundaries(
-            { latitude: 85, longitude: -40 },
-            { latitude: 15, longitude: -180 }
-          );
-        }}
       >
+        <Camera
+          ref={cameraRef}
+          maxBounds={MAP_BOUNDS}
+          maxZoomLevel={20}
+          defaultSettings={{
+            centerCoordinate: [TAMPA_COORDS.longitude, TAMPA_COORDS.latitude],
+            zoomLevel: 10,
+          }}
+        />
 
-
-
-        {/* Route Polyline */}
+        {/* Route line */}
         {routeCoordinates.length > 0 && (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor={colors.primary.main}
-            strokeWidth={4}
-          />
-        )}
-
-        {/* Heatmap Layer - Rendered before markers to avoid blocking touch events */}
-        {isHeatMap && heatmapPoints.length > 0 && (
-          <Heatmap
-            points={heatmapPoints}
-            radius={40}
-            opacity={0.7}
-            gradient={{
-              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
-              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
-              colorMapSize: 256,
+          <ShapeSource
+            id="route-source"
+            shape={{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: routeCoordinates },
             }}
-          />
+          >
+            <LineLayer
+              id="route-line"
+              style={{
+                lineColor: colors.primary.main,
+                lineWidth: 4,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </ShapeSource>
         )}
 
-        {/* Lead Markers — ALL leads rendered as memoized native Markers.
-             Stable keys on the MemoizedGeojsonOverlay components prevent fully unmounting/remounting
-             the children (which parses and renders 3,000+ points on the map), resulting in quick, smooth filters. */}
-        {!isHeatMap && defaultLeads.length > 0 && (
-          <MemoizedGeojsonOverlay
-            key="default-geojson-overlay"
-            geojson={defaultGeoJson}
-            color="#4CBB17"
-            tracksViewChanges={false}
-            onPress={stableMarkerPress}
-          />
+        {/* Heatmap Layer — smooth, large-radius gradient matching the web app. */}
+        {isHeatMap && heatmapGeoJson.features.length > 0 && (
+          <ShapeSource id="heatmap-source" shape={heatmapGeoJson}>
+            <HeatmapLayer
+              id="heatmap-layer"
+              sourceID="heatmap-source"
+              style={{
+                heatmapWeight: ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 10, 1],
+                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 2, 13, 3],
+                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 18, 9, 30, 13, 45, 16, 60],
+                heatmapOpacity: ['interpolate', ['linear'], ['zoom'], 7, 0.85, 16, 0.6],
+                heatmapColor: [
+                  'interpolate',
+                  ['linear'],
+                  ['heatmap-density'],
+                  0, 'rgba(0, 0, 255, 0)',
+                  0.1, '#74c0ff',
+                  0.3, '#0072ff',
+                  0.5, '#00c853',
+                  0.7, '#ffab00',
+                  0.85, '#ff6d00',
+                  1, '#d50000',
+                ],
+              }}
+            />
+          </ShapeSource>
         )}
-        {!isHeatMap && favoriteLeads.length > 0 && (
-          <MemoizedGeojsonOverlay
-            key="fav-geojson-overlay"
-            geojson={favoriteGeoJson}
-            color="#FFA500"
-            tracksViewChanges={false}
-            onPress={stableMarkerPress}
-          />
+
+        {/* Pin marker images registered with the style for the SymbolLayer below. */}
+        <Images
+          images={{
+            markerGreen: MARKER_IMAGES.default,
+            markerRed: MARKER_IMAGES.searched,
+            markerAmber: MARKER_IMAGES.favorite,
+          }}
+        />
+
+        {/* Lead Markers — teardrop pins (green/amber/red) anchored at their tip,
+             matching the previous Google Maps look. A single SymbolLayer renders
+             thousands of points performantly. */}
+        {!isHeatMap && markersGeoJson.features.length > 0 && (
+          <ShapeSource id="job-markers-source" shape={markersGeoJson} onPress={onMarkerPress}>
+            <SymbolLayer
+              id="job-markers-symbols"
+              style={{
+                iconImage: [
+                  'match',
+                  ['get', 'category'],
+                  'favorite', 'markerAmber',
+                  'searched', 'markerRed',
+                  /* default */ 'markerGreen',
+                ],
+                iconSize: ['interpolate', ['linear'], ['zoom'], 8, 0.7, 12, 0.9, 16, 1.1],
+                iconAnchor: 'bottom',
+                iconAllowOverlap: true,
+                iconIgnorePlacement: true,
+              }}
+            />
+          </ShapeSource>
         )}
-        {!isHeatMap && searchedLeads.length > 0 && (
-          <MemoizedGeojsonOverlay
-            key="searched-geojson-overlay"
-            geojson={searchedGeoJson}
-            color="#2390ff"
-            tracksViewChanges={false}
-            onPress={stableMarkerPress}
-          />
-        )}
+
         {/* User Location Marker */}
         {userLocation && (
-          <Marker
-            coordinate={userLocation}
+          <MarkerView
+            coordinate={[userLocation.longitude, userLocation.latitude]}
             anchor={{ x: 0.5, y: 0.5 }}
           >
             <View className="items-center justify-center">
@@ -789,18 +742,14 @@ export const LeadMap = ({
                 <View className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
               </View>
             </View>
-          </Marker>
+          </MarkerView>
         )}
 
         {/* Location-search center marker */}
         {currentLead?.latitude && currentLead?.longitude && (
-          <Marker
-            coordinate={{
-              latitude: currentLead.latitude,
-              longitude: currentLead.longitude,
-            }}
+          <MarkerView
+            coordinate={[currentLead.longitude, currentLead.latitude]}
             anchor={{ x: 0.5, y: 1 }}
-            zIndex={999}
           >
             <View style={{ alignItems: 'center', justifyContent: 'center' }}>
               <Icon name="map-marker" size={34} color="#FF3B30" />
@@ -817,7 +766,7 @@ export const LeadMap = ({
                 }}
               />
             </View>
-          </Marker>
+          </MarkerView>
         )}
       </MapView>
 
@@ -827,7 +776,7 @@ export const LeadMap = ({
           style={{
             position: 'absolute',
             left: selectedLeadPoint.x - 140, // Centered horizontally (280 / 2)
-            top: selectedLeadPoint.y - cardHeight - 58, // Sit above the 40px tall marker + 10px triangle + 8px gap
+            top: selectedLeadPoint.y - cardHeight - 58, // Sit above the marker + triangle + gap
             zIndex: 1000,
           }}
           pointerEvents="auto"
@@ -961,27 +910,13 @@ export const LeadMap = ({
 
         <View className="bg-white rounded-xl shadow-xl overflow-hidden border border-slate-100">
           <TouchableOpacity
-            onPress={() => {
-              const r = currentRegion.current;
-              mapRef.current?.animateToRegion({
-                ...r,
-                latitudeDelta: r.latitudeDelta / 2,
-                longitudeDelta: r.longitudeDelta / 2,
-              }, 300);
-            }}
+            onPress={() => handleZoom(1)}
             className="w-10 h-10 items-center justify-center border-b border-slate-100"
           >
             <Icon name="plus" size={24} color="#64748b" />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => {
-              const r = currentRegion.current;
-              mapRef.current?.animateToRegion({
-                ...r,
-                latitudeDelta: r.latitudeDelta * 2,
-                longitudeDelta: r.longitudeDelta * 2,
-              }, 300);
-            }}
+            onPress={() => handleZoom(-1)}
             className="w-10 h-10 items-center justify-center"
           >
             <Icon name="minus" size={24} color="#64748b" />
@@ -1017,7 +952,7 @@ export const LeadMap = ({
         onSuccess={() => {
           // Refresh data so jobReferrals / referralToggle state is up-to-date.
           // In standalone mode this fetches fresh data.
-          // In external-leads mode, bump dataVersion so markers remount.
+          // In external-leads mode, bump dataVersion so markers re-render.
           if (!externalLeads) {
             fetchAllJobs();
           } else {
@@ -1040,106 +975,3 @@ const styles = StyleSheet.create({
     zIndex: 20,
   }
 });
-
-const darkMapStyle = [
-  {
-    "elementType": "geometry",
-    "stylers": [{ "color": "#212121" }]
-  },
-  {
-    "elementType": "labels.icon",
-    "stylers": [{ "visibility": "off" }]
-  },
-  {
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#757575" }]
-  },
-  {
-    "elementType": "labels.text.stroke",
-    "stylers": [{ "color": "#212121" }]
-  },
-  {
-    "featureType": "administrative",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#757575" }]
-  },
-  {
-    "featureType": "administrative.country",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#9e9e9e" }]
-  },
-  {
-    "featureType": "administrative.land_parcel",
-    "stylers": [{ "visibility": "off" }]
-  },
-  {
-    "featureType": "administrative.locality",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#bdbdbd" }]
-  },
-  {
-    "featureType": "poi",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#757575" }]
-  },
-  {
-    "featureType": "poi.park",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#181818" }]
-  },
-  {
-    "featureType": "poi.park",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#616161" }]
-  },
-  {
-    "featureType": "poi.park",
-    "elementType": "labels.text.stroke",
-    "stylers": [{ "color": "#1b1b1b" }]
-  },
-  {
-    "featureType": "road",
-    "elementType": "geometry.fill",
-    "stylers": [{ "color": "#2c2c2c" }]
-  },
-  {
-    "featureType": "road",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#8a8a8a" }]
-  },
-  {
-    "featureType": "road.arterial",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#373737" }]
-  },
-  {
-    "featureType": "road.highway",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#3c3c3c" }]
-  },
-  {
-    "featureType": "road.highway.controlled_access",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#4e4e4e" }]
-  },
-  {
-    "featureType": "road.local",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#616161" }]
-  },
-  {
-    "featureType": "transit",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#757575" }]
-  },
-  {
-    "featureType": "water",
-    "elementType": "geometry",
-    "stylers": [{ "color": "#000000" }]
-  },
-  {
-    "featureType": "water",
-    "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#3d3d3d" }]
-  }
-];
