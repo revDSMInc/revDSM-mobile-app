@@ -11,6 +11,7 @@ import {
   Alert,
   Image,
   Modal,
+  Animated,
 } from 'react-native';
 
 import Mapbox, {
@@ -427,39 +428,26 @@ export const LeadMap = ({
     );
   };
 
-  const [selectedLeadPoint, setSelectedLeadPoint] = useState<{ x: number, y: number } | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [cardHeight, setCardHeight] = useState(380);
 
-  // Guards against overlapping getPointInView() bridge calls when this is fired
-  // rapidly from onCameraChanged during a camera animation.
-  const pointUpdateInFlight = useRef(false);
-
-  const updateSelectedPoint = async () => {
-    if (selectedLead?.location?.coordinates && mapViewRef.current) {
-      if (pointUpdateInFlight.current) return;
-      pointUpdateInFlight.current = true;
-      try {
-        const point = await mapViewRef.current.getPointInView([
-          Number(selectedLead.location.coordinates[0]),
-          Number(selectedLead.location.coordinates[1]),
-        ]);
-        if (point) setSelectedLeadPoint({ x: point[0], y: point[1] });
-      } catch (e) {
-        // ignore
-      } finally {
-        pointUpdateInFlight.current = false;
-      }
-    } else {
-      setSelectedLeadPoint(null);
-    }
-  };
-
+  // Card entrance animation. The card itself is a native MarkerView glued to the
+  // marker coordinate (so it tracks the marker through any pan/zoom natively).
+  // We fade + scale it in with a small delay so the camera has already started
+  // gliding toward the marker before the card appears — a smooth, sequenced feel.
+  const cardAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    updateSelectedPoint();
-    const timer = setTimeout(updateSelectedPoint, 150);
-    return () => clearTimeout(timer);
-  }, [selectedLead]);
+    if (selectedLead?._id) {
+      cardAnim.setValue(0);
+      Animated.timing(cardAnim, {
+        toValue: 1,
+        duration: 280,
+        delay: 220,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      cardAnim.setValue(0);
+    }
+  }, [selectedLead?._id, cardAnim]);
 
   useEffect(() => {
     if (selectedLead && !filteredLeads.some(job => job._id === selectedLead._id)) {
@@ -531,6 +519,42 @@ export const LeadMap = ({
   const handleMarkerClickRef = useRef<(job: any) => void>(handleMarkerClick);
   handleMarkerClickRef.current = handleMarkerClick;
 
+  // Timestamp of the last marker selection. The native ShapeSource.onPress and
+  // the MapView.onPress can both fire for a single tap; this guard makes sure a
+  // tap is handled exactly once (and the map press never deselects right after).
+  const lastMarkerPressRef = useRef(0);
+
+  const selectJob = (job: any) => {
+    lastMarkerPressRef.current = Date.now();
+    handleMarkerClickRef.current(job);
+  };
+
+  // Native, reliable marker hit-test (Mapbox does the hit detection with the
+  // ShapeSource's enlarged hitbox), so taps land consistently at any zoom.
+  const onMarkerSourcePress = useCallback((e: any) => {
+    if (isHeatMapActive) return;
+    if (Date.now() - lastMarkerPressRef.current < 400) return;
+    const id = e?.features?.[0]?.properties?.id;
+    const job = id ? leadsByIdRef.current.get(id) : null;
+    if (job) selectJob(job);
+  }, [isHeatMapActive]);
+
+  // Zoom threshold the popup is considered "anchored close" at. When the map is
+  // zoomed out further than this, tapping the popup card itself glides the camera
+  // in and re-centers on the marker (nested buttons inside the card still take
+  // priority for their own taps).
+  const CARD_FOCUS_ZOOM = 15.5;
+  const handleCardPress = useCallback(() => {
+    if (!selectedLead?.location?.coordinates) return;
+    if (zoomRef.current >= CARD_FOCUS_ZOOM - 0.05) return; // already zoomed in
+    const coords = selectedLead.location.coordinates;
+    cameraRef.current?.setCamera({
+      centerCoordinate: [Number(coords[0]), Number(coords[1]) + 0.003],
+      zoomLevel: CARD_FOCUS_ZOOM,
+      animationDuration: 600,
+    });
+  }, [selectedLead]);
+
   // Haversine formula to compute great-circle distance in kilometers
   const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; // Radius of the earth in km
@@ -546,51 +570,15 @@ export const LeadMap = ({
     return R * c; // Distance in km
   };
 
-  // Single tap handler for the whole map.
-  //  • When pins are shown, we hit-test a generous rect around the tap point and
-  //    resolve the closest marker. This is far more forgiving than relying on the
-  //    icon's own (tiny, zoom-scaled) touch area, so taps no longer "sometimes"
-  //    miss when zoomed out.
+  // Map background tap handler.
+  //  • If a marker was just selected (native ShapeSource.onPress), ignore this so
+  //    we don't immediately deselect it.
   //  • When the heatmap is active there are no pins, so a tap selects the closest
   //    lead within 2km.
   //  • Otherwise it deselects.
   const handleMapPress = useCallback(
-    async (feature: any) => {
-      const tap = feature?.geometry?.coordinates;
-      const screenX = feature?.properties?.screenPointX;
-      const screenY = feature?.properties?.screenPointY;
-
-      // ── Pin hit-test ──────────────────────────────────────────────────────
-      if (!isHeatMapActive && screenX != null && screenY != null && mapViewRef.current) {
-        const HIT = 22; // px radius around the tap — comfortable finger target
-        try {
-          const fc = await mapViewRef.current.queryRenderedFeaturesInRect(
-            [screenY - HIT, screenX + HIT, screenY + HIT, screenX - HIT], // [top, right, bottom, left]
-            undefined,
-            ['job-markers-symbols']
-          );
-          const features = fc?.features || [];
-          if (features.length && tap) {
-            // Pick the pin geographically closest to the tap point.
-            let best: any = null;
-            let bestD = Infinity;
-            for (const f of features as any[]) {
-              const c = f?.geometry?.coordinates;
-              if (!c) continue;
-              const d = (c[0] - tap[0]) ** 2 + (c[1] - tap[1]) ** 2;
-              if (d < bestD) { bestD = d; best = f; }
-            }
-            const id = best?.properties?.id;
-            const job = id ? leadsByIdRef.current.get(id) : null;
-            if (job) {
-              handleMarkerClickRef.current(job);
-              return;
-            }
-          }
-        } catch (e) {
-          // fall through to deselect on any query failure
-        }
-      }
+    (feature: any) => {
+      if (Date.now() - lastMarkerPressRef.current < 400) return;
 
       if (isHeatMapActive && filteredLeads.length > 0) {
         const c = feature?.geometry?.coordinates;
@@ -711,13 +699,6 @@ export const LeadMap = ({
         onPress={handleMapPress}
         onCameraChanged={(e: any) => {
           if (e?.properties?.zoom != null) zoomRef.current = e.properties.zoom;
-          // Keep the popup anchored to its marker throughout pan/zoom animations
-          // (e.g. the zoom-in triggered when a marker is tapped), so it never gets
-          // stranded mid-flight near the screen center.
-          if (selectedLead) updateSelectedPoint();
-        }}
-        onMapIdle={() => {
-          updateSelectedPoint();
         }}
       >
         <Camera
@@ -752,28 +733,37 @@ export const LeadMap = ({
           </ShapeSource>
         )}
 
-        {/* Heatmap Layer — smooth, large-radius gradient matching the web app. */}
-        {isHeatMapActive && heatmapGeoJson.features.length > 0 && (
+        {/* Heatmap Layer — smooth, large-radius gradient matching the web app.
+             Kept mounted at all times; we only flip `visibility` on toggle so
+             switching modes is instant instead of rebuilding the native layer. */}
+        {heatmapGeoJson.features.length > 0 && (
           <ShapeSource id="heatmap-source" shape={heatmapGeoJson}>
             <HeatmapLayer
               id="heatmap-layer"
               sourceID="heatmap-source"
               style={{
+                visibility: isHeatMapActive ? 'visible' : 'none',
                 heatmapWeight: ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1.5, 1],
-                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 2, 13, 3],
-                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 18, 9, 30, 13, 45, 16, 60],
-                heatmapOpacity: ['interpolate', ['linear'], ['zoom'], 7, 0.85, 16, 0.6],
+                // Moderate intensity so density stays lower — warm hotspots
+                // only where leads genuinely cluster, with more cyan/green
+                // across the sparser areas.
+                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 0.25, 9, 0.38, 13, 0.5, 16, 0.6],
+                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 16, 9, 22, 13, 40, 16, 60],
+                heatmapOpacity: ['interpolate', ['linear'], ['zoom'], 7, 0.9, 16, 0.7],
+                // Match the web heatmap ramp: faint blue (very sparse) → cyan →
+                // green at low density, then yellow → orange across most of the
+                // range (warm-dominant), with red for the densest cores.
                 heatmapColor: [
                   'interpolate',
                   ['linear'],
                   ['heatmap-density'],
-                  0, 'rgba(116, 192, 255, 0)',
-                  0.15, 'rgba(116, 192, 255, 0.8)',
-                  0.3, '#0072ff',
-                  0.5, '#00c853',
-                  0.7, '#ffab00',
-                  0.85, '#ff6d00',
-                  1, '#d50000',
+                  0, 'rgba(0, 0, 255, 0)',
+                  0.15, 'rgba(0, 0, 255, 0.7)',
+                  0.3, 'rgba(0, 255, 255, 0.8)',
+                  0.45, 'rgba(0, 255, 0, 0.85)',
+                  0.6, 'rgba(255, 255, 0, 0.9)',
+                  0.75, 'rgba(255, 165, 0, 0.95)',
+                  1, 'rgba(255, 0, 0, 1)',
                 ],
               }}
             />
@@ -791,12 +781,20 @@ export const LeadMap = ({
 
         {/* Lead Markers — teardrop pins (green/amber/red) anchored at their tip,
              matching the previous Google Maps look. A single SymbolLayer renders
-             thousands of points performantly. */}
-        {!isHeatMapActive && markersGeoJson.features.length > 0 && (
-          <ShapeSource id="job-markers-source" shape={markersGeoJson}>
+             thousands of points performantly. Kept mounted with `visibility`
+             toggled (instant heatmap switch) and an enlarged hitbox so taps land
+             reliably at any zoom. */}
+        {markersGeoJson.features.length > 0 && (
+          <ShapeSource
+            id="job-markers-source"
+            shape={markersGeoJson}
+            onPress={onMarkerSourcePress}
+            hitbox={{ width: 44, height: 44 }}
+          >
             <SymbolLayer
               id="job-markers-symbols"
               style={{
+                visibility: isHeatMapActive ? 'none' : 'visible',
                 iconImage: [
                   'match',
                   ['get', 'category'],
@@ -850,94 +848,108 @@ export const LeadMap = ({
             </View>
           </MarkerView>
         )}
-      </MapView>
 
-
-      {selectedLead && selectedLeadPoint && (
-        <View
-          style={{
-            position: 'absolute',
-            left: selectedLeadPoint.x - 140, // Centered horizontally (280 / 2)
-            top: selectedLeadPoint.y - cardHeight - 58, // Sit above the marker + triangle + gap
-            zIndex: 1000,
-          }}
-          pointerEvents="auto"
-        >
-          <View
-            onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
-            style={{
-              backgroundColor: isDark ? '#1E1E1E' : 'white',
-              borderRadius: 20,
-              padding: loadingDetail ? 20 : 0,
-              width: 280,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.3,
-              shadowRadius: 20,
-              elevation: 20,
-              borderWidth: 1,
-              borderColor: isDark ? '#333' : '#f1f5f9',
-              minHeight: loadingDetail ? 100 : undefined,
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}
+        {/* Pin-anchored popup — rendered as a native MarkerView so it stays glued
+             to the marker through any pan/zoom (no JS projection, no lag). Sits
+             directly above the marker with a downward pointer triangle, and
+             fades/scales in smoothly after the camera glides to the marker. */}
+        {selectedLead?.location?.coordinates && (
+          <MarkerView
+            id="selected-lead-card"
+            coordinate={[
+              Number(selectedLead.location.coordinates[0]),
+              Number(selectedLead.location.coordinates[1]),
+            ]}
+            anchor={{ x: 0.5, y: 1 }}
+            allowOverlap
           >
-            {loadingDetail ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <ActivityIndicator size="small" color="#4CBB17" />
-                <Text style={{ color: isDark ? '#ffffff' : '#1C252E', fontSize: 12, fontWeight: '700' }}>
-                  Loading Job details...
-                </Text>
-              </View>
-            ) : (
-              <MapJobCard
-                job={selectedLead}
-                onClose={() => setSelectedLead(null)}
-                isMyJob={isJobOwner(selectedLead, user)}
-                onReferencePress={() => {
-                  if (onReferencePress) {
-                    onReferencePress(selectedLead);
-                  } else {
-                    setGalleryJob(selectedLead);
-                    setShowReferral(true);
-                  }
-                }}
-                onCameraPress={() => {
-                  setGalleryJob(selectedLead);
-                  setShowUpload(true);
-                }}
-                onGalleryPress={() => {
-                  if (onGalleryPress) onGalleryPress(selectedLead);
-                  else {
-                    setGalleryJob(selectedLead);
-                    setShowGallery(true);
-                  }
-                }}
-                onFavoritePress={handleToggleFavorite}
-              />
-            )}
-
-            {/* Anchor Triangle */}
-            <View
+            <Animated.View
               style={{
-                position: 'absolute',
-                bottom: -10,
-                left: 130, // Centered (140 - 10)
-                width: 0,
-                height: 0,
-                backgroundColor: 'transparent',
-                borderStyle: 'solid',
-                borderLeftWidth: 10,
-                borderRightWidth: 10,
-                borderTopWidth: 10,
-                borderLeftColor: 'transparent',
-                borderRightColor: 'transparent',
-                borderTopColor: isDark ? '#1E1E1E' : 'white',
+                paddingBottom: 46, // lift the card above the pin + leave room for the triangle
+                opacity: cardAnim,
+                transform: [
+                  { scale: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) },
+                ],
               }}
-            />
-          </View>
-        </View>
-      )}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={handleCardPress}
+                style={{
+                  backgroundColor: isDark ? '#1E1E1E' : 'white',
+                  borderRadius: 24,
+                  padding: loadingDetail ? 20 : 0,
+                  width: 280,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 10 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 20,
+                  elevation: 20,
+                  borderWidth: 1,
+                  borderColor: isDark ? '#333' : '#f1f5f9',
+                  minHeight: loadingDetail ? 100 : undefined,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                {loadingDetail ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <ActivityIndicator size="small" color="#4CBB17" />
+                    <Text style={{ color: isDark ? '#ffffff' : '#1C252E', fontSize: 12, fontWeight: '700' }}>
+                      Loading Job details...
+                    </Text>
+                  </View>
+                ) : (
+                  <MapJobCard
+                    job={selectedLead}
+                    onClose={() => setSelectedLead(null)}
+                    isMyJob={isJobOwner(selectedLead, user)}
+                    onReferencePress={() => {
+                      if (onReferencePress) {
+                        onReferencePress(selectedLead);
+                      } else {
+                        setGalleryJob(selectedLead);
+                        setShowReferral(true);
+                      }
+                    }}
+                    onCameraPress={() => {
+                      setGalleryJob(selectedLead);
+                      setShowUpload(true);
+                    }}
+                    onGalleryPress={() => {
+                      if (onGalleryPress) onGalleryPress(selectedLead);
+                      else {
+                        setGalleryJob(selectedLead);
+                        setShowGallery(true);
+                      }
+                    }}
+                    onFavoritePress={handleToggleFavorite}
+                  />
+                )}
+
+                {/* Anchor Triangle pointing down to the marker */}
+                <View
+                  style={{
+                    position: 'absolute',
+                    bottom: -10,
+                    left: 130, // centered (140 - 10)
+                    width: 0,
+                    height: 0,
+                    backgroundColor: 'transparent',
+                    borderStyle: 'solid',
+                    borderLeftWidth: 10,
+                    borderRightWidth: 10,
+                    borderTopWidth: 10,
+                    borderLeftColor: 'transparent',
+                    borderRightColor: 'transparent',
+                    borderTopColor: isDark ? '#1E1E1E' : 'white',
+                  }}
+                />
+              </TouchableOpacity>
+            </Animated.View>
+          </MarkerView>
+        )}
+      </MapView>
 
 
       {/* Back Button on Top Left Corner */}
@@ -1048,14 +1060,3 @@ export const LeadMap = ({
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  cardOverlay: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 20,
-  }
-});
