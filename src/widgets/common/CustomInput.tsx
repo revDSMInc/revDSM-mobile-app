@@ -60,7 +60,6 @@ export const CustomInput = memo(
               autoCorrect={false}
               autoCapitalize="none"
               spellCheck={false}
-              textContentType="oneTimeCode"
               {...props}
             />
             {hasRightIcon &&

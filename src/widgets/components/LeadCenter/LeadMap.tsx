@@ -38,6 +38,8 @@ const MARKER_IMAGES = {
   selected: require('../../../assets/images/map/marker-selected.png'),
 };
 
+const TRANSPARENT_IMAGE = require('../../../assets/images/map/transparent.png');
+
 const { width, height } = Dimensions.get('window');
 
 // STATIC TAMPA DATA
@@ -108,6 +110,8 @@ const MemoizedGeojsonOverlay = React.memo(
       <Geojson
         geojson={geojson}
         color={color}
+        // @ts-ignore
+        markerColor={color}
         tracksViewChanges={tracksViewChanges}
         onPress={onPress}
       />
@@ -200,7 +204,6 @@ export const LeadMap = ({
 
   const [userLocation, setUserLocation] = useState<any>(null);
   const markerPressedRef = useRef(false);
-  const [isHeatMap, setIsHeatMap] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<any[]>([]);
@@ -221,6 +224,7 @@ export const LeadMap = ({
     longitudeDelta: 0.0421,
   });
   const currentRegion = useRef(region);
+  const [visibleRegion, setVisibleRegion] = useState(region);
 
   const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => {
     if (onToggleFilter) {
@@ -361,11 +365,6 @@ export const LeadMap = ({
         }))
     };
   }, [defaultLeads]);
-
-  // Sync heatmap state when toggle changes
-  useEffect(() => {
-    if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
-  }, [isHeatMapActive]);
 
   // filterKey changes on every filter toggle.
   // This forces a clean remount of ALL markers, which prevents phantom duplicates from prior async renders,
@@ -550,12 +549,13 @@ export const LeadMap = ({
       setSelectedLead(null);
     } else {
       setSelectedLead(lead);
-      mapRef.current?.animateToRegion({
-        latitude: coords[1] + 0.003, // shift center north to center card vertically
-        longitude: coords[0],
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }, 300);
+      mapRef.current?.animateCamera({
+        center: {
+          latitude: coords[1] + 0.003, // shift center north to center card vertically
+          longitude: coords[0],
+        },
+        zoom: 15.5,
+      }, { duration: 600 });
     }
   };
 
@@ -593,11 +593,19 @@ export const LeadMap = ({
   const heatmapPoints = useMemo(() => {
     return filteredLeads
       .filter((l: any) => l.location?.coordinates)
-      .map((l: any) => ({
-        latitude: l.location.coordinates[1],
-        longitude: l.location.coordinates[0],
-        weight: (l.price || 0) / 1000 || 1,
-      }));
+      .map((l: any) => {
+        const price = l.price || 0;
+        let intensity = 0.3; // Default low density for jobs under $5000 (increased from 0.1)
+        if (price > 5000) {
+          // Scale intensity based on price for jobs over $5000 (increased multiplier from 0.9 to 1.2)
+          intensity = 0.3 + Math.min(1.2, ((price - 5000) / 15000) * 1.2);
+        }
+        return {
+          latitude: l.location.coordinates[1],
+          longitude: l.location.coordinates[0],
+          weight: intensity,
+        };
+      });
   }, [filteredLeads]);
 
   // Haversine formula to compute great-circle distance in kilometers
@@ -684,6 +692,7 @@ export const LeadMap = ({
         onRegionChangeComplete={(r) => {
           currentRegion.current = r;
           setIsMapMoving(false);
+          setVisibleRegion(r); // Trigger viewport markers recalculation
 
           // Snap back and re-enable scrolling after gesture was killed
           if (isOutOfBoundsRef.current) {
@@ -706,11 +715,43 @@ export const LeadMap = ({
           }
           updateSelectedPoint();
         }}
-        onPress={() => {
+        onPress={(event) => {
           if (markerPressedRef.current) {
             markerPressedRef.current = false;
             return;
           }
+
+          // When heatmap is active, tapping the map should select the closest lead if it is nearby (within 2 km)
+          if (isHeatMapActive && filteredLeads.length > 0) {
+            const tapCoord = event.nativeEvent.coordinate;
+            let closestLead = null;
+            let minDistance = Infinity;
+
+            for (const lead of filteredLeads) {
+              if (lead.location?.coordinates) {
+                const leadLng = lead.location.coordinates[0];
+                const leadLat = lead.location.coordinates[1];
+                const distance = getDistanceInKm(tapCoord.latitude, tapCoord.longitude, leadLat, leadLng);
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  closestLead = lead;
+                }
+              }
+            }
+
+            if (closestLead && minDistance <= 2) {
+              setSelectedLead(closestLead);
+              mapRef.current?.animateCamera({
+                center: {
+                  latitude: closestLead.location.coordinates[1] + 0.003, // shift center north to center card vertically
+                  longitude: closestLead.location.coordinates[0],
+                },
+                zoom: 15.5,
+              }, { duration: 600 });
+              return;
+            }
+          }
+
           setSelectedLead(null);
         }}
         customMapStyle={isDark ? darkMapStyle : []}
@@ -735,23 +776,21 @@ export const LeadMap = ({
         )}
 
         {/* Heatmap Layer - Rendered before markers to avoid blocking touch events */}
-        {isHeatMap && heatmapPoints.length > 0 && (
+        {isHeatMapActive && heatmapPoints.length > 0 && (
           <Heatmap
             points={heatmapPoints}
-            radius={40}
-            opacity={0.7}
+            radius={30}
+            opacity={1.0}
             gradient={{
-              colors: ['#74c0ff', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
-              startPoints: [0.1, 0.3, 0.5, 0.7, 0.85, 1],
+              colors: ['rgba(116, 192, 255, 0)', 'rgba(116, 192, 255, 0.8)', '#0072ff', '#00c853', '#ffab00', '#ff6d00', '#d50000'],
+              startPoints: [0.01, 0.15, 0.3, 0.5, 0.7, 0.85, 1.0],
               colorMapSize: 256,
             }}
           />
         )}
 
-        {/* Lead Markers — ALL leads rendered as memoized native Markers.
-             Stable keys on the MemoizedGeojsonOverlay components prevent fully unmounting/remounting
-             the children (which parses and renders 3,000+ points on the map), resulting in quick, smooth filters. */}
-        {!isHeatMap && defaultLeads.length > 0 && (
+        {/* Lead Markers — ALL leads rendered as memoized native Markers. */}
+        {!isHeatMapActive && defaultLeads.length > 0 && (
           <MemoizedGeojsonOverlay
             key="default-geojson-overlay"
             geojson={defaultGeoJson}
@@ -760,7 +799,7 @@ export const LeadMap = ({
             onPress={stableMarkerPress}
           />
         )}
-        {!isHeatMap && favoriteLeads.length > 0 && (
+        {!isHeatMapActive && favoriteLeads.length > 0 && (
           <MemoizedGeojsonOverlay
             key="fav-geojson-overlay"
             geojson={favoriteGeoJson}
@@ -769,7 +808,7 @@ export const LeadMap = ({
             onPress={stableMarkerPress}
           />
         )}
-        {!isHeatMap && searchedLeads.length > 0 && (
+        {!isHeatMapActive && searchedLeads.length > 0 && (
           <MemoizedGeojsonOverlay
             key="searched-geojson-overlay"
             geojson={searchedGeoJson}
@@ -935,12 +974,14 @@ export const LeadMap = ({
                 key={btn.id}
                 value={isFilterActive}
                 onValueChange={(val) => {
-                  if (onToggleFilter) {
-                    onToggleFilter(btn.type);
-                  } else {
-                    if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
-                    else setActiveFilters([...activeFilters, btn.id]);
-                  }
+                  requestAnimationFrame(() => {
+                    if (onToggleFilter) {
+                      onToggleFilter(btn.type);
+                    } else {
+                      if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
+                      else setActiveFilters([...activeFilters, btn.id]);
+                    }
+                  });
                 }}
                 activeLabel={btn.active}
                 inactiveLabel={btn.inactive}

@@ -23,6 +23,7 @@ import {
 import { GlobalModal } from '../common/modal/GlobalModal';
 import { MapSelectionModal } from '../common/modal/MapSelectionModal';
 import { format } from 'date-fns';
+import { FlashMessage } from '../../config/message';
 import {
   calculateDistance,
   isSelfGeneratedLead,
@@ -477,18 +478,22 @@ export function LeadCard({
 
   const isResulted = leadState.status === 'RESULTED';
 
+  const handlePreviewPress = () => {
+
+    const scheduledTime = getScheduledDateTime(lead);
+    const msg = !scheduledTime
+      ? 'This appointment opens when you arrive on-site.'
+      : `This appointment opens at ${format(
+        new Date(scheduledTime.getTime() - 15 * 60 * 1000),
+        'hh:mm a'
+      )} when you arrive on-site.`;
+    FlashMessage.success(msg);
+  };
+
   // ── Card press handler — UPCOMING shows info snackbar, others navigate ───
   const handleCardPress = () => {
     if (leadState.status === 'UPCOMING') {
-      const scheduledTime = getScheduledDateTime(lead);
-      // N/A time (self-gen with no slot) → generic message matching web
-      const msg = !scheduledTime
-        ? 'This appointment opens when you arrive on-site.'
-        : `This appointment opens at ${format(
-          new Date(scheduledTime.getTime() - 15 * 60 * 1000),
-          'hh:mm a'
-        )} when you arrive on-site.`;
-      Alert.alert('Appointment Preview', msg);
+      handlePreviewPress();
     } else {
       onPress();
     }
@@ -497,7 +502,7 @@ export function LeadCard({
   return (
     <TouchableOpacity
       activeOpacity={0.9}
-      onPress={() => { }}
+      onPress={handleCardPress}
       className="mb-4 rounded-2xl overflow-hidden border-2"
       style={{
         backgroundColor: isResulted
@@ -539,7 +544,7 @@ export function LeadCard({
               color={isResulted ? '#72BD00' : isDark ? colors.textSecondary : '#637381'}
             />
             <Text
-              className="ml-1.5 text-sm font-bold"
+              className="ml-1.5 text-base font-bold"
               style={{ color: isResulted ? '#72BD00' : colors.primary.main }}
             >
               {formatTime(lead.leadTime || 'N/A')}
@@ -554,14 +559,14 @@ export function LeadCard({
                 className="px-3 py-1.5 rounded-lg"
                 style={{ backgroundColor: '#94a3b8' }}
               >
-                <Text className="text-[10px] font-black text-white tracking-widest uppercase">
+                <Text className="text-base font-black text-white tracking-widest uppercase">
                   RESULTED
                 </Text>
               </View>
             )}
 
-            {/* Archive button (not shown in archived view) */}
-            {!isArchived && (
+            {/* Archive button — self-generated leads only, not issued LF leads */}
+            {!isArchived && isSelfGeneratedLead(lead) && (
               <TouchableOpacity
                 onPress={() => setShowArchiveModal(true)}
                 disabled={archiveMutation.isPending}
@@ -575,29 +580,31 @@ export function LeadCard({
               </TouchableOpacity>
             )}
 
-            {/* Delete button */}
-            <TouchableOpacity
-              onPress={() => setShowDeleteModal(true)}
-              className="w-9 h-9 rounded-full items-center justify-center bg-[#FF5630]"
-            >
-              <MaterialIcon name="delete" size={16} color="white" />
-            </TouchableOpacity>
+            {/* Delete button — self-generated leads only, not issued LF leads */}
+            {isSelfGeneratedLead(lead) && (
+              <TouchableOpacity
+                onPress={() => setShowDeleteModal(true)}
+                className="w-9 h-9 rounded-full items-center justify-center bg-[#FF5630]"
+              >
+                <MaterialIcon name="delete" size={16} color="white" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
         {/* ── Lead Info ────────────────────────────────────────────────── */}
         <View className="mb-4">
-          <Text className="text-xs text-slate-400 mb-1">Lead ID: {lead.leadId}</Text>
+          <Text className="text-base text-slate-400 mb-1">Lead ID: {lead.leadId}</Text>
           <View className="flex-row justify-between items-center">
             <View className="flex-row items-center flex-1">
               <FontAwesome name="user" size={14} color="#637381" />
-              <Text className="ml-2 text-sm font-bold" style={{ color: colors.text }}>
+              <Text className="ml-2 text-base font-bold" style={{ color: colors.text }}>
                 {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
               </Text>
             </View>
             <View className="flex-row items-center">
               <Ionicon name="calendar-clear" size={14} color="#637381" />
-              <Text className="ml-1.5 text-xs font-semibold" style={{ color: colors.textSecondary }}>
+              <Text className="ml-1.5 text-base font-semibold" style={{ color: colors.textSecondary }}>
                 {lead.leadDate ? format(new Date(lead.leadDate), 'MM/dd/yyyy') : 'N/A'}
               </Text>
             </View>
@@ -606,7 +613,7 @@ export function LeadCard({
 
         {/* ── Lead Code & Pitchbook ────────────────────────────────────── */}
         <View className="flex-row justify-between items-center mb-4">
-          <Text className="text-xs font-semibold" style={{ color: colors.textSecondary }}>
+          <Text className="text-base font-semibold" style={{ color: colors.textSecondary }}>
             Lead Code:{' '}
             <Text style={{ color: colors.primary.main }}>{lead.leadCode || 'N/A'}</Text>
           </Text>
@@ -630,7 +637,7 @@ export function LeadCard({
           />
           <View className="flex-1 ml-1.5">
             <Text
-              className="text-xs font-bold leading-5"
+              className="text-base font-bold leading-5"
               style={{ color: isResulted ? '#72BD00' : colors.text }}
               numberOfLines={2}
             >
@@ -662,7 +669,7 @@ export function LeadCard({
                 onPress={onActionPress}
                 className="flex-[3] h-12 rounded-xl bg-[#94a3b8] items-center justify-center"
               >
-                <Text className="text-white font-bold text-sm tracking-tight">
+                <Text className="text-white font-bold text-base tracking-tight">
                   {leadState.action}
                 </Text>
               </TouchableOpacity>
@@ -682,8 +689,12 @@ export function LeadCard({
             // Normal: single animated action button
             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
               <TouchableOpacity
-                onPress={onActionPress}
-                disabled={actionLoading || leadState.disabled}
+                onPress={
+                  leadState.status === 'UPCOMING'
+                    ? handlePreviewPress
+                    : onActionPress
+                }
+                disabled={actionLoading || (leadState.disabled && leadState.status !== 'UPCOMING')}
                 className="h-12 rounded-xl items-center justify-center shadow-lg flex-row"
                 style={{
                   backgroundColor: leadState.color,
@@ -695,7 +706,7 @@ export function LeadCard({
                 ) : (
                   <>
                     <Ionicon name="location-sharp" size={20} color="white" />
-                    <Text className="text-white ml-2 text-sm font-bold">
+                    <Text className="text-white ml-2 text-base font-bold">
                       {leadState.action}
                     </Text>
                   </>
@@ -707,7 +718,7 @@ export function LeadCard({
           {/* Last check-in time (web parity) */}
           {lastCheckInTime && (
             <Text
-              className="text-center text-[11px] italic mt-2"
+              className="text-center text-base italic mt-2"
               style={{ color: colors.textSecondary }}
             >
               Last check-in: {lastCheckInTime}

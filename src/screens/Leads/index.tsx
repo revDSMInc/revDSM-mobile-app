@@ -290,7 +290,7 @@ export default function LeadsPage() {
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            className="flex-1 ml-2 text-xs"
+            className="flex-1 ml-2 text-base"
             style={{ color: colors.text }}
           />
           {searchQuery.length > 0 && (
@@ -309,10 +309,10 @@ export default function LeadsPage() {
             backgroundColor: isDark ? colors.surface : '#8E33FF14',
           }}
         >
-          <Text className="text-sm font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
+          <Text className="text-base font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
             {filteredLeads.length}
           </Text>
-          <Text className="text-sm font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
+          <Text className="text-base font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
             Leads
           </Text>
         </View>
@@ -337,7 +337,7 @@ export default function LeadsPage() {
               ]}
             >
               <Text
-                className="text-sm font-medium"
+                className="text-base font-medium"
                 style={{
                   color: currentTab === tab ? '#FFFFFF' : colors.textSecondary,
                 }}
@@ -486,7 +486,7 @@ export default function LeadsPage() {
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center pt-[30%]">
               <Clipboard className="text-text-secondary" />
-              <Text className="text-xs text-center mt-4" style={{ color: colors.textSecondary }}>
+              <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
                 No jobs available
               </Text>
             </View>
@@ -578,7 +578,7 @@ function SubTab({
   return (
     <TouchableOpacity onPress={onPress} className="mr-6">
       <Text
-        className="text-sm pb-1.5"
+        className="text-base pb-1.5"
         style={{
           color: active ? colors.primary.main : colors.textSecondary,
           borderBottomWidth: 2,

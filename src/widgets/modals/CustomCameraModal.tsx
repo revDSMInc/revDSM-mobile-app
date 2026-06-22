@@ -10,12 +10,13 @@ import {
   SafeAreaView,
   Image,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat } from 'react-native-vision-camera';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Reanimated, { useSharedValue, useAnimatedProps, runOnJS, withSpring } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, SafeAreaView as SafeAreaViewContext } from 'react-native-safe-area-context';
 
 const ReanimatedCamera = Reanimated.createAnimatedComponent(Camera);
 
@@ -243,7 +244,9 @@ export const CustomCameraModal = ({
 
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
   const viewfinderHeight = screenWidth * (4 / 3);
-  const viewfinderTop = insets.top + 20;
+  const viewfinderTop = insets.top + 20 + (Platform.OS === 'android' ? insets.top + 20 : 0);
+
+  const SafeAreaComponent = Platform.OS === 'android' ? SafeAreaViewContext : SafeAreaView;
 
   return (
     <View style={[StyleSheet.absoluteFill, { zIndex: 9999, backgroundColor: 'black' }]}>
@@ -292,7 +295,7 @@ export const CustomCameraModal = ({
         </View>
       )}
 
-      <SafeAreaView style={{ flex: 1 }} pointerEvents="box-none">
+      <SafeAreaComponent style={{ flex: 1 }} pointerEvents="box-none">
         {hasPermission === false && (
           <View style={styles.center}>
             <Text style={styles.errorText}>Camera permission is required.</Text>
@@ -338,7 +341,19 @@ export const CustomCameraModal = ({
               /* ACTIVE CAMERA STATE */
               <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
                 {/* TOP BAR CONTROLS (iOS Style) */}
-                <View style={[styles.iosTopBar, { position: 'absolute', top: 0, left: 0, right: 0, height: viewfinderTop, backgroundColor: 'black', zIndex: 10 }]}>
+                <View style={[
+                  styles.iosTopBar,
+                  {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: viewfinderTop,
+                    paddingTop: Platform.OS === 'android' ? insets.top : 0,
+                    backgroundColor: 'black',
+                    zIndex: 10
+                  }
+                ]}>
                   <TouchableOpacity onPress={onClose} style={styles.iosIconButton} disabled={isCapturing}>
                     <Icon name="close" size={28} color="white" />
                   </TouchableOpacity>
@@ -377,7 +392,7 @@ export const CustomCameraModal = ({
                 <View style={[styles.iosBottomSection, { position: 'absolute', top: viewfinderTop + viewfinderHeight, bottom: 0, left: 0, right: 0, backgroundColor: 'black', zIndex: 10, paddingVertical: 12 }]}>
                   {/* ZOOM PILLS BAR (above shutter) */}
                   <View style={styles.iosZoomContainer}>
-                    {isUltrawideSupported && (
+                    {(isUltrawideSupported || Platform.OS === 'android') && (
                       <TouchableOpacity
                         onPress={() => { zoom.value = withSpring(minZoom); setActiveZoomLevel(minZoom); }}
                         style={[styles.iosZoomButton, activeZoomLevel < neutralZoom && styles.iosZoomButtonActive]}
@@ -440,7 +455,7 @@ export const CustomCameraModal = ({
             <Text style={styles.loadingText}>Initializing camera...</Text>
           </View>
         )}
-      </SafeAreaView>
+      </SafeAreaComponent>
     </View>
   );
 };

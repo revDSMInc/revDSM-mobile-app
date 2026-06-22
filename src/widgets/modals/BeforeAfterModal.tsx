@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   Modal,
   ScrollView,
   ActivityIndicator,
+  Alert,
+  DeviceEventEmitter,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -13,6 +15,7 @@ import { BeforeImageModal } from './BeforeImageModal';
 import { AfterImageModal } from './AfterImageModal';
 import { LeadService } from '../../services/api/leads';
 import { FlashMessage } from '../../config/message';
+import { checkOnlineStatus, enqueueOfflineUpload, getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
 
 interface BeforeAfterModalProps {
   visible: boolean;
@@ -35,6 +38,19 @@ export const BeforeAfterModal = ({
   const [isSaving, setIsSaving] = useState(false);
   const [job, setJob] = useState(selectedJob);
 
+  const fetchFreshJob = useCallback(async () => {
+    if (!selectedJob?.jobNumber) return;
+    try {
+      const res = await LeadService.findJobs({ jobNumber: selectedJob.jobNumber });
+      const updated = res.data?.data?.[0];
+      if (updated) {
+        setJob(updated);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch fresh job:', err);
+    }
+  }, [selectedJob?.jobNumber]);
+
   useEffect(() => {
     if (visible) {
       setJob(selectedJob);
@@ -43,28 +59,75 @@ export const BeforeAfterModal = ({
       setShowBeforeModal(false);
       setShowAfterModal(false);
       setIsSaving(false);
-
-      // Fetch fresh job data to ensure updated images are shown when reopened
-      const fetchFreshJob = async () => {
-        if (!selectedJob?.jobNumber) return;
-        try {
-          const res = await LeadService.findJobs({ jobNumber: selectedJob.jobNumber });
-          const updated = res.data?.data?.[0];
-          if (updated) {
-            setJob(updated);
-          }
-        } catch (err) {
-          console.warn('Failed to fetch fresh job on modal open:', err);
-        }
-      };
       fetchFreshJob();
     }
-  }, [visible, selectedJob]);
+  }, [visible, selectedJob, fetchFreshJob]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+      if (data?.jobNumber === selectedJob?.jobNumber) {
+        fetchFreshJob();
+      }
+    });
+    return () => sub.remove();
+  }, [selectedJob?.jobNumber, fetchFreshJob]);
 
   const handleSaveChanges = async () => {
     if (beforeImages.length === 0 && afterImages.length === 0) return;
     try {
       setIsSaving(true);
+
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        // Enqueue offline uploads
+        if (beforeImages.length > 0) {
+          await enqueueOfflineUpload({
+            jobNumber: job.jobNumber,
+            companyId: job.companyId,
+            houseNumber: job.address?.houseNumber || '',
+            streetName: job.address?.streetName || '',
+            city: job.address?.city || '',
+            state: job.address?.state || '',
+            zip: job.address?.zip || '',
+            price: job.price || 0,
+            installationDate: job.installationDate || '',
+            type: 'before',
+            images: beforeImages.map(img => ({
+              uri: img.uri || '',
+              type: img.type,
+              fileName: img.name,
+            })),
+          });
+        }
+
+        if (afterImages.length > 0) {
+          await enqueueOfflineUpload({
+            jobNumber: job.jobNumber,
+            companyId: job.companyId,
+            houseNumber: job.address?.houseNumber || '',
+            streetName: job.address?.streetName || '',
+            city: job.address?.city || '',
+            state: job.address?.state || '',
+            zip: job.address?.zip || '',
+            price: job.price || 0,
+            installationDate: job.installationDate || '',
+            type: 'after',
+            images: afterImages.map(img => ({
+              uri: img.uri || '',
+              type: img.type,
+              fileName: img.name,
+            })),
+          });
+        }
+
+        Alert.alert(
+          'Offline Mode',
+          'Connection lost. Your changes have been enqueued offline and will sync once internet is restored.'
+        );
+        onUploadSuccess?.();
+        onClose();
+        return;
+      }
 
       // Upload Before Images if any
       if (beforeImages.length > 0) {
@@ -99,8 +162,17 @@ export const BeforeAfterModal = ({
     }
   };
 
-  const existingBeforeUris = job?.images?.beforeImages?.map((img: any) => img.secureUrl || img.filePath) || [];
-  const existingAfterUris = job?.images?.afterImages?.map((img: any) => img.secureUrl || img.filePath) || [];
+  const offlineBefore = getOfflineImagesForJob(job?.jobNumber, 'before').map(img => img.uri);
+  const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
+
+  const existingBeforeUris = [
+    ...(job?.images?.beforeImages?.map((img: any) => img.secureUrl || img.filePath) || []),
+    ...offlineBefore,
+  ];
+  const existingAfterUris = [
+    ...(job?.images?.afterImages?.map((img: any) => img.secureUrl || img.filePath) || []),
+    ...offlineAfter,
+  ];
 
   return (
     <>

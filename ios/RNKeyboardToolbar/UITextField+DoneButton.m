@@ -155,7 +155,17 @@
 
 - (BOOL)db_becomeFirstResponder {
   if (!self.inputAccessoryView) {
-    self.inputAccessoryView = [self makeCustomKeyboardToolbar];
+    // Only attach the tick toolbar for numeric keyboard types.
+    // Default, email, URL, search, and Twitter keyboards already have
+    // a Return/Go key so they do not need the custom done button.
+    UIKeyboardType kbType = self.keyboardType;
+    BOOL isNumeric = (kbType == UIKeyboardTypeNumberPad ||
+                      kbType == UIKeyboardTypeDecimalPad ||
+                      kbType == UIKeyboardTypePhonePad ||
+                      kbType == UIKeyboardTypeNumbersAndPunctuation);
+    if (isNumeric) {
+      self.inputAccessoryView = [self makeCustomKeyboardToolbar];
+    }
   }
   return [self db_becomeFirstResponder]; // calls original
 }

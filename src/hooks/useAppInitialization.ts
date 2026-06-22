@@ -9,6 +9,7 @@ import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
+import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
 
 export function useAppInitialization() {
   const dispatch = useDispatch();
@@ -91,6 +92,12 @@ export function useAppInitialization() {
 
   useEffect(() => {
     initialize();
+
+    // Start background sync timer for offline image uploads
+    startOfflineSyncTimer();
+    return () => {
+      stopOfflineSyncTimer();
+    };
   }, [initialize]);
 
 

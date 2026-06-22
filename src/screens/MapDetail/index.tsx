@@ -304,7 +304,20 @@ export default function MapDetailScreen() {
 
     console.log('[MapDetail DEBUG] Recalculated filteredLeads. final count:', processed.length);
     return processed;
-  }, [leads, filters, user]);
+  }, [
+    leads,
+    filters.jobNumber,
+    filters.myJobsOnly,
+    filters.isFavoriteOnly,
+    filters.isReferralOnly,
+    filters.minPrice,
+    filters.maxPrice,
+    filters.startDate,
+    filters.endDate,
+    filters.centerCoords,
+    filters.radius,
+    user
+  ]);
 
   const filteredLeads = useMemo(() => {
     // Apply Sorting

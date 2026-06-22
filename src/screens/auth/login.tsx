@@ -162,6 +162,8 @@ export default function LoginScreen() {
                 returnKeyType="next"
                 onSubmitEditing={() => passwordRef.current?.focus()}
                 blurOnSubmit={false}
+                textContentType="username"
+                autoComplete="email"
               />
 
               <CustomInput
@@ -175,6 +177,8 @@ export default function LoginScreen() {
                 onRightIconPress={() => setShowPassword((p) => !p)}
                 returnKeyType="done"
                 onSubmitEditing={handleLogin}
+                textContentType="password"
+                autoComplete="password"
               />
 
               <TouchableOpacity

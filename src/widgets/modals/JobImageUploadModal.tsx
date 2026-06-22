@@ -8,12 +8,14 @@ import {
   Alert,
   ScrollView,
   Image,
+  DeviceEventEmitter,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { launchCamera, launchImageLibrary, Asset, PhotoQuality } from 'react-native-image-picker';
 import { LeadService } from '../../services/api/leads';
 import { ENV } from '../../config/env';
+import { checkOnlineStatus, enqueueOfflineUpload, getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
 
 interface JobImageUploadModalProps {
   visible: boolean;
@@ -52,6 +54,15 @@ export const JobImageUploadModal = ({
       }
     }
   }, [visible]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+      if (data?.jobNumber === selectedJob?.jobNumber) {
+        fetchJobDetails();
+      }
+    });
+    return () => sub.remove();
+  }, [selectedJob?.jobNumber]);
 
   const resetState = () => {
     setType(null);
@@ -123,7 +134,6 @@ export const JobImageUploadModal = ({
     const imgs = type === 'before'
       ? jobDetails?.images?.beforeImages
       : jobDetails?.images?.afterImages;
-    if (!imgs) return [];
 
     const getFallbackUri = (raw: any): string => {
       if (!raw) return '';
@@ -137,16 +147,21 @@ export const JobImageUploadModal = ({
       return ENV.S3_BASE_URL + path;
     };
 
-    return imgs
+    const serverImages = (imgs || [])
       .map((raw: any, idx: number) => {
         const uri = signedUris[idx] || getFallbackUri(raw);
         return {
           isExisting: true,
           uri,
           raw,
+          index: -1,
         };
       })
       .filter((img: any) => img.uri && !deletedExistingUris.includes(img.uri));
+
+    const offlinePending = getOfflineImagesForJob(jobDetails.jobNumber, type);
+
+    return [...serverImages, ...offlinePending];
   }, [jobDetails, type, signedUris, deletedExistingUris]);
 
   const allImages = React.useMemo(() => {
@@ -207,6 +222,37 @@ export const JobImageUploadModal = ({
 
     setLoading(true);
     try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        // Enqueue offline upload
+        await enqueueOfflineUpload({
+          jobNumber: selectedJob.jobNumber,
+          companyId: selectedJob.companyId,
+          houseNumber: selectedJob.address?.houseNumber || '',
+          streetName: selectedJob.address?.streetName || '',
+          city: selectedJob.address?.city || '',
+          state: selectedJob.address?.state || '',
+          zip: selectedJob.address?.zip || '',
+          price: selectedJob.price || 0,
+          installationDate: selectedJob.installationDate || '',
+          type,
+          images: images.map(img => ({
+            uri: img.uri || '',
+            type: img.type,
+            fileName: img.fileName,
+          })),
+        });
+
+        Alert.alert(
+          'Offline Mode',
+          'Internet connection is unavailable. Your images have been saved locally and will upload automatically once connection is restored.'
+        );
+        onUploadSuccess?.();
+        resetState();
+        onClose();
+        return;
+      }
+
       const formData = new FormData();
       formData.append('jobNumber', selectedJob.jobNumber);
       formData.append('companyId', selectedJob.companyId);

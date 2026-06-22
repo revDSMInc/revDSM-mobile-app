@@ -434,6 +434,7 @@ export default function ChatDetailScreen() {
           textInputProps={{
             ...composerProps.textInputProps,
             accessibilityLabel: 'ChatInput',
+            inputAccessoryViewID: '',
             onChangeText: (text: string) => {
               composerProps.onTextChanged?.(text);
               handleComposerChange(text);
