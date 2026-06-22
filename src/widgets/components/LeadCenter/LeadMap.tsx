@@ -186,7 +186,6 @@ export const LeadMap = ({
 
 
   const [userLocation, setUserLocation] = useState<any>(null);
-  const markerPressedRef = useRef(false);
   const [showRoute, setShowRoute] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
@@ -432,8 +431,14 @@ export const LeadMap = ({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [cardHeight, setCardHeight] = useState(380);
 
+  // Guards against overlapping getPointInView() bridge calls when this is fired
+  // rapidly from onCameraChanged during a camera animation.
+  const pointUpdateInFlight = useRef(false);
+
   const updateSelectedPoint = async () => {
     if (selectedLead?.location?.coordinates && mapViewRef.current) {
+      if (pointUpdateInFlight.current) return;
+      pointUpdateInFlight.current = true;
       try {
         const point = await mapViewRef.current.getPointInView([
           Number(selectedLead.location.coordinates[0]),
@@ -442,6 +447,8 @@ export const LeadMap = ({
         if (point) setSelectedLeadPoint({ x: point[0], y: point[1] });
       } catch (e) {
         // ignore
+      } finally {
+        pointUpdateInFlight.current = false;
       }
     } else {
       setSelectedLeadPoint(null);
@@ -506,8 +513,6 @@ export const LeadMap = ({
   };
 
   const handleMarkerClick = (lead: any) => {
-    markerPressedRef.current = true;
-
     const coords = lead.location?.coordinates;
     if (!coords) return;
 
@@ -526,13 +531,6 @@ export const LeadMap = ({
   const handleMarkerClickRef = useRef<(job: any) => void>(handleMarkerClick);
   handleMarkerClickRef.current = handleMarkerClick;
 
-  const onMarkerPress = useCallback((event: any) => {
-    const feature = event?.features?.[0];
-    const id = feature?.properties?.id;
-    const job = id ? leadsByIdRef.current.get(id) : null;
-    if (job) handleMarkerClickRef.current(job);
-  }, []);
-
   // Haversine formula to compute great-circle distance in kilometers
   const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; // Radius of the earth in km
@@ -548,13 +546,50 @@ export const LeadMap = ({
     return R * c; // Distance in km
   };
 
-  // Map tap handler. When the heatmap is active there are no tappable pins, so a
-  // tap selects the closest lead within 2km; otherwise it just deselects.
+  // Single tap handler for the whole map.
+  //  • When pins are shown, we hit-test a generous rect around the tap point and
+  //    resolve the closest marker. This is far more forgiving than relying on the
+  //    icon's own (tiny, zoom-scaled) touch area, so taps no longer "sometimes"
+  //    miss when zoomed out.
+  //  • When the heatmap is active there are no pins, so a tap selects the closest
+  //    lead within 2km.
+  //  • Otherwise it deselects.
   const handleMapPress = useCallback(
-    (feature: any) => {
-      if (markerPressedRef.current) {
-        markerPressedRef.current = false;
-        return;
+    async (feature: any) => {
+      const tap = feature?.geometry?.coordinates;
+      const screenX = feature?.properties?.screenPointX;
+      const screenY = feature?.properties?.screenPointY;
+
+      // ── Pin hit-test ──────────────────────────────────────────────────────
+      if (!isHeatMapActive && screenX != null && screenY != null && mapViewRef.current) {
+        const HIT = 22; // px radius around the tap — comfortable finger target
+        try {
+          const fc = await mapViewRef.current.queryRenderedFeaturesInRect(
+            [screenY - HIT, screenX + HIT, screenY + HIT, screenX - HIT], // [top, right, bottom, left]
+            undefined,
+            ['job-markers-symbols']
+          );
+          const features = fc?.features || [];
+          if (features.length && tap) {
+            // Pick the pin geographically closest to the tap point.
+            let best: any = null;
+            let bestD = Infinity;
+            for (const f of features as any[]) {
+              const c = f?.geometry?.coordinates;
+              if (!c) continue;
+              const d = (c[0] - tap[0]) ** 2 + (c[1] - tap[1]) ** 2;
+              if (d < bestD) { bestD = d; best = f; }
+            }
+            const id = best?.properties?.id;
+            const job = id ? leadsByIdRef.current.get(id) : null;
+            if (job) {
+              handleMarkerClickRef.current(job);
+              return;
+            }
+          }
+        } catch (e) {
+          // fall through to deselect on any query failure
+        }
       }
 
       if (isHeatMapActive && filteredLeads.length > 0) {
@@ -676,6 +711,10 @@ export const LeadMap = ({
         onPress={handleMapPress}
         onCameraChanged={(e: any) => {
           if (e?.properties?.zoom != null) zoomRef.current = e.properties.zoom;
+          // Keep the popup anchored to its marker throughout pan/zoom animations
+          // (e.g. the zoom-in triggered when a marker is tapped), so it never gets
+          // stranded mid-flight near the screen center.
+          if (selectedLead) updateSelectedPoint();
         }}
         onMapIdle={() => {
           updateSelectedPoint();
@@ -754,7 +793,7 @@ export const LeadMap = ({
              matching the previous Google Maps look. A single SymbolLayer renders
              thousands of points performantly. */}
         {!isHeatMapActive && markersGeoJson.features.length > 0 && (
-          <ShapeSource id="job-markers-source" shape={markersGeoJson} onPress={onMarkerPress}>
+          <ShapeSource id="job-markers-source" shape={markersGeoJson}>
             <SymbolLayer
               id="job-markers-symbols"
               style={{
