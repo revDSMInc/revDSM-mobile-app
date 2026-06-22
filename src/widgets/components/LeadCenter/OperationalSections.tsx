@@ -97,20 +97,20 @@ export const ToolsSection = ({
           </View>
           <View className="flex-1 justify-between gap-2 ml-2">
             <View className="flex-row items-center gap-3">
-              <Text className="text-sm font-semibold" style={{ color: '#1C252E' }}>
+              <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
                 revRender
               </Text>
               <View className="bg-[#1C252E] rounded-md">
-                <Text className="px-3 py-0.5 text-xs font-semibold" style={{ color: '#ffffff' }}>
+                <Text className="px-3 py-0.5 text-base font-semibold" style={{ color: '#ffffff' }}>
                   {runs?.length || 0} Runs
                 </Text>
               </View>
             </View>
-            <Text className="text-xs">Select a photo to render</Text>
+            <Text className="text-base">Select a photo to render</Text>
           </View>
           <View>
             <View className="rounded-md" style={{ backgroundColor: colors.primary.main }}>
-              <Text className="text-sm font-semibold px-2" style={{ color: '#ffffff' }}>
+              <Text className="text-base font-semibold px-2" style={{ color: '#ffffff' }}>
                 AI
               </Text>
             </View>
@@ -121,7 +121,7 @@ export const ToolsSection = ({
         {revRenderJobs.some((j: any) => j.status !== 'completed' && j.status !== 'failed') && (
           <View className="mb-4">
             <View className="flex-row justify-between items-center mb-1.5">
-              <Text className="text-[10px] font-black text-slate-400">
+              <Text className="text-[12px] font-black text-slate-400">
                 {Math.round(revRenderJobs.reduce((acc: number, j: any) => acc + (j.progress || 0), 0) / revRenderJobs.length)}%
               </Text>
             </View>
@@ -167,7 +167,7 @@ export const ToolsSection = ({
                 </TouchableOpacity>
               ))
             ) : revRenderJobs.length === 0 ? (
-              <Text className="text-xs font-light mt-2" style={{ color: '#637381' }}>
+              <Text className="text-base font-light mt-2" style={{ color: '#637381' }}>
                 No generated images found in revRender runs.
               </Text>
             ) : null}
@@ -201,7 +201,7 @@ export const ToolsSection = ({
             <Icon name="alert" size={16} color={'#637381'} />
           </View>
           <View className="flex-1 ml-4">
-            <Text className="text-sm font-semibold" style={{ color: '#1C252E' }}>
+            <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
               Risk Report
             </Text>
           </View>
@@ -264,7 +264,7 @@ export const ToolsSection = ({
             {riskJob && riskJob.status !== 'completed' && (
               <View className="flex-row items-center gap-2">
                 <ActivityIndicator size="small" color={colors.primary.main} />
-                <Text className="text-[10px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
+                <Text className="text-[12px] font-bold text-slate-500 ">{riskJob.progress}%</Text>
               </View>
             )}
           </View>
@@ -277,7 +277,7 @@ export const ToolsSection = ({
           </View>
         )}
         {riskJob && riskJob.status !== 'completed' && (
-          <Text className="text-[10px] text-slate-400 mt-1 italic">
+          <Text className="text-[12px] text-slate-400 mt-1 italic">
             {riskJob.step || 'Processing...'}
           </Text>
         )}
@@ -342,7 +342,7 @@ const PulsingSkeleton = ({ isDark, label = 'AI\nRendering' }: { isDark: boolean;
       }}
     >
       {label ? (
-        <Text className="text-[8px] font-black text-slate-400 uppercase tracking-tighter text-center">{label}</Text>
+        <Text className="text-[10px] font-black text-slate-400 uppercase tracking-tighter text-center">{label}</Text>
       ) : null}
     </Animated.View>
   );
@@ -397,7 +397,7 @@ const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated, isLoadi
         </View>
         <View className="flex-1 ml-4">
           <Text
-            className="text-sm font-semibold"
+            className="text-base font-semibold"
             style={{ color: isGenerated ? colors.primary.main : '#1C252E' }}
           >
             {title}
@@ -408,7 +408,7 @@ const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated, isLoadi
         )}
         {isGenerated && !isLoading && (
           <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2">
-            <Text className="text-[10px] font-semibold text-violet-700">Already Generated</Text>
+            <Text className="text-[12px] font-semibold text-violet-700">Already Generated</Text>
           </View>
         )}
       </TouchableOpacity>
@@ -436,7 +436,7 @@ export const MapSection = ({ lead }: any) => {
     <View className="px-5 py-4">
       <View className="flex-row items-center justify-between mb-5">
         <Text
-          className="text-[14px] font-black  tracking-widest"
+          className="text-base font-black  tracking-widest"
           style={{ color: colors.textSecondary }}
         >
           Active Job Location
@@ -446,13 +446,13 @@ export const MapSection = ({ lead }: any) => {
           className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex-row items-center"
         >
           <Icon name="check-decagram" size={12} color="#10B981" />
-          <Text className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 ml-1 ">
+          <Text className="text-[12px] font-black text-emerald-600 dark:text-emerald-400 ml-1 ">
             Expand Map
           </Text>
         </TouchableOpacity>
       </View>
 
-      <Text className="text-[14px] font-bold mb-4" style={{ color: colors.text }}>
+      <Text className="text-base font-bold mb-4" style={{ color: colors.text }}>
         📍 {lead?.fullAddress || lead?.customerDetails?.address || 'Address not available'}
       </Text>
 

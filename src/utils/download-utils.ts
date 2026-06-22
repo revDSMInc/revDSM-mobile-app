@@ -24,16 +24,24 @@ export const downloadPdfToDevice = async (uri: string, title?: string) => {
     if (uri.startsWith('file://') || uri.startsWith('/')) {
       const cleanSourcePath = uri.replace('file://', '');
       
-      // Remove existing file to prevent cp error
-      const exists = await ReactNativeBlobUtil.fs.exists(publicPath);
-      if (exists) {
-        await ReactNativeBlobUtil.fs.unlink(publicPath);
-      }
-      await ReactNativeBlobUtil.fs.cp(cleanSourcePath, publicPath);
-      
       if (Platform.OS === 'android') {
-        ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: 'application/pdf' }]);
+        await ReactNativeBlobUtil.MediaCollection.copyToMediaStore(
+          {
+            name: finalFileName.replace('.pdf', ''),
+            parentFolder: '',
+            mimeType: 'application/pdf',
+          },
+          'Download',
+          cleanSourcePath
+        );
       } else {
+        // Remove existing file to prevent cp error
+        const exists = await ReactNativeBlobUtil.fs.exists(publicPath);
+        if (exists) {
+          await ReactNativeBlobUtil.fs.unlink(publicPath);
+        }
+        await ReactNativeBlobUtil.fs.cp(cleanSourcePath, publicPath);
+        
         await Share.share({
           url: `file://${publicPath}`,
           title: title || 'Save PDF',

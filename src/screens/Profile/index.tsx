@@ -542,10 +542,9 @@ export default function ProfilePage() {
   return (
     <SafeAreaView
       style={[styles.root, { backgroundColor: isDark ? colors.background : '#F8FAFC' }]}
+      edges={['bottom', 'left', 'right']}
     >
       <View style={[styles.root, { backgroundColor: isDark ? colors.background : '#F8FAFC' }]}>
-        <View style={{ height: 0, backgroundColor: isDark ? colors.surface : '#111827' }} />
-        <Header onNavigate={(route) => navigation.navigate(route)} />
 
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Title & Breadcrumbs */}

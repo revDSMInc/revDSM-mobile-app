@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, ActivityIndicator } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
@@ -93,8 +93,41 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-export default function RootNavigator() {
+import { Header, HeaderContext } from '../widgets/common/MainHeader';
+import { useTheme } from '../theme/ThemeProvider';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { createNavigationContainerRef } from '@react-navigation/native';
+import { useEffect } from 'react';
+
+export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+export default function RootNavigator({ currentRouteName }: { currentRouteName: string | null }) {
   const { isAuthenticated, loading, isInitialized } = useAuth();
+  const { colors, isDark } = useTheme();
+
+  const [headerActions, setHeaderActions] = useState<{
+    onFilterPress?: (() => void) | null;
+    onListPress?: (() => void) | null;
+    onNavigate?: ((route: any) => void) | null;
+  }>({});
+
+  const contextValue = React.useMemo(() => ({
+    ...headerActions,
+    setHeaderActions,
+  }), [headerActions]);
+
+
+  const showHeader = isAuthenticated && currentRouteName && [
+    'Leads',
+    'Profile',
+    'JobTracker',
+    'MyLearning',
+    'LeadCenter',
+    'DealCenter',
+    'Pitchbook',
+    'RooflineDeck',
+    'MapDetail',
+  ].includes(currentRouteName);
 
   if (loading || !isInitialized) {
     return (
@@ -105,37 +138,44 @@ export default function RootNavigator() {
   }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false, screenOrientation: 'portrait' } as any}>
-      {!isAuthenticated ? (
-        <>
-          <Stack.Screen name="Login" component={LoginPage} />
-          <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-          <Stack.Screen name="EmailOTP" component={EmailOTPScreen} />
-          <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
-          <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
-        </>
-      ) : (
-        <>
-          <Stack.Screen name="Leads" component={LeadsPage} />
-          <Stack.Screen name="Profile" component={ProfilePage} />
-          <Stack.Screen name="JobTracker" component={JobTrackerPage} />
-          <Stack.Screen name="MyLearning" component={LearningPage} />
-          <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
-          <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
-          <Stack.Screen name="MapDetail" component={MapDetailPage} />
-          <Stack.Screen
-            name="LeadCenter"
-            component={LeadCenterPage}
-            options={{ gestureEnabled: true }}
-          />
-          <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
-          <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
-          <Stack.Screen name="DealCenter" component={DealCenter} />
-          <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
-          <Stack.Screen name="RevRender" component={RevRenderScreen} />
-          <Stack.Screen name="ImageAnnotation" component={ImageAnnotationScreen} options={{ gestureEnabled: false }} />
-        </>
-      )}
-    </Stack.Navigator>
+    <HeaderContext.Provider value={contextValue}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#101828' }} edges={showHeader ? ['top'] : []}>
+        {showHeader && <Header />}
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <Stack.Navigator screenOptions={{ headerShown: false, screenOrientation: 'portrait' } as any}>
+            {!isAuthenticated ? (
+              <>
+                <Stack.Screen name="Login" component={LoginPage} />
+                <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+                <Stack.Screen name="EmailOTP" component={EmailOTPScreen} />
+                <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+                <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
+              </>
+            ) : (
+              <>
+                <Stack.Screen name="Leads" component={LeadsPage} />
+                <Stack.Screen name="Profile" component={ProfilePage} />
+                <Stack.Screen name="JobTracker" component={JobTrackerPage} />
+                <Stack.Screen name="MyLearning" component={LearningPage} />
+                <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
+                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+                <Stack.Screen name="MapDetail" component={MapDetailPage} />
+                <Stack.Screen
+                  name="LeadCenter"
+                  component={LeadCenterPage}
+                  options={{ gestureEnabled: true }}
+                />
+                <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
+                <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
+                <Stack.Screen name="DealCenter" component={DealCenter} />
+                <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
+                <Stack.Screen name="RevRender" component={RevRenderScreen} />
+                <Stack.Screen name="ImageAnnotation" component={ImageAnnotationScreen} options={{ gestureEnabled: false }} />
+              </>
+            )}
+          </Stack.Navigator>
+        </View>
+      </SafeAreaView>
+    </HeaderContext.Provider>
   );
 }

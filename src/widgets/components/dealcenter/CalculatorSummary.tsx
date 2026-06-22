@@ -15,7 +15,9 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, SharedValue, LinearTransition, SlideOutLeft, FadeOut } from 'react-native-reanimated';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import {
@@ -253,14 +255,30 @@ export const CalculatorSummary = ({
   const [displayShowDownPaymentInput, setDisplayShowDownPaymentInput] = useState(false);
   const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
   const summaryTabsScrollViewRef = useRef<ScrollView>(null);
+  const tabLayouts = useRef<Record<number, { x: number; width: number }>>({});
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
-  useEffect(() => {
-    if (activeIdx >= 0 && calculators.length > 0) {
-      const tabWidth = 90;
-      const targetOffset = Math.max(0, (activeIdx - 1) * tabWidth);
+  const centerTab = (idx: number) => {
+    const layout = tabLayouts.current[idx];
+    if (layout && scrollViewWidth > 0) {
+      const targetOffset = Math.max(0, layout.x - (scrollViewWidth - layout.width) / 2);
       summaryTabsScrollViewRef.current?.scrollTo({ x: targetOffset, animated: true });
     }
-  }, [activeIdx, calculators.length]);
+  };
+
+  useEffect(() => {
+    centerTab(activeIdx);
+  }, [activeIdx, scrollViewWidth]);
+
+  const onTabLayout = (idx: number, event: any) => {
+    const { x, width } = event.nativeEvent.layout;
+    tabLayouts.current[idx] = { x, width };
+    if (idx === activeIdx) {
+      centerTab(idx);
+    }
+  };
 
   useEffect(() => {
     setPreOrderDownPayment(activeCalc.downPayment || 0);
@@ -397,48 +415,84 @@ export const CalculatorSummary = ({
                 })}
               </View>
             ) : (
-              <ScrollView ref={summaryTabsScrollViewRef} horizontal showsHorizontalScrollIndicator={false} className="flex-1">
-                {calculators.map((calc: any, idx: number) => {
-                  const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
-                  const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
-                    if (idx === cIdx) return false;
-                    return isCalculatorIdentical(calc, c);
-                  });
-                  return (
-                    <TouchableOpacity
-                      key={idx}
-                      onPress={() => setActiveIdx(idx)}
-                      className={`flex-row items-center h-full px-4 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
-                        }`}
-                    >
-                      <View className="flex-row items-center">
-                        {isLocked && (
-                          <Ionicons
-                            name="lock-closed"
-                            size={12}
-                            color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
-                            style={{ marginRight: 6 }}
-                          />
-                        )}
-                        {isTabDuplicate && (
-                          <Ionicons
-                            name="warning"
-                            size={12}
-                            color="#FF990F"
-                            style={{ marginRight: 6 }}
-                          />
-                        )}
-                        <Text
-                          className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
-                            }`}
-                        >
-                          {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              <View className="flex-1 relative flex-row items-center h-full">
+                <ScrollView
+                  ref={summaryTabsScrollViewRef}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  className="flex-1"
+                  scrollEventThrottle={16}
+                  onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
+                  onContentSizeChange={(w) => setContentWidth(w)}
+                  onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+                >
+                  {calculators.map((calc: any, idx: number) => {
+                    const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
+                    const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
+                      if (idx === cIdx) return false;
+                      return isCalculatorIdentical(calc, c);
+                    });
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        onPress={() => setActiveIdx(idx)}
+                        onLayout={(e) => onTabLayout(idx, e)}
+                        className={`flex-row items-center h-full px-4 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                          }`}
+                      >
+                        <View className="flex-row items-center">
+                          {isLocked && (
+                            <Ionicons
+                              name="lock-closed"
+                              size={12}
+                              color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
+                              style={{ marginRight: 6 }}
+                            />
+                          )}
+                          {isTabDuplicate && (
+                            <Ionicons
+                              name="warning"
+                              size={12}
+                              color="#FF990F"
+                              style={{ marginRight: 6 }}
+                            />
+                          )}
+                          <Text
+                            className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
+                              }`}
+                          >
+                            {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Left Blur/Fade Overlay */}
+                {scrollOffset > 5 && (
+                  <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
+                    <BlurView
+                      style={StyleSheet.absoluteFill}
+                      blurType={isDark ? 'dark' : 'light'}
+                      blurAmount={5}
+                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                    />
+                  </View>
+                )}
+
+                {/* Right Blur/Fade Overlay */}
+                {scrollOffset + scrollViewWidth < contentWidth - 5 && (
+                  <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
+                    <BlurView
+                      style={StyleSheet.absoluteFill}
+                      blurType={isDark ? 'dark' : 'light'}
+                      blurAmount={5}
+                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                    />
+                  </View>
+                )}
+              </View>
             )}
           </View>
         </View>
@@ -913,9 +967,11 @@ export const CalculatorSummary = ({
                                   setPreOrderDownPayment(val);
                                 }}
                                 onFocus={() => {
-                                  setTimeout(() => {
-                                    scrollViewRef.current?.scrollTo({ y: 10, animated: true });
-                                  }, 100);
+                                  if (Platform.OS === 'ios') {
+                                    setTimeout(() => {
+                                      scrollViewRef.current?.scrollTo({ y: 10, animated: true });
+                                    }, 100);
+                                  }
                                 }}
 
                                 onBlur={async () => {
@@ -1179,7 +1235,7 @@ export const CalculatorSummary = ({
 
                 {/* Bottom Action Buttons per Screenshot */}
                 <View
-                  className="flex-row gap-4 mb-20"
+                  className="flex-row gap-4 mb-0"
                   pointerEvents={isJobSubmittedOnOtherCalc ? 'none' : 'auto'}
                 >
                   {/* Drop button — disabled when job builder has been submitted */}
@@ -1378,15 +1434,15 @@ export const CalculatorSummary = ({
                           >
                             {plan.label}
                           </Text>
-                          {plan.minPrice && (
+                          {plan.minPrice && belowMin && (
                             <Text
-                              className={`text-[10px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
+                              className={`text-[10px] font-bold mt-1 ${belowMin ? 'text-slate-800' : 'text-slate-400'
                                 }`}
                             >
                               Requires ${plan.minPrice?.toLocaleString()}+
-                              {rolloutEndPrice > 0
+                              {/* {rolloutEndPrice > 0
                                 ? ` (current: $${rolloutEndPrice.toLocaleString()})`
-                                : ' — enter end price first'}
+                                : ' — enter end price first'} */}
                             </Text>
                           )}
                         </TouchableOpacity>
@@ -1583,422 +1639,432 @@ export const CalculatorSummary = ({
             }
           };
 
-          return (
-            <Modal visible={isVisible} transparent animationType="fade">
-              <View className="flex-1 justify-center px-5">
-                <TouchableOpacity
+          const modalContent = (
+            <View className="flex-1 justify-center px-5">
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => {
+                  if (showDropModal) setShowDropModal(false);
+                  if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
+                }}
+              >
+                <BlurView
                   style={StyleSheet.absoluteFill}
-                  activeOpacity={1}
-                  onPress={() => {
-                    if (showDropModal) setShowDropModal(false);
-                    if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
-                  }}
-                >
-                  <BlurView
-                    style={StyleSheet.absoluteFill}
-                    blurType={isDark ? 'dark' : 'light'}
-                    blurAmount={10}
-                    reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
-                  />
-                </TouchableOpacity>
-                <View className="bg-white rounded-[40px] p-6 shadow-2xl">
-                  {/* Header: Icon + UPDATED PRICE + CK/CC badges */}
-                  <View className="items-center mb-6">
-                    <View className="w-12 h-12 rounded-full bg-green-50 items-center justify-center mb-4">
-                      <Ionicons name="checkmark" size={24} color="#31D076" />
-                    </View>
-                    <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-2">
-                      UPDATED PRICE
-                    </Text>
+                  blurType={isDark ? 'dark' : 'light'}
+                  blurAmount={10}
+                  reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                />
+              </TouchableOpacity>
+              <View className="bg-white rounded-[40px] p-6 shadow-2xl">
+                {/* Header: Icon + UPDATED PRICE + CK/CC badges */}
+                <View className="items-center mb-6">
+                  <View className="w-12 h-12 rounded-full bg-green-50 items-center justify-center mb-4">
+                    <Ionicons name="checkmark" size={24} color="#31D076" />
+                  </View>
+                  <Text className="text-[10px] font-black text-slate-400  tracking-[2px] mb-2">
+                    UPDATED PRICE
+                  </Text>
 
-                    <View className="flex-row items-center gap-4">
-                      <Text className="text-4xl font-black text-[#1C252E]">
-                        {fCurrency(currentDropPrice)}
-                      </Text>
-                      <View className="flex-row items-center gap-2">
-                        {(isLowesLead
-                          ? [
-                            { key: 'lowes_ach', label: 'ACH' },
-                            { key: 'lowes_cc', label: 'CC' },
-                          ]
-                          : [
-                            { key: 'check', label: 'CK' },
-                            { key: 'mcVisaDscvr', label: 'CC' },
-                          ]
-                        ).map((badge) => (
-                          <TouchableOpacity
-                            key={badge.key}
-                            onPress={() => setSelectedPlan(badge.key)}
-                            className={`px-3 py-1.5 rounded-lg border-2 ${selectedPlan === badge.key
-                              ? 'bg-[#31D076] border-[#31D076]'
-                              : 'bg-white border-slate-200'
+                  <View className="flex-row items-center gap-4">
+                    <Text className="text-4xl font-black text-[#1C252E]">
+                      {fCurrency(currentDropPrice)}
+                    </Text>
+                    <View className="flex-row items-center gap-2">
+                      {(isLowesLead
+                        ? [
+                          { key: 'lowes_ach', label: 'ACH' },
+                          { key: 'lowes_cc', label: 'CC' },
+                        ]
+                        : [
+                          { key: 'check', label: 'CK' },
+                          { key: 'mcVisaDscvr', label: 'CC' },
+                        ]
+                      ).map((badge) => (
+                        <TouchableOpacity
+                          key={badge.key}
+                          onPress={() => setSelectedPlan(badge.key)}
+                          className={`px-3 py-1.5 rounded-lg border-2 ${selectedPlan === badge.key
+                            ? 'bg-[#31D076] border-[#31D076]'
+                            : 'bg-white border-slate-200'
+                            }`}
+                        >
+                          <Text
+                            className={`text-[11px] font-black ${selectedPlan === badge.key ? 'text-white' : 'text-slate-400'
                               }`}
                           >
-                            <Text
-                              className={`text-[11px] font-black ${selectedPlan === badge.key ? 'text-white' : 'text-slate-400'
-                                }`}
-                            >
-                              {badge.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                            {badge.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
+                  </View>
 
-                    {!currentShowDownPaymentInput ? (
-                      <TouchableOpacity
-                        onPress={() => handleCurrentSetShowDownPaymentInput(true)}
-                        className="mt-4 px-5 py-2 border-2 border-dashed border-slate-200 rounded-2xl flex-row items-center"
-                      >
-                        <Ionicons name="add" size={16} color="#919EAB" />
-                        <Text className="ml-1 text-sm font-bold text-[#919EAB]">Add Down Payment</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View className="flex-row gap-3 mt-6 w-full">
-                        <View className="flex-1">
-                          <Pressable
-                            onPress={() => dpInputRef.current?.focus()}
-                            className="bg-white border-2 border-slate-900 rounded-2xl px-3 py-2"
-                          >
-                            <Text className="text-[10px] font-black text-slate-900 absolute -top-2 left-3 bg-white px-1">
-                              Down Payment
+                  {!currentShowDownPaymentInput ? (
+                    <TouchableOpacity
+                      onPress={() => handleCurrentSetShowDownPaymentInput(true)}
+                      className="mt-4 px-5 py-2 border-2 border-dashed border-slate-200 rounded-2xl flex-row items-center"
+                    >
+                      <Ionicons name="add" size={16} color="#919EAB" />
+                      <Text className="ml-1 text-sm font-bold text-[#919EAB]">Add Down Payment</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View className="flex-row gap-3 mt-6 w-full">
+                      <View className="flex-1">
+                        <Pressable
+                          onPress={() => dpInputRef.current?.focus()}
+                          className="bg-white border-2 border-slate-900 rounded-2xl px-3 py-2"
+                        >
+                          <Text className="text-[10px] font-black text-slate-900 absolute -top-2 left-3 bg-white px-1">
+                            Down Payment
+                          </Text>
+                          <View className="flex-row items-center h-6">
+                            <Text
+                              className="text-base font-bold text-slate-900 mr-1"
+                              style={{ includeFontPadding: false, textAlignVertical: 'center' }}
+                            >
+                              $
                             </Text>
-                            <View className="flex-row items-center h-6">
-                              <Text
-                                className="text-base font-bold text-slate-900 mr-1"
-                                style={{ includeFontPadding: false, textAlignVertical: 'center' }}
-                              >
-                                $
-                              </Text>
-                              <TextInput
-                                ref={dpInputRef}
-                                className="flex-1 font-bold text-base text-slate-900 p-0"
-                                style={{
-                                  padding: 0,
-                                  paddingVertical: 0,
-                                  margin: 0,
-                                  textAlignVertical: 'center',
-                                  includeFontPadding: false,
-                                  top: -4,
-                                }}
-                                keyboardType="numeric"
-                                value={String(currentDownPayment || '')}
-                                onChangeText={(t) => handleCurrentSetDownPayment(Number(t.replace(/[^0-9]/g, '')))}
-                                placeholder="0"
-                              />
-                            </View>
-                          </Pressable>
-                        </View>
-                        <View className="flex-1">
-                          <View className="bg-slate-50 border-2 border-slate-100 rounded-2xl px-3 py-2 opacity-60">
-                            <Text className="text-[10px] font-black text-slate-400 absolute -top-2 left-3 bg-white px-1">
-                              Balance
+                            <TextInput
+                              ref={dpInputRef}
+                              className="flex-1 font-bold text-base text-slate-900 p-0"
+                              style={{
+                                padding: 0,
+                                paddingVertical: 0,
+                                margin: 0,
+                                textAlignVertical: 'center',
+                                includeFontPadding: false,
+                                top: -4,
+                              }}
+                              keyboardType="numeric"
+                              value={String(currentDownPayment || '')}
+                              onChangeText={(t) => handleCurrentSetDownPayment(Number(t.replace(/[^0-9]/g, '')))}
+                              placeholder="0"
+                            />
+                          </View>
+                        </Pressable>
+                      </View>
+                      <View className="flex-1">
+                        <View className="bg-slate-50 border-2 border-slate-100 rounded-2xl px-3 py-2 opacity-60">
+                          <Text className="text-[10px] font-black text-slate-400 absolute -top-2 left-3 bg-white px-1">
+                            Balance
+                          </Text>
+                          <View className="flex-row items-center h-6">
+                            <Text
+                              className="text-base font-bold text-slate-400 mr-1"
+                              style={{ includeFontPadding: false, textAlignVertical: 'center', lineHeight: 24 }}
+                            >
+                              $
                             </Text>
-                            <View className="flex-row items-center h-6">
-                              <Text
-                                className="text-base font-bold text-slate-400 mr-1"
-                                style={{ includeFontPadding: false, textAlignVertical: 'center', lineHeight: 24 }}
-                              >
-                                $
-                              </Text>
-                              <Text
-                                className="text-base font-bold text-slate-400"
-                                style={{ includeFontPadding: false, textAlignVertical: 'center', lineHeight: 24 }}
-                              >
-                                {Math.max(0, currentDropPrice - currentDownPayment).toLocaleString()}
-                              </Text>
-                            </View>
+                            <Text
+                              className="text-base font-bold text-slate-400"
+                              style={{ includeFontPadding: false, textAlignVertical: 'center', lineHeight: 24 }}
+                            >
+                              {Math.max(0, currentDropPrice - currentDownPayment).toLocaleString()}
+                            </Text>
                           </View>
                         </View>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                <View className="h-[1px] bg-slate-100 w-full mb-6" />
+
+                {/* Monthly Options */}
+                <View className="mb-6">
+                  <View className="flex-row items-center justify-between mb-4">
+                    <Text className="text-[10px] font-black text-slate-400  tracking-widest uppercase">
+                      Monthly Options
+                    </Text>
+                    {addedPlans.length > 0 && (
+                      <View className="flex-row items-center bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
+                        <Ionicons name="chevron-back" size={10} color="#FF5630" />
+                        <Text className="text-[8px] font-black text-[#FF5630] uppercase ml-0.5">
+                          swipe to delete
+                        </Text>
                       </View>
                     )}
                   </View>
 
-                  <View className="h-[1px] bg-slate-100 w-full mb-6" />
+                  <ScrollView className="max-h-60" showsVerticalScrollIndicator={false}>
+                    {addedPlans
+                      .filter((p) => !['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'].includes(p))
+                      .map((planKey, idx) => {
+                        const plan = paymentPlans[planKey];
+                        const balance = Math.max(0, currentDropPrice - currentDownPayment);
+                        const monthly = calculateMonthly(balance, planKey);
+                        const isSelected = selectedPlan === planKey;
+                        const belowMin = !!(plan?.minPrice && currentDropPrice > 0 && currentDropPrice < plan.minPrice);
 
-                  {/* Monthly Options */}
-                  <View className="mb-6">
-                    <View className="flex-row items-center justify-between mb-4">
-                      <Text className="text-[10px] font-black text-slate-400  tracking-widest uppercase">
-                        Monthly Options
-                      </Text>
-                      {addedPlans.length > 0 && (
-                        <View className="flex-row items-center bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
-                          <Ionicons name="chevron-back" size={10} color="#FF5630" />
-                          <Text className="text-[8px] font-black text-[#FF5630] uppercase ml-0.5">
-                            swipe to delete
-                          </Text>
-                        </View>
-                      )}
-                    </View>
+                        const planCode = planKey.replace(/^[a-z]+/, '').toUpperCase();
+                        const planTitle = planCode || plan.label.split('(')[0].trim();
+                        const planDesc = plan.label.includes('(')
+                          ? plan.label.split('(')[1].split(')')[0]
+                          : plan.label;
 
-                    <ScrollView className="max-h-60" showsVerticalScrollIndicator={false}>
-                      {addedPlans
-                        .filter((p) => !['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'].includes(p))
-                        .map((planKey, idx) => {
-                          const plan = paymentPlans[planKey];
-                          const balance = Math.max(0, currentDropPrice - currentDownPayment);
-                          const monthly = calculateMonthly(balance, planKey);
-                          const isSelected = selectedPlan === planKey;
-                          const belowMin = !!(plan?.minPrice && currentDropPrice > 0 && currentDropPrice < plan.minPrice);
-
-                          const planCode = planKey.replace(/^[a-z]+/, '').toUpperCase();
-                          const planTitle = planCode || plan.label.split('(')[0].trim();
-                          const planDesc = plan.label.includes('(')
-                            ? plan.label.split('(')[1].split(')')[0]
-                            : plan.label;
-
-                          const renderRightActions = (
-                            prog: any,
-                            drag: any
-                          ) => {
-                            const styleAnimation = useAnimatedStyle(() => ({
-                              transform: [{ translateX: drag.value + 80 }],
-                            }));
-
-                            return (
-                              <View className="w-20 ml-2">
-                                <Animated.View style={styleAnimation}>
-                                  <TouchableOpacity
-                                    onPress={() => {
-                                      const newPlans = addedPlans.filter((k) => k !== planKey);
-                                      setAddedPlans(newPlans);
-                                      if (selectedPlan === planKey) {
-                                        setSelectedPlan(newPlans[0] || (isLowesLead ? 'lowes_ach' : 'check'));
-                                      }
-                                    }}
-                                    className="bg-[#FF5630] h-full rounded-2xl items-center justify-center"
-                                  >
-                                    <Text className="text-white font-black text-xs">Delete</Text>
-                                  </TouchableOpacity>
-                                </Animated.View>
-                              </View>
-                            );
-                          };
+                        const renderRightActions = (
+                          prog: any,
+                          drag: any
+                        ) => {
+                          const styleAnimation = useAnimatedStyle(() => ({
+                            transform: [{ translateX: drag.value + 80 }],
+                          }));
 
                           return (
-                            <Animated.View
-                              key={planKey}
-                              layout={LinearTransition}
-                              exiting={FadeOut}
-                            >
-                              <Swipeable
-                                renderRightActions={renderRightActions}
-                                rightThreshold={40}
-                                onSwipeableWillOpen={() => {
-                                  // We can use a slight delay if we want, or rely on exiting animation
-                                  const newPlans = addedPlans.filter((k) => k !== planKey);
-                                  setAddedPlans(newPlans);
-                                  if (selectedPlan === planKey) {
-                                    setSelectedPlan(newPlans[0] || (isLowesLead ? 'lowes_ach' : 'check'));
-                                  }
-                                }}
-                              >
+                            <View className="w-20 ml-2">
+                              <Animated.View style={styleAnimation}>
                                 <TouchableOpacity
                                   onPress={() => {
-                                    if (belowMin) {
-                                      Alert.alert(
-                                        'Minimum price',
-                                        `This plan requires a minimum price of $${plan.minPrice.toLocaleString()} (Entered: $${currentDropPrice.toLocaleString()}).`
-                                      );
-                                      return;
+                                    const newPlans = addedPlans.filter((k) => k !== planKey);
+                                    setAddedPlans(newPlans);
+                                    if (selectedPlan === planKey) {
+                                      setSelectedPlan(newPlans[0] || (isLowesLead ? 'lowes_ach' : 'check'));
                                     }
-                                    setSelectedPlan(planKey);
                                   }}
-                                  className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${isSelected
-                                    ? 'bg-white border-[#31D076]'
-                                    : belowMin
-                                      ? 'bg-slate-100 border-slate-200 opacity-50'
-                                      : 'bg-slate-50 border-slate-100'
-                                    }`}
+                                  className="bg-[#FF5630] h-full rounded-2xl items-center justify-center"
                                 >
-                                  <View className="flex-1">
-                                    <View className="flex-row items-center gap-2 mb-1">
-                                      <Text
-                                        className={`text-base font-black ${isSelected ? 'text-slate-900' : 'text-slate-400'
-                                          }`}
-                                      >
-                                        {planTitle}
-                                      </Text>
-                                      {isSelected && (
-                                        <View className="bg-[#31D076] px-1.5 py-0.5 rounded-md">
-                                          <Text className="text-[8px] font-black text-white">SELECTED</Text>
-                                        </View>
-                                      )}
-                                    </View>
-                                    <Text
-                                      className="text-[10px] font-medium text-slate-400 mb-2"
-                                      numberOfLines={1}
-                                    >
-                                      {planDesc}
-                                    </Text>
-                                    <View className="flex-row items-baseline">
-                                      <Text
-                                        className={`text-xl font-black ${isSelected ? 'text-slate-900' : 'text-slate-400'
-                                          }`}
-                                      >
-                                        ${Math.round(monthly).toLocaleString()}
-                                      </Text>
-                                      <Text className="text-xs font-bold text-slate-400 ml-1">/mo</Text>
-                                    </View>
-                                    {belowMin && (
-                                      <Text className="text-[10px] font-bold text-red-500 mt-1">
-                                        ${plan.minPrice.toLocaleString()}+ req.
-                                      </Text>
-                                    )}
-                                  </View>
-
-                                  <View
-                                    className={`w-7 h-7 rounded-full border-2 items-center justify-center ${isSelected
-                                      ? 'border-[#31D076] bg-white'
-                                      : 'border-slate-200 bg-slate-100'
-                                      }`}
-                                  >
-                                    {isSelected && <View className="w-4 h-4 rounded-full bg-[#31D076]" />}
-                                  </View>
+                                  <Text className="text-white font-black text-xs">Delete</Text>
                                 </TouchableOpacity>
-                              </Swipeable>
-                            </Animated.View>
-                          );
-                        })}
-
-                      <TouchableOpacity
-                        onPress={() => {
-                          setTempPlan(null);
-                          setIsPlanPickerVisible(true);
-                        }}
-                        className="h-14 border-2 border-dashed border-[#31D076] rounded-2xl items-center justify-center bg-green-50/30"
-                      >
-                        <Text className="text-[#31D076] font-black text-sm">+ Add Plan</Text>
-                      </TouchableOpacity>
-                    </ScrollView>
-                  </View>
-
-                  <View className="flex-row gap-4 mt-2">
-                    <TouchableOpacity
-                      onPress={handleCurrentDecline}
-                      className="flex-1 h-14 bg-[#FF5630] rounded-2xl items-center justify-center shadow-lg shadow-red-100"
-                    >
-                      <Text className="text-white font-black text-base">Decline</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      disabled={!selectedPlan}
-                      onPress={handleCurrentAccept}
-                      className={`flex-1 h-14 rounded-2xl items-center justify-center shadow-lg ${!selectedPlan ? 'bg-slate-200' : 'bg-[#31D076] shadow-green-100'
-                        }`}
-                    >
-                      <Text
-                        className={`font-black text-base ${!selectedPlan ? 'text-slate-400' : 'text-white'
-                          }`}
-                      >
-                        Secure This Price
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Plan Picker Modal - NESTED inside so it layers perfectly on iOS */}
-                <Modal visible={isPlanPickerVisible} transparent animationType="fade">
-                  <View className="flex-1 bg-black/40 justify-center px-8">
-                    <View className="bg-white rounded-[24px] overflow-hidden shadow-2xl max-h-[70%]">
-                      <View className="flex-row justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
-                        <Text className="text-sm font-black text-[#1C252E]">Add Payment Plan</Text>
-                        <TouchableOpacity
-                          onPress={() => setIsPlanPickerVisible(false)}
-                          className="w-6 h-6 bg-white rounded-full items-center justify-center border border-slate-200"
-                        >
-                          <Ionicons name="close" size={16} color="#919EAB" />
-                        </TouchableOpacity>
-                      </View>
-
-                      <ScrollView className="px-4 py-4" showsVerticalScrollIndicator={false}>
-                        {getDropAddPlanCategories(isLowesLead).map((cat, ci) => {
-                          return (
-                            <View key={ci} className="mb-4">
-                              <View
-                                className={`px-3 py-1 rounded-md mb-2 inline-block self-start ${cat.bg}`}
-                              >
-                                <Text
-                                  className={`text-[10px] font-black uppercase tracking-wider ${cat.text}`}
-                                >
-                                  {cat.title}
-                                </Text>
-                              </View>
-                              <View className="gap-1.5">
-                                {cat.plans.map((key) => {
-                                  const plan = paymentPlans[key];
-                                  if (!plan) return null;
-                                  const isSelected = tempPlan === key;
-                                  const belowMin = isPlanBelowMinPrice(key, currentDropPrice);
-                                  return (
-                                    <TouchableOpacity
-                                      key={key}
-                                      onPress={() => {
-                                        if (belowMin) {
-                                          Alert.alert(
-                                            'Payment plan',
-                                            getBelowMinMessage(key, currentDropPrice)
-                                          );
-                                          return;
-                                        }
-                                        setTempPlan(key);
-                                      }}
-                                      className={`p-3 rounded-xl border ${isSelected
-                                        ? 'bg-green-50 border-[#31D076]'
-                                        : belowMin
-                                          ? 'bg-slate-100 border-slate-100 opacity-60'
-                                          : 'bg-white border-slate-100'
-                                        }`}
-                                    >
-                                      <Text
-                                        className={`font-bold text-[11px] ${isSelected ? 'text-[#31D076]' : 'text-slate-900'
-                                          }`}
-                                      >
-                                        {plan.label}
-                                      </Text>
-                                      {plan.minPrice && (
-                                        <Text
-                                          className={`text-[9px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
-                                            }`}
-                                        >
-                                          ${plan.minPrice?.toLocaleString()}+ req.
-                                        </Text>
-                                      )}
-                                    </TouchableOpacity>
-                                  );
-                                })}
-                              </View>
+                              </Animated.View>
                             </View>
                           );
-                        })}
-                      </ScrollView>
+                        };
 
-                      <View className="flex-row gap-3 p-4 border-t border-slate-100">
-                        <TouchableOpacity
-                          onPress={() => setIsPlanPickerVisible(false)}
-                          className="flex-1 h-10 border border-slate-200 rounded-xl items-center justify-center"
-                        >
-                          <Text className="text-slate-400 font-bold text-xs">Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          disabled={!tempPlan}
-                          onPress={() => {
-                            if (tempPlan && !addedPlans.includes(tempPlan)) {
-                              setAddedPlans([...addedPlans, tempPlan]);
-                              setSelectedPlan(tempPlan);
-                            }
-                            setIsPlanPickerVisible(false);
-                          }}
-                          className={`flex-1 h-10 rounded-xl items-center justify-center ${!tempPlan ? 'bg-slate-200' : 'bg-[#31D076]'
-                            }`}
-                        >
-                          <Text className="text-white font-black text-xs">Add Plan</Text>
-                        </TouchableOpacity>
-                      </View>
+                        return (
+                          <Animated.View
+                            key={planKey}
+                            layout={LinearTransition}
+                            exiting={FadeOut}
+                          >
+                            <Swipeable
+                              renderRightActions={renderRightActions}
+                              rightThreshold={40}
+                              onSwipeableWillOpen={() => {
+                                // We can use a slight delay if we want, or rely on exiting animation
+                                const newPlans = addedPlans.filter((k) => k !== planKey);
+                                setAddedPlans(newPlans);
+                                if (selectedPlan === planKey) {
+                                  setSelectedPlan(newPlans[0] || (isLowesLead ? 'lowes_ach' : 'check'));
+                                }
+                              }}
+                            >
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (belowMin) {
+                                    Alert.alert(
+                                      'Minimum price',
+                                      `This plan requires a minimum price of $${plan.minPrice.toLocaleString()} (Entered: $${currentDropPrice.toLocaleString()}).`
+                                    );
+                                    return;
+                                  }
+                                  setSelectedPlan(planKey);
+                                }}
+                                className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${isSelected
+                                  ? 'bg-white border-[#31D076]'
+                                  : belowMin
+                                    ? 'bg-slate-100 border-slate-200 opacity-50'
+                                    : 'bg-slate-50 border-slate-100'
+                                  }`}
+                              >
+                                <View className="flex-1">
+                                  <View className="flex-row items-center gap-2 mb-1">
+                                    <Text
+                                      className={`text-base font-black ${isSelected ? 'text-slate-900' : 'text-slate-400'
+                                        }`}
+                                    >
+                                      {planTitle}
+                                    </Text>
+                                    {isSelected && (
+                                      <View className="bg-[#31D076] px-1.5 py-0.5 rounded-md">
+                                        <Text className="text-[8px] font-black text-white">SELECTED</Text>
+                                      </View>
+                                    )}
+                                  </View>
+                                  <Text
+                                    className="text-[10px] font-medium text-slate-400 mb-2"
+                                    numberOfLines={1}
+                                  >
+                                    {planDesc}
+                                  </Text>
+                                  <View className="flex-row items-baseline">
+                                    <Text
+                                      className={`text-xl font-black ${isSelected ? 'text-slate-900' : 'text-slate-400'
+                                        }`}
+                                    >
+                                      ${Math.round(monthly).toLocaleString()}
+                                    </Text>
+                                    <Text className="text-xs font-bold text-slate-400 ml-1">/mo</Text>
+                                  </View>
+                                  {belowMin && (
+                                    <Text className="text-[10px] font-bold text-red-500 mt-1">
+                                      ${plan.minPrice.toLocaleString()}+ req.
+                                    </Text>
+                                  )}
+                                </View>
+
+                                <View
+                                  className={`w-7 h-7 rounded-full border-2 items-center justify-center ${isSelected
+                                    ? 'border-[#31D076] bg-white'
+                                    : 'border-slate-200 bg-slate-100'
+                                    }`}
+                                >
+                                  {isSelected && <View className="w-4 h-4 rounded-full bg-[#31D076]" />}
+                                </View>
+                              </TouchableOpacity>
+                            </Swipeable>
+                          </Animated.View>
+                        );
+                      })}
+
+                    <TouchableOpacity
+                      onPress={() => {
+                        setTempPlan(null);
+                        setIsPlanPickerVisible(true);
+                      }}
+                      className="h-14 border-2 border-dashed border-[#31D076] rounded-2xl items-center justify-center bg-green-50/30"
+                    >
+                      <Text className="text-[#31D076] font-black text-sm">+ Add Plan</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+
+                <View className="flex-row gap-4 mt-2">
+                  <TouchableOpacity
+                    onPress={handleCurrentDecline}
+                    className="flex-1 h-14 bg-[#FF5630] rounded-2xl items-center justify-center shadow-lg shadow-red-100"
+                  >
+                    <Text className="text-white font-black text-base">Decline</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={!selectedPlan}
+                    onPress={handleCurrentAccept}
+                    className={`flex-1 h-14 rounded-2xl items-center justify-center shadow-lg ${!selectedPlan ? 'bg-slate-200' : 'bg-[#31D076] shadow-green-100'
+                      }`}
+                  >
+                    <Text
+                      className={`font-black text-base ${!selectedPlan ? 'text-slate-400' : 'text-white'
+                        }`}
+                    >
+                      Secure This Price
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Plan Picker Modal - NESTED inside so it layers perfectly on iOS */}
+              <Modal visible={isPlanPickerVisible} transparent animationType="fade">
+                <View className="flex-1 bg-black/40 justify-center px-8">
+                  <View className="bg-white rounded-[24px] overflow-hidden shadow-2xl max-h-[70%]">
+                    <View className="flex-row justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+                      <Text className="text-sm font-black text-[#1C252E]">Add Payment Plan</Text>
+                      <TouchableOpacity
+                        onPress={() => setIsPlanPickerVisible(false)}
+                        className="w-6 h-6 bg-white rounded-full items-center justify-center border border-slate-200"
+                      >
+                        <Ionicons name="close" size={16} color="#919EAB" />
+                      </TouchableOpacity>
+                    </View>
+
+                    <ScrollView className="px-4 py-4" showsVerticalScrollIndicator={false}>
+                      {getDropAddPlanCategories(isLowesLead).map((cat, ci) => {
+                        return (
+                          <View key={ci} className="mb-4">
+                            <View
+                              className={`px-3 py-1 rounded-md mb-2 inline-block self-start ${cat.bg}`}
+                            >
+                              <Text
+                                className={`text-[10px] font-black uppercase tracking-wider ${cat.text}`}
+                              >
+                                {cat.title}
+                              </Text>
+                            </View>
+                            <View className="gap-1.5">
+                              {cat.plans.map((key) => {
+                                const plan = paymentPlans[key];
+                                if (!plan) return null;
+                                const isSelected = tempPlan === key;
+                                const belowMin = isPlanBelowMinPrice(key, currentDropPrice);
+                                return (
+                                  <TouchableOpacity
+                                    key={key}
+                                    onPress={() => {
+                                      if (belowMin) {
+                                        Alert.alert(
+                                          'Payment plan',
+                                          getBelowMinMessage(key, currentDropPrice)
+                                        );
+                                        return;
+                                      }
+                                      setTempPlan(key);
+                                    }}
+                                    className={`p-3 rounded-xl border ${isSelected
+                                      ? 'bg-green-50 border-[#31D076]'
+                                      : belowMin
+                                        ? 'bg-slate-100 border-slate-100 opacity-60'
+                                        : 'bg-white border-slate-100'
+                                      }`}
+                                  >
+                                    <Text
+                                      className={`font-bold text-[11px] ${isSelected ? 'text-[#31D076]' : 'text-slate-900'
+                                        }`}
+                                    >
+                                      {plan.label}
+                                    </Text>
+                                    {plan.minPrice && (
+                                      <Text
+                                        className={`text-[9px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
+                                          }`}
+                                      >
+                                        ${plan.minPrice?.toLocaleString()}+ req.
+                                      </Text>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+
+                    <View className="flex-row gap-3 p-4 border-t border-slate-100">
+                      <TouchableOpacity
+                        onPress={() => setIsPlanPickerVisible(false)}
+                        className="flex-1 h-10 border border-slate-200 rounded-xl items-center justify-center"
+                      >
+                        <Text className="text-slate-400 font-bold text-xs">Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        disabled={!tempPlan}
+                        onPress={() => {
+                          if (tempPlan && !addedPlans.includes(tempPlan)) {
+                            setAddedPlans([...addedPlans, tempPlan]);
+                            setSelectedPlan(tempPlan);
+                          }
+                          setIsPlanPickerVisible(false);
+                        }}
+                        className={`flex-1 h-10 rounded-xl items-center justify-center ${!tempPlan ? 'bg-slate-200' : 'bg-[#31D076]'
+                          }`}
+                      >
+                        <Text className="text-white font-black text-xs">Add Plan</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
-                </Modal>
-              </View>
+                </View>
+              </Modal>
+            </View>
+          );
+
+          return (
+            <Modal visible={isVisible} transparent animationType="fade">
+              {Platform.OS === 'android' ? (
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  {modalContent}
+                </GestureHandlerRootView>
+              ) : (
+                modalContent
+              )}
             </Modal>
           );
         })()}

@@ -89,11 +89,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
   // ── Form state ─────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
-  const [loadingDocs, setLoadingDocs] = useState(false);
-  const [preFetchedDocs, setPreFetchedDocs] = useState<{ agreements: any[]; orderSheets: any[] }>({
-    agreements: [],
-    orderSheets: [],
-  });
   const [formData, setFormData] = useState({
     originalContractPrice: '0',
     downPayment: '0',
@@ -103,35 +98,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     lastPriceQuoted: '0',
     reason: '',
   });
-
-  // Helper to convert pre-fetched documents to payload format
-  const getDocsPayload = () => {
-    const agreementsPayload = (preFetchedDocs.agreements || []).map((doc: any) => {
-      const cType = doc.fileData?.contentType || 'application/pdf';
-      const base64Prefix = doc.base64Data?.startsWith('data:')
-        ? doc.base64Data
-        : `data:${cType};base64,${doc.base64Data || ''}`;
-      return {
-        file: base64Prefix,
-        name: doc.name || '',
-        type: 'agreement',
-      };
-    });
-
-    const orderSheetsPayload = (preFetchedDocs.orderSheets || []).map((doc: any) => {
-      const cType = doc.fileData?.contentType || 'application/pdf';
-      const base64Prefix = doc.base64Data?.startsWith('data:')
-        ? doc.base64Data
-        : `data:${cType};base64,${doc.base64Data || ''}`;
-      return {
-        file: base64Prefix,
-        name: doc.name || '',
-        type: 'orderSheet',
-      };
-    });
-
-    return { agreementsPayload, orderSheetsPayload };
-  };
 
   // ── Amendment state ────────────────────────────────────────────────────────
   const [amendmentOpen, setAmendmentOpen] = useState(false);
@@ -169,25 +135,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       setAmendmentChanges([]);
       setDraftId(null);
 
-      // Pre-fetch S3 documents
-      const leadId = lead?._id || lead?.id;
-      if (leadId) {
-        setLoadingDocs(true);
-        LeadService.downloadOutcomeDocuments(leadId)
-          .then((response) => {
-            const dataObj = response.data?.data || response.data || {};
-            setPreFetchedDocs({
-              agreements: dataObj.agreements || [],
-              orderSheets: dataObj.orderSheets || [],
-            });
-          })
-          .catch((err) => {
-            console.warn('[EditContractDetailsModal] Failed to pre-fetch documents:', err);
-          })
-          .finally(() => {
-            setLoadingDocs(false);
-          });
-      }
+
     }
   }, [visible, outcomeData, lead]);
 
@@ -244,12 +192,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
       // 3. Non-sale: save directly (no amendment required)
       if (!isSale) {
-        const { agreementsPayload, orderSheetsPayload } = getDocsPayload();
         await LeadService.submitJobBuilder(leadId, {
           leadData: editedLeadData,
           jobState: existingJobState,
-          agreements: agreementsPayload,
-          orderSheets: orderSheetsPayload,
         });
         await onUpdate(editedLeadData);
         onClose();
@@ -317,12 +262,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     if (!pending?.leadId) return;
     setAmendmentSubmitting(true);
     try {
-      const { agreementsPayload, orderSheetsPayload } = getDocsPayload();
       await LeadService.submitJobBuilder(pending.leadId, {
         leadData: pending.editedLeadData,
         jobState: pending.existingJobState,
-        agreements: agreementsPayload,
-        orderSheets: orderSheetsPayload,
       });
       if (draftId) {
         try {
@@ -390,12 +332,9 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       };
 
       // Non-sale or no change: save directly
-      const { agreementsPayload, orderSheetsPayload } = getDocsPayload();
       await LeadService.submitJobBuilder(leadId, {
         leadData: editedLeadData,
         jobState: editedJobState,
-        agreements: agreementsPayload,
-        orderSheets: orderSheetsPayload,
       });
 
       const outcomePayload = {
@@ -738,14 +677,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                 maxHeight: '85%',
               }}
             >
-              {loadingDocs ? (
-                <View style={{ padding: 40, alignItems: 'center', justifyContent: 'center' }}>
-                  <ActivityIndicator size="large" color="#4CBB17" />
-                  <Text style={{ marginTop: 16, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}>
-                    Loading documents...
-                  </Text>
-                </View>
-              ) : (
                 <>
                   {/* ─── Menu View ──────────────────────────────────────────── */}
                   {view === 'menu' && (
@@ -1005,7 +936,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                     </ScrollView>
                   )}
                 </>
-              )}
             </View>
           </View>
         </KeyboardAvoidingView>

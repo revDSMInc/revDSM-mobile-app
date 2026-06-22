@@ -11,8 +11,32 @@ import { LeadService } from '../../services/api/leads';
 import Logo from '../../assets/svgs/light-logo';
 import { ENV } from '../../config/env';
 
-interface HeaderProps {
+import { createContext, useContext } from 'react';
 
+export interface HeaderContextType {
+  onFilterPress?: (() => void) | null;
+  onListPress?: (() => void) | null;
+  onNavigate?: ((route: any) => void) | null;
+  setHeaderActions: (actions: {
+    onFilterPress?: (() => void) | null;
+    onListPress?: (() => void) | null;
+    onNavigate?: ((route: any) => void) | null;
+  }) => void;
+}
+
+export const HeaderContext = createContext<HeaderContextType | null>(null);
+
+export const useHeader = () => {
+  const ctx = useContext(HeaderContext);
+  if (!ctx) {
+    return {
+      setHeaderActions: () => {},
+    };
+  }
+  return ctx;
+};
+
+interface HeaderProps {
   onNavigate?: (route: any) => void;
   onFilterPress?: () => void;
   onListPress?: () => void;
@@ -20,22 +44,28 @@ interface HeaderProps {
 
 export function Header({
   onNavigate: parentOnNavigate,
-  onFilterPress,
-  onListPress,
+  onFilterPress: parentOnFilterPress,
+  onListPress: parentOnListPress,
 }: HeaderProps) {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const navigation = useNavigation<any>();
+  const ctx = useContext(HeaderContext);
   const [popoverVisible, setPopoverVisible] = useState(false);
   const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState(false);
 
+  const activeOnNavigate = parentOnNavigate || ctx?.onNavigate;
+  const activeOnFilterPress = parentOnFilterPress || ctx?.onFilterPress;
+  const activeOnListPress = parentOnListPress || ctx?.onListPress;
+
   const onNavigate = (route: any) => {
-    if (parentOnNavigate) parentOnNavigate(route);
+    if (activeOnNavigate) activeOnNavigate(route);
     else navigation.navigate(route);
   };
 
   const initials = `${user?.firstName?.[0] || 'U'}${user?.lastName?.[0] || ''}`;
+
 
   useEffect(() => {
     const pic = user?.profilePicture;
@@ -95,18 +125,18 @@ export function Header({
         </View>
 
         <View className="flex-row items-center">
-          {onFilterPress && (
+          {activeOnFilterPress && (
             <TouchableOpacity
-              onPress={onFilterPress}
+              onPress={activeOnFilterPress}
               className="w-9 h-9 rounded-full bg-[#4CBB17] items-center justify-center mr-3 shadow-sm"
             >
               <Icon name="filter-variant" size={22} color="white" />
             </TouchableOpacity>
           )}
 
-          {onListPress && (
+          {activeOnListPress && (
             <TouchableOpacity
-              onPress={onListPress}
+              onPress={activeOnListPress}
               className="w-9 h-9 rounded-full bg-[#4CBB17] items-center justify-center mr-3 shadow-sm"
             >
               <Icon name="format-list-bulleted" size={22} color="white" />

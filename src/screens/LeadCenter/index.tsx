@@ -723,16 +723,8 @@ export default function LeadCenterPage() {
     <>
       <SafeAreaView
         style={[styles.root, { backgroundColor: isDark ? colors.surface : colors.background }]}
+        edges={['bottom', 'left', 'right']}
       >
-        <Header
-          onNavigate={(route) => {
-            if (route === 'Leads' && fromZoneCanvasser) {
-              navigation.navigate('Leads', { reopenZoneCanvasser: true });
-              return;
-            }
-            navigation.navigate(route);
-          }}
-        />
 
         <ImageGridModal
           visible={showInspectionGrid}
@@ -786,9 +778,9 @@ export default function LeadCenterPage() {
           contentContainerStyle={{ paddingBottom: 20 }}
         >
           <View className="px-4">
-            <View className="flex-row gap-[30%] mb-4">
+            <View className="flex-row gap-[10%] mb-4">
               <View className="flex-col gap-4">
-                <Text className="text-sm" style={{ color: colors.primary.main }}>
+                <Text className="text-base" style={{ color: colors.primary.main }}>
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadId}
@@ -800,7 +792,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold text-text-primary">
+                  <Text className="ml-1 text-base font-semibold text-text-primary">
                     {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
                   </Text>
                   <TouchableOpacity
@@ -824,7 +816,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold" style={{ color: '#72BD00' }}>
+                  <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
                     {lead.customerDetails?.phone}
                   </Text>
                 </TouchableOpacity>
@@ -834,21 +826,21 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold text-text-primary">
+                  <Text className="ml-1 text-base font-semibold text-text-primary">
                     {formatDate(lead?.leadDatetime)}
                   </Text>
                 </View>
               </View>
 
               <View className="flex-col gap-3">
-                <Text className="text-sm text-right" style={{ color: colors.primary.main }}>
+                <Text className="text-base text-right" style={{ color: colors.primary.main }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
                   </Text>
                 </Text>
                 <View>
-                  <Text className="ml-1 text-xs font-semibold text-[#1C252E]"></Text>
+                  <Text className="ml-1 text-base font-semibold text-[#1C252E]"></Text>
                 </View>
                 <TouchableOpacity
                   className="flex-row items-center"
@@ -859,7 +851,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold" style={{ color: '#72BD00' }}>
+                  <Text className="ml-1 text-base font-semibold" style={{ color: '#72BD00' }}>
                     {lead?.customerDetails?.email || 'N/A'}
                   </Text>
                 </TouchableOpacity>
@@ -869,7 +861,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-xs font-semibold  text-text-primary">
+                  <Text className="ml-1 text-base font-semibold  text-text-primary">
                     {lead.leadTime}
                   </Text>
                 </View>
@@ -881,7 +873,7 @@ export default function LeadCenterPage() {
                 size={14}
                 color="#72BD00"
               />
-              <Text className="ml-1 text-xs font-semibold " style={{ color: "#72BD00" }}>
+              <Text className="ml-1 text-base font-semibold " style={{ color: "#72BD00" }}>
                 {lead?.fullAddress || lead?.customerDetails?.address || 'N/A'}
               </Text>
             </TouchableOpacity>
@@ -1123,7 +1115,7 @@ export default function LeadCenterPage() {
               color="white"
               style={{ marginRight: 6, marginBottom: 2 }}
             />
-            <Text className="text-white text-[10px] font-black  tracking-widest">Msg Ops/IM</Text>
+            <Text className="text-white text-base font-black  tracking-widest">Msg Ops/IM</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -1261,7 +1253,7 @@ export default function LeadCenterPage() {
               className="flex-row items-center py-4"
             >
               <Feather name="phone-call" size={18} color={colors.text} />
-              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Call</Text>
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Call</Text>
             </TouchableOpacity>
             <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
             <TouchableOpacity
@@ -1269,7 +1261,7 @@ export default function LeadCenterPage() {
               className="flex-row items-center py-4"
             >
               <Feather name="message-square" size={18} color={colors.text} />
-              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Text Message</Text>
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Text Message</Text>
             </TouchableOpacity>
             <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
             <TouchableOpacity
@@ -1277,7 +1269,7 @@ export default function LeadCenterPage() {
               className="flex-row items-center py-4"
             >
               <Feather name="copy" size={18} color={colors.text} />
-              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Copy Number</Text>
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Copy Number</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -1309,7 +1301,7 @@ export default function LeadCenterPage() {
               className="flex-row items-center py-4"
             >
               <Feather name="mail" size={18} color={colors.text} />
-              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Email</Text>
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Email</Text>
             </TouchableOpacity>
             <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
             <TouchableOpacity
@@ -1317,7 +1309,7 @@ export default function LeadCenterPage() {
               className="flex-row items-center py-4"
             >
               <Feather name="copy" size={18} color={colors.text} />
-              <Text className="ml-4 text-sm font-semibold" style={{ color: colors.text }}>Copy Email</Text>
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Copy Email</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -1353,7 +1345,7 @@ function TabButton({ label, i, active, onPress, colors, isDark }: any) {
         color={active ? 'white' : colors.textSecondary}
       />
       <Text
-        className="text-xs font-semibold mt-1"
+        className="text-base font-semibold mt-1"
         style={{ color: active ? 'white' : colors.textSecondary }}
       >
         {label}

@@ -417,8 +417,7 @@ export default function LFCalculator({ route }: any) {
   };
 
   return (
-    <ModalContainer>
-      <Header />
+    <View style={{ flex: 1, backgroundColor: isDark ? colors.background : '#ffffff' }}>
       {loading && (
         <View className="absolute inset-0 z-50 items-center justify-center bg-black/5">
           <ActivityIndicator color="#4CBB17" size="large" />
@@ -618,8 +617,8 @@ export default function LFCalculator({ route }: any) {
                         setCurrentView(prevView);
                       }}
                       className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
-                          ? 'border-green-500 bg-green-500/10'
-                          : 'border-border bg-surface'
+                        ? 'border-green-500 bg-green-500/10'
+                        : 'border-border bg-surface'
                         }`}
                     >
                       <View className="flex-1">
@@ -659,8 +658,8 @@ export default function LFCalculator({ route }: any) {
                         setCurrentView(prevView);
                       }}
                       className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
-                          ? 'border-green-500 bg-green-500/10'
-                          : 'border-border bg-surface'
+                        ? 'border-green-500 bg-green-500/10'
+                        : 'border-border bg-surface'
                         }`}
                     >
                       <View className="flex-1">
@@ -711,8 +710,8 @@ export default function LFCalculator({ route }: any) {
                         setCurrentView(prevView);
                       }}
                       className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
-                          ? 'border-green-500 bg-green-500/10'
-                          : 'border-border bg-surface'
+                        ? 'border-green-500 bg-green-500/10'
+                        : 'border-border bg-surface'
                         }`}
                     >
                       <View className="flex-1">
@@ -752,8 +751,8 @@ export default function LFCalculator({ route }: any) {
                         setCurrentView(prevView);
                       }}
                       className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
-                          ? 'border-green-500 bg-green-500/10'
-                          : 'border-border bg-surface'
+                        ? 'border-green-500 bg-green-500/10'
+                        : 'border-border bg-surface'
                         }`}
                     >
                       <View className="flex-1">
@@ -791,8 +790,8 @@ export default function LFCalculator({ route }: any) {
                         setCurrentView(prevView);
                       }}
                       className={`p-5 border-2 rounded-3xl flex-row items-center justify-between ${inputs.paymentPlan === key
-                          ? 'border-green-500 bg-green-500/10'
-                          : 'border-border bg-surface'
+                        ? 'border-green-500 bg-green-500/10'
+                        : 'border-border bg-surface'
                         }`}
                     >
                       <View className="flex-1">
@@ -961,6 +960,6 @@ export default function LFCalculator({ route }: any) {
         job={prefilledJob as any}
         isLowesLead={isLowesLead}
       />
-    </ModalContainer>
+    </View>
   );
 }

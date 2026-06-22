@@ -123,7 +123,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
   }, [uri, visible]);
 
   const handleDownloadToDevice = async () => {
-    const sourceUri = localUri || uri;
+    const sourceUri = (Platform.OS === 'android' && uri.startsWith('http')) ? uri : (localUri || uri);
     if (!sourceUri || saving) return;
     try {
       setSaving(true);
@@ -150,6 +150,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         if (Platform.OS === 'android') {
           // Add to DownloadManager and scan so it appears in 'Downloads' app
           ReactNativeBlobUtil.fs.scanFile([{ path: publicPath, mime: mimeType }]);
+          FlashMessage.success('Document downloaded successfully!', 'Downloaded');
         } else {
           await Share.share({
             url: `file://${publicPath}`,
@@ -168,6 +169,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
               mime: mimeType,
             },
           }).fetch('GET', sourceUri);
+          FlashMessage.success('Document downloaded successfully!', 'Downloaded');
         } else {
           await ReactNativeBlobUtil.config({
             path: publicPath,

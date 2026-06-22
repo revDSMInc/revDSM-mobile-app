@@ -1,5 +1,7 @@
 import { showMessage, MessageType } from 'react-native-flash-message';
 
+import { triggerSuccess, triggerFailure } from '../utils/haptics';
+
 /**
  * Standardized Flash Message Wrapper
  * Simplifies and centralizes application focal notifications
@@ -25,6 +27,7 @@ export const FlashMessage = {
    * Success notification - Professional green background
    */
   success: (title: string, description: string = '') => {
+    triggerSuccess();
     showMessage({
       message: title,
       description: description,
@@ -41,6 +44,7 @@ export const FlashMessage = {
    * Error notification - Critical red background
    */
   error: (title: string, description: string = 'Something went wrong') => {
+    triggerFailure();
     showMessage({
       message: title,
       description: description,

@@ -1,5 +1,5 @@
 import './global.css';
-import React from 'react';
+import React, { useState } from 'react';
 import { Text, TextInput, View, StyleSheet, StatusBar, Platform } from 'react-native';
 
 // Professional Global Font Injection for RN 0.84+
@@ -30,7 +30,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from './src/redux/store';
 import { NavigationContainer } from '@react-navigation/native';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
-import RootNavigator from './src/navigation';
+import RootNavigator, { navigationRef } from './src/navigation';
 import { useAppInitialization } from './src/hooks/useAppInitialization';
 import { useSocketManager } from './src/hooks/useSocketManager';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -46,6 +46,8 @@ function AppContent() {
   // Connect the global socket once — persists across all screens
   useSocketManager();
 
+  const [currentRouteName, setCurrentRouteName] = useState<string | null>(null);
+
   const statusBarBg = isDark ? colors.background : '#101828';
 
   return (
@@ -54,7 +56,7 @@ function AppContent() {
         barStyle="light-content"
         backgroundColor={statusBarBg}
       />
-      {Platform.OS === 'ios' && (
+      {(Platform.OS === 'ios' || Platform.OS === 'android') && (
         <View
           style={{
             height: insets.top,
@@ -67,8 +69,27 @@ function AppContent() {
           }}
         />
       )}
-      <NavigationContainer>
-        <RootNavigator />
+      <NavigationContainer
+        ref={navigationRef}
+        onReady={() => {
+          const route = navigationRef.getCurrentRoute();
+          setCurrentRouteName(route?.name || null);
+        }}
+        onStateChange={(state) => {
+          if (!state) return;
+          let route: any = state.routes[state.index];
+          while (route.state) {
+            const stateIndex = route.state.index;
+            if (typeof stateIndex === 'number' && route.state.routes) {
+              route = route.state.routes[stateIndex];
+            } else {
+              break;
+            }
+          }
+          setCurrentRouteName(route.name);
+        }}
+      >
+        <RootNavigator currentRouteName={currentRouteName} />
       </NavigationContainer>
       <FlashMessage position="top" />
     </QueryClientProvider>

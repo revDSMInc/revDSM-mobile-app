@@ -9,6 +9,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { LeadService } from '../../services/api/leads';
 import { FlashMessage } from '../../config/message';
+import { checkOnlineStatus, enqueueOfflineUpload } from '../../services/api/offlineUploadManager';
 
 const ThumbSkeleton = () => {
   const shimmer = useRef(new RNAnimated.Value(0)).current;
@@ -74,7 +75,7 @@ export const AfterImageModal = ({
 
   const allImages = React.useMemo(() => {
     return [
-      ...existingUris.map((uri) => ({ isExisting: true, uri })),
+      ...existingUris.map((uri) => ({ isExisting: true, uri, index: -1 })),
       ...newImages.map((file, idx) => ({ isExisting: false, uri: file.uri, index: idx })),
     ];
   }, [existingUris, newImages]);
@@ -140,6 +141,30 @@ export const AfterImageModal = ({
     }
     try {
       setLoading(true);
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        await enqueueOfflineUpload({
+          jobNumber: job.jobNumber,
+          companyId: job.companyId,
+          houseNumber: job.address?.houseNumber || '',
+          streetName: job.address?.streetName || '',
+          city: job.address?.city || '',
+          state: job.address?.state || '',
+          zip: job.address?.zip || '',
+          price: job.price || 0,
+          installationDate: job.installationDate || '',
+          type: 'after',
+          images: newImages.map(img => ({
+            uri: img.uri || '',
+            type: img.type,
+            fileName: img.name,
+          })),
+        });
+        FlashMessage.info('Offline: Images saved. They will be uploaded automatically.');
+        onUploadSuccess?.();
+        onClose();
+        return;
+      }
       const formData = new FormData();
       formData.append('jobNumber', job.jobNumber);
       formData.append('companyId', job.companyId);

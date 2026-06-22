@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Platform,
   StyleSheet,
   Modal,
+  Animated,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -42,6 +43,7 @@ import { PermissionsAndroid } from 'react-native';
 import { consumeZoneCanvasserReopen } from '../../utils/zone-canvasser-session';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../../services/api/leads';
+import { triggerThresholdCrossing, prepareHaptic } from '../../utils/haptics';
 
 export default function LeadsPage() {
   const queryClient = useQueryClient();
@@ -128,6 +130,24 @@ export default function LeadsPage() {
       }
     }
   }, [route.params?.openChatId, leads]);
+
+  const hasFiredRefreshHaptic = useRef(false);
+
+  const handleScrollBeginDrag = useCallback(() => {
+    prepareHaptic('impact');
+    hasFiredRefreshHaptic.current = false;
+  }, []);
+
+  const handleScroll = useCallback((event: any) => {
+    const y = event.nativeEvent.contentOffset.y;
+
+    if (y <= -80) {
+      if (!hasFiredRefreshHaptic.current) {
+        triggerThresholdCrossing();
+        hasFiredRefreshHaptic.current = true;
+      }
+    }
+  }, []);
 
   // ── Location: permission + watchPosition (kept for movement updates) ──────
   React.useEffect(() => {
@@ -241,7 +261,9 @@ export default function LeadsPage() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refresh();
+    const refreshPromise = refresh();
+    const delayPromise = new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    await Promise.all([refreshPromise, delayPromise]);
     setRefreshing(false);
   }, [refresh]);
 
@@ -268,8 +290,7 @@ export default function LeadsPage() {
   };
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
-      <Header onNavigate={(route) => navigation.navigate(route)} />
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['bottom', 'left', 'right']}>
 
       {/* Search Bar & Add Button */}
       <View
@@ -290,7 +311,7 @@ export default function LeadsPage() {
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            className="flex-1 ml-2 text-xs"
+            className="flex-1 ml-2 text-base"
             style={{ color: colors.text }}
           />
           {searchQuery.length > 0 && (
@@ -309,10 +330,10 @@ export default function LeadsPage() {
             backgroundColor: isDark ? colors.surface : '#8E33FF14',
           }}
         >
-          <Text className="text-sm font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
+          <Text className="text-base font-medium" style={{ color: '#8E33FF' }}>
             {filteredLeads.length}
           </Text>
-          <Text className="text-sm font-medium leading-[0px]" style={{ color: '#8E33FF' }}>
+          <Text className="text-base font-medium" style={{ color: '#8E33FF' }}>
             Leads
           </Text>
         </View>
@@ -337,7 +358,7 @@ export default function LeadsPage() {
               ]}
             >
               <Text
-                className="text-sm font-medium"
+                className="text-base font-medium"
                 style={{
                   color: currentTab === tab ? '#FFFFFF' : colors.textSecondary,
                 }}
@@ -476,17 +497,21 @@ export default function LeadsPage() {
             />
           )}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100 }}
+          onScroll={handleScroll}
+          onScrollBeginDrag={handleScrollBeginDrag}
+          scrollEventThrottle={16}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
               tintColor={colors.primary.main}
+              colors={[colors.primary.main]}
             />
           }
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center pt-[30%]">
               <Clipboard className="text-text-secondary" />
-              <Text className="text-xs text-center mt-4" style={{ color: colors.textSecondary }}>
+              <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
                 No jobs available
               </Text>
             </View>
@@ -578,7 +603,7 @@ function SubTab({
   return (
     <TouchableOpacity onPress={onPress} className="mr-6">
       <Text
-        className="text-sm pb-1.5"
+        className="text-base pb-1.5"
         style={{
           color: active ? colors.primary.main : colors.textSecondary,
           borderBottomWidth: 2,

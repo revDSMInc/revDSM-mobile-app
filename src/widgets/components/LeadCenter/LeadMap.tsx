@@ -187,7 +187,6 @@ export const LeadMap = ({
 
   const [userLocation, setUserLocation] = useState<any>(null);
   const markerPressedRef = useRef(false);
-  const [isHeatMap, setIsHeatMap] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
@@ -298,8 +297,8 @@ export const LeadMap = ({
   }, [filteredLeads]);
 
   // ─── Combined GeoJSON for all job markers ──────────────────────────────────
-  // One FeatureCollection with a `category` property so a single CircleLayer can
-  // color each point. CircleLayer renders thousands of points smoothly.
+  // One FeatureCollection with a `category` property so a single SymbolLayer can
+  // pick the right pin image. SymbolLayer renders thousands of points smoothly.
   const markersGeoJson = useMemo(() => {
     const toFeature = (job: any, category: string) => ({
       type: 'Feature' as const,
@@ -323,28 +322,31 @@ export const LeadMap = ({
   }, [defaultLeads, favoriteLeads, searchedLeads]);
 
   // ─── Heatmap GeoJSON ───────────────────────────────────────────────────────
-  // Each point carries a numeric `weight` derived from price, matching the
-  // previous Google heatmap weighting.
+  // Each point carries a numeric `weight` derived from price: a 0.3 baseline for
+  // jobs under $5000, scaling up for higher-value jobs.
   const heatmapGeoJson = useMemo(() => {
     return {
       type: 'FeatureCollection' as const,
       features: filteredLeads
         .filter((l: any) => l.location?.coordinates && l.location.coordinates.length >= 2)
-        .map((l: any) => ({
-          type: 'Feature' as const,
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [Number(l.location.coordinates[0]), Number(l.location.coordinates[1])],
-          },
-          properties: { weight: (l.price || 0) / 1000 || 1 },
-        })),
+        .map((l: any) => {
+          const price = l.price || 0;
+          let intensity = 0.3; // baseline density for jobs under $5000
+          if (price > 5000) {
+            intensity = 0.3 + Math.min(1.2, ((price - 5000) / 15000) * 1.2);
+          }
+          return {
+            type: 'Feature' as const,
+            geometry: {
+              type: 'Point' as const,
+              coordinates: [Number(l.location.coordinates[0]), Number(l.location.coordinates[1])],
+            },
+            properties: { weight: intensity },
+          };
+        }),
     };
   }, [filteredLeads]);
 
-  // Sync heatmap state when toggle changes
-  useEffect(() => {
-    if (isHeatMap !== isHeatMapActive) setIsHeatMap(isHeatMapActive);
-  }, [isHeatMapActive]);
 
   useEffect(() => {
     requestLocationPermission();
@@ -515,8 +517,8 @@ export const LeadMap = ({
       setSelectedLead(lead);
       cameraRef.current?.setCamera({
         centerCoordinate: [Number(coords[0]), Number(coords[1]) + 0.003], // shift center north to center card vertically
-        zoomLevel: Math.max(zoomRef.current, 13),
-        animationDuration: 300,
+        zoomLevel: Math.max(zoomRef.current, 15.5),
+        animationDuration: 600,
       });
     }
   };
@@ -531,13 +533,69 @@ export const LeadMap = ({
     if (job) handleMarkerClickRef.current(job);
   }, []);
 
-  const handleMapPress = useCallback(() => {
-    if (markerPressedRef.current) {
-      markerPressedRef.current = false;
-      return;
-    }
-    setSelectedLead(null);
-  }, []);
+  // Haversine formula to compute great-circle distance in kilometers
+  const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
+  };
+
+  // Map tap handler. When the heatmap is active there are no tappable pins, so a
+  // tap selects the closest lead within 2km; otherwise it just deselects.
+  const handleMapPress = useCallback(
+    (feature: any) => {
+      if (markerPressedRef.current) {
+        markerPressedRef.current = false;
+        return;
+      }
+
+      if (isHeatMapActive && filteredLeads.length > 0) {
+        const c = feature?.geometry?.coordinates;
+        if (c) {
+          const tapLng = c[0];
+          const tapLat = c[1];
+          let closestLead: any = null;
+          let minDistance = Infinity;
+
+          for (const lead of filteredLeads) {
+            if (lead.location?.coordinates) {
+              const leadLng = lead.location.coordinates[0];
+              const leadLat = lead.location.coordinates[1];
+              const distance = getDistanceInKm(tapLat, tapLng, leadLat, leadLng);
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestLead = lead;
+              }
+            }
+          }
+
+          if (closestLead && minDistance <= 2) {
+            setSelectedLead(closestLead);
+            cameraRef.current?.setCamera({
+              centerCoordinate: [
+                Number(closestLead.location.coordinates[0]),
+                Number(closestLead.location.coordinates[1]) + 0.003,
+              ],
+              zoomLevel: Math.max(zoomRef.current, 15.5),
+              animationDuration: 600,
+            });
+            return;
+          }
+        }
+      }
+
+      setSelectedLead(null);
+    },
+    [isHeatMapActive, filteredLeads]
+  );
 
   const fetchRoute = async () => {
     if (!userLocation || !currentLead?.location?.coordinates) return;
@@ -569,21 +627,6 @@ export const LeadMap = ({
       setRouteCoordinates([]);
     }
   }, [showRoute, userLocation, currentLead]);
-
-  // Haversine formula to compute great-circle distance in kilometers
-  const getDistanceInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // Distance in km
-  };
 
   // Check if a job is near the searched location (within 2 km radius)
   const isNearSearchedLocation = (jobLat: number, jobLng: number) => {
@@ -671,13 +714,13 @@ export const LeadMap = ({
         )}
 
         {/* Heatmap Layer — smooth, large-radius gradient matching the web app. */}
-        {isHeatMap && heatmapGeoJson.features.length > 0 && (
+        {isHeatMapActive && heatmapGeoJson.features.length > 0 && (
           <ShapeSource id="heatmap-source" shape={heatmapGeoJson}>
             <HeatmapLayer
               id="heatmap-layer"
               sourceID="heatmap-source"
               style={{
-                heatmapWeight: ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 10, 1],
+                heatmapWeight: ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1.5, 1],
                 heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 2, 13, 3],
                 heatmapRadius: ['interpolate', ['linear'], ['zoom'], 0, 18, 9, 30, 13, 45, 16, 60],
                 heatmapOpacity: ['interpolate', ['linear'], ['zoom'], 7, 0.85, 16, 0.6],
@@ -685,8 +728,8 @@ export const LeadMap = ({
                   'interpolate',
                   ['linear'],
                   ['heatmap-density'],
-                  0, 'rgba(0, 0, 255, 0)',
-                  0.1, '#74c0ff',
+                  0, 'rgba(116, 192, 255, 0)',
+                  0.15, 'rgba(116, 192, 255, 0.8)',
                   0.3, '#0072ff',
                   0.5, '#00c853',
                   0.7, '#ffab00',
@@ -710,7 +753,7 @@ export const LeadMap = ({
         {/* Lead Markers — teardrop pins (green/amber/red) anchored at their tip,
              matching the previous Google Maps look. A single SymbolLayer renders
              thousands of points performantly. */}
-        {!isHeatMap && markersGeoJson.features.length > 0 && (
+        {!isHeatMapActive && markersGeoJson.features.length > 0 && (
           <ShapeSource id="job-markers-source" shape={markersGeoJson} onPress={onMarkerPress}>
             <SymbolLayer
               id="job-markers-symbols"
@@ -884,12 +927,14 @@ export const LeadMap = ({
                 key={btn.id}
                 value={isFilterActive}
                 onValueChange={(val) => {
-                  if (onToggleFilter) {
-                    onToggleFilter(btn.type);
-                  } else {
-                    if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
-                    else setActiveFilters([...activeFilters, btn.id]);
-                  }
+                  requestAnimationFrame(() => {
+                    if (onToggleFilter) {
+                      onToggleFilter(btn.type);
+                    } else {
+                      if (!val) setActiveFilters(activeFilters.filter(f => f !== btn.id));
+                      else setActiveFilters([...activeFilters, btn.id]);
+                    }
+                  });
                 }}
                 activeLabel={btn.active}
                 inactiveLabel={btn.inactive}

@@ -4,6 +4,7 @@ import {
   Dimensions, ScrollView, ActivityIndicator, Alert,
   Animated as RNAnimated,
   Platform,
+  DeviceEventEmitter,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LeadService } from '../../../services/api/leads';
@@ -15,6 +16,7 @@ import { BeforeImageModal } from '../../modals/BeforeImageModal';
 import { AfterImageModal } from '../../modals/AfterImageModal';
 import Logo from "../../../assets/svgs/logo"
 import { ENV } from '../../../config/env';
+import { getOfflineImagesForJob } from '../../../services/api/offlineUploadManager';
 
 
 const { width, height } = Dimensions.get('window');
@@ -171,15 +173,17 @@ export const MapGalleryModal = ({
   const setFallbackUris = useCallback((bImages: any[], aImages: any[]) => {
     const extractFallback = (img: any): string =>
       img.secureUrl || img.s3url || img.url || '';
-    const bFallback = bImages.map(extractFallback).filter(Boolean);
-    const aFallback = aImages.map(extractFallback).filter(Boolean);
-    if (bFallback.length > 0) setBeforeUris(bFallback);
-    if (aFallback.length > 0) setAfterUris(aFallback);
-  }, []);
+    const offlineBefore = getOfflineImagesForJob(job?.jobNumber, 'before').map(img => img.uri);
+    const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
+    
+    const bFallback = [...bImages.map(extractFallback).filter(Boolean), ...offlineBefore];
+    const aFallback = [...aImages.map(extractFallback).filter(Boolean), ...offlineAfter];
+    setBeforeUris(bFallback);
+    setAfterUris(aFallback);
+  }, [job?.jobNumber]);
 
   // ─── PHASE 2: Silently upgrade to fresh signed URLs in the background
   const fetchSignedUrls = useCallback(async (bImages: any[], aImages: any[]) => {
-    if (bImages.length === 0 && aImages.length === 0) return;
     try {
       setSigningUrls(true);
       const filePaths = [
@@ -192,21 +196,29 @@ export const MapGalleryModal = ({
           filePath: img.filePath || img.s3url || img.secureUrl,
         })),
       ];
-      const res = await LeadService.getSecureUrls(filePaths);
-      const secureData = res.data?.data || res.data || [];
-      const signedBefore = secureData.slice(0, bImages.length)
-        .map((s: any) => s?.secureUrl || s?.url || '').filter(Boolean);
-      const signedAfter = secureData.slice(bImages.length)
-        .map((s: any) => s?.secureUrl || s?.url || '').filter(Boolean);
-      // Only update if we actually got signed URLs
-      if (signedBefore.length > 0) setBeforeUris(signedBefore);
-      if (signedAfter.length > 0) setAfterUris(signedAfter);
+      let signedBefore: string[] = [];
+      let signedAfter: string[] = [];
+      if (filePaths.length > 0) {
+        const res = await LeadService.getSecureUrls(filePaths);
+        const secureData = res.data?.data || res.data || [];
+        signedBefore = secureData.slice(0, bImages.length)
+          .map((s: any) => s?.secureUrl || s?.url || '').filter(Boolean);
+        signedAfter = secureData.slice(bImages.length)
+          .map((s: any) => s?.secureUrl || s?.url || '').filter(Boolean);
+      }
+      
+      const offlineBefore = getOfflineImagesForJob(job?.jobNumber, 'before').map(img => img.uri);
+      const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
+
+      // Only update if we have signed URLs or offline pending images
+      setBeforeUris(signedBefore.length > 0 ? [...signedBefore, ...offlineBefore] : [...bImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean), ...offlineBefore]);
+      setAfterUris(signedAfter.length > 0 ? [...signedAfter, ...offlineAfter] : [...aImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean), ...offlineAfter]);
     } catch {
       // Keep fallback URLs — no-op on error
     } finally {
       setSigningUrls(false);
     }
-  }, []);
+  }, [job?.jobNumber]);
 
   const initImages = useCallback(() => {
     if (!job) return;
@@ -266,6 +278,15 @@ export const MapGalleryModal = ({
       lastVisibleRef.current = false;
     }
   }, [visible, job?._id, initImages, refreshJobImages]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+      if (data?.jobNumber === job?.jobNumber) {
+        refreshJobImages();
+      }
+    });
+    return () => sub.remove();
+  }, [job?.jobNumber, refreshJobImages]);
 
   // ─── Local delete (staged until Save Changes) ────────────────────
   const handleLocalDelete = (type: 'before' | 'after', index: number) => {

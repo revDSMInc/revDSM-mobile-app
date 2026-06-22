@@ -18,7 +18,17 @@
 
 - (BOOL)tv_becomeFirstResponder {
   if (!self.inputAccessoryView) {
-    self.inputAccessoryView = [self makeCustomKeyboardToolbar];
+    // Only attach the tick toolbar for numeric keyboard types.
+    // The chat message input and other default-keyboard UITextViews
+    // already have a Return key and should NOT get the tick button.
+    UIKeyboardType kbType = self.keyboardType;
+    BOOL isNumeric = (kbType == UIKeyboardTypeNumberPad ||
+                      kbType == UIKeyboardTypeDecimalPad ||
+                      kbType == UIKeyboardTypePhonePad ||
+                      kbType == UIKeyboardTypeNumbersAndPunctuation);
+    if (isNumeric) {
+      self.inputAccessoryView = [self makeCustomKeyboardToolbar];
+    }
   }
   return [self tv_becomeFirstResponder];
 }
