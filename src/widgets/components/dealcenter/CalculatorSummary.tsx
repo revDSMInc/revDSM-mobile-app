@@ -11,6 +11,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  findNodeHandle,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -195,6 +196,7 @@ export const CalculatorSummary = ({
     setShowPaymentPicker(false);
   };
   const dpInputRef = useRef<TextInput>(null);
+  const dpWrapperRef = useRef<View>(null);
   const {
     error,
     setError,
@@ -329,6 +331,8 @@ export const CalculatorSummary = ({
     return isCalculatorIdentical(activeCalc, c);
   });
   const scrollViewRef = useRef<ScrollView>(null);
+  const downPaymentInputRef = useRef<any>(null);
+  const downPaymentWrapperRef = useRef<View>(null);
 
   const fCurrency = (num: number) => `$${Math.round(num).toLocaleString()}`;
 
@@ -943,7 +947,12 @@ export const CalculatorSummary = ({
 
                         {!showPreOrderDownPaymentInput ? (
                           <TouchableOpacity
-                            onPress={() => setShowPreOrderDownPaymentInput(true)}
+                            onPress={() => {
+                              setShowPreOrderDownPaymentInput(true);
+                              setTimeout(() => {
+                                downPaymentInputRef.current?.focus();
+                              }, 150);
+                            }}
                             className="mt-2 mb-4 py-2 border border-dashed border-[#2196F3] rounded-xl items-center justify-center flex-row gap-1 bg-[#2196F3]/5"
                           >
                             <Ionicons name="add" size={14} color="#2196F3" />
@@ -952,10 +961,16 @@ export const CalculatorSummary = ({
                             </Text>
                           </TouchableOpacity>
                         ) : (
-                          <View className="mt-2 mb-4 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex-row items-center justify-between min-h-[40px]">
-                            <View className="flex-row items-center flex-1">
+                          <View
+                            ref={downPaymentWrapperRef}
+                            collapsable={false}
+                            className="mt-2 mb-4 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex-row items-center justify-between min-h-[40px]"
+                          >
+                            <View collapsable={false} className="flex-row items-center flex-1">
                               <Text className="text-xs font-bold text-slate-500 mr-1">$</Text>
                               <TextInput
+                                ref={downPaymentInputRef}
+                                autoFocus={true}
                                 className="text-xs font-black text-slate-800 p-0 flex-1"
                                 keyboardType="numeric"
                                 value={preOrderDownPayment > 0 ? String(preOrderDownPayment) : ''}
@@ -967,11 +982,17 @@ export const CalculatorSummary = ({
                                   setPreOrderDownPayment(val);
                                 }}
                                 onFocus={() => {
-                                  if (Platform.OS === 'ios') {
-                                    setTimeout(() => {
-                                      scrollViewRef.current?.scrollTo({ y: 10, animated: true });
-                                    }, 100);
-                                  }
+                                  setTimeout(() => {
+                                    if (downPaymentWrapperRef.current && scrollViewRef.current) {
+                                      downPaymentWrapperRef.current.measureLayout(
+                                        scrollViewRef.current as any,
+                                        (_left: number, top: number, _width: number, _height: number) => {
+                                          scrollViewRef.current?.scrollTo({ y: Math.max(0, top - 75), animated: true });
+                                        },
+                                        () => { }
+                                      );
+                                    }
+                                  }, 150);
                                 }}
 
                                 onBlur={async () => {
@@ -1330,8 +1351,6 @@ export const CalculatorSummary = ({
                     </TouchableOpacity>
                   )}
                 </View>
-
-                <View className="mb-20" />
               </View>
             )}
           </View>
@@ -1702,7 +1721,12 @@ export const CalculatorSummary = ({
 
                   {!currentShowDownPaymentInput ? (
                     <TouchableOpacity
-                      onPress={() => handleCurrentSetShowDownPaymentInput(true)}
+                      onPress={() => {
+                        handleCurrentSetShowDownPaymentInput(true);
+                        setTimeout(() => {
+                          dpInputRef.current?.focus();
+                        }, 150);
+                      }}
                       className="mt-4 px-5 py-2 border-2 border-dashed border-slate-200 rounded-2xl flex-row items-center"
                     >
                       <Ionicons name="add" size={16} color="#919EAB" />
@@ -1713,12 +1737,13 @@ export const CalculatorSummary = ({
                       <View className="flex-1">
                         <Pressable
                           onPress={() => dpInputRef.current?.focus()}
+                          collapsable={false}
                           className="bg-white border-2 border-slate-900 rounded-2xl px-3 py-2"
                         >
                           <Text className="text-[10px] font-black text-slate-900 absolute -top-2 left-3 bg-white px-1">
                             Down Payment
                           </Text>
-                          <View className="flex-row items-center h-6">
+                          <View ref={dpWrapperRef} collapsable={false} className="flex-row items-center h-6">
                             <Text
                               className="text-base font-bold text-slate-900 mr-1"
                               style={{ includeFontPadding: false, textAlignVertical: 'center' }}
@@ -1727,6 +1752,7 @@ export const CalculatorSummary = ({
                             </Text>
                             <TextInput
                               ref={dpInputRef}
+                              autoFocus={true}
                               className="flex-1 font-bold text-base text-slate-900 p-0"
                               style={{
                                 padding: 0,
@@ -1734,7 +1760,20 @@ export const CalculatorSummary = ({
                                 margin: 0,
                                 textAlignVertical: 'center',
                                 includeFontPadding: false,
-                                top: -4,
+                                top: Platform.OS == 'android' ? 2 : -4,
+                              }}
+                              onFocus={() => {
+                                setTimeout(() => {
+                                  if (dpWrapperRef.current && scrollViewRef.current) {
+                                    dpWrapperRef.current.measureLayout(
+                                      scrollViewRef.current as any,
+                                      (_left: number, top: number, _width: number, _height: number) => {
+                                        scrollViewRef.current?.scrollTo({ y: Math.max(0, top - 75), animated: true });
+                                      },
+                                      () => { }
+                                    );
+                                  }
+                                }, 150);
                               }}
                               keyboardType="numeric"
                               value={String(currentDownPayment || '')}

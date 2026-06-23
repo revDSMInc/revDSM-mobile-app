@@ -76,14 +76,14 @@ export const useLeadCenterModals = (
       if (toolId === 'consent') {
         const existing = findReport('consent_form');
         if (existing) {
-          handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl);
+          handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl, 'Consent Form');
         } else {
           toggleModal('showConsentModal', true);
         }
       } else if (toolId === 'waiver') {
         const existing = findReport('waiver_form');
         if (existing) {
-          handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl);
+          handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl, 'Roof Waiver');
         } else {
           toggleModal('showWaiverModal', true);
         }

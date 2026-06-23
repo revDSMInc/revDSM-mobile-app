@@ -8,14 +8,15 @@ import {
   ScrollView,
   StyleSheet,
   PanResponder,
+  Platform,
+  StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
 import Svg, { Path } from 'react-native-svg';
 import RNFS from 'react-native-fs';
-import { Platform } from 'react-native';
-import { FlashMessage as GlobalFlashMessage } from '../../../config/message';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
 import { Share, ActivityIndicator, Linking } from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -51,6 +52,7 @@ export const RoofWaiverModal = ({
   prefilledData,
 }: RoofWaiverModalProps) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const flashRef = React.useRef<RNFlashMessage>(null);
   const FlashMessage = {
@@ -73,7 +75,7 @@ export const RoofWaiverModal = ({
         icon: 'danger',
         duration: 4000,
         floating: true,
-        style: { zIndex: 9999, elevation: 9999 },
+        style: { zIndex: 9999, elevation: 9999, backgroundColor: '#D32F2F' },
       });
     },
     show: (title: string, description: string = '', type: any = 'info') => {
@@ -84,7 +86,7 @@ export const RoofWaiverModal = ({
         icon: type,
         duration: 3000,
         floating: true,
-        style: { zIndex: 9999, elevation: 9999 },
+        style: { zIndex: 9999, elevation: 9999, backgroundColor: type === 'danger' ? '#D32F2F' : undefined },
       });
     },
   };
@@ -500,7 +502,11 @@ export const RoofWaiverModal = ({
           saveSig={saveSig}
           onPadLayout={(e: any) => setPadLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
         />
-        <RNFlashMessage ref={flashRef} position="top" />
+        <RNFlashMessage
+          ref={flashRef}
+          position="top"
+          statusBarHeight={insets.top > 0 ? insets.top : (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined)}
+        />
       </View>
     </Modal>
   );

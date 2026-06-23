@@ -33,6 +33,7 @@ import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
 import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
+import { useSecureUrls } from '../../hooks/useSecureUrls';
 
 const { width } = Dimensions.get('window');
 
@@ -81,8 +82,13 @@ export default function PitchbookScreen() {
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
-  const [secureImages, setSecureImages] = useState<Record<string, any[]>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  const activePhotos = useMemo(() => {
+    return fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || [];
+  }, [fullLeadData, lead]);
+
+  const { data: secureImages = {} } = useSecureUrls(activePhotos);
 
   // Animation for tools drawer
   const toolsAnim = useRef(new Animated.Value(0)).current;
@@ -133,35 +139,6 @@ export default function PitchbookScreen() {
     prepareHaptic('impact');
   }, []);
 
-  const fetchSecureImages = async (photos: any[]) => {
-    if (!photos?.length) return;
-    try {
-      const filePaths = photos.map((p: any) => ({
-        bucketName: p.bucketName || ENV.S3_BUCKET,
-        filePath: p.s3url,
-      }));
-      const secureRes = await LeadService.getSecureUrls(filePaths);
-      const secureData = secureRes.data?.data || secureRes.data || [];
-
-      const map: Record<string, any[]> = {};
-      photos.forEach((photo: any) => {
-        const catName = photo.category;
-        if (!map[catName]) map[catName] = [];
-        const secured = secureData.find(
-          (s: any) => s.s3url === photo.s3url || s.filePath === photo.s3url
-        );
-        map[catName].push({
-          uri: secured?.secureUrl || photo.s3url,
-          s3url: photo.s3url,
-          subcategory: photo.subcategory,
-        });
-      });
-      setSecureImages(map);
-    } catch (e) {
-      console.warn('Pitchbook fetch secure images failed', e);
-    }
-  };
-
   const pollInterval = useRef<any>(null);
 
   const refetch = async () => {
@@ -170,16 +147,11 @@ export default function PitchbookScreen() {
     try {
       const response = await LeadService.getLeadOutcome(lid);
       const data = response.data?.data || response.data;
-      const outcome = data?.outcome || data;
       setFullLeadData(data);
-      if (outcome?.salesPhotos) fetchSecureImages(outcome.salesPhotos);
     } catch (error) { }
   };
 
   useEffect(() => {
-    if (lead?.salesPhotos) {
-      fetchSecureImages(lead.salesPhotos);
-    }
     const result = String(lead?.result || lead?.status || '').toLowerCase();
     if (result === 'sale' || result === 'demo') {
       refetch();
@@ -294,6 +266,10 @@ export default function PitchbookScreen() {
 
   const renderInteractiveTools = () => {
     if (viewMode !== 'rep' || !showTools) return null;
+    const drawerHeight = isLandscape
+      ? winHeight - insets.top
+      : winHeight * 0.7;
+
     return (
       <View style={[{ zIndex: 1000 }, StyleSheet.absoluteFill]}>
         <TouchableOpacity
@@ -308,12 +284,14 @@ export default function PitchbookScreen() {
             bottom: 0,
             left: 0,
             right: 0,
-            height: Dimensions.get('window').height * 0.7,
+            height: drawerHeight,
+            paddingLeft: isLandscape ? Math.max(insets.left, 16) : 0,
+            paddingRight: isLandscape ? Math.max(insets.right, 16) : 0,
             transform: [
               {
                 translateY: toolsAnim.interpolate({
                   inputRange: [0, 1],
-                  outputRange: [Dimensions.get('window').height * 0.7, 0],
+                  outputRange: [drawerHeight, 0],
                 }),
               },
             ],
@@ -495,7 +473,7 @@ export default function PitchbookScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white" edges={['bottom', 'left', 'right']}>
+    <SafeAreaView className="flex-1 bg-background" edges={['bottom', 'left', 'right']}>
 
       {/* Pitch Book Toolbar */}
       <View className="flex-row items-center justify-between px-4 pt-6 bg-background">
@@ -724,7 +702,7 @@ export default function PitchbookScreen() {
           supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
           onRequestClose={() => setIsFullscreen(false)}
         >
-          <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
             {/* Hide status bar in landscape */}
             <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
 
@@ -732,7 +710,7 @@ export default function PitchbookScreen() {
               /* ════════════════════════════════════════
                  LANDSCAPE LAYOUT
                  ════════════════════════════════════════ */
-              <View style={{ flex: 1, backgroundColor: '#000', position: 'relative' }}>
+              <View style={{ flex: 1, backgroundColor: '#000', position: 'relative', paddingTop: insets.top }}>
 
                 {/* ── Centre: image area + category tabs below image ── */}
                 <View style={{ flex: 1, flexDirection: 'column' }}>
@@ -840,7 +818,10 @@ export default function PitchbookScreen() {
                   <View
                     style={{
                       backgroundColor: '#111',
-                      paddingVertical: 10,
+                      paddingTop: 10,
+                      paddingBottom: Math.max(insets.bottom, 10),
+                      paddingLeft: Math.max(insets.left, 8),
+                      paddingRight: Math.max(insets.right, 8),
                       borderTopWidth: 1,
                       borderTopColor: 'rgba(255,255,255,0.08)',
                     }}
@@ -1093,13 +1074,39 @@ export default function PitchbookScreen() {
               </View>
             )}
             {renderInteractiveTools()}
-          </SafeAreaView>
+
+            {/* Full Screen Image Preview (Nested inside Modal to show on top of it) */}
+            <Modal visible={!!previewImage && isFullscreen} transparent animationType="fade">
+              <View className="flex-1 bg-black/90 justify-center items-center">
+                <TouchableOpacity
+                  onPress={() => setPreviewImage(null)}
+                  className="absolute top-12 right-6 z-10 w-10 h-10 bg-white/20 rounded-full items-center justify-center"
+                >
+                  <Icon name="close" size={24} color="white" />
+                </TouchableOpacity>
+                {previewImage && (
+                  <Image
+                    source={{ uri: previewImage }}
+                    className="w-full h-[80%]"
+                    resizeMode="contain"
+                  />
+                )}
+              </View>
+            </Modal>
+
+            <PdfPreviewModal
+              visible={showPdfModal && isFullscreen}
+              onClose={() => setShowPdfModal(false)}
+              uri={pdfPreviewData.url}
+              title={pdfPreviewData.title}
+            />
+          </View>
         </Modal>
 
         {!isFullscreen && renderInteractiveTools()}
 
         {/* Full Screen Image Preview */}
-        <Modal visible={!!previewImage} transparent animationType="fade">
+        <Modal visible={!!previewImage && !isFullscreen} transparent animationType="fade">
           <View className="flex-1 bg-black/90 justify-center items-center">
             <TouchableOpacity
               onPress={() => setPreviewImage(null)}
@@ -1118,7 +1125,7 @@ export default function PitchbookScreen() {
         </Modal>
 
         <PdfPreviewModal
-          visible={showPdfModal}
+          visible={showPdfModal && !isFullscreen}
           onClose={() => setShowPdfModal(false)}
           uri={pdfPreviewData.url}
           title={pdfPreviewData.title}

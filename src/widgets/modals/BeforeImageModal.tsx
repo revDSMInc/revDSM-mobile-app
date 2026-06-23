@@ -83,13 +83,17 @@ export const BeforeImageModal = ({
 
   const handleAddImage = async (useCamera: boolean) => {
     if (useCamera && Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA, {
-        title: 'Camera Permission',
-        message: 'App needs camera access to take photos.',
-        buttonNeutral: 'Ask Me Later',
-        buttonNegative: 'Cancel',
-        buttonPositive: 'OK',
-      });
+      const hasCamera = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+      let granted = hasCamera ? PermissionsAndroid.RESULTS.GRANTED : null;
+      if (!hasCamera) {
+        granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA, {
+          title: 'Camera Permission',
+          message: 'App needs camera access to take photos.',
+          buttonNeutral: 'Ask Me Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'OK',
+        });
+      }
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
         FlashMessage.error('Camera permission is required.');
         return;

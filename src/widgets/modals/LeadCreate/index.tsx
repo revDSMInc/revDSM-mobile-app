@@ -139,9 +139,15 @@ export default function LeadCreateModal({
 
   const handleGetCurrentLocation = async () => {
     if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
+      const hasLocation = await PermissionsAndroid.check(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       );
+      let granted = hasLocation ? PermissionsAndroid.RESULTS.GRANTED : null;
+      if (!hasLocation) {
+        granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+      }
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
         Alert.alert(
           'Permission Denied',

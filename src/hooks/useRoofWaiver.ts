@@ -102,7 +102,7 @@ export const useRoofWaiver = (
           icon: 'danger',
           duration: 4000,
           floating: true,
-          style: { zIndex: 9999, elevation: 9999 },
+          style: { zIndex: 9999, elevation: 9999, backgroundColor: '#D32F2F' },
         });
       } else {
         GlobalFlashMessage.error(title, description);
@@ -117,7 +117,7 @@ export const useRoofWaiver = (
           icon: type,
           duration: 3000,
           floating: true,
-          style: { zIndex: 9999, elevation: 9999 },
+          style: { zIndex: 9999, elevation: 9999, backgroundColor: type === 'danger' ? '#D32F2F' : undefined },
         });
       } else {
         GlobalFlashMessage.show(title, description, type);
@@ -297,7 +297,7 @@ export const useRoofWaiver = (
         fullName: `${formData.firstName} ${formData.lastName}`.trim(),
         phoneNumber: finalPhone,
         email: String(formData.email),
-        leadId: String(lead?.leadId || ''),
+        leadId: String(formData.leadId || ''),
         repName: String(formData.repName),
         officeCode: String(formData.officeCode),
         time: String(formData.time),

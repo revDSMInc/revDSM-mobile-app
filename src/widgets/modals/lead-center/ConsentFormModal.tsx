@@ -9,7 +9,9 @@ import {
   Platform,
   StyleSheet,
   PanResponder,
+  StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
@@ -95,6 +97,7 @@ export const ConsentFormModal = ({
 }: ConsentFormModalProps) => {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const flashRef = React.useRef<RNFlashMessage>(null);
   const FlashMessage = {
@@ -117,7 +120,7 @@ export const ConsentFormModal = ({
         icon: 'danger',
         duration: 4000,
         floating: true,
-        style: { zIndex: 9999, elevation: 9999 },
+        style: { zIndex: 9999, elevation: 9999, backgroundColor: '#D32F2F' },
       });
     },
     show: (title: string, description: string = '', type: any = 'info') => {
@@ -128,7 +131,7 @@ export const ConsentFormModal = ({
         icon: type,
         duration: 3000,
         floating: true,
-        style: { zIndex: 9999, elevation: 9999 },
+        style: { zIndex: 9999, elevation: 9999, backgroundColor: type === 'danger' ? '#D32F2F' : undefined },
       });
     },
   };
@@ -335,7 +338,7 @@ export const ConsentFormModal = ({
         fullName: `${formData.firstName} ${formData.lastName}`.trim(),
         email: String(formData.email),
         phoneNumber: finalPhone,
-        leadId: String(lead?.leadId || ''),
+        leadId: String(formData.leadId || ''),
         type: submissionType,
         file: signatureFile,
         repName: String(formData.repName),
@@ -742,7 +745,11 @@ export const ConsentFormModal = ({
             </View>
           </View>
         )}
-        <RNFlashMessage ref={flashRef} position="top" />
+        <RNFlashMessage
+          ref={flashRef}
+          position="top"
+          statusBarHeight={insets.top > 0 ? insets.top : (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined)}
+        />
       </View>
     </Modal>
   );

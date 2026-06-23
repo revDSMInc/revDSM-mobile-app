@@ -42,11 +42,18 @@ export default function LoginScreen() {
           getCurrentLocation();
         }
       } else {
-        const granted = await PermissionsAndroid.request(
+        const hasLocation = await PermissionsAndroid.check(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         );
-        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        if (hasLocation) {
           getCurrentLocation();
+        } else {
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+          );
+          if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+            getCurrentLocation();
+          }
         }
       }
     };

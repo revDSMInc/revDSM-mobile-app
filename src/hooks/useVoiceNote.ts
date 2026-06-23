@@ -64,6 +64,11 @@ export function useVoiceNote(): VoiceNoteHookResult {
     if (permissionGrantedRef.current) return true;
     if (Platform.OS === 'android') {
       try {
+        const hasMic = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (hasMic) {
+          permissionGrantedRef.current = true;
+          return true;
+        }
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
           {

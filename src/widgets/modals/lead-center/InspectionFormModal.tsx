@@ -13,12 +13,15 @@ import {
   Platform,
   PermissionsAndroid,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
 import { INSPECTION_ISSUES } from '../../../constants/lead-center';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import RNFlashMessage from 'react-native-flash-message';
 
 interface InspectionFormModalProps {
   visible: boolean;
@@ -65,6 +68,45 @@ export const InspectionFormModal = ({
   loading,
 }: InspectionFormModalProps) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const flashRef = React.useRef<RNFlashMessage>(null);
+
+  const FlashMessage = {
+    info: (title: string, description: string = '') => {
+      flashRef.current?.showMessage({
+        message: title,
+        description,
+        type: 'info',
+        icon: 'info',
+        duration: 3000,
+        floating: true,
+        style: { zIndex: 9999, elevation: 9999 },
+      });
+    },
+    error: (title: string, description: string = 'Something went wrong') => {
+      flashRef.current?.showMessage({
+        message: title,
+        description,
+        type: 'danger',
+        icon: 'danger',
+        duration: 4000,
+        floating: true,
+        style: { zIndex: 9999, elevation: 9999, backgroundColor: '#D32F2F' },
+      });
+    },
+    success: (title: string, description: string = '') => {
+      flashRef.current?.showMessage({
+        message: title,
+        description,
+        type: 'success',
+        icon: 'success',
+        duration: 3000,
+        floating: true,
+        style: { zIndex: 9999, elevation: 9999 },
+      });
+    },
+  };
+
   const [isGenerating, setIsGenerating] = useState(false);
   const isLoading = !!(isGenerating || loading);
 
@@ -127,16 +169,20 @@ export const InspectionFormModal = ({
             text: 'Camera',
             onPress: async () => {
               if (Platform.OS === 'android') {
-                const granted = await PermissionsAndroid.request(
-                  PermissionsAndroid.PERMISSIONS.CAMERA,
-                  {
-                    title: 'Camera Permission',
-                    message: 'App needs access to your camera to take photos.',
-                    buttonNeutral: 'Ask Me Later',
-                    buttonNegative: 'Cancel',
-                    buttonPositive: 'OK',
-                  }
-                );
+                const hasCamera = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+                let granted = hasCamera ? PermissionsAndroid.RESULTS.GRANTED : null;
+                if (!hasCamera) {
+                  granted = await PermissionsAndroid.request(
+                    PermissionsAndroid.PERMISSIONS.CAMERA,
+                    {
+                      title: 'Camera Permission',
+                      message: 'App needs access to your camera to take photos.',
+                      buttonNeutral: 'Ask Me Later',
+                      buttonNegative: 'Cancel',
+                      buttonPositive: 'OK',
+                    }
+                  );
+                }
                 if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
                   Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
                   return;
@@ -206,6 +252,7 @@ export const InspectionFormModal = ({
     if (isLoading) return;
     try {
       setIsGenerating(true);
+      FlashMessage.info('Generating inspection report...', 'Generating');
       const payload: any = {
         name,
         email,
@@ -241,8 +288,9 @@ export const InspectionFormModal = ({
 
       payload.leadId = lead?._id || lead?.id;
       await onSubmit(payload);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Inspection Submit Error:', err);
+      FlashMessage.error('Error', err?.message || 'Error generating inspection report');
     } finally {
       setIsGenerating(false);
     }
@@ -457,6 +505,11 @@ export const InspectionFormModal = ({
               </Text>
             </TouchableOpacity>
           </View>
+          <RNFlashMessage
+            ref={flashRef}
+            position="top"
+            statusBarHeight={insets.top > 0 ? insets.top : (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined)}
+          />
         </View>
       </View>
     </Modal>

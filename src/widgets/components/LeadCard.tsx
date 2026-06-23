@@ -392,18 +392,19 @@ function getLeadState(
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function LeadCard({
-  lead,
-  isTomorrow = false,
-  isArchived = false,
-  actionLoading,
-  onActionPress,
-  onPitchbookPress,
-  onArchiveSuccess,
-  onDeleteSuccess,
-  onPress,
-  userLocation,
-}: Props) {
+export const LeadCard = React.memo(
+  function LeadCard({
+    lead,
+    isTomorrow = false,
+    isArchived = false,
+    actionLoading,
+    onActionPress,
+    onPitchbookPress,
+    onArchiveSuccess,
+    onDeleteSuccess,
+    onPress,
+    userLocation,
+  }: Props) {
   const { colors, isDark } = useTheme();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
@@ -863,4 +864,41 @@ export function LeadCard({
       />
     </TouchableOpacity>
   );
-}
+},
+  (prevProps, nextProps) => {
+    if (prevProps.isTomorrow !== nextProps.isTomorrow) return false;
+    if (prevProps.isArchived !== nextProps.isArchived) return false;
+    if (prevProps.actionLoading !== nextProps.actionLoading) return false;
+    if (prevProps.isDark !== nextProps.isDark) return false;
+
+    const prevLoc = prevProps.userLocation;
+    const nextLoc = nextProps.userLocation;
+    if ((prevLoc === null || prevLoc === undefined) !== (nextLoc === null || nextLoc === undefined)) return false;
+    if (prevLoc && nextLoc) {
+      if (prevLoc.latitude !== nextLoc.latitude || prevLoc.longitude !== nextLoc.longitude) return false;
+    }
+
+    const prevLead = prevProps.lead;
+    const nextLead = nextProps.lead;
+    if (prevLead._id !== nextLead._id) return false;
+    if (prevLead.status !== nextLead.status) return false;
+    if (prevLead.workflowState !== nextLead.workflowState) return false;
+    if (prevLead.leadTime !== nextLead.leadTime) return false;
+    if (prevLead.leadDate !== nextLead.leadDate) return false;
+    if (prevLead.leadCode !== nextLead.leadCode) return false;
+    if (prevLead.fullAddress !== nextLead.fullAddress) return false;
+    if (prevLead.lowesLead !== nextLead.lowesLead) return false;
+
+    if (prevLead.customerDetails?.firstName !== nextLead.customerDetails?.firstName) return false;
+    if (prevLead.customerDetails?.lastName !== nextLead.customerDetails?.lastName) return false;
+
+    if (JSON.stringify(prevLead.actionCounts) !== JSON.stringify(nextLead.actionCounts)) return false;
+
+    const prevLogs = prevLead.actionlogs || [];
+    const nextLogs = nextLead.actionlogs || [];
+    if (prevLogs.length !== nextLogs.length) return false;
+    if (JSON.stringify(prevLogs) !== JSON.stringify(nextLogs)) return false;
+
+    return true;
+  }
+);

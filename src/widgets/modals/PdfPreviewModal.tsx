@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   View,
   Text,
@@ -28,6 +29,7 @@ interface PdfPreviewModalProps {
 }
 
 export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModalProps) => {
+  const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -130,7 +132,11 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       FlashMessage.info('Download started...', 'Downloading');
       const { dirs } = ReactNativeBlobUtil.fs;
       const ext = isImage ? (uri.split('?')[0].split('.').pop() || 'jpg') : 'pdf';
-      const fileName = uri.split('?')[0].split('/').pop() || `revdsm_${Date.now()}.${ext}`;
+      let cleanTitle = title ? title.trim().replace(/[^a-zA-Z0-9\s_-]/g, '') : '';
+      cleanTitle = cleanTitle.replace(/\s+/g, ' ');
+      const fileName = cleanTitle 
+        ? `${cleanTitle}.${ext}` 
+        : (uri.split('?')[0].split('/').pop() || `revdsm_${Date.now()}.${ext}`);
       const baseDir = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
       const publicPath = `${baseDir}/${fileName}`;
       const mimeType = isImage ? `image/${ext === 'png' ? 'png' : 'jpeg'}` : 'application/pdf';
@@ -192,7 +198,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? colors.surface : '#f8fafc' }}>
+      <View style={{ flex: 1, backgroundColor: isDark ? colors.surface : '#f8fafc', paddingTop: insets.top, paddingBottom: insets.bottom }}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -284,7 +290,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
             </View>
           )}
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 };

@@ -53,7 +53,16 @@ export const CustomCameraModal = ({
   const insets = useSafeAreaInsets();
 
   const device = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle-camera', 'wide-angle-camera', 'telephoto-camera'] });
-  const format = useCameraFormat(device, [
+  const ultraWideDevice = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle-camera'] });
+  const hasPhysicalUltraWide = ultraWideDevice !== undefined &&
+                               device !== undefined &&
+                               ultraWideDevice.id !== device.id &&
+                               ultraWideDevice.physicalDevices.includes('ultra-wide-angle-camera');
+
+  const [activeDeviceType, setActiveDeviceType] = useState<'standard' | 'ultrawide'>('standard');
+  const activeDevice = activeDeviceType === 'ultrawide' && ultraWideDevice ? ultraWideDevice : device;
+
+  const format = useCameraFormat(activeDevice, [
     { photoAspectRatio: 4 / 3 },
     { videoAspectRatio: 4 / 3 },
     { photoResolution: 'max' },
@@ -63,23 +72,23 @@ export const CustomCameraModal = ({
   const countdownScale = useRef(new Animated.Value(1)).current;
   const timerIntervalRef = useRef<any>(null);
 
-  const minZoom = device?.minZoom ?? 1;
-  const maxZoom = device?.maxZoom ?? 8;
-  const neutralZoom = device?.neutralZoom ?? minZoom;
-  const isUltrawideSupported = neutralZoom > minZoom;
+  const minZoom = activeDevice?.minZoom ?? 1;
+  const maxZoom = activeDevice?.maxZoom ?? 8;
+  const neutralZoom = activeDevice?.neutralZoom ?? minZoom;
+  const isUltrawideSupported = !!((device && device.neutralZoom > device.minZoom) || hasPhysicalUltraWide);
 
   const zoom = useSharedValue(neutralZoom);
   const startZoom = useSharedValue(neutralZoom);
   const [activeZoomLevel, setActiveZoomLevel] = useState(neutralZoom);
 
   useEffect(() => {
-    if (device) {
-      const defaultZoom = device.neutralZoom ?? device.minZoom ?? 1;
+    if (activeDevice) {
+      const defaultZoom = activeDevice.neutralZoom ?? activeDevice.minZoom ?? 1;
       zoom.value = defaultZoom;
       startZoom.value = defaultZoom;
       setActiveZoomLevel(defaultZoom);
     }
-  }, [device?.id]); // reset when device changes
+  }, [activeDevice?.id]); // reset when device changes
 
   const updateActiveZoomLevel = (val: number) => {
     setActiveZoomLevel(val);
@@ -127,6 +136,7 @@ export const CustomCameraModal = ({
       setCapturedAsset(null);
       setIsCapturing(false);
       setCountdown(null);
+      setActiveDeviceType('standard');
       zoom.value = neutralZoom;
       startZoom.value = neutralZoom;
       setActiveZoomLevel(neutralZoom);
@@ -169,7 +179,7 @@ export const CustomCameraModal = ({
   };
 
   const handleCapture = async () => {
-    if (isCapturing || capturedAsset || !cameraRef.current || !device) return;
+    if (isCapturing || capturedAsset || !cameraRef.current || !activeDevice) return;
 
     if (timer > 0) {
       setIsCapturing(true);
@@ -251,7 +261,7 @@ export const CustomCameraModal = ({
   return (
     <View style={[StyleSheet.absoluteFill, { zIndex: 9999, backgroundColor: 'black' }]}>
       {/* 4:3 Viewfinder centered container */}
-      {hasPermission === true && device && !capturedAsset && (
+      {hasPermission === true && activeDevice && !capturedAsset && (
         <View style={{
           position: 'absolute',
           top: viewfinderTop,
@@ -267,7 +277,7 @@ export const CustomCameraModal = ({
                 <ReanimatedCamera
                   ref={cameraRef as any}
                   style={StyleSheet.absoluteFill}
-                  device={device}
+                  device={activeDevice}
                   format={format}
                   isActive={visible && !capturedAsset}
                   photo={true}
@@ -305,7 +315,7 @@ export const CustomCameraModal = ({
           </View>
         )}
 
-        {hasPermission === true && device && (
+        {hasPermission === true && activeDevice && (
           <View style={{ flex: 1 }} pointerEvents="box-none">
             {/* PHOTO PREVIEW STATE */}
             {capturedAsset ? (
@@ -392,31 +402,86 @@ export const CustomCameraModal = ({
                 <View style={[styles.iosBottomSection, { position: 'absolute', top: viewfinderTop + viewfinderHeight, bottom: 0, left: 0, right: 0, backgroundColor: 'black', zIndex: 10, paddingVertical: 12 }]}>
                   {/* ZOOM PILLS BAR (above shutter) */}
                   <View style={styles.iosZoomContainer}>
-                    {(isUltrawideSupported || Platform.OS === 'android') && (
+                    {isUltrawideSupported && (
                       <TouchableOpacity
-                        onPress={() => { zoom.value = withSpring(minZoom); setActiveZoomLevel(minZoom); }}
-                        style={[styles.iosZoomButton, activeZoomLevel < neutralZoom && styles.iosZoomButtonActive]}
+                        onPress={() => {
+                          if (device && device.neutralZoom > device.minZoom) {
+                            zoom.value = withSpring(minZoom);
+                            setActiveZoomLevel(minZoom);
+                          } else if (ultraWideDevice) {
+                            setActiveDeviceType('ultrawide');
+                            const targetZoom = ultraWideDevice.neutralZoom ?? ultraWideDevice.minZoom ?? 1;
+                            zoom.value = targetZoom;
+                            setActiveZoomLevel(minZoom);
+                          }
+                        }}
+                        style={[
+                          styles.iosZoomButton,
+                          (activeDeviceType === 'ultrawide' || (activeDeviceType === 'standard' && activeZoomLevel < neutralZoom)) && styles.iosZoomButtonActive
+                        ]}
                       >
-                        <Text style={[styles.iosZoomText, activeZoomLevel < neutralZoom && styles.iosZoomTextActive]}>0.5x</Text>
+                        <Text style={[
+                          styles.iosZoomText,
+                          (activeDeviceType === 'ultrawide' || (activeDeviceType === 'standard' && activeZoomLevel < neutralZoom)) && styles.iosZoomTextActive
+                        ]}>0.5x</Text>
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
-                      onPress={() => { zoom.value = withSpring(neutralZoom); setActiveZoomLevel(neutralZoom); }}
-                      style={[styles.iosZoomButton, activeZoomLevel >= neutralZoom && activeZoomLevel < neutralZoom * 2 && styles.iosZoomButtonActive]}
+                      onPress={() => {
+                        if (activeDeviceType === 'ultrawide') {
+                          setActiveDeviceType('standard');
+                        }
+                        const targetZoom = device ? (device.neutralZoom ?? 1) : 1;
+                        zoom.value = withSpring(targetZoom);
+                        setActiveZoomLevel(targetZoom);
+                      }}
+                      style={[
+                        styles.iosZoomButton,
+                        activeDeviceType === 'standard' && activeZoomLevel >= neutralZoom && activeZoomLevel < neutralZoom * 2 && styles.iosZoomButtonActive
+                      ]}
                     >
-                      <Text style={[styles.iosZoomText, activeZoomLevel >= neutralZoom && activeZoomLevel < neutralZoom * 2 && styles.iosZoomTextActive]}>1x</Text>
+                      <Text style={[
+                        styles.iosZoomText,
+                        activeDeviceType === 'standard' && activeZoomLevel >= neutralZoom && activeZoomLevel < neutralZoom * 2 && styles.iosZoomTextActive
+                      ]}>1x</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => { zoom.value = withSpring(neutralZoom * 2); setActiveZoomLevel(neutralZoom * 2); }}
-                      style={[styles.iosZoomButton, activeZoomLevel >= neutralZoom * 2 && activeZoomLevel < neutralZoom * 3 && styles.iosZoomButtonActive]}
+                      onPress={() => {
+                        if (activeDeviceType === 'ultrawide') {
+                          setActiveDeviceType('standard');
+                        }
+                        const targetZoom = device ? (device.neutralZoom ?? 1) * 2 : 2;
+                        zoom.value = withSpring(targetZoom);
+                        setActiveZoomLevel(targetZoom);
+                      }}
+                      style={[
+                        styles.iosZoomButton,
+                        activeDeviceType === 'standard' && activeZoomLevel >= neutralZoom * 2 && activeZoomLevel < neutralZoom * 3 && styles.iosZoomButtonActive
+                      ]}
                     >
-                      <Text style={[styles.iosZoomText, activeZoomLevel >= neutralZoom * 2 && activeZoomLevel < neutralZoom * 3 && styles.iosZoomTextActive]}>2x</Text>
+                      <Text style={[
+                        styles.iosZoomText,
+                        activeDeviceType === 'standard' && activeZoomLevel >= neutralZoom * 2 && activeZoomLevel < neutralZoom * 3 && styles.iosZoomTextActive
+                      ]}>2x</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => { zoom.value = withSpring(neutralZoom * 3); setActiveZoomLevel(neutralZoom * 3); }}
-                      style={[styles.iosZoomButton, activeZoomLevel >= neutralZoom * 3 && styles.iosZoomButtonActive]}
+                      onPress={() => {
+                        if (activeDeviceType === 'ultrawide') {
+                          setActiveDeviceType('standard');
+                        }
+                        const targetZoom = device ? (device.neutralZoom ?? 1) * 3 : 3;
+                        zoom.value = withSpring(targetZoom);
+                        setActiveZoomLevel(targetZoom);
+                      }}
+                      style={[
+                        styles.iosZoomButton,
+                        activeDeviceType === 'standard' && activeZoomLevel >= neutralZoom * 3 && styles.iosZoomButtonActive
+                      ]}
                     >
-                      <Text style={[styles.iosZoomText, activeZoomLevel >= neutralZoom * 3 && styles.iosZoomTextActive]}>3x</Text>
+                      <Text style={[
+                        styles.iosZoomText,
+                        activeDeviceType === 'standard' && activeZoomLevel >= neutralZoom * 3 && styles.iosZoomTextActive
+                      ]}>3x</Text>
                     </TouchableOpacity>
                   </View>
 
@@ -449,7 +514,7 @@ export const CustomCameraModal = ({
           </View>
         )}
 
-        {hasPermission === true && !device && (
+        {hasPermission === true && !activeDevice && (
           <View style={styles.center}>
             <ActivityIndicator size="large" color="#FFD607" />
             <Text style={styles.loadingText}>Initializing camera...</Text>

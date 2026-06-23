@@ -362,11 +362,18 @@ export const LeadMap = ({
         startTracking();
       }
     } else {
-      const granted = await PermissionsAndroid.request(
+      const hasLocation = await PermissionsAndroid.check(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       );
-      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+      if (hasLocation) {
         startTracking();
+      } else {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+          startTracking();
+        }
       }
     }
   };

@@ -1,5 +1,5 @@
 import { showMessage, MessageType } from 'react-native-flash-message';
-
+import { Platform, StatusBar } from 'react-native';
 import { triggerSuccess, triggerFailure } from '../utils/haptics';
 
 /**
@@ -18,7 +18,12 @@ export const FlashMessage = {
       icon: type as any,
       duration: 3000,
       floating: true,
-      style: { zIndex: 9999, elevation: 9999 },
+      statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
+      style: {
+        zIndex: 9999,
+        elevation: 9999,
+        backgroundColor: type === 'danger' ? '#D32F2F' : undefined,
+      },
       hideStatusBar: false,
     });
   },
@@ -35,6 +40,7 @@ export const FlashMessage = {
       icon: 'success',
       duration: 3000,
       floating: true,
+      statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
       style: { zIndex: 9999, elevation: 9999 },
       hideStatusBar: false,
     });
@@ -52,7 +58,8 @@ export const FlashMessage = {
       icon: 'danger',
       duration: 4000,
       floating: true,
-      style: { zIndex: 9999, elevation: 9999 },
+      statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
+      style: { zIndex: 9999, elevation: 9999, backgroundColor: '#D32F2F' },
       hideStatusBar: false,
     });
   },
@@ -68,6 +75,7 @@ export const FlashMessage = {
       icon: 'warning',
       duration: 3500,
       floating: true,
+      statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
       style: { zIndex: 9999, elevation: 9999 },
       hideStatusBar: false,
     });
@@ -83,6 +91,10 @@ export const FlashMessage = {
       type: 'info',
       icon: 'info',
       duration: 3000,
+      floating: true,
+      statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
+      style: { zIndex: 9999, elevation: 9999 },
+      hideStatusBar: false,
     });
   },
 };

@@ -188,7 +188,7 @@ export const useSubmitDigitalConsentMutation = () => {
     },
     onSuccess: async (pdfPath: string) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      FlashMessage.success('Success', 'Digital document generated.');
+      // FlashMessage.success('Success', 'Digital document generated.');
       // We will now handle the PDF path in the UI instead of auto-opening here
     },
     onError: (err: any) => {
@@ -271,7 +271,7 @@ export const useSubmitRoofWaiverMutation = () => {
     },
     onSuccess: (pdfPath: string) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      FlashMessage.success('Success', 'Waiver document generated.');
+      // FlashMessage.success('Success', 'Waiver document generated.');
     },
     onError: (err: any) => {
       console.error('Roof Waiver Mutation Error:', err);
@@ -350,9 +350,11 @@ export const useFinalizeConsentUploadMutation = () => {
 
       return LeadService.uploadGeneratedReport(formData);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
-      FlashMessage.success('Saved', 'Document uploaded to lead archive.');
+      const isWaiver = variables.reportType === 'waiver_form';
+      const docName = isWaiver ? 'Roof waiver' : 'Consent form';
+      FlashMessage.success('Success', `${docName} successfully uploaded`);
     },
     onError: (err: any) =>
       FlashMessage.error('Error', err?.message || 'Failed to archive document'),

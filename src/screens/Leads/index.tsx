@@ -157,16 +157,20 @@ export default function LeadsPage() {
     const startLocationWatch = async () => {
       try {
         if (Platform.OS === 'android') {
-          const granted = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-            {
-              title: 'Location Permission',
-              message: 'This app needs access to your location for geofencing.',
-              buttonNeutral: 'Ask Me Later',
-              buttonNegative: 'Cancel',
-              buttonPositive: 'OK',
-            }
-          );
+          const hasLocation = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+          let granted = PermissionsAndroid.RESULTS.GRANTED;
+          if (!hasLocation) {
+            granted = await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+              {
+                title: 'Location Permission',
+                message: 'This app needs access to your location for geofencing.',
+                buttonNeutral: 'Ask Me Later',
+                buttonNegative: 'Cancel',
+                buttonPositive: 'OK',
+              }
+            );
+          }
           if (granted !== PermissionsAndroid.RESULTS.GRANTED || cancelled) return;
         } else {
           const currentAuth = await Geolocation.requestAuthorization('whenInUse');
@@ -461,6 +465,10 @@ export default function LeadsPage() {
         <FlatList
           data={filteredLeads}
           keyExtractor={(item) => item._id}
+          windowSize={15}
+          initialNumToRender={8}
+          maxToRenderPerBatch={10}
+          removeClippedSubviews={false}
           renderItem={({ item }) => (
             <LeadCard
               lead={item}

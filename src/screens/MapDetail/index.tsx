@@ -166,7 +166,10 @@ export default function MapDetailScreen() {
       if (Platform.OS === 'ios') {
         await Geolocation.requestAuthorization('whenInUse');
       } else {
-        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        const hasLocation = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        if (!hasLocation) {
+          await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        }
       }
 
       Geolocation.getCurrentPosition(

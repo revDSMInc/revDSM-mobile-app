@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, TextInput } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
-export const PricingInputField = ({
+export const PricingInputField = React.memo(({
   label,
   value,
   onSave,
@@ -46,7 +46,7 @@ export const PricingInputField = ({
       </View>
     </View>
   );
-};
+});
 
 export const SubHeader = ({ title }: any) => (
   <Text className="text-xs font-semibold text-[#637381] mt-6 mb-3">{title}</Text>
@@ -101,7 +101,7 @@ export const Section = ({
   </View>
 );
 
-export const InputField = ({
+export const InputField = React.memo(({
   label,
   value,
   keyName,
@@ -171,4 +171,4 @@ export const InputField = ({
       </View>
     </View>
   );
-};
+});

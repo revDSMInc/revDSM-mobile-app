@@ -216,7 +216,10 @@ export default function LeadCenterPage() {
         if (Platform.OS === 'ios') {
           await Geolocation.requestAuthorization('whenInUse');
         } else {
-          await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+          const hasLocation = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+          if (!hasLocation) {
+            await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+          }
         }
       } catch (e) {
         console.warn('[LeadCenter Prefetch] Location/Prefetch error:', e);
@@ -591,7 +594,6 @@ export default function LeadCenterPage() {
   const handleInspectionSubmit = async (data: any) => {
     setIsInspectionGenerating(true);
     try {
-      FlashMessage.info('Generating inspection report...', 'Generating');
       const token = Storage.getItem('accessToken');
       const { dirs } = ReactNativeBlobUtil.fs;
       const fileName = `Inspection_${lead.jobNumber || lead.leadId || 'Report'}.pdf`;
@@ -666,7 +668,7 @@ export default function LeadCenterPage() {
       toggleModal('showInspectionModal', false);
     } catch (e: any) {
       console.error('Inspection Submit Error:', e);
-      FlashMessage.show(e.message || 'Error generating inspection report', 'danger');
+      throw e;
     } finally {
       setIsInspectionGenerating(false);
     }
@@ -726,20 +728,24 @@ export default function LeadCenterPage() {
         edges={['bottom', 'left', 'right']}
       >
 
-        <ImageGridModal
-          visible={showInspectionGrid}
-          onClose={() => toggleModal('showInspectionGrid', false)}
-          images={
-            lead?.salesPhotos?.map((p: any) => ({ uri: p.s3url, category: p.category })) || []
-          }
-        />
+        {showInspectionGrid && (
+          <ImageGridModal
+            visible={showInspectionGrid}
+            onClose={() => toggleModal('showInspectionGrid', false)}
+            images={
+              lead?.salesPhotos?.map((p: any) => ({ uri: p.s3url, category: p.category })) || []
+            }
+          />
+        )}
 
-        <PdfPreviewModal
-          visible={showPdfModal}
-          onClose={() => toggleModal('showPdfModal', false)}
-          uri={pdfPreviewData.url}
-          title={pdfPreviewData.title}
-        />
+        {showPdfModal && (
+          <PdfPreviewModal
+            visible={showPdfModal}
+            onClose={() => toggleModal('showPdfModal', false)}
+            uri={pdfPreviewData.url}
+            title={pdfPreviewData.title}
+          />
+        )}
 
         <View
           className="px-4 pb-4 pt-6"
@@ -1132,20 +1138,6 @@ export default function LeadCenterPage() {
             setActiveFallbackForm('consent');
           }}
           onSubmit={handleConsentSubmit}
-          onFinalUpload={async (pdfPath) => {
-            try {
-              await finalizeUploadMutation.mutateAsync({
-                leadId: lead?._id,
-                pdfPath,
-                reportType: 'consent_form',
-              });
-              setTimeout(() => refetch(), 1000);
-              setTimeout(() => refetch(), 3000);
-            } catch (error) {
-              console.error('Consent auto-upload failed:', error);
-            }
-          }}
-          uploading={finalizeUploadMutation.isPending}
           lead={lead}
           type="consent"
           loading={consentMutation.isPending}
@@ -1165,20 +1157,6 @@ export default function LeadCenterPage() {
             setActiveFallbackForm('roof_waiver');
           }}
           onSubmit={handleWaiverSubmit}
-          onFinalUpload={async (pdfPath) => {
-            try {
-              await finalizeUploadMutation.mutateAsync({
-                leadId: lead?._id,
-                pdfPath,
-                reportType: 'waiver_form',
-              });
-              setTimeout(() => refetch(), 1000);
-              setTimeout(() => refetch(), 3000);
-            } catch (error) {
-              console.error('Waiver auto-upload failed:', error);
-            }
-          }}
-          uploading={finalizeUploadMutation.isPending}
           lead={lead}
           loading={waiverMutation.isPending}
           prefilledData={prefilledOcrData}
@@ -1212,11 +1190,13 @@ export default function LeadCenterPage() {
         />
       )}
 
-      <MapSelectionModal
-        visible={showMapModal}
-        address={lead?.fullAddress || lead?.customerDetails?.address || ''}
-        onClose={() => setShowMapModal(false)}
-      />
+      {showMapModal && (
+        <MapSelectionModal
+          visible={showMapModal}
+          address={lead?.fullAddress || lead?.customerDetails?.address || ''}
+          onClose={() => setShowMapModal(false)}
+        />
+      )}
 
       {showEditCustomerModal && (
         <EditCustomerModal

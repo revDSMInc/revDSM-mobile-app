@@ -22,9 +22,14 @@ export function useAppInitialization() {
       // Request Permissions (Location, Camera, and Photo)
       try {
         if (Platform.OS === 'android') {
-          await PermissionsAndroid.request(
+          const hasLocation = await PermissionsAndroid.check(
             PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
           );
+          if (!hasLocation) {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+            );
+          }
         } else {
           await Geolocation.requestAuthorization('whenInUse');
         }
@@ -44,22 +49,35 @@ export function useAppInitialization() {
       try {
         if (Platform.OS === 'android') {
           if (Number(Platform.Version) >= 33) {
-            await PermissionsAndroid.requestMultiple([
-              PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-              PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
-            ]);
+            const hasImages = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES);
+            const hasVideo = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO);
+            if (!hasImages || !hasVideo) {
+              await PermissionsAndroid.requestMultiple([
+                PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+                PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+              ]);
+            }
           } else {
-            await PermissionsAndroid.request(
-              PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
-            );
+            const hasWrite = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+            const hasRead = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
+            if (!hasWrite || !hasRead) {
+              await PermissionsAndroid.requestMultiple([
+                PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+                PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+              ]);
+            }
           }
         } else if (Platform.OS === 'ios') {
           try {
             const cameraRollModule = require('@react-native-camera-roll/camera-roll');
-            if (cameraRollModule && cameraRollModule.iosReadGalleryPermission && cameraRollModule.iosRequestAddOnlyGalleryPermission) {
-              const status = await cameraRollModule.iosReadGalleryPermission('addOnly');
+            if (cameraRollModule && cameraRollModule.iosReadGalleryPermission) {
+              const status = await cameraRollModule.iosReadGalleryPermission('readWrite');
               if (status !== 'granted' && status !== 'limited') {
-                await cameraRollModule.iosRequestAddOnlyGalleryPermission();
+                if (cameraRollModule.iosRequestReadWriteGalleryPermission) {
+                  await cameraRollModule.iosRequestReadWriteGalleryPermission();
+                } else if (cameraRollModule.iosRequestAddOnlyGalleryPermission) {
+                  await cameraRollModule.iosRequestAddOnlyGalleryPermission();
+                }
               }
             }
           } catch (e) {
