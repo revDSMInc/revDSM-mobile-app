@@ -832,7 +832,7 @@ export default function LeadCenterPage() {
                 </View>
               </View>
 
-              <View className="flex-col gap-3">
+              <View className="flex-col gap-4">
                 <Text className="text-base text-right" style={{ color: colors.primary.main }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>

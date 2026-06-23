@@ -489,7 +489,7 @@ export default function LFCalculator({ route }: any) {
           />
           <View
             className="px-5 py-4 border-t border-border bg-card relative"
-            style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10, position: 'relative', overflow: 'visible' }}
+            style={{ paddingBottom: Platform.OS === 'ios' ? insets.bottom : insets.bottom + 10, position: 'relative', overflow: 'visible' }}
           >
 
 
