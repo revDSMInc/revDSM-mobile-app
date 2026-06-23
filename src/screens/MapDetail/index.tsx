@@ -110,6 +110,7 @@ export default function MapDetailScreen() {
   const [userLocation, setUserLocation] = useState<{ latitude: number, longitude: number } | null>(null);
 
   const [isListView, setIsListView] = useState(false);
+  const [updatedJob, setUpdatedJob] = useState<any>(null);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -414,6 +415,7 @@ export default function MapDetailScreen() {
           isHeatMapFilter={filters.isHeatMap}
           searchedJobNumber={filters.jobNumber}
           showProduct={filters.showProduct}
+          updatedJob={updatedJob}
           onToggleFilter={(type) => {
             setFilters((prev) => {
               if (type === 'heatmap') return { ...prev, isHeatMap: !prev.isHeatMap };
@@ -643,8 +645,59 @@ export default function MapDetailScreen() {
         visible={showReferralModal}
         onClose={() => setShowReferralModal(false)}
         selectedJob={selectedJob}
-        onSuccess={fetchLeads}
         isMyJob={isJobOwner(selectedJob, user)}
+        onSuccess={(referralData) => {
+          // ── 1. Instantly update the visible job card ──────────────────────
+          let patchedJob: any = null;
+          setSelectedJob((prev: any) => {
+            if (!prev) return prev;
+            const existingReferrals: any[] = prev.jobReferrals || [];
+            const idx = existingReferrals.findIndex((r: any) => r._id === referralData._id);
+            const updatedReferrals =
+              idx >= 0
+                ? existingReferrals.map((r: any) => (r._id === referralData._id ? referralData : r))
+                : [referralData, ...existingReferrals];
+            patchedJob = { ...prev, jobReferrals: updatedReferrals };
+            return patchedJob;
+          });
+
+          // ── 2. Patch the full leads list so filters/map stay consistent ──
+          setLeads((prev: any[]) =>
+            prev.map((job: any) => {
+              if (job._id !== selectedJob?._id) return job;
+              const existingReferrals: any[] = job.jobReferrals || [];
+              const idx = existingReferrals.findIndex((r: any) => r._id === referralData._id);
+              const updatedReferrals =
+                idx >= 0
+                  ? existingReferrals.map((r: any) => (r._id === referralData._id ? referralData : r))
+                  : [referralData, ...existingReferrals];
+              return { ...job, jobReferrals: updatedReferrals };
+            })
+          );
+
+          // ── 3. Patch React Query cache to keep it consistent ─────────────
+          queryClient.setQueryData(queryKey, (old: any) => {
+            if (!old) return old;
+            return old.map((job: any) => {
+              if (job._id !== selectedJob?._id) return job;
+              const existingReferrals: any[] = job.jobReferrals || [];
+              const idx = existingReferrals.findIndex((r: any) => r._id === referralData._id);
+              const updatedReferrals =
+                idx >= 0
+                  ? existingReferrals.map((r: any) => (r._id === referralData._id ? referralData : r))
+                  : [referralData, ...existingReferrals];
+              return { ...job, jobReferrals: updatedReferrals };
+            });
+          });
+
+          // Pass the patched job down to LeadMap so the selectedLead state there updates instantly
+          if (patchedJob) {
+            setUpdatedJob(patchedJob);
+          }
+
+          // ── 4. Background refetch to sync real server state ──────────────
+          fetchLeads();
+        }}
       />
 
 

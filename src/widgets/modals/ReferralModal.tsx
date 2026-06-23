@@ -22,7 +22,7 @@ interface ReferralModalProps {
   onClose: () => void;
   selectedJob: any;
   isMyJob?: boolean;
-  onSuccess?: () => void;
+  onSuccess?: (referralData: any) => void;
 }
 
 const InputField = ({ 
@@ -245,7 +245,23 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
       }
 
       Alert.alert('Success', `Referral ${mode === 'EDIT' ? 'updated' : 'added'} successfully`);
-      if (onSuccess) onSuccess();
+
+      // Build an optimistic referral object from what was submitted
+      const optimisticReferral = {
+        ...(existingReferral || {}),
+        firstName: form.firstName,
+        phoneNumber: form.phoneNumber,
+        preferredContactMethod: form.preferredContactMethod,
+        bestTimeToContact: form.bestTimeToContact,
+        notes: form.note,
+        zipCode: form.zipCode,
+        items: form.items,
+        referralToggle: form.referralToggle,
+        jobId: selectedJob?.jobNumber,
+        _id: existingReferral?._id || `temp_${Date.now()}`,
+      };
+
+      if (onSuccess) onSuccess(optimisticReferral);
       onClose();
 
     } catch (error) {

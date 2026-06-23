@@ -110,6 +110,9 @@ interface LeadMapProps {
   searchedJobNumber?: string;
   onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
   showProduct?: boolean;
+  // When the parent makes an optimistic patch to a job (e.g. after referral submit)
+  // it passes the updated job here so the open job card reflects instantly.
+  updatedJob?: any;
 }
 
 export const LeadMap = ({
@@ -128,6 +131,7 @@ export const LeadMap = ({
   searchedJobNumber,
   onFavoriteToggle,
   showProduct = true,
+  updatedJob,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
@@ -186,6 +190,12 @@ export const LeadMap = ({
       fetchAllJobs();
     }
   }, [externalLeads]);
+
+  useEffect(() => {
+    if (updatedJob && selectedLead && updatedJob._id === selectedLead._id) {
+      setSelectedLead(updatedJob);
+    }
+  }, [updatedJob]);
 
 
   const [userLocation, setUserLocation] = useState<any>(null);
@@ -1055,10 +1065,34 @@ export const LeadMap = ({
         visible={showReferral}
         onClose={() => setShowReferral(false)}
         selectedJob={galleryJob}
-        onSuccess={() => {
-          // Refresh data so jobReferrals / referralToggle state is up-to-date.
-          // In standalone mode this fetches fresh data.
-          // In external-leads mode, bump dataVersion so markers re-render.
+        onSuccess={(referralData) => {
+          // ── 1. Instantly patch galleryJob so the card updates immediately ──
+          setGalleryJob((prev: any) => {
+            if (!prev) return prev;
+            const existing: any[] = prev.jobReferrals || [];
+            const idx = existing.findIndex((r: any) => r._id === referralData._id);
+            const updated =
+              idx >= 0
+                ? existing.map((r: any) => (r._id === referralData._id ? referralData : r))
+                : [referralData, ...existing];
+            return { ...prev, jobReferrals: updated };
+          });
+
+          // ── 2. Patch internalLeads so marker icons / filters stay consistent
+          setInternalLeads((prev: any[]) =>
+            prev.map((job: any) => {
+              if (job._id !== galleryJob?._id) return job;
+              const existing: any[] = job.jobReferrals || [];
+              const idx = existing.findIndex((r: any) => r._id === referralData._id);
+              const updated =
+                idx >= 0
+                  ? existing.map((r: any) => (r._id === referralData._id ? referralData : r))
+                  : [referralData, ...existing];
+              return { ...job, jobReferrals: updated };
+            })
+          );
+
+          // ── 3. Background sync: full server refetch in either mode ────────
           if (!externalLeads) {
             fetchAllJobs();
           } else {
