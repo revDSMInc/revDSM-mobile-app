@@ -20,6 +20,7 @@ export interface FilterState {
   isReferralOnly: boolean;
   isHeatMap: boolean;
   showRoute: boolean;
+  showProduct: boolean;
   centerCoords?: { latitude: number; longitude: number };
 }
 
@@ -459,11 +460,11 @@ export const MapFiltersModal = ({
                 <View className="flex-row gap-5 items-center">
                   <Icon name="format-list-checks" size={24} color="#000" />
                   <TouchableOpacity
-                    onPress={() => setLocalFilters({ ...localFilters, myJobsOnly: !localFilters.myJobsOnly })}
+                    onPress={() => setLocalFilters({ ...localFilters, showProduct: !localFilters.showProduct })}
                     className="w-11 h-6 rounded-full px-1 justify-center"
-                    style={{ backgroundColor: localFilters.myJobsOnly ? colors.primary.main : '#e2e8f0' }}
+                    style={{ backgroundColor: localFilters.showProduct ? colors.primary.main : '#e2e8f0' }}
                   >
-                    <View className={`w-4 h-4 bg-white rounded-full ${localFilters.myJobsOnly ? 'self-end' : 'self-start'}`} />
+                    <View className={`w-4 h-4 bg-white rounded-full ${localFilters.showProduct ? 'self-end' : 'self-start'}`} />
                   </TouchableOpacity>
                 </View>
 

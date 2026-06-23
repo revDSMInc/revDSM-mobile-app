@@ -10,6 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 import { LeadService } from '../../services/api/leads';
 import Logo from '../../assets/svgs/light-logo';
 import { ENV } from '../../config/env';
+import { GlobalModal } from '../common/modal/GlobalModal';
 
 import { createContext, useContext } from 'react';
 
@@ -48,10 +49,11 @@ export function Header({
   onListPress: parentOnListPress,
 }: HeaderProps) {
   const { colors, isDark } = useTheme();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigation = useNavigation<any>();
   const ctx = useContext(HeaderContext);
   const [popoverVisible, setPopoverVisible] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState(false);
 
@@ -168,13 +170,30 @@ export function Header({
         </View>
       </View>
 
-      {popoverVisible && (
-        <AccountPopover
-          visible={popoverVisible}
-          onClose={() => setPopoverVisible(false)}
-          onNavigate={onNavigate}
-        />
-      )}
+      <AccountPopover
+        visible={popoverVisible}
+        onClose={() => setPopoverVisible(false)}
+        onNavigate={onNavigate}
+        onLogoutRequest={() => {
+          setPopoverVisible(false);
+          setShowLogoutModal(true);
+        }}
+      />
+
+      <GlobalModal
+        visible={showLogoutModal}
+        type="error"
+        title="Logout"
+        message="Are you sure want to Logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+        onConfirm={async () => {
+          setShowLogoutModal(false);
+          await logout();
+        }}
+        onCancel={() => setShowLogoutModal(false)}
+        onClose={() => setShowLogoutModal(false)}
+      />
     </View>
   );
 }

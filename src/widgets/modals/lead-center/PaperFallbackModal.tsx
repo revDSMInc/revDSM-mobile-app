@@ -46,7 +46,7 @@ export const PaperFallbackModal = ({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <View className="flex-1 bg-black/60 justify-center px-4">
+      <View className="flex-1 bg-black/80 justify-center px-4">
         <View className="bg-white rounded-2xl overflow-hidden shadow-2xl">
           <View
             className="flex-row justify-between items-center p-4 mb-6"

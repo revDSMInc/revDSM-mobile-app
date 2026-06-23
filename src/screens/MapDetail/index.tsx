@@ -139,6 +139,7 @@ export default function MapDetailScreen() {
     isReferralOnly: false,
     isHeatMap: false,
     showRoute: false,
+    showProduct: true,
   });
 
   const [jumpLead, setJumpLead] = useState<any>(null);
@@ -412,6 +413,7 @@ export default function MapDetailScreen() {
           isMyJobsFilter={filters.myJobsOnly}
           isHeatMapFilter={filters.isHeatMap}
           searchedJobNumber={filters.jobNumber}
+          showProduct={filters.showProduct}
           onToggleFilter={(type) => {
             setFilters((prev) => {
               if (type === 'heatmap') return { ...prev, isHeatMap: !prev.isHeatMap };
@@ -622,6 +624,7 @@ export default function MapDetailScreen() {
           isHeatMap: false,
           showRoute: false,
           centerCoords: undefined,
+          showProduct: true,
         })}
       />
 

@@ -17,6 +17,7 @@ interface MapJobCardProps {
   onReferencePress?: (job: any) => void;
   onGalleryPress?: (job: any) => void;
   onFavoritePress?: (job: any) => void;
+  showProduct?: boolean;
 }
 
 export const MapJobCard = ({
@@ -27,6 +28,7 @@ export const MapJobCard = ({
   onCameraPress,
   onReferencePress,
   onFavoritePress,
+  showProduct = true,
 }: MapJobCardProps) => {
   const { colors, isDark } = useTheme();
 
@@ -154,10 +156,12 @@ export const MapJobCard = ({
         </View>
 
         {/* Product Row */}
-        <View className="flex-row items-center mb-5">
-          <Text className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Product:</Text>
-          <Text className="text-[12px] font-black text-slate-700 ml-2">{job.product || 'N/A'}</Text>
-        </View>
+        {showProduct && (
+          <View className="flex-row items-center mb-5">
+            <Text className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Product:</Text>
+            <Text className="text-[12px] font-black text-slate-700 ml-2">{job.product || 'N/A'}</Text>
+          </View>
+        )}
 
         {/* Action Row */}
         <View className="flex-row items-center gap-3">

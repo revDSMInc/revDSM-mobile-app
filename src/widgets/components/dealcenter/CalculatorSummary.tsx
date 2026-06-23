@@ -441,7 +441,7 @@ export const CalculatorSummary = ({
                         key={idx}
                         onPress={() => setActiveIdx(idx)}
                         onLayout={(e) => onTabLayout(idx, e)}
-                        className={`flex-row items-center h-full px-4 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                        className={`flex-row items-center h-full px-2 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
                           }`}
                       >
                         <View className="flex-row items-center">

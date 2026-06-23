@@ -263,6 +263,7 @@ export default function LeadCreateModal({
           type: 'danger',
           icon: 'danger',
           duration: 4000,
+          style: { zIndex: 9999, elevation: 9999, backgroundColor: '#D32F2F' },
         });
       } else {
         FlashMessage.error(title, msg);
@@ -829,10 +830,10 @@ export default function LeadCreateModal({
                     </ScrollView>
                   </View>
                   <CustomInput
-                    label="Appointment Date (MM-DD-YYYY)*"
-                    value={form.lfLeadDate}
+                    label="Appointment Date (MM/DD/YYYY)*"
+                    value={form.lfLeadDate ? form.lfLeadDate.replace(/-/g, '/') : ''}
                     onChangeText={(t) => setForm({ ...form, lfLeadDate: t })}
-                    placeholder="MM-DD-YYYY"
+                    placeholder="MM/DD/YYYY"
                     rightIcon="calendar-outline"
                     onRightIconPress={() => setShowDatePicker(true)}
                     onFocus={() => {

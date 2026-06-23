@@ -8,3 +8,7 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+
+# Keep custom Haptic Feedback native module and package
+-keep class com.revdsm_sales.HapticFeedbackModule { *; }
+-keep class com.revdsm_sales.HapticFeedbackPackage { *; }

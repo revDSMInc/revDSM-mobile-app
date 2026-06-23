@@ -109,6 +109,7 @@ export const TagPhotoModal = ({
   const [customCameraVisible, setCustomCameraVisible] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [localVisible, setLocalVisible] = useState(visible);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   useEffect(() => {
     setLocalVisible(visible);
@@ -953,8 +954,7 @@ export const TagPhotoModal = ({
           <View className="flex-row px-4 py-6 justify-between gap-4 bg-black">
             <TouchableOpacity
               onPress={() => {
-                setShowFullScreenPreview(false);
-                handleQuickDiscard();
+                setShowDiscardConfirm(true);
               }}
               className="flex-1 h-14 rounded-2xl items-center justify-center border-2 border-red-500/50 bg-red-500/10"
             >
@@ -974,6 +974,60 @@ export const TagPhotoModal = ({
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* Discard Confirmation Overlay (Avoids nested Modal bugs on iOS) */}
+          {showDiscardConfirm && (
+            <View style={StyleSheet.absoluteFillObject} className="bg-black/60 justify-center items-center px-6 z-50">
+              <View className="bg-[#0B1512] rounded-[28px] p-6 w-full max-w-[340px] border border-white/5">
+                {/* Icons Row */}
+                <View className="flex-row items-center gap-3">
+                  <View className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 items-center justify-center">
+                    <Icon name="delete-outline" size={24} color="#EF4444" />
+                  </View>
+                  {activePreviewUri && (
+                    <Image
+                      source={{ uri: activePreviewUri }}
+                      className="w-12 h-12 rounded-xl bg-slate-800"
+                      resizeMode="cover"
+                    />
+                  )}
+                </View>
+
+                {/* Content */}
+                <Text className="text-white text-xl font-bold mt-4 mb-2">
+                  Discard this photo?
+                </Text>
+                <Text className="text-slate-400 text-sm leading-5">
+                  This photo will be permanently deleted. You'll need to retake it to capture this shot.
+                </Text>
+
+                {/* Buttons Row */}
+                <View className="flex-row gap-3 mt-6">
+                  <TouchableOpacity
+                    onPress={() => setShowDiscardConfirm(false)}
+                    className="flex-1 h-12 rounded-2xl border border-slate-700 items-center justify-center"
+                  >
+                    <Text className="text-white font-semibold text-sm">
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowDiscardConfirm(false);
+                      setShowFullScreenPreview(false);
+                      handleQuickDiscard();
+                    }}
+                    className="flex-1 h-12 rounded-2xl bg-[#EF4444] flex-row items-center justify-center gap-2"
+                  >
+                    <Icon name="delete-outline" size={16} color="white" />
+                    <Text className="text-white font-semibold text-sm">
+                      Discard
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       </Modal>
 

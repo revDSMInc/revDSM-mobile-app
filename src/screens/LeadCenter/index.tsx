@@ -516,7 +516,7 @@ export default function LeadCenterPage() {
       return res;
     } catch (err) {
       console.error('Consent Submit Error:', err);
-      FlashMessage.show('Error submitting consent form', 'danger');
+      FlashMessage.show('Error submitting consent form', '', 'danger');
     } finally {
       setIsConsentGenerating(false);
     }
@@ -585,7 +585,7 @@ export default function LeadCenterPage() {
       return res;
     } catch (err) {
       console.error('Waiver Submit Error:', err);
-      FlashMessage.show('Error submitting roof waiver', 'danger');
+      FlashMessage.show('Error submitting roof waiver', '', 'danger');
     } finally {
       setIsWaiverGenerating(false);
     }

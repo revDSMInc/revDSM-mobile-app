@@ -109,6 +109,7 @@ interface LeadMapProps {
   onToggleFilter?: (filterType: 'heatmap' | 'myjobs' | 'referral' | 'favorite') => void;
   searchedJobNumber?: string;
   onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
+  showProduct?: boolean;
 }
 
 export const LeadMap = ({
@@ -126,6 +127,7 @@ export const LeadMap = ({
   onToggleFilter,
   searchedJobNumber,
   onFavoriteToggle,
+  showProduct = true,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
@@ -911,6 +913,7 @@ export const LeadMap = ({
                     job={selectedLead}
                     onClose={() => setSelectedLead(null)}
                     isMyJob={isJobOwner(selectedLead, user)}
+                    showProduct={showProduct}
                     onReferencePress={() => {
                       if (onReferencePress) {
                         onReferencePress(selectedLead);
