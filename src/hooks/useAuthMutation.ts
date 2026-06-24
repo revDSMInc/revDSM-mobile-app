@@ -5,6 +5,7 @@ import { login as loginAction } from '../redux/reducer/auth.reducer';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { Platform } from 'react-native';
+import { commitAutofill } from '../utils/autofill';
 
 
 export const useLoginMutation = () => {
@@ -50,8 +51,14 @@ export const useLoginMutation = () => {
     },
     onSuccess: (res: any) => {
       if (res.userData) {
-        // 5. Update Redux State
-        dispatch(loginAction({ user: res.userData }));
+        commitAutofill();
+        if (Platform.OS === 'android') {
+          setTimeout(() => {
+            dispatch(loginAction({ user: res.userData }));
+          }, 200);
+        } else {
+          dispatch(loginAction({ user: res.userData }));
+        }
       }
     },
   });
@@ -96,7 +103,14 @@ export const useVerifyOtpMutation = () => {
       return userData;
     },
     onSuccess: (userData) => {
-      dispatch(loginAction({ user: userData }));
+      commitAutofill();
+      if (Platform.OS === 'android') {
+        setTimeout(() => {
+          dispatch(loginAction({ user: userData }));
+        }, 200);
+      } else {
+        dispatch(loginAction({ user: userData }));
+      }
     },
   });
 };

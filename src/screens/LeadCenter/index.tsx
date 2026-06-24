@@ -35,6 +35,7 @@ import {
 import { LeadService } from '../../services/api/leads';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { getRawPhoneNumber } from '../../utils/phone-util';
+import { parseApiError } from '../../utils/error-util';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
 import { RiskReportModal } from '../../widgets/modals/lead-center/RiskReportModal';
@@ -516,7 +517,8 @@ export default function LeadCenterPage() {
       return res;
     } catch (err) {
       console.error('Consent Submit Error:', err);
-      FlashMessage.show('Error submitting consent form', '', 'danger');
+      const errorMsg = parseApiError(err);
+      FlashMessage.show('Submission Failed', errorMsg, 'danger');
     } finally {
       setIsConsentGenerating(false);
     }
@@ -585,7 +587,8 @@ export default function LeadCenterPage() {
       return res;
     } catch (err) {
       console.error('Waiver Submit Error:', err);
-      FlashMessage.show('Error submitting roof waiver', '', 'danger');
+      const errorMsg = parseApiError(err);
+      FlashMessage.show('Submission Failed', errorMsg, 'danger');
     } finally {
       setIsWaiverGenerating(false);
     }
@@ -658,14 +661,28 @@ export default function LeadCenterPage() {
       } as any);
 
       await reportMutation.mutateAsync(uploadData);
-      FlashMessage.success('Success', 'Inspection report generated and uploaded.');
+      
+      // Close the modal first so that the flash message and sharesheet appear on the main screen
+      toggleModal('showInspectionModal', false);
+      
+      setTimeout(async () => {
+        try {
+          await downloadPdfToDevice(pdfPath, 'Inspection Report', false);
+          FlashMessage.success(
+            'Success',
+            Platform.OS === 'ios'
+              ? 'Inspection report generated and uploaded.'
+              : 'Inspection report generated and saved to Downloads.'
+          );
+        } catch (downloadErr) {
+          console.error('[LeadCenter] Download after generation failed:', downloadErr);
+          FlashMessage.success('Success', 'Inspection report generated and uploaded successfully.');
+        }
+      }, 400);
+
       await refetch();
       setTimeout(() => refetch(), 1000);
       setTimeout(() => refetch(), 3000);
-
-      // Directly download the report
-      downloadPdfToDevice(pdfPath, 'Inspection Report');
-      toggleModal('showInspectionModal', false);
     } catch (e: any) {
       console.error('Inspection Submit Error:', e);
       throw e;
@@ -925,6 +942,7 @@ export default function LeadCenterPage() {
                 refetch={refetch}
                 onOpenPdf={handleOpenPdf}
                 secureUrls={secureUrls}
+                isRefreshing={isRefreshing}
               />
             )}
             {activeTab === 'tools' && (

@@ -12,6 +12,7 @@ import {
   Image,
   Modal,
   Animated,
+  DeviceEventEmitter,
 } from 'react-native';
 
 import Mapbox, {
@@ -29,6 +30,7 @@ import Geolocation from 'react-native-geolocation-service';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useLeadsData } from '../../../hooks/useLeadsData';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { ENV } from '../../../config/env';
@@ -138,6 +140,7 @@ export const LeadMap = ({
   const { colors, isDark } = useTheme();
   const [isFetching, setIsFetching] = useState(false);
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const mapViewRef = useRef<MapView>(null);
   const cameraRef = useRef<Camera>(null);
   const zoomRef = useRef(10); // tracks current zoom for +/- buttons
@@ -191,13 +194,6 @@ export const LeadMap = ({
     }
   }, [externalLeads]);
 
-  useEffect(() => {
-    if (updatedJob && selectedLead && updatedJob._id === selectedLead._id) {
-      setSelectedLead(updatedJob);
-    }
-  }, [updatedJob]);
-
-
   const [userLocation, setUserLocation] = useState<any>(null);
   const [showRoute, setShowRoute] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
@@ -207,6 +203,37 @@ export const LeadMap = ({
   const [showUpload, setShowUpload] = useState(false);
   const [showReferral, setShowReferral] = useState(false);
   const [activeFilters, setActiveFilters] = useState(['DEF-0', 'AJ-1', 'DEF-3']);
+
+  // Keep selectedLead and galleryJob in sync with the latest data in allLeads
+  useEffect(() => {
+    if (selectedLead?._id) {
+      const latest = allLeads.find((l: any) => l._id === selectedLead._id);
+      if (latest && latest !== selectedLead) {
+        setSelectedLead(latest);
+      }
+    }
+    if (galleryJob?._id) {
+      const latest = allLeads.find((l: any) => l._id === galleryJob._id);
+      if (latest && latest !== galleryJob) {
+        setGalleryJob(latest);
+      }
+    }
+  }, [allLeads, selectedLead?._id, galleryJob?._id]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+      if (!externalLeads) {
+        fetchAllJobs();
+      }
+    });
+    return () => sub.remove();
+  }, [externalLeads]);
+
+  useEffect(() => {
+    if (updatedJob && selectedLead && updatedJob._id === selectedLead._id) {
+      setSelectedLead(updatedJob);
+    }
+  }, [updatedJob, selectedLead]);
 
   const { isHeatMapActive, isMyJobsOnly, isReferralOnly, isFavoriteOnly } = useMemo(() => {
     if (onToggleFilter) {
@@ -529,7 +556,7 @@ export const LeadMap = ({
       setSelectedLead(lead);
       cameraRef.current?.setCamera({
         centerCoordinate: [Number(coords[0]), Number(coords[1]) + 0.003], // shift center north to center card vertically
-        zoomLevel: Math.max(zoomRef.current, 15.5),
+        zoomLevel: 14,
         animationDuration: 600,
       });
     }
@@ -626,7 +653,7 @@ export const LeadMap = ({
                 Number(closestLead.location.coordinates[0]),
                 Number(closestLead.location.coordinates[1]) + 0.003,
               ],
-              zoomLevel: Math.max(zoomRef.current, 15.5),
+              zoomLevel: 14,
               animationDuration: 600,
             });
             return;
@@ -982,7 +1009,13 @@ export const LeadMap = ({
       </TouchableOpacity>
 
       {/* Right Side Vertical Controls (Toggles) */}
-      <View className="absolute bottom-[120px] right-5 gap-3 items-center" style={{ zIndex: 10 }}>
+      <View 
+        className="absolute right-5 gap-3 items-center" 
+        style={{ 
+          zIndex: 10,
+          bottom: Platform.OS === 'android' ? 120 + insets.bottom : 120,
+        }}
+      >
         <View className="gap-2">
           {[
             { active: 'HM', inactive: 'DEF', id: 'HT-0', type: 'heatmap' as const },
@@ -1016,7 +1049,13 @@ export const LeadMap = ({
       </View>
 
       {/* Bottom Right Controls (GPS & Zoom) */}
-      <View className="absolute bottom-10 right-6 flex-row items-end gap-3" style={{ zIndex: 10 }}>
+      <View 
+        className="absolute right-6 flex-row items-end gap-3" 
+        style={{ 
+          zIndex: 10,
+          bottom: Platform.OS === 'android' ? 40 + insets.bottom : 40,
+        }}
+      >
         <TouchableOpacity
           onPress={() => startTracking(true)}
           className="w-12 h-12 rounded-full bg-[#4cbb17] items-center justify-center shadow-xl"

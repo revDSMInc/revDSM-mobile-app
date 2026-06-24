@@ -17,6 +17,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { WebView } from 'react-native-webview';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+
+const WebViewComponent = WebView as any;
 import Geolocation from 'react-native-geolocation-service';
 import { useUploadImagesMutation } from '../../hooks/useLeadMutation';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -441,7 +443,7 @@ export default function ImageAnnotationScreen() {
   // Image Saving & Rasterization Queue
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveProgressText, setSaveProgressText] = useState<string>('');
-  const webViewRef = useRef<WebView>(null);
+  const webViewRef = useRef<any>(null);
   
   const [mountWebView, setMountWebView] = useState<boolean>(false);
 
@@ -461,7 +463,9 @@ export default function ImageAnnotationScreen() {
       const data = await ReactNativeBlobUtil.fs.readFile(cleanPath, 'base64');
       return `data:image/jpeg;base64,${data}`;
     }
-    const res = await ReactNativeBlobUtil.config({ fileCache: true }).fetch('GET', uri);
+    const res = await ReactNativeBlobUtil.config({ fileCache: true }).fetch('GET', uri, {
+      'Accept-Encoding': 'identity',
+    });
     const path = res.path();
     const base64Data = await ReactNativeBlobUtil.fs.readFile(path, 'base64');
     await ReactNativeBlobUtil.fs.unlink(path);
@@ -1049,7 +1053,7 @@ export default function ImageAnnotationScreen() {
       {/* Hidden WebView for high-res rasterization */}
       {mountWebView && (
         <View style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }}>
-          <WebView
+          <WebViewComponent
             ref={webViewRef}
             onMessage={handleWebViewMessage}
             originWhitelist={['*']}

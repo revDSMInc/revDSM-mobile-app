@@ -14,6 +14,7 @@ import {
   Share,
   Image,
   ScrollView,
+  StatusBar,
 } from 'react-native';
 import Pdf from 'react-native-pdf';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -31,6 +32,7 @@ interface PdfPreviewModalProps {
 export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModalProps) => {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
+  const statusBarBg = isDark ? colors.background : '#101828';
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,28 +81,57 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         const safeName = urlHash.toLowerCase().endsWith(`.${ext}`) ? urlHash : `${urlHash}.${ext}`;
         const filePath = `${dir}/${safeName}`;
 
+        const checkIsPDF = async (path: string): Promise<boolean> => {
+          try {
+            const headPath = `${path}_head`;
+            await ReactNativeBlobUtil.fs.slice(path, headPath, 0, 100);
+            const headBase64 = await ReactNativeBlobUtil.fs.readFile(headPath, 'base64');
+            await ReactNativeBlobUtil.fs.unlink(headPath);
+            const stat = await ReactNativeBlobUtil.fs.stat(path);
+            console.log(`[PdfPreviewModal] checkIsPDF: size=${stat.size}, isPDF=${headBase64.startsWith('JVBERi')}, path=${path}`);
+            return headBase64.startsWith('JVBERi') && stat.size > 8192;
+          } catch (err) {
+            console.error('[PdfPreviewModal] Failed to read PDF header:', err);
+            return false;
+          }
+        };
+
         const fileExists = await ReactNativeBlobUtil.fs.exists(filePath);
         if (fileExists) {
-          // Android requires file:/// (3 slashes) for absolute paths
-          const formattedPath = Platform.OS === 'android' ? `file://${filePath}` : filePath;
-          setLocalUri(formattedPath);
-          setDownloading(false);
-          return;
+          let isValid = true;
+          if (!isImg) {
+            isValid = await checkIsPDF(filePath);
+          }
+          if (isValid) {
+            // Android requires file:/// (3 slashes) for absolute paths
+            const formattedPath = Platform.OS === 'android' ? `file://${filePath}` : filePath;
+            console.log('[PdfPreviewModal] Cache hit, file valid:', formattedPath);
+            setLocalUri(formattedPath);
+            setDownloading(false);
+            return;
+          } else {
+            console.log('[PdfPreviewModal] Found invalid/corrupted existing file, unlinking:', filePath);
+            try {
+              await ReactNativeBlobUtil.fs.unlink(filePath);
+            } catch (e) {
+              console.warn('[PdfPreviewModal] Failed to unlink invalid file:', e);
+            }
+          }
         }
 
+        console.log('[PdfPreviewModal] Downloading file from:', uri);
         const res = await ReactNativeBlobUtil.config({
           path: filePath,
           fileCache: true,
           appendExt: ext,
-        }).fetch('GET', uri);
+        }).fetch('GET', uri, {
+          'Accept-Encoding': 'identity',
+        });
 
         const downloadedPath = res.path();
 
         if (!isImg) {
-          // VALIDATION: Check if it's actually a PDF (starts with %PDF- which is JVBERi in base64)
-          const firstChunk = await ReactNativeBlobUtil.fs.readFile(downloadedPath, 'base64');
-          const isPDF = firstChunk.startsWith('JVBERi');
-
+          const isPDF = await checkIsPDF(downloadedPath);
           if (!isPDF) {
             console.error('[PdfPreviewModal] Validation failed. Not a PDF.');
             await ReactNativeBlobUtil.fs.unlink(downloadedPath);
@@ -111,7 +142,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
         }
 
         const finalPath = Platform.OS === 'android' ? `file://${downloadedPath}` : downloadedPath;
-        console.log('[PdfPreviewModal] File loaded:', finalPath);
+        console.log('[PdfPreviewModal] File loaded successfully:', finalPath);
         setLocalUri(finalPath);
       } catch (err: any) {
         console.error('[PdfPreviewModal] Download error:', err);
@@ -197,8 +228,12 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: isDark ? colors.surface : '#f8fafc', paddingTop: insets.top, paddingBottom: insets.bottom }}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <StatusBar barStyle="light-content" backgroundColor={statusBarBg} translucent />
+      <View style={{ flex: 1, backgroundColor: isDark ? colors.surface : '#f8fafc', paddingBottom: insets.bottom }}>
+        {(Platform.OS === 'ios' || Platform.OS === 'android') && (
+          <View style={{ height: insets.top, backgroundColor: statusBarBg }} />
+        )}
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -263,7 +298,7 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
             ) : (
               <Pdf
                 key={localUri}
-                source={{ uri: localUri }}
+                source={{ uri: localUri, cache: false }}
                 trustAllCerts={false}
                 style={[styles.pdf, { backgroundColor: isDark ? colors.surface : '#f8fafc' }]}
                 onLoadComplete={(numberOfPages) => {

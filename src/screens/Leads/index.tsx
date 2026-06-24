@@ -264,6 +264,9 @@ export default function LeadsPage() {
   const [navigatingLeadId, setNavigatingLeadId] = useState<string | null>(null);
 
   const onRefresh = useCallback(async () => {
+    if (Platform.OS === 'android') {
+      triggerThresholdCrossing();
+    }
     setRefreshing(true);
     const refreshPromise = refresh();
     const delayPromise = new Promise<void>((resolve) => setTimeout(resolve, 1000));

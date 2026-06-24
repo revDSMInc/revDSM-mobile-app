@@ -544,6 +544,10 @@ export const useDealCalculator = (lead: any) => {
       const defaultPay = defaultCalc ? defaultCalc.inputs?.paymentPlan : (user?.defaultPaymentMethod || getDefaultPaymentMethod(isLowesLead));
       const shouldSetDefaultToggle = defaultCalc ? true : false;
 
+      // Mirror web: seed default discount from user.defaultPercentage
+      const defaultDiscount = user?.defaultPercentage || INITIAL_INPUTS.discountPercentage;
+      const shouldSetDefaultDiscount = !!user?.defaultPercentage;
+
       const positions = calculators.map((c) => c.position ?? 0);
       const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
 
@@ -554,6 +558,8 @@ export const useDealCalculator = (lead: any) => {
         paymentPlan: defaultPay,
         paymentMethod: defaultPay,
         isDefaultPayment: shouldSetDefaultToggle,
+        discountPercentage: defaultDiscount,
+        isDefaultDiscount: shouldSetDefaultDiscount,
         pricemarkup: '100',
         ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
         price: 0,
@@ -591,6 +597,11 @@ export const useDealCalculator = (lead: any) => {
       // Inherit paymentPlan and default status
       const paymentPlanToUse = defaultCalc ? defaultPay : (duplicate?.inputs?.paymentPlan || defaultPay);
       const isDefaultPaymentToUse = defaultCalc ? true : (duplicate?.isDefaultPayment || false);
+
+      // Mirror web: derive isDefaultDiscount from user.defaultPercentage vs duplicated discount
+      const isDefaultDiscountToUse =
+        !!user?.defaultPercentage &&
+        user.defaultPercentage === duplicate.inputs.discountPercentage;
 
       const positions = calculators.map((c) => c.position ?? 0);
       const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
@@ -652,7 +663,7 @@ export const useDealCalculator = (lead: any) => {
         isDefaultPayment: isDefaultPaymentToUse,
         discounts: duplicate.discounts,
         discountPercentage: duplicate.inputs.discountPercentage,
-        isDefaultDiscount: duplicate.inputs.isDefaultDiscount,
+        isDefaultDiscount: isDefaultDiscountToUse,
         ...Object.keys(duplicate.extras || {}).reduce((acc: any, k) => {
           const matchingExtra = (extrasList as any[]).find((e: any) => e.id === k || e.apiKey === k);
           if (matchingExtra) {

@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { WebView } from 'react-native-webview';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+
+const WebViewComponent = WebView as any;
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useVoiceNote, formatMs } from '../../../hooks/useVoiceNote';
 
@@ -43,7 +45,7 @@ export function VoiceNotePlayer({
   } = useVoiceNote();
 
   // ── react-native-webview (WebM / unsupported fallback) ──────────────────────
-  const webviewRef = useRef<WebView>(null);
+  const webviewRef = useRef<any>(null);
   const [videoUri, setVideoUri]         = useState<string | null>(null);
   const [videoPaused, setVideoPaused]   = useState(true);
   const [videoPos, setVideoPos]         = useState(0);          // ms
@@ -95,7 +97,9 @@ export function VoiceNotePlayer({
       console.log('[VNP] ⬇️  Downloading native audio...');
 
       const tempPath = `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/vnp_tmp_${Date.now()}`;
-      const res = await ReactNativeBlobUtil.config({ path: tempPath, fileCache: false }).fetch('GET', uri);
+      const res = await ReactNativeBlobUtil.config({ path: tempPath, fileCache: false }).fetch('GET', uri, {
+        'Accept-Encoding': 'identity',
+      });
 
       const status  = res.info().status;
       const headers = res.info().headers ?? {};
@@ -213,7 +217,7 @@ export function VoiceNotePlayer({
     >
       <View style={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}>
         {videoUri && (
-          <WebView
+          <WebViewComponent
             ref={webviewRef}
             source={{
               html: `
@@ -254,7 +258,7 @@ export function VoiceNotePlayer({
                 </html>
               `
             }}
-            onMessage={(event) => {
+            onMessage={(event: any) => {
               try {
                 const data = JSON.parse(event.nativeEvent.data);
                 if (data.type === 'progress') {

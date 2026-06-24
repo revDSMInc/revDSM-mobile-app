@@ -10,11 +10,14 @@ import {
   Alert,
   StyleSheet,
   useWindowDimensions,
+  StatusBar,
+  Platform,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { LeadService } from '../../../services/api/leads';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface DocumentScannerModalProps {
   visible: boolean;
@@ -37,7 +40,9 @@ export const DocumentScannerModal = ({
   category,
   initialFiles = [],
 }: DocumentScannerModalProps) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const statusBarBg = isDark ? colors.background : '#101828';
   const { width } = useWindowDimensions();
   const [files, setFiles] = useState<any[]>([]);
   const [removedServerIds, setRemovedServerIds] = useState<string[]>([]);
@@ -122,8 +127,12 @@ export const DocumentScannerModal = ({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose} statusBarTranslucent>
+      <StatusBar barStyle="light-content" backgroundColor={statusBarBg} translucent />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
+        {(Platform.OS === 'ios' || Platform.OS === 'android') && (
+          <View style={{ height: insets.top, backgroundColor: statusBarBg }} />
+        )}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={onClose} disabled={loading}>
             <Text style={{ color: colors.primary.main, fontSize: 16 }}>Cancel</Text>
@@ -202,7 +211,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 56,
+    paddingTop: 16,
     paddingBottom: 16,
     borderBottomWidth: 1,
   },

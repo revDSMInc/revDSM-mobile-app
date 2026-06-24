@@ -351,7 +351,9 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
       if (!(await ReactNativeBlobUtil.fs.exists(dir))) await ReactNativeBlobUtil.fs.mkdir(dir);
 
       const res = await ReactNativeBlobUtil.config({ path, fileCache: true })
-        .fetch('GET', mediaUri)
+        .fetch('GET', mediaUri, {
+          'Accept-Encoding': 'identity',
+        })
         .progress((r: number, t: number) => {
           if (t > 0) setDownloadProgress(r / t);
         });

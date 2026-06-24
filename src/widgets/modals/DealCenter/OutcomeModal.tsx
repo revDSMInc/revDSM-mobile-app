@@ -123,16 +123,14 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
         <Text className={`text-[10px] font-semibold ${isError ? 'text-[#EF4444]' : 'text-black'}  tracking-[0.5px]`}>{label}</Text>
       </View>
       <TouchableOpacity
-        className={`flex-row items-center border rounded-lg px-[14px] py-3 min-h-[48px] ${
-          isError ? 'border-[#EF4444]' : isExpanded ? 'border-[#1C252E]' : 'border-[#919EAB33]'
-        } ${disabled ? 'bg-[#F4F6F8]' : 'bg-white'}`}
+        className={`flex-row items-center border rounded-lg px-[14px] py-3 min-h-[48px] ${isError ? 'border-[#EF4444]' : isExpanded ? 'border-[#1C252E]' : 'border-[#919EAB33]'
+          } ${disabled ? 'bg-[#F4F6F8]' : 'bg-white'}`}
         onPress={disabled ? undefined : onPress}
         activeOpacity={disabled ? 1 : 0.7}
       >
         <Text
-          className={`flex-1 text-[13px] font-semibold p-0 ${
-            disabled ? 'text-[#919EAB]' : value ? 'text-[#1C252E]' : 'text-[#919EAB]'
-          } ${textTransform === 'capitalize' ? 'capitalize' : ''}`}
+          className={`flex-1 text-[13px] font-semibold p-0 ${disabled ? 'text-[#919EAB]' : value ? 'text-[#1C252E]' : 'text-[#919EAB]'
+            } ${textTransform === 'capitalize' ? 'capitalize' : ''}`}
         >
           {value || `Select ${label}`}
         </Text>
@@ -168,9 +166,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
           editable={editable}
           keyboardType={keyboardType}
           onChangeText={onChange}
-          className={`flex-1 text-[13px] font-semibold p-0 ${
-            editable ? 'text-[#1C252E]' : 'text-[#919EAB]'
-          }`}
+          className={`flex-1 text-[13px] font-semibold p-0 ${editable ? 'text-[#1C252E]' : 'text-[#919EAB]'
+            }`}
         />
       </View>
     </View>
@@ -188,9 +185,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
         <Text className="text-[10px] font-semibold text-black  tracking-[0.5px]">{label}</Text>
       </View>
       <View
-        className={`border border-[#919EAB33] rounded-lg px-[14px] py-3 bg-white ${
-          multiline ? 'min-h-[80px]' : 'min-h-[48px]'
-        }`}
+        className={`border border-[#919EAB33] rounded-lg px-[14px] py-3 bg-white ${multiline ? 'min-h-[80px]' : 'min-h-[48px]'
+          }`}
       >
         <TextInput
           value={value}
@@ -274,18 +270,16 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       {oneLegOptions.map((opt) => (
                         <TouchableOpacity
                           key={opt}
-                          className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                            outcomeForm.oneLeg === opt ? 'rounded-lg bg-[#F4F6F8]' : ''
-                          }`}
+                          className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeForm.oneLeg === opt ? 'rounded-lg bg-[#F4F6F8]' : ''
+                            }`}
                           onPress={() => {
                             setOutcomeForm({ ...outcomeForm, oneLeg: opt });
                             setExpanded(null);
                           }}
                         >
                           <Text
-                            className={`text-[13px] font-semibold ${
-                              outcomeForm.oneLeg === opt ? 'text-[#1C252E]' : 'text-[#637381]'
-                            }`}
+                            className={`text-[13px] font-semibold ${outcomeForm.oneLeg === opt ? 'text-[#1C252E]' : 'text-[#637381]'
+                              }`}
                           >
                             {opt}
                           </Text>
@@ -314,20 +308,18 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       {['Demo', 'Sale'].map((opt) => (
                         <TouchableOpacity
                           key={opt}
-                          className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                            outcomeStatus === opt.toLowerCase() ? 'rounded-lg bg-[#F4F6F8]' : ''
-                          }`}
+                          className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeStatus === opt.toLowerCase() ? 'rounded-lg bg-[#F4F6F8]' : ''
+                            }`}
                           onPress={() => {
                             handleStatusSelect(opt.toLowerCase() as any);
                             setExpanded(null);
                           }}
                         >
                           <Text
-                            className={`text-[13px] font-semibold ${
-                              outcomeStatus === opt.toLowerCase()
+                            className={`text-[13px] font-semibold ${outcomeStatus === opt.toLowerCase()
                                 ? 'text-[#1C252E]'
                                 : 'text-[#637381]'
-                            }`}
+                              }`}
                           >
                             {opt}
                           </Text>
@@ -358,18 +350,16 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                             {demoReasons.map((opt) => (
                               <TouchableOpacity
                                 key={opt}
-                                className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                  outcomeForm.reason === opt ? 'rounded-lg bg-[#F4F6F8]' : ''
-                                }`}
+                                className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeForm.reason === opt ? 'rounded-lg bg-[#F4F6F8]' : ''
+                                  }`}
                                 onPress={() => {
                                   setOutcomeForm({ ...outcomeForm, reason: opt });
                                   setExpanded(null);
                                 }}
                               >
                                 <Text
-                                  className={`text-[13px] font-semibold ${
-                                    outcomeForm.reason === opt ? 'text-[#1C252E]' : 'text-[#637381]'
-                                  }`}
+                                  className={`text-[13px] font-semibold ${outcomeForm.reason === opt ? 'text-[#1C252E]' : 'text-[#637381]'
+                                    }`}
                                 >
                                   {opt}
                                 </Text>
@@ -445,22 +435,20 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                             {downPaymentMethods.map((m) => (
                               <TouchableOpacity
                                 key={m.value}
-                                className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                  outcomeForm.downPaymentMethod === m.value
+                                className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeForm.downPaymentMethod === m.value
                                     ? 'rounded-lg bg-[#F4F6F8]'
                                     : ''
-                                }`}
+                                  }`}
                                 onPress={() => {
                                   setOutcomeForm({ ...outcomeForm, downPaymentMethod: m.value });
                                   setExpanded(null);
                                 }}
                               >
                                 <Text
-                                  className={`text-[13px] font-semibold ${
-                                    outcomeForm.downPaymentMethod === m.value
+                                  className={`text-[13px] font-semibold ${outcomeForm.downPaymentMethod === m.value
                                       ? 'text-[#1C252E]'
                                       : 'text-[#637381]'
-                                  }`}
+                                    }`}
                                 >
                                   {m.label}
                                 </Text>
@@ -504,13 +492,12 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                   return (
                                     <TouchableOpacity
                                       key={key}
-                                      className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                                        outcomeForm.balancePaymentMethod === key
+                                      className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeForm.balancePaymentMethod === key
                                           ? 'rounded-lg bg-[#F4F6F8]'
                                           : belowMin
-                                          ? 'opacity-50'
-                                          : ''
-                                      }`}
+                                            ? 'opacity-50'
+                                            : ''
+                                        }`}
                                       onPress={() => {
                                         if (belowMin) {
                                           Alert.alert(
@@ -528,16 +515,15 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                     >
                                       <View className="flex-1">
                                         <Text
-                                          className={`text-[13px] font-semibold ${
-                                            outcomeForm.balancePaymentMethod === key
+                                          className={`text-[13px] font-semibold ${outcomeForm.balancePaymentMethod === key
                                               ? 'text-[#1C252E]'
                                               : 'text-[#637381]'
-                                          }`}
+                                            }`}
                                         >
                                           {plan.label}
                                         </Text>
                                         {belowMin && (
-                                          <Text className="text-[10px] text-red-500">
+                                          <Text className="text-[10px] text-slate-900">
                                             Requires ${plan.minPrice?.toLocaleString()}+
                                           </Text>
                                         )}
@@ -554,7 +540,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         )}
                       </View>
                     </View>
- 
+
 
                   </>
                 )}
@@ -589,18 +575,16 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         {calculators.map((c, i) => (
                           <TouchableOpacity
                             key={c._id || i}
-                            className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${
-                              activeIdx === i ? 'rounded-lg bg-[#F4F6F8]' : ''
-                            }`}
+                            className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${activeIdx === i ? 'rounded-lg bg-[#F4F6F8]' : ''
+                              }`}
                             onPress={() => {
                               setActiveIdx(i);
                               setExpanded(null);
                             }}
                           >
                             <Text
-                              className={`text-[13px] font-semibold ${
-                                activeIdx === i ? 'text-[#1C252E]' : 'text-[#637381]'
-                              }`}
+                              className={`text-[13px] font-semibold ${activeIdx === i ? 'text-[#1C252E]' : 'text-[#637381]'
+                                }`}
                             >
                               {c.name}
                             </Text>
@@ -637,13 +621,13 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
                     {categories.map((cat: any) => {
                       const catConfig: Record<string, { icon: string; color: string; bg: string }> = {
-                        Gutters:             { icon: 'home',                    color: '#3182CE', bg: '#EBF8FF' },
-                        LeafFilter:          { icon: 'leaf',                    color: '#38A169', bg: '#E6FFFA' },
-                        Soffit:              { icon: 'construct',               color: '#00B8D9', bg: '#E0F8FB' },
-                        Fascia:              { icon: 'layers',                  color: '#8E33FF', bg: '#F2E8FF' },
-                        Lighting:            { icon: 'bulb',                    color: '#FFAB00', bg: '#FFF8E6' },
-                        'Additional Services': { icon: 'add-circle',           color: '#FFAB00', bg: '#FFF8E6' },
-                        Miscellaneous:       { icon: 'ellipsis-horizontal-circle', color: '#637381', bg: '#F4F6F8' },
+                        Gutters: { icon: 'home', color: '#3182CE', bg: '#EBF8FF' },
+                        LeafFilter: { icon: 'leaf', color: '#38A169', bg: '#E6FFFA' },
+                        Soffit: { icon: 'construct', color: '#00B8D9', bg: '#E0F8FB' },
+                        Fascia: { icon: 'layers', color: '#8E33FF', bg: '#F2E8FF' },
+                        Lighting: { icon: 'bulb', color: '#FFAB00', bg: '#FFF8E6' },
+                        'Additional Services': { icon: 'add-circle', color: '#FFAB00', bg: '#FFF8E6' },
+                        Miscellaneous: { icon: 'ellipsis-horizontal-circle', color: '#637381', bg: '#F4F6F8' },
                       };
                       const cfg = catConfig[cat] || { icon: 'list', color: '#637381', bg: '#F4F6F8' };
                       return (
@@ -680,13 +664,13 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                       })
                       .map((item: any, idx: number) => {
                         const itemCatConfig: Record<string, { icon: string; iconColor: string; bg: string }> = {
-                          Gutters:             { icon: 'home',                    iconColor: '#00B8D9', bg: '#E1F5FE' },
-                          LeafFilter:          { icon: 'leaf',                    iconColor: '#22C55E', bg: '#E8F5E9' },
-                          Soffit:              { icon: 'construct',               iconColor: '#00B8D9', bg: '#E1F5FE' },
-                          Fascia:              { icon: 'layers',                  iconColor: '#8E33FF', bg: '#F2E8FF' },
-                          Lighting:            { icon: 'bulb',                    iconColor: '#FFAB00', bg: '#FFF8E6' },
-                          'Additional Services': { icon: 'add-circle',           iconColor: '#FFAB00', bg: '#FFF8E6' },
-                          Miscellaneous:       { icon: 'ellipsis-horizontal-circle', iconColor: '#637381', bg: '#F4F6F8' },
+                          Gutters: { icon: 'home', iconColor: '#00B8D9', bg: '#E1F5FE' },
+                          LeafFilter: { icon: 'leaf', iconColor: '#22C55E', bg: '#E8F5E9' },
+                          Soffit: { icon: 'construct', iconColor: '#00B8D9', bg: '#E1F5FE' },
+                          Fascia: { icon: 'layers', iconColor: '#8E33FF', bg: '#F2E8FF' },
+                          Lighting: { icon: 'bulb', iconColor: '#FFAB00', bg: '#FFF8E6' },
+                          'Additional Services': { icon: 'add-circle', iconColor: '#FFAB00', bg: '#FFF8E6' },
+                          Miscellaneous: { icon: 'ellipsis-horizontal-circle', iconColor: '#637381', bg: '#F4F6F8' },
                         };
                         const cfg = itemCatConfig[item.category] || { icon: 'list', iconColor: '#637381', bg: '#F4F6F8' };
                         return (
@@ -749,14 +733,14 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
               <TouchableOpacity
                 onPress={handleFinishOutcome}
                 disabled={
-                  !outcomeStatus || 
+                  !outcomeStatus ||
                   (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim())))
                 }
                 className="h-12 rounded-xl items-center justify-center"
                 style={{
-                  backgroundColor: !outcomeStatus || 
+                  backgroundColor: !outcomeStatus ||
                     (outcomeStatus === 'demo' && (!outcomeForm.reason || (outcomeForm.reason === 'Other (Explain)' && !outcomeForm.reasonExplanation?.trim())))
-                    ? '#919EAB' 
+                    ? '#919EAB'
                     : colors.primary.main,
                   opacity: loading ? 0.7 : 1,
                 }}

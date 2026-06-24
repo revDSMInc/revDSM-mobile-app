@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { format, parseISO, isValid, addDays, parse } from 'date-fns';
 import JobService, { JobEntry } from '../services/api/JobService';
 import { parseSafeISO } from '../utils/date-util';
+import { triggerThresholdCrossing } from '../utils/haptics';
 
 export const useJobTracker = (selectedYear: number) => {
   const [jobs, setJobs] = useState<JobEntry[]>([]);
@@ -43,6 +44,9 @@ export const useJobTracker = (selectedYear: number) => {
   }, [selectedYear]);
 
   const onRefresh = useCallback(async () => {
+    if (Platform.OS === 'android') {
+      triggerThresholdCrossing();
+    }
     setRefreshing(true);
     await fetchJobs();
     setRefreshing(false);

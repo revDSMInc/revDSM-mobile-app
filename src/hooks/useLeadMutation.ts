@@ -144,9 +144,6 @@ export const useSubmitDigitalConsentMutation = () => {
         }
       });
 
-      console.log('Consent Request URL:', url);
-      console.log('Consent Request Body keys/values:', body.map(b => b.name === 'signature' || b.name === 'file' ? { name: b.name, filename: b.filename } : b));
-
       const fetchConfig = {
         fileCache: true,
         appendExt: 'pdf',
@@ -160,7 +157,7 @@ export const useSubmitDigitalConsentMutation = () => {
         {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data',
-          Accept: 'application/pdf', // Tell backend we prefer PDF
+          Accept: 'application/pdf',
         },
         body
       );

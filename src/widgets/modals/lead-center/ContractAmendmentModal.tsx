@@ -19,6 +19,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
   draftId = null,
 }) => {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
 
   // ── Signature state — same pattern as ConsentFormModal ────────────────────
   const [showSigPad, setShowSigPad] = useState(false);
@@ -292,7 +294,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
               <ScrollView
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 }}
+                contentContainerStyle={{ padding: 24, paddingBottom: Math.max(insets.bottom, 24) }}
               >
                 <View style={styles.sheetHeader}>
                   <Text style={[styles.sheetTitle, { color: isDark ? '#FFF' : '#1C252E' }]}>
@@ -415,7 +417,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             scrollEnabled={!showSigPad}
-            contentContainerStyle={{ padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 }}
+            contentContainerStyle={{ padding: 24, paddingBottom: Math.max(insets.bottom, 24) }}
           >
             {/* Title */}
             <View style={styles.titleRow}>

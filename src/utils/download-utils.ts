@@ -6,16 +6,21 @@ import { FlashMessage } from '../config/message';
  * Standard utility to download a PDF file to the device's Downloads folder
  * and optionally notify the system media scanner (Android) or open (iOS).
  */
-export const downloadPdfToDevice = async (uri: string, title?: string) => {
+export const downloadPdfToDevice = async (uri: string, title?: string, showToast = true) => {
   if (!uri) return;
   try {
-    FlashMessage.info('Download started...', 'Downloading');
+    if (showToast) {
+      FlashMessage.info('Download started...', 'Downloading');
+    }
     const { dirs } = ReactNativeBlobUtil.fs;
     
-    // Clean file name
+    // Clean file name keeping spaces
     const urlHash = uri.split('?')[0].split('/').pop() || `doc_${Date.now()}`;
     const safeName = urlHash.endsWith('.pdf') ? urlHash : `${urlHash}.pdf`;
-    const finalFileName = title ? `${title.replace(/\s+/g, '_')}.pdf` : safeName;
+    
+    let cleanTitle = title ? title.trim().replace(/[^a-zA-Z0-9\s_-]/g, '') : '';
+    cleanTitle = cleanTitle.replace(/\s+/g, ' ');
+    const finalFileName = cleanTitle ? `${cleanTitle}.pdf` : safeName;
     
     const baseDir = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
     const publicPath = `${baseDir}/${finalFileName}`;
@@ -72,11 +77,15 @@ export const downloadPdfToDevice = async (uri: string, title?: string) => {
       }
     }
     
-    FlashMessage.success('Success', Platform.OS === 'ios' ? 'Document shared' : 'Document saved to Downloads');
+    if (showToast) {
+      FlashMessage.success('Success', Platform.OS === 'ios' ? 'Document shared' : 'Document saved to Downloads');
+    }
     return publicPath;
   } catch (err) {
     console.error('[DownloadUtil] Public download error:', err);
-    FlashMessage.error('Error', 'Failed to save document to device');
+    if (showToast) {
+      FlashMessage.error('Error', 'Failed to save document to device');
+    }
     throw err;
   }
 };

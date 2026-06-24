@@ -19,6 +19,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
+import { parseApiError } from '../../../utils/error-util';
 import { INSPECTION_ISSUES } from '../../../constants/lead-center';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import RNFlashMessage from 'react-native-flash-message';
@@ -290,7 +291,8 @@ export const InspectionFormModal = ({
       await onSubmit(payload);
     } catch (err: any) {
       console.error('Inspection Submit Error:', err);
-      FlashMessage.error('Error', err?.message || 'Error generating inspection report');
+      const errorMsg = parseApiError(err);
+      FlashMessage.error('Submission Failed', errorMsg);
     } finally {
       setIsGenerating(false);
     }

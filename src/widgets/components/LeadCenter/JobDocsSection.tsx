@@ -78,6 +78,7 @@ interface JobDocsSectionProps {
   refetch: () => Promise<void>;
   onOpenPdf?: (url: string, title?: string) => void;
   secureUrls?: Record<string, string>;
+  isRefreshing?: boolean;
 }
 
 const MANAGE_TABS = [
@@ -112,6 +113,7 @@ export const JobDocsSection = ({
   refetch,
   onOpenPdf,
   secureUrls: _secureUrls = {},
+  isRefreshing = false,
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -1296,7 +1298,14 @@ export const JobDocsSection = ({
       </View>
 
       {/* Result Buttons */}
-      {isResulted ? (
+      {Platform.OS === 'android' && isRefreshing ? (
+        <View
+          className="py-4 flex-row items-center justify-center"
+          style={{ height: 80, backgroundColor: isDark ? colors.surface : colors.background }}
+        >
+          <ActivityIndicator size="small" color="#72BD00" />
+        </View>
+      ) : isResulted ? (
         <View className="flex-row gap-2 mt-2 mb-4">
           <View
             className="flex-[3] h-12 rounded-xl items-center justify-center"

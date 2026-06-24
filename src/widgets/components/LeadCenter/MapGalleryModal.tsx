@@ -110,6 +110,8 @@ export const MapGalleryModal = ({
   const [afterImages, setAfterImages] = useState<any[]>([]);
   const [beforeUris, setBeforeUris] = useState<string[]>([]);
   const [afterUris, setAfterUris] = useState<string[]>([]);
+  const [offlineBeforeUris, setOfflineBeforeUris] = useState<string[]>([]);
+  const [offlineAfterUris, setOfflineAfterUris] = useState<string[]>([]);
 
   const [newBeforeImages, setNewBeforeImages] = useState<any[]>([]);
   const [newAfterImages, setNewAfterImages] = useState<any[]>([]);
@@ -176,8 +178,11 @@ export const MapGalleryModal = ({
     const offlineBefore = getOfflineImagesForJob(job?.jobNumber, 'before').map(img => img.uri);
     const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
     
-    const bFallback = [...bImages.map(extractFallback).filter(Boolean), ...offlineBefore];
-    const aFallback = [...aImages.map(extractFallback).filter(Boolean), ...offlineAfter];
+    setOfflineBeforeUris(offlineBefore);
+    setOfflineAfterUris(offlineAfter);
+
+    const bFallback = bImages.map(extractFallback).filter(Boolean);
+    const aFallback = aImages.map(extractFallback).filter(Boolean);
     setBeforeUris(bFallback);
     setAfterUris(aFallback);
   }, [job?.jobNumber]);
@@ -211,8 +216,11 @@ export const MapGalleryModal = ({
       const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
 
       // Only update if we have signed URLs or offline pending images
-      setBeforeUris(signedBefore.length > 0 ? [...signedBefore, ...offlineBefore] : [...bImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean), ...offlineBefore]);
-      setAfterUris(signedAfter.length > 0 ? [...signedAfter, ...offlineAfter] : [...aImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean), ...offlineAfter]);
+      setBeforeUris(signedBefore.length > 0 ? signedBefore : bImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean));
+      setAfterUris(signedAfter.length > 0 ? signedAfter : aImages.map((img: any) => img.secureUrl || img.s3url || img.url || '').filter(Boolean));
+      
+      setOfflineBeforeUris(offlineBefore);
+      setOfflineAfterUris(offlineAfter);
     } catch {
       // Keep fallback URLs — no-op on error
     } finally {
@@ -242,7 +250,7 @@ export const MapGalleryModal = ({
   const lastVisibleRef = useRef<boolean>(false);
 
   const refreshJobImages = useCallback(async () => {
-    if (!job?.jobNumber) return;
+    if (!job?.jobNumber) return null;
     try {
       const res = await LeadService.findJobs({ jobNumber: job.jobNumber });
       const updated = res.data?.data?.[0];
@@ -253,10 +261,12 @@ export const MapGalleryModal = ({
         setAfterImages(aImages);
         setFallbackUris(bImages, aImages);
         fetchSignedUrls(bImages, aImages);
+        return updated;
       }
     } catch (err) {
       console.warn('Failed to refresh job images on modal open:', err);
     }
+    return null;
   }, [job?.jobNumber, setFallbackUris, fetchSignedUrls]);
 
   useEffect(() => {
@@ -265,6 +275,8 @@ export const MapGalleryModal = ({
       if (isNewJob) {
         setBeforeUris([]);
         setAfterUris([]);
+        setOfflineBeforeUris([]);
+        setOfflineAfterUris([]);
         setBeforeImages([]);
         setAfterImages([]);
         setNewBeforeImages([]);
@@ -280,9 +292,15 @@ export const MapGalleryModal = ({
   }, [visible, job?._id, initImages, refreshJobImages]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', async (data) => {
       if (data?.jobNumber === job?.jobNumber) {
-        refreshJobImages();
+        const updated = await refreshJobImages();
+        if (updated) {
+          const offlineBefore = getOfflineImagesForJob(job.jobNumber, 'before').map(img => img.uri);
+          const offlineAfter = getOfflineImagesForJob(job.jobNumber, 'after').map(img => img.uri);
+          setOfflineBeforeUris(offlineBefore);
+          setOfflineAfterUris(offlineAfter);
+        }
       }
     });
     return () => sub.remove();
@@ -413,7 +431,9 @@ export const MapGalleryModal = ({
 
   if (!job) return null;
 
-  const hasNoImages = beforeUris.length === 0 && afterUris.length === 0;
+  const allBeforeUris = [...beforeUris, ...offlineBeforeUris];
+  const allAfterUris = [...afterUris, ...offlineAfterUris];
+  const hasNoImages = allBeforeUris.length === 0 && allAfterUris.length === 0;
   // iOS can fail to present a Modal over another active Modal.
   // Hide the base gallery modal while any child modal is open.
   const mainModalVisible =
@@ -472,17 +492,20 @@ export const MapGalleryModal = ({
                     )}
                   </View>
 
-                  {(beforeUris.length > 0 || newBeforeImages.length > 0) ? (
+                  {(allBeforeUris.length > 0 || newBeforeImages.length > 0) ? (
                     <View className="gap-4">
-                      {beforeUris.map((uri, idx) => (
-                        <GalleryImage
-                          key={`before-${idx}-${uri.slice(-12)}`}
-                          uri={uri}
-                          canDelete={isMyJob && beforeUris.length > 1}
-                          onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
-                          onDelete={() => confirmDeleteDirect('before', idx)}
-                        />
-                      ))}
+                      {allBeforeUris.map((uri, idx) => {
+                        const isOffline = offlineBeforeUris.includes(uri);
+                        return (
+                          <GalleryImage
+                            key={`before-${idx}-${uri.slice(-12)}`}
+                            uri={uri}
+                            canDelete={isMyJob && !isOffline && allBeforeUris.length > 1}
+                            onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
+                            onDelete={() => confirmDeleteDirect('before', idx)}
+                          />
+                        );
+                      })}
                       {newBeforeImages.map((file, idx) => (
                         <GalleryImage
                           key={`new-before-${idx}`}
@@ -531,17 +554,20 @@ export const MapGalleryModal = ({
                     )}
                   </View>
 
-                  {(afterUris.length > 0 || newAfterImages.length > 0) ? (
+                  {(allAfterUris.length > 0 || newAfterImages.length > 0) ? (
                     <View className="gap-4">
-                      {afterUris.map((uri, idx) => (
-                        <GalleryImage
-                          key={`after-${idx}-${uri.slice(-12)}`}
-                          uri={uri}
-                          canDelete={isMyJob && afterUris.length > 1}
-                          onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
-                          onDelete={() => confirmDeleteDirect('after', idx)}
-                        />
-                      ))}
+                      {allAfterUris.map((uri, idx) => {
+                        const isOffline = offlineAfterUris.includes(uri);
+                        return (
+                          <GalleryImage
+                            key={`after-${idx}-${uri.slice(-12)}`}
+                            uri={uri}
+                            canDelete={isMyJob && !isOffline && allAfterUris.length > 1}
+                            onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
+                            onDelete={() => confirmDeleteDirect('after', idx)}
+                          />
+                        );
+                      })}
                       {newAfterImages.map((file, idx) => (
                         <GalleryImage
                           key={`new-after-${idx}`}
@@ -582,7 +608,7 @@ export const MapGalleryModal = ({
             <View className="py-3 px-6 flex-row items-center justify-between border-t border-slate-100 bg-white">
               <TouchableOpacity
                 onPress={() => {
-                  if (beforeUris.length > 0 && afterUris.length > 0) { setShowPresent(true); }
+                  if (allBeforeUris.length > 0 && allAfterUris.length > 0) { setShowPresent(true); }
                   else { FlashMessage.warning('You need at least one Before and one After image.'); }
                 }}
                 className="flex-row items-center"
@@ -590,11 +616,11 @@ export const MapGalleryModal = ({
                 <Icon
                   name="presentation"
                   size={16}
-                  color={beforeUris.length > 0 && afterUris.length > 0 ? '#65C216' : '#cbd5e1'}
+                  color={allBeforeUris.length > 0 && allAfterUris.length > 0 ? '#65C216' : '#cbd5e1'}
                 />
                 <Text
                   className="ml-2 text-[14px] font-black"
-                  style={{ color: beforeUris.length > 0 && afterUris.length > 0 ? '#65C216' : '#cbd5e1' }}
+                  style={{ color: allBeforeUris.length > 0 && allAfterUris.length > 0 ? '#65C216' : '#cbd5e1' }}
                 >
                   Present
                 </Text>

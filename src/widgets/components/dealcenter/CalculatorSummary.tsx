@@ -123,6 +123,12 @@ export const CalculatorSummary = ({
     !!user?.defaultPaymentMethod &&
     user.defaultPaymentMethod === activeCalc.inputs?.paymentPlan;
 
+  // Derived from user preference — mirrors web's useEffect logic:
+  // isDefaultDiscount = (user.defaultPercentage === calculator.discountPercentage)
+  const isDefaultDiscount =
+    !!user?.defaultPercentage &&
+    user.defaultPercentage === activeCalc.inputs?.discountPercentage;
+
   const rolloutEndPrice = Number(activeCalc.price) || 0;
 
   const CATEGORY_ORDER = [
@@ -816,18 +822,23 @@ export const CalculatorSummary = ({
                               Default
                             </Text>
                             <TouchableOpacity
-                              onPress={() => {
-                                const nextVal = !activeCalc.inputs.isDefaultDiscount;
-                                updateActive({
-                                  inputs: {
-                                    isDefaultDiscount: nextVal,
-                                  },
-                                });
-                                handleSave();
+                              disabled={!currentDiscount}
+                              onPress={async () => {
+                                const nextVal = !isDefaultDiscount;
+                                try {
+                                  await SettingsService.updateCalculatorsSetting({
+                                    defaultPercentage: nextVal ? currentDiscount : null,
+                                  });
+                                  await refreshUser();
+                                } catch (e) {
+                                  console.warn('Failed to update default discount setting', e);
+                                }
                               }}
-                              className={`w-8 h-5 rounded-full justify-center px-1 ${activeCalc.inputs.isDefaultDiscount
+                              className={`w-8 h-5 rounded-full justify-center px-1 ${isDefaultDiscount
                                 ? 'bg-green-500 items-end'
-                                : 'bg-slate-300 items-start'
+                                : !currentDiscount
+                                  ? 'bg-slate-200 items-start opacity-40'
+                                  : 'bg-slate-300 items-start'
                                 }`}
                             >
                               <View className="w-3 h-3 bg-white rounded-full shadow-sm" />
@@ -1360,7 +1371,7 @@ export const CalculatorSummary = ({
         {!activeCalc.isRolloutConfirmed && (
           <View
             className="px-6 py-6 border-t border-border bg-card"
-            style={{ paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom + 10 }}
+            style={{ paddingBottom: Platform.OS === 'ios' ? insets.bottom : insets.bottom + 10 }}
           >
             <View className="flex-row items-center mb-4">
               <View className="flex-1 mr-3">
@@ -2052,10 +2063,10 @@ export const CalculatorSummary = ({
                                     </Text>
                                     {plan.minPrice && (
                                       <Text
-                                        className={`text-[9px] font-bold mt-1 ${belowMin ? 'text-red-500' : 'text-slate-400'
+                                        className={`text-[9px] font-bold mt-1 ${belowMin ? 'text-slate-900' : 'text-slate-400'
                                           }`}
                                       >
-                                        ${plan.minPrice?.toLocaleString()}+ req.
+                                        Requires ${plan.minPrice?.toLocaleString()}+
                                       </Text>
                                     )}
                                   </TouchableOpacity>

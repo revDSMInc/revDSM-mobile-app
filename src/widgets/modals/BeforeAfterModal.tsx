@@ -35,20 +35,24 @@ export const BeforeAfterModal = ({
   const [showAfterModal, setShowAfterModal] = useState(false);
   const [beforeImages, setBeforeImages] = useState<any[]>([]);
   const [afterImages, setAfterImages] = useState<any[]>([]);
+  const [offlineBeforeUris, setOfflineBeforeUris] = useState<string[]>([]);
+  const [offlineAfterUris, setOfflineAfterUris] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [job, setJob] = useState(selectedJob);
 
   const fetchFreshJob = useCallback(async () => {
-    if (!selectedJob?.jobNumber) return;
+    if (!selectedJob?.jobNumber) return null;
     try {
       const res = await LeadService.findJobs({ jobNumber: selectedJob.jobNumber });
       const updated = res.data?.data?.[0];
       if (updated) {
         setJob(updated);
+        return updated;
       }
     } catch (err) {
       console.warn('Failed to fetch fresh job:', err);
     }
+    return null;
   }, [selectedJob?.jobNumber]);
 
   useEffect(() => {
@@ -59,14 +63,20 @@ export const BeforeAfterModal = ({
       setShowBeforeModal(false);
       setShowAfterModal(false);
       setIsSaving(false);
+      setOfflineBeforeUris(getOfflineImagesForJob(selectedJob?.jobNumber, 'before').map(img => img.uri));
+      setOfflineAfterUris(getOfflineImagesForJob(selectedJob?.jobNumber, 'after').map(img => img.uri));
       fetchFreshJob();
     }
   }, [visible, selectedJob, fetchFreshJob]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', async (data) => {
       if (data?.jobNumber === selectedJob?.jobNumber) {
-        fetchFreshJob();
+        const updated = await fetchFreshJob();
+        if (updated) {
+          setOfflineBeforeUris(getOfflineImagesForJob(selectedJob.jobNumber, 'before').map(img => img.uri));
+          setOfflineAfterUris(getOfflineImagesForJob(selectedJob.jobNumber, 'after').map(img => img.uri));
+        }
       }
     });
     return () => sub.remove();
@@ -162,16 +172,13 @@ export const BeforeAfterModal = ({
     }
   };
 
-  const offlineBefore = getOfflineImagesForJob(job?.jobNumber, 'before').map(img => img.uri);
-  const offlineAfter = getOfflineImagesForJob(job?.jobNumber, 'after').map(img => img.uri);
-
   const existingBeforeUris = [
     ...(job?.images?.beforeImages?.map((img: any) => img.secureUrl || img.filePath) || []),
-    ...offlineBefore,
+    ...offlineBeforeUris,
   ];
   const existingAfterUris = [
     ...(job?.images?.afterImages?.map((img: any) => img.secureUrl || img.filePath) || []),
-    ...offlineAfter,
+    ...offlineAfterUris,
   ];
 
   return (

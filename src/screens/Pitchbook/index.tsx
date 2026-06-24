@@ -34,6 +34,7 @@ import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import Feather from 'react-native-vector-icons/Feather';
 
 const { width } = Dimensions.get('window');
 
@@ -54,6 +55,7 @@ export default function PitchbookScreen() {
   const insets = useSafeAreaInsets();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const isLandscape = winWidth > winHeight;
+  const landscapeRightInset = Platform.OS === 'android' ? Math.max(insets.right || 0, 48) : (insets.right || 0);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
   const { lead } = (route.params as any) || {};
@@ -68,7 +70,7 @@ export default function PitchbookScreen() {
       if (parsed && typeof parsed.category === 'string' && typeof parsed.slideIndex === 'number') {
         return parsed as { category: string; slideIndex: number };
       }
-    } catch (e) {}
+    } catch (e) { }
     return null;
   }, [leadId]);
 
@@ -132,7 +134,7 @@ export default function PitchbookScreen() {
         progressKey(leadId),
         JSON.stringify({ category: activeCategory, slideIndex: currentSlideIndex })
       );
-    } catch (e) {}
+    } catch (e) { }
   }, [leadId, activeCategory, currentSlideIndex]);
 
   useEffect(() => {
@@ -282,11 +284,13 @@ export default function PitchbookScreen() {
           style={{
             position: 'absolute',
             bottom: 0,
-            left: 0,
-            right: 0,
+            left: isLandscape ? insets.left : 0,
+            right: isLandscape ? landscapeRightInset : 0,
+            width: isLandscape ? undefined : '100%',
             height: drawerHeight,
-            paddingLeft: isLandscape ? Math.max(insets.left, 16) : 0,
-            paddingRight: isLandscape ? Math.max(insets.right, 16) : 0,
+            paddingLeft: isLandscape ? 16 : 0,
+            paddingRight: isLandscape ? 16 : 0,
+            paddingBottom: insets.bottom,
             transform: [
               {
                 translateY: toolsAnim.interpolate({
@@ -477,29 +481,40 @@ export default function PitchbookScreen() {
 
       {/* Pitch Book Toolbar */}
       <View className="flex-row items-center justify-between px-4 pt-6 bg-background">
-        <Text className="text-text-primary text-sm font-medium">Pitch Book</Text>
         <View className="flex-row items-center gap-3">
-          {/* Fullscreen Button */}
           <TouchableOpacity
-            onPress={() => setIsFullscreen(true)}
+            onPress={() => navigation.goBack()}
+            className="p-1 items-center justify-center border border-border rounded-lg"
             style={{
               width: 32,
               height: 32,
-              borderRadius: 6,
-              backgroundColor: isDark ? '#2D3A24' : '#F0FAE8',
-              borderWidth: 1,
-              borderColor: colors.primary.main,
-              alignItems: 'center',
-              justifyContent: 'center',
             }}
           >
-            <IonIcon name="expand" size={16} color={colors.primary.main} />
+            <Feather
+              name="arrow-left"
+              size={14}
+              color={isDark ? colors.text : colors.textSecondary}
+            />
           </TouchableOpacity>
-          {/* Close Button */}
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <IonIcon name="close" size={20} color={isDark ? 'white' : '#1C252E'} />
-          </TouchableOpacity>
+          <Text className="text-text-primary text-sm font-medium">Pitch Book</Text>
         </View>
+
+        {/* Fullscreen Button */}
+        <TouchableOpacity
+          onPress={() => setIsFullscreen(true)}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 6,
+            backgroundColor: isDark ? '#2D3A24' : '#F0FAE8',
+            borderWidth: 1,
+            borderColor: colors.primary.main,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <IonIcon name="expand" size={16} color={colors.primary.main} />
+        </TouchableOpacity>
       </View>
 
       <View className="flex-1">
@@ -748,7 +763,7 @@ export default function PitchbookScreen() {
                       style={{
                         position: 'absolute',
                         top: Math.max(insets.top + 8, 20),
-                        right: 16,
+                        right: Math.max(landscapeRightInset, 16),
                         width: 36,
                         height: 36,
                         borderRadius: 18,
@@ -793,7 +808,7 @@ export default function PitchbookScreen() {
                       disabled={currentGlobalPageNumber === totalGlobalPages}
                       style={{
                         position: 'absolute',
-                        right: viewMode === 'rep' ? Math.max((insets.right || 0) + 48, 48) : Math.max((insets.right || 0) + 24, 48),
+                        right: viewMode === 'rep' ? Math.max(landscapeRightInset + 48, 48) : Math.max(landscapeRightInset + 24, 48),
                         top: '50%',
                         transform: [{ translateY: -20 }],
                         width: 40,
@@ -821,7 +836,7 @@ export default function PitchbookScreen() {
                       paddingTop: 10,
                       paddingBottom: Math.max(insets.bottom, 10),
                       paddingLeft: Math.max(insets.left, 8),
-                      paddingRight: Math.max(insets.right, 8),
+                      paddingRight: Math.max(landscapeRightInset, 8),
                       borderTopWidth: 1,
                       borderTopColor: 'rgba(255,255,255,0.08)',
                     }}
@@ -878,7 +893,7 @@ export default function PitchbookScreen() {
                     onPress={toggleTools}
                     style={{
                       position: 'absolute',
-                      right: 0,
+                      right: landscapeRightInset,
                       top: '50%',
                       transform: [{ translateY: -40 }],
                       width: 32,

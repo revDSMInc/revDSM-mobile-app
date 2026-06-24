@@ -22,10 +22,9 @@ export const CustomInput = memo(
 
       useEffect(() => {
         inputRef.current?.setNativeProps({
-          secureTextEntry: secureTextEntry,
           style: [styles.input, { color: colors.text }],
         });
-      }, [secureTextEntry, colors.text]);
+      }, [colors.text]);
 
       const iconColor = isDark ? 'rgba(255,255,255,0.45)' : '#637381';
       const hasRightIcon = Boolean(rightIcon);
@@ -55,7 +54,7 @@ export const CustomInput = memo(
                 { color: colors.text, paddingRight: hasRightIcon ? 4 : 16 },
                 style,
               ]}
-              secureTextEntry={initialSecure.current}
+              secureTextEntry={secureTextEntry}
               placeholderTextColor={isDark ? 'rgba(255,255,255,0.35)' : '#919EAB'}
               autoCorrect={false}
               autoCapitalize="none"

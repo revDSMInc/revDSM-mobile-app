@@ -8,6 +8,7 @@ import {
   PanResponder,
   Platform,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -17,7 +18,7 @@ import FileViewer from 'react-native-file-viewer';
 import Pdf from 'react-native-pdf';
 import { FlashMessage } from '../../../config/message';
 import { LeadService } from '../../../services/api/leads';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -50,6 +51,8 @@ export const AgreementSignatureModal = ({
   signatureFields,
 }: AgreementSignatureModalProps) => {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const statusBarBg = isDark ? colors.background : '#101828';
   const [loading, setLoading] = useState(false);
 
   // Initials state
@@ -275,10 +278,14 @@ export const AgreementSignatureModal = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false}>
+    <Modal visible={visible} animationType="slide" transparent={false} statusBarTranslucent>
+      <StatusBar barStyle="light-content" backgroundColor={statusBarBg} translucent />
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={{ flex: 1, backgroundColor: 'white' }}>
+            {(Platform.OS === 'ios' || Platform.OS === 'android') && (
+              <View style={{ height: insets.top, backgroundColor: statusBarBg }} />
+            )}
             <View style={{ flex: 1, backgroundColor: 'white' }}>
               {/* Header */}
               <View style={{ paddingHorizontal: 24, paddingVertical: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
@@ -508,7 +515,7 @@ export const AgreementSignatureModal = ({
 
 
               {/* Compact Footer Actions */}
-              <View style={{ paddingHorizontal: 24, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: 'white', flexDirection: 'row', gap: 12 }}>
+              <View style={{ paddingHorizontal: 24, paddingVertical: 10, paddingBottom: Math.max(insets.bottom, 16), borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: 'white', flexDirection: 'row', gap: 12 }}>
                 <TouchableOpacity
                   onPress={onClose}
                   style={{ flex: 1, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}
@@ -613,10 +620,10 @@ export const AgreementSignatureModal = ({
                 </View>
               </View>
             )}
-          </SafeAreaView>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    </Modal>
+            </View>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </Modal>
   );
 };
 

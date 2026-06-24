@@ -1,12 +1,9 @@
 package com.revdsm_sales;
 
-import android.app.Activity;
 import android.content.Context;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.view.HapticFeedbackConstants;
-import android.view.View;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -28,66 +25,39 @@ public class HapticFeedbackModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void trigger(String type) {
-        Activity activity = getCurrentActivity();
-        View view = null;
-        if (activity != null && activity.getWindow() != null) {
-            view = activity.getWindow().getDecorView();
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && view != null) {
-            // Android 11+ (API 30+) using performHapticFeedback semantic constants
-            int feedbackConstant = -1;
-            if ("success".equals(type)) {
-                feedbackConstant = HapticFeedbackConstants.CONFIRM;
-            } else if ("error".equals(type)) {
-                feedbackConstant = HapticFeedbackConstants.REJECT;
-            } else if ("light".equals(type)) {
-                feedbackConstant = HapticFeedbackConstants.VIRTUAL_KEY;
-            } else if ("threshold".equals(type)) {
-                feedbackConstant = HapticFeedbackConstants.GESTURE_START;
-            }
-
-            if (feedbackConstant != -1) {
-                if (view.performHapticFeedback(feedbackConstant)) {
-                    return;
-                }
-            }
-        }
-
-        // Fallback for API < 30 or if view is null, using Vibrator API
         Vibrator vibrator = (Vibrator) getReactApplicationContext().getSystemService(Context.VIBRATOR_SERVICE);
-        if (vibrator != null && vibrator.hasVibrator()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // API 29+ Predefined Effects
-                VibrationEffect effect = null;
-                if ("success".equals(type)) {
-                    effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK);
-                } else if ("error".equals(type)) {
-                    effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK);
-                } else if ("light".equals(type) || "threshold".equals(type)) {
-                    effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK);
-                }
+        if (vibrator == null || !vibrator.hasVibrator()) {
+            return;
+        }
 
-                if (effect != null) {
-                    vibrator.vibrate(effect);
-                    return;
-                }
-            }
+        // Predefined effects (VibrationEffect.createPredefined) are intentionally NOT used.
+        // They silently no-op on some OEM devices (confirmed on Samsung) even though
+        // hasVibrator() reports true. Plain duration/waveform vibration is the only
+        // path verified to work consistently across OEMs (Samsung + Xiaomi tested).
 
-            // Older Fallbacks / Custom Waveforms
-            if ("success".equals(type)) {
-                vibrator.vibrate(50);
-            } else if ("error".equals(type)) {
-                // Two-pulse error/failure pattern
-                long[] pattern = {0, 40, 60, 40};
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1));
-                } else {
-                    vibrator.vibrate(pattern, -1);
-                }
-            } else if ("light".equals(type) || "threshold".equals(type)) {
-                vibrator.vibrate(15);
+        if ("success".equals(type)) {
+            vibrate(vibrator, 50);
+        } else if ("error".equals(type)) {
+            long[] pattern = {0, 40, 60, 40};
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1));
+            } else {
+                vibrator.vibrate(pattern, -1);
             }
+        } else if ("light".equals(type) || "threshold".equals(type)) {
+            // 15ms was below the minimum threshold most Android OEMs (Samsung, Xiaomi, etc.)
+            // require to produce a perceptible vibration — the OS silently drops it.
+            // 35ms is short enough to feel distinctly lighter than success (50ms),
+            // but above the hardware minimum to actually fire.
+            vibrate(vibrator, 35);
+        }
+    }
+
+    private void vibrate(Vibrator vibrator, long durationMs) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE));
+        } else {
+            vibrator.vibrate(durationMs);
         }
     }
 }

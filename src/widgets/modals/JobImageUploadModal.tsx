@@ -42,6 +42,7 @@ export const JobImageUploadModal = ({
   const [deletedExistingUris, setDeletedExistingUris] = useState<string[]>([]);
   const [signedUris, setSignedUris] = useState<string[]>([]);
   const [jobDetails, setJobDetails] = useState<any>(null);
+  const [offlinePendingImages, setOfflinePendingImages] = useState<any[]>([]);
 
   // Reset state when modal opens
   useEffect(() => {
@@ -56,13 +57,24 @@ export const JobImageUploadModal = ({
   }, [visible]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+    if (visible && jobDetails && type) {
+      const pending = getOfflineImagesForJob(jobDetails.jobNumber, type);
+      setOfflinePendingImages(pending);
+    }
+  }, [visible, jobDetails?.jobNumber, type]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', async (data) => {
       if (data?.jobNumber === selectedJob?.jobNumber) {
-        fetchJobDetails();
+        const updated = await fetchJobDetails();
+        if (type && updated) {
+          const pending = getOfflineImagesForJob(selectedJob.jobNumber, type);
+          setOfflinePendingImages(pending);
+        }
       }
     });
     return () => sub.remove();
-  }, [selectedJob?.jobNumber]);
+  }, [selectedJob?.jobNumber, type]);
 
   const resetState = () => {
     setType(null);
@@ -74,19 +86,22 @@ export const JobImageUploadModal = ({
     setDeletedExistingUris([]);
     setSignedUris([]);
     setJobDetails(null);
+    setOfflinePendingImages([]);
   };
 
   const fetchJobDetails = async () => {
-    if (!selectedJob?.jobNumber) return;
+    if (!selectedJob?.jobNumber) return null;
     try {
       const res = await LeadService.findJobs({ jobNumber: selectedJob.jobNumber });
       const updated = res.data?.data?.[0];
       if (updated) {
         setJobDetails(updated);
+        return updated;
       }
     } catch (err) {
       console.warn('Failed to fetch job details in JobImageUploadModal:', err);
     }
+    return null;
   };
 
   useEffect(() => {
@@ -159,10 +174,8 @@ export const JobImageUploadModal = ({
       })
       .filter((img: any) => img.uri && !deletedExistingUris.includes(img.uri));
 
-    const offlinePending = getOfflineImagesForJob(jobDetails.jobNumber, type);
-
-    return [...serverImages, ...offlinePending];
-  }, [jobDetails, type, signedUris, deletedExistingUris]);
+    return [...serverImages, ...offlinePendingImages];
+  }, [jobDetails, type, signedUris, deletedExistingUris, offlinePendingImages]);
 
   const allImages = React.useMemo(() => {
     return [
@@ -175,6 +188,20 @@ export const JobImageUploadModal = ({
       })),
     ];
   }, [existingImages, images]);
+
+  const hasBeforeImage = React.useMemo(() => {
+    if (!jobDetails) return false;
+    const serverCount = jobDetails?.images?.beforeImages?.length || 0;
+    const offlineCount = getOfflineImagesForJob(jobDetails.jobNumber, 'before')?.length || 0;
+    return (serverCount + offlineCount) > 0;
+  }, [jobDetails]);
+
+  const hasAfterImage = React.useMemo(() => {
+    if (!jobDetails) return false;
+    const serverCount = jobDetails?.images?.afterImages?.length || 0;
+    const offlineCount = getOfflineImagesForJob(jobDetails.jobNumber, 'after')?.length || 0;
+    return (serverCount + offlineCount) > 0;
+  }, [jobDetails]);
 
   console.log('JobImageUploadModal Render State:', {
     visible,
@@ -371,21 +398,29 @@ export const JobImageUploadModal = ({
             {!type ? (
               <View className="flex-row gap-4 py-2">
                 <TouchableOpacity
+                  disabled={hasBeforeImage}
                   onPress={() => selectType('before')}
-                  className="flex-1 bg-zinc-50 dark:bg-zinc-800 py-8 px-4 rounded-3xl items-center justify-center border border-zinc-300/30 dark:border-zinc-700 shadow-sm"
+                  className={`flex-1 py-8 px-4 rounded-3xl items-center justify-center border shadow-sm ${hasBeforeImage
+                    ? 'bg-zinc-100 dark:bg-zinc-900 border-zinc-200/50 dark:border-zinc-800 opacity-50'
+                    : 'bg-zinc-50 dark:bg-zinc-800 border-zinc-300/30 dark:border-zinc-700'
+                    }`}
                 >
-                  <Icon name="image-plus" size={44} color={isDark ? '#E4E4E7' : '#1C252E'} />
-                  <Text className="mt-4 text-[13px] text-secondary text-center">
+                  <Icon name="image-plus" size={44} color={hasBeforeImage ? '#A1A1AA' : (isDark ? '#E4E4E7' : '#1C252E')} />
+                  <Text className={`mt-4 text-[13px] text-center ${hasBeforeImage ? 'text-zinc-400' : 'text-[#1C252E]'}`}>
                     {"Upload Before Images"}
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
+                  disabled={hasAfterImage}
                   onPress={() => selectType('after')}
-                  className="flex-1 bg-zinc-50 dark:bg-zinc-800 py-8 px-4 rounded-3xl items-center justify-center border border-zinc-300/30 dark:border-zinc-700 shadow-sm"
+                  className={`flex-1 py-8 px-4 rounded-3xl items-center justify-center border shadow-sm ${hasAfterImage
+                    ? 'bg-zinc-100 dark:bg-zinc-900 border-zinc-200/50 dark:border-zinc-800 opacity-50'
+                    : 'bg-zinc-50 dark:bg-zinc-800 border-zinc-300/30 dark:border-zinc-700'
+                    }`}
                 >
-                  <Icon name="image-plus" size={44} color={isDark ? '#E4E4E7' : '#1C252E'} />
-                  <Text className="mt-4 text-[13px] text-secondary text-center">
+                  <Icon name="image-plus" size={44} color={hasAfterImage ? '#A1A1AA' : (isDark ? '#E4E4E7' : '#1C252E')} />
+                  <Text className={`mt-4 text-[13px] text-center ${hasAfterImage ? 'text-zinc-400' : 'text-[#1C252E]'}`}>
                     {"Upload After Images"}
                   </Text>
                 </TouchableOpacity>
@@ -406,16 +441,16 @@ export const JobImageUploadModal = ({
                         {allImages.map((img, index) => (
                           <View
                             key={index}
-                            className="w-20 h-20 rounded-2xl overflow-visible relative mr-2"
+                            className="w-20 h-20 rounded-xl overflow-hidden bg-slate-100 relative mr-2"
                           >
                             <Image
                               source={{ uri: img.uri }}
-                              className="w-full h-full rounded-2xl"
+                              style={{ width: '100%', height: '100%' }}
                               resizeMode="cover"
                             />
                             <TouchableOpacity
                               onPress={() => removeImage(img)}
-                              className="absolute top-[-6px] right-[-6px] bg-black/70 rounded-full p-1 border border-white"
+                              className="absolute top-1 right-1 bg-black rounded-full p-0.5 shadow-sm"
                             >
                               <Icon name="close" size={12} color="white" />
                             </TouchableOpacity>

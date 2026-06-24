@@ -16,6 +16,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
+import { formatUSPhoneNumber } from '../../utils/phone-util';
 
 interface ReferralModalProps {
   visible: boolean;
@@ -39,7 +40,8 @@ const InputField = ({
   editable = true,
   showDropdown = false,
   dropdownOptions = [],
-  onSelectOption
+  onSelectOption,
+  ...rest
 }: any) => (
   <View className="mb-5 relative" style={{ zIndex: showDropdown ? 1000 : 1 }}>
     <View className="absolute -top-2.5 left-3 bg-white px-1 z-10">
@@ -69,6 +71,7 @@ const InputField = ({
             color: isDark ? '#E5E7EB' : '#334155',
           },
         ]}
+        {...rest}
       />
       {dropdown && <Icon name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#94a3b8" />}
     </TouchableOpacity>
@@ -313,9 +316,13 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
                 <InputField 
                   label="Phone Number" 
                   value={form.phoneNumber} 
-                  onChangeText={(t: string) => setForm({...form, phoneNumber: t})}
-                  placeholder="Phone Number"
+                  onChangeText={(t: string) => {
+                    const formatted = formatUSPhoneNumber(t);
+                    setForm({...form, phoneNumber: formatted});
+                  }}
+                  placeholder="+1 (123) 456-7890"
                   keyboardType="phone-pad"
+                  maxLength={17}
                   required
                   isDark={isDark}
                   editable={!isViewMode}

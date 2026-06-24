@@ -4,6 +4,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { format } from 'date-fns';
+import { getOfflineImagesForJob } from '../../../services/api/offlineUploadManager';
 
 const { width } = Dimensions.get('window');
 
@@ -177,25 +178,38 @@ export const MapJobCard = ({
           </TouchableOpacity>
 
           {/* Show Gallery only if images exist */}
-          {((job.images?.beforeImages?.length > 0) || (job.images?.afterImages?.length > 0)) && (
-            <TouchableOpacity
-              onPress={() => onGalleryPress?.(job)}
-              className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-            >
-              <IonIcon name="image" size={20} color="#333333" />
-            </TouchableOpacity>
-          )}
+          {(() => {
+            const offlineBefore = getOfflineImagesForJob(job.jobNumber, 'before');
+            const offlineAfter = getOfflineImagesForJob(job.jobNumber, 'after');
+            const hasBefore = (job.images?.beforeImages?.length > 0) || (offlineBefore.length > 0);
+            const hasAfter = (job.images?.afterImages?.length > 0) || (offlineAfter.length > 0);
+            const hasImages = hasBefore || hasAfter;
+            return hasImages && (
+              <TouchableOpacity
+                onPress={() => onGalleryPress?.(job)}
+                className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+              >
+                <IonIcon name="image" size={20} color="#333333" />
+              </TouchableOpacity>
+            );
+          })()}
 
           {/* Upload: Only for Owner and if no images yet */}
           {isMyJob &&
-            !(job.images?.beforeImages?.length > 0 && job.images?.afterImages?.length > 0) && (
-              <TouchableOpacity
-                onPress={() => onCameraPress?.(job)}
-                className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
-              >
-                <Icon name="camera" size={20} color="#000000ff" />
-              </TouchableOpacity>
-            )}
+            (() => {
+              const offlineBefore = getOfflineImagesForJob(job.jobNumber, 'before');
+              const offlineAfter = getOfflineImagesForJob(job.jobNumber, 'after');
+              const hasBefore = (job.images?.beforeImages?.length > 0) || (offlineBefore.length > 0);
+              const hasAfter = (job.images?.afterImages?.length > 0) || (offlineAfter.length > 0);
+              return !(hasBefore && hasAfter) && (
+                <TouchableOpacity
+                  onPress={() => onCameraPress?.(job)}
+                  className="w-10 h-10 rounded-xl bg-slate-50 items-center justify-center border border-slate-100"
+                >
+                  <Icon name="camera" size={20} color="#000000ff" />
+                </TouchableOpacity>
+              );
+            })()}
 
 
           {/* Reference: Always for Owner, Only if exists for others */}

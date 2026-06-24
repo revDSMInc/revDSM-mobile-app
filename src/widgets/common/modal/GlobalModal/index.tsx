@@ -29,77 +29,46 @@ export const GlobalModal: React.FC<GlobalModalProps> = ({
 }) => {
   const { colors, isDark } = useTheme();
 
-  const getHeaderColor = () => {
-    switch (type) {
-      case 'error':
-        return '#FF5630';
-      case 'success':
-        return '#22C55E';
-      case 'warning':
-        return '#FFAB00';
-      default:
-        return colors.primary.main;
-    }
+  const getConfirmBgColor = () => {
+    if (type === 'error') return '#FF5630';
+    return '#2EDE56'; // premium green
   };
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]} onPress={onClose}>
-        <View
-          style={[
-            styles.container,
-            {
-              backgroundColor: isDark ? '#1C1C1E' : '#fff',
-            },
-          ]}
-        >
-          <View
-            className="p-5 border-b items-center"
-            style={{ borderBottomColor: isDark ? colors.border : '#eee' }}
-          >
-            <Text
-              className="text-lg font-black tracking-widest text-center"
-              style={{ color: getHeaderColor() }}
-            >
-              {title}
-            </Text>
-          </View>
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable style={[styles.container, { backgroundColor: isDark ? '#1C1C1E' : '#fff' }]}>
+          <Text className="text-[18px] font-black text-[#1C252E] dark:text-white mb-2">
+            {title}
+          </Text>
+          <Text className="text-slate-600 dark:text-zinc-400 text-sm mb-6 leading-5">
+            {message}
+          </Text>
+          
+          {children}
 
-          <View className="px-6 py-8 items-center">
-            <Text
-              className="text-sm text-center leading-5 opacity-80"
-              style={{
-                color: isDark ? '#fff' : colors.textSecondary,
-                marginBottom: children ? 20 : 0,
-              }}
-            >
-              {message}
-            </Text>
-            {children}
-          </View>
-
-          <View style={[styles.footer, { borderTopColor: isDark ? colors.border : '#eee' }]}>
+          <View className="flex-row justify-end gap-3">
             {onCancel && (
               <TouchableOpacity
                 onPress={onCancel}
-                style={[
-                  styles.btn,
-                  { backgroundColor: isDark ? '#2A2A2A' : '#F4F6F8', marginRight: 12 },
-                ]}
+                className="px-4 py-2.5 rounded-xl justify-center items-center"
               >
-                <Text style={[styles.btnText, { color: isDark ? '#fff' : '#637381' }]}>
+                <Text className="font-bold text-[#1C252E] dark:text-zinc-200 text-sm">
                   {cancelText}
                 </Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
               onPress={onConfirm || onClose}
-              style={[styles.btn, { backgroundColor: getHeaderColor(), flex: onCancel ? 1 : 0 }]}
+              style={{ backgroundColor: getConfirmBgColor() }}
+              className="px-5 py-2.5 rounded-xl justify-center items-center"
             >
-              <Text style={styles.btnText}>{confirmText}</Text>
+              <Text className="text-white font-bold text-sm">
+                {confirmText}
+              </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </Pressable>
       </Pressable>
     </Modal>
   );
@@ -110,38 +79,18 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: 16,
   },
   container: {
-    width: '100%',
-    maxWidth: 340,
+    width: '90%',
+    maxWidth: 360,
     borderRadius: 32,
-    overflow: 'hidden',
+    padding: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 30,
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
     elevation: 10,
-  },
-  footer: {
-    padding: 20,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  btn: {
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 16,
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-    letterSpacing: 1.1,
   },
 });

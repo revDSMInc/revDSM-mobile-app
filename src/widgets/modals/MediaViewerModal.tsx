@@ -171,7 +171,9 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     try {
       const ext = mediaType === 'image' ? 'jpg' : 'mp4';
       const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/save_${Date.now()}.${ext}`;
-      const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri);
+      const res = await ReactNativeBlobUtil.config({ path }).fetch('GET', mediaUri, {
+        'Accept-Encoding': 'identity',
+      });
       const rawPath = res.path();
       const saveTag = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
       await saveToCameraRollWithRetry(saveTag, mediaType === 'image' ? 'photo' : 'video');

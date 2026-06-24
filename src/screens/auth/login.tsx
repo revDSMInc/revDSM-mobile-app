@@ -20,8 +20,9 @@ import { validateEmail } from '../../utils/validation';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation';
-import { TouchableOpacity, Platform, PermissionsAndroid } from 'react-native';
+import { TouchableOpacity, Platform, PermissionsAndroid, Keyboard } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
+import { commitAutofill, cancelAutofill } from '../../utils/autofill';
 
 
 export default function LoginScreen() {
@@ -32,7 +33,12 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [location, setLocation] = useState<{ lat: number; long: number } | null>(null);
+  const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
+
+  React.useEffect(() => {
+    cancelAutofill();
+  }, []);
 
   React.useEffect(() => {
     const requestLocationPermission = async () => {
@@ -88,6 +94,10 @@ export default function LoginScreen() {
       return;
     }
 
+    Keyboard.dismiss();
+    emailRef.current?.blur();
+    passwordRef.current?.blur();
+
     try {
       const res: any = await loginMutation.mutateAsync({
         email: email,
@@ -96,6 +106,7 @@ export default function LoginScreen() {
         long: location?.long
       });
 
+      commitAutofill();
 
       if (res?.twoFactorRequired) {
         if (res.method === 'authenticator') {
@@ -158,7 +169,8 @@ export default function LoginScreen() {
               <Text className="text-2xl font-semibold mb-8" style={{ color: colors.text }}>
                 Sign in to <Text style={{ color: colors.primary.main }}>rev</Text>DSM
               </Text>
-              <CustomInput
+               <CustomInput
+                ref={emailRef}
                 label="Email"
                 placeholder="Enter your email"
                 value={email}
@@ -169,8 +181,9 @@ export default function LoginScreen() {
                 returnKeyType="next"
                 onSubmitEditing={() => passwordRef.current?.focus()}
                 blurOnSubmit={false}
-                textContentType="username"
+                textContentType={Platform.OS === 'ios' ? 'username' : undefined}
                 autoComplete="email"
+                importantForAutofill="yes"
               />
 
               <CustomInput
@@ -184,8 +197,9 @@ export default function LoginScreen() {
                 onRightIconPress={() => setShowPassword((p) => !p)}
                 returnKeyType="done"
                 onSubmitEditing={handleLogin}
-                textContentType="password"
+                textContentType={Platform.OS === 'ios' ? 'password' : undefined}
                 autoComplete="password"
+                importantForAutofill="yes"
               />
 
               <TouchableOpacity

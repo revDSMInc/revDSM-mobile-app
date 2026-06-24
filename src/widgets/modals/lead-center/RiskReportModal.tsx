@@ -12,6 +12,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { ENV } from '../../../config/env';
 import { useUploadReportMutation } from '../../../hooks/useLeadMutation';
+import { parseApiError } from '../../../utils/error-util';
 
 interface RiskReportModalProps {
   visible: boolean;
@@ -107,8 +108,9 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
         onClose();
       }, 3000);
     } catch (e: any) {
-      addLog(`❌ Error: ${e.message}`);
-      Alert.alert('Generation Failed', e.message);
+      const errorMsg = parseApiError(e);
+      addLog(`❌ Error: ${errorMsg}`);
+      Alert.alert('Generation Failed', errorMsg);
       setLoadingStep(0);
     }
   };

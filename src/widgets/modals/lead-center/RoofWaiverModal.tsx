@@ -232,7 +232,7 @@ export const RoofWaiverModal = ({
             </View>
 
             {renderField('First Name*', formData.firstName, 'firstName', undefined, true)}
-            {renderField('Phone Numberß*', formData.phoneNumber, 'phoneNumber', undefined, true)}
+            {renderField('Phone Number*', formData.phoneNumber, 'phoneNumber', undefined, true)}
             {renderField('Email Address*', formData.email, 'email', undefined, true)}
             {renderField('Lead ID*', formData.leadId, 'leadId')}
             {renderField('Rep Name*', formData.repName, 'repName')}

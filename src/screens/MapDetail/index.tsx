@@ -12,6 +12,7 @@ import {
   Modal,
   PermissionsAndroid,
   FlatList,
+  DeviceEventEmitter,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 
@@ -28,6 +29,7 @@ import { ReferralModal } from '../../widgets/modals/ReferralModal';
 import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { format } from 'date-fns';
+import { getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashMessage } from '../../config/message';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -239,6 +241,14 @@ export default function MapDetailScreen() {
   const fetchLeads = async () => {
     refetchQuery();
   };
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
+      queryClient.invalidateQueries({ queryKey: ['mapJobs'] });
+      refetchQuery();
+    });
+    return () => sub.remove();
+  }, [queryClient, refetchQuery]);
 
   const baseFilteredLeads = useMemo(() => {
     console.log('[MapDetail DEBUG] Recalculating filteredLeads. leads.length:', leads.length, 'myJobsOnly:', filters.myJobsOnly, 'user ID:', user?._id || user?.id);
@@ -551,17 +561,25 @@ export default function MapDetailScreen() {
                         <View className="bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg border border-green-100 dark:border-green-900/30">
                           <Text className="text-[13px] font-black text-[#2EDE56]">#{job.jobNumber}</Text>
                         </View>
-                        {(job.images?.beforeImages?.length > 0 || job.images?.afterImages?.length > 0) && (
-                          <TouchableOpacity
-                            onPress={() => {
-                              setSelectedJob(job);
-                              setShowGalleryModal(true);
-                            }}
-                            className="p-1"
-                          >
-                            <Icon name="image-multiple-outline" size={22} color="#2EDE56" />
-                          </TouchableOpacity>
-                        )}
+                        {(() => {
+                          const offlineBefore = getOfflineImagesForJob(job.jobNumber, 'before');
+                          const offlineAfter = getOfflineImagesForJob(job.jobNumber, 'after');
+                          const hasImages = (job.images?.beforeImages?.length > 0) || 
+                                            (job.images?.afterImages?.length > 0) || 
+                                            (offlineBefore.length > 0) || 
+                                            (offlineAfter.length > 0);
+                          return hasImages && (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setSelectedJob(job);
+                                setShowGalleryModal(true);
+                              }}
+                              className="p-1"
+                            >
+                              <Icon name="image-multiple-outline" size={22} color="#2EDE56" />
+                            </TouchableOpacity>
+                          );
+                        })()}
                       </View>
 
                       {/* Card Body - Grid Layout */}

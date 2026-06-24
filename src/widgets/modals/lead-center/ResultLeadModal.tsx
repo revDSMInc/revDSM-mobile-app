@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Modal, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from '@react-native-community/blur';
 
 interface ResultLeadModalProps {
@@ -40,6 +40,7 @@ export const ResultLeadModal = ({
   loading,
 }: ResultLeadModalProps) => {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const [reason, setReason] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
@@ -79,8 +80,12 @@ export const ResultLeadModal = ({
         </TouchableOpacity>
 
         <View
-          className="w-full rounded-t-[32px] px-6 pt-5 pb-8"
-          style={{ backgroundColor: isDark ? colors.surface : colors.background, zIndex: 1 }}
+          className="w-full rounded-t-[32px] px-6 pt-5"
+          style={{
+            backgroundColor: isDark ? colors.surface : colors.background,
+            zIndex: 1,
+            paddingBottom: Math.max(insets.bottom, 24),
+          }}
         >
           {/* Header */}
           <View className="flex-row items-center justify-between mb-8">
