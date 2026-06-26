@@ -11,6 +11,8 @@ import {
   Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -19,6 +21,7 @@ interface BeforeAfterPresentModalProps {
   onClose: () => void;
   beforeImages: string[];
   afterImages: string[];
+  job?: any;
 }
 
 export const BeforeAfterPresentModal = ({
@@ -26,9 +29,29 @@ export const BeforeAfterPresentModal = ({
   onClose,
   beforeImages,
   afterImages,
+  job,
 }: BeforeAfterPresentModalProps) => {
+  const { user } = useAuth();
   const [activeIndex, setActiveIndex] = React.useState(0);
   const scrollViewRef = React.useRef<ScrollView>(null);
+
+  React.useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (visible && userId) {
+      logEvent('view', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'presentation',
+        meta: {
+          jobNumber: job?.jobNumber,
+          jobId: job?._id,
+          beforeImagesCount: beforeImages.length,
+          afterImagesCount: afterImages.length,
+          action: 'presentation_mode_selected',
+        },
+      });
+    }
+  }, [visible, user, job, beforeImages.length, afterImages.length]);
 
   // Number of slides is determined by the number of complete pairs
   const numSlides = Math.min(beforeImages.length, afterImages.length);

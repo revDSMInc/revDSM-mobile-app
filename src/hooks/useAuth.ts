@@ -6,6 +6,7 @@ import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { queryClient } from '../services/api/queryClient';
+import { logEvent } from '../services/api/LoggerService';
 
 
 export const useAuth = () => {
@@ -18,6 +19,8 @@ export const useAuth = () => {
    * Universal Logout Utility
    */
   const logout = useCallback(async () => {
+    const userId = user?._id || user?.id;
+    const userEmail = user?.email;
     try {
       // 1. Clear session from persistent storage & headers
       await setSessionHeader(null);
@@ -28,10 +31,19 @@ export const useAuth = () => {
 
       // 4. Wipe memory / Redux state
       dispatch(logoutAction());
+
+      if (userId) {
+        logEvent('logout', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'system',
+          meta: { email: userEmail },
+        });
+      }
     } catch (err) {
       console.error('Logout failed', err);
     }
-  }, [dispatch]);
+  }, [dispatch, user]);
 
   /**
    * Refreshes the active user's profile from source

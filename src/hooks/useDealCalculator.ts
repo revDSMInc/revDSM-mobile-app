@@ -10,6 +10,12 @@ import { Alert, DeviceEventEmitter } from 'react-native';
 import { useAuth } from './useAuth';
 import { autoConfirmManager } from '../utils/calculator/autoConfirmManager';
 import { logEvent } from '../services/api/LoggerService';
+import {
+  logCalculatorCreated,
+  logCalculatorRename,
+  logPaymentMethodInherited,
+} from '../utils/activity-log/calculator-log';
+import { sanitizeCalculatorLogTitle } from '../utils/activity-log/job-builder-auto-log';
 
 const INITIAL_INPUTS = {
   gutter5DsE: '',
@@ -76,6 +82,13 @@ export const useDealCalculator = (lead: any) => {
   }>>([]);
   const fieldLogTimerRef = useRef<any>(null);
   const lastSavedTitlesRef = useRef<Record<string, string>>({});
+  const hasLoggedCalculatorViewRef = useRef(false);
+
+  const leadId = lead?._id || lead?.id;
+
+  useEffect(() => {
+    hasLoggedCalculatorViewRef.current = false;
+  }, [leadId]);
 
   const getInputLabelAndCategory = (name: string): { label: string; category: string } => {
     switch (name) {
@@ -88,15 +101,15 @@ export const useDealCalculator = (lead: any) => {
       case 'versaMaxFt1': return { label: 'Versa Max', category: 'gutter_filter' };
       case 'versaMaxFt2': return { label: 'Versa Max 2nd Story', category: 'gutter_filter' };
       case 'versaMaxFt3': return { label: 'Versa Max 3rd Story', category: 'gutter_filter' };
-      case 'versa6Ft1': return { label: '6" Versa 1st Story', category: 'gutter_filter' };
-      case 'versa7Ft1': return { label: '7" Versa 1st Story', category: 'gutter_filter' };
-      case 'filter45Ft1': return { label: '7" & 5" Versa 1st Story', category: 'gutter_filter' };
-      case 'versa6Ft2': return { label: '6" Versa 2nd Story', category: 'gutter_filter' };
-      case 'versa7Ft2': return { label: '7" Versa 2nd Story', category: 'gutter_filter' };
-      case 'filter45Ft2': return { label: '7" & 5" Versa 2nd Story', category: 'gutter_filter' };
-      case 'versa6Ft3': return { label: '6" Versa 3rd Story', category: 'gutter_filter' };
-      case 'versa7Ft3': return { label: '7" Versa 3rd Story', category: 'gutter_filter' };
-      case 'filter45Ft3': return { label: '7" & 5" Versa 3rd Story', category: 'gutter_filter' };
+      case 'versa6Ft1': return { label: '6" Versa (1st Story)', category: 'gutter_filter' };
+      case 'versa7Ft1': return { label: '7" Versa (1st Story)', category: 'gutter_filter' };
+      case 'filter45Ft1': return { label: '4" & 5" Versa (1st Story)', category: 'gutter_filter' };
+      case 'versa6Ft2': return { label: '6" Versa (2nd Story)', category: 'gutter_filter' };
+      case 'versa7Ft2': return { label: '7" Versa (2nd Story)', category: 'gutter_filter' };
+      case 'filter45Ft2': return { label: '4" & 5" Versa (2nd Story)', category: 'gutter_filter' };
+      case 'versa6Ft3': return { label: '6" Versa (3rd Story)', category: 'gutter_filter' };
+      case 'versa7Ft3': return { label: '7" Versa (3rd Story)', category: 'gutter_filter' };
+      case 'filter45Ft3': return { label: '4" & 5" Versa (3rd Story)', category: 'gutter_filter' };
       case 'ckToInstallers': return { label: 'Check to Installers', category: 'gutter_filter' };
       case 'extraLabor': return { label: 'Extra Labor Hours', category: 'gutter_filter' };
       case 'paymentPlan': return { label: 'Payment Plan', category: 'gutter_filter' };
@@ -147,9 +160,10 @@ export const useDealCalculator = (lead: any) => {
     });
   };
 
-  // Log viewed event whenever active calculator changes
+  // Mirror web lf-calculator-view: log calculator viewed once on initial render, not per tab switch.
   useEffect(() => {
-    if (active?._id && user?._id) {
+    if (active?._id && user?._id && !hasLoggedCalculatorViewRef.current) {
+      hasLoggedCalculatorViewRef.current = true;
       logEvent('view', {
         user_id: user._id,
         created_by: user._id,
@@ -157,12 +171,12 @@ export const useDealCalculator = (lead: any) => {
         meta: {
           calculatorId: active._id,
           appointmentId: active.appointmentId || appointmentId,
-          calculatorTitle: active.name || active.title,
+          calculatorTitle: sanitizeCalculatorLogTitle(active.name || active.title || ''),
           action: 'calculator viewed',
         },
       });
     }
-  }, [active?._id, user?._id]);
+  }, [active?._id, user?._id, appointmentId]);
 
   // Clean up and flush pending change logs on active calculator switch or unmount
   useEffect(() => {
@@ -269,6 +283,7 @@ export const useDealCalculator = (lead: any) => {
 
   const latestActiveRef = useRef<any>(null);
   const isAutoSavingRef = useRef(false);
+  const saveCalculatorRef = useRef<(data: any) => Promise<void>>(async () => {});
 
   const fetchCalculators = async (leadOverride?: any) => {
     const activeLead = leadOverride || lead;
@@ -323,11 +338,9 @@ export const useDealCalculator = (lead: any) => {
       let calculatorsData = calcRes.data?.data || calcRes.data || [];
 
       if (calculatorsData.length === 0) {
-        const leadName = `${activeLead.customerDetails?.firstName || ''} ${activeLead.customerDetails?.lastName || ''
-          }`.trim();
         const defaultPay = user?.defaultPaymentMethod || (isLowesLead ? 'lowes_ach' : 'check');
         const fullPayload = {
-          title: leadName || '.',
+          title: 'Calculator',
           position: 1,
           ...INITIAL_INPUTS,
           paymentPlan: defaultPay,
@@ -340,22 +353,29 @@ export const useDealCalculator = (lead: any) => {
         const reCalcRes = await LeadService.getCalculators(apptId);
         calculatorsData = reCalcRes.data?.data || reCalcRes.data || [];
 
-        // Log first-time calculator creation — matches web's 'Created new calculator tab' event
         const userId = user?._id || user?.id;
         if (userId) {
-          const createdData = (createRes as any)?.data;
-          logEvent('create', {
-            user_id: userId,
-            created_by: userId,
-            module_type: 'calculator',
-            meta: {
-              calculatorId: createdData?._id,
-              appointmentId: createdData?.appointmentId || apptId,
-              calculatorTitle: createdData?.title || leadName || '.',
-              isFirstCalculator: true,
-              action: 'Created new calculator tab',
-            },
+          const createdData = (createRes as any)?.data?.data || (createRes as any)?.data;
+          const createdId = createdData?._id;
+          await logCalculatorCreated({
+            userId,
+            calculatorId: createdId,
+            appointmentId: createdData?.appointmentId || apptId,
+            calculatorTitle: createdData?.title || 'Calculator',
+            isFirstCalculator: true,
+            calculatorPosition: 1,
           });
+          if (defaultPay) {
+            await logPaymentMethodInherited({
+              userId,
+              calculatorId: createdId,
+              appointmentId: apptId,
+              calculatorTitle: createdData?.title || 'Calculator',
+              paymentMethod: defaultPay,
+              inheritanceSource: 'default payment method',
+              toCalculator: createdId,
+            });
+          }
         }
       }
 
@@ -445,10 +465,11 @@ export const useDealCalculator = (lead: any) => {
   }, [lead?._id]);
 
   useEffect(() => {
+    const userId = user?._id || user?.id;
     calculators.forEach((calc) => {
-      autoConfirmManager.registerPendingConfirm(calc);
+      autoConfirmManager.registerPendingConfirm(calc, userId);
     });
-  }, [calculators]);
+  }, [calculators, user]);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('calculatorAutoConfirmed', () => {
@@ -469,8 +490,12 @@ export const useDealCalculator = (lead: any) => {
     const hasStoryFt = ['lighting1stStory', 'lighting2ndStory', 'lighting3rdStory'].some(
       (f) => Number(extras[f]) > 0
     );
+    const normalizeControlBox = (v: any) => {
+      const s = String(v ?? '').trim();
+      return s === '0' ? '' : s;
+    };
     const expectedControlBox = hasStoryFt ? '1' : '';
-    const currentControlBox = String(extras.lightingControlBox || '');
+    const currentControlBox = normalizeControlBox(extras.lightingControlBox);
 
     if (currentControlBox !== expectedControlBox) {
       setCalculators((prev) => {
@@ -482,11 +507,9 @@ export const useDealCalculator = (lead: any) => {
         return next;
       });
 
-      // Log the auto-set of Control Box — mirrors web's Lighting.js which routes this
-      // through handleExtras (the normal logging pipeline). On mobile we bypass updateActive
-      // so we fire the logEvent explicitly here.
+      // Only log when auto-adding control box (story footage entered) — not on open/normalize
       const userId = user?._id || user?.id;
-      if (userId && activeCalc._id) {
+      if (userId && activeCalc._id && hasStoryFt && expectedControlBox === '1') {
         logEvent('change', {
           user_id: userId,
           created_by: userId,
@@ -635,10 +658,23 @@ export const useDealCalculator = (lead: any) => {
           return res.baseRetailTotal;
         };
         const titles = getUpdatedCalculatorTitles(next, getRetailPrice);
+        const displacedToSave: any[] = [];
         next.forEach((c, idx) => {
           const key = c._id || `temp-${idx}`;
           if (titles[key]) c.name = titles[key];
+          if (idx !== activeIdx && c._id) {
+            const oldTitle = lastSavedTitlesRef.current[c._id];
+            if (oldTitle && c.name && oldTitle !== c.name) {
+              displacedToSave.push({ ...c });
+            }
+          }
         });
+
+        if (displacedToSave.length > 0) {
+          setTimeout(() => {
+            displacedToSave.forEach((c) => saveCalculatorRef.current(c));
+          }, 0);
+        }
 
         if (bypassAutoSave) {
           isPendingSave.current = false;
@@ -764,6 +800,7 @@ export const useDealCalculator = (lead: any) => {
       isAutoSavingRef.current = false;
     }
   };
+  saveCalculatorRef.current = saveCalculator;
 
   useEffect(() => {
     if (active) {
@@ -839,18 +876,27 @@ export const useDealCalculator = (lead: any) => {
         const createdCalc = newCalcs[newCalcs.length - 1];
         const userId = user?._id || user?.id;
         if (userId && createdCalc) {
-          logEvent('create', {
-            user_id: userId,
-            created_by: userId,
-            module_type: 'calculator',
-            meta: {
+          await logCalculatorCreated({
+            userId,
+            calculatorId: createdCalc._id,
+            appointmentId: apptId,
+            calculatorTitle: createdCalc.name,
+            isFirstCalculator: false,
+            calculatorPosition: createdCalc.position ?? nextPosition,
+            action: 'calculator_created',
+          });
+          const inheritedPaymentMethod = defaultPay || '';
+          if (inheritedPaymentMethod) {
+            await logPaymentMethodInherited({
+              userId,
               calculatorId: createdCalc._id,
               appointmentId: apptId,
               calculatorTitle: createdCalc.name,
-              isFirstCalculator: false,
-              action: 'Created new calculator tab',
-            },
-          });
+              paymentMethod: inheritedPaymentMethod,
+              inheritanceSource: 'default payment method',
+              toCalculator: createdCalc._id,
+            });
+          }
         }
       }
     } catch (e) {
@@ -972,11 +1018,12 @@ export const useDealCalculator = (lead: any) => {
           meta: {
             leadId: lead?._id || lead?.id,
             sourceCalculatorId: duplicate._id,
-            sourceCalculatorTitle: duplicate.name,
-            newCalculatorTitle: warningTitle,
+            sourceCalculatorTitle: sanitizeCalculatorLogTitle(duplicate.name || duplicate.title || ''),
+            newCalculatorTitle: sanitizeCalculatorLogTitle(warningTitle),
             appointmentId: apptId,
             position: nextPosition,
-            action: 'calculator_duplicated',
+            action: 'Calculator',
+            duplicateAction: 'calculator_duplicated',
           },
         },
       });
@@ -984,9 +1031,28 @@ export const useDealCalculator = (lead: any) => {
       const newCalcs = await fetchCalculators();
       if (newCalcs && newCalcs.length > 0) {
         setActiveIdx(newCalcs.length - 1);
-        // Note: duplicateLog in the API payload is processed by the backend to create the
-        // 'calculator_duplicated' activity entry. No extra client-side logEvent needed here
-        // — doing so causes a double 'New Calculator Tab' entry in the Sales Portal timeline.
+        const createdCalc = newCalcs[newCalcs.length - 1];
+        const userId = user?._id || user?.id;
+        const logTitle = sanitizeCalculatorLogTitle(warningTitle);
+        const sourceTitle = sanitizeCalculatorLogTitle(duplicate.name || duplicate.title || '');
+        const leadIdVal = lead?._id || lead?.id;
+
+        const inheritedPaymentMethod = duplicate?.inputs?.paymentPlan || duplicate?.paymentMethod || '';
+        if (userId && createdCalc && inheritedPaymentMethod) {
+          await logPaymentMethodInherited({
+            userId,
+            calculatorId: createdCalc._id,
+            appointmentId: apptId,
+            calculatorTitle: logTitle,
+            paymentMethod: inheritedPaymentMethod,
+            inheritanceSource: 'calculator duplication',
+            fromCalculator: duplicate._id,
+            toCalculator: createdCalc._id,
+            sourceCalculatorTitle: sourceTitle,
+            newCalculatorTitle: logTitle,
+            leadId: leadIdVal,
+          });
+        }
       }
     } catch (e) {
       console.warn('Failed to duplicate', e);
@@ -1171,6 +1237,52 @@ export const useDealCalculator = (lead: any) => {
     }
   };
 
+  const handleRenameCalculator = async (idx: number, newTitle: string) => {
+    const calc = calculators[idx];
+    const trimmed = newTitle.trim();
+    if (!calc?._id || !trimmed) return;
+
+    const previousTitle = calc.name || calc.title || '';
+    if (previousTitle === trimmed) return;
+
+    try {
+      setLoading(true);
+      setCalculators((prev) => {
+        const next = [...prev];
+        next[idx] = { ...next[idx], name: trimmed };
+        return next;
+      });
+
+      await LeadService.updateCalculator(calc._id, {
+        title: trimmed,
+        gutter5DsE: Number(calc.inputs?.gutter5DsE || 0),
+        gutter6Ft1: Number(calc.inputs?.gutter6Ft1 || 0),
+        gutter7DsE: Number(calc.inputs?.gutter7DsE || 0),
+        paymentMethod: calc.inputs?.paymentPlan || 'check',
+        pricemarkup: calc.inputs?.markup || '100',
+        price: calc.price || 0,
+      });
+
+      lastSavedTitlesRef.current[calc._id] = trimmed;
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        await logCalculatorRename({
+          userId,
+          calculatorId: calc._id,
+          appointmentId: calc.appointmentId || appointmentId || '',
+          previousCalculatorTitle: previousTitle,
+          newCalculatorTitle: trimmed,
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to rename calculator', e);
+      Alert.alert('Error', 'Could not rename calculator. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return {
     calculators,
     setCalculators,
@@ -1192,5 +1304,6 @@ export const useDealCalculator = (lead: any) => {
     handleDuplicateCalculator,
     handleDeleteCalculator,
     handleReorderCalculators,
+    handleRenameCalculator,
   };
 };

@@ -33,6 +33,16 @@ import JobService from '../../services/api/JobService';
 import { calculateCommission } from '../../utils/calculator/commission-utils';
 import { parseSafeISO } from '../../utils/date-util';
 import { logEvent } from '../../services/api/LoggerService';
+import {
+  logAutoPopulatedSection,
+} from '../../utils/activity-log/auto-fields';
+import {
+  fetchJobBuilderLoggedSections,
+  markAutoFieldsLogged,
+  measurementIndexToLabels,
+  shouldLogJobBuilderFieldChange,
+} from '../../utils/activity-log/job-builder-auto-log';
+import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
 // @ts-ignore
 import base64 from 'base-64';
 
@@ -125,107 +135,21 @@ function buildJobNumber(repDetails: any, leadNum: string | number) {
   return initials ? `${initials}${leadNum}` : String(leadNum ?? 'N/A');
 }
 
-const AUTO_FIELDS_BY_SECTION: Record<string, any[]> = {
-  gutter: [
-    { key: 'extras_wedges',                label: 'Wedges',                       getValue: (cd: any) => cd?.wedges },
-    { key: 'extras_straps',                label: 'Straps',                       getValue: (cd: any) => cd?.straps },
-    { key: 'extras_modifyHeight',          label: 'Modify Height/R&R',            getValue: (cd: any) => cd?.modifyHeight },
-    { key: 'extras_groundSpout',           label: 'GroundSpout',                  getValue: (cd: any) => cd?.groundSpout },
-    { key: 'extras_replaceCorner',         label: 'Replace Corner Miter',         getValue: (cd: any) => cd?.replaceCorner },
-    { key: 'extras_extendedSplashGuard',   label: 'Extended Splash Guard',        getValue: (cd: any) => cd?.extendedSplashGuard },
-    { key: 'extras_extendedSplashGuard032',label: 'Extended .032 Splash Guard',   getValue: (cd: any) => cd?.extendedSplashGuard032 },
-    { key: 'gutter_profile',               label: 'Gutter Size & Profile',        getValue: (cd: any) => cd?.gutterProfile ?? cd?.gutter_profile },
-  ],
-  leaffilter: [
-    { key: 'leaffilter_extras_csr',              label: 'C-S-R',               getValue: (cd: any) => cd?.csr },
-    { key: 'leaffilter_extras_cornersFilter',    label: 'Corners (Filter)',    getValue: (cd: any) => cd?.cornersFilter },
-    { key: 'leaffilter_extras_sawzallHanger',    label: 'Sawzall Hanger',     getValue: (cd: any) => cd?.sawzallHanger },
-    { key: 'leaffilter_extras_removeProtection', label: 'Remove Protection',  getValue: (cd: any) => cd?.removeProtection },
-    { key: 'leaffilter_extras_ribbedRoof',       label: 'Ribbed Roof',        getValue: (cd: any) => cd?.ribbedRoof },
-  ],
-  fascia: [
-    { key: 'fascia_wrap_footage',           label: 'Fascia Wrap Footage',           getValue: (cd: any) => cd?.fasciaWrapFootage ?? cd?.trimWrap },
-    { key: 'fascia_boards_footage',         label: 'Fascia Boards Footage',         getValue: (cd: any) => cd?.fasciaBoardsFootage ?? cd?.fasciaBoard },
-    { key: 'fascia_aluminum_board_footage', label: 'Aluminum Fascia Board Footage', getValue: (cd: any) => cd?.aluminumFasciaBoard },
-  ],
-  soffit: [
-    { key: 'soffit_vinyl_footage',  label: 'Vinyl Soffit Footage',    getValue: (cd: any) => cd?.vinylSoffit },
-    { key: 'soffit_porch_footage',  label: 'Porch Ceiling Footage',   getValue: (cd: any) => cd?.porchCeiling },
-    { key: 'soffit_nailer_footage', label: 'Nailer Build Out Footage', getValue: (cd: any) => cd?.nailerBuildOut },
-  ],
-  additional: [
-    { key: 'misc_extraLabor', label: 'Extra Labor', getValue: (cd: any) => cd?.extraLabor },
-    { key: 'misc_screenPulls', label: 'Number of Screen Pulls', getValue: (cd: any) => cd?.screens },
-  ],
-  lighting: [
-    { key: 'lighting_booster_box',         label: 'Booster Box',                  getValue: (cd: any) => parseFloat(cd?.lightingBoosterBox) || 0 },
-    { key: 'lighting_control_box',         label: 'Control Box',                  getValue: (cd: any) => parseFloat(cd?.lightingControlBox) || 0 },
-    { key: 'lighting_electrical_outlet',   label: 'Electrical Outlet',            getValue: (cd: any) => parseFloat(cd?.lightingElectricalOutlet) || 0 },
-    { key: 'lighting_wifi_extender',       label: 'WiFi Extender',                getValue: (cd: any) => parseFloat(cd?.lightingWifiExtender) || 0 },
-  ],
-};
-
-function isQualifyingValue(value: any) {
-  if (value === null || value === undefined) return false;
-  if (typeof value === 'number') return value > 0;
-  if (typeof value === 'string') return value.trim().length > 0;
-  return Boolean(value);
-}
-
-function getAutoFieldEntriesForSection(section: string, calculatorData: any) {
-  const entries: any[] = [];
-  const fields = AUTO_FIELDS_BY_SECTION[section] || [];
-
-  for (const field of fields) {
-    const value = field.getValue(calculatorData);
-    if (isQualifyingValue(value)) {
-      entries.push({ key: field.key, label: field.label, value });
-    }
-  }
-
-  if (section === 'lighting') {
-    const extrasEntries = entries.filter((e) =>
-      ['lighting_booster_box', 'lighting_control_box', 'lighting_electrical_outlet', 'lighting_wifi_extender'].includes(e.key)
-    );
-    if (extrasEntries.length > 0) {
-      return extrasEntries;
-    }
-    const storyFields = [
-      { key: 'lighting_1st_story_footage', label: 'Lighting 1st Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting1stStory) || 0 },
-      { key: 'lighting_2nd_story_footage', label: 'Lighting 2nd Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting2ndStory) || 0 },
-      { key: 'lighting_3rd_story_footage', label: 'Lighting 3rd Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting3rdStory) || 0 },
-    ];
-    return storyFields
-      .map((f) => ({ key: f.key, label: f.label, value: f.getValue(calculatorData) }))
-      .filter((e) => isQualifyingValue(e.value));
-  }
-
-  if (section === 'leaffilter') {
-    const combinations = calculatorData?.leaffilter?.combinations;
-    if (Array.isArray(combinations)) {
-      combinations.forEach((combo: any, index: number) => {
-        if (!combo?.isLocked) return;
-        const n = index + 1;
-        const gutterOpeningWidth = combo?.gutterOpeningWidth;
-        if (isQualifyingValue(gutterOpeningWidth)) {
-          entries.push({ key: `lf_combo_${n}_gutterOpeningWidth`, label: `Gutter Opening Width (Combo ${n})`, value: gutterOpeningWidth });
-        }
-        const lfProfile = combo?.lfProfile;
-        if (isQualifyingValue(lfProfile)) {
-          entries.push({ key: `lf_combo_${n}_lfProfile`, label: `LeafFilter Profile (Combo ${n})`, value: lfProfile });
-        }
-      });
-    }
-  }
-
-  return entries;
-}
-
 export default function JobBuilderScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const queryClient = useQueryClient();
-  const { initialJobState, calculatorData, leadId, outcomeForm, onGoBack, onComplete } = route.params || {};
+  const {
+    initialJobState,
+    calculatorData,
+    allCalculators,
+    appointmentId: routeAppointmentId,
+    isLowesLead: routeIsLowesLead,
+    leadId,
+    outcomeForm,
+    onGoBack,
+    onComplete,
+  } = route.params || {};
 
   const [jobState, setJobState] = useState(initialJobState || {});
   const { colors, isDark } = useTheme();
@@ -301,10 +225,59 @@ export default function JobBuilderScreen() {
   const activeStep = availableStepsInfo[currentStepIndex];
 
   const autoFieldsLoggedRef = useRef<Record<string, boolean>>({});
+  const jobBuilderRecordRef = useRef<any>(null);
+  const initDoneRef = useRef(false);
   const lastStepLoggedRef = useRef<string | null>(null);
   const prevJobStateRef = useRef<any>(null);
   const fieldLogTimerRef = useRef<any>(null);
   const openedLoggedRef = useRef(false);
+
+  const markSectionLogged = useCallback(
+    async (section: string) => {
+      autoFieldsLoggedRef.current[section] = true;
+      if (leadId) {
+        await markAutoFieldsLogged(leadId, jobBuilderRecordRef.current, section);
+        const existing =
+          jobBuilderRecordRef.current?.autoFieldsLogged &&
+          typeof jobBuilderRecordRef.current.autoFieldsLogged === 'object'
+            ? jobBuilderRecordRef.current.autoFieldsLogged
+            : {};
+        jobBuilderRecordRef.current = {
+          ...(jobBuilderRecordRef.current || {}),
+          autoFieldsLogged: { ...existing, [section]: true },
+        };
+      }
+    },
+    [leadId]
+  );
+
+  const fireAutoPopulatedSection = useCallback(
+    async (sectionKey: string) => {
+      const uId = user?._id || user?.id;
+      if (!uId || !calculatorData || autoFieldsLoggedRef.current[sectionKey]) return;
+      await logAutoPopulatedSection({
+        userId: uId,
+        section: sectionKey,
+        calculatorData,
+        leadId,
+        jobBuilderId: leadId,
+        alreadyLogged: autoFieldsLoggedRef.current,
+        onSectionLogged: markSectionLogged,
+      });
+    },
+    [user, calculatorData, leadId, markSectionLogged]
+  );
+
+  // Hydrate autoFieldsLogged from backend (web parity)
+  useEffect(() => {
+    if (!leadId) return;
+    fetchJobBuilderLoggedSections(leadId)
+      .then(({ jobBuilder, loggedSections }) => {
+        jobBuilderRecordRef.current = jobBuilder;
+        autoFieldsLoggedRef.current = { ...autoFieldsLoggedRef.current, ...loggedSections };
+      })
+      .catch((err) => console.warn('[JobBuilder] Failed to fetch autoFieldsLogged:', err));
+  }, [leadId]);
 
   // 1. Mount event logging (job_builder_opened)
   useEffect(() => {
@@ -328,6 +301,16 @@ export default function JobBuilderScreen() {
     }
   }, [user, leadId, calculatorData, leadData, outcomeForm]);
 
+  // Init-time auto-populated logs — gutter + lighting (web parity)
+  useEffect(() => {
+    const uId = user?._id || user?.id;
+    if (!uId || !calculatorData || initDoneRef.current) return;
+
+    initDoneRef.current = true;
+    fireAutoPopulatedSection('gutter');
+    fireAutoPopulatedSection('lighting');
+  }, [user, calculatorData, fireAutoPopulatedSection]);
+
   // 2. Active step view and auto-populated logging
   useEffect(() => {
     if (!activeStep) return;
@@ -339,6 +322,7 @@ export default function JobBuilderScreen() {
 
     if (lastStepLoggedRef.current !== sectionKey) {
       lastStepLoggedRef.current = sectionKey;
+      const stepStartedAt = new Date().toISOString();
       logEvent('view', {
         user_id: uId,
         created_by: uId,
@@ -352,32 +336,15 @@ export default function JobBuilderScreen() {
           fieldCategory: sectionKey || 'unknown',
           calculatorType: calculatorData?.type || 'lf-calculator',
           action: 'step_viewed',
+          stepStartedAt,
         },
       });
 
-      if (sectionKey && !autoFieldsLoggedRef.current[sectionKey]) {
-        autoFieldsLoggedRef.current[sectionKey] = true;
-        const entries = getAutoFieldEntriesForSection(sectionKey, calculatorData);
-        entries.forEach((entry) => {
-          logEvent('auto-populated', {
-            user_id: uId,
-            created_by: uId,
-            module_type: 'job_builder',
-            meta: {
-              fieldName: entry.key,
-              fieldLabel: entry.label,
-              fieldValue: entry.value,
-              fieldType: 'locked',
-              section: sectionKey,
-              fieldCategory: sectionKey,
-              leadId,
-              jobBuilderId: leadId,
-            },
-          });
-        });
+      if (sectionKey) {
+        fireAutoPopulatedSection(sectionKey);
       }
     }
-  }, [activeStep, user, leadId, calculatorData]);
+  }, [activeStep, user, leadId, calculatorData, fireAutoPopulatedSection]);
 
   const getFieldCategory = useCallback((fieldName = '') => {
     if (fieldName.startsWith('gutter_')) return 'gutter';
@@ -406,7 +373,6 @@ export default function JobBuilderScreen() {
           meta: {
             draft: true,
             leadId,
-            action: 'job_builder_field_changed',
             fieldCategory: fieldInfo.fieldCategory || getFieldCategory(fieldInfo.fieldName),
             autoSelected: false,
             locked: false,
@@ -463,14 +429,14 @@ export default function JobBuilderScreen() {
       });
     }
 
-    // partial
-    if (prevGutter.partial !== currGutter.partial) {
+    // partial (global Yes/No — single log, not per combo)
+    if (String(prevGutter.partial ?? '') !== String(currGutter.partial ?? '') && currGutter.partial) {
       logFieldChange({
         fieldName: 'gutter_partial',
         fieldLabel: 'Gutter Partial',
         fieldValue: currGutter.partial,
         fieldCategory: 'gutter',
-        oldValue: prevGutter.partial,
+        oldValue: prevGutter.partial ?? '',
       });
     }
 
@@ -483,11 +449,9 @@ export default function JobBuilderScreen() {
       const currCombo = currGutterCombos[i] || {};
       const comboNum = i + 1;
 
-      // size, color, partial, mitersOutside, mitersInside, endCapsRights, endCapsLefts
       const fields = [
         { key: 'size', label: 'Size', fieldNameKey: 'size' },
         { key: 'color', label: 'Color', fieldNameKey: 'color' },
-        { key: 'partial', label: 'Gutter Partial', fieldNameKey: 'partial' },
         { key: 'mitersOutside', label: 'Miters Outside', fieldNameKey: 'mitersOutside' },
         { key: 'mitersInside', label: 'Miters Inside', fieldNameKey: 'mitersInside' },
         { key: 'endCapsRights', label: 'End Caps Rights', fieldNameKey: 'endCapsRights' },
@@ -495,13 +459,13 @@ export default function JobBuilderScreen() {
       ];
 
       fields.forEach(({ key, label, fieldNameKey }) => {
-        if (prevCombo[key] !== currCombo[key] && currCombo[key] !== undefined) {
+        if (shouldLogJobBuilderFieldChange(prevCombo[key], currCombo[key])) {
           logFieldChange({
             fieldName: `gutter_combo${comboNum}_${fieldNameKey}`,
             fieldLabel: `Gutter Combo #${comboNum} - ${label}`,
             fieldValue: currCombo[key],
             fieldCategory: 'gutter',
-            oldValue: prevCombo[key],
+            oldValue: prevCombo[key] ?? '',
             comboNumber: comboNum,
           });
         }
@@ -511,22 +475,17 @@ export default function JobBuilderScreen() {
       const prevMeas = prevCombo.measurements || [];
       const currMeas = currCombo.measurements || [];
       const maxMeas = Math.max(prevMeas.length, currMeas.length);
-      const locations = ['Front', 'Back', 'Left', 'Right', 'Left Garage', 'Right Garage'];
-      const stories = ['1st Story', '2nd Story', '3rd Story'];
 
       for (let mIdx = 0; mIdx < maxMeas; mIdx++) {
-        if (prevMeas[mIdx] !== currMeas[mIdx] && currMeas[mIdx] !== undefined) {
-          const locIdx = Math.floor(mIdx / 3);
-          const storyIdx = mIdx % 3;
-          const locLabel = locations[locIdx] || `Location ${locIdx + 1}`;
-          const storyLabel = stories[storyIdx] || `Story ${storyIdx + 1}`;
+        if (shouldLogJobBuilderFieldChange(prevMeas[mIdx], currMeas[mIdx])) {
+          const { location: locLabel, story: storyLabel } = measurementIndexToLabels(mIdx, 'gutter');
 
           logFieldChange({
-            fieldName: `gutter_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${storyIdx + 1}`,
+            fieldName: `gutter_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${mIdx % 3 + 1}`,
             fieldLabel: `Gutter Combo #${comboNum} Measurement - ${locLabel} (${storyLabel})`,
             fieldValue: currMeas[mIdx],
             fieldCategory: 'gutter',
-            oldValue: prevMeas[mIdx],
+            oldValue: prevMeas[mIdx] ?? '',
             comboNumber: comboNum,
             location: locLabel,
             story: storyLabel,
@@ -556,7 +515,7 @@ export default function JobBuilderScreen() {
       ];
 
       fields.forEach(({ key, label }) => {
-        if (prevD[key] !== currD[key] && currD[key] !== undefined) {
+        if (shouldLogJobBuilderFieldChange(prevD[key], currD[key])) {
           logFieldChange({
             fieldName: `gutter_downspout${dsNum}_${key}`,
             fieldLabel: `Downspout #${dsNum} - ${label}`,
@@ -620,22 +579,17 @@ export default function JobBuilderScreen() {
       const prevMeas = prevCombo.measurements || [];
       const currMeas = currCombo.measurements || [];
       const maxMeas = Math.max(prevMeas.length, currMeas.length);
-      const locations = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
-      const stories = ['1st Story', '2nd Story', '3rd Story'];
 
       for (let mIdx = 0; mIdx < maxMeas; mIdx++) {
-        if (prevMeas[mIdx] !== currMeas[mIdx] && currMeas[mIdx] !== undefined) {
-          const locIdx = mIdx % 6;
-          const storyIdx = Math.floor(mIdx / 6);
-          const locLabel = locations[locIdx] || `Location ${locIdx + 1}`;
-          const storyLabel = stories[storyIdx] || `Story ${storyIdx + 1}`;
+        if (String(prevMeas[mIdx] ?? '') !== String(currMeas[mIdx] ?? '') && currMeas[mIdx] !== undefined) {
+          const { location: locLabel, story: storyLabel } = measurementIndexToLabels(mIdx, 'leaffilter');
 
           logFieldChange({
-            fieldName: `leaffilter_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${storyIdx + 1}`,
+            fieldName: `leaffilter_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${Math.floor(mIdx / 6) + 1}`,
             fieldLabel: `LeafFilter Combo #${comboNum}${isVersaMaxCombo ? ' (Versa Max)' : ''} Measurement - ${locLabel} (${storyLabel})`,
             fieldValue: currMeas[mIdx],
             fieldCategory: 'leaffilter',
-            oldValue: prevMeas[mIdx],
+            oldValue: prevMeas[mIdx] ?? '',
             comboNumber: comboNum,
             location: locLabel,
             story: storyLabel,
@@ -754,22 +708,17 @@ export default function JobBuilderScreen() {
       const prevMeas = prevCombo.measurements || [];
       const currMeas = currCombo.measurements || [];
       const maxMeas = Math.max(prevMeas.length, currMeas.length);
-      const locations = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
-      const stories = ['1st Story', '2nd Story', '3rd Story'];
 
       for (let mIdx = 0; mIdx < maxMeas; mIdx++) {
-        if (prevMeas[mIdx] !== currMeas[mIdx] && currMeas[mIdx] !== undefined) {
-          const locIdx = mIdx % 6;
-          const storyIdx = Math.floor(mIdx / 6);
-          const locLabel = locations[locIdx] || `Location ${locIdx + 1}`;
-          const storyLabel = stories[storyIdx] || `Story ${storyIdx + 1}`;
+        if (String(prevMeas[mIdx] ?? '') !== String(currMeas[mIdx] ?? '') && currMeas[mIdx] !== undefined) {
+          const { location: locLabel, story: storyLabel } = measurementIndexToLabels(mIdx, 'lighting');
 
           logFieldChange({
-            fieldName: `lighting_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${storyIdx + 1}`,
+            fieldName: `lighting_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${Math.floor(mIdx / 6) + 1}`,
             fieldLabel: `Lighting Combo #${comboNum} Measurement - ${locLabel} (${storyLabel})`,
             fieldValue: currMeas[mIdx],
             fieldCategory: 'lighting',
-            oldValue: prevMeas[mIdx],
+            oldValue: prevMeas[mIdx] ?? '',
             comboNumber: comboNum,
             location: locLabel,
             story: storyLabel,
@@ -987,6 +936,7 @@ export default function JobBuilderScreen() {
             fieldCategory: step.category,
             direction: index > currentStepIndex ? 'next' : 'back',
             action: 'step_navigation',
+            stepStartedAt: new Date().toISOString(),
           },
         });
       }
@@ -1388,6 +1338,26 @@ export default function JobBuilderScreen() {
               action: 'job_builder_completed',
             },
           });
+
+          const calculatorsForSummary = allCalculators?.length
+            ? allCalculators
+            : calculatorData
+              ? [calculatorData]
+              : [];
+          if (calculatorsForSummary.length > 0 && calculatorData) {
+            await logRolloutAndDropSummary({
+              userId: uId,
+              leadId,
+              allCalculators: calculatorsForSummary,
+              selectedCalculator: calculatorData,
+              leadData: {
+                ...outcomeForm,
+                ...payload.leadData,
+                timestamp: Date.now(),
+              },
+              isLowesLead: routeIsLowesLead ?? leadData?.lowesLead === true,
+            });
+          }
         }
 
         await Promise.all([
@@ -1616,6 +1586,7 @@ export default function JobBuilderScreen() {
                             fieldCategory: toStep.category,
                             direction: 'back',
                             action: 'step_navigation',
+                            stepStartedAt: new Date().toISOString(),
                           },
                         });
                       }
@@ -1714,6 +1685,7 @@ export default function JobBuilderScreen() {
                                 fieldCategory: toStep.category,
                                 direction: 'next',
                                 action: 'step_navigation',
+                                stepStartedAt: new Date().toISOString(),
                               },
                             });
                           }

@@ -712,6 +712,7 @@ export const MapGalleryModal = ({
         onClose={() => setShowPresent(false)}
         beforeImages={beforeUris}
         afterImages={afterUris}
+        job={job}
       />
 
       {/* Full-screen viewer */}

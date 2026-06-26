@@ -24,6 +24,12 @@ import { PdfPreviewModal } from '../../modals/PdfPreviewModal';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { useLeadQuery } from '../../../hooks/useLeadQuery';
+import {
+  logAppointmentScheduled,
+  logAgreementGenerated,
+  logAgreementUploaded,
+  logOrderSheetUploaded,
+} from '../../../utils/activity-log/job-builder-logs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 // @ts-ignore
 import base64 from 'base-64';
@@ -49,16 +55,16 @@ const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string
   const offset4 = offset3 + obj3.length;
   const offset5 = offset4 + obj4.length;
   const offset6 = offset5 + obj5.length;
-  
+
   const obj6FullLength = obj6Header.length + imgLength + obj6Footer.length;
   const offsetStartXref = offset6 + obj6FullLength;
-  
+
   const padOffset = (offset: number) => String(offset).padStart(10, '0');
-  
+
   const xref = `xref\n0 7\n0000000000 65535 f \n${padOffset(offset1)} 00000 n \n${padOffset(offset2)} 00000 n \n${padOffset(offset3)} 00000 n \n${padOffset(offset4)} 00000 n \n${padOffset(offset5)} 00000 n \n${padOffset(offset6)} 00000 n \n`;
   const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offsetStartXref}\n%%EOF\n`;
-  
-  const pdfBinaryString = 
+
+  const pdfBinaryString =
     pdfHeader +
     obj1 +
     obj2 +
@@ -70,7 +76,7 @@ const convertJpegToPdf = (jpegBase64: string, width = 595, height = 842): string
     obj6Footer +
     xref +
     trailer;
-    
+
   return base64.encode(pdfBinaryString);
 };
 
@@ -252,8 +258,7 @@ export const SummarySection = ({
             const accParts: any[] = [];
             if (parseFloat(combo.mitersOutside) > 0)
               accParts.push(
-                `${combo.mitersOutside} Outside Miter${
-                  parseFloat(combo.mitersOutside) > 1 ? 's' : ''
+                `${combo.mitersOutside} Outside Miter${parseFloat(combo.mitersOutside) > 1 ? 's' : ''
                 }`
               );
             if (parseFloat(combo.mitersInside) > 0)
@@ -330,25 +335,22 @@ export const SummarySection = ({
       if (gutter.extrasColors?.replaceCorner) {
         extrasList.push({
           label: '',
-          value: `${replaceCornerCount > 0 ? replaceCornerCount + ' ' : ''}${
-            gutter.extrasColors.replaceCorner
-          } Replace Corner Miter`,
+          value: `${replaceCornerCount > 0 ? replaceCornerCount + ' ' : ''}${gutter.extrasColors.replaceCorner
+            } Replace Corner Miter`,
         });
       }
       if (gutter.extrasColors?.extendedSplashGuard) {
         extrasList.push({
           label: '',
-          value: `${extSplashCount > 0 ? extSplashCount + ' ' : ''}${
-            gutter.extrasColors.extendedSplashGuard
-          } Extended Splash Guard`,
+          value: `${extSplashCount > 0 ? extSplashCount + ' ' : ''}${gutter.extrasColors.extendedSplashGuard
+            } Extended Splash Guard`,
         });
       }
       if (gutter.extrasColors?.extendedSplashGuard032) {
         extrasList.push({
           label: '',
-          value: `${extSplash032Count > 0 ? extSplash032Count + ' ' : ''}${
-            gutter.extrasColors.extendedSplashGuard032
-          } Extended .032 Splash Guard`,
+          value: `${extSplash032Count > 0 ? extSplash032Count + ' ' : ''}${gutter.extrasColors.extendedSplashGuard032
+            } Extended .032 Splash Guard`,
         });
       }
 
@@ -726,9 +728,8 @@ export const SummarySection = ({
 
       // Lead Name for Customer
       const leadFullName =
-        `${leadData?.customerDetails?.firstName || ''} ${
-          leadData?.customerDetails?.lastName || ''
-        }`.trim() || customerName;
+        `${leadData?.customerDetails?.firstName || ''} ${leadData?.customerDetails?.lastName || ''
+          }`.trim() || customerName;
 
       // Construct high-fidelity Job Scope (Description of Work) to match web app logic
       const scope: string[] = [];
@@ -746,8 +747,7 @@ export const SummarySection = ({
       );
       if (csrField) {
         scope.push(
-          `Clean, Seal and Reinforce: Clean interior of Gutter and Downspouts, Seal each seam with 50yr Silicone, Install Hidden Hangers to reinforce — ${
-            extractFt(csrField.value) || '1'
+          `Clean, Seal and Reinforce: Clean interior of Gutter and Downspouts, Seal each seam with 50yr Silicone, Install Hidden Hangers to reinforce — ${extractFt(csrField.value) || '1'
           }'`
         );
       }
@@ -849,14 +849,14 @@ export const SummarySection = ({
           f.value.toLowerCase().includes('modify height') || f.value.toLowerCase().includes('r&r')
       );
       let hasWedges = getFields(gSec, 'extras').some((f: any) => f.value.toLowerCase().includes('wedges'));
-      
+
       if (rrField) {
-        const rrLocField = gSec?.subsections?.find((sub: any) => 
+        const rrLocField = gSec?.subsections?.find((sub: any) =>
           sub.name && sub.name.toLowerCase().includes('extras')
         )?.fields?.find((f: any) => f.label === 'Location');
         const rrLoc = rrLocField?.value || 'Front';
         scope.push(`Remove and Rehang ${rrLoc}: ${extractFt(rrField.value)}'`);
-        
+
         let installDesc = 'Installation: Align, pitch';
         if (hasWedges) installDesc += ', install wedges for slanted/step fascia';
         installDesc += ', install hidden hangers every 20-25", seal each seam, miter and connection with 50yr silicone';
@@ -875,19 +875,19 @@ export const SummarySection = ({
             // Find the part that looks like footage (e.g., "100'")
             const ftPart = parts.find((p: string) => /\d+'/.test(p) || /\d+ ft/.test(p));
             const ft = parseInt(extractFt(ftPart) || '0');
-            
+
             if (ft > 0) {
               totalGutterFt += ft;
               // Extract color - usually the part after footage or containing a known color
               // But more reliably, it's one of the parts that isn't footage, size, or "Gutter"
-              const colorPart = parts.find((p: string) => 
-                !p.includes("'") && 
-                !p.includes('"') && 
-                !p.toLowerCase().includes('partial') && 
+              const colorPart = parts.find((p: string) =>
+                !p.includes("'") &&
+                !p.includes('"') &&
+                !p.toLowerCase().includes('partial') &&
                 !p.toLowerCase().includes('gutter')
               );
               gColor = colorPart || 'White';
-              
+
               const sizePart = parts.find((p: string) => p.includes('"'));
               const size = (sizePart?.match(/(\d+)/) || [])[1] || '5';
               const comboLocations = (f.locationRows || [])
@@ -934,8 +934,7 @@ export const SummarySection = ({
           const colorMatch = f.value.match(/([A-Za-z\s]+?)\s+\d+\s*[Xx]/i);
           if (ft && sizeMatch)
             scope.push(
-              `Install ${ft}' of ${sizeMatch[0].replace(/\s*[Xx]\s*/, ' X ')} ${
-                colorMatch ? colorMatch[1].trim() : gColor || 'White'
+              `Install ${ft}' of ${sizeMatch[0].replace(/\s*[Xx]\s*/, ' X ')} ${colorMatch ? colorMatch[1].trim() : gColor || 'White'
               } downspouts`
             );
         }
@@ -945,7 +944,7 @@ export const SummarySection = ({
       let hasLF = false;
       let hasVM = false;
       const locationNames = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
-      
+
       // Extract gutterWidth
       let gutterWidth: number | null = null;
       lfSec?.subsections?.forEach((sub: any) => {
@@ -1274,6 +1273,10 @@ export const SummarySection = ({
       const data = response.data?.data || response.data;
 
       if (data?.agreementId && data?.previewBase64) {
+        const userId = user?._id || user?.id;
+        if (userId && leadId) {
+          logAgreementGenerated(userId, leadId);
+        }
         setAgreementData({ ...data, payload });
         setSignatureModalOpen(true);
       } else {
@@ -1430,8 +1433,8 @@ export const SummarySection = ({
                           key={rIdx}
                           style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
                         >
-                          <Text style={{ fontSize: 6, fontWeight: '900', color: '#64748b' }}>{row.location}</Text>
-                          <Text style={{ fontSize: 6, fontWeight: 'bold', color: '#059669' }}>
+                          <Text style={{ fontSize: 8, fontWeight: '900', color: '#64748b' }}>{row.location}</Text>
+                          <Text style={{ fontSize: 8, fontWeight: 'bold', color: '#059669' }}>
                             {row.entries.map((e: any) => `${e.story}: ${e.value}ft`).join(' · ')}
                           </Text>
                         </View>
@@ -1449,6 +1452,25 @@ export const SummarySection = ({
         ))}
       </View>
     </View>
+  );
+
+  const handleScheduleConfirm = useCallback(
+    (data: any) => {
+      onUpdate?.('scheduleTime', '', data);
+      const userId = user?._id || user?.id;
+      if (userId && leadId) {
+        logAppointmentScheduled(userId, leadId, {
+          date: data?.date,
+          timeWindow: data?.timeWindow,
+          reason: data?.reason,
+          customerName:
+            data?.customerName ||
+            `${leadData?.customerDetails?.firstName || ''} ${leadData?.customerDetails?.lastName || ''}`.trim() ||
+            customerName,
+        });
+      }
+    },
+    [onUpdate, user, leadId, leadData, customerName],
   );
 
   const [thumbLoadingMap, setThumbLoadingMap] = useState<Record<string, boolean>>({});
@@ -1623,7 +1645,7 @@ export const SummarySection = ({
                               setThumbLoadingMap((prev) => ({ ...prev, [thumbKey]: false }))
                             }
                           />
-                      {isLoading && (
+                          {isLoading && (
                             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9' }}>
                               <ActivityIndicator size="small" color="#00B8D9" />
                             </View>
@@ -1762,22 +1784,21 @@ export const SummarySection = ({
       <AppointmentSchedulerModal
         visible={schedulerOpen}
         onClose={() => setSchedulerOpen(false)}
-        onConfirm={(data) => onUpdate?.('scheduleTime', '', data)}
+        onConfirm={(data) => handleScheduleConfirm(data)}
         onGenerate={(data) => {
-          onUpdate?.('scheduleTime', '', data);
+          handleScheduleConfirm(data);
           setTimeout(() => handleGenerateAgreement(data), 500);
         }}
         onUpload={(data) => {
-          onUpdate?.('scheduleTime', '', data);
+          handleScheduleConfirm(data);
           setTimeout(() => {
             setScannerType('agreement');
             setScannerOpen(true);
           }, 500);
         }}
         customerName={
-          `${leadData?.customerDetails?.firstName || ''} ${
-            leadData?.customerDetails?.lastName || ''
-          }`.trim() || customerName || 'Customer'
+          `${leadData?.customerDetails?.firstName || ''} ${leadData?.customerDetails?.lastName || ''
+            }`.trim() || customerName || 'Customer'
         }
         isEdit={stableIsEdit}
         initialDate={jobState.scheduleTime?.date}
@@ -1862,6 +1883,15 @@ export const SummarySection = ({
             await fetchOutcome();
             onUpdate?.('', stateField, []);
             setScannerOpen(false);
+
+            const userId = user?._id || user?.id;
+            if (userId && leadId) {
+              if (scannerCategory === 'agreement') {
+                logAgreementUploaded(userId, leadId, newPages.length);
+              } else {
+                logOrderSheetUploaded(userId, leadId, newPages.length);
+              }
+            }
           } catch (error: any) {
             console.error('[Summary] Outcome document upload failed:', error);
             Alert.alert('Error', error?.message || 'Could not update documents.');

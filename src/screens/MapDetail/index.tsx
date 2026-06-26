@@ -439,11 +439,47 @@ export default function MapDetailScreen() {
           updatedJob={updatedJob}
           onToggleFilter={(type) => {
             setFilters((prev) => {
-              if (type === 'heatmap') return { ...prev, isHeatMap: !prev.isHeatMap };
-              if (type === 'myjobs') return { ...prev, myJobsOnly: !prev.myJobsOnly };
-              if (type === 'referral') return { ...prev, isReferralOnly: !prev.isReferralOnly };
-              if (type === 'favorite') return { ...prev, isFavoriteOnly: !prev.isFavoriteOnly };
-              return prev;
+              let next = prev;
+              if (type === 'heatmap') next = { ...prev, isHeatMap: !prev.isHeatMap };
+              else if (type === 'myjobs') next = { ...prev, myJobsOnly: !prev.myJobsOnly };
+              else if (type === 'referral') next = { ...prev, isReferralOnly: !prev.isReferralOnly };
+              else if (type === 'favorite') next = { ...prev, isFavoriteOnly: !prev.isFavoriteOnly };
+
+              const userId = user?._id || user?.id;
+              if (userId && next !== prev) {
+                const toggleMeta: Record<string, { toggle: string; enabled: boolean; action: string }> = {
+                  heatmap: {
+                    toggle: 'heat_map',
+                    enabled: next.isHeatMap,
+                    action: next.isHeatMap ? 'heat_map_enabled' : 'heat_map_disabled',
+                  },
+                  myjobs: {
+                    toggle: 'my_jobs',
+                    enabled: next.myJobsOnly,
+                    action: next.myJobsOnly ? 'my_jobs_filter_enabled' : 'my_jobs_filter_disabled',
+                  },
+                  referral: {
+                    toggle: 'referral',
+                    enabled: next.isReferralOnly,
+                    action: next.isReferralOnly ? 'referral_filter_enabled' : 'referral_filter_disabled',
+                  },
+                  favorite: {
+                    toggle: 'favorite',
+                    enabled: next.isFavoriteOnly,
+                    action: next.isFavoriteOnly ? 'favorite_filter_enabled' : 'favorite_filter_disabled',
+                  },
+                };
+                const meta = toggleMeta[type];
+                if (meta) {
+                  logEvent('toggle', {
+                    user_id: userId,
+                    created_by: userId,
+                    module_type: 'heat_map_filter',
+                    meta,
+                  });
+                }
+              }
+              return next;
             });
           }}
           onFavoriteToggle={(jobId, isFav) => {

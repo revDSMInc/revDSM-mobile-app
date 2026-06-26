@@ -18,6 +18,8 @@ import { parseSafeISO } from '../../../utils/date-util';
 import { CustomDatePicker } from './CustomDatePicker';
 import { calculateCommission } from '../../../utils/calculator/commission-utils';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface Props {
   visible: boolean;
@@ -55,6 +57,7 @@ const lowesOptions = Object.keys(paymentPlans)
 
 export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead = false }: Props) => {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
 
   // Dynamically group payment methods based on isLowesLead, matching rollout summary
   const PAYMENT_GROUPS = isLowesLead
@@ -193,8 +196,46 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
 
       if (job?.id || job?._id) {
         await JobService.updateJob((job.id || job._id)!, payload);
+        const userId = user?._id || user?.id;
+        if (userId) {
+          logEvent('update', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'job_tracker',
+            meta: {
+              jobId: job.id || job._id,
+              jobNumber: payload.jobNumber,
+              isManual: payload.isManual,
+              salesPrice: payload.salesPrice,
+              paymentMethod: payload.paymentMethod,
+              commission: payload.commission,
+              soldDate: payload.soldDate,
+              action: 'job_updated',
+            },
+          });
+        }
       } else {
         await JobService.createJob(payload as JobEntry);
+        const userId = user?._id || user?.id;
+        if (userId) {
+          logEvent('create', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'job_tracker',
+            meta: {
+              jobNumber: payload.jobNumber,
+              isManual: payload.isManual,
+              customerName: payload.customerName || null,
+              salesPrice: payload.salesPrice,
+              paymentMethod: payload.paymentMethod,
+              commission: payload.commission,
+              soldDate: payload.soldDate,
+              appointmentId: payload.appointmentId || null,
+              calculatorId: payload.calculatorId || null,
+              action: payload.isManual ? 'manual_job_created' : 'job_created_from_calculator',
+            },
+          });
+        }
       }
       onSuccess();
       onClose();

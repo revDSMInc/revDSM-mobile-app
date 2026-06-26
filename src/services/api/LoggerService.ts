@@ -3,17 +3,20 @@ import { ENV } from '../../config/env';
 import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 
+const ExcludedModuleTypes = ['leads_list', 'system', 'lms', 'self_gen_lead'];
+
 export const logEvent = async (eventType: string, details: any = {}) => {
   const userId = details.user_id;
-  if (!userId) return;
+  const isPublic = details.isPublic || false;
+  if (!userId && !isPublic) return;
 
-  const meta = { ...details.meta };
+  const meta = { ...(details.meta || {}) };
   if (details.action && meta.action == null) {
     meta.action = details.action;
   }
 
   // Sync with web app: automatically attach leadId if missing and available in storage
-  if (!meta.leadId) {
+  if (!meta.leadId && !ExcludedModuleTypes.includes(details.module_type)) {
     const storedLeadId = Storage.getItem('leadId');
     if (storedLeadId) {
       meta.leadId = storedLeadId;

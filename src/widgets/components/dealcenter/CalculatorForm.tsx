@@ -5,6 +5,8 @@ import Feather from 'react-native-vector-icons/Feather';
 import JobService from '../../../services/api/JobService';
 import { Section, SubHeader, InputField } from './SharedElements';
 import { pricing } from '../../../utils/calculator/pricing-data';
+import { useAuth } from '../../../hooks/useAuth';
+import { logSectionCleared } from '../../../utils/activity-log/calculator-log';
 
 const CATEGORY_STYLES: Record<string, { color: string; icon: string; bg: string }> = {
   Gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
@@ -323,9 +325,28 @@ export const CalculatorForm = ({
   readOnly = false,
   calculators = [],
 }: any) => {
+  const { user } = useAuth();
+
   const guardedUpdate = (patch: any) => {
     if (readOnly) return;
     onUpdate(patch);
+  };
+
+  const clearSection = (
+    patch: any,
+    meta: { fieldName: string; fieldLabel: string; fieldCategory: string },
+  ) => {
+    guardedUpdate(patch);
+    const userId = user?._id || user?.id;
+    if (userId && active?._id) {
+      logSectionCleared({
+        userId,
+        calculatorId: active._id,
+        appointmentId: active.appointmentId,
+        calculatorTitle: active.name || active.title,
+        ...meta,
+      });
+    }
   };
   const hasGutterInput =
     Number(inputs.gutter5DsE) > 0 || Number(inputs.gutter6Ft1) > 0 || Number(inputs.gutter7DsE) > 0;
@@ -431,25 +452,32 @@ export const CalculatorForm = ({
               onClear={
                 hasGutterData
                   ? () =>
-                    guardedUpdate({
-                      inputs: {
-                        gutter5DsE: '',
-                        gutter6Ft1: '',
-                        gutter7DsE: '',
-                        miters: '',
-                        endCaps: '',
-                        spoutSavers: '',
+                    clearSection(
+                      {
+                        inputs: {
+                          gutter5DsE: '',
+                          gutter6Ft1: '',
+                          gutter7DsE: '',
+                          miters: '',
+                          endCaps: '',
+                          spoutSavers: '',
+                        },
+                        extras: {
+                          wedges: '',
+                          straps: '',
+                          modifyHeight: '',
+                          replaceCorner: '',
+                          groundSpout: '',
+                          extendedSplashGuard: '',
+                          extendedSplashGuard032: '',
+                        },
                       },
-                      extras: {
-                        wedges: '',
-                        straps: '',
-                        modifyHeight: '',
-                        replaceCorner: '',
-                        groundSpout: '',
-                        extendedSplashGuard: '',
-                        extendedSplashGuard032: '',
+                      {
+                        fieldName: 'gutters',
+                        fieldLabel: 'Gutter Section',
+                        fieldCategory: 'gutter_filter',
                       },
-                    })
+                    )
                   : null
               }
             >
@@ -556,27 +584,34 @@ export const CalculatorForm = ({
               onClear={
                 hasProtectionData
                   ? () =>
-                    guardedUpdate({
-                      inputs: {
-                        versaMaxFt1: '',
-                        versa6Ft1: '',
-                        versa7Ft1: '',
-                        filter45Ft1: '',
-                        versa6Ft2: '',
-                        versa7Ft2: '',
-                        filter45Ft2: '',
-                        versa6Ft3: '',
-                        versa7Ft3: '',
-                        filter45Ft3: '',
+                    clearSection(
+                      {
+                        inputs: {
+                          versaMaxFt1: '',
+                          versa6Ft1: '',
+                          versa7Ft1: '',
+                          filter45Ft1: '',
+                          versa6Ft2: '',
+                          versa7Ft2: '',
+                          filter45Ft2: '',
+                          versa6Ft3: '',
+                          versa7Ft3: '',
+                          filter45Ft3: '',
+                        },
+                        extras: {
+                          csr: '',
+                          cornersFilter: '',
+                          sawzallHanger: '',
+                          removeProtection: '',
+                          ribbedRoof: '',
+                        },
                       },
-                      extras: {
-                        csr: '',
-                        cornersFilter: '',
-                        sawzallHanger: '',
-                        removeProtection: '',
-                        ribbedRoof: '',
+                      {
+                        fieldName: 'leafFilter',
+                        fieldLabel: 'Leaf Filter Section',
+                        fieldCategory: 'leaf_filter',
                       },
-                    })
+                    )
                   : null
               }
             >
@@ -727,9 +762,14 @@ export const CalculatorForm = ({
               onClear={
                 hasSoffitData
                   ? () =>
-                    guardedUpdate({
-                      extras: { vinylSoffit: '', porchCeiling: '', nailerBuildOut: '' },
-                    })
+                    clearSection(
+                      { extras: { vinylSoffit: '', porchCeiling: '', nailerBuildOut: '' } },
+                      {
+                        fieldName: 'soffit',
+                        fieldLabel: 'Soffit Section',
+                        fieldCategory: 'soffit',
+                      },
+                    )
                   : null
               }
             >
@@ -773,9 +813,14 @@ export const CalculatorForm = ({
               onClear={
                 hasFasciaData
                   ? () =>
-                    guardedUpdate({
-                      extras: { trimWrap: '', fasciaBoard: '', aluminumFasciaBoard: '' },
-                    })
+                    clearSection(
+                      { extras: { trimWrap: '', fasciaBoard: '', aluminumFasciaBoard: '' } },
+                      {
+                        fieldName: 'fascia',
+                        fieldLabel: 'Fascia Section',
+                        fieldCategory: 'fascia',
+                      },
+                    )
                   : null
               }
             >
@@ -819,17 +864,24 @@ export const CalculatorForm = ({
               onClear={
                 hasLightingData
                   ? () =>
-                    guardedUpdate({
-                      extras: {
-                        lighting1stStory: '',
-                        lighting2ndStory: '',
-                        lighting3rdStory: '',
-                        lightingControlBox: '',
-                        lightingWifiExtender: '',
-                        lightingBoosterBox: '',
-                        lightingElectricalOutlet: '',
+                    clearSection(
+                      {
+                        extras: {
+                          lighting1stStory: '',
+                          lighting2ndStory: '',
+                          lighting3rdStory: '',
+                          lightingControlBox: '',
+                          lightingWifiExtender: '',
+                          lightingBoosterBox: '',
+                          lightingElectricalOutlet: '',
+                        },
                       },
-                    })
+                      {
+                        fieldName: 'lighting',
+                        fieldLabel: 'Lighting Section',
+                        fieldCategory: 'lighting',
+                      },
+                    )
                   : null
               }
             >
@@ -926,7 +978,15 @@ export const CalculatorForm = ({
               onToggle={onToggle}
               onClear={
                 hasAdditionalData
-                  ? () => guardedUpdate({ inputs: { extraLabor: '', ckToInstallers: '' } })
+                  ? () =>
+                    clearSection(
+                      { inputs: { extraLabor: '', ckToInstallers: '' } },
+                      {
+                        fieldName: 'additionalServices',
+                        fieldLabel: 'Additional Services Section',
+                        fieldCategory: 'additional_services',
+                      },
+                    )
                   : null
               }
             >

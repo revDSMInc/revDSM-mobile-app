@@ -29,9 +29,12 @@ const YEARS = [2026, 2025, 2024];
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 import { useJobTracker } from '../../hooks/useJobTracker';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 export default function JobTrackerPage() {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
 
@@ -169,6 +172,18 @@ export default function JobTrackerPage() {
     }
   }, [groupedJobs]);
 
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('view', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'job_tracker',
+        meta: { action: 'job_tracker_viewed' },
+      });
+    }
+  }, [user?._id, user?.id]);
+
   const handleDelete = (job: JobEntry) => {
     Alert.alert('Delete Job', 'Are you sure you want to delete this job entry?', [
       { text: 'Cancel', style: 'cancel' },
@@ -177,6 +192,22 @@ export default function JobTrackerPage() {
         style: 'destructive',
         onPress: async () => {
           await JobService.deleteJob((job.id || job._id)!);
+          const userId = user?._id || user?.id;
+          if (userId) {
+            logEvent('delete', {
+              user_id: userId,
+              created_by: userId,
+              module_type: 'job_tracker',
+              meta: {
+                jobId: job.id || job._id,
+                jobNumber: job.jobNumber,
+                isManual: job.isManual,
+                salesPrice: job.salesPrice,
+                status: job.status,
+                action: 'job_deleted',
+              },
+            });
+          }
           fetchJobs();
         },
       },

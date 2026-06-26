@@ -107,6 +107,12 @@ export function planZoneCanvasserStartAppointment(
   };
 }
 
+const LEAD_ACTION_BY_MODULE: Record<Exclude<LeadLogModule, ''>, string> = {
+  lead_check_in: 'check_in_clicked',
+  lead_resume: 'check_resume_clicked',
+  lead_review: 'check_review_clicked',
+};
+
 export async function logLeadActionClick(
   user: any,
   logModule: LeadLogModule,
@@ -118,7 +124,7 @@ export async function logLeadActionClick(
   await logEvent('click', {
     user_id: userId,
     module_type: logModule,
-    action: `${logModule}_clicked`,
+    action: LEAD_ACTION_BY_MODULE[logModule],
     created_by: userId,
     meta: {
       leadId: lead._id || lead.id,

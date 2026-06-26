@@ -23,6 +23,8 @@ import Geolocation from 'react-native-geolocation-service';
 import { useUploadImagesMutation } from '../../hooks/useLeadMutation';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 // Subcomponents
 import { AnnotationCanvas } from '../../widgets/components/LeadCenter/AnnotationCanvas';
@@ -43,7 +45,9 @@ interface SectionImage {
 export default function ImageAnnotationScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
   const { selectedPhotos = [], lead, onSaveSuccess, onCancel } = route.params || {};
+  const openedLoggedRef = useRef(false);
 
   const uploadImagesMutation = useUploadImagesMutation();
 
@@ -67,6 +71,23 @@ export default function ImageAnnotationScreen() {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [containerLayout, setContainerLayout] = useState<{ width: number; height: number } | null>(null);
   const [pendingTextPos, setPendingTextPos] = useState<{ px: number; py: number } | null>(null);
+
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (userId && selectedPhotos.length > 0 && !openedLoggedRef.current) {
+      openedLoggedRef.current = true;
+      logEvent('open', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'annotated_photos',
+        meta: {
+          action: 'opened_annotation_dialog',
+          total_images: selectedPhotos.length,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  }, [user, selectedPhotos.length]);
 
   useEffect(() => {
     if (currentPhoto?.uri) {
@@ -671,6 +692,19 @@ export default function ImageAnnotationScreen() {
     }
 
     setIsSaving(false);
+    const userId = user?._id || user?.id;
+    if (userId && results.length > 0) {
+      logEvent('save', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'annotated_photos',
+        meta: {
+          action: 'saved_annotated_images',
+          image_count: results.length,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
     onSaveSuccess?.();
     navigation.goBack();
   };

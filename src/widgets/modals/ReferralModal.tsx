@@ -17,6 +17,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
 import { formatUSPhoneNumber } from '../../utils/phone-util';
+import { logEvent } from '../../services/api/LoggerService';
 
 interface ReferralModalProps {
   visible: boolean;
@@ -181,6 +182,16 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
     }
   }, [visible, existingReferral]);
 
+  useEffect(() => {
+    if (visible && user?._id) {
+      logEvent('view', {
+        user_id: user._id || user.id,
+        created_by: user._id || user.id,
+        module_type: 'referral',
+      });
+    }
+  }, [visible, user?._id, user?.id]);
+
   const toggleProduct = (product: string) => {
     if (mode === 'VIEW') return;
     setForm((prev) => ({
@@ -226,20 +237,24 @@ export const ReferralModal = ({ visible, onClose, selectedJob, isMyJob, onSucces
         payload.jobId = selectedJob?.jobNumber;
       }
 
-      const activityPayload = {
-        user_id: user?._id || user?.id,
-        action_type: mode === 'ADD' ? 'create' : 'update',
-        module_type: 'referral',
-        created_by: user?._id || user?.id,
-        meta: {
-          value: { ...form },
-          leadId: selectedJob?._id,
-          lat: selectedJob?.location?.coordinates?.[1] || 0,
-          long: selectedJob?.location?.coordinates?.[0] || 0,
+      const userId = user?._id || user?.id;
+      if (userId) {
+        if (mode === 'EDIT') {
+          logEvent('update', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'referral',
+            meta: { value: { ...form } },
+          });
+        } else {
+          logEvent('create', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'referral',
+            meta: { value: { ...form } },
+          });
         }
-      };
-
-      LeadService.logUserActivity(activityPayload).catch(e => console.log('Activity Log Error:', e));
+      }
 
       if (mode === 'EDIT' && existingReferral?._id) {
         await LeadService.updateReferral(existingReferral._id, payload);

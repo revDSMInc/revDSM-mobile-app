@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -117,6 +117,47 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     editedLeadData: any;
     existingJobState: any;
   } | null>(null);
+  const amendmentLoggedRef = useRef(false);
+
+  useEffect(() => {
+    if (!amendmentOpen) {
+      amendmentLoggedRef.current = false;
+      return;
+    }
+    if (amendmentLoggedRef.current) return;
+
+    const userId = user?._id || user?.id;
+    const leadId = lead?._id || lead?.id || outcomeData?._id || outcomeData?.id;
+    if (!userId || !leadId) return;
+
+    amendmentLoggedRef.current = true;
+
+    logEvent('add', {
+      user_id: userId,
+      created_by: userId,
+      module_type: 'amendments',
+      meta: {
+        leadId,
+        action: 'opened_contract_amendment_modal',
+      },
+    });
+
+    amendmentChanges.forEach((change) => {
+      logEvent('change', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'amendments',
+        meta: {
+          leadId,
+          fieldName: change.key,
+          fieldLabel: change.label,
+          oldValue: change.oldValue,
+          newValue: change.newValue,
+          action: 'amendment_field_changed',
+        },
+      });
+    });
+  }, [amendmentOpen, amendmentChanges, user, lead, outcomeData]);
 
   const handleFieldChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -354,6 +395,25 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     if (!pending?.leadId) return;
     setAmendmentSubmitting(true);
     try {
+      const userId = user?._id || user?.id;
+      const leadId = pending.leadId;
+      if (userId) {
+        logEvent('add', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'amendments',
+          meta: {
+            leadId,
+            action: 'submitted_amendment_signature',
+            changes: amendmentChanges.map((c) => ({
+              field: c.label,
+              old: c.oldValue,
+              new: c.newValue,
+            })),
+          },
+        });
+      }
+
       await LeadService.submitJobBuilder(pending.leadId, {
         leadData: pending.editedLeadData,
         jobState: pending.existingJobState,

@@ -15,6 +15,7 @@ import {
   Alert,
   Platform,
   InteractionManager,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -43,6 +44,9 @@ import { format } from 'date-fns';
 import { useDealCalculator } from '../../hooks/useDealCalculator';
 import { HorizontalDraggableTabs } from '../../widgets/components/dealcenter/HorizontalDraggableTabs';
 import { useDealOutcome } from '../../hooks/useDealOutcome';
+import { logViewAllCalculators, logBuildJobInitiated } from '../../utils/activity-log/calculator-log';
+import { persistActiveLeadId } from '../../utils/lead-activity-log';
+import { autoConfirmManager } from '../../utils/calculator/autoConfirmManager';
 
 const INITIAL_JOB_STATE = {
   gutter: {
@@ -82,6 +86,8 @@ export default function LFCalculator({ route }: any) {
   const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [showJobBuilder, setShowJobBuilder] = useState(false);
   const [menuVisible, setMenuVisible] = useState<number | null>(null);
+  const [renameModalIdx, setRenameModalIdx] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [deleteConfirmIdx, setDeleteConfirmIdx] = useState<number | null>(null);
   const [trackerJobs, setTrackerJobs] = useState<any[]>([]);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -94,6 +100,11 @@ export default function LFCalculator({ route }: any) {
       gestureEnabled: false,
     });
   }, [navigation]);
+
+  useEffect(() => {
+    const id = currentLead?._id || currentLead?.leadId || currentLead?.id;
+    if (id) persistActiveLeadId(id);
+  }, [currentLead?._id, currentLead?.leadId, currentLead?.id]);
 
   const {
     calculators,
@@ -116,7 +127,17 @@ export default function LFCalculator({ route }: any) {
     handleDuplicateCalculator,
     handleDeleteCalculator,
     handleReorderCalculators,
+    handleRenameCalculator,
   } = useDealCalculator(currentLead);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        autoConfirmManager.checkPendingOnReturn();
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (activeIdx >= 0 && calculators.length > 0) {
@@ -208,13 +229,27 @@ export default function LFCalculator({ route }: any) {
   const handleFinishOutcome = () => {
     handleFinishOutcomeHook((showJB: boolean) => {
       if (showJB) {
+        const uId = user?._id || user?.id;
+        const activeLeadId = currentLead?._id || currentLead?.leadId || currentLead?.id;
+        if (uId && activeLeadId) {
+          logBuildJobInitiated({
+            userId: uId,
+            leadId: activeLeadId,
+            result: outcomeStatus || undefined,
+            calculatorId: active?._id,
+            appointmentId: appointmentId || undefined,
+          });
+        }
         // Ensure the native Outcome modal unmounts before navigating (critical on iOS).
         setCurrentView('summary');
         InteractionManager.runAfterInteractions(() => {
           navigation.navigate('JobBuilder', {
             initialJobState: jobState,
             calculatorData: active,
-            leadId: currentLead?._id || currentLead?.leadId || currentLead?.id,
+            allCalculators: calculators,
+            appointmentId,
+            leadId: activeLeadId,
+            isLowesLead: currentLead?.lowesLead === true,
             outcomeForm: { ...outcomeForm, result: outcomeStatus },
             // Called when user closes JobBuilder WITHOUT completing
             onGoBack: (updatedJobState: any) => {
@@ -529,7 +564,11 @@ export default function LFCalculator({ route }: any) {
                   <Ionicons name="add" size={24} color={colors.text} />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  onPress={() => setCurrentView('summary')}
+                  onPress={() => {
+                    const uId = user?._id || user?.id;
+                    if (uId) logViewAllCalculators(uId);
+                    setCurrentView('summary');
+                  }}
                   style={{ width: 44, height: 44 }}
                   className="bg-[#2169f3] rounded-xl items-center justify-center shadow-lg shadow-slate-900/20"
                 >
@@ -850,6 +889,24 @@ export default function LFCalculator({ route }: any) {
                 <TouchableOpacity
                   onPress={() => {
                     if (menuVisible !== null) {
+                      setRenameValue(calculators[menuVisible]?.name || '');
+                      setRenameModalIdx(menuVisible);
+                      setMenuVisible(null);
+                    }
+                  }}
+                  className="flex-row items-center p-3 rounded-xl"
+                >
+                  <Feather name="edit-2" size={18} color={isDark ? '#919EAB' : '#637381'} />
+                  <Text className="ml-3 text-sm font-semibold" style={{ color: colors.text }}>
+                    Rename
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {menuVisible !== null && calculators[menuVisible]?.name !== '.' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    if (menuVisible !== null) {
                       handleDuplicateCalculator(menuVisible).then(() => setMenuVisible(null));
                     }
                   }}
@@ -887,6 +944,59 @@ export default function LFCalculator({ route }: any) {
                 <Text className="ml-3 text-sm font-semibold text-[#919EAB]">Cancel</Text>
               </TouchableOpacity>
             </View>
+          </Pressable>
+        </Modal>
+      )}
+
+      {renameModalIdx !== null && (
+        <Modal
+          transparent
+          visible={renameModalIdx !== null}
+          animationType="fade"
+          onRequestClose={() => setRenameModalIdx(null)}
+        >
+          <Pressable
+            className="flex-1 bg-black/40 justify-center px-6"
+            onPress={() => setRenameModalIdx(null)}
+          >
+            <Pressable
+              onPress={(e) => e.stopPropagation()}
+              className="rounded-2xl p-5"
+              style={{ backgroundColor: isDark ? '#1C252E' : 'white' }}
+            >
+              <Text className="text-base font-bold mb-3" style={{ color: colors.text }}>
+                Rename Calculator
+              </Text>
+              <TextInput
+                value={renameValue}
+                onChangeText={setRenameValue}
+                placeholder="Calculator name"
+                placeholderTextColor="#919EAB"
+                className="border border-border rounded-xl px-4 py-3 mb-4 text-sm font-semibold"
+                style={{ color: colors.text }}
+                autoFocus
+              />
+              <View className="flex-row gap-3">
+                <TouchableOpacity
+                  onPress={() => setRenameModalIdx(null)}
+                  className="flex-1 py-3 rounded-xl items-center bg-[#F4F6F8]"
+                >
+                  <Text className="font-bold text-sm text-[#637381]">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (renameModalIdx !== null) {
+                      handleRenameCalculator(renameModalIdx, renameValue);
+                      setRenameModalIdx(null);
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-xl items-center"
+                  style={{ backgroundColor: colors.primary.main }}
+                >
+                  <Text className="font-bold text-sm text-white">Save</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
           </Pressable>
         </Modal>
       )}

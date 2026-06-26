@@ -26,6 +26,7 @@ import {
 } from '../../../utils/calculator/lowes-payment-util';
 import RNFlashMessage from 'react-native-flash-message';
 import { useRef } from 'react';
+import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 
 interface OutcomeModalProps {
   visible: boolean;
@@ -82,6 +83,15 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
   const [expanded, setExpanded] = useState<string | null>(null);
   const flashRef = useRef<any>(null);
   const scrollRef = useRef<ScrollView>(null);
+
+  const { logReset } = useOutcomeLogging({
+    visible,
+    outcomeForm,
+    outcomeStatus,
+    calculators,
+    activeIdx,
+    lead,
+  });
 
   const toggleExpand = (key: string) => {
     const isExpanding = expanded !== key;
@@ -233,7 +243,10 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                 <Text className="text-base font-semibold text-white">Result Lead</Text>
                 {onReset && (
                   <TouchableOpacity
-                    onPress={onReset}
+                    onPress={() => {
+                      logReset();
+                      onReset();
+                    }}
                     className="flex-row items-center bg-white/15 px-2 py-1 rounded-md ml-3"
                   >
                     <Ionicons name="refresh" size={14} color="white" />

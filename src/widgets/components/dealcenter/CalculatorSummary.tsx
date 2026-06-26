@@ -43,6 +43,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { BlurView } from '@react-native-community/blur';
 import { LoadingOverlay } from '../../modals/DealCenter/OutcomeModal';
 import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
+import { sanitizeCalculatorLogTitle } from '../../../utils/activity-log/job-builder-auto-log';
 import { SettingsService } from '../../../services/api/SettingsService';
 
 const getOrdinal = (n: number) => {
@@ -196,6 +198,7 @@ export const CalculatorSummary = ({
 
     updateActive({ inputs: { paymentPlan: method } });
     handleSave();
+    logPaymentMethodChange(method, oldMethod);
     if (isDefaultPayment && activeCalc.isRolloutConfirmed) {
       propagateDefaultPaymentPlan(method);
     }
@@ -245,6 +248,8 @@ export const CalculatorSummary = ({
     tempPlan,
     setTempPlan,
     propagateDefaultPaymentPlan,
+    logPaymentMethodChange,
+    logDropPlanSelect,
   } = useCalculatorSummary(
     activeCalc,
     results,
@@ -257,6 +262,9 @@ export const CalculatorSummary = ({
   );
 
   const [showLockedDetails, setShowLockedDetails] = useState(false);
+  const lockedDetailsLoggedRef = useRef(false);
+  const paymentPickerLoggedRef = useRef(false);
+  const dropModalLoggedRef = useRef(false);
   const [showPreOrderDownPaymentInput, setShowPreOrderDownPaymentInput] = useState(activeCalc.downPayment > 0);
   const [preOrderDownPayment, setPreOrderDownPayment] = useState(activeCalc.downPayment || 0);
 
@@ -279,6 +287,72 @@ export const CalculatorSummary = ({
   useEffect(() => {
     centerTab(activeIdx);
   }, [activeIdx, scrollViewWidth]);
+
+  useEffect(() => {
+    if (!showLockedDetails) {
+      lockedDetailsLoggedRef.current = false;
+      return;
+    }
+    const userId = user?._id || user?.id;
+    if (!userId || lockedDetailsLoggedRef.current) return;
+    lockedDetailsLoggedRef.current = true;
+    logEvent('view', {
+      user_id: userId,
+      created_by: userId,
+      module_type: 'rollout_and_drop',
+      meta: {
+        calculatorId: activeCalc?._id,
+        appointmentId: activeCalc?.appointmentId,
+        calculatorTitle: sanitizeCalculatorLogTitle(activeCalc?.name || activeCalc?.title || ''),
+        action: 'rollout_locked_details_expanded',
+        leadId: lead?._id || lead?.id,
+      },
+    });
+  }, [showLockedDetails, user, activeCalc, lead]);
+
+  useEffect(() => {
+    if (!showPaymentPicker) {
+      paymentPickerLoggedRef.current = false;
+      return;
+    }
+    const userId = user?._id || user?.id;
+    if (!userId || paymentPickerLoggedRef.current) return;
+    paymentPickerLoggedRef.current = true;
+    logEvent('view', {
+      user_id: userId,
+      created_by: userId,
+      module_type: 'rollout_and_drop',
+      meta: {
+        calculatorId: activeCalc?._id,
+        appointmentId: activeCalc?.appointmentId,
+        calculatorTitle: sanitizeCalculatorLogTitle(activeCalc?.name || activeCalc?.title || ''),
+        action: 'payment_plan_dropdown_opened',
+        leadId: lead?._id || lead?.id,
+      },
+    });
+  }, [showPaymentPicker, user, activeCalc, lead]);
+
+  useEffect(() => {
+    if (!showDropModal) {
+      dropModalLoggedRef.current = false;
+      return;
+    }
+    const userId = user?._id || user?.id;
+    if (!userId || dropModalLoggedRef.current) return;
+    dropModalLoggedRef.current = true;
+    logEvent('view', {
+      user_id: userId,
+      created_by: userId,
+      module_type: 'rollout_and_drop',
+      meta: {
+        calculatorId: activeCalc?._id,
+        appointmentId: activeCalc?.appointmentId,
+        calculatorTitle: sanitizeCalculatorLogTitle(activeCalc?.name || activeCalc?.title || ''),
+        action: 'drop_plan_dropdown_opened',
+        leadId: lead?._id || lead?.id,
+      },
+    });
+  }, [showDropModal, user, activeCalc, lead]);
 
   const onTabLayout = (idx: number, event: any) => {
     const { x, width } = event.nativeEvent.layout;
@@ -1908,7 +1982,9 @@ export const CalculatorSummary = ({
                                     );
                                     return;
                                   }
+                                  const oldPlan = selectedPlan || activeCalc.inputs?.paymentPlan || '';
                                   setSelectedPlan(planKey);
+                                  logDropPlanSelect(planKey, currentDropPrice, oldPlan);
                                 }}
                                 className={`mb-3 p-4 rounded-2xl border-2 flex-row items-center justify-between ${isSelected
                                   ? 'bg-white border-[#31D076]'

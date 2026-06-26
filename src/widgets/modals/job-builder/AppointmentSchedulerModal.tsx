@@ -41,7 +41,7 @@ export const AppointmentSchedulerModal = ({
   const { colors, isDark } = useTheme();
 
   const [view, setView] = useState<'date' | 'time' | 'tbd' | 'success'>('date');
-  
+
   const windows = [
     { label: '8:00 AM - 12:00 PM', value: '8:00 AM - 12:00 PM' },
     { label: '12:00 PM - 4:00 PM', value: '12:00 PM - 4:00 PM' },
@@ -226,7 +226,7 @@ export const AppointmentSchedulerModal = ({
           {/* Header */}
           <View style={{ backgroundColor: '#22C55E', paddingHorizontal: 24, paddingVertical: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View style={{ flex: 1, alignItems: 'center' }}>
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: '900', letterSpacing: -0.3 }}>
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '900', letterSpacing: -0.3 }}>
                 First Available Date For Customer
               </Text>
             </View>
@@ -292,7 +292,7 @@ export const AppointmentSchedulerModal = ({
                         backgroundColor: 'white',
                       }}
                     >
-                      <Text style={{ color: '#475569', fontWeight: '900', fontSize: 16 }}>No</Text>
+                      <Text style={{ color: '#475569', fontWeight: '900', fontSize: 14 }}>No</Text>
                     </View>
                   </TouchableOpacity>
 
@@ -311,7 +311,7 @@ export const AppointmentSchedulerModal = ({
                         elevation: 4,
                       }}
                     >
-                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>Yes</Text>
+                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14 }}>Yes</Text>
                     </View>
                   </TouchableOpacity>
                 </View>
@@ -367,7 +367,7 @@ export const AppointmentSchedulerModal = ({
                       <Text
                         style={{
                           fontWeight: '900',
-                          fontSize: 16,
+                          fontSize: 14,
                           color: !tbdReason.trim() ? '#94a3b8' : 'white',
                         }}
                       >
@@ -384,7 +384,7 @@ export const AppointmentSchedulerModal = ({
                 <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#22C55E', alignItems: 'center', marginBottom: 24, justifyContent: 'center' }}>
                   <Icon name="check" size={48} color="white" />
                 </View>
-                
+
                 <Text style={{ fontSize: 24, fontWeight: '900', color: '#1e293b', marginBottom: 32 }}>Job Booked!</Text>
 
                 <View style={{ width: '100%', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#f1f5f9', borderRadius: 24, padding: 24, marginBottom: 32 }}>
@@ -426,13 +426,13 @@ export const AppointmentSchedulerModal = ({
                     }}
                     style={{ width: '100%' }}
                   >
-                    <View 
-                      style={{ 
-                        height: 64, 
-                        width: '100%', 
-                        backgroundColor: '#22C55E', 
-                        borderRadius: 16, 
-                        alignItems: 'center', 
+                    <View
+                      style={{
+                        height: 64,
+                        width: '100%',
+                        backgroundColor: '#22C55E',
+                        borderRadius: 16,
+                        alignItems: 'center',
                         justifyContent: 'center',
                         shadowColor: colors.primary.main,
                         shadowOffset: { width: 0, height: 4 },
@@ -441,7 +441,7 @@ export const AppointmentSchedulerModal = ({
                         elevation: 4,
                       }}
                     >
-                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 16, textTransform: 'uppercase', letterSpacing: 1 }}>Save Changes</Text>
+                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 14, textTransform: 'uppercase', letterSpacing: 1 }}>Save Changes</Text>
                     </View>
                   </TouchableOpacity>
                 ) : (
@@ -449,7 +449,7 @@ export const AppointmentSchedulerModal = ({
                     <TouchableOpacity
                       onPress={() => {
                         onGenerate?.(
-                          isTBD 
+                          isTBD
                             ? { date: 'TBD', reason: tbdReason, customerName }
                             : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName }
                         );
@@ -474,7 +474,7 @@ export const AppointmentSchedulerModal = ({
                         style={{
                           color: 'white',
                           fontWeight: '900',
-                          fontSize: 16,
+                          fontSize: 14,
                         }}
                       >
                         Generate Dynamic Agreement
@@ -484,7 +484,7 @@ export const AppointmentSchedulerModal = ({
                     <TouchableOpacity
                       onPress={() => {
                         onUpload?.(
-                          isTBD 
+                          isTBD
                             ? { date: 'TBD', reason: tbdReason, customerName }
                             : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName }
                         );
@@ -504,7 +504,7 @@ export const AppointmentSchedulerModal = ({
                         style={{
                           color: '#1e293b',
                           fontWeight: '900',
-                          fontSize: 16,
+                          fontSize: 14,
                         }}
                       >
                         Add Presigned Agreement

@@ -10,6 +10,13 @@ import {
 } from '../utils/calculator/payment-method-validation';
 import { useAuth } from './useAuth';
 import { logEvent } from '../services/api/LoggerService';
+import { Storage } from '../utils/storage';
+import {
+  fireRolloutLog,
+  getPaymentPlanLabel,
+  calculateMarkupLabel,
+} from '../utils/activity-log/rollout-log-meta';
+import { setRolloutConfirmedTimestamp } from '../utils/activity-log/rollout-confirmed-at';
 
 const calculateMarkupLocal = (endPrice: number, price50: number, price65: number, price100: number) => {
   const numericPrice = Number(endPrice);
@@ -125,6 +132,48 @@ export const useCalculatorSummary = (
   setCalculators?: any
 ) => {
   const { user } = useAuth();
+  const leadId = Storage.getItem('leadId') || undefined;
+
+  const getTierPrices = (calc: any) => {
+    const price50 = calculateResultUtil({
+      details: calc,
+      markupKey: '50',
+      pricing,
+      extrasList,
+      extrasList50,
+      paymentPlans,
+      paymentMethod: 'check',
+      hideScreens: true,
+      isLowesLead,
+    });
+    const price65 = calculateResultUtil({
+      details: calc,
+      markupKey: '65',
+      pricing,
+      extrasList,
+      extrasList50,
+      paymentPlans,
+      paymentMethod: 'check',
+      hideScreens: true,
+      isLowesLead,
+    });
+    const price100 = calculateResultUtil({
+      details: calc,
+      markupKey: '100',
+      pricing,
+      extrasList,
+      extrasList50,
+      paymentPlans,
+      paymentMethod: 'check',
+      hideScreens: true,
+      isLowesLead,
+    });
+    return {
+      costPrice: Math.round(price50) || 0,
+      parPrice: Math.round(price65) || 0,
+      retailPrice: Math.round(price100) || 0,
+    };
+  };
   const [error, setError] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [showResultModal, setShowResultModal] = useState(false);
@@ -703,26 +752,22 @@ export const useCalculatorSummary = (
     const oldValue = activeCalc.price ?? '';
     const userId = user?._id || user?.id;
     if (num !== oldValue && userId) {
-      logEvent('change', {
-        user_id: userId,
-        created_by: userId,
-        module_type: 'rollout_and_drop',
-        meta: {
-          calculatorId: activeCalc._id,
-          appointmentId: activeCalc.appointmentId,
-          calculatorTitle: activeCalc.name || activeCalc.title,
-          fieldLabel: 'Price',
+      const tiers = getTierPrices(activeCalc);
+      fireRolloutLog(
+        userId,
+        activeCalc,
+        {
+          fieldName: 'endPrice',
+          fieldLabel: 'End Price',
           fieldValue: num,
-          fieldCategory: 'rollout_prices',
+          fieldCategory: 'rollout',
           oldValue,
           newValue: num,
-          action: 'rollout price changed',
-          costPrice: Math.round(results.price50) || 0,
-          parPrice: Math.round(results.price65) || 0,
-          retailPrice: Math.round(results.price100) || 0,
-          percentageOfRollout: calculateMarkupLocal(num, results.price50, results.price65, results.price100),
+          action: 'end price entered',
         },
-      });
+        leadId,
+        tiers
+      );
     }
 
     updateActive({ price: num });
@@ -730,6 +775,7 @@ export const useCalculatorSummary = (
   };
   const propagateDefaultPaymentPlan = async (paymentPlanToPropagate: string) => {
     try {
+      const userId = user?._id || user?.id;
       const promises = calculators.map((calc: any) => {
         if (calc._id === activeCalc._id) return Promise.resolve();
         const payload = {
@@ -746,6 +792,34 @@ export const useCalculatorSummary = (
         return LeadService.updateCalculator(calc._id, payload);
       });
       await Promise.all(promises);
+
+      if (userId) {
+        for (const calc of calculators) {
+          if (calc._id === activeCalc._id) continue;
+          const oldMethod = calc.inputs?.paymentPlan || calc.paymentMethod || '';
+          if (oldMethod === paymentPlanToPropagate) continue;
+          const tiers = getTierPrices(calc);
+          await fireRolloutLog(
+            userId,
+            calc,
+            {
+              fieldName: 'paymentMethod',
+              fieldLabel: 'Payment Method',
+              fieldValue: Number(calc.price) || 0,
+              fieldCategory: calc.isRolloutConfirmed ? 'drop' : 'rollout',
+              oldValue: oldMethod,
+              newValue: Number(calc.price) || 0,
+              oldPaymentMethod: oldMethod,
+              newPaymentMethod: paymentPlanToPropagate,
+              oldPaymentMethodLabel: getPaymentPlanLabel(oldMethod),
+              newPaymentMethodLabel: getPaymentPlanLabel(paymentPlanToPropagate),
+              action: calc.isRolloutConfirmed ? 'payment method changed for drop' : 'payment method changed',
+            },
+            leadId,
+            tiers
+          );
+        }
+      }
       if (setCalculators) {
         setCalculators((prev: any) =>
           prev.map((calc: any) => {
@@ -845,14 +919,12 @@ export const useCalculatorSummary = (
       if (userId) {
         calculators.forEach((calc: any) => {
           if (calc.price > 0 && !calc.isRolloutConfirmed) {
-            logEvent('change', {
-              user_id: userId,
-              created_by: userId,
-              module_type: 'rollout_and_drop',
-              meta: {
-                calculatorId: calc._id,
-                appointmentId: calc.appointmentId || activeCalc.appointmentId,
-                calculatorTitle: calc.name || calc.title,
+            if (leadId) setRolloutConfirmedTimestamp(leadId, calc._id);
+            const tiers = getTierPrices(calc);
+            fireRolloutLog(
+              userId,
+              calc,
+              {
                 fieldName: 'rolloutConfirmed',
                 fieldLabel: 'Rollout Confirmed',
                 fieldValue: Number(calc.price),
@@ -861,7 +933,9 @@ export const useCalculatorSummary = (
                 newValue: Number(calc.price),
                 action: 'rollout confirmed',
               },
-            });
+              leadId,
+              tiers
+            );
           }
         });
       }
@@ -903,6 +977,57 @@ export const useCalculatorSummary = (
     } finally {
       setIsConfirming(false);
     }
+  };
+
+  const logPaymentMethodChange = async (method: string, oldMethod: string) => {
+    const userId = user?._id || user?.id;
+    if (!userId || method === oldMethod) return;
+    const currentPrice = Number(activeCalc.price) || 0;
+    const isConfirmed = !!activeCalc.isRolloutConfirmed && currentPrice > 0;
+    const tiers = getTierPrices(activeCalc);
+    await fireRolloutLog(
+      userId,
+      activeCalc,
+      {
+        fieldName: 'paymentMethod',
+        fieldLabel: 'Payment Method',
+        fieldValue: currentPrice,
+        fieldCategory: isConfirmed ? 'drop' : 'rollout',
+        oldValue: oldMethod,
+        newValue: currentPrice,
+        oldPaymentMethod: oldMethod,
+        newPaymentMethod: method,
+        oldPaymentMethodLabel: getPaymentPlanLabel(oldMethod),
+        newPaymentMethodLabel: getPaymentPlanLabel(method),
+        action: isConfirmed ? 'payment method changed for drop' : 'payment method changed',
+      },
+      leadId,
+      tiers
+    );
+  };
+
+  const logDropPlanSelect = async (planKey: string, droppedPrice: number, oldPlanKey: string) => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    const tiers = getTierPrices(activeCalc);
+    await fireRolloutLog(
+      userId,
+      activeCalc,
+      {
+        fieldName: 'dropPricePlan',
+        fieldLabel: 'Drop Price Plan',
+        fieldValue: droppedPrice,
+        fieldCategory: 'drop',
+        oldValue: oldPlanKey ?? '',
+        newValue: droppedPrice,
+        paymentPlanKey: planKey,
+        paymentPlanLabel: getPaymentPlanLabel(planKey),
+        dropPrice: droppedPrice,
+        action: 'drop price plan selected',
+      },
+      leadId,
+      tiers
+    );
   };
 
   const calculateMonthly = (principal: number, planKey?: string) => {
@@ -969,6 +1094,8 @@ export const useCalculatorSummary = (
     calculateMonthly,
     handleDiscountChange,
     propagateDefaultPaymentPlan,
+    logPaymentMethodChange,
+    logDropPlanSelect,
     // Drop display state
     displayDrop,
     setDisplayDrop,

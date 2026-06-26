@@ -6,6 +6,7 @@ import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { Platform } from 'react-native';
 import { commitAutofill } from '../utils/autofill';
+import { logEvent } from '../services/api/LoggerService';
 
 
 export const useLoginMutation = () => {
@@ -51,6 +52,19 @@ export const useLoginMutation = () => {
     },
     onSuccess: (res: any) => {
       if (res.userData) {
+        const userId = res.userData?._id || res.userData?.id;
+        if (userId) {
+          logEvent('login', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'system',
+            meta: {
+              email: res.userData?.email,
+              firstName: res.userData?.firstName,
+              lastName: res.userData?.lastName,
+            },
+          });
+        }
         commitAutofill();
         if (Platform.OS === 'android') {
           setTimeout(() => {
@@ -103,6 +117,19 @@ export const useVerifyOtpMutation = () => {
       return userData;
     },
     onSuccess: (userData) => {
+      const userId = userData?._id || userData?.id;
+      if (userId) {
+        logEvent('login', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'system',
+          meta: {
+            email: userData?.email,
+            firstName: userData?.firstName,
+            lastName: userData?.lastName,
+          },
+        });
+      }
       commitAutofill();
       if (Platform.OS === 'android') {
         setTimeout(() => {
