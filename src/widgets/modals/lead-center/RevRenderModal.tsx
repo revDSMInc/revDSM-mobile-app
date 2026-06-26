@@ -77,6 +77,32 @@ const MATERIAL_SECTIONS = [
   },
 ];
 
+// ─── Payload Helpers ──────────────────────────────────────────────────────────
+
+const toApiType = (type: string | null, sectionLabel: string): string | null => {
+  if (!type) return null;
+  let cleaned = type.trim();
+  const suffix = sectionLabel.trim();
+  if (cleaned.toLowerCase().endsWith(suffix.toLowerCase())) {
+    cleaned = cleaned.slice(0, -(suffix.length)).trim();
+  }
+  return cleaned.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || null;
+};
+
+const extractS3Key = (url: string | undefined): string => {
+  if (!url) return '';
+  const match = url.match(/^https?:\/\/[^/]+\/(.+)/);
+  if (match && match[1]) return match[1];
+  return url;
+};
+
+const getFilename = (url: string | undefined): string => {
+  if (!url) return '';
+  const withoutQuery = url.split('?')[0];
+  const parts = withoutQuery.split('/');
+  return parts[parts.length - 1] || '';
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const RevRenderModal = ({
@@ -151,12 +177,17 @@ export const RevRenderModal = ({
     const textureImageUrls: any = {};
 
     MATERIAL_SECTIONS.forEach(s => {
-      if (config[`${s.key}Checked`]) {
-        const type = config[s.key];
-        const color = config[`${s.key}Color`];
-        selections[s.key] = type ? `${type}-${color?.name}` : color?.name;
-        selections[`${s.key}Type`] = type;
+      const isChecked = config[`${s.key}Checked`];
+      const type = config[s.key];
+      const color = config[`${s.key}Color`];
+
+      if (isChecked) {
+        selections[s.key] = color?.name?.toLowerCase() || null;
+        selections[`${s.key}Type`] = toApiType(type, s.label);
         textureImageUrls[s.key] = color?.hex || null;
+      } else {
+        selections[s.key] = null;
+        selections[`${s.key}Type`] = null;
       }
     });
 
@@ -179,15 +210,20 @@ export const RevRenderModal = ({
 
   const handleGenerateAll = async () => {
     try {
-      const payloads = renderQueue.map(item => ({
-        houseImageUrl: item.photo?.uri || item.photo?.s3url,
-        houseMimeType: 'image/jpeg',
-        leadId: lead?._id || lead?.leadId,
-        selections: item.selections,
-        textureImageUrls: item.textureImageUrls,
-      }));
+      const leadId = lead?._id || lead?.leadId || '';
+      const payloads = renderQueue.map(item => {
+        const rawUrl = item.photo?.s3url || item.photo?.uri || '';
+        return {
+          houseImageUrl: extractS3Key(rawUrl),
+          houseMimeType: 'image/jpeg',
+          selections: item.selections,
+          textureImageUrls: item.textureImageUrls,
+          sourceFileName: getFilename(rawUrl),
+          viewLabel: item.viewLabel || item.photo?.label || '',
+          leadId,
+        };
+      });
 
-      // In background processing, we just trigger them and close
       payloads.forEach(payload => onGenerate(payload));
       handleClose();
     } catch (err) {

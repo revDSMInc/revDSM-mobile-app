@@ -1,0 +1,307 @@
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/components/add-appointment.js:20:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/components/add-appointment.js:123:        logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/components/add-appointment.js:150:        logEvent('update', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/components/CalculatorAppointmentCard.js:7:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/components/CalculatorAppointmentCard.js:29:    logEvent('open', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/view/calculator-appointment.js:24:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/view/calculator-appointment.js:140:        logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/view/calculator-appointment.js:185:      logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/view/calculator-appointment.js:219:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/calculator-appointment/view/calculator-appointment.js:234:      logEvent('JobTracker_Viewed', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/roofline-deck/view/roofline-deck.js:24:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/roofline-deck/view/roofline-deck.js:126:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/roofline-deck/view/roofline-deck.js:198:    logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/roofline-deck/view/roofline-deck.js:240:    logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/roofline-deck/view/roofline-deck.js:279:    logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/roofline-deck/view/roofline-deck.js:304:    logEvent('close', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/beforeImageModal.js:15:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/zone-canvasser/submitted-lead-popup.js:10:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/zone-canvasser/submitted-lead-popup.js:149:        logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/zone-canvasser/submitted-lead-popup.js:158:        logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/referal-model.js:26:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/referal-model.js:98:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/referal-model.js:135:      logEvent('update', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/referal-model.js:144:      logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/components/self-gen-lead.js:28:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/components/self-gen-lead.js:180:              logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/components/job-list.js:8:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/components/job-list.js:388:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/uploadImageModal.js:19:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/uploadImageModal.js:88:            logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/uploadImageModal.js:127:          logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/uploadImageModal.js:204:            logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/uploadImageModal.js:242:          logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/hooks/useJobCard.js:6:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/hooks/useJobCard.js:103:      logEvent('select', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/hooks/useJobCard.js:136:      logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:28:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:316:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:670:    logEvent('preview', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:1027:      logEvent('update', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:1069:                    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:1562:                    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/before-after-modal.js:1602:                    logEvent('update', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/map.js:50:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/map.js:503:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/map.js:578:      logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/map.js:1349:    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/map/map.js:1518:        logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-amendment-modal.js:22:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-amendment-modal.js:63:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-amendment-modal.js:147:        logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-amendment-modal.js:332:                  logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/agreement-generator/agreement-generator.js:19:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/agreement-generator/agreement-generator.js:94:                        logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/agreement-generator/agreement-generator.js:335:                                                logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/agreement-generator/agreement-generator.js:458:                                                            logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details-edit.js:25:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details-edit.js:374:        logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details-edit.js:415:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details-edit.js:574:        logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details-edit.js:651:      //   logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/lead-center-photos-tab.js:6:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/lead-center-photos-tab.js:214:                  logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:7:import { logEvent } from "src/utils/logger";
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:121:            logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:167:            logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:224:                logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:452:                                logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:787:                                                logEvent('pinch', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:827:                                                logEvent('pinch', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/rev-render-card.js:857:                                                    logEvent('pinch', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/lead-center-tabs.js:23:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/lead-center-tabs.js:453:        logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/job-docs-tab.js:18:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/job-docs-tab.js:776:                  logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/result-lead-drawer.js:19:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/result-lead-drawer.js:85:              return logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/result-lead-drawer.js:187:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-capture-images-sections/result-lead-drawer.js:215:          logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details.js:29:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/contract-details.js:210:                logEvent('upload', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:36:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:433:              logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:470:              logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2150:        logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2180:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2200:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2243:    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2265:        logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2313:        logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2340:        logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-modal.js:2431:      logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-sections/job-builder-summary.js:23:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-sections/job-builder-summary.js:216:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-sections/job-builder-summary.js:1139:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-sections/job-builder-summary.js:1183:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-sections/job-builder-summary.js:1223:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:35:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:581:              logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:618:              logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2299:        logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2329:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2349:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2392:    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2414:        logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2480:        logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2507:        logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/job-builder-edit-flow-modal.js:2607:      logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:32:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:575:              return logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:921:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:1189:        logEvent('user_changed', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:1211:        logEvent('auto-populated', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:1677:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:1707:        logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:1806:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:1837:          logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/components/result-lead-modal.js:2661:                    logEvent('reset', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:56:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:251:    logEvent('pause', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:805:            logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:844:          logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:883:          logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:923:        //   logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:1040:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:1066:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:1107:      //   logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:1141:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:1168:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:2107:            logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:2207:            logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/job-capture-images-view.js:2954:                logEvent('pause', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/risk-report-card.js:24:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/risk-report-card.js:428:            await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job/view/risk-report-card.js:476:          await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/_examples/extra/map-view/draggable-markers/index.js:16:  const [events, logEvents] = useState({});
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/_examples/extra/map-view/draggable-markers/index.js:19:    logEvents((_events) => ({ ..._events, onDragStart: event.lngLat }));
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/_examples/extra/map-view/draggable-markers/index.js:23:    logEvents((_events) => ({ ..._events, onDrag: event.lngLat }));
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/_examples/extra/map-view/draggable-markers/index.js:32:    logEvents((_events) => ({ ..._events, onDragEnd: event.lngLat }));
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/add-edit-job-modal.js:10:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/add-edit-job-modal.js:136:        logEvent('update', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/add-edit-job-modal.js:152:        logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/job-tracker-button.js:5:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/job-tracker-button.js:42:    logEvent('JobTracker_Add_Clicked', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/change-status.js:16:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/components/change-status.js:65:        logEvent('JobTracker_JobPaid_Checked', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/view/job-tracker-view.js:20:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/view/job-tracker-view.js:140:          logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/view/job-tracker-view-page.js:20:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/job-tracker/view/job-tracker-view-page.js:146:          logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:25:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:201:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:219:    logEvent('mode', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:402:    logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:449:    logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:492:    logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/pitch-book/view/pitch-book.js:520:    logEvent('close', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/forms/CommonPlans.js:33:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/forms/ProjectConfiguration.js:6:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/forms/ProjectConfiguration.js:61:                    logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/forms/ProjectConfiguration.js:97:                    logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/forms/PaymentSection.js:24:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/tab-action-utils.js:8:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/tab-action-utils.js:38:    logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/tab-action-utils.js:53:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/tab-action-utils.js:102:    logEvent('rename', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/tab-action-utils.js:184:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/tab-action-utils.js:231:    logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/ViewAllCalculators.js:35:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/ViewAllCalculators.js:168:        logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/ViewAllCalculators.js:205:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/TabbedCalculator.js:17:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/TabbedCalculator.js:268:            logEvent('auto_rename', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/TabbedCalculator.js:497:            logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/TabbedCalculator.js:503:            // logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/TabbedCalculator.js:1042:                  logEvent('rollout_and_drop_summary', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/view/lf-calculator-view.js:20:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/view/lf-calculator-view.js:424:            logEvent('auto_rename', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/view/lf-calculator-view.js:447:        logEvent('auto_rename', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/view/lf-calculator-view.js:481:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/view/lf-calculator-view.js:506:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/verticals/VerticalsCalculatorView.js:18:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/verticals/VerticalsCalculatorView.js:481:            logEvent('auto_rename', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/verticals/VerticalsCalculatorView.js:504:        logEvent('auto_rename', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/verticals/VerticalsCalculatorView.js:538:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/verticals/VerticalsCalculatorView.js:563:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/auth/context/jwt/auth-provider.js:8:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/auth/context/jwt/auth-provider.js:154:    logEvent('login', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/utils/logger.js:25:export const logEvent = async (eventType, details = {}) => {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/utils/logger.js:86:export const logEventWithBeacon = (eventType, details = {}) => {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/utils/logger.js:111:  return logEvent(eventType, details);
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/before-after-slider.js:17:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/before-after-slider.js:219:        logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/before-after-slider.js:242:        logEvent('navigate', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/BeforeAfterSliderUrls.js:5:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/BeforeAfterSliderUrls.js:75:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/BeforeAfterSliderUrls.js:100:      logEvent('pinch', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/BeforeAfterSliderUrls.js:134:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/before-after-slider/BeforeAfterSliderUrls.js:178:          logEvent('pinch', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/referral-toggle.js:6:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/referral-toggle.js:59:            logEvent('toggle', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/ToggleSwitch.js:6:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/ToggleSwitch.js:60:            logEvent('toggle', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/pdf.js:22:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/pdf.js:532:      logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/paperForm.js:32:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/paperForm.js:195:            await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/weater-report-model.js:27:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/weater-report-model.js:98:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/weater-report-model.js:161:      // await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/weater-report-model.js:216:        await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/weater-report-model.js:234:        await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/digitalForm.js:29:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/digitalForm.js:166:      await logEvent('create', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:57:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:156:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:184:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:238:          logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:424:          logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:455:        logEvent('toggle', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:564:        logEvent('apply', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:578:        logEvent('apply', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:591:        logEvent('apply', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:603:        logEvent('apply', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:615:        logEvent('apply', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/header-filter.js:629:        logEvent('apply', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/ToggleSwitchFilterJobs.js:6:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/ToggleSwitchFilterJobs.js:57:            logEvent('toggle', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/ProductToggle.js:5:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/ProductToggle.js:62:            logEvent('toggle', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/image-modal.js:40:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/header-filters/image-modal.js:146:      logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:27:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:312:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:335:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:349:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:366:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:424:        logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:460:        logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:495:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:509:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:524:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:538:            logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/appointment-scheduler/appointment-scheduler.js:595:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageInput.js:23:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageInput.js:268:    logEvent('send', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageInput.js:300:      logEvent('edit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageInput.js:328:      ? logEvent('send', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageInput.js:348:      : logEvent('send', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/ChatModule.js:19:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/ChatModule.js:90:    logEvent('open', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/ChatModule.js:1054:        logEvent('reaction', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/ChatModule.js:1073:        logEvent('reaction', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/ChatModule.js:1117:        logEvent('pin', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/ChatModule.js:1133:        logEvent('pin', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageItem.js:15:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/chat-module/MessageItem.js:192:      logEvent('copy', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:12:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:181:        logEvent('open', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:549:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:795:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:869:        logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:891:        logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:918:      logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/image-annotation/use-annotation.js:1108:          logEvent('save', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/contract-details/contract-details.js:26:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/components/contract-details/contract-details.js:201:                logEvent('upload', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/layouts/_common/account-popover.js:26:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/layouts/_common/account-popover.js:80:      logEvent('logout', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/layouts/_common/account-popover.js:105:            await logEvent('login', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/hooks/useActiveTimeTracker.js:2:import { logEvent, logEventWithBeacon } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/hooks/useActiveTimeTracker.js:25:        await logEvent(eventType, {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/hooks/useActiveTimeTracker.js:111:        logEventWithBeacon(eventType, data);
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/hooks/useInactivityTimeout.js:8:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/hooks/useInactivityTimeout.js:125:    //logEvent
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/hooks/useInactivityTimeout.js:126:    logEvent('logout', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/api/leads.js:427: * (which has user context) can fire logEvent only for sections not yet logged.
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/lead-drafts.js:26:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/lead-drafts.js:358:                            logEvent('signature', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/deal-drafts.js:26:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/deal-drafts.js:467:      logEvent('signature', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:18:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:307:    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:398:        logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:437:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:494:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:532:      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:775:                  logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before-configure.js:995:              logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before.js:21:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before.js:235:    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/before.js:276:        logEvent('select', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/queue.js:17:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/queue.js:235:        logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/queue.js:308:        logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/queue.js:344:        logEvent('delete', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/queue.js:405:        logEvent('click', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/queue.js:445:      logEvent('submit', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:23:import { logEvent } from 'src/utils/logger';
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:329:    logEvent('view', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:448:          logEvent('select', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:507:      logEvent('add', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:718:                      logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:789:                          logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:851:                              logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:936:                                    logEvent('change', {
+/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/pages/dashboard/rev-render/lf.js:993:                                      logEvent('change', {

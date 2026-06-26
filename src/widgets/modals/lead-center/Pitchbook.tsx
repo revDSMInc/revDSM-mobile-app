@@ -16,6 +16,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../common/MainHeader';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 const { width } = Dimensions.get('window');
 
@@ -36,6 +38,7 @@ interface PitchbookProps {
 export default function Pitchbook({ onClose, lead }: PitchbookProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
   const [activeCategory, setActiveCategory] = useState('leafFilter_story');
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -59,46 +62,204 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
 
   const currentCategoryImages = useMemo(() => {
     const imagesObj = pitchBookImages[activeCategory] || {};
-    return Object.values(imagesObj);
+    return Object.entries(imagesObj).map(([key, src]) => ({ key, src }));
   }, [activeCategory]);
+
+  const getCurrentSlideName = (categoryId: string, slideIndex: number): string => {
+    const imagesObj = pitchBookImages[categoryId] || {};
+    return Object.keys(imagesObj)[slideIndex] || '';
+  };
 
   const totalGlobalPages = useMemo(() => {
     return Object.values(pitchBookImages).reduce((acc, cat) => acc + Object.keys(cat).length, 0);
   }, []);
 
-  const currentGlobalPageNumber = useMemo(() => {
+  const getGlobalPosition = (categoryId: string, slideIndex: number) => {
     let count = 0;
     for (const cat of CATEGORIES) {
-      if (cat.id === activeCategory) {
-        count += currentSlideIndex + 1;
+      if (cat.id === categoryId) {
+        count += slideIndex + 1;
         break;
       }
       count += Object.keys(pitchBookImages[cat.id] || {}).length;
     }
     return count;
+  };
+
+  const currentGlobalPageNumber = useMemo(() => {
+    return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex]);
 
+  // Lifecycle logs
+  React.useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('view', {
+        user_id: userId,
+        module_type: 'pitch_book',
+        created_by: userId,
+        meta: {
+          leadId: lead?._id || lead?.id,
+          action: 'pitch_book_opened',
+        },
+      });
+    }
+
+    return () => {
+      if (userId) {
+        logEvent('close', {
+          user_id: userId,
+          module_type: 'pitch_book',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id,
+            action: 'pitch_book_close',
+          },
+        });
+      }
+    };
+  }, [user?._id, user?.id, lead?._id, lead?.id]);
+
+  const handleSetViewMode = (mode: 'rep' | 'homeowner') => {
+    setViewMode(mode);
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('mode', {
+        user_id: userId,
+        module_type: 'pitch_book',
+        created_by: userId,
+        meta: {
+          leadId: lead?._id || lead?.id,
+          viewMode: mode,
+          action: 'pitch_book_view_mode_changed',
+        },
+      });
+    }
+  };
+
+  const handleTabChange = (tabId: string) => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('navigate', {
+        user_id: userId,
+        module_type: 'pitch_book',
+        created_by: userId,
+        meta: {
+          leadId: lead?._id || lead?.id,
+          fromSlideTab: activeCategory,
+          toSlideTab: tabId,
+          fromSlide: currentGlobalPageNumber,
+          fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+          toSlide: getGlobalPosition(tabId, 0),
+          toSlideName: getCurrentSlideName(tabId, 0),
+          totalSlides: totalGlobalPages,
+          action: 'pitch_book_tab_changed',
+        },
+      });
+    }
+    setActiveCategory(tabId);
+    setCurrentSlideIndex(0);
+  };
+
   const handleNext = () => {
+    const userId = user?._id || user?.id;
     if (currentSlideIndex < currentCategoryImages.length - 1) {
-      setCurrentSlideIndex(currentSlideIndex + 1);
+      const nextSlideIdx = currentSlideIndex + 1;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'pitch_book',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id,
+            fromTab: activeCategory,
+            toTab: activeCategory,
+            fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+            fromSlide: currentGlobalPageNumber,
+            toSlideName: getCurrentSlideName(activeCategory, nextSlideIdx),
+            toSlide: currentGlobalPageNumber + 1,
+            totalSlides: totalGlobalPages,
+            action: 'pitch_book_slide_next',
+          },
+        });
+      }
+      setCurrentSlideIndex(nextSlideIdx);
     } else {
       const catIdx = CATEGORIES.findIndex((c) => c.id === activeCategory);
       if (catIdx < CATEGORIES.length - 1) {
-        setActiveCategory(CATEGORIES[catIdx + 1].id);
+        const nextCat = CATEGORIES[catIdx + 1].id;
+        if (userId) {
+          logEvent('navigate', {
+            user_id: userId,
+            module_type: 'pitch_book',
+            created_by: userId,
+            meta: {
+              leadId: lead?._id || lead?.id,
+              fromTab: activeCategory,
+              toTab: nextCat,
+              fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+              fromSlide: currentGlobalPageNumber,
+              toSlideName: getCurrentSlideName(nextCat, 0),
+              toSlide: currentGlobalPageNumber + 1,
+              totalSlides: totalGlobalPages,
+              action: 'pitch_book_slide_next',
+            },
+          });
+        }
+        setActiveCategory(nextCat);
         setCurrentSlideIndex(0);
       }
     }
   };
 
   const handlePrev = () => {
+    const userId = user?._id || user?.id;
     if (currentSlideIndex > 0) {
-      setCurrentSlideIndex(currentSlideIndex - 1);
+      const prevSlideIdx = currentSlideIndex - 1;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'pitch_book',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id,
+            fromTab: activeCategory,
+            toTab: activeCategory,
+            fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+            fromSlide: currentGlobalPageNumber,
+            toSlideName: getCurrentSlideName(activeCategory, prevSlideIdx),
+            toSlide: currentGlobalPageNumber - 1,
+            totalSlides: totalGlobalPages,
+            action: 'pitch_book_slide_previous',
+          },
+        });
+      }
+      setCurrentSlideIndex(prevSlideIdx);
     } else {
       const catIdx = CATEGORIES.findIndex((c) => c.id === activeCategory);
       if (catIdx > 0) {
         const prevCat = CATEGORIES[catIdx - 1].id;
+        const prevCatImagesCount = Object.keys(pitchBookImages[prevCat] || {}).length;
+        if (userId) {
+          logEvent('navigate', {
+            user_id: userId,
+            module_type: 'pitch_book',
+            created_by: userId,
+            meta: {
+              leadId: lead?._id || lead?.id,
+              fromTab: activeCategory,
+              toTab: prevCat,
+              fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+              fromSlide: currentGlobalPageNumber,
+              toSlideName: getCurrentSlideName(prevCat, prevCatImagesCount - 1),
+              toSlide: currentGlobalPageNumber - 1,
+              totalSlides: totalGlobalPages,
+              action: 'pitch_book_slide_previous',
+            },
+          });
+        }
         setActiveCategory(prevCat);
-        setCurrentSlideIndex(Object.keys(pitchBookImages[prevCat]).length - 1);
+        setCurrentSlideIndex(prevCatImagesCount - 1);
       }
     }
   };
@@ -120,7 +281,7 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
         <View className="px-5 py-4">
           <View className="flex-row bg-[#F4F6F8] p-1 rounded-2xl border border-gray-100">
             <TouchableOpacity
-              onPress={() => setViewMode('rep')}
+              onPress={() => handleSetViewMode('rep')}
               className={`flex-1 py-3 items-center rounded-xl ${
                 viewMode === 'rep' ? 'bg-[#72BD00] shadow-sm' : ''
               }`}
@@ -134,7 +295,7 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => setViewMode('homeowner')}
+              onPress={() => handleSetViewMode('homeowner')}
               className={`flex-1 py-3 items-center rounded-xl ${
                 viewMode === 'homeowner' ? 'bg-[#72BD00] shadow-sm' : ''
               }`}
@@ -165,10 +326,7 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
               return (
                 <TouchableOpacity
                   key={cat.id}
-                  onPress={() => {
-                    setActiveCategory(cat.id);
-                    setCurrentSlideIndex(0);
-                  }}
+                  onPress={() => handleTabChange(cat.id)}
                   className="mr-6 py-4"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
@@ -207,7 +365,7 @@ export default function Pitchbook({ onClose, lead }: PitchbookProps) {
 
           <View className="w-full aspect-[4/3] bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden elevation-2">
             <Image
-              source={currentCategoryImages[currentSlideIndex]}
+              source={currentCategoryImages[currentSlideIndex]?.src}
               className="w-full h-full"
               resizeMode="contain"
             />

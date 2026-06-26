@@ -388,7 +388,6 @@ export const TagPhotoModal = ({
       const existingImagesLocal = getImagesForSection(targetCatName);
       const requiredCountLocal = catObjLocal?.subCategories?.length || 0;
       const extraCountLocal = existingImagesLocal.filter((img) =>
-        img.subcategory?.includes(`${targetCatName} - Image`) ||
         img.subcategory?.includes(`${targetCatName} - Extra`)
       ).length;
 

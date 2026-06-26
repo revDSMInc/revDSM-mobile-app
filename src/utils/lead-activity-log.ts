@@ -28,19 +28,6 @@ export const logLeadCardSelect = async (user: any, lead: any) => {
   if (!userId) return;
   const leadId = lead?._id || lead?.id;
   await persistActiveLeadId(leadId);
-  await logEvent('select', {
-    user_id: userId,
-    module_type: 'lead_card',
-    created_by: userId,
-    meta: {
-      leadId,
-      contactPerson:
-        `${lead.customerDetails?.firstName || ''} ${lead.customerDetails?.lastName || ''}`.trim() ||
-        'N/A',
-      address: lead.fullAddress || 'N/A',
-      action: 'view_lead_details',
-    },
-  });
 };
 
 export function isLeadInGeofence(lead: any, userLocation: UserLocation): boolean {
@@ -194,30 +181,10 @@ export async function logLeadSessionEnter(user: any, lead: any) {
   const leadId = lead?._id || lead?.id;
   if (!userId || !leadId) return;
   await persistActiveLeadId(leadId);
-  await logEvent('view', {
-    user_id: userId,
-    module_type: 'lead_session',
-    action: 'session_enter',
-    created_by: userId,
-    meta: {
-      leadId,
-      jobLeadId: lead.leadId,
-      workflowState: lead.workflowState,
-    },
-  });
 }
 
 export async function logLeadSessionPause(user: any, lead: any) {
-  const userId = user?._id || user?.id;
-  const leadId = lead?._id || lead?.id;
-  if (!userId || !leadId) return;
-  await logEvent('pause', {
-    user_id: userId,
-    module_type: 'lead_session',
-    action: 'session_pause',
-    created_by: userId,
-    meta: { leadId, jobLeadId: lead.leadId },
-  });
+  // No-op - removed irrelevant telemetry logs
 }
 
 export async function logLeadCheckOut(user: any, lead: any) {

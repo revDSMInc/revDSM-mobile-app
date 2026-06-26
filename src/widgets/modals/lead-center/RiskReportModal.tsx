@@ -13,6 +13,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { ENV } from '../../../config/env';
 import { useUploadReportMutation } from '../../../hooks/useLeadMutation';
 import { parseApiError } from '../../../utils/error-util';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface RiskReportModalProps {
   visible: boolean;
@@ -23,11 +25,22 @@ interface RiskReportModalProps {
 
 export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportModalProps) => {
   const { colors } = useTheme();
+  const { user } = useAuth();
   const [loadingStep, setLoadingStep] = useState<number>(0);
   const [logs, setLogs] = useState<string[]>([]);
   const uploadReport = useUploadReportMutation();
 
   const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
+
+  useEffect(() => {
+    if (visible && user) {
+      logEvent('view', {
+        user_id: user._id || user.id,
+        module_type: 'risk_report',
+        created_by: user._id || user.id,
+      });
+    }
+  }, [visible, user]);
 
   const generateReport = async () => {
     setLogs([]);
@@ -101,6 +114,21 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
 
       await uploadReport.mutateAsync(formData);
 
+      // Log successful report generation
+      const street = address?.split(',')[0] || '';
+      await logEvent('create', {
+        user_id: user?._id || user?.id,
+        module_type: 'risk_report',
+        created_by: user?._id || user?.id,
+        meta: {
+          leadId: lead?._id || lead?.id,
+          reportId: street,
+          formattedAddress: address,
+          pastRangeType: 3,
+          filename: `${street}-Risk-Report.pdf`,
+        },
+      });
+
       addLog(`🎉 Complete! Your report is now available in Job Docs.`);
       refetch?.();
       setTimeout(() => {
@@ -110,6 +138,24 @@ export const RiskReportModal = ({ visible, onClose, lead, refetch }: RiskReportM
     } catch (e: any) {
       const errorMsg = parseApiError(e);
       addLog(`❌ Error: ${errorMsg}`);
+
+      // Log report generation error
+      const lat = lead?.customerDetails?.lat || lead?.location?.lat;
+      const lng = lead?.customerDetails?.lng || lead?.location?.lng;
+      const address = lead?.fullAddress || lead?.address || '';
+      const street = address?.split(',')[0] || '';
+      await logEvent('create', {
+        user_id: user?._id || user?.id,
+        module_type: 'risk_report',
+        created_by: user?._id || user?.id,
+        meta: {
+          reportId: street,
+          formattedAddress: address,
+          pastRangeType: 3,
+          error: errorMsg || e?.message,
+        },
+      });
+
       Alert.alert('Generation Failed', errorMsg);
       setLoadingStep(0);
     }

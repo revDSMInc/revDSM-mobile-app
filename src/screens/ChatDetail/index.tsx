@@ -127,6 +127,7 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 
 import { useChatLogic } from '../../hooks/useChatLogic';
 import { ChatHeader } from '../../widgets/components/chat/ChatHeader';
+import { logEvent } from '../../services/api/LoggerService';
 
 export default function ChatDetailScreen() {
   const insets = useSafeAreaInsets();
@@ -136,6 +137,23 @@ export default function ChatDetailScreen() {
   const navigation = useNavigation<any>();
   const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [] } = route.params;
   const isChannel = chatType === 'channel';
+
+  // Log chat open
+  React.useEffect(() => {
+    if (user?._id) {
+      logEvent('open', {
+        user_id: user._id,
+        module_type: isChannel ? 'team_channel' : 'chat',
+        created_by: user._id,
+        meta: {
+          leadId,
+          type: isChannel ? 'team_channel' : 'chat',
+          action: 'opened chat',
+          participantsCount: initialParticipants?.length || 0,
+        },
+      });
+    }
+  }, [user?._id, isChannel, leadId, initialParticipants?.length]);
 
   const {
     chatId,
@@ -195,7 +213,8 @@ export default function ChatDetailScreen() {
     currentUserId || '',
     user,
     isChannel,
-    filteredParticipants
+    filteredParticipants,
+    leadId
   );
 
   // Dynamically resolve channel details and permissions
@@ -470,6 +489,19 @@ export default function ChatDetailScreen() {
         if (!chatId) return;
         const action = msg.isPinned ? 'unpin' : 'pin';
         try {
+          if (user?._id) {
+            logEvent('pin', {
+              user_id: user._id,
+              module_type: isChannel ? 'team_channel' : 'chat',
+              created_by: user._id,
+              meta: {
+                leadId,
+                type: isChannel ? 'team_channel' : 'chat',
+                action: action === 'pin' ? 'pinned message' : 'unpinned message',
+                messageId: msg._id,
+              },
+            });
+          }
           // Optimistic update
           setMessages((prev) =>
             prev.map((m) => (m._id === msg._id ? { ...m, isPinned: !msg.isPinned } : m))
@@ -506,6 +538,20 @@ export default function ChatDetailScreen() {
         const alreadyReactedSameEmoji = myPrevReaction?.emoji === e;
 
         try {
+          if (user?._id) {
+            logEvent('reaction', {
+              user_id: user._id,
+              module_type: isChannel ? 'team_channel' : 'chat',
+              created_by: user._id,
+              meta: {
+                leadId,
+                type: isChannel ? 'team_channel' : 'chat',
+                action: myPrevReaction ? 'removed reaction' : 'added reaction',
+                emoji: e,
+                messageId: m._id,
+              },
+            });
+          }
           // Optimistic update
           setMessages((prev) =>
             prev.map((msgItem: ICustomMessage) => {

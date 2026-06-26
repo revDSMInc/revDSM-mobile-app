@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,8 @@ import { parseApiError } from '../../../utils/error-util';
 import { INSPECTION_ISSUES } from '../../../constants/lead-center';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import RNFlashMessage from 'react-native-flash-message';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface InspectionFormModalProps {
   visible: boolean;
@@ -69,8 +71,19 @@ export const InspectionFormModal = ({
   loading,
 }: InspectionFormModalProps) => {
   const { colors } = useTheme();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const flashRef = React.useRef<RNFlashMessage>(null);
+
+  useEffect(() => {
+    if (visible && user) {
+      logEvent('view', {
+        user_id: user._id || user.id,
+        module_type: 'inspection_report',
+        created_by: user._id || user.id,
+      });
+    }
+  }, [visible, user]);
 
   const FlashMessage = {
     info: (title: string, description: string = '') => {

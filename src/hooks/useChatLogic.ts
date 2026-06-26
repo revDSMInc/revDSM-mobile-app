@@ -5,6 +5,41 @@ import { launchImageLibrary } from 'react-native-image-picker';
 import ChatService from '../services/api/ChatService';
 import { useVoiceNote } from '../hooks/useVoiceNote';
 import * as DocumentPicker from '@react-native-documents/picker';
+import { logEvent } from '../services/api/LoggerService';
+import RNFS from 'react-native-fs';
+
+const getWebMessageType = (file?: { name?: string | null; type?: string | null }) => {
+  if (!file) return 'file';
+  const name = (file.name || '').toLowerCase();
+  const mime = (file.type || '').toLowerCase();
+  const ext = name.split('.').pop() || '';
+
+  if (mime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)) {
+    return 'image';
+  }
+  if (mime.startsWith('video/') || ['mp4', 'webm', 'mov', 'avi', 'wmv', 'flv', 'mkv'].includes(ext)) {
+    return 'video';
+  }
+  if (mime.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'wma', 'opus', 'ogg'].includes(ext)) {
+    return 'audio';
+  }
+  if (mime === 'application/pdf' || ext === 'pdf') {
+    return 'pdf';
+  }
+  if (mime.includes('msword') || mime.includes('officedocument.wordprocessingml') || ext === 'doc' || ext === 'docx') {
+    return 'doc';
+  }
+  if (mime.includes('spreadsheetml') || mime.includes('ms-excel') || ext === 'xls' || ext === 'xlsx') {
+    return 'xls';
+  }
+  if (mime === 'text/csv' || ext === 'csv') {
+    return 'csv';
+  }
+  if (mime.startsWith('text/') || ext === 'txt') {
+    return 'txt';
+  }
+  return 'file';
+};
 
 export const useChatLogic = (
   chatId: string | null,
@@ -13,7 +48,8 @@ export const useChatLogic = (
   currentUserId: string,
   user: any,
   isChannel: boolean,
-  participants: any[]
+  participants: any[],
+  leadId?: string
 ) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [replyingTo, setReplyingTo] = useState<any>(null);
@@ -101,6 +137,21 @@ export const useChatLogic = (
       try {
         if (editingMessage) {
           const editedText = raw.text || composerText;
+          if (user?._id) {
+            logEvent('edit', {
+              user_id: user._id,
+              module_type: isChannel ? 'team_channel' : 'chat',
+              created_by: user._id,
+              meta: {
+                leadId,
+                type: isChannel ? 'team_channel' : 'chat',
+                action: 'Edited message',
+                messageType: 'text',
+                messageId: editingMessage._id,
+                message: editedText,
+              },
+            });
+          }
           setMessages((prev: any[]) =>
             prev.map((m) =>
               m._id === editingMessage._id ? { ...m, text: editedText, isEdited: true } : m
@@ -109,6 +160,21 @@ export const useChatLogic = (
           await ChatService.editMessage(editingMessage._id, editedText);
           setEditingMessage(null);
         } else {
+          if (user?._id) {
+            logEvent('send', {
+              user_id: user._id,
+              module_type: isChannel ? 'team_channel' : 'chat',
+              created_by: user._id,
+              meta: {
+                leadId,
+                type: isChannel ? 'team_channel' : 'chat',
+                action: 'Sent text message',
+                messageType: 'text',
+                isReply: !!replyingTo,
+                message: raw.text,
+              },
+            });
+          }
           const optimistic = {
             ...raw,
             _id: tempId,
@@ -126,7 +192,7 @@ export const useChatLogic = (
             replyTo: replyingTo?._id,
           });
         }
-      } catch (err) {
+      } catch {
         setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
       } finally {
         setReplyingTo(null);
@@ -140,13 +206,37 @@ export const useChatLogic = (
         }
       }
     },
-    [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText, isChannel]
+    [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText, isChannel, leadId]
   );
 
   const handleAttach = useCallback(() => {
     launchImageLibrary({ mediaType: 'mixed', selectionLimit: 5 }, async (response) => {
       if (response.assets && chatId) {
         const assets = response.assets;
+        if (user?._id) {
+          const firstAsset = assets[0];
+          const fileType = getWebMessageType({
+            name: firstAsset?.fileName,
+            type: firstAsset?.type,
+          });
+
+          logEvent('send', {
+            user_id: user._id,
+            module_type: isChannel ? 'team_channel' : 'chat',
+            created_by: user._id,
+            meta: {
+              leadId,
+              type: isChannel ? 'team_channel' : 'chat',
+              isEdit: false,
+              isReply: false,
+              messageType: fileType,
+              fileName: firstAsset?.fileName || 'Attachment',
+              fileSize: firstAsset?.fileSize || 12000,
+              message: '',
+              action: 'sent an attachment',
+            },
+          });
+        }
         const optimistics = assets.map((f) => {
           const isImg = f.type?.startsWith('image');
           return {
@@ -175,7 +265,7 @@ export const useChatLogic = (
         }
       }
     });
-  }, [chatId, currentUserId, setMessages]);
+  }, [chatId, currentUserId, setMessages, user, leadId, isChannel]);
 
   const handleDocumentAttach = useCallback(async () => {
     try {
@@ -186,6 +276,28 @@ export const useChatLogic = (
 
       if (results && chatId) {
         const docs = results;
+        if (user?._id) {
+          const firstDoc = docs[0];
+          logEvent('send', {
+            user_id: user._id,
+            module_type: isChannel ? 'team_channel' : 'chat',
+            created_by: user._id,
+            meta: {
+              leadId,
+              type: isChannel ? 'team_channel' : 'chat',
+              isEdit: false,
+              isReply: false,
+              messageType: getWebMessageType({
+                name: firstDoc?.name,
+                type: firstDoc?.type,
+              }),
+              fileName: firstDoc?.name || 'Document',
+              fileSize: firstDoc?.size || 12000,
+              message: '',
+              action: 'sent an attachment',
+            },
+          });
+        }
         const optimistics = docs.map((f) => ({
           _id: `temp_${Date.now()}_${Math.random()}`,
           text: f.name || 'Document',
@@ -212,11 +324,38 @@ export const useChatLogic = (
       setMessages((prev: any[]) => prev.filter((m) => typeof m._id === 'string' && m._id.startsWith('temp_')));
       Alert.alert('Send Failed', 'Failed to send document. Please try again.');
     }
-  }, [chatId, currentUserId, setMessages]);
+  }, [chatId, currentUserId, setMessages, user, leadId, isChannel]);
 
   const handleSendVoiceNote = async (uri: string) => {
     if (!uri || !chatId) return;
     console.log('[Media] Sending voice note:', uri);
+    if (user?._id) {
+      const fileName = uri.split('/').pop() || `voice_${Date.now()}.m4a`;
+      let fileSize = 12000;
+      try {
+        const path = uri.replace('file://', '');
+        const stat = await RNFS.stat(path);
+        fileSize = stat.size;
+      } catch (e) {
+        console.warn('[Chat] Failed to stat voice note file:', e);
+      }
+
+      logEvent('send', {
+        user_id: user._id,
+        module_type: isChannel ? 'team_channel' : 'chat',
+        created_by: user._id,
+        meta: {
+          leadId,
+          type: isChannel ? 'team_channel' : 'chat',
+          action: 'Sent voice memo',
+          messageType: 'voice',
+          isReply: replyingTo ? true : false,
+          duration: recordingTime,
+          fileName,
+          fileSize,
+        },
+      });
+    }
     const tempId = `temp_${Date.now()}`;
     try {
       const fileName = uri.split('/').pop() || `voice_${Date.now()}.m4a`;

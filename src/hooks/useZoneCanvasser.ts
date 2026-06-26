@@ -7,6 +7,8 @@ import axios from 'axios';
 
 import api from '../services/api';
 import { ENV } from '../config/env';
+import { logEvent } from '../services/api/LoggerService';
+import { calculateDistance } from '../utils/location-util';
 import { normalizeLeadStatus } from '../utils/zone-canvasser-status';
 import {
   createBuildingLead,
@@ -524,6 +526,35 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     setIsEditingGoBack(false);
     if (building.leads && building.leads.length > 0) {
       setSubmittedLeadPopupOpen(true);
+
+      const leadData = building.leads[0];
+      const coords = leadData?.location?.coordinates;
+      const targetLat = coords ? coords[1] : building.position[0];
+      const targetLng = coords ? coords[0] : building.position[1];
+      const fromLat = userLocation?.latitude;
+      const fromLng = userLocation?.longitude;
+      const distance = (fromLat != null && fromLng != null)
+        ? calculateDistance(fromLat, fromLng, targetLat, targetLng)
+        : 0;
+
+      logEvent('click', {
+        user_id: user?._id || user?.id,
+        created_by: user?._id || user?.id,
+        module_type: 'map_interaction',
+        meta: {
+          jobNumber: leadData?.jobNumber || 'N/A',
+          jobId: leadData?._id || leadData?.id || 'N/A',
+          address: leadData?.address?.streetName || leadData?.streetName || building.label || 'N/A',
+          city: leadData?.address?.city || leadData?.city || 'N/A',
+          state: leadData?.address?.state || leadData?.state || 'N/A',
+          coordinates: { lat: targetLat, lng: targetLng },
+          price: leadData?.price || 0,
+          installDate: leadData?.installationDate || leadData?.leadDate || '',
+          distance: distance || 0,
+          distanceFrom: 'user_gps',
+          action: 'job_pin_selected',
+        },
+      });
     } else {
       setPropertyData(null);
       setPropertyModalOpen(true);

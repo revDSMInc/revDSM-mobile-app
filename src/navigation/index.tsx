@@ -82,7 +82,7 @@ export type RootStackParamList = {
     sectionImages: { [key: string]: any[] };
     onNavToDocs: () => void;
     onGenerate: (payload: any) => Promise<string | null>;
-    onGenerateAll?: (payloads: any[]) => void;
+    onGenerateAll?: (body: { payloads: any[]; leadId: string; jobId: string }) => void;
   };
   ImageAnnotation: {
     selectedPhotos: any[];

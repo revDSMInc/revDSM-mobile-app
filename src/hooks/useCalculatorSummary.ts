@@ -8,6 +8,56 @@ import {
   WELLS_FARGO_HIGH_KEYS,
   WF_HIGH_MIN_PRICE,
 } from '../utils/calculator/payment-method-validation';
+import { useAuth } from './useAuth';
+import { logEvent } from '../services/api/LoggerService';
+
+const calculateMarkupLocal = (endPrice: number, price50: number, price65: number, price100: number) => {
+  const numericPrice = Number(endPrice);
+  if (isNaN(numericPrice) || numericPrice < 0) return '';
+
+  const cost = Math.round(price50) || 0;
+  const par = Math.round(price65) || 0;
+  const retail = Math.round(price100) || 0;
+
+  let anchor = cost;
+  let label = 'COST';
+
+  if (numericPrice >= retail) {
+    anchor = retail;
+    label = 'RETAIL';
+  } else if (numericPrice >= par) {
+    anchor = par;
+    label = 'PAR';
+  } else if (numericPrice >= cost) {
+    anchor = cost;
+    label = 'COST';
+  }
+
+  if (!anchor || anchor === 0) return '';
+
+  const percent = Math.round(((numericPrice - anchor) / anchor) * 100);
+
+  if (percent === 0) return label;
+  return `${label} + ${percent}%`;
+};
+
+const calculateMarkupNumberLocal = (endPrice: number, price50: number, price65: number, price100: number) => {
+  const cost = Math.round(price50) || 0;
+  const par = Math.round(price65) || 0;
+  const retail = Math.round(price100) || 0;
+
+  let anchor = cost;
+  if (endPrice >= retail) {
+    anchor = retail;
+  } else if (endPrice >= par) {
+    anchor = par;
+  } else if (endPrice >= cost) {
+    anchor = cost;
+  }
+
+  if (!anchor || anchor === 0) return 0;
+  return Math.round(((endPrice - anchor) / anchor) * 100);
+};
 
 const getCostPriceForCalc = (calc: any, isLowesLead?: boolean): number => {
   const price50 = calculateResultUtil({
@@ -74,6 +124,7 @@ export const useCalculatorSummary = (
   isLowesLead?: boolean,
   setCalculators?: any
 ) => {
+  const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [showResultModal, setShowResultModal] = useState(false);
@@ -280,6 +331,96 @@ export const useCalculatorSummary = (
         ];
       }
 
+      // Log the drop price action
+      const userId = user?._id || user?.id;
+      if (userId) {
+        const _costPrice = Math.round(results.price50) || 0;
+        const _parPrice = Math.round(results.price65) || 0;
+        const _retailPrice = Math.round(results.price100) || 0;
+        const _dropNum = status === 'accepted' ? updatedDrops.findIndex((d) => d.secured) + 1 : updatedDrops.filter((d) => d.declined).length;
+        const _planLabel = paymentPlans[dropPaymentMethod]?.label || dropPaymentMethod;
+        const lastDroppedPrice = droppedPrices.length > 0 ? droppedPrices[droppedPrices.length - 1].price : activeCalc.price;
+        const percentageOfRollout = calculateMarkupLocal(num, results.price50, results.price65, results.price100);
+
+        if (status === 'accepted') {
+          logEvent('change', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'rollout_and_drop',
+            meta: {
+              calculatorId: activeCalc._id,
+              appointmentId: activeCalc.appointmentId,
+              calculatorTitle: activeCalc.name || activeCalc.title,
+              fieldName: 'dropPrice',
+              fieldLabel: 'Drop Price',
+              fieldValue: num,
+              fieldCategory: 'drop',
+              oldValue: lastDroppedPrice,
+              newValue: num,
+              isSecured: true,
+              isDeclined: false,
+              dropNumber: _dropNum,
+              dropPrice: num,
+              costPrice: _costPrice,
+              parPrice: _parPrice,
+              retailPrice: _retailPrice,
+              percentageOfRollout,
+              paymentPlanKey: dropPaymentMethod,
+              paymentPlanLabel: _planLabel,
+              action: 'drop price secured',
+            },
+          });
+
+          logEvent('change', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'rollout_and_drop',
+            meta: {
+              calculatorId: activeCalc._id,
+              appointmentId: activeCalc.appointmentId,
+              calculatorTitle: activeCalc.name || activeCalc.title,
+              fieldName: 'dropPricePlan',
+              fieldLabel: 'Drop Price Plan',
+              fieldValue: num,
+              fieldCategory: 'drop',
+              oldValue: activeCalc.paymentMethod ?? '',
+              newValue: num,
+              paymentPlanKey: dropPaymentMethod,
+              paymentPlanLabel: _planLabel,
+              action: 'drop price plan selected on secure',
+            },
+          });
+        } else {
+          logEvent('change', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'rollout_and_drop',
+            meta: {
+              calculatorId: activeCalc._id,
+              appointmentId: activeCalc.appointmentId,
+              calculatorTitle: activeCalc.name || activeCalc.title,
+              fieldName: 'dropPrice',
+              fieldLabel: 'Drop Price',
+              fieldValue: num,
+              fieldCategory: 'drop',
+              oldValue: lastDroppedPrice,
+              newValue: num,
+              isSecured: false,
+              isDeclined: true,
+              dropNumber: _dropNum,
+              dropPrice: num,
+              costPrice: _costPrice,
+              parPrice: _parPrice,
+              retailPrice: _retailPrice,
+              percentageOfRollout,
+              paymentPlanKey: dropPaymentMethod,
+              paymentPlanLabel: _planLabel,
+              action: 'drop price declined',
+            },
+          });
+        }
+      }
+
       // Optimistic local update
       setDroppedPrices(updatedDrops);
       updateActive({
@@ -344,6 +485,98 @@ export const useCalculatorSummary = (
         return item;
       });
 
+      const userId = user?._id || user?.id;
+      if (userId) {
+        const itemToUpdate = droppedPrices[targetIdx];
+        const num = Number(itemToUpdate.price);
+        const _costPrice = Math.round(results.price50) || 0;
+        const _parPrice = Math.round(results.price65) || 0;
+        const _retailPrice = Math.round(results.price100) || 0;
+        const planToUse = selectedPlan || itemToUpdate.paymentMethod;
+        const _planLabel = paymentPlans[planToUse]?.label || planToUse;
+        const _dropNum = updatedDrops.findIndex((d) => d.secured) + 1;
+        const lastDroppedPrice = targetIdx > 0 ? droppedPrices[targetIdx - 1].price : activeCalc.price;
+        const percentageOfRollout = calculateMarkupLocal(num, results.price50, results.price65, results.price100);
+
+        if (status === 'accepted') {
+          logEvent('change', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'rollout_and_drop',
+            meta: {
+              calculatorId: activeCalc._id,
+              appointmentId: activeCalc.appointmentId,
+              calculatorTitle: activeCalc.name || activeCalc.title,
+              fieldName: 'dropPrice',
+              fieldLabel: 'Drop Price',
+              fieldValue: num,
+              fieldCategory: 'drop',
+              oldValue: lastDroppedPrice,
+              newValue: num,
+              isSecured: true,
+              isDeclined: false,
+              dropNumber: _dropNum,
+              dropPrice: num,
+              costPrice: _costPrice,
+              parPrice: _parPrice,
+              retailPrice: _retailPrice,
+              percentageOfRollout,
+              paymentPlanKey: planToUse,
+              paymentPlanLabel: _planLabel,
+              action: 'drop price secured',
+            },
+          });
+
+          logEvent('change', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'rollout_and_drop',
+            meta: {
+              calculatorId: activeCalc._id,
+              appointmentId: activeCalc.appointmentId,
+              calculatorTitle: activeCalc.name || activeCalc.title,
+              fieldName: 'dropPricePlan',
+              fieldLabel: 'Drop Price Plan',
+              fieldValue: num,
+              fieldCategory: 'drop',
+              oldValue: activeCalc.paymentMethod ?? '',
+              newValue: num,
+              paymentPlanKey: planToUse,
+              paymentPlanLabel: _planLabel,
+              action: 'drop price plan selected on secure',
+            },
+          });
+        } else {
+          logEvent('change', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'rollout_and_drop',
+            meta: {
+              calculatorId: activeCalc._id,
+              appointmentId: activeCalc.appointmentId,
+              calculatorTitle: activeCalc.name || activeCalc.title,
+              fieldName: 'dropPrice',
+              fieldLabel: 'Drop Price',
+              fieldValue: num,
+              fieldCategory: 'drop',
+              oldValue: lastDroppedPrice,
+              newValue: num,
+              isSecured: false,
+              isDeclined: true,
+              dropNumber: updatedDrops.filter((d) => d.declined).length,
+              dropPrice: num,
+              costPrice: _costPrice,
+              parPrice: _parPrice,
+              retailPrice: _retailPrice,
+              percentageOfRollout,
+              paymentPlanKey: planToUse,
+              paymentPlanLabel: _planLabel,
+              action: 'drop price declined',
+            },
+          });
+        }
+      }
+
       // Optimistic local update
       setDroppedPrices(updatedDrops);
       updateActive({
@@ -378,9 +611,50 @@ export const useCalculatorSummary = (
 
   const handleUnselectDrop = async (index: number) => {
     try {
+      const dropPriceEntry = droppedPrices[index];
       const updatedDrops = droppedPrices.map((drop, i) =>
         i === index ? { ...drop, secured: false, declined: true } : drop
       );
+
+      const userId = user?._id || user?.id;
+      if (userId && dropPriceEntry) {
+        const dropPrice = Number(dropPriceEntry.price);
+        const currentPaymentMethod = dropPriceEntry.paymentMethod || activeCalc.paymentMethod;
+        const _costPrice = Math.round(results.price50) || 0;
+        const _parPrice = Math.round(results.price65) || 0;
+        const _retailPrice = Math.round(results.price100) || 0;
+        const _dropNum = updatedDrops.filter((d) => d.declined).length;
+        const _planLabel = paymentPlans[currentPaymentMethod]?.label || currentPaymentMethod;
+        const percentageOfRollout = calculateMarkupLocal(dropPrice, results.price50, results.price65, results.price100);
+
+        logEvent('change', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'rollout_and_drop',
+          meta: {
+            calculatorId: activeCalc._id,
+            appointmentId: activeCalc.appointmentId,
+            calculatorTitle: activeCalc.name || activeCalc.title,
+            fieldName: 'dropPrice',
+            fieldLabel: 'Drop Price',
+            fieldValue: dropPrice,
+            fieldCategory: 'drop',
+            oldValue: dropPrice,
+            newValue: dropPrice,
+            isSecured: false,
+            isDeclined: true,
+            dropNumber: _dropNum,
+            dropPrice: dropPrice,
+            costPrice: _costPrice,
+            parPrice: _parPrice,
+            retailPrice: _retailPrice,
+            percentageOfRollout,
+            paymentPlanKey: currentPaymentMethod,
+            paymentPlanLabel: _planLabel,
+            action: 'drop price unselected',
+          },
+        });
+      }
 
       setDroppedPrices(updatedDrops);
       updateActive({ dropPrice: updatedDrops.map(dropEntryToPayload) }, true);
@@ -425,6 +699,32 @@ export const useCalculatorSummary = (
         return;
       }
     }
+
+    const oldValue = activeCalc.price ?? '';
+    const userId = user?._id || user?.id;
+    if (num !== oldValue && userId) {
+      logEvent('change', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'rollout_and_drop',
+        meta: {
+          calculatorId: activeCalc._id,
+          appointmentId: activeCalc.appointmentId,
+          calculatorTitle: activeCalc.name || activeCalc.title,
+          fieldLabel: 'Price',
+          fieldValue: num,
+          fieldCategory: 'rollout_prices',
+          oldValue,
+          newValue: num,
+          action: 'rollout price changed',
+          costPrice: Math.round(results.price50) || 0,
+          parPrice: Math.round(results.price65) || 0,
+          retailPrice: Math.round(results.price100) || 0,
+          percentageOfRollout: calculateMarkupLocal(num, results.price50, results.price65, results.price100),
+        },
+      });
+    }
+
     updateActive({ price: num });
     handleSave();
   };
@@ -540,6 +840,32 @@ export const useCalculatorSummary = (
         return Promise.resolve();
       });
       await Promise.all(promises);
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        calculators.forEach((calc: any) => {
+          if (calc.price > 0 && !calc.isRolloutConfirmed) {
+            logEvent('change', {
+              user_id: userId,
+              created_by: userId,
+              module_type: 'rollout_and_drop',
+              meta: {
+                calculatorId: calc._id,
+                appointmentId: calc.appointmentId || activeCalc.appointmentId,
+                calculatorTitle: calc.name || calc.title,
+                fieldName: 'rolloutConfirmed',
+                fieldLabel: 'Rollout Confirmed',
+                fieldValue: Number(calc.price),
+                fieldCategory: 'rollout',
+                oldValue: '',
+                newValue: Number(calc.price),
+                action: 'rollout confirmed',
+              },
+            });
+          }
+        });
+      }
+
       if (setCalculators) {
         setCalculators((prev: any) =>
           prev.map((calc: any) => {
@@ -588,6 +914,28 @@ export const useCalculatorSummary = (
   };
 
   const handleDiscountChange = (val: number) => {
+    const oldValue = activeCalc.inputs.discountPercentage || 15;
+    const userId = user?._id || user?.id;
+    if (val !== oldValue && userId) {
+      logEvent('change', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'rollout_and_drop',
+        meta: {
+          calculatorId: activeCalc._id,
+          appointmentId: activeCalc.appointmentId,
+          calculatorTitle: activeCalc.name || activeCalc.title,
+          fieldName: 'discountPercentage',
+          fieldLabel: 'Discount Percentage',
+          fieldValue: val,
+          fieldCategory: 'rollout_discount',
+          oldValue,
+          newValue: val,
+          action: 'discount percentage changed',
+        },
+      });
+    }
+
     setCurrentDiscount(val);
     updateActive({ inputs: { discountPercentage: val } });
     handleSave();

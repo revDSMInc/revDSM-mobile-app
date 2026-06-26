@@ -33,6 +33,7 @@ import RNFS from 'react-native-fs';
 import base64 from 'base-64';
 import { useAuth } from '../../../hooks/useAuth';
 import SocketManager from '../../../services/SocketManager';
+import { logEvent } from '../../../services/api/LoggerService';
 
 const getNativeModules = () => {
   try {
@@ -311,9 +312,16 @@ export const JobDocsSection = ({
     setUploadingSlots((prev) => ({ ...prev, [slotKey]: true }));
 
     const categoryObj = IMAGE_CATEGORIES.find((cat) => cat.name === categoryName);
+    // Compute the extra-slot index matching the web formula:
+    // nextIndex = baseSubcatCount + existingExtraCount + 1  (1-based absolute)
+    const baseSubcatCount = categoryObj?.subCategories?.length ?? 0;
+    const existingExtraCount = getImagesForSection(categoryName).filter(
+      (img) => img.subcategory?.includes(`${categoryName} - Extra`)
+    ).length;
+    const nextExtraIndex = baseSubcatCount + existingExtraCount + 1;
     const subcategory = groupName
       ? groupName
-      : categoryObj?.subCategories?.[idx]?.name || `${categoryName} - Extra ${idx + 1}`;
+      : categoryObj?.subCategories?.[idx]?.name || `${categoryName} - Extra ${nextExtraIndex}`;
 
     const tempPhoto: SectionImage = {
       uri: asset.uri,
@@ -343,6 +351,7 @@ export const JobDocsSection = ({
       uri: asset.uri,
       type: asset.type || 'image/jpeg',
       name: asset.fileName || `photo_${Date.now()}.jpg`,
+      userId: user?._id || user?.id,
     });
 
     // Clear the per-slot uploading spinner (queue handles the real upload)
@@ -400,9 +409,16 @@ export const JobDocsSection = ({
     if (!movingImage || !lead?._id) return;
 
     const targetCategoryObj = IMAGE_CATEGORIES.find((cat) => cat.name === targetCatName);
+    // Compute the extra-slot index matching the web formula:
+    // nextIndex = baseSubcatCount + existingExtraCount + 1  (1-based absolute)
+    const targetBaseSubcatCount = targetCategoryObj?.subCategories?.length ?? 0;
+    const targetExtraCount = getImagesForSection(targetCatName).filter(
+      (img) => img.subcategory?.includes(`${targetCatName} - Extra`)
+    ).length;
+    const targetNextExtraIndex = targetBaseSubcatCount + targetExtraCount + 1;
     const subcategory = targetGroupName
       ? targetGroupName
-      : targetCategoryObj?.subCategories?.[targetIdx]?.name || `${targetCatName} - Extra ${targetIdx + 1}`;
+      : targetCategoryObj?.subCategories?.[targetIdx]?.name || `${targetCatName} - Extra ${targetNextExtraIndex}`;
 
     const payload = {
       photoId: movingImage.image.id,
@@ -620,6 +636,21 @@ export const JobDocsSection = ({
         leadId: lead?._id,
         payload: { leadData, jobState: {} },
       });
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('submit', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'lead_result_field_entry',
+          meta: {
+            leadId: lead?._id,
+            result: leadData.result,
+            reason: leadData.reason,
+            action: 'submit_lead_result_form',
+          },
+        });
+      }
 
       setShowResultModal(false);
       await refetch();

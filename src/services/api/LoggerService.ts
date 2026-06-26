@@ -63,8 +63,14 @@ export const logEvent = async (eventType: string, details: any = {}) => {
 
     // Ensure URL doesn't have double slashes
     const baseUrl = ENV.API_URL.endsWith('/') ? ENV.API_URL.slice(0, -1) : ENV.API_URL;
-    await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload);
+    const token = Storage.getItem('accessToken');
+    const headers: any = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, { headers });
   } catch (err) {
     console.error('[Logger] Failed to send log:', err);
   }
 };
+

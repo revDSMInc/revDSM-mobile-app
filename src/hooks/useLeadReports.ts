@@ -7,6 +7,9 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import FileViewer from 'react-native-file-viewer';
 import { downloadPdfToDevice } from '../utils/download-utils';
 import { ENV } from '../config/env';
+import { useAuth } from './useAuth';
+import { logEvent } from '../services/api/LoggerService';
+
 
 export interface RiskJob {
   jobId: string;
@@ -49,9 +52,13 @@ const triggerGlobalRefetch = (leadId: string) => {
 };
 
 export const useLeadReports = (lead: any, refetch: () => void) => {
+  const { user } = useAuth();
+  const existingRunIdsRef = useRef<Set<string>>(new Set());
+  const pastYearsRef = useRef<number>(3);
   const [secureUrls, setSecureUrls] = useState<Record<string, string>>({});
   const resolvedReportsRef = useRef<string>('');
   const [riskJob, setRiskJob] = useState<RiskJob | null>(null);
+
   const [revRenderJobs, setRevRenderJobs] = useState<any[]>([]);
   const queryClient = useQueryClient();
 
@@ -171,6 +178,24 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           if (data.status === 'completed' || data.progress === 100) {
             console.log('[Risk] Job completed, final sync...');
             updateRiskJob(null);
+
+            // Log successful report generation
+            const address = lead?.fullAddress || lead?.address || '';
+            const street = address?.split(',')[0] || '';
+            if (user?._id || user?.id) {
+              logEvent('create', {
+                user_id: user?._id || user?.id,
+                module_type: 'risk_report',
+                created_by: user?._id || user?.id,
+                meta: {
+                  leadId: leadId,
+                  reportId: street,
+                  formattedAddress: address,
+                  pastRangeType: pastYearsRef.current,
+                  filename: `${street}-Risk-Report.pdf`,
+                },
+              });
+            }
             
             // Invalidate React Query cache to update other screens (MapDetail, LeadCenter, etc.)
             queryClient.invalidateQueries({ queryKey: ['mapJobs'] });
@@ -195,6 +220,24 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
           if (data.status === 'failed') {
             console.warn('[Risk] Job failed:', data.error);
             updateRiskJob(null);
+
+            // Log report generation error
+            const address = lead?.fullAddress || lead?.address || '';
+            const street = address?.split(',')[0] || '';
+            if (user?._id || user?.id) {
+              logEvent('create', {
+                user_id: user?._id || user?.id,
+                module_type: 'risk_report',
+                created_by: user?._id || user?.id,
+                meta: {
+                  reportId: street,
+                  formattedAddress: address,
+                  pastRangeType: pastYearsRef.current,
+                  error: data.error || 'Job failed',
+                },
+              });
+            }
+
             FlashMessage.error('Report generation timed out or failed. Please try again.', 'Risk Report Failed');
             return true;
           }
@@ -253,6 +296,7 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
   }, [leadId]);
 
   const handleStartRiskReport = async (pastYears: number) => {
+    pastYearsRef.current = pastYears;
     try {
       updateRiskJob({ jobId: 'temp', progress: 0, status: 'pending', step: 'Starting...' });
       FlashMessage.info('Starting Risk Report generation...', 'Processing');
@@ -267,10 +311,27 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       } else {
         updateRiskJob(null);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Risk] Failed to start generation:', err);
       updateRiskJob(null);
       FlashMessage.error('Error', 'Failed to start report generation');
+
+      // Log report generation start error
+      const address = lead?.fullAddress || lead?.address || '';
+      const street = address?.split(',')[0] || '';
+      if (user?._id || user?.id) {
+        logEvent('create', {
+          user_id: user?._id || user?.id,
+          module_type: 'risk_report',
+          created_by: user?._id || user?.id,
+          meta: {
+            reportId: street,
+            formattedAddress: address,
+            pastRangeType: pastYears,
+            error: err?.message || 'Failed to start report generation',
+          },
+        });
+      }
     }
   };
 
@@ -314,7 +375,22 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
     setRevRenderJobs(initialJobs);
     Storage.setItem(`rev_render_jobs_${lead?._id || lead?.id}`, JSON.stringify(initialJobs));
 
+    try {
+      existingRunIdsRef.current.clear();
+      if (leadId) {
+        const res = await LeadService.getRevRenderRuns(leadId);
+        const runs = res.data?.runs || res.data?.data?.runs || [];
+        runs.forEach((r: any) => {
+          const id = r.runId || r._id || r.id;
+          if (id) existingRunIdsRef.current.add(id);
+        });
+      }
+    } catch (e) {
+      console.warn('[Reports] Failed to fetch pre-gen runs:', e);
+    }
+
     FlashMessage.info(`Starting ${total} render generation(s)...`, 'RevRender');
+
 
     let completedCount = 0;
 
@@ -481,9 +557,11 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
       FlashMessage.info('RevRender Batch finished', 'Check results in Tools tab');
       setRevRenderJobs([]);
       Storage.removeItem(`rev_render_jobs_${lead?._id || lead?.id}`);
+
       queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead?._id || lead?.id] });
       refetch();
     };
+
 
     payloads.forEach((_, i) => runRender(initialJobs[i], i));
   };

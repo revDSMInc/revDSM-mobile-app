@@ -20,6 +20,7 @@ import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navig
 import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 import { LeadMap } from '../../widgets/components/LeadCenter/LeadMap';
 import { RootStackParamList } from '../../navigation';
 import { Header, useHeader } from '../../widgets/common/MainHeader';
@@ -101,6 +102,16 @@ export default function MapDetailScreen() {
   const { currentLead } = route.params || {};
 
   const { setHeaderActions } = useHeader();
+
+  useEffect(() => {
+    if (user?._id || user?.id) {
+      logEvent('view', {
+        user_id: user?._id || user?.id,
+        module_type: 'sales_map',
+        created_by: user?._id || user?.id,
+      });
+    }
+  }, [user]);
 
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -455,6 +466,15 @@ export default function MapDetailScreen() {
           onCameraPress={(job) => {
             setSelectedJob(job);
             setShowCameraModal(true);
+            logEvent('view', {
+              user_id: user?._id || user?.id,
+              module_type: 'upload_before_after_images',
+              created_by: user?._id || user?.id,
+              meta: {
+                job_number: job?.jobNumber,
+                company_id: job?.companyId,
+              },
+            });
           }}
           onReferencePress={(job) => {
             setSelectedJob(job);

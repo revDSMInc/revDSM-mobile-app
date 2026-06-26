@@ -1,21 +1,21 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Image,
   ScrollView,
-  Dimensions,
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS, IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { RootStackParamList } from '../../navigation';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
 
@@ -67,6 +67,43 @@ const INITIAL_CONFIG = {
 
 const loadedUris = new Set<string>();
 
+// ─── Payload Helpers ──────────────────────────────────────────────────────────
+
+/** Converts a UI type label to snake_case API value, stripping the section label suffix.
+ *  e.g. toApiType('Hidden Vent Soffit', 'Soffit') → 'hidden_vent'
+ *       toApiType('K-Style', 'Gutter')            → 'k_style'
+ */
+const toApiType = (type: string | null, sectionLabel: string): string | null => {
+  if (!type) return null;
+  let cleaned = type.trim();
+  // Strip trailing section label word (case-insensitive)
+  const suffix = sectionLabel.trim();
+  if (cleaned.toLowerCase().endsWith(suffix.toLowerCase())) {
+    cleaned = cleaned.slice(0, -(suffix.length)).trim();
+  }
+  return cleaned.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || null;
+};
+
+/** Extracts relative S3 key from a full S3 URL or returns the value as-is for local URIs.
+ *  e.g. 'https://bucket.s3.amazonaws.com/images/SelfGen/file.jpg' → 'images/SelfGen/file.jpg'
+ */
+const extractS3Key = (url: string | undefined): string => {
+  if (!url) return '';
+  // Match 'https://..../path' or 'http://..../path' and extract everything after the host
+  const match = url.match(/^https?:\/\/[^/]+\/(.+)/);
+  if (match && match[1]) return match[1];
+  // Not a full URL (device file:/// URI or already a relative path) — return as-is
+  return url;
+};
+
+/** Extracts the filename from any URL or path. */
+const getFilename = (url: string | undefined): string => {
+  if (!url) return '';
+  const withoutQuery = url.split('?')[0];
+  const parts = withoutQuery.split('/');
+  return parts[parts.length - 1] || '';
+};
+
 const HouseImage = ({ uri, style, height = 130 }: { uri: string; style?: any; height?: number }) => {
   const { colors, isDark } = useTheme();
   const [loading, setLoading] = useState(!loadedUris.has(uri));
@@ -110,8 +147,7 @@ export default function RevRenderScreen() {
   const { colors, isDark } = useTheme();
   const navigation = useNavigation<any>();
   const route = useRoute<RevRenderRouteProp>();
-  const insets = useSafeAreaInsets();
-  const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const { lead, sectionImages, onNavToDocs, onGenerate, onGenerateAll } = route.params;
 
@@ -124,6 +160,42 @@ export default function RevRenderScreen() {
 
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
+  // ── Analytics ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+
+    let screenName = 'before';
+    let extraMeta: Record<string, any> = {};
+
+    if (status === 'config') {
+      screenName = 'before_configure';
+      extraMeta = {
+        viewId: selectedPhoto?.viewId,
+        viewLabel: selectedPhoto?.viewLabel,
+      };
+    } else if (status === 'queue') {
+      screenName = 'queue';
+      // Match web queue.js: include totalRenders + hasLeadContext
+      extraMeta = {
+        totalRenders: renderQueue.length,
+        hasLeadContext: !!(lead?._id || lead?.id || lead?.leadId),
+      };
+    }
+
+    logEvent('view', {
+      user_id: userId,
+      module_type: 'rev_render',
+      created_by: userId,
+      meta: {
+        leadId: lead?._id || lead?.id || lead?.leadId || null,
+        jobId: lead?._id || lead?.id || lead?.leadId || null,
+        screen: screenName,
+        ...extraMeta,
+      },
+    });
+  }, [status, selectedPhoto?.viewId, selectedPhoto?.viewLabel, user?._id, user?.id, lead?._id, lead?.id, lead?.leadId, renderQueue.length]);
+
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handleAddToQueue = () => {
@@ -131,12 +203,19 @@ export default function RevRenderScreen() {
     const textureImageUrls: any = {};
 
     MATERIAL_SECTIONS.forEach(s => {
-      if (config[`${s.key}Checked`]) {
-        const type = config[s.key];
-        const color = config[`${s.key}Color`];
-        selections[s.key] = type ? `${type}-${color?.name}` : color?.name;
-        selections[`${s.key}Type`] = type;
+      const isChecked = config[`${s.key}Checked`];
+      const type = config[s.key];
+      const color = config[`${s.key}Color`];
+
+      if (isChecked) {
+        // API expects lowercase color name and snake_case type without section suffix
+        selections[s.key] = color?.name?.toLowerCase() || null;
+        selections[`${s.key}Type`] = toApiType(type, s.label);
         textureImageUrls[s.key] = color?.hex || null;
+      } else {
+        // Always include all components; null for unchecked ones
+        selections[s.key] = null;
+        selections[`${s.key}Type`] = null;
       }
     });
 
@@ -145,6 +224,8 @@ export default function RevRenderScreen() {
       photo: selectedPhoto,
       selections,
       textureImageUrls,
+      viewId: selectedPhoto?.viewId,
+      viewLabel: selectedPhoto?.viewLabel,
       summary: MATERIAL_SECTIONS.filter(s => config[`${s.key}Checked`]).map(s => ({
         label: s.label,
         type: config[s.key],
@@ -153,22 +234,63 @@ export default function RevRenderScreen() {
       }))
     };
 
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('add', {
+        user_id: userId,
+        module_type: 'rev_render',
+        created_by: userId,
+        meta: {
+          leadId: lead?._id || lead?.id || lead?.leadId || null,
+          jobId: lead?._id || lead?.id || lead?.leadId || null,
+          screen: 'before_configure',
+          viewId: selectedPhoto?.viewId,
+          viewLabel: selectedPhoto?.viewLabel,
+          enabledComponentIds: Object.keys(selections),
+          sameColorEnabled: config.sameColor,
+        },
+      });
+    }
+
     setRenderQueue([...renderQueue, newRender]);
     setStatus('queue');
   };
 
   const handleGenerateAll = async () => {
     try {
-      const payloads = renderQueue.map(item => ({
-        houseImageUrl: item.photo?.uri || item.photo?.s3url,
-        houseMimeType: 'image/jpeg',
-        leadId: lead?._id || lead?.leadId,
-        selections: item.selections,
-        textureImageUrls: item.textureImageUrls,
-      }));
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('start', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            screen: 'Generating renders from queue',
+            totalRenders: renderQueue.length,
+          },
+        });
+      }
+
+      const leadId = lead?._id || lead?.leadId || '';
+
+      const payloads = renderQueue.map(item => {
+        const rawUrl = item.photo?.s3url || item.photo?.uri || '';
+        return {
+          houseImageUrl: extractS3Key(rawUrl),
+          houseMimeType: 'image/jpeg',
+          selections: item.selections,
+          textureImageUrls: item.textureImageUrls,
+          sourceFileName: getFilename(rawUrl),
+          viewLabel: item.viewLabel || item.photo?.label || '',
+          leadId,
+        };
+      });
+
+      // Wrap in the envelope format the API expects
+      const requestBody = { payloads, leadId, jobId: leadId };
 
       if (onGenerateAll) {
-        onGenerateAll(payloads);
+        onGenerateAll(requestBody);
       } else {
         payloads.forEach(p => onGenerate(p));
       }
@@ -179,10 +301,29 @@ export default function RevRenderScreen() {
   };
 
   const removeFromQueue = (id: number) => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      const deletedItem = renderQueue.find(item => item.id === id);
+      logEvent('delete', {
+        user_id: userId,
+        module_type: 'rev_render',
+        created_by: userId,
+        meta: {
+          leadId: lead?._id || lead?.id || lead?.leadId || null,
+          jobId: lead?._id || lead?.id || lead?.leadId || null,
+          screen: 'queue',
+          itemId: id,
+          viewId: deletedItem?.viewId || null,
+          viewLabel: deletedItem?.viewLabel || deletedItem?.photo?.label || null,
+          componentsCount: deletedItem?.summary?.length ?? 0,
+          remainingRenders: renderQueue.length - 1,
+        },
+      });
+    }
     setRenderQueue(prev => prev.filter(item => item.id !== id));
   };
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (status === 'config') {
       setStatus('grid');
       setSelectedPhoto(null);
@@ -192,12 +333,12 @@ export default function RevRenderScreen() {
       navigation.goBack();
     }
     return true;
-  };
+  }, [status, navigation]);
 
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBack);
     return () => backHandler.remove();
-  }, [status]);
+  }, [handleBack]);
   // ── Renders ────────────────────────────────────────────────────────────────
 
   const renderEmptyState = () => (
@@ -300,6 +441,8 @@ export default function RevRenderScreen() {
         matchingPhotos.forEach((photo: any) => {
           discoveredViews.push({
             ...photo,
+            viewId: `${group.categoryId}-${view.id}`,
+            viewLabel: view.label,
             label: view.label,
           });
         });
@@ -335,6 +478,8 @@ export default function RevRenderScreen() {
           
           group.discoveredViews.push({
             ...p,
+            viewId: `${group.categoryId}-${p.subcategory || p.id || p._id}`,
+            viewLabel: p.subcategory?.replace(/-/g, ' ') || group.categoryId,
             label: p.subcategory?.replace(/-/g, ' ') || group.categoryId,
           });
           accountedPhotoUris.add(p.uri);
@@ -407,6 +552,22 @@ export default function RevRenderScreen() {
                     <TouchableOpacity
                       key={index}
                       onPress={() => {
+                        const userId = user?._id || user?.id;
+                        if (userId) {
+                          logEvent('select', {
+                            user_id: userId,
+                            module_type: 'rev_render',
+                            created_by: userId,
+                            meta: {
+                              leadId: lead?._id || lead?.id || lead?.leadId || null,
+                              jobId: lead?._id || lead?.id || lead?.leadId || null,
+                              viewId: photo.viewId,
+                              viewLabel: photo.viewLabel,
+                              hasImage: !!(photo.uri || photo.s3url),
+                              screen: 'before',
+                            },
+                          });
+                        }
                         setConfig(INITIAL_CONFIG);
                         setSelectedPhoto(photo);
                         setStatus('config');
@@ -438,6 +599,27 @@ export default function RevRenderScreen() {
     const isAnyChecked = MATERIAL_SECTIONS.some(s => config[`${s.key}Checked`]);
 
     const handleCommonColorSelect = (color: any) => {
+      const oldVal = config.selectedCommonColor;
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('change', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id || lead?.leadId || null,
+            jobId: lead?._id || lead?.id || lead?.leadId || null,
+            viewId: selectedPhoto?.viewId,
+            screen: 'before_configure',
+            fieldName: 'same_color_texture',
+            oldValue: oldVal?.name || null,
+            oldValueHex: oldVal?.hex || null,
+            newValue: color.name,
+            newValueHex: color.hex,
+          },
+        });
+      }
+
       setConfig((prev: any) => {
         const next = { ...prev, selectedCommonColor: color };
         MATERIAL_SECTIONS.forEach(s => {
@@ -459,6 +641,37 @@ export default function RevRenderScreen() {
       if (newChecked && config.sameColor) {
         newConfig[`${key}Color`] = config.selectedCommonColor;
       }
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        const section = MATERIAL_SECTIONS.find(s => s.key === key);
+        const compColor = newConfig[`${key}Color`] || config[`${key}Color`];
+        const appliedColorName = compColor?.name ?? null;
+        const appliedColorHex = compColor?.hex ?? null;
+
+        logEvent('change', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id || lead?.leadId || null,
+            jobId: lead?._id || lead?.id || lead?.leadId || null,
+            viewId: selectedPhoto?.viewId,
+            screen: 'before_configure',
+            fieldName: 'component_enabled',
+            componentId: key,
+            componentLabel: section?.label || key,
+            oldValue: config[`${key}Checked`],
+            newValue: newChecked,
+            ...(appliedColorName != null && {
+              [newChecked ? 'appliedColor' : 'removedColor']: appliedColorName,
+              [newChecked ? 'appliedColorHex' : 'removedColorHex']: appliedColorHex,
+              colorSource: config.sameColor ? 'same_color_for_all' : 'component_default',
+            }),
+          },
+        });
+      }
+
       setConfig(newConfig);
     };
 
@@ -506,136 +719,208 @@ export default function RevRenderScreen() {
                 Same Color for All
               </Text>
               <TouchableOpacity
-                onPress={() => setConfig({ ...config, sameColor: !config.sameColor })}
-                className="w-12 h-6 rounded-full px-1 justify-center"
-                style={{ backgroundColor: config.sameColor ? '#2EDE56' : '#919EAB' }}
-              >
-                <View
-                  className="w-4 h-4 rounded-full bg-white"
-                  style={{ alignSelf: config.sameColor ? 'flex-end' : 'flex-start' }}
-                />
-              </TouchableOpacity>
-            </View>
-            <Text className="text-xs mb-4" style={{ color: isDark ? '#919EAB' : '#637381' }}>
-              Apply one color to all checked components
-            </Text>
-
-            {config.sameColor && (
-              <>
-                <Text className="text-[15px] font-black mb-3" style={{ color: '#2EDE56' }}>
-                  {config.selectedCommonColor?.name || 'White'}
-                </Text>
-                <View className="flex-row flex-wrap gap-2">
-                  {REV_RENDER_COLORS.common.map((color, i) => {
-                    const isSelected = config.selectedCommonColor?.hex === color.hex;
-                    return (
-                      <TouchableOpacity
-                        key={i}
-                        onPress={() => handleCommonColorSelect(color)}
-                        className="w-10 h-10 rounded-lg border-2"
-                        style={{
-                          backgroundColor: color.hex,
-                          borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
-                        }}
-                      />
-                    );
-                  })}
-                </View>
-              </>
-            )}
+                onPress={() => {
+                const newSameColor = !config.sameColor;
+                const userId = user?._id || user?.id;
+                if (userId) {
+                  logEvent('change', {
+                    user_id: userId,
+                    module_type: 'rev_render',
+                    created_by: userId,
+                    meta: {
+                      leadId: lead?._id || lead?.id || lead?.leadId || null,
+                      jobId: lead?._id || lead?.id || lead?.leadId || null,
+                      viewId: selectedPhoto?.viewId,
+                      screen: 'before_configure',
+                      fieldName: 'same_color_enabled',
+                      componentId: 'sameColor',
+                      componentLabel: 'Same Color for All',
+                      oldValue: config.sameColor,
+                      newValue: newSameColor,
+                    },
+                  });
+                }
+                setConfig({ ...config, sameColor: newSameColor });
+              }}
+              className="w-12 h-6 rounded-full px-1 justify-center"
+              style={{ backgroundColor: config.sameColor ? '#2EDE56' : '#919EAB' }}
+            >
+              <View
+                className="w-4 h-4 rounded-full bg-white"
+                style={{ alignSelf: config.sameColor ? 'flex-end' : 'flex-start' }}
+              />
+            </TouchableOpacity>
           </View>
-
-          <Text className="text-[11px] font-black tracking-widest mb-4 uppercase" style={{ color: '#637381' }}>
-            SELECT COMPONENTS TO INCLUDE
+          <Text className="text-xs mb-4" style={{ color: isDark ? '#919EAB' : '#637381' }}>
+            Apply one color to all checked components
           </Text>
 
-          {MATERIAL_SECTIONS.map((section) => {
-            const isChecked = config[`${section.key}Checked`];
-            const isOpen = expandedSection === section.key;
-            const selectedType = config[section.key];
-            const selectedColor = config[`${section.key}Color`];
-
-            return (
-              <View
-                key={section.key}
-                className="mb-4 rounded-[20px] border overflow-hidden"
-                style={{
-                  backgroundColor: isDark ? '#1E1E1E' : '#fff',
-                  borderColor: isChecked ? '#2EDE56' : (isDark ? '#3A3A3A' : '#F4F6F8'),
-                }}
-              >
-                <TouchableOpacity
-                  onPress={() => setExpandedSection(isOpen ? null : section.key)}
-                  className="p-5 flex-row justify-between items-center"
-                >
-                  <View className="flex-row items-center flex-1">
+          {config.sameColor && (
+            <>
+              <Text className="text-[15px] font-black mb-3" style={{ color: '#2EDE56' }}>
+                {config.selectedCommonColor?.name || 'White'}
+              </Text>
+              <View className="flex-row flex-wrap gap-2">
+                {REV_RENDER_COLORS.common.map((color, i) => {
+                  const isSelected = config.selectedCommonColor?.hex === color.hex;
+                  return (
                     <TouchableOpacity
-                      onPress={() => toggleChecked(section.key)}
-                      className="w-5 h-5 rounded-md items-center justify-center mr-4"
+                      key={i}
+                      onPress={() => handleCommonColorSelect(color)}
+                      className="w-10 h-10 rounded-lg border-2"
                       style={{
-                        backgroundColor: isChecked ? '#2EDE56' : 'transparent',
-                        borderWidth: isChecked ? 0 : 1.5,
-                        borderColor: isDark ? '#555' : '#D0D5DD'
+                        backgroundColor: color.hex,
+                        borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
                       }}
-                    >
-                      {isChecked && <Icon name="check" size={14} color="white" />}
-                    </TouchableOpacity>
-                    <Text className="text-[16px] font-black" style={{ color: isDark ? '#fff' : '#1C252E' }}>
-                      {section.label}
-                    </Text>
-                    {isChecked && selectedColor && (
-                      <View className="flex-row items-center ml-auto mr-4">
-                        <View className="w-6 h-6 rounded-lg mr-2 border border-gray-200" style={{ backgroundColor: selectedColor.hex }} />
-                        <Text className="text-xs" style={{ color: '#919EAB' }}>{selectedColor.name}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={20} color="#919EAB" />
-                </TouchableOpacity>
+                    />
+                  );
+                })}
+              </View>
+            </>
+          )}
+        </View>
 
-                {isOpen && (
-                  <View className="px-5 pb-5">
-                    {section.types.length > 0 && (
-                      <>
-                        <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>TYPE</Text>
-                        <View className="flex-row flex-wrap gap-2">
-                          {section.types.map((type) => {
-                            const active = selectedType === type;
-                            return (
-                              <TouchableOpacity
-                                key={type}
-                                onPress={() => setConfig({ ...config, [section.key]: type })}
-                                className="px-5 py-2.5 rounded-full border"
-                                style={{
-                                  backgroundColor: active ? '#2EDE56' : 'transparent',
-                                  borderColor: active ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
-                                }}
-                              >
-                                <Text className="text-[13px] font-black" style={{ color: active ? '#fff' : (isDark ? '#919EAB' : '#1C252E') }}>{type}</Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      </>
-                    )}
-                    {!config.sameColor && (
-                      <View className="mt-5">
-                        <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>COLOR</Text>
-                        <View className="flex-row flex-wrap gap-2">
-                          {section.getColors(selectedType).map((color: any, i: number) => {
-                            const isSelected = selectedColor?.hex === color.hex;
-                            return (
-                              <TouchableOpacity
-                                key={i}
-                                onPress={() => setConfig({ ...config, [`${section.key}Color`]: color })}
-                                className="w-10 h-10 rounded-lg border-2"
-                                style={{ backgroundColor: color.hex, borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0') }}
-                              />
-                            );
-                          })}
-                        </View>
+        <Text className="text-[11px] font-black tracking-widest mb-4 uppercase" style={{ color: '#637381' }}>
+          SELECT COMPONENTS TO INCLUDE
+        </Text>
+
+        {MATERIAL_SECTIONS.map((section) => {
+          const isChecked = config[`${section.key}Checked`];
+          const isOpen = expandedSection === section.key;
+          const selectedType = config[section.key];
+          const selectedColor = config[`${section.key}Color`];
+
+          return (
+            <View
+              key={section.key}
+              className="mb-4 rounded-[20px] border overflow-hidden"
+              style={{
+                backgroundColor: isDark ? '#1E1E1E' : '#fff',
+                borderColor: isChecked ? '#2EDE56' : (isDark ? '#3A3A3A' : '#F4F6F8'),
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => setExpandedSection(isOpen ? null : section.key)}
+                className="p-5 flex-row justify-between items-center"
+              >
+                <View className="flex-row items-center flex-1">
+                  <TouchableOpacity
+                    onPress={() => toggleChecked(section.key)}
+                    className="w-5 h-5 rounded-md items-center justify-center mr-4"
+                    style={{
+                      backgroundColor: isChecked ? '#2EDE56' : 'transparent',
+                      borderWidth: isChecked ? 0 : 1.5,
+                      borderColor: isDark ? '#555' : '#D0D5DD'
+                    }}
+                  >
+                    {isChecked && <Icon name="check" size={14} color="white" />}
+                  </TouchableOpacity>
+                  <Text className="text-[16px] font-black" style={{ color: isDark ? '#fff' : '#1C252E' }}>
+                    {section.label}
+                  </Text>
+                  {isChecked && selectedColor && (
+                    <View className="flex-row items-center ml-auto mr-4">
+                      <View className="w-6 h-6 rounded-lg mr-2 border border-gray-200" style={{ backgroundColor: selectedColor.hex }} />
+                      <Text className="text-xs" style={{ color: '#919EAB' }}>{selectedColor.name}</Text>
+                    </View>
+                  )}
+                </View>
+                <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={20} color="#919EAB" />
+              </TouchableOpacity>
+
+              {isOpen && (
+                <View className="px-5 pb-5">
+                  {section.types.length > 0 && (
+                    <>
+                      <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>TYPE</Text>
+                      <View className="flex-row flex-wrap gap-2">
+                        {section.types.map((type) => {
+                          const active = selectedType === type;
+                          return (
+                            <TouchableOpacity
+                              key={type}
+                              onPress={() => {
+                                const oldType = config[section.key];
+                                const userId = user?._id || user?.id;
+                                if (userId) {
+                                  logEvent('change', {
+                                    user_id: userId,
+                                    module_type: 'rev_render',
+                                    created_by: userId,
+                                    meta: {
+                                      leadId: lead?._id || lead?.id || lead?.leadId || null,
+                                      jobId: lead?._id || lead?.id || lead?.leadId || null,
+                                      viewId: selectedPhoto?.viewId,
+                                      screen: 'before_configure',
+                                      fieldName: 'component_type',
+                                      componentId: section.key,
+                                      componentLabel: section.label,
+                                      oldValue: oldType,
+                                      newValue: type,
+                                    },
+                                  });
+                                }
+                                setConfig({ ...config, [section.key]: type });
+                              }}
+                              className="px-5 py-2.5 rounded-full border"
+                              style={{
+                                backgroundColor: active ? '#2EDE56' : 'transparent',
+                                borderColor: active ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0'),
+                              }}
+                            >
+                              <Text className="text-[13px] font-black" style={{ color: active ? '#fff' : (isDark ? '#919EAB' : '#1C252E') }}>{type}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
-                    )}
+                    </>
+                  )}
+                  {!config.sameColor && (
+                    <View className="mt-5">
+                      <Text className="text-[11px] font-black tracking-widest mb-3 uppercase" style={{ color: '#637381' }}>COLOR</Text>
+                      <View className="flex-row flex-wrap gap-2">
+                        {section.getColors(selectedType).map((color: any, i: number) => {
+                          const isSelected = selectedColor?.hex === color.hex;
+                          return (
+                            <TouchableOpacity
+                              key={i}
+                              onPress={() => {
+                                const oldColor = config[`${section.key}Color`];
+                                const userId = user?._id || user?.id;
+                                if (userId) {
+                                  logEvent('change', {
+                                    user_id: userId,
+                                    module_type: 'rev_render',
+                                    created_by: userId,
+                                    meta: {
+                                      leadId: lead?._id || lead?.id || lead?.leadId || null,
+                                      jobId: lead?._id || lead?.id || lead?.leadId || null,
+                                      viewId: selectedPhoto?.viewId,
+                                      screen: 'before_configure',
+                                      fieldName: 'component_texture',
+                                      componentId: section.key,
+                                      componentLabel: section.label,
+                                      oldValue: oldColor?.name || null,
+                                      oldValueHex: oldColor?.hex || null,
+                                      newValue: color.name,
+                                      newValueHex: color.hex,
+                                      appliedColor: color.name,
+                                      appliedColorHex: color.hex,
+                                      previousColor: oldColor?.name || null,
+                                      previousColorHex: oldColor?.hex || null,
+                                    },
+                                  });
+                                }
+                                setConfig({ ...config, [`${section.key}Color`]: color });
+                              }}
+                              className="w-10 h-10 rounded-lg border-2"
+                              style={{ backgroundColor: color.hex, borderColor: isSelected ? '#2EDE56' : (isDark ? '#3A3A3A' : '#E0E0E0') }}
+                            />
+                          );
+                        })}
+                      </View>
+                    </View>
+                  )}
                   </View>
                 )}
               </View>

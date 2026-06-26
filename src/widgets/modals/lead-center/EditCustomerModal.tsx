@@ -15,6 +15,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { formatUSPhoneNumber } from '../../../utils/phone-util';
 import { FlashMessage } from '../../../config/message';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface EditCustomerModalProps {
   visible: boolean;
@@ -30,6 +32,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   lead,
 }) => {
   const { colors } = useTheme();
+  const { user } = useAuth();
   const [firstName, setFirstName] = useState(lead?.customerDetails?.firstName || '');
   const [lastName, setLastName] = useState(lead?.customerDetails?.lastName || '');
   const [phone, setPhone] = useState(lead?.customerDetails?.phone || '');
@@ -58,6 +61,20 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
         phone: phone.trim(),
         email: email.trim(),
       });
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('change', {
+          user_id: userId,
+          module_type: 'lead_center',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id,
+            action: 'edited_customer_details',
+          },
+        });
+      }
+
       onClose();
     } catch (error: any) {
       FlashMessage.error('Error', error?.message || 'Failed to update customer info.');

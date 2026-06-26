@@ -16,6 +16,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { LeadService } from '../../../services/api/leads';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface RevRenderHistoryModalProps {
   visible: boolean;
@@ -35,6 +37,7 @@ export const RevRenderHistoryModal = ({
   onDeleteSuccess,
 }: RevRenderHistoryModalProps) => {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
@@ -48,7 +51,40 @@ export const RevRenderHistoryModal = ({
     if (visible && runs.length === 0) {
       onClose();
     }
-  }, [runs, visible]);
+  }, [runs, visible, onClose]);
+
+  // ── render_result: view — fires on open and when the user navigates to a new render ──
+  useEffect(() => {
+    if (!visible) return;
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    const run = runs[currentIndex];
+    if (!run) return;
+    logEvent('view', {
+      user_id: userId,
+      module_type: 'rev_render',
+      created_by: userId,
+      meta: {
+        action: 'render_viewed',
+        screen: 'render_result',
+        leadId,
+        renderIndex: currentIndex + 1,
+        totalRenders: runs.length,
+        beforeImageUrl: run.originalUrl || run.s3UrlOriginal || null,
+        afterImageUrl: run.generatedUrl || run.s3UrlGenerated || null,
+        originalS3url: run.s3UrlOriginal || null,
+        generatedS3url: run.s3UrlGenerated || null,
+        s3url: run.s3url || null,
+        bucketName: run.bucketName || null,
+        category: run.category || null,
+        subcategory: run.subcategory || null,
+        viewLabel: run.viewLabel || null,
+        createdAt: run.createdAt || null,
+        runId: run.runId || run._id || null,
+      },
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, currentIndex]);
 
   useEffect(() => {
     if (currentIndex >= runs.length) {
@@ -67,6 +103,32 @@ export const RevRenderHistoryModal = ({
     setIsDeleting(true);
     try {
       await LeadService.deleteRevRenderRun(runId, { reason: deleteReason });
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        const deleteIndex = runs.findIndex(
+          (r) => (r.runId || r._id) === runId
+        );
+        logEvent('delete', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            action: 'render_deleted',
+            screen: 'render_result',
+            leadId,
+            renderIndex: deleteIndex + 1,
+            runId,
+            generatedS3url: currentRun?.s3UrlGenerated || null,
+            bucketName: currentRun?.bucketName || null,
+            category: currentRun?.category || null,
+            subcategory: currentRun?.subcategory || null,
+            viewLabel: currentRun?.viewLabel || null,
+            createdAt: currentRun?.createdAt || null,
+            deleteReason: deleteReason || null,
+          },
+        });
+      }
       
       if (onDeleteSuccess) {
         onDeleteSuccess();
@@ -106,12 +168,26 @@ export const RevRenderHistoryModal = ({
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => { scale.value = savedScale.value * e.scale; })
     .onEnd(() => {
-      if (scale.value < 1) {
+      const userId = user?._id || user?.id;
+      const newScale = scale.value;
+      if (userId && newScale !== 1) {
+        logEvent('pinch', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            leadId,
+            action: 'pinch_zoom_applied',
+            newScale,
+          },
+        });
+      }
+      if (newScale < 1) {
         scale.value = withSpring(1); savedScale.value = 1;
         translateX.value = withSpring(0); translateY.value = withSpring(0);
         savedTranslateX.value = 0; savedTranslateY.value = 0;
       } else {
-        savedScale.value = scale.value;
+        savedScale.value = newScale;
       }
     });
 
@@ -146,7 +222,7 @@ export const RevRenderHistoryModal = ({
   useEffect(() => {
     sliderX.value = imageWidth / 2;
     savedSliderX.value = imageWidth / 2;
-  }, [currentIndex]);
+  }, [currentIndex, imageWidth, savedSliderX, sliderX]);
 
   const sliderPan = Gesture.Pan()
     // Only activate on clear horizontal swipes so vertical scrolls pass through
@@ -170,7 +246,27 @@ export const RevRenderHistoryModal = ({
 
   // ── Nav ───────────────────────────────────────────────────────────────
   const handlePrev = () => { if (currentIndex > 0) setCurrentIndex(currentIndex - 1); };
-  const handleNext = () => { if (currentIndex < runs.length - 1) setCurrentIndex(currentIndex + 1); };
+  const handleNext = () => {
+    if (currentIndex < runs.length - 1) {
+      const nextIndex = currentIndex + 1;
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            action: 'gallery_next',
+            leadId,
+            fromIndex: currentIndex + 1,
+            toIndex: nextIndex + 1,
+            totalRenders: runs.length,
+          },
+        });
+      }
+      setCurrentIndex(nextIndex);
+    }
+  };
 
   const currentRun = runs[currentIndex];
   if (!currentRun) return null;

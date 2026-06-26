@@ -91,7 +91,6 @@ export default function LeadsPage() {
     }
   }, [reopenZoneFromParams, navigation]);
 
-  // Fallback: reopen via MMKV storage when Leads regains focus (web zoneCanvasserOpen flag)
   useFocusEffect(
     useCallback(() => {
       if (reopenZoneFromParams) return undefined;
@@ -102,6 +101,17 @@ export default function LeadsPage() {
       return undefined;
     }, [reopenZoneFromParams])
   );
+
+  useEffect(() => {
+    if (zoneCanvasserVisible && (user?._id || user?.id)) {
+      logEvent('view', {
+        user_id: user?._id || user?.id,
+        module_type: 'sales_map',
+        created_by: user?._id || user?.id,
+      });
+    }
+  }, [zoneCanvasserVisible, user]);
+
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(
     null
@@ -484,21 +494,6 @@ export default function LeadsPage() {
               actionLoading={navigatingLeadId === item._id}
               onPress={() => handleActionPress(item)}
               onPitchbookPress={() => {
-                if (user?._id) {
-                  logEvent('select', {
-                    user_id: user._id,
-                    module_type: 'lead_card',
-                    created_by: user._id,
-                    meta: {
-                      leadId: item._id,
-                      contactPerson:
-                        `${item.customerDetails?.firstName || ''} ${item.customerDetails?.lastName || ''
-                          }`.trim() || 'N/A',
-                      address: item.fullAddress || 'N/A',
-                      action: 'view_pitchbook',
-                    },
-                  });
-                }
                 navigation.navigate('Pitchbook', { lead: item });
               }}
               onActionPress={() => handleActionPress(item)}

@@ -29,6 +29,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import RNFlashMessage from 'react-native-flash-message';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface Props {
   visible: boolean;
@@ -396,6 +397,19 @@ export default function LeadCreateModal({
       console.log(payload, 'lf lead creation');
       const response = await createLeadMutation.mutateAsync(payload);
       showSuccess('Success', 'Lead created successfully');
+
+      const uId = user?._id || user?.id;
+      if (uId) {
+        logEvent('add', {
+          user_id: uId,
+          created_by: uId,
+          module_type: 'self_gen_lead',
+          meta: {
+            leadData: response?.data?.lead || response?.data || response || payload,
+            action: 'self_gen_lead_created',
+          },
+        });
+      }
 
       const createdLead = fromZone ? {
         ...(response?.data?.lead || response?.data || response),

@@ -3,6 +3,8 @@ import { useNavigation } from '@react-navigation/native';
 import { LeadService } from '../services/api/leads';
 import { FlashMessage } from '../config/message';
 import { downloadPdfToDevice } from '../utils/download-utils';
+import { useAuth } from './useAuth';
+import { logEvent } from '../services/api/LoggerService';
 
 interface ModalState {
   showJobBuilder: boolean;
@@ -23,6 +25,7 @@ export const useLeadCenterModals = (
   handlers: any = {}
 ) => {
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
 
   const [modals, setModals] = useState<ModalState>({
     showJobBuilder: initialTool === 'job_builder',
@@ -79,6 +82,14 @@ export const useLeadCenterModals = (
           handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl, 'Consent Form');
         } else {
           toggleModal('showConsentModal', true);
+          if (user?._id || user?.id) {
+            logEvent('view', {
+              user_id: user?._id || user?.id,
+              created_by: user?._id || user?.id,
+              module_type: 'consent_form',
+              meta: { action: 'consent portal opened' },
+            });
+          }
         }
       } else if (toolId === 'waiver') {
         const existing = findReport('waiver_form');
@@ -86,6 +97,14 @@ export const useLeadCenterModals = (
           handleOpenPdf(secureUrls[existing.reportPath] || existing.fileUrl, 'Roof Waiver');
         } else {
           toggleModal('showWaiverModal', true);
+          if (user?._id || user?.id) {
+            logEvent('view', {
+              user_id: user?._id || user?.id,
+              created_by: user?._id || user?.id,
+              module_type: 'roof_waiver_form',
+              meta: { action: 'roof waiver portal opened' },
+            });
+          }
         }
       } else if (toolId === 'consent-download') {
         handleOpenPdf(extra, 'Consent Form');

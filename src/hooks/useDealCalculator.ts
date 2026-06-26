@@ -9,6 +9,7 @@ import { LeadService } from '../services/api/leads';
 import { Alert, DeviceEventEmitter } from 'react-native';
 import { useAuth } from './useAuth';
 import { autoConfirmManager } from '../utils/calculator/autoConfirmManager';
+import { logEvent } from '../services/api/LoggerService';
 
 const INITIAL_INPUTS = {
   gutter5DsE: '',
@@ -63,6 +64,118 @@ export const useDealCalculator = (lead: any) => {
 
   const active = calculators[activeIdx] || calculators[0];
   const { inputs, extras, discounts } = active;
+
+  // --- Web Parity Telemetry Refs & Helpers ---
+  const pendingChangesRef = useRef<Array<{
+    fieldName: string;
+    fieldLabel: string;
+    fieldCategory: string;
+    oldValue: any;
+    newValue: any;
+    action: string;
+  }>>([]);
+  const fieldLogTimerRef = useRef<any>(null);
+  const lastSavedTitlesRef = useRef<Record<string, string>>({});
+
+  const getInputLabelAndCategory = (name: string): { label: string; category: string } => {
+    switch (name) {
+      case 'gutter5DsE': return { label: '5" Gutter/DS/E', category: 'gutter_filter' };
+      case 'gutter6Ft1': return { label: '6" Gutter/DS/Elbows', category: 'gutter_filter' };
+      case 'gutter7DsE': return { label: '7" Gutter/DS/Elbows', category: 'gutter_filter' };
+      case 'miters': return { label: 'Miters', category: 'gutter_filter' };
+      case 'endCaps': return { label: 'End Caps', category: 'gutter_filter' };
+      case 'spoutSavers': return { label: 'Spout Savers', category: 'gutter_filter' };
+      case 'versaMaxFt1': return { label: 'Versa Max', category: 'gutter_filter' };
+      case 'versaMaxFt2': return { label: 'Versa Max 2nd Story', category: 'gutter_filter' };
+      case 'versaMaxFt3': return { label: 'Versa Max 3rd Story', category: 'gutter_filter' };
+      case 'versa6Ft1': return { label: '6" Versa 1st Story', category: 'gutter_filter' };
+      case 'versa7Ft1': return { label: '7" Versa 1st Story', category: 'gutter_filter' };
+      case 'filter45Ft1': return { label: '7" & 5" Versa 1st Story', category: 'gutter_filter' };
+      case 'versa6Ft2': return { label: '6" Versa 2nd Story', category: 'gutter_filter' };
+      case 'versa7Ft2': return { label: '7" Versa 2nd Story', category: 'gutter_filter' };
+      case 'filter45Ft2': return { label: '7" & 5" Versa 2nd Story', category: 'gutter_filter' };
+      case 'versa6Ft3': return { label: '6" Versa 3rd Story', category: 'gutter_filter' };
+      case 'versa7Ft3': return { label: '7" Versa 3rd Story', category: 'gutter_filter' };
+      case 'filter45Ft3': return { label: '7" & 5" Versa 3rd Story', category: 'gutter_filter' };
+      case 'ckToInstallers': return { label: 'Check to Installers', category: 'gutter_filter' };
+      case 'extraLabor': return { label: 'Extra Labor Hours', category: 'gutter_filter' };
+      case 'paymentPlan': return { label: 'Payment Plan', category: 'gutter_filter' };
+      case 'markup': return { label: 'Markup', category: 'gutter_filter' };
+      case 'discountPercentage': return { label: 'Discount Percentage', category: 'gutter_filter' };
+      default: return { label: name, category: 'gutter_filter' };
+    }
+  };
+
+  const getExtraLabelAndCategory = (name: string): { label: string; category: string } => {
+    const matched = extrasList.find((e: any) => e.id === name || e.apiKey === name);
+    if (matched) {
+      return { label: matched.label, category: 'extras' };
+    }
+    return { label: name, category: 'extras' };
+  };
+
+  const getDiscountLabelAndCategory = (name: string): { label: string; category: string } => {
+    if (name === 'seniorVet') return { label: 'Senior/Vet Discount', category: 'discounts' };
+    if (name === 'preOrder') return { label: 'Pre-Order Discount', category: 'discounts' };
+    return { label: name, category: 'discounts' };
+  };
+
+  const flushQueuedFieldChanges = (calc: any) => {
+    const userId = user?._id || user?.id;
+    if (!userId || !calc) return;
+    const changes = pendingChangesRef.current;
+    pendingChangesRef.current = [];
+
+    changes.forEach((change) => {
+      if (String(change.oldValue) === String(change.newValue)) return;
+      logEvent('change', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'calculator_field_entry',
+        meta: {
+          calculatorId: calc._id,
+          appointmentId: calc.appointmentId || appointmentId,
+          calculatorTitle: calc.name || calc.title,
+          fieldLabel: change.fieldLabel,
+          fieldValue: change.newValue,
+          fieldCategory: change.fieldCategory,
+          oldValue: change.oldValue ?? '',
+          newValue: change.newValue ?? '',
+          action: change.action,
+        },
+      });
+    });
+  };
+
+  // Log viewed event whenever active calculator changes
+  useEffect(() => {
+    if (active?._id && user?._id) {
+      logEvent('view', {
+        user_id: user._id,
+        created_by: user._id,
+        module_type: 'calculator',
+        meta: {
+          calculatorId: active._id,
+          appointmentId: active.appointmentId || appointmentId,
+          calculatorTitle: active.name || active.title,
+          action: 'calculator viewed',
+        },
+      });
+    }
+  }, [active?._id, user?._id]);
+
+  // Clean up and flush pending change logs on active calculator switch or unmount
+  useEffect(() => {
+    return () => {
+      if (fieldLogTimerRef.current) {
+        clearTimeout(fieldLogTimerRef.current);
+      }
+      if (pendingChangesRef.current.length > 0 && active) {
+        flushQueuedFieldChanges(active);
+      }
+    };
+  }, [active?._id]);
+
 
   const results = useMemo(() => {
     const n = (v: any) => Number(v) || 0;
@@ -223,9 +336,27 @@ export const useDealCalculator = (lead: any) => {
           ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
           price: 0,
         };
-        await LeadService.createCalculator(apptId, fullPayload);
+        const createRes = await LeadService.createCalculator(apptId, fullPayload);
         const reCalcRes = await LeadService.getCalculators(apptId);
         calculatorsData = reCalcRes.data?.data || reCalcRes.data || [];
+
+        // Log first-time calculator creation — matches web's 'Created new calculator tab' event
+        const userId = user?._id || user?.id;
+        if (userId) {
+          const createdData = (createRes as any)?.data;
+          logEvent('create', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'calculator',
+            meta: {
+              calculatorId: createdData?._id,
+              appointmentId: createdData?.appointmentId || apptId,
+              calculatorTitle: createdData?.title || leadName || '.',
+              isFirstCalculator: true,
+              action: 'Created new calculator tab',
+            },
+          });
+        }
       }
 
       if (calculatorsData.length > 0) {
@@ -291,6 +422,11 @@ export const useDealCalculator = (lead: any) => {
         });
 
         mappedCalculators.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
+        mappedCalculators.forEach((c: any) => {
+          if (c._id && !lastSavedTitlesRef.current[c._id]) {
+            lastSavedTitlesRef.current[c._id] = c.name;
+          }
+        });
         setCalculators(mappedCalculators);
         return mappedCalculators;
       }
@@ -345,6 +481,29 @@ export const useDealCalculator = (lead: any) => {
         next[activeIdx] = current;
         return next;
       });
+
+      // Log the auto-set of Control Box — mirrors web's Lighting.js which routes this
+      // through handleExtras (the normal logging pipeline). On mobile we bypass updateActive
+      // so we fire the logEvent explicitly here.
+      const userId = user?._id || user?.id;
+      if (userId && activeCalc._id) {
+        logEvent('change', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'calculator_field_entry',
+          meta: {
+            calculatorId: activeCalc._id,
+            appointmentId: activeCalc.appointmentId || appointmentId,
+            calculatorTitle: activeCalc.name,
+            fieldLabel: 'Control Box',
+            fieldCategory: 'extras',
+            oldValue: currentControlBox,
+            newValue: expectedControlBox,
+            action: 'calculator field changed',
+            autoSet: true,
+          },
+        });
+      }
     }
   }, [
     activeIdx,
@@ -360,6 +519,90 @@ export const useDealCalculator = (lead: any) => {
         const next = [...prev];
         if (!next[activeIdx]) return prev;
         const current = { ...next[activeIdx] };
+
+        // Queue field changes for web parity logging
+        const userId = user?._id || user?.id;
+        if (userId) {
+          if (patch.inputs) {
+            Object.entries(patch.inputs).forEach(([k, v]) => {
+              const oldValue = current.inputs[k] ?? '';
+              const newValue = v ?? '';
+              if (String(oldValue) !== String(newValue)) {
+                const info = getInputLabelAndCategory(k);
+                const existing = pendingChangesRef.current.find(c => c.fieldName === k);
+                const originalOldValue = existing ? existing.oldValue : oldValue;
+
+                pendingChangesRef.current = [
+                  ...pendingChangesRef.current.filter(c => c.fieldName !== k),
+                  {
+                    fieldName: k,
+                    fieldLabel: info.label,
+                    fieldCategory: info.category,
+                    oldValue: originalOldValue,
+                    newValue,
+                    action: 'calculator field changed',
+                  }
+                ];
+              }
+            });
+          }
+
+          if (patch.extras) {
+            Object.entries(patch.extras).forEach(([k, v]) => {
+              const oldValue = current.extras[k] ?? '';
+              const newValue = v ?? '';
+              if (String(oldValue) !== String(newValue)) {
+                const info = getExtraLabelAndCategory(k);
+                const existing = pendingChangesRef.current.find(c => c.fieldName === k);
+                const originalOldValue = existing ? existing.oldValue : oldValue;
+
+                pendingChangesRef.current = [
+                  ...pendingChangesRef.current.filter(c => c.fieldName !== k),
+                  {
+                    fieldName: k,
+                    fieldLabel: info.label,
+                    fieldCategory: info.category,
+                    oldValue: originalOldValue,
+                    newValue,
+                    action: 'calculator field changed',
+                  }
+                ];
+              }
+            });
+          }
+
+          if (patch.discounts) {
+            Object.entries(patch.discounts).forEach(([k, v]) => {
+              const oldValue = current.discounts[k] ?? false;
+              const newValue = v ?? false;
+              if (oldValue !== newValue) {
+                const info = getDiscountLabelAndCategory(k);
+                const existing = pendingChangesRef.current.find(c => c.fieldName === k);
+                const originalOldValue = existing ? existing.oldValue : oldValue;
+
+                pendingChangesRef.current = [
+                  ...pendingChangesRef.current.filter(c => c.fieldName !== k),
+                  {
+                    fieldName: k,
+                    fieldLabel: info.label,
+                    fieldCategory: info.category,
+                    oldValue: originalOldValue,
+                    newValue,
+                    action: 'calculator field changed',
+                  }
+                ];
+              }
+            });
+          }
+
+          if (fieldLogTimerRef.current) {
+            clearTimeout(fieldLogTimerRef.current);
+          }
+          fieldLogTimerRef.current = setTimeout(() => {
+            flushQueuedFieldChanges(current);
+          }, 1000);
+        }
+
         if (patch.inputs) current.inputs = { ...current.inputs, ...patch.inputs };
         if (patch.extras) current.extras = { ...current.extras, ...patch.extras };
         if (patch.discounts) current.discounts = { ...current.discounts, ...patch.discounts };
@@ -413,6 +656,29 @@ export const useDealCalculator = (lead: any) => {
     if (!data?._id || isAutoSavingRef.current) return;
     try {
       setIsAutoSaving(true);
+
+      // Check if title changed to trigger auto_rename log
+      const oldTitle = lastSavedTitlesRef.current[data._id];
+      const newTitle = data.name;
+      if (oldTitle && newTitle && oldTitle !== newTitle) {
+        lastSavedTitlesRef.current[data._id] = newTitle;
+        const userId = user?._id || user?.id;
+        if (userId) {
+          logEvent('auto_rename', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'calculator',
+            meta: {
+              calculatorId: data._id,
+              appointmentId: data.appointmentId || appointmentId,
+              calculatorTitle: newTitle,
+              action: 'calculator_auto_renamed',
+            },
+          });
+        }
+      } else if (!oldTitle && newTitle) {
+        lastSavedTitlesRef.current[data._id] = newTitle;
+      }
       isAutoSavingRef.current = true;
 
       let rawDrops = (data.dropPrice || []).map(({ _clientId, ...rest }: any) => rest);
@@ -569,6 +835,23 @@ export const useDealCalculator = (lead: any) => {
       const newCalcs = await fetchCalculators();
       if (newCalcs && newCalcs.length > 0) {
         setActiveIdx(newCalcs.length - 1);
+
+        const createdCalc = newCalcs[newCalcs.length - 1];
+        const userId = user?._id || user?.id;
+        if (userId && createdCalc) {
+          logEvent('create', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'calculator',
+            meta: {
+              calculatorId: createdCalc._id,
+              appointmentId: apptId,
+              calculatorTitle: createdCalc.name,
+              isFirstCalculator: false,
+              action: 'Created new calculator tab',
+            },
+          });
+        }
       }
     } catch (e) {
       console.error('Failed to add calculator', e);
@@ -701,6 +984,9 @@ export const useDealCalculator = (lead: any) => {
       const newCalcs = await fetchCalculators();
       if (newCalcs && newCalcs.length > 0) {
         setActiveIdx(newCalcs.length - 1);
+        // Note: duplicateLog in the API payload is processed by the backend to create the
+        // 'calculator_duplicated' activity entry. No extra client-side logEvent needed here
+        // — doing so causes a double 'New Calculator Tab' entry in the Sales Portal timeline.
       }
     } catch (e) {
       console.warn('Failed to duplicate', e);
@@ -786,9 +1072,25 @@ export const useDealCalculator = (lead: any) => {
 
   const handleDeleteCalculator = async (idx: number) => {
     if (calculators.length <= 1) return;
+    const deletedCalc = calculators[idx];
     try {
       setLoading(true);
-      await LeadService.deleteCalculator(calculators[idx]._id);
+      await LeadService.deleteCalculator(deletedCalc._id);
+
+      const userId = user?._id || user?.id;
+      if (userId && deletedCalc) {
+        logEvent('delete', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'calculator',
+          meta: {
+            action: 'calculator_deleted',
+            calculatorId: deletedCalc._id,
+            calculatorTitle: deletedCalc.name,
+            appointmentId: appointmentId || lead.appointmentId,
+          },
+        });
+      }
 
       setCalculators((prev) => {
         const remaining = prev.filter((_, i) => i !== idx);

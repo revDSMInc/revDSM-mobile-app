@@ -311,9 +311,9 @@ class ChatService {
       }
     }
 
-    // iOS: production Hermes builds require a file:// prefix for local file URIs
-    // when used in FormData. Debug builds accept bare paths but prod does not.
-    if (Platform.OS === 'ios' && resolvedUri && !resolvedUri.startsWith('file://') && !resolvedUri.startsWith('http')) {
+    // Normalize local file paths with the file:// prefix on both Android and iOS so that
+    // React Native's FormData engine can correctly read the file data.
+    if (resolvedUri && !resolvedUri.startsWith('file://') && !resolvedUri.startsWith('content://') && !resolvedUri.startsWith('http')) {
       resolvedUri = `file://${resolvedUri}`;
     }
 

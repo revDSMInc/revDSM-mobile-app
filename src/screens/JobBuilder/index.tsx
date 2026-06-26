@@ -32,6 +32,7 @@ import { FlashMessage } from '../../config/message';
 import JobService from '../../services/api/JobService';
 import { calculateCommission } from '../../utils/calculator/commission-utils';
 import { parseSafeISO } from '../../utils/date-util';
+import { logEvent } from '../../services/api/LoggerService';
 // @ts-ignore
 import base64 from 'base-64';
 
@@ -124,6 +125,102 @@ function buildJobNumber(repDetails: any, leadNum: string | number) {
   return initials ? `${initials}${leadNum}` : String(leadNum ?? 'N/A');
 }
 
+const AUTO_FIELDS_BY_SECTION: Record<string, any[]> = {
+  gutter: [
+    { key: 'extras_wedges',                label: 'Wedges',                       getValue: (cd: any) => cd?.wedges },
+    { key: 'extras_straps',                label: 'Straps',                       getValue: (cd: any) => cd?.straps },
+    { key: 'extras_modifyHeight',          label: 'Modify Height/R&R',            getValue: (cd: any) => cd?.modifyHeight },
+    { key: 'extras_groundSpout',           label: 'GroundSpout',                  getValue: (cd: any) => cd?.groundSpout },
+    { key: 'extras_replaceCorner',         label: 'Replace Corner Miter',         getValue: (cd: any) => cd?.replaceCorner },
+    { key: 'extras_extendedSplashGuard',   label: 'Extended Splash Guard',        getValue: (cd: any) => cd?.extendedSplashGuard },
+    { key: 'extras_extendedSplashGuard032',label: 'Extended .032 Splash Guard',   getValue: (cd: any) => cd?.extendedSplashGuard032 },
+    { key: 'gutter_profile',               label: 'Gutter Size & Profile',        getValue: (cd: any) => cd?.gutterProfile ?? cd?.gutter_profile },
+  ],
+  leaffilter: [
+    { key: 'leaffilter_extras_csr',              label: 'C-S-R',               getValue: (cd: any) => cd?.csr },
+    { key: 'leaffilter_extras_cornersFilter',    label: 'Corners (Filter)',    getValue: (cd: any) => cd?.cornersFilter },
+    { key: 'leaffilter_extras_sawzallHanger',    label: 'Sawzall Hanger',     getValue: (cd: any) => cd?.sawzallHanger },
+    { key: 'leaffilter_extras_removeProtection', label: 'Remove Protection',  getValue: (cd: any) => cd?.removeProtection },
+    { key: 'leaffilter_extras_ribbedRoof',       label: 'Ribbed Roof',        getValue: (cd: any) => cd?.ribbedRoof },
+  ],
+  fascia: [
+    { key: 'fascia_wrap_footage',           label: 'Fascia Wrap Footage',           getValue: (cd: any) => cd?.fasciaWrapFootage ?? cd?.trimWrap },
+    { key: 'fascia_boards_footage',         label: 'Fascia Boards Footage',         getValue: (cd: any) => cd?.fasciaBoardsFootage ?? cd?.fasciaBoard },
+    { key: 'fascia_aluminum_board_footage', label: 'Aluminum Fascia Board Footage', getValue: (cd: any) => cd?.aluminumFasciaBoard },
+  ],
+  soffit: [
+    { key: 'soffit_vinyl_footage',  label: 'Vinyl Soffit Footage',    getValue: (cd: any) => cd?.vinylSoffit },
+    { key: 'soffit_porch_footage',  label: 'Porch Ceiling Footage',   getValue: (cd: any) => cd?.porchCeiling },
+    { key: 'soffit_nailer_footage', label: 'Nailer Build Out Footage', getValue: (cd: any) => cd?.nailerBuildOut },
+  ],
+  additional: [
+    { key: 'misc_extraLabor', label: 'Extra Labor', getValue: (cd: any) => cd?.extraLabor },
+    { key: 'misc_screenPulls', label: 'Number of Screen Pulls', getValue: (cd: any) => cd?.screens },
+  ],
+  lighting: [
+    { key: 'lighting_booster_box',         label: 'Booster Box',                  getValue: (cd: any) => parseFloat(cd?.lightingBoosterBox) || 0 },
+    { key: 'lighting_control_box',         label: 'Control Box',                  getValue: (cd: any) => parseFloat(cd?.lightingControlBox) || 0 },
+    { key: 'lighting_electrical_outlet',   label: 'Electrical Outlet',            getValue: (cd: any) => parseFloat(cd?.lightingElectricalOutlet) || 0 },
+    { key: 'lighting_wifi_extender',       label: 'WiFi Extender',                getValue: (cd: any) => parseFloat(cd?.lightingWifiExtender) || 0 },
+  ],
+};
+
+function isQualifyingValue(value: any) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return Boolean(value);
+}
+
+function getAutoFieldEntriesForSection(section: string, calculatorData: any) {
+  const entries: any[] = [];
+  const fields = AUTO_FIELDS_BY_SECTION[section] || [];
+
+  for (const field of fields) {
+    const value = field.getValue(calculatorData);
+    if (isQualifyingValue(value)) {
+      entries.push({ key: field.key, label: field.label, value });
+    }
+  }
+
+  if (section === 'lighting') {
+    const extrasEntries = entries.filter((e) =>
+      ['lighting_booster_box', 'lighting_control_box', 'lighting_electrical_outlet', 'lighting_wifi_extender'].includes(e.key)
+    );
+    if (extrasEntries.length > 0) {
+      return extrasEntries;
+    }
+    const storyFields = [
+      { key: 'lighting_1st_story_footage', label: 'Lighting 1st Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting1stStory) || 0 },
+      { key: 'lighting_2nd_story_footage', label: 'Lighting 2nd Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting2ndStory) || 0 },
+      { key: 'lighting_3rd_story_footage', label: 'Lighting 3rd Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting3rdStory) || 0 },
+    ];
+    return storyFields
+      .map((f) => ({ key: f.key, label: f.label, value: f.getValue(calculatorData) }))
+      .filter((e) => isQualifyingValue(e.value));
+  }
+
+  if (section === 'leaffilter') {
+    const combinations = calculatorData?.leaffilter?.combinations;
+    if (Array.isArray(combinations)) {
+      combinations.forEach((combo: any, index: number) => {
+        if (!combo?.isLocked) return;
+        const n = index + 1;
+        const gutterOpeningWidth = combo?.gutterOpeningWidth;
+        if (isQualifyingValue(gutterOpeningWidth)) {
+          entries.push({ key: `lf_combo_${n}_gutterOpeningWidth`, label: `Gutter Opening Width (Combo ${n})`, value: gutterOpeningWidth });
+        }
+        const lfProfile = combo?.lfProfile;
+        if (isQualifyingValue(lfProfile)) {
+          entries.push({ key: `lf_combo_${n}_lfProfile`, label: `LeafFilter Profile (Combo ${n})`, value: lfProfile });
+        }
+      });
+    }
+  }
+
+  return entries;
+}
+
 export default function JobBuilderScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -202,6 +299,531 @@ export default function JobBuilderScreen() {
     [availableStepsInfo]
   );
   const activeStep = availableStepsInfo[currentStepIndex];
+
+  const autoFieldsLoggedRef = useRef<Record<string, boolean>>({});
+  const lastStepLoggedRef = useRef<string | null>(null);
+  const prevJobStateRef = useRef<any>(null);
+  const fieldLogTimerRef = useRef<any>(null);
+  const openedLoggedRef = useRef(false);
+
+  // 1. Mount event logging (job_builder_opened)
+  useEffect(() => {
+    const uId = user?._id || user?.id;
+    if (uId && !openedLoggedRef.current) {
+      openedLoggedRef.current = true;
+      logEvent('view', {
+        user_id: uId,
+        created_by: uId,
+        module_type: 'job_builder',
+        meta: {
+          draft: true,
+          leadId,
+          calculatorType: calculatorData?.type || 'lf-calculator',
+          result: leadData?.result || outcomeForm?.result,
+          calculatorId: calculatorData?._id,
+          action: 'job_builder_opened',
+          fieldCategory: 'job_builder',
+        },
+      });
+    }
+  }, [user, leadId, calculatorData, leadData, outcomeForm]);
+
+  // 2. Active step view and auto-populated logging
+  useEffect(() => {
+    if (!activeStep) return;
+    const uId = user?._id || user?.id;
+    if (!uId) return;
+
+    const stepName = activeStep.name.toUpperCase();
+    const sectionKey = activeStep.category;
+
+    if (lastStepLoggedRef.current !== sectionKey) {
+      lastStepLoggedRef.current = sectionKey;
+      logEvent('view', {
+        user_id: uId,
+        created_by: uId,
+        module_type: 'job_builder',
+        meta: {
+          draft: true,
+          leadId,
+          stepNumber: activeStep.step,
+          stepName,
+          stepCategory: sectionKey || 'unknown',
+          fieldCategory: sectionKey || 'unknown',
+          calculatorType: calculatorData?.type || 'lf-calculator',
+          action: 'step_viewed',
+        },
+      });
+
+      if (sectionKey && !autoFieldsLoggedRef.current[sectionKey]) {
+        autoFieldsLoggedRef.current[sectionKey] = true;
+        const entries = getAutoFieldEntriesForSection(sectionKey, calculatorData);
+        entries.forEach((entry) => {
+          logEvent('auto-populated', {
+            user_id: uId,
+            created_by: uId,
+            module_type: 'job_builder',
+            meta: {
+              fieldName: entry.key,
+              fieldLabel: entry.label,
+              fieldValue: entry.value,
+              fieldType: 'locked',
+              section: sectionKey,
+              fieldCategory: sectionKey,
+              leadId,
+              jobBuilderId: leadId,
+            },
+          });
+        });
+      }
+    }
+  }, [activeStep, user, leadId, calculatorData]);
+
+  const getFieldCategory = useCallback((fieldName = '') => {
+    if (fieldName.startsWith('gutter_')) return 'gutter';
+    if (fieldName.startsWith('leaffilter_')) return 'leaffilter';
+    if (fieldName.startsWith('soffit_')) return 'soffit';
+    if (fieldName.startsWith('fascia_')) return 'fascia';
+    if (fieldName.startsWith('lighting_')) return 'lighting';
+    if (fieldName.startsWith('misc_') || fieldName.startsWith('additional_')) return 'additional';
+    return availableStepsInfo[currentStepIndex]?.category || 'unknown';
+  }, [currentStepIndex, availableStepsInfo]);
+
+  // 3. Field change debounced tracking
+  const debouncedFieldLog = useCallback(
+    (fieldInfo: any) => {
+      if (fieldLogTimerRef.current) {
+        clearTimeout(fieldLogTimerRef.current);
+      }
+      fieldLogTimerRef.current = setTimeout(() => {
+        const uId = user?._id || user?.id;
+        if (!uId) return;
+
+        logEvent('change', {
+          user_id: uId,
+          created_by: uId,
+          module_type: 'job_builder',
+          meta: {
+            draft: true,
+            leadId,
+            action: 'job_builder_field_changed',
+            fieldCategory: fieldInfo.fieldCategory || getFieldCategory(fieldInfo.fieldName),
+            autoSelected: false,
+            locked: false,
+            ...fieldInfo,
+          },
+        });
+      }, 1000);
+    },
+    [user, leadId, getFieldCategory]
+  );
+
+  useEffect(() => {
+    const uId = user?._id || user?.id;
+    if (!uId) return;
+
+    if (!prevJobStateRef.current) {
+      prevJobStateRef.current = JSON.parse(JSON.stringify(jobState));
+      return;
+    }
+
+    const prev = prevJobStateRef.current;
+    const curr = jobState;
+
+    const logFieldChange = (fieldInfo: {
+      fieldName: string;
+      fieldLabel: string;
+      fieldValue: any;
+      fieldCategory: string;
+      oldValue?: any;
+      newValue?: any;
+      comboNumber?: number;
+      location?: string;
+      story?: string;
+    }) => {
+      debouncedFieldLog({
+        ...fieldInfo,
+        oldValue: fieldInfo.oldValue ?? '',
+        newValue: fieldInfo.fieldValue,
+      });
+    };
+
+    // ─── 1. GUTTER SECTION ───
+    const prevGutter = prev.gutter || {};
+    const currGutter = curr.gutter || {};
+
+    // gutterSizeAndProfile
+    if (JSON.stringify(prevGutter.gutterSizeAndProfile) !== JSON.stringify(currGutter.gutterSizeAndProfile)) {
+      logFieldChange({
+        fieldName: 'gutter_gutterSizeAndProfile',
+        fieldLabel: 'Gutter Size & Profile',
+        fieldValue: currGutter.gutterSizeAndProfile,
+        fieldCategory: 'gutter',
+        oldValue: prevGutter.gutterSizeAndProfile,
+      });
+    }
+
+    // partial
+    if (prevGutter.partial !== currGutter.partial) {
+      logFieldChange({
+        fieldName: 'gutter_partial',
+        fieldLabel: 'Gutter Partial',
+        fieldValue: currGutter.partial,
+        fieldCategory: 'gutter',
+        oldValue: prevGutter.partial,
+      });
+    }
+
+    // gutterColorsMulti combinations
+    const prevGutterCombos = prevGutter.gutterColorsMulti || [];
+    const currGutterCombos = currGutter.gutterColorsMulti || [];
+    const maxGutterCombos = Math.max(prevGutterCombos.length, currGutterCombos.length);
+    for (let i = 0; i < maxGutterCombos; i++) {
+      const prevCombo = prevGutterCombos[i] || {};
+      const currCombo = currGutterCombos[i] || {};
+      const comboNum = i + 1;
+
+      // size, color, partial, mitersOutside, mitersInside, endCapsRights, endCapsLefts
+      const fields = [
+        { key: 'size', label: 'Size', fieldNameKey: 'size' },
+        { key: 'color', label: 'Color', fieldNameKey: 'color' },
+        { key: 'partial', label: 'Gutter Partial', fieldNameKey: 'partial' },
+        { key: 'mitersOutside', label: 'Miters Outside', fieldNameKey: 'mitersOutside' },
+        { key: 'mitersInside', label: 'Miters Inside', fieldNameKey: 'mitersInside' },
+        { key: 'endCapsRights', label: 'End Caps Rights', fieldNameKey: 'endCapsRights' },
+        { key: 'endCapsLefts', label: 'End Caps Lefts', fieldNameKey: 'endCapsLefts' },
+      ];
+
+      fields.forEach(({ key, label, fieldNameKey }) => {
+        if (prevCombo[key] !== currCombo[key] && currCombo[key] !== undefined) {
+          logFieldChange({
+            fieldName: `gutter_combo${comboNum}_${fieldNameKey}`,
+            fieldLabel: `Gutter Combo #${comboNum} - ${label}`,
+            fieldValue: currCombo[key],
+            fieldCategory: 'gutter',
+            oldValue: prevCombo[key],
+            comboNumber: comboNum,
+          });
+        }
+      });
+
+      // Gutter measurements
+      const prevMeas = prevCombo.measurements || [];
+      const currMeas = currCombo.measurements || [];
+      const maxMeas = Math.max(prevMeas.length, currMeas.length);
+      const locations = ['Front', 'Back', 'Left', 'Right', 'Left Garage', 'Right Garage'];
+      const stories = ['1st Story', '2nd Story', '3rd Story'];
+
+      for (let mIdx = 0; mIdx < maxMeas; mIdx++) {
+        if (prevMeas[mIdx] !== currMeas[mIdx] && currMeas[mIdx] !== undefined) {
+          const locIdx = Math.floor(mIdx / 3);
+          const storyIdx = mIdx % 3;
+          const locLabel = locations[locIdx] || `Location ${locIdx + 1}`;
+          const storyLabel = stories[storyIdx] || `Story ${storyIdx + 1}`;
+
+          logFieldChange({
+            fieldName: `gutter_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${storyIdx + 1}`,
+            fieldLabel: `Gutter Combo #${comboNum} Measurement - ${locLabel} (${storyLabel})`,
+            fieldValue: currMeas[mIdx],
+            fieldCategory: 'gutter',
+            oldValue: prevMeas[mIdx],
+            comboNumber: comboNum,
+            location: locLabel,
+            story: storyLabel,
+          });
+        }
+      }
+    }
+
+    // downspoutsMulti array
+    const prevDS = prevGutter.downspoutsMulti || [];
+    const currDS = currGutter.downspoutsMulti || [];
+    const maxDS = Math.max(prevDS.length, currDS.length);
+    for (let i = 0; i < maxDS; i++) {
+      const prevD = prevDS[i] || {};
+      const currD = currDS[i] || {};
+      const dsNum = i + 1;
+
+      const fields = [
+        { key: 'type', label: 'Type' },
+        { key: 'color', label: 'Color' },
+        { key: 'footage', label: 'Footage' },
+        { key: 'aElbows', label: 'A Elbows' },
+        { key: 'bElbows', label: 'B Elbows' },
+        { key: 'roundElbow', label: 'Round Elbow' },
+        { key: 'offsetElbows', label: 'Offset Elbows' },
+        { key: 'spoutSavers', label: 'Spout Savers' },
+      ];
+
+      fields.forEach(({ key, label }) => {
+        if (prevD[key] !== currD[key] && currD[key] !== undefined) {
+          logFieldChange({
+            fieldName: `gutter_downspout${dsNum}_${key}`,
+            fieldLabel: `Downspout #${dsNum} - ${label}`,
+            fieldValue: currD[key],
+            fieldCategory: 'gutter',
+            oldValue: prevD[key],
+          });
+        }
+      });
+    }
+
+    // modifyHeightLocations
+    if (JSON.stringify(prevGutter.modifyHeightLocations) !== JSON.stringify(currGutter.modifyHeightLocations)) {
+      const nextVal = Array.isArray(currGutter.modifyHeightLocations) ? currGutter.modifyHeightLocations.join(', ') : currGutter.modifyHeightLocations || '';
+      const oldVal = Array.isArray(prevGutter.modifyHeightLocations) ? prevGutter.modifyHeightLocations.join(', ') : prevGutter.modifyHeightLocations || '';
+      logFieldChange({
+        fieldName: 'gutter_modifyHeightLocations',
+        fieldLabel: 'Modify Height Locations',
+        fieldValue: nextVal,
+        fieldCategory: 'gutter',
+        oldValue: oldVal,
+      });
+    }
+
+    // ─── 2. LEAFFILTER SECTION ───
+    const prevLF = prev.leaffilter || {};
+    const currLF = curr.leaffilter || {};
+
+    // leaffilter combinations
+    const prevLFCombos = prevLF.combinations || [];
+    const currLFCombos = currLF.combinations || [];
+    const maxLFCombos = Math.max(prevLFCombos.length, currLFCombos.length);
+    for (let i = 0; i < maxLFCombos; i++) {
+      const prevCombo = prevLFCombos[i] || {};
+      const currCombo = currLFCombos[i] || {};
+      const comboNum = i + 1;
+      const isVersaMaxCombo = currCombo.lfProfile === 'Versa Max';
+
+      const fields = [
+        { key: 'gutterOpeningWidth', label: 'Gutter Opening Width' },
+        { key: 'lfProfile', label: 'LF Profile' },
+        { key: 'gutterProfile', label: 'Gutter Profile' },
+        { key: 'lfColor', label: 'LF Color' },
+        { key: 'exactSize', label: 'Exact Size (4" or 5")' },
+      ];
+
+      fields.forEach(({ key, label }) => {
+        if (prevCombo[key] !== currCombo[key] && currCombo[key] !== undefined) {
+          logFieldChange({
+            fieldName: `leaffilter_combo${comboNum}_${key}`,
+            fieldLabel: `LeafFilter Combination #${comboNum} - ${label}`,
+            fieldValue: currCombo[key],
+            fieldCategory: 'leaffilter',
+            oldValue: prevCombo[key],
+            comboNumber: comboNum,
+          });
+        }
+      });
+
+      // measurements (LeafFilter)
+      const prevMeas = prevCombo.measurements || [];
+      const currMeas = currCombo.measurements || [];
+      const maxMeas = Math.max(prevMeas.length, currMeas.length);
+      const locations = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
+      const stories = ['1st Story', '2nd Story', '3rd Story'];
+
+      for (let mIdx = 0; mIdx < maxMeas; mIdx++) {
+        if (prevMeas[mIdx] !== currMeas[mIdx] && currMeas[mIdx] !== undefined) {
+          const locIdx = mIdx % 6;
+          const storyIdx = Math.floor(mIdx / 6);
+          const locLabel = locations[locIdx] || `Location ${locIdx + 1}`;
+          const storyLabel = stories[storyIdx] || `Story ${storyIdx + 1}`;
+
+          logFieldChange({
+            fieldName: `leaffilter_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${storyIdx + 1}`,
+            fieldLabel: `LeafFilter Combo #${comboNum}${isVersaMaxCombo ? ' (Versa Max)' : ''} Measurement - ${locLabel} (${storyLabel})`,
+            fieldValue: currMeas[mIdx],
+            fieldCategory: 'leaffilter',
+            oldValue: prevMeas[mIdx],
+            comboNumber: comboNum,
+            location: locLabel,
+            story: storyLabel,
+          });
+        }
+      }
+    }
+
+    // LeafFilter extras
+    const prevLFExtras = prevLF.extras || {};
+    const currLFExtras = currLF.extras || {};
+    const extraFields = ['csr', 'cornersFilter', 'sawzallHanger', 'removeProtection', 'ribbedRoof'];
+    extraFields.forEach((field) => {
+      if (prevLFExtras[field] !== currLFExtras[field] && currLFExtras[field] !== undefined) {
+        logFieldChange({
+          fieldName: `leaffilter_extra_${field.toLowerCase()}`,
+          fieldLabel: `LeafFilter Extra - ${field === 'csr' ? 'CSR' : field}`,
+          fieldValue: currLFExtras[field],
+          fieldCategory: 'leaffilter',
+          oldValue: prevLFExtras[field],
+        });
+      }
+    });
+
+    // ─── 3. SOFFIT SECTION ───
+    const prevSoffit = prev.soffit || {};
+    const currSoffit = curr.soffit || {};
+    const soffitSubsections = ['vinyl', 'porch', 'nailer'] as const;
+    const soffitSectionLabels = { vinyl: 'Vinyl Soffit', porch: 'Porch Ceiling', nailer: 'Nailer Build Out' };
+    const soffitFieldLabels = { location: 'Location', type: 'Type', soffitType: 'Soffit Type', color: 'Color', footage: 'Footage' };
+
+    soffitSubsections.forEach((subSec) => {
+      const prevSub = prevSoffit[subSec] || {};
+      const currSub = currSoffit[subSec] || {};
+
+      Object.keys(currSub).forEach((f) => {
+        const pVal = prevSub[f];
+        const cVal = currSub[f];
+
+        if (JSON.stringify(pVal) !== JSON.stringify(cVal) && cVal !== undefined) {
+          const nextVal = Array.isArray(cVal) ? cVal.join(', ') : cVal;
+          const oldVal = Array.isArray(pVal) ? pVal.join(', ') : pVal;
+
+          logFieldChange({
+            fieldName: `soffit_${subSec}_${f}`,
+            fieldLabel: `${soffitSectionLabels[subSec]} - ${soffitFieldLabels[f as keyof typeof soffitFieldLabels] || f}`,
+            fieldValue: nextVal,
+            fieldCategory: 'soffit',
+            oldValue: oldVal,
+          });
+        }
+      });
+    });
+
+    // ─── 4. FASCIA SECTION ───
+    const prevFascia = prev.fascia || {};
+    const currFascia = curr.fascia || {};
+    const fasciaSubsections = ['wrap', 'boards'] as const;
+    const fasciaFieldLabels = { type: 'Type', size: 'Size', color: 'Color', footage: 'Footage', boardType: 'Board Type' };
+
+    fasciaSubsections.forEach((subSec) => {
+      const prevSub = prevFascia[subSec] || {};
+      const currSub = currFascia[subSec] || {};
+
+      Object.keys(currSub).forEach((f) => {
+        const pVal = prevSub[f];
+        const cVal = currSub[f];
+
+        if (pVal !== cVal && cVal !== undefined) {
+          logFieldChange({
+            fieldName: `fascia_${subSec}_${f}`,
+            fieldLabel: `Fascia ${subSec === 'wrap' ? 'Wrap' : 'Boards'} - ${fasciaFieldLabels[f as keyof typeof fasciaFieldLabels] || f}`,
+            fieldValue: cVal,
+            fieldCategory: 'fascia',
+            oldValue: pVal,
+          });
+        }
+      });
+    });
+
+    // ─── 5. LIGHTING SECTION ───
+    const prevLighting = prev.lighting || {};
+    const currLighting = curr.lighting || {};
+
+    // lighting combinations
+    const prevLightCombos = prevLighting.combinations || [];
+    const currLightCombos = currLighting.combinations || [];
+    const maxLightCombos = Math.max(prevLightCombos.length, currLightCombos.length);
+    for (let i = 0; i < maxLightCombos; i++) {
+      const prevCombo = prevLightCombos[i] || {};
+      const currCombo = currLightCombos[i] || {};
+      const comboNum = i + 1;
+
+      const fields = [
+        { key: 'trackColor', label: 'Track Color' },
+        { key: 'wireColor', label: 'Wire Color' },
+        { key: 'trackMaterial', label: 'Track Material' },
+        { key: 'mountingLocation', label: 'Mounting Location' },
+        { key: 'substrate', label: 'Substrate' },
+      ];
+
+      fields.forEach(({ key, label }) => {
+        if (prevCombo[key] !== currCombo[key] && currCombo[key] !== undefined) {
+          logFieldChange({
+            fieldName: `lighting_combo${comboNum}_${key}`,
+            fieldLabel: `Lighting Combo #${comboNum} - ${label}`,
+            fieldValue: currCombo[key],
+            fieldCategory: 'lighting',
+            oldValue: prevCombo[key],
+            comboNumber: comboNum,
+          });
+        }
+      });
+
+      // measurements (Lighting)
+      const prevMeas = prevCombo.measurements || [];
+      const currMeas = currCombo.measurements || [];
+      const maxMeas = Math.max(prevMeas.length, currMeas.length);
+      const locations = ['LEFT SIDE', 'RIGHT SIDE', 'FRONT', 'REAR', 'GARAGE', 'OTHER'];
+      const stories = ['1st Story', '2nd Story', '3rd Story'];
+
+      for (let mIdx = 0; mIdx < maxMeas; mIdx++) {
+        if (prevMeas[mIdx] !== currMeas[mIdx] && currMeas[mIdx] !== undefined) {
+          const locIdx = mIdx % 6;
+          const storyIdx = Math.floor(mIdx / 6);
+          const locLabel = locations[locIdx] || `Location ${locIdx + 1}`;
+          const storyLabel = stories[storyIdx] || `Story ${storyIdx + 1}`;
+
+          logFieldChange({
+            fieldName: `lighting_combo${comboNum}_measurement_${locLabel.toLowerCase().replace(/ /g, '_')}_${storyIdx + 1}`,
+            fieldLabel: `Lighting Combo #${comboNum} Measurement - ${locLabel} (${storyLabel})`,
+            fieldValue: currMeas[mIdx],
+            fieldCategory: 'lighting',
+            oldValue: prevMeas[mIdx],
+            comboNumber: comboNum,
+            location: locLabel,
+            story: storyLabel,
+          });
+        }
+      }
+    }
+
+    // ─── 6. ADDITIONAL (MISC) SECTION ───
+    const prevAdd = prev.additional || {};
+    const currAdd = curr.additional || {};
+    const miscFields = [
+      'extraLaborReason',
+      'cutAndRemoveShingleOverhang',
+      'dripEdgeFlashingFootage',
+      'fortyFootLadderNeeded',
+      'requireHarnessWork',
+      'needWalkboards',
+      'extraLabor',
+      'numberOfScreenPulls',
+    ];
+    const miscFieldLabels = {
+      extraLaborReason: 'Extra Labor Reason',
+      cutAndRemoveShingleOverhang: 'Cut And Remove Shingle Overhang',
+      dripEdgeFlashingFootage: 'Footage Of Drip Edge/Flashing',
+      fortyFootLadderNeeded: 'Is A Forty Foot Ladder Needed',
+      requireHarnessWork: 'Does This Install Require Harness Work',
+      needWalkboards: 'Does This Install Need Walkboards',
+      extraLabor: 'Extra Labor',
+      numberOfScreenPulls: 'Number of Screen Pulls',
+    };
+
+    miscFields.forEach((field) => {
+      if (prevAdd[field] !== currAdd[field] && currAdd[field] !== undefined) {
+        logFieldChange({
+          fieldName: field,
+          fieldLabel: miscFieldLabels[field as keyof typeof miscFieldLabels] || field,
+          fieldValue: currAdd[field],
+          fieldCategory: 'additional',
+          oldValue: prevAdd[field],
+        });
+      }
+    });
+
+    prevJobStateRef.current = JSON.parse(JSON.stringify(jobState));
+  }, [jobState, user, debouncedFieldLog]);
+
+  useEffect(() => {
+    return () => {
+      if (fieldLogTimerRef.current) {
+        clearTimeout(fieldLogTimerRef.current);
+      }
+    };
+  }, []);
 
   // Auto-save logic
 
@@ -347,6 +969,26 @@ export default function JobBuilderScreen() {
 
       if (index > currentStepIndex) {
         return;
+      }
+
+      const uId = user?._id || user?.id;
+      if (uId) {
+        logEvent('navigate', {
+          user_id: uId,
+          created_by: uId,
+          module_type: 'job_builder',
+          meta: {
+            draft: true,
+            leadId,
+            fromStep: activeStep.step,
+            fromStepName: activeStep.name.toUpperCase(),
+            toStep: step.step,
+            toStepName: step.name.toUpperCase(),
+            fieldCategory: step.category,
+            direction: index > currentStepIndex ? 'next' : 'back',
+            action: 'step_navigation',
+          },
+        });
       }
 
       setCurrentStepIndex(index);
@@ -677,6 +1319,77 @@ export default function JobBuilderScreen() {
       };
 
       if (leadId) {
+        const uId = user?._id || user?.id;
+        if (uId) {
+          logEvent('submit', {
+            user_id: uId,
+            created_by: uId,
+            module_type: 'job_builder',
+            meta: {
+              leadId,
+              fieldCategory: 'summary',
+              calculatorType: calculatorData?.type || 'lf-calculator',
+              result: outcomeForm?.result || leadData?.result || 'Sale',
+              calculatorId: calculatorData?._id,
+              appointmentId: calculatorData?.appointmentId || leadId,
+              gutter: {
+                color: jobState.gutter?.color,
+                partial: jobState.gutter?.partial,
+                downspoutType: jobState.gutter?.downspoutType,
+                downspoutColor: jobState.gutter?.downspoutColor,
+                downspoutFootage: jobState.gutter?.downspoutFootage,
+                totalMeasurementsFt: Array.isArray(jobState.gutter?.measurements)
+                  ? jobState.gutter.measurements.flat().reduce((s: number, v: any) => s + (parseFloat(v) || 0), 0)
+                  : 0,
+                accessories: jobState.gutter?.accessories,
+                extras: {
+                  wedges: calculatorData?.wedges || 0,
+                  straps: calculatorData?.straps || 0,
+                  modifyHeight: calculatorData?.modifyHeight || 0,
+                  groundSpout: calculatorData?.groundSpout || 0,
+                  replaceCorner: calculatorData?.replaceCorner || 0,
+                  replaceCornerColor: jobState.gutter?.extrasColors?.replaceCorner || null,
+                  extendedSplashGuard: calculatorData?.extendedSplashGuard || 0,
+                  extendedSplashGuardColor: jobState.gutter?.extrasColors?.extendedSplashGuard || null,
+                  extendedSplashGuard032: calculatorData?.extendedSplashGuard032 || 0,
+                  extendedSplashGuard032Color:
+                    jobState.gutter?.extrasColors?.extendedSplashGuard032 || null,
+                },
+              },
+              leaffilter: {
+                combinationsCount: jobState.leaffilter?.combinations?.length || 0,
+                combinations: (jobState.leaffilter?.combinations || []).map((c: any) => ({
+                  gutterOpeningWidth: c.gutterOpeningWidth,
+                  lfProfile: c.lfProfile,
+                  gutterProfile: c.gutterProfile,
+                  lfColor: c.lfColor,
+                  totalFt: Array.isArray(c.measurements)
+                    ? c.measurements.reduce((s: number, v: any) => s + (parseFloat(v) || 0), 0)
+                    : 0,
+                })),
+                extras: {
+                  csr: jobState.leaffilter?.extras?.csr || 0,
+                  cornersFilter: jobState.leaffilter?.extras?.cornersFilter || 0,
+                  sawzallHanger: jobState.leaffilter?.extras?.sawzallHanger || 0,
+                  removeProtection: jobState.leaffilter?.extras?.removeProtection || 0,
+                  ribbedRoof: jobState.leaffilter?.extras?.ribbedRoof || 0,
+                },
+              },
+              soffit: jobState.soffit,
+              fascia: jobState.fascia,
+              additional: jobState.additional,
+              scheduleTime: jobState.scheduleTime,
+              agreements: {
+                count: (jobState.agreements || []).length,
+              },
+              orderSheets: {
+                count: (jobState.orderSheets || []).length,
+              },
+              action: 'job_builder_completed',
+            },
+          });
+        }
+
         await Promise.all([
           LeadService.submitJobBuilder(leadId, payload),
           LeadService.updateLeadTimelineProgress(leadId, { jobBuild: 'complete' }),
@@ -884,7 +1597,30 @@ export default function JobBuilderScreen() {
                     while (prevIdx >= 0 && availableStepsInfo[prevIdx].isLocked) {
                       prevIdx--;
                     }
-                    if (prevIdx >= 0) setCurrentStepIndex(prevIdx);
+                    if (prevIdx >= 0) {
+                      const fromStep = activeStep;
+                      const toStep = availableStepsInfo[prevIdx];
+                      const uId = user?._id || user?.id;
+                      if (uId) {
+                        logEvent('navigate', {
+                          user_id: uId,
+                          created_by: uId,
+                          module_type: 'job_builder',
+                          meta: {
+                            draft: true,
+                            leadId,
+                            fromStep: fromStep.step,
+                            fromStepName: fromStep.name.toUpperCase(),
+                            toStep: toStep.step,
+                            toStepName: toStep.name.toUpperCase(),
+                            fieldCategory: toStep.category,
+                            direction: 'back',
+                            action: 'step_navigation',
+                          },
+                        });
+                      }
+                      setCurrentStepIndex(prevIdx);
+                    }
                   }}
                   style={{
                     padding: 6,
@@ -960,6 +1696,27 @@ export default function JobBuilderScreen() {
                           nextIdx++;
                         }
                         if (nextIdx < availableStepsInfo.length) {
+                          const fromStep = activeStep;
+                          const toStep = availableStepsInfo[nextIdx];
+                          const uId = user?._id || user?.id;
+                          if (uId) {
+                            logEvent('navigate', {
+                              user_id: uId,
+                              created_by: uId,
+                              module_type: 'job_builder',
+                              meta: {
+                                draft: true,
+                                leadId,
+                                fromStep: fromStep.step,
+                                fromStepName: fromStep.name.toUpperCase(),
+                                toStep: toStep.step,
+                                toStepName: toStep.name.toUpperCase(),
+                                fieldCategory: toStep.category,
+                                direction: 'next',
+                                action: 'step_navigation',
+                              },
+                            });
+                          }
                           setCurrentStepIndex(nextIdx);
                         }
                       }}

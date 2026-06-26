@@ -35,6 +35,8 @@ import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import Feather from 'react-native-vector-icons/Feather';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 const { width } = Dimensions.get('window');
 
@@ -52,6 +54,7 @@ const CATEGORIES = [
 
 export default function PitchbookScreen() {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const isLandscape = winWidth > winHeight;
@@ -106,6 +109,23 @@ export default function PitchbookScreen() {
     setShowTools(!showTools);
   };
 
+  const getGlobalPosition = (categoryId: string, slideIndex: number) => {
+    let count = 0;
+    for (const cat of CATEGORIES) {
+      if (cat.id === categoryId) {
+        count += slideIndex + 1;
+        break;
+      }
+      count += Object.keys(pitchBookImages[cat.id] || {}).length;
+    }
+    return count;
+  };
+
+  const getCurrentSlideName = (categoryId: string, slideIndex: number): string => {
+    const imagesObj = pitchBookImages[categoryId] || {};
+    return Object.keys(imagesObj)[slideIndex] || '';
+  };
+
   const currentCategoryImages = useMemo(() => {
     const imagesObj = pitchBookImages[activeCategory] || {};
     return Object.values(imagesObj);
@@ -116,16 +136,53 @@ export default function PitchbookScreen() {
   }, []);
 
   const currentGlobalPageNumber = useMemo(() => {
-    let count = 0;
-    for (const cat of CATEGORIES) {
-      if (cat.id === activeCategory) {
-        count += currentSlideIndex + 1;
-        break;
-      }
-      count += Object.keys(pitchBookImages[cat.id] || {}).length;
-    }
-    return count;
+    return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex]);
+
+  const activeCategoryRef = useRef(activeCategory);
+  const currentSlideIndexRef = useRef(currentSlideIndex);
+
+  useEffect(() => {
+    activeCategoryRef.current = activeCategory;
+  }, [activeCategory]);
+
+  useEffect(() => {
+    currentSlideIndexRef.current = currentSlideIndex;
+  }, [currentSlideIndex]);
+
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('view', {
+        user_id: userId,
+        module_type: 'pitch_book',
+        created_by: userId,
+        meta: {
+          leadId,
+          action: 'pitch_book_opened',
+          totalSlides: totalGlobalPages,
+        },
+      });
+    }
+
+    return () => {
+      if (userId) {
+        logEvent('close', {
+          user_id: userId,
+          module_type: 'pitch_book',
+          created_by: userId,
+          meta: {
+            leadId,
+            slideTab: activeCategoryRef.current,
+            currentSlideName: getCurrentSlideName(activeCategoryRef.current, currentSlideIndexRef.current),
+            currentSlide: currentSlideIndexRef.current + 1,
+            totalSlides: totalGlobalPages,
+            action: 'pitch_book_close',
+          },
+        });
+      }
+    };
+  }, [user?._id, user?.id, leadId, totalGlobalPages]);
 
   // Persist the current slide position for this lead whenever it changes.
   useEffect(() => {
@@ -140,6 +197,7 @@ export default function PitchbookScreen() {
   useEffect(() => {
     prepareHaptic('impact');
   }, []);
+
 
   const pollInterval = useRef<any>(null);
 
@@ -241,12 +299,51 @@ export default function PitchbookScreen() {
 
   const handleNext = () => {
     triggerLightTap();
+    const userId = user?._id || user?.id;
     if (currentSlideIndex < currentCategoryImages.length - 1) {
-      setCurrentSlideIndex(currentSlideIndex + 1);
+      const nextSlideIdx = currentSlideIndex + 1;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'pitch_book',
+          created_by: userId,
+          meta: {
+            leadId,
+            fromTab: activeCategory,
+            toTab: activeCategory,
+            fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+            fromSlide: currentGlobalPageNumber,
+            toSlideName: getCurrentSlideName(activeCategory, nextSlideIdx),
+            toSlide: currentGlobalPageNumber + 1,
+            totalSlides: totalGlobalPages,
+            action: 'pitch_book_slide_next',
+          },
+        });
+      }
+      setCurrentSlideIndex(nextSlideIdx);
     } else {
       const catIdx = CATEGORIES.findIndex((c) => c.id === activeCategory);
       if (catIdx < CATEGORIES.length - 1) {
-        setActiveCategory(CATEGORIES[catIdx + 1].id);
+        const nextCat = CATEGORIES[catIdx + 1].id;
+        if (userId) {
+          logEvent('navigate', {
+            user_id: userId,
+            module_type: 'pitch_book',
+            created_by: userId,
+            meta: {
+              leadId,
+              fromTab: activeCategory,
+              toTab: nextCat,
+              fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+              fromSlide: currentGlobalPageNumber,
+              toSlideName: getCurrentSlideName(nextCat, 0),
+              toSlide: currentGlobalPageNumber + 1,
+              totalSlides: totalGlobalPages,
+              action: 'pitch_book_slide_next',
+            },
+          });
+        }
+        setActiveCategory(nextCat);
         setCurrentSlideIndex(0);
       }
     }
@@ -254,15 +351,95 @@ export default function PitchbookScreen() {
 
   const handlePrev = () => {
     triggerLightTap();
+    const userId = user?._id || user?.id;
     if (currentSlideIndex > 0) {
-      setCurrentSlideIndex(currentSlideIndex - 1);
+      const prevSlideIdx = currentSlideIndex - 1;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'pitch_book',
+          created_by: userId,
+          meta: {
+            leadId,
+            fromTab: activeCategory,
+            toTab: activeCategory,
+            fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+            fromSlide: currentGlobalPageNumber,
+            toSlideName: getCurrentSlideName(activeCategory, prevSlideIdx),
+            toSlide: currentGlobalPageNumber - 1,
+            totalSlides: totalGlobalPages,
+            action: 'pitch_book_slide_previous',
+          },
+        });
+      }
+      setCurrentSlideIndex(prevSlideIdx);
     } else {
       const catIdx = CATEGORIES.findIndex((c) => c.id === activeCategory);
       if (catIdx > 0) {
         const prevCat = CATEGORIES[catIdx - 1].id;
+        const prevCatImagesCount = Object.keys(pitchBookImages[prevCat] || {}).length;
+        if (userId) {
+          logEvent('navigate', {
+            user_id: userId,
+            module_type: 'pitch_book',
+            created_by: userId,
+            meta: {
+              leadId,
+              fromTab: activeCategory,
+              toTab: prevCat,
+              fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+              fromSlide: currentGlobalPageNumber,
+              toSlideName: getCurrentSlideName(prevCat, prevCatImagesCount - 1),
+              toSlide: currentGlobalPageNumber - 1,
+              totalSlides: totalGlobalPages,
+              action: 'pitch_book_slide_previous',
+            },
+          });
+        }
         setActiveCategory(prevCat);
-        setCurrentSlideIndex(Object.keys(pitchBookImages[prevCat]).length - 1);
+        setCurrentSlideIndex(prevCatImagesCount - 1);
       }
+    }
+  };
+
+  const handleTabChange = (tabId: string) => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('navigate', {
+        user_id: userId,
+        module_type: 'pitch_book',
+        created_by: userId,
+        meta: {
+          leadId,
+          fromSlideTab: activeCategory,
+          toSlideTab: tabId,
+          fromSlide: currentGlobalPageNumber,
+          fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+          toSlide: getGlobalPosition(tabId, 0),
+          toSlideName: getCurrentSlideName(tabId, 0),
+          totalSlides: totalGlobalPages,
+          action: 'pitch_book_tab_changed',
+        },
+      });
+    }
+    setActiveCategory(tabId);
+    setCurrentSlideIndex(0);
+  };
+
+  const handleSetViewMode = (mode: 'rep' | 'homeowner') => {
+    setViewMode(mode);
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('mode', {
+        user_id: userId,
+        module_type: 'pitch_book',
+        created_by: userId,
+        meta: {
+          leadId,
+          viewMode: mode,
+          action: 'pitch_book_view_mode_changed',
+        },
+      });
     }
   };
 
@@ -525,7 +702,7 @@ export default function PitchbookScreen() {
             style={{ borderColor: '#919EAB33', backgroundColor: '' }}
           >
             <TouchableOpacity
-              onPress={() => setViewMode('rep')}
+              onPress={() => handleSetViewMode('rep')}
               className="flex-1 py-2 items-center rounded-lg"
               style={{ backgroundColor: viewMode === 'rep' ? colors.primary.main : 'transparent' }}
             >
@@ -537,7 +714,7 @@ export default function PitchbookScreen() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => setViewMode('homeowner')}
+              onPress={() => handleSetViewMode('homeowner')}
               className="flex-1 py-2 items-center rounded-l"
               style={{
                 backgroundColor: viewMode === 'homeowner' ? colors.primary.main : 'transparent',
@@ -565,10 +742,7 @@ export default function PitchbookScreen() {
               return (
                 <TouchableOpacity
                   key={cat.id}
-                  onPress={() => {
-                    setActiveCategory(cat.id);
-                    setCurrentSlideIndex(0);
-                  }}
+                  onPress={() => handleTabChange(cat.id)}
                   className="mr-5 pt-3 pb-1"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
@@ -855,10 +1029,7 @@ export default function PitchbookScreen() {
                         return (
                           <TouchableOpacity
                             key={cat.id}
-                            onPress={() => {
-                              setActiveCategory(cat.id);
-                              setCurrentSlideIndex(0);
-                            }}
+                            onPress={() => handleTabChange(cat.id)}
                             style={{
                               marginHorizontal: 4,
                               paddingHorizontal: 14,
@@ -1029,10 +1200,7 @@ export default function PitchbookScreen() {
                       return (
                         <TouchableOpacity
                           key={cat.id}
-                          onPress={() => {
-                            setActiveCategory(cat.id);
-                            setCurrentSlideIndex(0);
-                          }}
+                          onPress={() => handleTabChange(cat.id)}
                           style={{
                             marginRight: 8,
                             paddingHorizontal: 14,

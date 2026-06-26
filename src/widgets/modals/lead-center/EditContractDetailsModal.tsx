@@ -21,6 +21,8 @@ import { LeadService } from '../../../services/api/leads';
 import { ContractAmendmentModal, AmendmentChange } from './ContractAmendmentModal';
 import JobService from '../../../services/api/JobService';
 import { parseSafeISO } from '../../../utils/date-util';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -75,6 +77,12 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   onSendSuccess,
 }) => {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
+
+  // ── Analytics refs ─────────────────────────────────────────────────────────
+  const pendingLogChangesRef = useRef<Record<string, { oldValue: any; newValue: any }>>({});
+  const logDebounceTimerRef = useRef<any>(null);
+  const initialFieldsRef = useRef<Record<string, any>>({});
 
   // ── View state ─────────────────────────────────────────────────────────────
   const [view, setView] = useState<'menu' | 'pricing'>('menu');
@@ -110,6 +118,46 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     existingJobState: any;
   } | null>(null);
 
+  const handleFieldChange = (field: string, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+
+    if (logDebounceTimerRef.current) {
+      clearTimeout(logDebounceTimerRef.current);
+    }
+    logDebounceTimerRef.current = setTimeout(() => {
+      const userId = user?._id || user?.id;
+      if (userId) {
+        const oldValue = initialFieldsRef.current[field];
+        if (String(oldValue) !== String(value)) {
+          pendingLogChangesRef.current[field] = { oldValue, newValue: value };
+        } else {
+          delete pendingLogChangesRef.current[field];
+        }
+      }
+    }, 500);
+  };
+
+  const flushQueuedLogs = () => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    const leadId = lead?._id || lead?.id || outcomeData?._id || outcomeData?.id;
+    Object.entries(pendingLogChangesRef.current).forEach(([fieldName, { oldValue, newValue }]) => {
+      logEvent('change', {
+        user_id: userId,
+        module_type: 'amendments',
+        created_by: userId,
+        meta: {
+          leadId,
+          fieldName,
+          oldValue,
+          newValue,
+          action: 'contract_field_changed',
+        },
+      });
+    });
+    pendingLogChangesRef.current = {};
+  };
+
   // ── Sync form with fresh data whenever modal opens ─────────────────────────
   React.useEffect(() => {
     if (visible) {
@@ -130,14 +178,41 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         lastPriceQuoted: String(lastPrice),
         reason,
       });
+
+      initialFieldsRef.current = {
+        originalContractPrice: String(price),
+        downPayment: String(dp),
+        downPaymentMethod: dpMethod,
+        balance: String(bal),
+        balancePaymentMethod: balMethod,
+        lastPriceQuoted: String(lastPrice),
+        reason,
+      };
+
+      pendingLogChangesRef.current = {};
+      if (logDebounceTimerRef.current) {
+        clearTimeout(logDebounceTimerRef.current);
+      }
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('add', {
+          user_id: userId,
+          module_type: 'amendments',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id || outcomeData?._id || outcomeData?.id,
+            action: 'opened_contract_details_edit_modal',
+          },
+        });
+      }
+
       setView('menu');
       setAmendmentOpen(false);
       setAmendmentChanges([]);
       setDraftId(null);
-
-
     }
-  }, [visible, outcomeData, lead]);
+  }, [visible, outcomeData, lead, user?._id, user?.id]);
 
   // ── Auto-compute balance ────────────────────────────────────────────────────
   React.useEffect(() => {
@@ -147,8 +222,24 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     const currentBalance = normalise(formData.balance) || 0;
     if (newBalance !== currentBalance) {
       setFormData((prev) => ({ ...prev, balance: fmt(newBalance) }));
+
+      if (logDebounceTimerRef.current) {
+        clearTimeout(logDebounceTimerRef.current);
+      }
+      logDebounceTimerRef.current = setTimeout(() => {
+        const userId = user?._id || user?.id;
+        if (userId) {
+          const oldValue = initialFieldsRef.current.balance;
+          const newValue = fmt(newBalance);
+          if (String(oldValue) !== String(newValue)) {
+            pendingLogChangesRef.current.balance = { oldValue, newValue };
+          } else {
+            delete pendingLogChangesRef.current.balance;
+          }
+        }
+      }, 500);
     }
-  }, [formData.originalContractPrice, formData.downPayment]);
+  }, [formData.originalContractPrice, formData.downPayment, formData.balance, user?._id, user?.id]);
 
   // ── Save pricing ────────────────────────────────────────────────────────────
   const handleSavePricing = async () => {
@@ -196,6 +287,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           leadData: editedLeadData,
           jobState: existingJobState,
         });
+        flushQueuedLogs();
         await onUpdate(editedLeadData);
         onClose();
         return;
@@ -276,6 +368,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           // non-fatal
         }
       }
+      flushQueuedLogs();
       await onUpdate(pending.editedLeadData);
       setAmendmentOpen(false);
       setAmendmentChanges([]);
@@ -336,6 +429,41 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         leadData: editedLeadData,
         jobState: editedJobState,
       });
+
+      // Log installDate and timeWindow edits
+      const oldInstallDate = lead?.installDate || outcomeData?.installDate;
+      const oldTimeWindow = lead?.timeWindow || outcomeData?.timeWindow;
+      const userId = user?._id || user?.id;
+      if (userId) {
+        if (String(oldInstallDate || '') !== String(apiDate || '')) {
+          logEvent('change', {
+            user_id: userId,
+            module_type: 'amendments',
+            created_by: userId,
+            meta: {
+              leadId,
+              fieldName: 'installDate',
+              oldValue: oldInstallDate || '',
+              newValue: apiDate || '',
+              action: 'contract_field_changed',
+            },
+          });
+        }
+        if (String(oldTimeWindow || '') !== String(data.timeWindow || '')) {
+          logEvent('change', {
+            user_id: userId,
+            module_type: 'amendments',
+            created_by: userId,
+            meta: {
+              leadId,
+              fieldName: 'timeWindow',
+              oldValue: oldTimeWindow || '',
+              newValue: data.timeWindow || '',
+              action: 'contract_field_changed',
+            },
+          });
+        }
+      }
 
       const outcomePayload = {
         installDate: apiDate,
@@ -465,7 +593,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                   <TouchableOpacity
                     key={item.value}
                     onPress={() => {
-                      setFormData({ ...formData, [field]: item.value });
+                      handleFieldChange(field, item.value);
                       setExpanded(null);
                     }}
                     style={{
@@ -609,7 +737,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                         <TouchableOpacity
                           key={key}
                           onPress={() => {
-                            setFormData({ ...formData, balancePaymentMethod: key });
+                            handleFieldChange('balancePaymentMethod', key);
                             setExpanded(null);
                           }}
                           style={{
@@ -812,7 +940,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                               <Text style={{ color: '#637381', marginRight: 8, fontSize: 18 }}>$</Text>
                               <TextInput
                                 value={formData.lastPriceQuoted}
-                                onChangeText={(t) => setFormData({ ...formData, lastPriceQuoted: t })}
+                                onChangeText={(t) => handleFieldChange('lastPriceQuoted', t)}
                                 keyboardType="numeric"
                                 style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
                               />
@@ -838,7 +966,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                               <Text style={{ color: '#637381', marginRight: 8, fontSize: 18 }}>$</Text>
                               <TextInput
                                 value={formData.originalContractPrice}
-                                onChangeText={(t) => setFormData({ ...formData, originalContractPrice: t })}
+                                onChangeText={(t) => handleFieldChange('originalContractPrice', t)}
                                 keyboardType="numeric"
                                 style={{ flex: 1, fontWeight: '700', fontSize: 16, color: isDark ? '#FFF' : '#1C252E' }}
                               />
@@ -855,7 +983,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
                                 <Text style={{ color: '#637381', marginRight: 8 }}>$</Text>
                                 <TextInput
                                   value={formData.downPayment}
-                                  onChangeText={(t) => setFormData({ ...formData, downPayment: t })}
+                                  onChangeText={(t) => handleFieldChange('downPayment', t)}
                                   keyboardType="numeric"
                                   style={{ flex: 1, fontWeight: '700', fontSize: 14, color: isDark ? '#FFF' : '#1C252E' }}
                                 />

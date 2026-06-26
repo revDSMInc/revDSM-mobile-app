@@ -35,6 +35,8 @@ import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import Feather from 'react-native-vector-icons/Feather';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 
 const { width } = Dimensions.get('window');
@@ -58,6 +60,7 @@ export default function RooflineDeckScreen() {
   const route = useRoute();
   const { lead } = (route.params as any) || {};
   const leadId = lead?._id || lead?.id || null;
+  const { user } = useAuth();
 
   // Restore the last viewed slide for this lead (if any).
   const savedProgress = useMemo(() => {
@@ -82,6 +85,15 @@ export default function RooflineDeckScreen() {
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
+
+  // Analytics refs to track exact slide position on unmount
+  const activeCategoryRef = useRef(activeCategory);
+  const currentSlideIndexRef = useRef(currentSlideIndex);
+
+  useEffect(() => {
+    activeCategoryRef.current = activeCategory;
+    currentSlideIndexRef.current = currentSlideIndex;
+  }, [activeCategory, currentSlideIndex]);
 
   // Persist the current slide position for this lead whenever it changes.
   useEffect(() => {
@@ -121,8 +133,13 @@ export default function RooflineDeckScreen() {
 
   const currentCategoryImages = useMemo(() => {
     const imagesObj = rooflineDeckImages[activeCategory] || {};
-    return Object.values(imagesObj);
+    return Object.entries(imagesObj).map(([key, src]) => ({ key, src }));
   }, [activeCategory]);
+
+  const getCurrentSlideName = (categoryId: string, slideIndex: number): string => {
+    const imagesObj = rooflineDeckImages[categoryId] || {};
+    return Object.keys(imagesObj)[slideIndex] || '';
+  };
 
   const totalGlobalPages = useMemo(() => {
     return Object.values(rooflineDeckImages).reduce(
@@ -131,17 +148,56 @@ export default function RooflineDeckScreen() {
     );
   }, []);
 
-  const currentGlobalPageNumber = useMemo(() => {
+  const getGlobalPosition = (categoryId: string, slideIndex: number) => {
     let count = 0;
     for (const cat of CATEGORIES) {
-      if (cat.id === activeCategory) {
-        count += currentSlideIndex + 1;
+      if (cat.id === categoryId) {
+        count += slideIndex + 1;
         break;
       }
       count += Object.keys(rooflineDeckImages[cat.id] || {}).length;
     }
     return count;
+  };
+
+  const currentGlobalPageNumber = useMemo(() => {
+    return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex]);
+
+  // Lifecycle events for deck open/close
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('view', {
+        user_id: userId,
+        module_type: 'roofline_deck',
+        created_by: userId,
+        meta: {
+          leadId,
+          action: 'roofline_deck_opened',
+          totalSlides: totalGlobalPages,
+        },
+      });
+    }
+
+    return () => {
+      if (userId) {
+        logEvent('close', {
+          user_id: userId,
+          module_type: 'roofline_deck',
+          created_by: userId,
+          meta: {
+            leadId,
+            slideTab: activeCategoryRef.current,
+            currentSlideName: getCurrentSlideName(activeCategoryRef.current, currentSlideIndexRef.current),
+            currentSlide: currentSlideIndexRef.current + 1,
+            totalSlides: totalGlobalPages,
+            action: 'roofline_deck_close',
+          },
+        });
+      }
+    };
+  }, [user?._id, user?.id, leadId, totalGlobalPages]);
 
   const pollInterval = useRef<any>(null);
 
@@ -241,14 +297,77 @@ export default function RooflineDeckScreen() {
     }
   };
 
+  const handleTabChange = (tabId: string) => {
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('navigate', {
+        user_id: userId,
+        module_type: 'roofline_deck',
+        created_by: userId,
+        meta: {
+          leadId,
+          fromSlideTab: activeCategory,
+          toSlideTab: tabId,
+          fromSlide: currentGlobalPageNumber,
+          fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+          toSlide: getGlobalPosition(tabId, 0),
+          toSlideName: getCurrentSlideName(tabId, 0),
+          totalSlides: totalGlobalPages,
+          action: 'roofline_deck_tab_changed',
+        },
+      });
+    }
+    setActiveCategory(tabId);
+    setCurrentSlideIndex(0);
+  };
+
   const handleNext = () => {
     triggerLightTap();
+    const userId = user?._id || user?.id;
     if (currentSlideIndex < currentCategoryImages.length - 1) {
-      setCurrentSlideIndex(currentSlideIndex + 1);
+      const nextSlideIdx = currentSlideIndex + 1;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'roofline_deck',
+          created_by: userId,
+          meta: {
+            leadId,
+            fromTab: activeCategory,
+            toTab: activeCategory,
+            fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+            fromSlide: currentGlobalPageNumber,
+            toSlideName: getCurrentSlideName(activeCategory, nextSlideIdx),
+            toSlide: currentGlobalPageNumber + 1,
+            totalSlides: totalGlobalPages,
+            action: 'roofline_deck_slide_next',
+          },
+        });
+      }
+      setCurrentSlideIndex(nextSlideIdx);
     } else {
       const catIdx = CATEGORIES.findIndex((c) => c.id === activeCategory);
       if (catIdx < CATEGORIES.length - 1) {
-        setActiveCategory(CATEGORIES[catIdx + 1].id);
+        const nextCat = CATEGORIES[catIdx + 1].id;
+        if (userId) {
+          logEvent('navigate', {
+            user_id: userId,
+            module_type: 'roofline_deck',
+            created_by: userId,
+            meta: {
+              leadId,
+              fromTab: activeCategory,
+              toTab: nextCat,
+              fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+              fromSlide: currentGlobalPageNumber,
+              toSlideName: getCurrentSlideName(nextCat, 0),
+              toSlide: currentGlobalPageNumber + 1,
+              totalSlides: totalGlobalPages,
+              action: 'roofline_deck_slide_next',
+            },
+          });
+        }
+        setActiveCategory(nextCat);
         setCurrentSlideIndex(0);
       }
     }
@@ -256,14 +375,53 @@ export default function RooflineDeckScreen() {
 
   const handlePrev = () => {
     triggerLightTap();
+    const userId = user?._id || user?.id;
     if (currentSlideIndex > 0) {
-      setCurrentSlideIndex(currentSlideIndex - 1);
+      const prevSlideIdx = currentSlideIndex - 1;
+      if (userId) {
+        logEvent('navigate', {
+          user_id: userId,
+          module_type: 'roofline_deck',
+          created_by: userId,
+          meta: {
+            leadId,
+            fromTab: activeCategory,
+            toTab: activeCategory,
+            fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+            fromSlide: currentGlobalPageNumber,
+            toSlideName: getCurrentSlideName(activeCategory, prevSlideIdx),
+            toSlide: currentGlobalPageNumber - 1,
+            totalSlides: totalGlobalPages,
+            action: 'roofline_deck_slide_previous',
+          },
+        });
+      }
+      setCurrentSlideIndex(prevSlideIdx);
     } else {
       const catIdx = CATEGORIES.findIndex((c) => c.id === activeCategory);
       if (catIdx > 0) {
         const prevCat = CATEGORIES[catIdx - 1].id;
+        const prevCatImagesCount = Object.keys(rooflineDeckImages[prevCat] || {}).length;
+        if (userId) {
+          logEvent('navigate', {
+            user_id: userId,
+            module_type: 'roofline_deck',
+            created_by: userId,
+            meta: {
+              leadId,
+              fromTab: activeCategory,
+              toTab: prevCat,
+              fromSlideName: getCurrentSlideName(activeCategory, currentSlideIndex),
+              fromSlide: currentGlobalPageNumber,
+              toSlideName: getCurrentSlideName(prevCat, prevCatImagesCount - 1),
+              toSlide: currentGlobalPageNumber - 1,
+              totalSlides: totalGlobalPages,
+              action: 'roofline_deck_slide_previous',
+            },
+          });
+        }
         setActiveCategory(prevCat);
-        setCurrentSlideIndex(Object.keys(rooflineDeckImages[prevCat]).length - 1);
+        setCurrentSlideIndex(prevCatImagesCount - 1);
       }
     }
   };
@@ -567,10 +725,7 @@ export default function RooflineDeckScreen() {
               return (
                 <TouchableOpacity
                   key={cat.id}
-                  onPress={() => {
-                    setActiveCategory(cat.id);
-                    setCurrentSlideIndex(0);
-                  }}
+                  onPress={() => handleTabChange(cat.id)}
                   className="mr-5 pt-3 pb-1"
                   style={{
                     borderBottomWidth: isActive ? 2 : 0,
@@ -629,7 +784,7 @@ export default function RooflineDeckScreen() {
               }}
             >
               <Image
-                source={currentCategoryImages[currentSlideIndex]}
+                source={currentCategoryImages[currentSlideIndex]?.src}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
               />
@@ -736,7 +891,7 @@ export default function RooflineDeckScreen() {
                   {/* Image */}
                   {currentCategoryImages[currentSlideIndex] && (
                     <Image
-                      source={currentCategoryImages[currentSlideIndex]}
+                      source={currentCategoryImages[currentSlideIndex]?.src}
                       style={{ width: '100%', height: '100%' }}
                       resizeMode="contain"
                     />
@@ -952,7 +1107,7 @@ export default function RooflineDeckScreen() {
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                 {currentCategoryImages[currentSlideIndex] && (
                   <Image
-                    source={currentCategoryImages[currentSlideIndex]}
+                    source={currentCategoryImages[currentSlideIndex]?.src}
                     style={{ width: '100%', height: '100%' }}
                     resizeMode="contain"
                   />

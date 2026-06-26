@@ -2,6 +2,7 @@ import { storage } from './storage';
 import Geolocation from 'react-native-geolocation-service';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { LeadService } from '../services/api/leads';
+import { logEvent } from '../services/api/LoggerService';
 
 export interface UploadQueueItem {
   id: string;
@@ -13,6 +14,7 @@ export interface UploadQueueItem {
   name: string;
   timestamp: string;
   retryCount?: number;
+  userId?: string;
 }
 
 class UploadQueueManager {
@@ -156,7 +158,75 @@ class UploadQueueManager {
     formData.append('category', 'salesPhotos');
 
     // 3. Upload S3 image
-    await LeadService.uploadImages(item.leadId, formData);
+    const response = await LeadService.uploadImages(item.leadId, formData);
+
+    // 3b. Log analytical event on upload success
+    try {
+      const isAnnotated = item.subcategory?.includes('(Annotated)');
+      const userId = item.userId;
+      if (userId) {
+        let s3url = '';
+        let bucketName = '';
+        try {
+          let refreshAttempt = 0;
+          const maxRefreshAttempts = 5;
+          let waitTime = 1000;
+          let foundPhoto = false;
+
+          while (!foundPhoto && refreshAttempt < maxRefreshAttempts) {
+            await new Promise<void>((resolve) => setTimeout(resolve, waitTime));
+            try {
+              const leadRes = await LeadService.workLead(item.leadId, userId);
+              const refreshedLead = leadRes.data?.data || leadRes.data;
+              if (refreshedLead?.salesPhotos && Array.isArray(refreshedLead.salesPhotos)) {
+                const matched = [...refreshedLead.salesPhotos].reverse().find(
+                  (p: any) =>
+                    p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+                    p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase()
+                );
+                if (matched && matched.s3url) {
+                  s3url = matched.s3url;
+                  bucketName = matched.bucketName || '';
+                  foundPhoto = true;
+                  break;
+                }
+              }
+            } catch (err) {
+              console.warn(`[UploadQueue] Refresh attempt ${refreshAttempt + 1} failed:`, err);
+            }
+            refreshAttempt++;
+            waitTime = Math.min(waitTime + 1000, 5000);
+          }
+        } catch (err) {
+          console.warn('[UploadQueue] Could not extract s3url by polling:', err);
+        }
+
+        logEvent('add', {
+          user_id: userId,
+          module_type: isAnnotated ? 'annotated_photos' : 'inspection_photo',
+          created_by: userId,
+          meta: {
+            leadId: item.leadId,
+            category: item.categoryName,
+            subcategory: item.subcategory,
+            timestamp: item.timestamp,
+            coordinates: coords,
+            action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',
+            image_url: s3url,
+            imageData: {
+              s3url,
+              bucketName,
+              category: item.categoryName,
+              subcategory: item.subcategory,
+              timestampTaken: item.timestamp,
+              coordinates: coords,
+            },
+          },
+        });
+      }
+    } catch (logErr) {
+      console.warn('[UploadQueue] Analytics logging failed:', logErr);
+    }
 
     // 4. Cleanup local cache file if applicable
     try {
