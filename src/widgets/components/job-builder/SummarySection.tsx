@@ -1433,8 +1433,8 @@ export const SummarySection = ({
                           key={rIdx}
                           style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
                         >
-                          <Text style={{ fontSize: 8, fontWeight: '900', color: '#64748b' }}>{row.location}</Text>
-                          <Text style={{ fontSize: 8, fontWeight: 'bold', color: '#059669' }}>
+                          <Text style={{ fontSize: 9, fontWeight: '900', color: '#64748b' }}>{row.location}</Text>
+                          <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#059669' }}>
                             {row.entries.map((e: any) => `${e.story}: ${e.value}ft`).join(' · ')}
                           </Text>
                         </View>

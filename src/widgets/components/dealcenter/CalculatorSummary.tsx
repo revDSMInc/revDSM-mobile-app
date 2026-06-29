@@ -559,7 +559,7 @@ export const CalculatorSummary = ({
                     <BlurView
                       style={StyleSheet.absoluteFill}
                       blurType={isDark ? 'dark' : 'light'}
-                      blurAmount={5}
+                      blurAmount={1}
                       reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
                     />
                   </View>
@@ -571,7 +571,7 @@ export const CalculatorSummary = ({
                     <BlurView
                       style={StyleSheet.absoluteFill}
                       blurType={isDark ? 'dark' : 'light'}
-                      blurAmount={5}
+                      blurAmount={1}
                       reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
                     />
                   </View>
@@ -1915,13 +1915,16 @@ export const CalculatorSummary = ({
                     {addedPlans
                       .filter((p) => !['check', 'mcVisaDscvr', 'amex', 'lowes_ach', 'lowes_cc'].includes(p))
                       .map((planKey, idx) => {
+                        console.log('planKey', planKey);
                         const plan = paymentPlans[planKey];
                         const balance = Math.max(0, currentDropPrice - currentDownPayment);
                         const monthly = calculateMonthly(balance, planKey);
                         const isSelected = selectedPlan === planKey;
                         const belowMin = !!(plan?.minPrice && currentDropPrice > 0 && currentDropPrice < plan.minPrice);
 
-                        const planCode = planKey.replace(/^[a-z]+/, '').toUpperCase();
+                        const planCode = planKey
+                          .toUpperCase()
+                          .replace(/([A-Z]+)(\d+)/, '$1 $2');
                         const planTitle = planCode || plan.label.split('(')[0].trim();
                         const planDesc = plan.label.includes('(')
                           ? plan.label.split('(')[1].split(')')[0]

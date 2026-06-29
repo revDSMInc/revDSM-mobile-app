@@ -26,6 +26,7 @@ export type PaymentPlanCategory = {
 export function isPlanBelowMinPrice(planKey: string, price: number): boolean {
   const plan = paymentPlans[planKey];
   if (!plan?.minPrice) return false;
+  if (!price || price <= 0) return false;
   const numericPrice = Number(price) || 0;
   return numericPrice === 0 || numericPrice < plan.minPrice;
 }

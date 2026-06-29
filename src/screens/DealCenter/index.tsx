@@ -47,6 +47,7 @@ import { useDealOutcome } from '../../hooks/useDealOutcome';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../utils/activity-log/calculator-log';
 import { persistActiveLeadId } from '../../utils/lead-activity-log';
 import { autoConfirmManager } from '../../utils/calculator/autoConfirmManager';
+import { BlurView } from '@react-native-community/blur';
 
 const INITIAL_JOB_STATE = {
   gutter: {
@@ -94,6 +95,9 @@ export default function LFCalculator({ route }: any) {
   const [isDraggingTab, setIsDraggingTab] = useState(false);
   const tabsScrollViewRef = useRef<ScrollView>(null);
   const scrollXRef = useRef(0);
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
   useEffect(() => {
     navigation.setOptions({
@@ -537,7 +541,10 @@ export default function LFCalculator({ route }: any) {
                   scrollEnabled={!isDraggingTab}
                   onScroll={(e) => {
                     scrollXRef.current = e.nativeEvent.contentOffset.x;
+                    setScrollOffset(e.nativeEvent.contentOffset.x);
                   }}
+                  onContentSizeChange={(w) => setContentWidth(w)}
+                  onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
                   scrollEventThrottle={16}
                   style={{ overflow: isDraggingTab ? 'visible' : 'hidden' }}
                   contentContainerStyle={{ alignItems: 'center' }}
@@ -553,6 +560,30 @@ export default function LFCalculator({ route }: any) {
                     scrollXRef={scrollXRef}
                   />
                 </ScrollView>
+
+                {/* Left Blur/Fade Overlay */}
+                {!isDraggingTab && scrollOffset > 5 && (
+                  <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
+                    <BlurView
+                      style={StyleSheet.absoluteFill}
+                      blurType={isDark ? 'dark' : 'light'}
+                      blurAmount={1}
+                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                    />
+                  </View>
+                )}
+
+                {/* Right Blur/Fade Overlay */}
+                {!isDraggingTab && scrollOffset + scrollViewWidth < contentWidth - 5 && (
+                  <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
+                    <BlurView
+                      style={StyleSheet.absoluteFill}
+                      blurType={isDark ? 'dark' : 'light'}
+                      blurAmount={1}
+                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+                    />
+                  </View>
+                )}
               </View>
 
               <View className="flex-row items-center gap-2" style={{ flexShrink: 0 }}>

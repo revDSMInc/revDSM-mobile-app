@@ -19,9 +19,8 @@ export const PricingInputField = React.memo(({
         </Text>
       )}
       <View
-        className={`flex-row items-center bg-white border border-slate-200 rounded-2xl px-5 h-16 shadow-sm ${
-          noLabel ? 'border-0 shadow-none bg-transparent h-12' : ''
-        }`}
+        className={`flex-row items-center bg-white border border-slate-200 rounded-2xl px-5 h-16 shadow-sm ${noLabel ? 'border-0 shadow-none bg-transparent h-12' : ''
+          }`}
       >
         {!noLabel && <Text className="text-xl font-black text-slate-400 mr-2">$</Text>}
         {noLabel && <Text className="text-lg font-black text-slate-400 mr-1">$</Text>}
