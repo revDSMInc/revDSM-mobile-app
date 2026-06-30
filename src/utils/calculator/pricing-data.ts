@@ -194,7 +194,7 @@ export const extrasList = [
     label: 'Extra Labor',
     price: 80.0,
     icon: 'solar:settings-bold-duotone',
-    category: 'Gutters',
+    category: 'Additional Services',
   },
   // Lighting (retail prices — used for PAR/RETAIL tier calculations)
   {
