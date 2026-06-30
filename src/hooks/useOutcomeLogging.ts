@@ -11,11 +11,12 @@ import { useAuth } from './useAuth';
 const RESULT_FIELDS = [
   'oneLeg',
   'result',
-  'paymentMethod',
+  'downPaymentMethod',
   'balancePaymentMethod',
   'originalContractPrice',
   'lastPriceQuoted',
   'reason',
+  'reasonExplanation',
 ];
 
 export function useOutcomeLogging(opts: {

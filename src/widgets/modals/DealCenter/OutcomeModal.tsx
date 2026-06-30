@@ -91,7 +91,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     calculators,
     activeIdx,
     lead,
-    disabled: true,
+    disabled: false,
   });
 
   const toggleExpand = (key: string) => {
@@ -331,8 +331,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                         >
                           <Text
                             className={`text-[13px] font-semibold ${outcomeStatus === opt.toLowerCase()
-                                ? 'text-[#1C252E]'
-                                : 'text-[#637381]'
+                              ? 'text-[#1C252E]'
+                              : 'text-[#637381]'
                               }`}
                           >
                             {opt}
@@ -450,8 +450,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                               <TouchableOpacity
                                 key={m.value}
                                 className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeForm.downPaymentMethod === m.value
-                                    ? 'rounded-lg bg-[#F4F6F8]'
-                                    : ''
+                                  ? 'rounded-lg bg-[#F4F6F8]'
+                                  : ''
                                   }`}
                                 onPress={() => {
                                   setOutcomeForm({ ...outcomeForm, downPaymentMethod: m.value });
@@ -460,8 +460,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                               >
                                 <Text
                                   className={`text-[13px] font-semibold ${outcomeForm.downPaymentMethod === m.value
-                                      ? 'text-[#1C252E]'
-                                      : 'text-[#637381]'
+                                    ? 'text-[#1C252E]'
+                                    : 'text-[#637381]'
                                     }`}
                                 >
                                   {m.label}
@@ -507,10 +507,10 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                     <TouchableOpacity
                                       key={key}
                                       className={`px-4 py-3 flex-row items-center justify-between border-b border-[#919EAB14] ${outcomeForm.balancePaymentMethod === key
-                                          ? 'rounded-lg bg-[#F4F6F8]'
-                                          : belowMin
-                                            ? 'opacity-50'
-                                            : ''
+                                        ? 'rounded-lg bg-[#F4F6F8]'
+                                        : belowMin
+                                          ? 'opacity-50'
+                                          : ''
                                         }`}
                                       onPress={() => {
                                         if (belowMin) {
@@ -530,8 +530,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
                                       <View className="flex-1">
                                         <Text
                                           className={`text-[13px] font-semibold ${outcomeForm.balancePaymentMethod === key
-                                              ? 'text-[#1C252E]'
-                                              : 'text-[#637381]'
+                                            ? 'text-[#1C252E]'
+                                            : 'text-[#637381]'
                                             }`}
                                         >
                                           {plan.label}
