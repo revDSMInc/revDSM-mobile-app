@@ -421,7 +421,7 @@ export const CalculatorForm = ({
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 90}
     >
       <View style={{ flex: 1, backgroundColor: isDark ? colors.background : '#ffffffff' }}>
 

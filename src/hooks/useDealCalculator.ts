@@ -1044,7 +1044,7 @@ export const useDealCalculator = (lead: any) => {
       const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
 
       const fullPayload = {
-        title: '',
+        title: '.',
         position: nextPosition,
         ...INITIAL_INPUTS,
         paymentPlan: defaultPay,

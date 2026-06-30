@@ -61,6 +61,24 @@ export const LeadEndpoints = {
   downloadOutcomeDocuments: (leadId: string) => `lead/v1/${leadId}/outcome/documents/download`,
 };
 
+export const sanitizeCalculatorPayload = (payload: any): any => {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (Array.isArray(payload)) {
+    return payload.map(sanitizeCalculatorPayload);
+  }
+  const sanitized = { ...payload };
+  const stringKeys = ['title', 'name', 'paymentMethod', 'paymentPlan', 'originalCalculatorId', 'status', 'action', 'sendMode', 'recipient', 'subject'];
+  Object.keys(sanitized).forEach((key) => {
+    const val = sanitized[key];
+    if (val === '' && !stringKeys.includes(key)) {
+      sanitized[key] = 0;
+    } else if (val && typeof val === 'object') {
+      sanitized[key] = sanitizeCalculatorPayload(val);
+    }
+  });
+  return sanitized;
+};
+
 export const LeadService = {
   createLead: (data: any): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.create, data),
   getSalesLeads: (repId: string, params?: any): Promise<AxiosResponse<any>> => {
@@ -123,10 +141,13 @@ export const LeadService = {
     api.get(LeadEndpoints.appointments, { params }),
   getCalculators: (appointmentId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.calculators(appointmentId)),
+  getCalculator: (id: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.updateCalculator(id)),
   createCalculator: (appointmentId: string, payload: any): Promise<AxiosResponse<any>> =>
-    api.post(LeadEndpoints.calculators(appointmentId), payload),
+    api.post(LeadEndpoints.calculators(appointmentId), sanitizeCalculatorPayload(payload)),
   updateCalculator: (id: string, payload: any): Promise<AxiosResponse<any>> =>
-    api.put(LeadEndpoints.updateCalculator(id), payload),
+    api.put(LeadEndpoints.updateCalculator(id), sanitizeCalculatorPayload(payload)),
+
   toggleFavourite: (leadId: string, isFavorite: boolean): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.favourite, { jobId: leadId, favorite: isFavorite }),
   archiveLead: (id: string, isArchive: boolean): Promise<AxiosResponse<any>> =>

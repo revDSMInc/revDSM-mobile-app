@@ -20,6 +20,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -73,6 +75,7 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
 }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   // ── Signature state — same pattern as ConsentFormModal ────────────────────
   const [showSigPad, setShowSigPad] = useState(false);
@@ -245,6 +248,22 @@ export const ContractAmendmentModal: React.FC<ContractAmendmentModalProps> = ({
         'Sent',
         sendView === 'sms' ? 'Text message sent successfully.' : 'Email sent successfully.'
       );
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('add', {
+          user_id: userId,
+          created_by: userId,
+          module_type: 'amendments',
+          meta: {
+            leadId,
+            action: `sent_amendment_${sendView}`,
+            recipient: to,
+            subject: sendView === 'email' ? sendSubject : undefined,
+          },
+        });
+      }
+
       setSendView(null);
       onSendSuccess?.({ mode: sendView!, to });
     } catch (err: any) {

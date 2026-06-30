@@ -23,7 +23,41 @@ import JobService from '../../../services/api/JobService';
 import { parseSafeISO } from '../../../utils/date-util';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
+import { getCalculationResult } from '../../../utils/calculator/calculator-calculation';
+import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 
+// Human-readable labels for each field — used in change logs
+const labelMap: Record<string, string> = {
+  reason: 'Reason',
+  explain: 'Explain',
+  lastPriceQuoted: 'Last Price Quoted',
+  originalContractPrice: 'Original Contract Price',
+  downPayment: 'Down Payment',
+  downPaymentMethod: 'Payment Method (Down Payment)',
+  balancePaymentMethod: 'Payment Method (Balance)',
+  balance: 'Balance',
+};
+
+const paymentFields = ['downPaymentMethod', 'balancePaymentMethod'];
+const specialLoggingFields = ['downPayment', 'balance'];
+
+function getPaymentMethodLabel(value: string) {
+  if (!value) return '';
+  return paymentPlans[value]?.label || value;
+}
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  return debouncedValue;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,14 +92,6 @@ function normalise(v: any): number | null {
   return isFinite(n) ? n : null;
 }
 
-function moneyChanged(a: any, b: any): boolean {
-  const an = normalise(a);
-  const bn = normalise(b);
-  if (an == null && bn == null) return false;
-  if (an == null || bn == null) return true;
-  return an !== bn;
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> = ({
@@ -79,10 +105,13 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
 
-  // ── Analytics refs ─────────────────────────────────────────────────────────
-  const pendingLogChangesRef = useRef<Record<string, { oldValue: any; newValue: any }>>({});
-  const logDebounceTimerRef = useRef<any>(null);
+  // ── Analytics & Parity refs ────────────────────────────────────────────────
+  const pendingLogChangesRef = useRef<any[]>([]);
+  const [logChangeTrigger, setLogChangeTrigger] = useState<any>(null);
+  const debouncedLogChange = useDebounce(logChangeTrigger, 1000);
+  const prevFormDataRef = useRef<any>(null);
   const initialFieldsRef = useRef<Record<string, any>>({});
+  const fetchedCalculatorRef = useRef<any>(null);
 
   // ── View state ─────────────────────────────────────────────────────────────
   const [view, setView] = useState<'menu' | 'pricing'>('menu');
@@ -119,6 +148,106 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
   } | null>(null);
   const amendmentLoggedRef = useRef(false);
 
+  const leadId = lead?._id || lead?.id || outcomeData?._id || outcomeData?.id;
+  const result = isSale ? 'Sale' : 'Demo';
+
+  const resolveCalculator = (fData: any) => {
+    if (fetchedCalculatorRef.current) return fetchedCalculatorRef.current;
+    const calcId = fData?.selectedCalculatorId || lead?.selectedCalculatorId || outcomeData?.selectedCalculatorId;
+    const lfCalc = lead?.LFCalculator || outcomeData?.LFCalculator || lead?.jobBuilder?.LFCalculator || outcomeData?.jobBuilder?.LFCalculator || {};
+    if (!calcId || !lfCalc) return null;
+    if (Array.isArray(lfCalc)) return lfCalc.find((c: any) => c._id === calcId) || null;
+    if (typeof lfCalc === 'object') {
+      if (lfCalc._id === calcId) return lfCalc;
+      return lfCalc[calcId] || null;
+    }
+    return null;
+  };
+
+  const buildRolloutMeta = (
+    fData: any,
+    fieldName: string,
+    fieldLabel: string,
+    fieldCategory: string,
+    oldValue: any,
+    newValue: any,
+    action: string,
+    extra: any = {}
+  ) => {
+    const calculator = resolveCalculator(fData);
+    const calcId = fData?.selectedCalculatorId || lead?.selectedCalculatorId || outcomeData?.selectedCalculatorId || null;
+    const endPrice = parseFloat(String(fData?.originalContractPrice || fData?.lastPriceQuoted || '0').replace(/,/g, '')) || 0;
+    
+    const costPrice = calculator
+      ? Math.round(getCalculationResult(calculator, '50', 'check')) || 0
+      : 0;
+    const parPrice = calculator
+      ? Math.round(getCalculationResult(calculator, '65', 'check')) || 0
+      : 0;
+    const retailPrice = calculator
+      ? Math.round(getCalculationResult(calculator, '100', 'check')) || 0
+      : 0;
+
+    const percentageOfRollout = calculator
+      ? calculateMarkupLabel(endPrice, costPrice, parPrice, retailPrice)
+      : '';
+
+    const reportFieldName = fieldName === 'downPaymentMethod' ? 'paymentMethod' : fieldName;
+
+    return {
+      calculatorId: calcId,
+      appointmentId: calculator?.appointmentId || null,
+      calculatorTitle: calculator?.name || calculator?.title || null,
+      fieldName: reportFieldName,
+      fieldLabel,
+      fieldValue: newValue ?? oldValue,
+      fieldCategory,
+      oldValue: oldValue ?? '',
+      newValue: newValue ?? '',
+      action,
+      costPrice,
+      parPrice,
+      retailPrice,
+      percentageOfRollout,
+      leadId,
+      ...extra,
+    };
+  };
+
+  const queueLog = (meta: any) => {
+    const existing = pendingLogChangesRef.current.find((c) => c.fieldName === meta.fieldName);
+    const merged = existing
+      ? { ...meta, oldValue: existing.oldValue }
+      : meta;
+    pendingLogChangesRef.current = [
+      ...pendingLogChangesRef.current.filter((c) => c.fieldName !== meta.fieldName),
+      merged,
+    ];
+    setLogChangeTrigger({ fieldName: meta.fieldName, _ts: Date.now() });
+  };
+
+  const flushQueuedLogs = () => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    const changes = pendingLogChangesRef.current;
+    if (!changes.length) return;
+    pendingLogChangesRef.current = [];
+    changes.forEach((meta) => {
+      logEvent('change', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'amendments',
+        meta,
+      });
+    });
+  };
+
+  // Flush queued changes when debounce settles
+  useEffect(() => {
+    if (!debouncedLogChange || !user?._id) return;
+    flushQueuedLogs();
+  }, [debouncedLogChange, user?._id]);
+
   useEffect(() => {
     if (!amendmentOpen) {
       amendmentLoggedRef.current = false;
@@ -127,8 +256,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
     if (amendmentLoggedRef.current) return;
 
     const userId = user?._id || user?.id;
-    const leadId = lead?._id || lead?.id || outcomeData?._id || outcomeData?.id;
-    if (!userId || !leadId) return;
+    const lId = lead?._id || lead?.id || outcomeData?._id || outcomeData?.id;
+    if (!userId || !lId) return;
 
     amendmentLoggedRef.current = true;
 
@@ -137,7 +266,7 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       created_by: userId,
       module_type: 'amendments',
       meta: {
-        leadId,
+        leadId: lId,
         action: 'opened_contract_amendment_modal',
       },
     });
@@ -148,8 +277,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         created_by: userId,
         module_type: 'amendments',
         meta: {
-          leadId,
-          fieldName: change.key,
+          leadId: lId,
+          fieldName: change.key === 'downPaymentMethod' ? 'paymentMethod' : change.key,
           fieldLabel: change.label,
           oldValue: change.oldValue,
           newValue: change.newValue,
@@ -161,42 +290,6 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
 
   const handleFieldChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-
-    if (logDebounceTimerRef.current) {
-      clearTimeout(logDebounceTimerRef.current);
-    }
-    logDebounceTimerRef.current = setTimeout(() => {
-      const userId = user?._id || user?.id;
-      if (userId) {
-        const oldValue = initialFieldsRef.current[field];
-        if (String(oldValue) !== String(value)) {
-          pendingLogChangesRef.current[field] = { oldValue, newValue: value };
-        } else {
-          delete pendingLogChangesRef.current[field];
-        }
-      }
-    }, 500);
-  };
-
-  const flushQueuedLogs = () => {
-    const userId = user?._id || user?.id;
-    if (!userId) return;
-    const leadId = lead?._id || lead?.id || outcomeData?._id || outcomeData?.id;
-    Object.entries(pendingLogChangesRef.current).forEach(([fieldName, { oldValue, newValue }]) => {
-      logEvent('change', {
-        user_id: userId,
-        module_type: 'amendments',
-        created_by: userId,
-        meta: {
-          leadId,
-          fieldName,
-          oldValue,
-          newValue,
-          action: 'contract_field_changed',
-        },
-      });
-    });
-    pendingLogChangesRef.current = {};
   };
 
   // ── Sync form with fresh data whenever modal opens ─────────────────────────
@@ -230,10 +323,8 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
         reason,
       };
 
-      pendingLogChangesRef.current = {};
-      if (logDebounceTimerRef.current) {
-        clearTimeout(logDebounceTimerRef.current);
-      }
+      prevFormDataRef.current = null;
+      pendingLogChangesRef.current = [];
 
       const userId = user?._id || user?.id;
       if (userId) {
@@ -244,48 +335,153 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
           meta: {
             leadId: lead?._id || lead?.id || outcomeData?._id || outcomeData?.id,
             action: 'opened_contract_details_edit_modal',
+            result: isSale ? 'Sale' : 'Demo',
           },
         });
+      }
+
+      const calcId =
+        outcomeData?.selectedCalculatorId ||
+        outcomeData?.jobBuilder?.calculatorId ||
+        lead?.selectedCalculatorId ||
+        lead?.jobBuilder?.calculatorId;
+
+      if (calcId) {
+        LeadService.getCalculator(calcId)
+          .then((res) => {
+            fetchedCalculatorRef.current = res?.data?.data || res?.data || null;
+          })
+          .catch(() => {
+            fetchedCalculatorRef.current = null;
+          });
+      } else {
+        fetchedCalculatorRef.current = null;
       }
 
       setView('menu');
       setAmendmentOpen(false);
       setAmendmentChanges([]);
       setDraftId(null);
+    } else {
+      flushQueuedLogs();
     }
   }, [visible, outcomeData, lead, user?._id, user?.id]);
 
-  // ── Auto-compute balance ────────────────────────────────────────────────────
+  // ── field-change detection → queue log ─────────────────────────────────────
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (!visible || !userId || !leadId) return;
+
+    if (!prevFormDataRef.current) {
+      prevFormDataRef.current = formData;
+      return;
+    }
+
+    let changedField = null;
+    let oldVal = '';
+    let newVal = '';
+
+    for (const key of Object.keys(formData)) {
+      if (key === 'LFCalculator' || key === 'lfCalculator') continue;
+      const curVal = (formData as any)[key];
+      const prevVal = (prevFormDataRef.current as any)[key];
+      if (curVal !== prevVal) {
+        changedField = key;
+        oldVal = prevVal;
+        newVal = curVal;
+        break;
+      }
+    }
+
+    prevFormDataRef.current = formData;
+
+    if (!changedField || !labelMap[changedField] || specialLoggingFields.includes(changedField))
+      return;
+
+    const isPayment = paymentFields.includes(changedField);
+    queueLog(
+      buildRolloutMeta(
+        formData,
+        changedField,
+        labelMap[changedField],
+        isPayment ? 'payment' : 'contract',
+        isPayment ? getPaymentMethodLabel(oldVal) || oldVal || '' : (oldVal ?? ''),
+        isPayment ? getPaymentMethodLabel(newVal) || newVal || '' : (newVal ?? ''),
+        'contract_details_field_changed'
+      )
+    );
+  }, [formData, visible, user?._id, user?.id, leadId]);
+
+  // ── Auto-compute balance & queue special logging fields ─────────────────────
   React.useEffect(() => {
     const price = normalise(formData.originalContractPrice) || 0;
     const dp = normalise(formData.downPayment) || 0;
     const newBalance = Math.max(0, price - dp);
     const currentBalance = normalise(formData.balance) || 0;
+    
     if (newBalance !== currentBalance) {
-      setFormData((prev) => ({ ...prev, balance: fmt(newBalance) }));
+      const oldDp = initialFieldsRef.current.downPayment;
+      const newDp = formData.downPayment;
+      const oldBal = initialFieldsRef.current.balance;
+      const newBal = fmt(newBalance);
 
-      if (logDebounceTimerRef.current) {
-        clearTimeout(logDebounceTimerRef.current);
-      }
-      logDebounceTimerRef.current = setTimeout(() => {
-        const userId = user?._id || user?.id;
-        if (userId) {
-          const oldValue = initialFieldsRef.current.balance;
-          const newValue = fmt(newBalance);
-          if (String(oldValue) !== String(newValue)) {
-            pendingLogChangesRef.current.balance = { oldValue, newValue };
-          } else {
-            delete pendingLogChangesRef.current.balance;
-          }
+      setFormData((prev) => ({ ...prev, balance: newBal }));
+
+      const userId = user?._id || user?.id;
+      if (userId && visible) {
+        if (String(oldDp) !== String(newDp)) {
+          queueLog(
+            buildRolloutMeta(
+              { ...formData, balance: newBal },
+              'downPayment',
+              'Down Payment',
+              'payment',
+              oldDp,
+              newDp,
+              'contract_details_field_changed'
+            )
+          );
         }
-      }, 500);
+        if (String(oldBal) !== String(newBal)) {
+          queueLog(
+            buildRolloutMeta(
+              { ...formData, balance: newBal },
+              'balance',
+              'Balance',
+              'payment',
+              oldBal,
+              newBal,
+              'contract_details_field_changed',
+              { fieldType: 'auto' }
+            )
+          );
+        }
+      }
     }
-  }, [formData.originalContractPrice, formData.downPayment, formData.balance, user?._id, user?.id]);
+  }, [formData.originalContractPrice, formData.downPayment, user?._id, user?.id, visible]);
+
 
   // ── Save pricing ────────────────────────────────────────────────────────────
   const handleSavePricing = async () => {
     const leadId = lead?._id || lead?.id;
     if (!leadId) return;
+
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('add', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'amendments',
+        meta: {
+          leadId,
+          action: `saved_contract_details_${result.toLowerCase()}`,
+          result,
+          initialFormData: initialFieldsRef.current,
+          formData,
+        },
+      });
+    }
+
     setLoading(true);
     try {
       // 1. Fetch existing job state so we preserve all other fields
