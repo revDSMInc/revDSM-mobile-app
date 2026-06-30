@@ -91,6 +91,7 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
     calculators,
     activeIdx,
     lead,
+    disabled: true,
   });
 
   const toggleExpand = (key: string) => {

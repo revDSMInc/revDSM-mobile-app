@@ -16,6 +16,8 @@ import { AfterImageModal } from './AfterImageModal';
 import { LeadService } from '../../services/api/leads';
 import { FlashMessage } from '../../config/message';
 import { checkOnlineStatus, enqueueOfflineUpload, getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 interface BeforeAfterModalProps {
   visible: boolean;
@@ -31,6 +33,7 @@ export const BeforeAfterModal = ({
   onUploadSuccess,
 }: BeforeAfterModalProps) => {
   const { isDark } = useTheme();
+  const { user } = useAuth();
   const [showBeforeModal, setShowBeforeModal] = useState(false);
   const [showAfterModal, setShowAfterModal] = useState(false);
   const [beforeImages, setBeforeImages] = useState<any[]>([]);
@@ -66,8 +69,21 @@ export const BeforeAfterModal = ({
       setOfflineBeforeUris(getOfflineImagesForJob(selectedJob?.jobNumber, 'before').map(img => img.uri));
       setOfflineAfterUris(getOfflineImagesForJob(selectedJob?.jobNumber, 'after').map(img => img.uri));
       fetchFreshJob();
+
+      const userId = user?._id || user?.id;
+      if (userId && selectedJob) {
+        logEvent('view', {
+          user_id: userId,
+          module_type: 'before_after_images',
+          created_by: userId,
+          meta: {
+            job_number: selectedJob.jobNumber,
+            company_id: selectedJob.companyId,
+          },
+        });
+      }
     }
-  }, [visible, selectedJob, fetchFreshJob]);
+  }, [visible, selectedJob, fetchFreshJob, user]);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', async (data) => {
@@ -130,6 +146,60 @@ export const BeforeAfterModal = ({
           });
         }
 
+        const userId = user?._id || user?.id;
+        if (userId) {
+          if (beforeImages.length > 0) {
+            logEvent('add', {
+              user_id: userId,
+              module_type: 'before_after_images',
+              created_by: userId,
+              meta: {
+                type: 'before',
+                job_number: job?.jobNumber || selectedJob?.jobNumber,
+                company_id: job?.companyId || selectedJob?.companyId,
+                isOffline: true,
+                imageData: beforeImages.map((img: any) => ({
+                  s3url: img.uri,
+                  bucketName: null,
+                  uploadedAt: null,
+                  category: 'Before',
+                  fileName: img.name || null,
+                })),
+              },
+            });
+          }
+          if (afterImages.length > 0) {
+            logEvent('add', {
+              user_id: userId,
+              module_type: 'before_after_images',
+              created_by: userId,
+              meta: {
+                type: 'after',
+                job_number: job?.jobNumber || selectedJob?.jobNumber,
+                company_id: job?.companyId || selectedJob?.companyId,
+                isOffline: true,
+                imageData: afterImages.map((img: any) => ({
+                  s3url: img.uri,
+                  bucketName: null,
+                  uploadedAt: null,
+                  category: 'After',
+                  fileName: img.name || null,
+                })),
+              },
+            });
+          }
+          logEvent('update', {
+            user_id: userId,
+            module_type: 'image_order',
+            created_by: userId,
+            meta: {
+              job_number: job?.jobNumber || selectedJob?.jobNumber,
+              company_id: job?.companyId || selectedJob?.companyId,
+              isOffline: true,
+            },
+          });
+        }
+
         Alert.alert(
           'Offline Mode',
           'Connection lost. Your changes have been enqueued offline and will sync once internet is restored.'
@@ -140,6 +210,7 @@ export const BeforeAfterModal = ({
       }
 
       // Upload Before Images if any
+      let updatedBefore = [];
       if (beforeImages.length > 0) {
         const formData = new FormData();
         formData.append('jobNumber', job.jobNumber);
@@ -147,10 +218,12 @@ export const BeforeAfterModal = ({
         beforeImages.forEach((file) => {
           formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
         });
-        await LeadService.updateBeforeImages(formData);
+        const res = await LeadService.updateBeforeImages(formData);
+        updatedBefore = res.data?.data?.images?.beforeImages || res.data?.images?.beforeImages || [];
       }
 
       // Upload After Images if any
+      let updatedAfter = [];
       if (afterImages.length > 0) {
         const formData = new FormData();
         formData.append('jobNumber', job.jobNumber);
@@ -158,7 +231,59 @@ export const BeforeAfterModal = ({
         afterImages.forEach((file) => {
           formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
         });
-        await LeadService.updateAfterImages(formData);
+        const res = await LeadService.updateAfterImages(formData);
+        updatedAfter = res.data?.data?.images?.afterImages || res.data?.images?.afterImages || [];
+      }
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        if (beforeImages.length > 0 && updatedBefore.length > 0) {
+          logEvent('add', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              type: 'before',
+              job_number: job?.jobNumber || selectedJob?.jobNumber,
+              company_id: job?.companyId || selectedJob?.companyId,
+              imageData: updatedBefore.map((img: any) => ({
+                s3url: img?.s3url?.filePath || img?.s3url || img?.url || img?.imagePath || img?.filePath || img,
+                bucketName: img?.s3url?.bucketName || img?.bucketName || null,
+                uploadedAt: img?.s3url?.uploadedAt || img?.uploadedAt || null,
+                category: 'Before',
+                fileName: img?.fileName || img?.name || null,
+              })),
+            },
+          });
+        }
+        if (afterImages.length > 0 && updatedAfter.length > 0) {
+          logEvent('add', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              type: 'after',
+              job_number: job?.jobNumber || selectedJob?.jobNumber,
+              company_id: job?.companyId || selectedJob?.companyId,
+              imageData: updatedAfter.map((img: any) => ({
+                s3url: img?.s3url?.filePath || img?.s3url || img?.url || img?.imagePath || img?.filePath || img,
+                bucketName: img?.s3url?.bucketName || img?.bucketName || null,
+                uploadedAt: img?.s3url?.uploadedAt || img?.uploadedAt || null,
+                category: 'After',
+                fileName: img?.fileName || img?.name || null,
+              })),
+            },
+          });
+        }
+        logEvent('update', {
+          user_id: userId,
+          module_type: 'image_order',
+          created_by: userId,
+          meta: {
+            job_number: job?.jobNumber || selectedJob?.jobNumber,
+            company_id: job?.companyId || selectedJob?.companyId,
+          },
+        });
       }
 
       FlashMessage.success('Images saved successfully');

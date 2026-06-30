@@ -37,7 +37,7 @@ import { ENV } from '../../../config/env';
 import { MapJobCard } from './MapJobCard';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
-import { calculateDistance } from '../../../utils/location-util';
+import { logFavoriteJobClick, logMapPinSelected } from '../../../utils/activity-log/map-activity-log';
 import { MapGalleryModal } from './MapGalleryModal';
 import { MapToggleSwitch } from '../../common/MapToggleSwitch';
 import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
@@ -508,16 +508,7 @@ export const LeadMap = ({
     try {
       await LeadService.toggleFavourite(job._id, nextValue);
 
-      logEvent('click', {
-        user_id: user?._id || user?.id,
-        module_type: 'favorite_job',
-        created_by: user?._id || user?.id,
-        meta: {
-          jobId: job?._id || job?.id,
-          jobNumber: job?.jobNumber,
-          action: nextValue ? 'added_to_favorites' : 'removed_from_favorites',
-        },
-      });
+      await logFavoriteJobClick(user, job, nextValue);
 
       if (nextValue) {
         FlashMessage.success('Job is added to favourite');
@@ -574,31 +565,13 @@ export const LeadMap = ({
       });
 
       // Log pin selected event
-      const fromLat = userLocation?.latitude;
-      const fromLng = userLocation?.longitude;
       const targetLat = coords[1];
       const targetLng = coords[0];
-      const distance = (fromLat != null && fromLng != null)
-        ? calculateDistance(fromLat, fromLng, targetLat, targetLng)
-        : 0;
-
-      logEvent('click', {
-        user_id: user?._id || user?.id,
-        created_by: user?._id || user?.id,
-        module_type: 'map_interaction',
-        meta: {
-          jobNumber: lead?.jobNumber || 'N/A',
-          jobId: lead?._id || lead?.id || 'N/A',
-          address: lead?.address?.streetName || lead?.streetName || 'N/A',
-          city: lead?.address?.city || lead?.city || 'N/A',
-          state: lead?.address?.state || lead?.state || 'N/A',
-          coordinates: { lat: targetLat, lng: targetLng },
-          price: lead?.price || 0,
-          installDate: lead?.installationDate || lead?.leadDate || '',
-          distance: distance || 0,
-          distanceFrom: 'user_gps',
-          action: 'job_pin_selected',
-        },
+      logMapPinSelected(user, {
+        job: lead,
+        coordinates: { lat: targetLat, lng: targetLng },
+        userLocation,
+        currentLead,
       });
     }
   };
@@ -1134,6 +1107,7 @@ export const LeadMap = ({
         visible={showGallery}
         job={galleryJob}
         isMyJob={isJobOwner(galleryJob, user)}
+        user={user}
         onClose={() => setShowGallery(false)}
         onUploadSuccess={fetchAllJobs}
       />

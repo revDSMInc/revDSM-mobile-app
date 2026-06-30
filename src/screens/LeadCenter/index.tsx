@@ -44,6 +44,7 @@ import { MapSelectionModal } from '../../widgets/common/modal/MapSelectionModal'
 import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { logBuildJobInitiated, logCalculatorCreated, logPaymentMethodInherited } from '../../utils/activity-log/calculator-log';
 import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSection';
 import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -401,6 +402,16 @@ export default function LeadCenterPage() {
             };
             setJobState(updatedJobState);
           }
+          const uId = user?._id || user?.id;
+          if (uId && lead?._id) {
+            logBuildJobInitiated({
+              userId: uId,
+              leadId: lead._id,
+              result: outcomeForm?.result || undefined,
+              calculatorId: calculatorData?._id,
+              calculatorType: calculatorData?.type,
+            });
+          }
           navigation.navigate('JobBuilder', {
             initialJobState: updatedJobState,
             calculatorData,
@@ -467,6 +478,16 @@ export default function LeadCenterPage() {
         };
         setJobState(updatedJobState);
       }
+      const uId = user?._id || user?.id;
+      if (uId && lead?._id) {
+        logBuildJobInitiated({
+          userId: uId,
+          leadId: lead._id,
+          result: outcomeForm?.result || undefined,
+          calculatorId: calculatorData?._id,
+          calculatorType: calculatorData?.type,
+        });
+      }
       navigation.navigate('JobBuilder', {
         initialJobState: updatedJobState,
         calculatorData,
@@ -476,6 +497,16 @@ export default function LeadCenterPage() {
       });
     } catch (e) {
       console.warn('Manual reset failed', e);
+      const uId = user?._id || user?.id;
+      if (uId && lead?._id) {
+        logBuildJobInitiated({
+          userId: uId,
+          leadId: lead._id,
+          result: outcomeForm?.result || undefined,
+          calculatorId: calculatorData?._id,
+          calculatorType: calculatorData?.type,
+        });
+      }
       navigation.navigate('JobBuilder', {
         initialJobState: jobState,
         calculatorData,
@@ -1101,12 +1132,42 @@ export default function LeadCenterPage() {
                 }}
                 onShowJobBuilder={handleShowJobBuilder}
                 onShowCalculator={async () => {
+                  const executeWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
+                    let attempt = 0;
+                    while (attempt < retries) {
+                      try {
+                        return await fn();
+                      } catch (error) {
+                        attempt++;
+                        if (attempt >= retries) throw error;
+                        await new Promise<void>((resolve) => setTimeout(() => resolve(), delay * attempt));
+                      }
+                    }
+                    throw new Error('Retry limit reached');
+                  };
+
                   try {
                     setLoading(true);
                     let activeLead = leadRef.current || lead;
-                    if (!activeLead?.leadId || !activeLead?.customerDetails?.firstName) {
-                      await refetch();
+
+                    // If lead details are missing (e.g. still loading), wait and retry refetching
+                    let refetchAttempts = 0;
+                    while (
+                      refetchAttempts < 5 &&
+                      (!activeLead?.leadId || !activeLead?.customerDetails?.firstName)
+                    ) {
+                      try {
+                        await refetch();
+                      } catch (refetchErr) {
+                        console.warn('Refetch lead attempt failed:', refetchErr);
+                      }
+                      await new Promise<void>((resolve) => setTimeout(() => resolve(), 1000));
                       activeLead = leadRef.current || lead;
+                      refetchAttempts++;
+                    }
+
+                    if (!activeLead?.leadId || !activeLead?.customerDetails?.firstName) {
+                      throw new Error('Lead details are still loading. Please try again.');
                     }
                     if (!activeLead?._id) throw new Error('Lead ID is missing');
 
@@ -1116,7 +1177,11 @@ export default function LeadCenterPage() {
                       ? activeLead.leadDate
                       : dateStr.split('T')[0] + 'T00:00:00+05:00';
 
-                    let res = await LeadService.getAppointments({ lead_date: finalLeadDate });
+                    let res = await executeWithRetry(
+                      () => LeadService.getAppointments({ lead_date: finalLeadDate }),
+                      3,
+                      1000
+                    );
                     let appointments = res.data?.data || res.data || [];
                     const targetTitle =
                       activeLead.title ||
@@ -1135,13 +1200,21 @@ export default function LeadCenterPage() {
                     let myAppt = findMyAppt(appointments);
 
                     if (!myAppt) {
-                      await LeadService.createAppointment({
-                        title: targetTitle,
-                        address: activeLead.customerDetails?.address || 'N/A',
-                        leadId: activeLead.leadId || 'N/A',
-                        selfGenLeadId: activeLead._id,
-                      });
-                      res = await LeadService.getAppointments({ lead_date: finalLeadDate });
+                      await executeWithRetry(
+                        () => LeadService.createAppointment({
+                          title: targetTitle,
+                          address: activeLead.customerDetails?.address || 'N/A',
+                          leadId: activeLead.leadId || 'N/A',
+                          selfGenLeadId: activeLead._id,
+                        }),
+                        3,
+                        1000
+                      );
+                      res = await executeWithRetry(
+                        () => LeadService.getAppointments({ lead_date: finalLeadDate }),
+                        3,
+                        1000
+                      );
                       appointments = res.data?.data || res.data || [];
                       myAppt = findMyAppt(appointments);
                     }
@@ -1149,7 +1222,11 @@ export default function LeadCenterPage() {
                     if (!myAppt) throw new Error('Appointment could not be resolved or created.');
 
                     const apptId = myAppt._id;
-                    const calcRes = await LeadService.getCalculators(apptId);
+                    const calcRes = await executeWithRetry(
+                      () => LeadService.getCalculators(apptId),
+                      3,
+                      1000
+                    );
                     let calculatorsData = calcRes.data?.data || calcRes.data || [];
 
                     if (calculatorsData.length === 0) {
@@ -1217,9 +1294,44 @@ export default function LeadCenterPage() {
                         ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
                         price: 0,
                       };
-                      await LeadService.createCalculator(apptId, fullPayload);
-                      const reCalcRes = await LeadService.getCalculators(apptId);
+                      await executeWithRetry(
+                        () => LeadService.createCalculator(apptId, fullPayload),
+                        3,
+                        1000
+                      );
+                      const reCalcRes = await executeWithRetry(
+                        () => LeadService.getCalculators(apptId),
+                        3,
+                        1000
+                      );
                       calculatorsData = reCalcRes.data?.data || reCalcRes.data || [];
+
+                      const createdCalc = calculatorsData[0];
+                      const userId = user?._id || user?.id;
+                      if (userId && createdCalc) {
+                        const createdId = createdCalc._id;
+                        const leadId = activeLead._id;
+                        await logCalculatorCreated({
+                          userId,
+                          calculatorId: createdId,
+                          appointmentId: createdCalc.appointmentId || apptId,
+                          calculatorTitle: createdCalc.title || targetTitle,
+                          isFirstCalculator: true,
+                          calculatorPosition: 1,
+                          leadId,
+                        });
+                        if (defaultPay) {
+                          await logPaymentMethodInherited({
+                            userId,
+                            calculatorId: createdId,
+                            appointmentId: apptId,
+                            calculatorTitle: createdCalc.title || targetTitle,
+                            paymentMethod: defaultPay,
+                            inheritanceSource: 'default payment method',
+                            toCalculator: createdId,
+                          });
+                        }
+                      }
                     }
 
                     if (calculatorsData.length === 0) {

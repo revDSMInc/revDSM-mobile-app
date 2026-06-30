@@ -28,6 +28,23 @@ export const logLeadCardSelect = async (user: any, lead: any) => {
   if (!userId) return;
   const leadId = lead?._id || lead?.id;
   await persistActiveLeadId(leadId);
+
+  const contactPerson = lead?.customerDetails
+    ? `${lead.customerDetails.firstName || ''} ${lead.customerDetails.lastName || ''}`.trim()
+    : 'N/A';
+  const address = lead?.customerDetails?.address || lead?.fullAddress || 'N/A';
+
+  await logEvent('select', {
+    user_id: userId,
+    module_type: 'lead_card',
+    created_by: userId,
+    meta: {
+      leadId,
+      contactPerson,
+      address,
+      action: 'view_lead_details',
+    },
+  });
 };
 
 export function isLeadInGeofence(lead: any, userLocation: UserLocation): boolean {

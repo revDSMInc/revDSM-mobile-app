@@ -1,4 +1,4 @@
-// src/widgets/modals/LeadCenter/utils/calculate-retail-util.ts
+import { getVerticalItemCost } from './verticals-data';
 
 export const calculateRetail = ({
   markupKey,
@@ -8,6 +8,7 @@ export const calculateRetail = ({
   extras,
   extrasList50,
   isLowesLead = false,
+  verticals,
 }: any) => {
   const n = (v: any) => (v === undefined || v === null || isNaN(Number(v)) ? 0 : Number(v));
   const adminFee = isLowesLead ? 0 : 500;
@@ -23,9 +24,11 @@ export const calculateRetail = ({
 
   if (markupKey === '50') {
     const gutterTotal =
-      n(inputs.gutter5DsE) * 11.5 + n(inputs.gutter6Ft1) * 12 + n(inputs.gutter7DsE) * 16;
+      n(inputs.gutter5DsE) * (pricing.gutters2?.['5_inch_all_stories'] || 11.5) +
+      n(inputs.gutter6Ft1) * (pricing.gutters2?.['6_inch_all_stories'] || 12) +
+      n(inputs.gutter7DsE) * (pricing.gutters2?.['7_inch_all_stories'] || 16);
 
-    const versaMaxTotal = n(inputs.versaMaxFt1) * 26;
+    const versaMaxTotal = n(inputs.versaMaxFt1) * pricing.filters2.versa_max_all_stories;
 
     const v6 =
       n(inputs.versa6Ft1) * pricing.filters2.versa_6['1'] +
@@ -44,14 +47,20 @@ export const calculateRetail = ({
 
     const extrasTotal = Object.entries(extras || {})
       .filter(([key]) => key !== 'gutter7DsE')
-      .reduce((sum, [key, value]) => {
+      .reduce((sum: number, [key, value]) => {
         const item = extrasList50.find((e: any) => e.id === key);
         return sum + (item ? n(value) * item.price : 0);
       }, 0);
 
-    const extraLaborCost = n(inputs.extraLabor) * 40;
+    // Vertical product items (cost prices)
+    const verticalTotal = Object.entries(verticals || inputs || {})
+      .filter(([key]) => key.startsWith('rf') || key.startsWith('win') || key.startsWith('fl') || key.startsWith('rm'))
+      .reduce((sum: number, [key, value]) => {
+        const cost = getVerticalItemCost(key);
+        return sum + (cost > 0 ? n(value) * cost : 0);
+      }, 0);
 
-    return gutterTotal + versaMaxTotal + v6 + v7 + f45 + extrasTotal + extraLaborCost;
+    return gutterTotal + versaMaxTotal + v6 + v7 + f45 + extrasTotal + verticalTotal;
   }
 
   return baseRetailTotal;

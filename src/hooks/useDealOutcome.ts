@@ -115,6 +115,15 @@ export const useDealOutcome = (
       downPaymentMethod: dpMethod,
       balancePaymentMethod: planKey,
     });
+
+    if (leadId) {
+      LeadService.updateLeadTimelineProgress(leadId, {
+        salesProcess: 'completed',
+        leadResulted: 'active',
+      }).catch((err) => {
+        console.error('[useDealOutcome] Failed to update timeline progress on status select:', err);
+      });
+    }
   };
 
   const handleFinishOutcome = async (setShowJobBuilder: (v: boolean) => void) => {

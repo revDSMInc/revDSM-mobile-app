@@ -23,8 +23,44 @@ export const ToolsSection = ({
   isCalculatorLoading,
 }: any) => {
   const { colors, isDark } = useTheme();
-  const { data: runs, isLoading, refetch: refetchRuns } = useRevRenderRunsQuery(lead?._id || '');
-  const orderedRuns = React.useMemo(() => (runs ? [...runs].reverse() : []), [runs]);
+
+  const buildRevRenderPairs = (rawRuns: any[]) => {
+    if (!Array.isArray(rawRuns)) return [];
+    return Array.from(
+      new Map(
+        rawRuns
+          .map((r) => ({
+            originalUrl: typeof r?.originalUrl === 'string' ? r.originalUrl.trim() : '',
+            generatedUrl: typeof r?.generatedUrl === 'string' ? r.generatedUrl.trim() : '',
+            createdAt: r?.createdAt || null,
+            runId: r?.runId || r?._id || null,
+            originalS3url: r?.s3UrlOriginal || null,
+            generatedS3url: r?.s3UrlGenerated || null,
+            s3url: r?.s3url || null,
+            bucketName: r?.bucketName || null,
+            category: r?.category || null,
+            subcategory: r?.subcategory || null,
+            viewLabel: r?.viewLabel || null,
+          }))
+          .filter((p) => p.originalUrl && p.generatedUrl)
+          .map((p) => [p.generatedUrl, p])
+      ).values()
+    );
+  };
+
+  const hasActiveJobs = revRenderJobs.some(
+    (j: any) => j.status !== 'completed' && j.status !== 'failed'
+  );
+  const { data: runs, isLoading, refetch: refetchRuns } = useRevRenderRunsQuery(
+    lead?._id || '',
+    lead?.hasRendered,
+    hasActiveJobs
+  );
+
+  const orderedRuns = React.useMemo(() => {
+    const pairs = buildRevRenderPairs(runs || []);
+    return [...pairs].reverse();
+  }, [runs]);
 
   const [historyModal, setHistoryModal] = useState({ visible: false, index: 0 });
   const [selectedYear, setSelectedYear] = useState(3);
@@ -100,11 +136,13 @@ export const ToolsSection = ({
               <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
                 revRender
               </Text>
-              <View className="bg-[#1C252E] rounded-md">
-                <Text className="px-3 py-0.5 text-base font-semibold" style={{ color: '#ffffff' }}>
-                  {runs?.length || 0} Runs
-                </Text>
-              </View>
+              {orderedRuns.length > 0 && (
+                <View className="bg-[#1C252E] rounded-md">
+                  <Text className="px-3 py-0.5 text-base font-semibold" style={{ color: '#ffffff' }}>
+                    {orderedRuns.length} Runs
+                  </Text>
+                </View>
+              )}
             </View>
             <Text className="text-base">Select a photo to render</Text>
           </View>
@@ -353,13 +391,16 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 
   return (
     <View style={{ width: '100%', height: '100%', backgroundColor: '#f1f5f9' }}>
-      <Image
-        source={{ uri }}
-        className="w-full h-full"
-        resizeMode="cover"
-        onLoadStart={() => setLoading(true)}
-        onLoadEnd={() => setLoading(false)}
-      />
+      {uri ? (
+        <Image
+          source={{ uri }}
+          className="w-full h-full"
+          resizeMode="cover"
+          onLoadStart={() => setLoading(true)}
+          onLoadEnd={() => setLoading(false)}
+          onError={() => setLoading(false)}
+        />
+      ) : null}
       {loading && (
         <View
           className="absolute inset-0 items-center justify-center bg-slate-100/50"

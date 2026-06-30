@@ -14,6 +14,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-na
 import { BeforeAfterPresentModal } from './BeforeAfterPresentModal';
 import { BeforeImageModal } from '../../modals/BeforeImageModal';
 import { AfterImageModal } from '../../modals/AfterImageModal';
+import { logEvent } from '../../../services/api/LoggerService';
 import Logo from "../../../assets/svgs/logo"
 import { ENV } from '../../../config/env';
 import { getOfflineImagesForJob } from '../../../services/api/offlineUploadManager';
@@ -93,6 +94,7 @@ interface MapGalleryModalProps {
   onClose: () => void;
   job: any;
   isMyJob?: boolean;
+  user?: any;
   onUploadSuccess?: () => void;
 }
 
@@ -101,6 +103,7 @@ export const MapGalleryModal = ({
   onClose,
   job,
   isMyJob = false,
+  user,
   onUploadSuccess,
 }: MapGalleryModalProps) => {
   const [signingUrls, setSigningUrls] = useState(false);  // background sign, not blocking
@@ -361,6 +364,19 @@ export const MapGalleryModal = ({
         setAfterUris(prev => prev.filter((_, i) => i !== index));
         setAfterImages(prev => prev.filter((_, i) => i !== index));
       }
+      const uId = user?._id || user?.id;
+      if (uId) {
+        logEvent('delete', {
+          user_id: uId,
+          module_type: 'before_after_images',
+          created_by: uId,
+          meta: {
+            job_number: job?.jobNumber,
+            company_id: job?.companyId,
+            image_type: type,
+          },
+        });
+      }
       FlashMessage.success('Image deleted successfully');
       onUploadSuccess?.();
     } catch (err) {
@@ -394,6 +410,7 @@ export const MapGalleryModal = ({
       }
 
       // 2. New Before images
+      let updatedBefore = [];
       if (newBeforeImages.length > 0) {
         const formData = new FormData();
         formData.append('jobNumber', job.jobNumber);
@@ -401,10 +418,12 @@ export const MapGalleryModal = ({
         newBeforeImages.forEach((file) => {
           formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
         });
-        await LeadService.updateBeforeImages(formData);
+        const res = await LeadService.updateBeforeImages(formData);
+        updatedBefore = res.data?.data?.images?.beforeImages || res.data?.images?.beforeImages || [];
       }
 
       // 3. New After images
+      let updatedAfter = [];
       if (newAfterImages.length > 0) {
         const formData = new FormData();
         formData.append('jobNumber', job.jobNumber);
@@ -412,7 +431,71 @@ export const MapGalleryModal = ({
         newAfterImages.forEach((file) => {
           formData.append('files', { uri: file.uri, type: file.type, name: file.name } as any);
         });
-        await LeadService.updateAfterImages(formData);
+        const res = await LeadService.updateAfterImages(formData);
+        updatedAfter = res.data?.data?.images?.afterImages || res.data?.images?.afterImages || [];
+      }
+
+      const userId = user?._id || user?.id;
+      if (userId) {
+        if (newBeforeImages.length > 0 && updatedBefore.length > 0) {
+          logEvent('add', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              type: 'before',
+              job_number: job?.jobNumber,
+              company_id: job?.companyId,
+              imageData: updatedBefore.map((img: any) => ({
+                s3url: img?.s3url?.filePath || img?.s3url || img?.url || img?.imagePath || img?.filePath || img,
+                bucketName: img?.s3url?.bucketName || img?.bucketName || null,
+                uploadedAt: img?.s3url?.uploadedAt || img?.uploadedAt || null,
+                category: 'Before',
+                fileName: img?.fileName || img?.name || null,
+              })),
+            },
+          });
+        }
+        if (newAfterImages.length > 0 && updatedAfter.length > 0) {
+          logEvent('add', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              type: 'after',
+              job_number: job?.jobNumber,
+              company_id: job?.companyId,
+              imageData: updatedAfter.map((img: any) => ({
+                s3url: img?.s3url?.filePath || img?.s3url || img?.url || img?.imagePath || img?.filePath || img,
+                bucketName: img?.s3url?.bucketName || img?.bucketName || null,
+                uploadedAt: img?.s3url?.uploadedAt || img?.uploadedAt || null,
+                category: 'After',
+                fileName: img?.fileName || img?.name || null,
+              })),
+            },
+          });
+        }
+        if (pendingDeletions.length > 0) {
+          logEvent('delete', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              job_number: job?.jobNumber,
+              company_id: job?.companyId,
+              count: pendingDeletions.length,
+            },
+          });
+        }
+        logEvent('update', {
+          user_id: userId,
+          module_type: 'image_order',
+          created_by: userId,
+          meta: {
+            job_number: job?.jobNumber,
+            company_id: job?.companyId,
+          },
+        });
       }
 
       setPendingDeletions([]);
@@ -501,7 +584,27 @@ export const MapGalleryModal = ({
                             key={`before-${idx}-${uri.slice(-12)}`}
                             uri={uri}
                             canDelete={isMyJob && !isOffline && allBeforeUris.length > 1}
-                            onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
+                            onExpand={() => {
+                              setViewerUri(uri);
+                              setViewerVisible(true);
+                              const uId = user?._id || user?.id;
+                              if (uId) {
+                                const rawImg = beforeImages[idx];
+                                logEvent('preview', {
+                                  user_id: uId,
+                                  module_type: 'before_after_images',
+                                  created_by: uId,
+                                  meta: {
+                                    job_number: job?.jobNumber,
+                                    company_id: job?.companyId,
+                                    category: 'Before',
+                                    index: idx,
+                                    s3url: rawImg?.filePath || rawImg?.s3url || rawImg?.secureUrl || uri,
+                                    bucketName: rawImg?.bucketName || ENV.S3_BUCKET || null,
+                                  },
+                                });
+                              }
+                            }}
                             onDelete={() => confirmDeleteDirect('before', idx)}
                           />
                         );
@@ -511,7 +614,26 @@ export const MapGalleryModal = ({
                           key={`new-before-${idx}`}
                           uri={file.uri}
                           canDelete={true}
-                          onExpand={() => { setViewerUri(file.uri); setViewerVisible(true); }}
+                          onExpand={() => {
+                            setViewerUri(file.uri);
+                            setViewerVisible(true);
+                            const uId = user?._id || user?.id;
+                            if (uId) {
+                              logEvent('preview', {
+                                user_id: uId,
+                                module_type: 'before_after_images',
+                                created_by: uId,
+                                meta: {
+                                  job_number: job?.jobNumber,
+                                  company_id: job?.companyId,
+                                  category: 'Before',
+                                  index: beforeUris.length + idx,
+                                  s3url: file.uri,
+                                  bucketName: ENV.S3_BUCKET || null,
+                                },
+                              });
+                            }
+                          }}
                           onDelete={() => {
                             setNewBeforeImages(prev => prev.filter((_, i) => i !== idx));
                           }}
@@ -538,7 +660,7 @@ export const MapGalleryModal = ({
                     )
                   )}
                 </View>
-
+ 
                 {/* ── After Column ── */}
                 <View className="flex-1">
                   <View className="flex-row justify-between items-center mb-4">
@@ -553,7 +675,7 @@ export const MapGalleryModal = ({
                       </TouchableOpacity>
                     )}
                   </View>
-
+ 
                   {(allAfterUris.length > 0 || newAfterImages.length > 0) ? (
                     <View className="gap-4">
                       {allAfterUris.map((uri, idx) => {
@@ -563,7 +685,27 @@ export const MapGalleryModal = ({
                             key={`after-${idx}-${uri.slice(-12)}`}
                             uri={uri}
                             canDelete={isMyJob && !isOffline && allAfterUris.length > 1}
-                            onExpand={() => { setViewerUri(uri); setViewerVisible(true); }}
+                            onExpand={() => {
+                              setViewerUri(uri);
+                              setViewerVisible(true);
+                              const uId = user?._id || user?.id;
+                              if (uId) {
+                                const rawImg = afterImages[idx];
+                                logEvent('preview', {
+                                  user_id: uId,
+                                  module_type: 'before_after_images',
+                                  created_by: uId,
+                                  meta: {
+                                    job_number: job?.jobNumber,
+                                    company_id: job?.companyId,
+                                    category: 'After',
+                                    index: idx,
+                                    s3url: rawImg?.filePath || rawImg?.s3url || rawImg?.secureUrl || uri,
+                                    bucketName: rawImg?.bucketName || ENV.S3_BUCKET || null,
+                                  },
+                                });
+                              }
+                            }}
                             onDelete={() => confirmDeleteDirect('after', idx)}
                           />
                         );
@@ -573,7 +715,26 @@ export const MapGalleryModal = ({
                           key={`new-after-${idx}`}
                           uri={file.uri}
                           canDelete={true}
-                          onExpand={() => { setViewerUri(file.uri); setViewerVisible(true); }}
+                          onExpand={() => {
+                            setViewerUri(file.uri);
+                            setViewerVisible(true);
+                            const uId = user?._id || user?.id;
+                            if (uId) {
+                              logEvent('preview', {
+                                user_id: uId,
+                                module_type: 'before_after_images',
+                                created_by: uId,
+                                meta: {
+                                  job_number: job?.jobNumber,
+                                  company_id: job?.companyId,
+                                  category: 'After',
+                                  index: afterUris.length + idx,
+                                  s3url: file.uri,
+                                  bucketName: ENV.S3_BUCKET || null,
+                                },
+                              });
+                            }
+                          }}
                           onDelete={() => {
                             setNewAfterImages(prev => prev.filter((_, i) => i !== idx));
                           }}

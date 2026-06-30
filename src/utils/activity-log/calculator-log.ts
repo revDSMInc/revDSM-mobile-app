@@ -6,9 +6,9 @@ export const logCalculatorCreated = async (opts: {
   calculatorId: string;
   appointmentId: string;
   calculatorTitle: string;
-  isFirstCalculator: boolean;
+  isFirstCalculator?: boolean;
   calculatorPosition?: number;
-  action?: string;
+  leadId?: string;
 }) => {
   await logEvent('create', {
     user_id: opts.userId,
@@ -18,12 +18,15 @@ export const logCalculatorCreated = async (opts: {
       calculatorId: opts.calculatorId,
       appointmentId: opts.appointmentId,
       calculatorTitle: opts.calculatorTitle,
-      calculatorPosition: opts.calculatorPosition,
-      isFirstCalculator: opts.isFirstCalculator,
-      action: opts.action || (opts.isFirstCalculator ? 'Calculator' : 'calculator_created'),
+      ...(opts.calculatorPosition !== undefined && { calculatorPosition: opts.calculatorPosition }),
+      ...(opts.isFirstCalculator && { isFirstCalculator: true }),
+      action: opts.isFirstCalculator ? 'Created new calculator tab' : 'calculator_created',
+      ...(opts.leadId && { leadId: opts.leadId }),
+      resetCycle: 0,
     },
   });
 };
+
 
 export const logSectionCleared = async (opts: {
   userId: string;
@@ -87,6 +90,7 @@ export const logBuildJobInitiated = async (opts: {
   result?: string;
   calculatorId?: string;
   appointmentId?: string;
+  calculatorType?: string;
 }) => {
   await logEvent('click', {
     user_id: opts.userId,
@@ -98,7 +102,7 @@ export const logBuildJobInitiated = async (opts: {
       result: opts.result,
       calculatorId: opts.calculatorId,
       appointmentId: opts.appointmentId,
-      calculatorType: 'lf-calculator',
+      calculatorType: opts.calculatorType || 'lf-calculator',
       action: 'build_job_initiated',
     },
   });

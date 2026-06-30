@@ -56,9 +56,28 @@ export const BeforeAfterPresentModal = ({
   // Number of slides is determined by the number of complete pairs
   const numSlides = Math.min(beforeImages.length, afterImages.length);
 
+  const logSlideChange = (fromIdx: number, toIdx: number) => {
+    const userId = user?._id || user?.id;
+    if (!userId) return;
+    logEvent('navigate', {
+      user_id: userId,
+      created_by: userId,
+      module_type: 'presentation',
+      meta: {
+        jobNumber: job?.jobNumber,
+        jobId: job?._id,
+        fromSlide: fromIdx + 1,
+        toSlide: toIdx + 1,
+        totalSlides: numSlides,
+        action: toIdx > fromIdx ? 'next_slide_presentation' : 'prev_slide_presentation',
+      },
+    });
+  };
+
   const scrollTo = (index: number) => {
     if (index >= 0 && index < numSlides) {
       scrollViewRef.current?.scrollTo({ x: index * (width * 0.95), animated: true });
+      logSlideChange(activeIndex, index);
       setActiveIndex(index);
     }
   };
@@ -67,6 +86,7 @@ export const BeforeAfterPresentModal = ({
     const xOffset = event.nativeEvent.contentOffset.x;
     const index = Math.round(xOffset / (width * 0.95));
     if (index !== activeIndex) {
+      logSlideChange(activeIndex, index);
       setActiveIndex(index);
     }
   };

@@ -5,6 +5,7 @@ import {
   pricing as defaultPricing,
 } from './pricing-data';
 import { paymentPlans as defaultPaymentPlans } from './payment-plans';
+import { getVerticalItemRetail } from './verticals-data';
 
 export const calculateMonthlyPayment = (principal: number, apr: number, months: number) => {
   if (months <= 0 || principal <= 0) return 0;
@@ -15,6 +16,18 @@ export const calculateMonthlyPayment = (principal: number, apr: number, months: 
   );
 };
 
+// Legacy field IDs that are already handled by the gutter/filter/extras paths below.
+// These also exist in verticalInputs but we skip them there to avoid double-counting.
+const LEGACY_FIELD_IDS = new Set([
+  'gutter5DsE', 'gutter6Ft1', 'gutter7DsE',
+  'versaMaxFt1',
+  'versa6Ft1', 'versa6Ft2', 'versa6Ft3',
+  'versa7Ft1', 'versa7Ft2', 'versa7Ft3',
+  'filter45Ft1', 'filter45Ft2', 'filter45Ft3',
+  'screens', 'ckToInstallers',
+  ...defaultExtrasList.map((e) => e.id),
+]);
+
 export const calculateQuote = (
   inputs: any,
   extras: any,
@@ -24,31 +37,46 @@ export const calculateQuote = (
   discounts: any,
   pricing = defaultPricing,
   markups = defaultMarkups,
-  paymentPlans = defaultPaymentPlans
+  paymentPlans = defaultPaymentPlans,
+  verticalInputs: any = {},
+  skipAdminFee = false
 ) => {
   let base = 0;
   const breakdownResult: any = {};
   const breakdownWithNumberNotPrice: any = {};
 
+  // ── Merge vertical tab values into inputs/extras for legacy fields ──
+  const mergedInputs = { ...inputs };
+  const mergedExtras = { ...extras };
+  if (verticalInputs && typeof verticalInputs === 'object') {
+    Object.entries(verticalInputs).forEach(([id, val]) => {
+      if (LEGACY_FIELD_IDS.has(id)) {
+        const v = val === '' || val === null || val === undefined ? '' : Number(val);
+        mergedInputs[id] = v;
+        mergedExtras[id] = v;
+      }
+    });
+  }
+
   // All stories gutters (5", 6" and 7")
   const gutter5Val =
-    (Number(inputs?.gutter5DsE) || 0) * (pricing?.gutters?.['5_inch_all_stories'] || 0);
+    (Number(mergedInputs?.gutter5DsE) || 0) * (pricing?.gutters?.['5_inch_all_stories'] || 0);
   const gutter6Val =
-    (Number(inputs?.gutter6Ft1) || 0) * (pricing?.gutters?.['6_inch_all_stories'] || 0);
+    (Number(mergedInputs?.gutter6Ft1) || 0) * (pricing?.gutters?.['6_inch_all_stories'] || 0);
   const gutter7Val =
-    (Number(inputs?.gutter7DsE) || 0) * (pricing?.gutters?.['7_inch_all_stories'] || 0);
+    (Number(mergedInputs?.gutter7DsE) || 0) * (pricing?.gutters?.['7_inch_all_stories'] || 0);
   breakdownResult.gutter5All = gutter5Val;
   breakdownResult.gutter6All = gutter6Val;
   breakdownResult.gutter7All = gutter7Val;
-  breakdownWithNumberNotPrice.gutter5All = Number(inputs?.gutter5DsE) || 0;
-  breakdownWithNumberNotPrice.gutter6All = Number(inputs?.gutter6Ft1) || 0;
-  breakdownWithNumberNotPrice.gutter7All = Number(inputs?.gutter7DsE) || 0;
+  breakdownWithNumberNotPrice.gutter5All = Number(mergedInputs?.gutter5DsE) || 0;
+  breakdownWithNumberNotPrice.gutter6All = Number(mergedInputs?.gutter6Ft1) || 0;
+  breakdownWithNumberNotPrice.gutter7All = Number(mergedInputs?.gutter7DsE) || 0;
 
   // Versa Max (all stories)
   const versaMaxVal =
-    (Number(inputs?.versaMaxFt1) || 0) * (pricing?.filters?.versa_max_all_stories || 0);
+    (Number(mergedInputs?.versaMaxFt1) || 0) * (pricing?.filters?.versa_max_all_stories || 0);
   breakdownResult.versaMax = versaMaxVal;
-  breakdownWithNumberNotPrice.versaMax = Number(inputs?.versaMaxFt1) || 0;
+  breakdownWithNumberNotPrice.versaMax = Number(mergedInputs?.versaMaxFt1) || 0;
 
   let versaMaxTotal = versaMaxVal;
   let guttersTotal = gutter5Val + gutter6Val + gutter7Val;
@@ -61,18 +89,18 @@ export const calculateQuote = (
     const fKey = `filter45Ft${s}`;
 
     const v6Val =
-      (Number(inputs?.[v6Key]) || 0) * ((pricing?.filters?.versa_6 as any)?.[String(s)] || 0);
+      (Number(mergedInputs?.[v6Key]) || 0) * ((pricing?.filters?.versa_6 as any)?.[String(s)] || 0);
     const v7Val =
-      (Number(inputs?.[v7Key]) || 0) * ((pricing?.filters?.versa_7 as any)?.[String(s)] || 0);
+      (Number(mergedInputs?.[v7Key]) || 0) * ((pricing?.filters?.versa_7 as any)?.[String(s)] || 0);
     const fVal =
-      (Number(inputs?.[fKey]) || 0) * ((pricing?.filters?.filter_4_5 as any)?.[String(s)] || 0);
+      (Number(mergedInputs?.[fKey]) || 0) * ((pricing?.filters?.filter_4_5 as any)?.[String(s)] || 0);
 
     breakdownResult[`versa6${s}`] = v6Val;
-    breakdownWithNumberNotPrice[`versa6${s}`] = Number(inputs?.[v6Key]) || 0;
+    breakdownWithNumberNotPrice[`versa6${s}`] = Number(mergedInputs?.[v6Key]) || 0;
     breakdownResult[`versa7${s}`] = v7Val;
-    breakdownWithNumberNotPrice[`versa7${s}`] = Number(inputs?.[v7Key]) || 0;
+    breakdownWithNumberNotPrice[`versa7${s}`] = Number(mergedInputs?.[v7Key]) || 0;
     breakdownResult[`filter${s}`] = fVal;
-    breakdownWithNumberNotPrice[`filter${s}`] = Number(inputs?.[fKey]) || 0;
+    breakdownWithNumberNotPrice[`filter${s}`] = Number(mergedInputs?.[fKey]) || 0;
 
     base += v6Val + v7Val + fVal;
   }
@@ -80,19 +108,32 @@ export const calculateQuote = (
   base += gutter5Val + gutter6Val + gutter7Val + versaMaxVal;
   breakdownResult.gutters = guttersTotal;
 
-  // Use the provided extrasList or default
-  const activeExtrasList =
-    markup === 50 || markup === '50' ? defaultExtrasList50 : defaultExtrasList;
-
-  breakdownResult.extras = activeExtrasList.reduce(
-    (sum: number, e: any) => sum + (Number(extras?.[e.id]) || 0) * (e.price || 0),
+  breakdownResult.extras = defaultExtrasList.reduce(
+    (sum: number, e: any) => sum + (Number(mergedExtras?.[e.id]) || 0) * (e.price || 0),
     0
   );
   base += breakdownResult.extras;
 
-  breakdownWithNumberNotPrice.extras = Number(extras?.extras) || 0;
-  breakdownWithNumberNotPrice.screens = Number(inputs?.screens) || 0;
-  breakdownWithNumberNotPrice.ckToInstallers = Number(inputs?.ckToInstallers) || 0;
+  // ── Vertical product items (skip legacy IDs to avoid double-counting) ──
+  let verticalTotal = 0;
+  if (verticalInputs && typeof verticalInputs === 'object') {
+    Object.entries(verticalInputs).forEach(([id, qty]) => {
+      if (LEGACY_FIELD_IDS.has(id)) return;
+      const numQty = Number(qty) || 0;
+      if (numQty > 0) {
+        const retailPrice = getVerticalItemRetail(id);
+        const lineTotal = numQty * retailPrice;
+        verticalTotal += lineTotal;
+        breakdownResult[id] = lineTotal;
+        breakdownWithNumberNotPrice[id] = numQty;
+      }
+    });
+  }
+  base += verticalTotal;
+
+  breakdownWithNumberNotPrice.extras = Number(mergedExtras?.extras) || Number(extras?.extras) || 0;
+  breakdownWithNumberNotPrice.screens = Number(mergedInputs?.screens) || Number(inputs?.screens) || 0;
+  breakdownWithNumberNotPrice.ckToInstallers = Number(mergedInputs?.ckToInstallers) || Number(inputs?.ckToInstallers) || 0;
 
   const markupMult = (markups as any)?.[markup as any] || 1;
   const afterMarkup = base * markupMult;
@@ -102,8 +143,8 @@ export const calculateQuote = (
   if (discounts?.preOrder) afterDiscounts *= 0.75;
 
   const plan = (paymentPlans as any)?.[paymentPlan];
-  let final = afterDiscounts * (1 + (plan?.fee || 0));
-  final += Number(inputs?.ckToInstallers) || 0;
+  let final = skipAdminFee ? afterDiscounts : afterDiscounts * (1 + (plan?.fee || 0));
+  final += Number(mergedInputs?.ckToInstallers) || Number(inputs?.ckToInstallers) || 0;
 
   let jobMinimumStatusResult = 'N/A';
   if (final < 200 && base > 0) {

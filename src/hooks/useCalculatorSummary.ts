@@ -18,13 +18,18 @@ import {
 } from '../utils/activity-log/rollout-log-meta';
 import { setRolloutConfirmedTimestamp } from '../utils/activity-log/rollout-confirmed-at';
 
-const calculateMarkupLocal = (endPrice: number, price50: number, price65: number, price100: number) => {
+const calculateMarkupLocal = (
+  endPrice: number,
+  costAtCheck: number,
+  parAtCheck: number,
+  retailAtCheck: number
+) => {
   const numericPrice = Number(endPrice);
   if (isNaN(numericPrice) || numericPrice < 0) return '';
 
-  const cost = Math.round(price50) || 0;
-  const par = Math.round(price65) || 0;
-  const retail = Math.round(price100) || 0;
+  const cost = Math.round(costAtCheck) || 0;
+  const par = Math.round(parAtCheck) || 0;
+  const retail = Math.round(retailAtCheck) || 0;
 
   let anchor = cost;
   let label = 'COST';
@@ -48,10 +53,15 @@ const calculateMarkupLocal = (endPrice: number, price50: number, price65: number
   return `${label} + ${percent}%`;
 };
 
-const calculateMarkupNumberLocal = (endPrice: number, price50: number, price65: number, price100: number) => {
-  const cost = Math.round(price50) || 0;
-  const par = Math.round(price65) || 0;
-  const retail = Math.round(price100) || 0;
+const calculateMarkupNumberLocal = (
+  endPrice: number,
+  costAtCheck: number,
+  parAtCheck: number,
+  retailAtCheck: number
+) => {
+  const cost = Math.round(costAtCheck) || 0;
+  const par = Math.round(parAtCheck) || 0;
+  const retail = Math.round(retailAtCheck) || 0;
 
   let anchor = cost;
   if (endPrice >= retail) {
@@ -67,18 +77,19 @@ const calculateMarkupNumberLocal = (endPrice: number, price50: number, price65: 
 };
 
 const getCostPriceForCalc = (calc: any, isLowesLead?: boolean): number => {
-  const price50 = calculateResultUtil({
-    details: calc,
-    markupKey: '50',
-    pricing,
-    extrasList,
-    extrasList50,
-    paymentPlans,
-    paymentMethod: calc.inputs?.paymentPlan || calc.paymentMethod || 'check',
-    hideScreens: true,
-    isLowesLead,
-  });
-  return Math.round(price50);
+  return Math.round(
+    calculateResultUtil({
+      details: calc,
+      markupKey: '50',
+      pricing,
+      extrasList,
+      extrasList50,
+      paymentPlans,
+      paymentMethod: 'check',
+      hideScreens: true,
+      isLowesLead,
+    })
+  );
 };
 
 /**
@@ -134,46 +145,6 @@ export const useCalculatorSummary = (
   const { user } = useAuth();
   const leadId = Storage.getItem('leadId') || undefined;
 
-  const getTierPrices = (calc: any) => {
-    const price50 = calculateResultUtil({
-      details: calc,
-      markupKey: '50',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      hideScreens: true,
-      isLowesLead,
-    });
-    const price65 = calculateResultUtil({
-      details: calc,
-      markupKey: '65',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      hideScreens: true,
-      isLowesLead,
-    });
-    const price100 = calculateResultUtil({
-      details: calc,
-      markupKey: '100',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      hideScreens: true,
-      isLowesLead,
-    });
-    return {
-      costPrice: Math.round(price50) || 0,
-      parPrice: Math.round(price65) || 0,
-      retailPrice: Math.round(price100) || 0,
-    };
-  };
   const [error, setError] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [showResultModal, setShowResultModal] = useState(false);
@@ -308,7 +279,7 @@ export const useCalculatorSummary = (
   // ----------------------------------------------------------------
   const handleAddDrop = async (status: 'accepted' | 'declined' = 'declined') => {
     const num = Number(dropValue.replace(/[^0-9.]/g, ''));
-    const costPrice = Math.round(results.price50);
+    const costPrice = Math.round(results.costAtCheck ?? results.price50);
     const endPrice = Number(activeCalc.price) || 0;
     const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
 
@@ -383,13 +354,18 @@ export const useCalculatorSummary = (
       // Log the drop price action
       const userId = user?._id || user?.id;
       if (userId) {
-        const _costPrice = Math.round(results.price50) || 0;
-        const _parPrice = Math.round(results.price65) || 0;
-        const _retailPrice = Math.round(results.price100) || 0;
+        const _costPrice = Math.round(results.costAtCheck ?? results.price50) || 0;
+        const _parPrice = Math.round(results.parAtCheck ?? results.price65) || 0;
+        const _retailPrice = Math.round(results.retailAtCheck ?? results.price100) || 0;
         const _dropNum = status === 'accepted' ? updatedDrops.findIndex((d) => d.secured) + 1 : updatedDrops.filter((d) => d.declined).length;
         const _planLabel = paymentPlans[dropPaymentMethod]?.label || dropPaymentMethod;
         const lastDroppedPrice = droppedPrices.length > 0 ? droppedPrices[droppedPrices.length - 1].price : activeCalc.price;
-        const percentageOfRollout = calculateMarkupLocal(num, results.price50, results.price65, results.price100);
+        const percentageOfRollout = calculateMarkupLocal(
+          num,
+          results.costAtCheck ?? results.price50,
+          results.parAtCheck ?? results.price65,
+          results.retailAtCheck ?? results.price100
+        );
 
         if (status === 'accepted') {
           logEvent('change', {
@@ -538,14 +514,19 @@ export const useCalculatorSummary = (
       if (userId) {
         const itemToUpdate = droppedPrices[targetIdx];
         const num = Number(itemToUpdate.price);
-        const _costPrice = Math.round(results.price50) || 0;
-        const _parPrice = Math.round(results.price65) || 0;
-        const _retailPrice = Math.round(results.price100) || 0;
+        const _costPrice = Math.round(results.costAtCheck ?? results.price50) || 0;
+        const _parPrice = Math.round(results.parAtCheck ?? results.price65) || 0;
+        const _retailPrice = Math.round(results.retailAtCheck ?? results.price100) || 0;
         const planToUse = selectedPlan || itemToUpdate.paymentMethod;
         const _planLabel = paymentPlans[planToUse]?.label || planToUse;
         const _dropNum = updatedDrops.findIndex((d) => d.secured) + 1;
         const lastDroppedPrice = targetIdx > 0 ? droppedPrices[targetIdx - 1].price : activeCalc.price;
-        const percentageOfRollout = calculateMarkupLocal(num, results.price50, results.price65, results.price100);
+        const percentageOfRollout = calculateMarkupLocal(
+          num,
+          results.costAtCheck ?? results.price50,
+          results.parAtCheck ?? results.price65,
+          results.retailAtCheck ?? results.price100
+        );
 
         if (status === 'accepted') {
           logEvent('change', {
@@ -669,12 +650,17 @@ export const useCalculatorSummary = (
       if (userId && dropPriceEntry) {
         const dropPrice = Number(dropPriceEntry.price);
         const currentPaymentMethod = dropPriceEntry.paymentMethod || activeCalc.paymentMethod;
-        const _costPrice = Math.round(results.price50) || 0;
-        const _parPrice = Math.round(results.price65) || 0;
-        const _retailPrice = Math.round(results.price100) || 0;
+        const _costPrice = Math.round(results.costAtCheck ?? results.price50) || 0;
+        const _parPrice = Math.round(results.parAtCheck ?? results.price65) || 0;
+        const _retailPrice = Math.round(results.retailAtCheck ?? results.price100) || 0;
         const _dropNum = updatedDrops.filter((d) => d.declined).length;
         const _planLabel = paymentPlans[currentPaymentMethod]?.label || currentPaymentMethod;
-        const percentageOfRollout = calculateMarkupLocal(dropPrice, results.price50, results.price65, results.price100);
+        const percentageOfRollout = calculateMarkupLocal(
+          dropPrice,
+          results.costAtCheck ?? results.price50,
+          results.parAtCheck ?? results.price65,
+          results.retailAtCheck ?? results.price100
+        );
 
         logEvent('change', {
           user_id: userId,
@@ -723,7 +709,7 @@ export const useCalculatorSummary = (
   // Called when the user finishes editing (onEndEditing / onBlur)
   const handlePriceBlur = () => {
     const num = Number(priceText.replace(/[^0-9.]/g, ''));
-    const costPrice = Math.round(results.price50);
+    const costPrice = Math.round(results.costAtCheck ?? results.price50);
     const activePaymentMethod = activeCalc.inputs.paymentPlan;
     const planName = activePaymentMethod.startsWith('wf')
       ? 'Wells Fargo'
@@ -752,7 +738,6 @@ export const useCalculatorSummary = (
     const oldValue = activeCalc.price ?? '';
     const userId = user?._id || user?.id;
     if (num !== oldValue && userId) {
-      const tiers = getTierPrices(activeCalc);
       fireRolloutLog(
         userId,
         activeCalc,
@@ -764,9 +749,9 @@ export const useCalculatorSummary = (
           oldValue,
           newValue: num,
           action: 'end price entered',
+          isLowesLead,
         },
-        leadId,
-        tiers
+        leadId
       );
     }
 
@@ -798,7 +783,6 @@ export const useCalculatorSummary = (
           if (calc._id === activeCalc._id) continue;
           const oldMethod = calc.inputs?.paymentPlan || calc.paymentMethod || '';
           if (oldMethod === paymentPlanToPropagate) continue;
-          const tiers = getTierPrices(calc);
           await fireRolloutLog(
             userId,
             calc,
@@ -814,9 +798,9 @@ export const useCalculatorSummary = (
               oldPaymentMethodLabel: getPaymentPlanLabel(oldMethod),
               newPaymentMethodLabel: getPaymentPlanLabel(paymentPlanToPropagate),
               action: calc.isRolloutConfirmed ? 'payment method changed for drop' : 'payment method changed',
+              isLowesLead,
             },
-            leadId,
-            tiers
+            leadId
           );
         }
       }
@@ -920,7 +904,6 @@ export const useCalculatorSummary = (
         calculators.forEach((calc: any) => {
           if (calc.price > 0 && !calc.isRolloutConfirmed) {
             if (leadId) setRolloutConfirmedTimestamp(leadId, calc._id);
-            const tiers = getTierPrices(calc);
             fireRolloutLog(
               userId,
               calc,
@@ -932,9 +915,9 @@ export const useCalculatorSummary = (
                 oldValue: '',
                 newValue: Number(calc.price),
                 action: 'rollout confirmed',
+                isLowesLead,
               },
-              leadId,
-              tiers
+              leadId
             );
           }
         });
@@ -984,7 +967,6 @@ export const useCalculatorSummary = (
     if (!userId || method === oldMethod) return;
     const currentPrice = Number(activeCalc.price) || 0;
     const isConfirmed = !!activeCalc.isRolloutConfirmed && currentPrice > 0;
-    const tiers = getTierPrices(activeCalc);
     await fireRolloutLog(
       userId,
       activeCalc,
@@ -1000,16 +982,15 @@ export const useCalculatorSummary = (
         oldPaymentMethodLabel: getPaymentPlanLabel(oldMethod),
         newPaymentMethodLabel: getPaymentPlanLabel(method),
         action: isConfirmed ? 'payment method changed for drop' : 'payment method changed',
+        isLowesLead,
       },
-      leadId,
-      tiers
+      leadId
     );
   };
 
   const logDropPlanSelect = async (planKey: string, droppedPrice: number, oldPlanKey: string) => {
     const userId = user?._id || user?.id;
     if (!userId) return;
-    const tiers = getTierPrices(activeCalc);
     await fireRolloutLog(
       userId,
       activeCalc,
@@ -1024,9 +1005,9 @@ export const useCalculatorSummary = (
         paymentPlanLabel: getPaymentPlanLabel(planKey),
         dropPrice: droppedPrice,
         action: 'drop price plan selected',
+        isLowesLead,
       },
-      leadId,
-      tiers
+      leadId
     );
   };
 

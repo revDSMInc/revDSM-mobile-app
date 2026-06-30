@@ -172,10 +172,8 @@ export const JobDocsSection = ({
     const unsubscribe = uploadQueueManager.addListener(() => {
       const currentQueue = uploadQueueManager.getQueue();
       setQueueItems([...currentQueue]);
-      // When queue empties (upload finished), refresh lead data from server
-      if (currentQueue.length === 0) {
-        refetch();
-      }
+      // Refresh lead data from server on any queue state change (e.g. each step of countdown)
+      refetch();
     });
 
     // On mount: resume any incomplete uploads that survived app restart
@@ -1435,6 +1433,7 @@ export const JobDocsSection = ({
         onSubmit={handleResultSubmit}
         initialResult={pendingResult}
         loading={submitJobMutation.isPending || resetLeadMutation.isPending}
+        lead={lead}
       />
 
       {/* Download Images Confirmation Modal */}

@@ -85,6 +85,9 @@ const processQueue = async (opts?: { onReturn?: boolean }) => {
               _id: calcId,
               appointmentId: item.appointmentId,
               name: item.name,
+              title: item.name,
+              inputs: item.inputs || {},
+              extras: item.extras || {},
               price: item.price,
             },
             {
@@ -99,7 +102,7 @@ const processQueue = async (opts?: { onReturn?: boolean }) => {
               action: confirmAction,
               ...(opts?.onReturn ? { autoConfirmed: true } : {}),
             },
-            leadId,
+            leadId
           );
         }
 

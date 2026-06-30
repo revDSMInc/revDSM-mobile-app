@@ -21,6 +21,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { LeadService } from '../../services/api/leads';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
 import { LeadMap } from '../../widgets/components/LeadCenter/LeadMap';
 import { RootStackParamList } from '../../navigation';
 import { Header, useHeader } from '../../widgets/common/MainHeader';
@@ -104,12 +105,8 @@ export default function MapDetailScreen() {
   const { setHeaderActions } = useHeader();
 
   useEffect(() => {
-    if (user?._id || user?.id) {
-      logEvent('view', {
-        user_id: user?._id || user?.id,
-        module_type: 'sales_map',
-        created_by: user?._id || user?.id,
-      });
+    if (user) {
+      logSalesMapView(user);
     }
   }, [user]);
 
@@ -708,6 +705,7 @@ export default function MapDetailScreen() {
         visible={showGalleryModal}
         job={selectedJob}
         isMyJob={isJobOwner(selectedJob, user)}
+        user={user}
         onClose={() => setShowGalleryModal(false)}
         onUploadSuccess={fetchLeads}
       />

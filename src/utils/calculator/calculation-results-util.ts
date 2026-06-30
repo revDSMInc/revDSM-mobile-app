@@ -1,5 +1,10 @@
 import { calculateRetail } from './calculate-retail-util';
+import { getVerticalItemRetail } from './verticals-data';
+import { normalizeCalculatorData } from './data-normalization-util';
 
+/**
+ * AUTHORITATIVE RESULT CALCULATOR — matches web calculation-results-util.js
+ */
 export const calculateResultUtil = ({
   details,
   markupKey,
@@ -19,16 +24,20 @@ export const calculateResultUtil = ({
 
   const n = (v: any) => Number(v) || 0;
 
-  let inputs = details;
-  let extras = details;
+  let inputs: any;
+  let extras: any;
+  let verticals: any;
 
   if (getCalculatorData) {
     const data = getCalculatorData(details);
     inputs = data.inputs;
     extras = data.extras;
+    verticals = data.verticals || {};
   } else {
-    inputs = details.inputs || details;
-    extras = details.extras || details;
+    const normalized = normalizeCalculatorData(details);
+    inputs = normalized.inputs;
+    extras = normalized.extras;
+    verticals = normalized.verticals;
   }
 
   const resolvedMethod =
@@ -67,10 +76,22 @@ export const calculateResultUtil = ({
     .filter((e: any) => e.id !== 'gutter7DsE')
     .reduce((sum: number, e: any) => sum + n(extras[e.id]) * e.price, 0);
 
-  const extraLaborTotal = n(inputs.extraLabor) * pricing.extras.extraLabor;
+  const verticalBase = (() => {
+    let total = 0;
+    Object.entries(verticals || {}).forEach(([id, qty]) => {
+      if (id.startsWith('rf') || id.startsWith('win') || id.startsWith('fl') || id.startsWith('rm')) {
+        const numQty = n(qty);
+        if (numQty > 0) {
+          const retailPrice = getVerticalItemRetail(id);
+          if (retailPrice > 0) total += numQty * retailPrice;
+        }
+      }
+    });
+    return total;
+  })();
 
   const baseRetailTotal =
-    gutterTotal + versaMaxTotal + v6Base + v7Base + f45Base + extrasBase + extraLaborTotal;
+    gutterTotal + versaMaxTotal + v6Base + v7Base + f45Base + extrasBase + verticalBase;
 
   const checkRetail = calculateRetail({
     markupKey,
@@ -80,6 +101,7 @@ export const calculateResultUtil = ({
     extras,
     extrasList50,
     isLowesLead,
+    verticals,
   });
 
   let price = fee >= 1 ? checkRetail : checkRetail / (1 - fee);
@@ -91,9 +113,7 @@ export const calculateResultUtil = ({
   if (discounts.seniorVet) price *= 0.9;
   if (discounts.preOrder) price *= 0.75;
 
-  if (!hideScreens) {
-    price += n(inputs.ckToInstallers) * (pricing.screens || 75);
-  }
+  price += n(ckToInstallers);
 
   return price;
 };

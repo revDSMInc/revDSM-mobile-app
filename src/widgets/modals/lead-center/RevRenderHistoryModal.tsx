@@ -53,6 +53,27 @@ export const RevRenderHistoryModal = ({
     }
   }, [runs, visible, onClose]);
 
+  // Preload all render images on modal open
+  useEffect(() => {
+    if (visible && runs && runs.length > 0) {
+      runs.forEach((run) => {
+        const before = run.originalUrl || run.s3UrlOriginal;
+        const after = run.generatedUrl || run.s3UrlGenerated;
+        if (before) {
+          Image.prefetch(before).catch((err) =>
+            console.warn('[RevRenderHistoryModal] Prefetch before failed:', err)
+          );
+        }
+        if (after) {
+          Image.prefetch(after).catch((err) =>
+            console.warn('[RevRenderHistoryModal] Prefetch after failed:', err)
+          );
+        }
+      });
+    }
+  }, [visible, runs]);
+
+
   // ── render_result: view — fires on open and when the user navigates to a new render ──
   useEffect(() => {
     if (!visible) return;
@@ -278,6 +299,21 @@ export const RevRenderHistoryModal = ({
     <Modal visible={visible} transparent animationType="fade">
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.95)' }]}>
+          {/* Preload adjacent images in memory */}
+          <View style={{ width: 0, height: 0, opacity: 0, position: 'absolute', overflow: 'hidden' }}>
+            {runs.map((run, idx) => {
+              if (Math.abs(idx - currentIndex) > 1) return null;
+              const before = run.originalUrl || run.s3UrlOriginal;
+              const after = run.generatedUrl || run.s3UrlGenerated;
+              return (
+                <React.Fragment key={idx}>
+                  {before && <Image source={{ uri: before }} style={{ width: 1, height: 1 }} />}
+                  {after && <Image source={{ uri: after }} style={{ width: 1, height: 1 }} />}
+                </React.Fragment>
+              );
+            })}
+          </View>
+
           {/* Header */}
           <View style={styles.header}>
             <View>

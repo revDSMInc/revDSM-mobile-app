@@ -48,4 +48,5 @@ export type Lead = {
     fileUrl: string;
     createdAt?: string;
   }>;
+  hasRendered?: boolean;
 };

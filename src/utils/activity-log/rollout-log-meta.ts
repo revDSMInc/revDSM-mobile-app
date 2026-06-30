@@ -1,5 +1,6 @@
 import { logEvent } from '../../services/api/LoggerService';
 import { paymentPlans } from '../calculator/payment-plans';
+import { getCalculationResult } from '../calculator/calculator-calculation';
 import { sanitizeCalculatorLogTitle } from './job-builder-auto-log';
 
 export const calculateMarkupLabel = (
@@ -44,11 +45,27 @@ export interface RolloutLogChange {
   oldValue?: any;
   newValue?: any;
   action: string;
+  isLowesLead?: boolean;
   [key: string]: any;
 }
 
 export const getCalculatorTitle = (calc: any) => calc?.name || calc?.title || '';
 
+const resolveTierPrices = (
+  calculator: any,
+  tierPrices?: { costPrice: number; parPrice: number; retailPrice: number },
+  isLowesLead?: boolean
+) => {
+  if (tierPrices) return tierPrices;
+  const tierOpts = { isLowesLead };
+  return {
+    costPrice: Math.round(getCalculationResult(calculator, '50', 'check', tierOpts)) || 0,
+    parPrice: Math.round(getCalculationResult(calculator, '65', 'check', tierOpts)) || 0,
+    retailPrice: Math.round(getCalculationResult(calculator, '100', 'check', tierOpts)) || 0,
+  };
+};
+
+/** Mirrors web ViewAllCalculators fireRolloutLog — tier prices computed inline when omitted */
 export const fireRolloutLog = async (
   userId: string,
   calculator: any,
@@ -58,10 +75,13 @@ export const fireRolloutLog = async (
 ) => {
   if (!userId || !calculator) return;
 
-  const costPrice = tierPrices?.costPrice ?? 0;
-  const parPrice = tierPrices?.parPrice ?? 0;
-  const retailPrice = tierPrices?.retailPrice ?? 0;
-  const fieldValue = change.newValue ?? change.fieldValue;
+  const { isLowesLead, ...changeRest } = change;
+  const { costPrice, parPrice, retailPrice } = resolveTierPrices(
+    calculator,
+    tierPrices,
+    isLowesLead
+  );
+  const fieldValue = changeRest.newValue ?? changeRest.fieldValue;
   const percentageOfRollout = calculateMarkupLabel(
     Number(fieldValue) || 0,
     costPrice,
@@ -77,20 +97,29 @@ export const fireRolloutLog = async (
       calculatorId: calculator._id,
       appointmentId: calculator.appointmentId,
       calculatorTitle: getCalculatorTitle(calculator),
-      fieldLabel: change.fieldLabel,
-      fieldValue: change.fieldValue,
-      fieldCategory: change.fieldCategory,
-      oldValue: change.oldValue ?? '',
-      newValue: change.newValue ?? change.fieldValue,
-      action: change.action,
+      fieldLabel: changeRest.fieldLabel,
+      fieldValue: changeRest.fieldValue,
+      fieldCategory: changeRest.fieldCategory,
+      oldValue: changeRest.oldValue ?? '',
+      newValue: changeRest.newValue ?? changeRest.fieldValue,
+      action: changeRest.action,
       costPrice,
       parPrice,
       retailPrice,
       percentageOfRollout,
       leadId,
       ...Object.fromEntries(
-        Object.entries(change).filter(
-          ([k]) => !['fieldLabel', 'fieldValue', 'fieldCategory', 'oldValue', 'newValue', 'action'].includes(k)
+        Object.entries(changeRest).filter(
+          ([k]) =>
+            ![
+              'fieldLabel',
+              'fieldValue',
+              'fieldCategory',
+              'oldValue',
+              'newValue',
+              'action',
+              'isLowesLead',
+            ].includes(k)
         )
       ),
     },
@@ -110,53 +139,32 @@ export const logPaymentMethodInherited = async (opts: {
   newCalculatorTitle?: string;
   leadId?: string;
 }) => {
-  await logEvent('change', {
-    user_id: opts.userId,
-    created_by: opts.userId,
-    module_type: 'rollout_and_drop',
-    meta: {
-      calculatorId: opts.calculatorId,
-      appointmentId: opts.appointmentId,
-      calculatorTitle: sanitizeCalculatorLogTitle(opts.calculatorTitle),
-      fromCalculator: opts.fromCalculator ?? null,
-      toCalculator: opts.toCalculator,
-      paymentMethod: opts.paymentMethod,
-      action: 'payment method inherited',
-      inheritanceSource: opts.inheritanceSource,
-      sourceCalculatorTitle: opts.sourceCalculatorTitle
-        ? sanitizeCalculatorLogTitle(opts.sourceCalculatorTitle)
-        : undefined,
-      newCalculatorTitle: opts.newCalculatorTitle
-        ? sanitizeCalculatorLogTitle(opts.newCalculatorTitle)
-        : undefined,
-      leadId: opts.leadId,
-    },
-  });
-};
+  const meta: Record<string, any> = {
+    calculatorId: opts.calculatorId,
+    appointmentId: opts.appointmentId,
+    calculatorTitle: sanitizeCalculatorLogTitle(opts.calculatorTitle),
+    fromCalculator: opts.fromCalculator ?? null,
+    toCalculator: opts.toCalculator,
+    paymentMethod: opts.paymentMethod,
+    action: 'payment method inherited',
+    inheritanceSource: opts.inheritanceSource,
+  };
 
-export const logCalculatorDuplicatedRolloutGroup = async (opts: {
-  userId: string;
-  calculatorId: string;
-  appointmentId: string;
-  calculatorTitle: string;
-  sourceCalculatorId: string;
-  sourceCalculatorTitle: string;
-  leadId?: string;
-}) => {
+  if (opts.sourceCalculatorTitle) {
+    meta.sourceCalculatorTitle = sanitizeCalculatorLogTitle(opts.sourceCalculatorTitle);
+  }
+  if (opts.newCalculatorTitle) {
+    meta.newCalculatorTitle = sanitizeCalculatorLogTitle(opts.newCalculatorTitle);
+  }
+  if (opts.leadId) {
+    meta.leadId = opts.leadId;
+  }
+
   await logEvent('change', {
     user_id: opts.userId,
     created_by: opts.userId,
     module_type: 'rollout_and_drop',
-    meta: {
-      calculatorId: opts.calculatorId,
-      appointmentId: opts.appointmentId,
-      calculatorTitle: sanitizeCalculatorLogTitle(opts.calculatorTitle),
-      sourceCalculatorId: opts.sourceCalculatorId,
-      sourceCalculatorTitle: sanitizeCalculatorLogTitle(opts.sourceCalculatorTitle),
-      newCalculatorTitle: sanitizeCalculatorLogTitle(opts.calculatorTitle),
-      action: 'calculator_duplicated',
-      leadId: opts.leadId,
-    },
+    meta,
   });
 };
 

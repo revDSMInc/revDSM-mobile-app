@@ -731,7 +731,7 @@ export default function PitchbookScreen() {
         </View>
 
         {/* Categories Tab Bar */}
-        <View className="bg-background shadow-sm pb-6">
+        <View className="bg-background shadow-sm pb-4">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}

@@ -242,6 +242,7 @@ export default function LFCalculator({ route }: any) {
             result: outcomeStatus || undefined,
             calculatorId: active?._id,
             appointmentId: appointmentId || undefined,
+            calculatorType: active?.type,
           });
         }
         // Ensure the native Outcome modal unmounts before navigating (critical on iOS).
@@ -563,25 +564,77 @@ export default function LFCalculator({ route }: any) {
 
                 {/* Left Blur/Fade Overlay */}
                 {!isDraggingTab && scrollOffset > 5 && (
-                  <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
-                    <BlurView
-                      style={StyleSheet.absoluteFill}
-                      blurType={isDark ? 'dark' : 'light'}
-                      blurAmount={1}
-                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
-                    />
+                  <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                    {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
+                      <View
+                        key={`left-blur-${idx}`}
+                        style={{
+                          width: 4,
+                          height: '100%',
+                          opacity: opacity,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <BlurView
+                          style={{
+                            position: 'absolute',
+                            left: -idx * 4,
+                            top: 0,
+                            bottom: 0,
+                            width: 24,
+                          }}
+                          blurType={isDark ? 'dark' : 'light'}
+                          blurAmount={10}
+                          reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255, 255, 255, 1)'}
+                        />
+                        {!isDark && (
+                          <View
+                            style={[
+                              StyleSheet.absoluteFill,
+                              { backgroundColor: 'rgba(255, 255, 255, 0.45)' }
+                            ]}
+                          />
+                        )}
+                      </View>
+                    ))}
                   </View>
                 )}
 
                 {/* Right Blur/Fade Overlay */}
                 {!isDraggingTab && scrollOffset + scrollViewWidth < contentWidth - 5 && (
-                  <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
-                    <BlurView
-                      style={StyleSheet.absoluteFill}
-                      blurType={isDark ? 'dark' : 'light'}
-                      blurAmount={1}
-                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
-                    />
+                  <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                    {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
+                      <View
+                        key={`right-blur-${idx}`}
+                        style={{
+                          width: 4,
+                          height: '100%',
+                          opacity: opacity,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <BlurView
+                          style={{
+                            position: 'absolute',
+                            left: -idx * 4,
+                            top: 0,
+                            bottom: 0,
+                            width: 24,
+                          }}
+                          blurType={isDark ? 'dark' : 'light'}
+                          blurAmount={10}
+                          reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255, 255, 255, 1)'}
+                        />
+                        {!isDark && (
+                          <View
+                            style={[
+                              StyleSheet.absoluteFill,
+                              { backgroundColor: 'rgba(255, 255, 255, 0.45)' }
+                            ]}
+                          />
+                        )}
+                      </View>
+                    ))}
                   </View>
                 )}
               </View>
@@ -916,7 +969,7 @@ export default function LFCalculator({ route }: any) {
                 padding: 8,
               }}
             >
-              {menuVisible !== null && calculators[menuVisible]?.name !== '.' && (
+              {/* {menuVisible !== null && calculators[menuVisible]?.name !== '.' && (
                 <TouchableOpacity
                   onPress={() => {
                     if (menuVisible !== null) {
@@ -932,7 +985,7 @@ export default function LFCalculator({ route }: any) {
                     Rename
                   </Text>
                 </TouchableOpacity>
-              )}
+              )} */}
 
               {menuVisible !== null && calculators[menuVisible]?.name !== '.' && (
                 <TouchableOpacity

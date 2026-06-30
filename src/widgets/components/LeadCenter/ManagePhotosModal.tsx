@@ -12,6 +12,8 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LoadingImage } from './JobDocsUtils';
 import { ImageSlideshowModal } from './ImageSlideshowModal';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
 
 interface ManagePhotosModalProps {
   visible: boolean;
@@ -72,6 +74,7 @@ export const ManagePhotosModal = ({
   handleDelete,
   getSubcategoryLabel,
 }: ManagePhotosModalProps) => {
+  const { user } = useAuth();
 
   // Local preview slideshow state
   const [localPreviewImages, setLocalPreviewImages] = React.useState<{ uri: string; label: string }[]>([]);
@@ -106,6 +109,22 @@ export const ManagePhotosModal = ({
     setLocalPreviewIndex(index >= 0 ? index : 0);
     setLocalIsPlaying(false);
     setLocalIsFullscreen(false);
+
+    const userId = user?._id || user?.id;
+    if (userId) {
+      logEvent('preview', {
+        user_id: userId,
+        module_type: 'before_after_images',
+        created_by: userId,
+        meta: {
+          job_number: lead?.jobNumber,
+          company_id: lead?.companyId,
+          category: activeManageTab,
+          index: index >= 0 ? index : 0,
+          s3url: clickedImageUri,
+        },
+      });
+    }
   };
 
   const handleClose = () => {

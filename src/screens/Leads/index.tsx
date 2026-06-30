@@ -22,7 +22,7 @@ import {
   logLeadCardSelect,
   persistActiveLeadId,
 } from '../../utils/lead-activity-log';
-import { logEvent } from '../../services/api/LoggerService';
+import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useLeadsData } from '../../hooks/useLeadsData';
@@ -44,6 +44,7 @@ import { consumeZoneCanvasserReopen } from '../../utils/zone-canvasser-session';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../../services/api/leads';
 import { triggerThresholdCrossing, prepareHaptic } from '../../utils/haptics';
+import { logEvent } from '../../services/api/LoggerService';
 
 export default function LeadsPage() {
   const queryClient = useQueryClient();
@@ -103,12 +104,8 @@ export default function LeadsPage() {
   );
 
   useEffect(() => {
-    if (zoneCanvasserVisible && (user?._id || user?.id)) {
-      logEvent('view', {
-        user_id: user?._id || user?.id,
-        module_type: 'sales_map',
-        created_by: user?._id || user?.id,
-      });
+    if (zoneCanvasserVisible && user) {
+      logSalesMapView(user);
     }
   }, [zoneCanvasserVisible, user]);
 
@@ -269,6 +266,23 @@ export default function LeadsPage() {
       return timeA - timeB;
     });
   }, [leads, searchQuery]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const userId = user?._id || user?.id;
+      if (filteredLeads && filteredLeads.length > 0 && userId) {
+        logEvent('view', {
+          user_id: userId,
+          module_type: 'leads_list',
+          created_by: userId,
+          meta: {
+            totalLeads: filteredLeads.length,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }, [filteredLeads, user])
+  );
 
   const workMutation = useWorkLeadMutation();
   const [navigatingLeadId, setNavigatingLeadId] = useState<string | null>(null);

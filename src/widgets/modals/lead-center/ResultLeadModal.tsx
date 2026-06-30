@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Modal, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from '@react-native-community/blur';
+import { useAuth } from '../../../hooks/useAuth';
+import { logEvent } from '../../../services/api/LoggerService';
+import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 
 interface ResultLeadModalProps {
   visible: boolean;
@@ -11,6 +14,7 @@ interface ResultLeadModalProps {
   onSubmit: (data: any) => void;
   initialResult?: string; // noDemo, reset, notHit
   loading?: boolean;
+  lead?: any;
 }
 
 const REASONS_MAP: { [key: string]: string[] } = {
@@ -31,31 +35,56 @@ const RESULT_LABELS: { [key: string]: string } = {
   notHit: 'Not Hit',
 };
 
-
 export const ResultLeadModal = ({
   visible,
   onClose,
   onSubmit,
   initialResult = 'noDemo',
   loading,
+  lead,
 }: ResultLeadModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [reason, setReason] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
+  useOutcomeLogging({
+    visible,
+    outcomeForm: { reason },
+    outcomeStatus: initialResult === 'noDemo' ? 'demo' : initialResult === 'notHit' ? 'demo' : 'sale',
+    calculators: [],
+    activeIdx: 0,
+    lead,
+    disabled: false,
+  });
+
   useEffect(() => {
     if (visible) {
-      setReason(null);
+      setReason(lead?.leadData?.reason || null);
       setIsDropdownOpen(false);
     }
-  }, [visible, initialResult]);
+  }, [visible, initialResult, lead]);
 
   const reasons = REASONS_MAP[initialResult] || [];
   const resultLabel = RESULT_LABELS[initialResult] || initialResult;
 
   const handleConfirm = () => {
     if (!reason) return;
+    const userId = user?._id || user?.id;
+    if (userId && lead?._id) {
+      logEvent('click', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'lead_result_field_entry',
+        meta: {
+          leadId: lead._id,
+          result: resultLabel,
+          reason,
+          action: 'click_build_job',
+        },
+      });
+    }
     onSubmit({
       result: initialResult,
       reason: reason,
@@ -155,8 +184,24 @@ export const ResultLeadModal = ({
                     <TouchableOpacity
                       key={item}
                       onPress={() => {
+                        const oldReason = reason;
                         setReason(item);
                         setIsDropdownOpen(false);
+                        const userId = user?._id || user?.id;
+                        if (userId && lead?._id) {
+                          logEvent('change', {
+                            user_id: userId,
+                            created_by: userId,
+                            module_type: 'lead_result_field_entry',
+                            meta: {
+                              leadId: lead._id,
+                              result: resultLabel,
+                              newValue: item,
+                              oldValue: oldReason || '',
+                              action: 'change_lead_result_reason',
+                            },
+                          });
+                        }
                       }}
                       className="px-4 py-4 border-b"
                       style={{ borderBottomColor: '#919EAB14' }}
@@ -197,3 +242,4 @@ export const ResultLeadModal = ({
     </Modal>
   );
 };
+

@@ -78,7 +78,7 @@ export const isResumeAppointment = (lead: any): boolean => {
  */
 export const getScheduledDateTime = (lead: any): Date | null => {
   if (!lead?.leadTime || typeof lead.leadTime !== 'string') return null;
-  const dateStr = lead.leadDatetime || lead.leadDate || lead.installationDate;
+  const dateStr = lead.leadDate || lead.installationDate;
   if (!dateStr) return null;
 
   const timeStr = lead.leadTime.toLowerCase().trim();

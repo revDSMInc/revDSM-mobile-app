@@ -6,6 +6,8 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { ENV } from '../../config/env';
 import axios from 'axios';
 import { CustomDatePicker } from '../../screens/JobTracker/components/CustomDatePicker';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 export interface FilterState {
   jobNumber: string;
@@ -52,6 +54,7 @@ export const MapFiltersModal = ({
   onReset,
 }: MapFiltersModalProps) => {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
   const [localFilters, setLocalFilters] = useState(filters);
   const [showStartDate, setShowStartDate] = useState(false);
   const [showEndDate, setShowEndDate] = useState(false);
@@ -116,6 +119,95 @@ export const MapFiltersModal = ({
     onApply({ ...localFilters, jobNumber: searchText });
     setSearchResults([]);
     onClose();
+
+    const uid = user?._id || user?.id;
+    if (!uid) return;
+
+    if (localFilters.minPrice || localFilters.maxPrice) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'price_filter',
+        created_by: uid,
+        meta: { minPrice: localFilters.minPrice || null, maxPrice: localFilters.maxPrice || null },
+      });
+    }
+
+    if (localFilters.radius) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'distance_filter',
+        created_by: uid,
+        meta: { radiusInMiles: localFilters.radius },
+      });
+    }
+
+    if (searchType === 'job' && searchText) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'job_number_filter',
+        created_by: uid,
+        meta: { jobNumber: searchText },
+      });
+    }
+
+    if (dateRangeLabel !== 'Select Date Range') {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'date_range_filter',
+        created_by: uid,
+        meta: {
+          dateFilterType: dateRangeLabel,
+          startDate: dateRangeLabel === 'Custom' ? localFilters.startDate : null,
+          endDate: dateRangeLabel === 'Custom' ? localFilters.endDate : null,
+        },
+      });
+    }
+
+    if (localFilters.isFavoriteOnly) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'favorite_filter',
+        created_by: uid,
+        meta: { favoriteEnabled: true },
+      });
+    }
+
+    if (localFilters.isHeatMap) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'heat_map_filter',
+        created_by: uid,
+        meta: { heatMapEnabled: true },
+      });
+    }
+
+    if (localFilters.showProduct) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'product_filter',
+        created_by: uid,
+        meta: { productEnabled: true },
+      });
+    }
+
+    logEvent('apply', {
+      user_id: uid,
+      module_type: 'search_action',
+      created_by: uid,
+      meta: {
+        searchType,
+        filtersApplied: {
+          hasAddress: !!localFilters.centerCoords,
+          hasJobNumber: searchType === 'job' && !!searchText,
+          hasDistance: !!localFilters.radius,
+          hasPrice: !!(localFilters.minPrice || localFilters.maxPrice),
+          hasDateRange: dateRangeLabel !== 'Select Date Range',
+          hasFavorite: localFilters.isFavoriteOnly,
+          hasProduct: localFilters.showProduct,
+          hasHeatMap: localFilters.isHeatMap,
+        },
+      },
+    });
   };
 
   const handleReset = () => {
@@ -124,6 +216,15 @@ export const MapFiltersModal = ({
     setSearchType('location');
     setDateRangeLabel('Select Date Range');
     onReset();
+    const uid = user?._id || user?.id;
+    if (uid) {
+      logEvent('apply', {
+        user_id: uid,
+        module_type: 'reset_filter',
+        created_by: uid,
+        meta: { reset: true },
+      });
+    }
   };
 
   const handleDateRangeSelect = (option: string) => {
@@ -285,6 +386,17 @@ export const MapFiltersModal = ({
                                   ...localFilters,
                                   centerCoords: { latitude: lat, longitude: lng }
                                 });
+                                if (user?._id || user?.id) {
+                                  logEvent('change', {
+                                    user_id: user._id || user.id,
+                                    module_type: 'address_filter',
+                                    created_by: user._id || user.id,
+                                    meta: {
+                                      address: item.description,
+                                      coordinates: { lat, lng },
+                                    },
+                                  });
+                                }
                               }
                             } catch (e) {
                               console.log('Geocoding error:', e);
@@ -460,7 +572,18 @@ export const MapFiltersModal = ({
                 <View className="flex-row gap-5 items-center">
                   <Icon name="format-list-checks" size={24} color="#000" />
                   <TouchableOpacity
-                    onPress={() => setLocalFilters({ ...localFilters, showProduct: !localFilters.showProduct })}
+                    onPress={() => {
+                      const next = !localFilters.showProduct;
+                      setLocalFilters({ ...localFilters, showProduct: next });
+                      if (user?._id || user?.id) {
+                        logEvent('toggle', {
+                          user_id: user._id || user.id,
+                          module_type: 'product_filter',
+                          created_by: user._id || user.id,
+                          meta: { productEnabled: next },
+                        });
+                      }
+                    }}
                     className="w-11 h-6 rounded-full px-1 justify-center"
                     style={{ backgroundColor: localFilters.showProduct ? colors.primary.main : '#e2e8f0' }}
                   >

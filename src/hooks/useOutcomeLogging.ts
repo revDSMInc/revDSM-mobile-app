@@ -20,15 +20,24 @@ const RESULT_FIELDS = [
 
 export function useOutcomeLogging(opts: {
   visible: boolean;
-  outcomeForm: any;
-  outcomeStatus: 'demo' | 'sale' | null;
-  calculators: any[];
-  activeIdx: number;
+  outcomeForm?: any;
+  outcomeStatus?: 'demo' | 'sale' | null;
+  calculators?: any[];
+  activeIdx?: number;
   setActiveIdx?: (idx: number) => void;
   lead?: any;
+  disabled?: boolean;
 }) {
   const { user } = useAuth();
-  const { visible, outcomeForm, outcomeStatus, calculators, activeIdx, lead } = opts;
+  const {
+    visible,
+    outcomeForm = {},
+    outcomeStatus = null,
+    calculators = [],
+    activeIdx = 0,
+    lead,
+    disabled = false,
+  } = opts;
   const leadId = lead?._id || lead?.leadId || lead?.id;
   const stepViewedRef = useRef(false);
   const autoLoggedRef = useRef(false);
@@ -40,7 +49,7 @@ export function useOutcomeLogging(opts: {
   const [sectionsReady, setSectionsReady] = useState(false);
 
   const buildResultData = useCallback(() => {
-    const activeCalc = calculators[activeIdx];
+    const activeCalc = calculators && calculators.length > activeIdx ? calculators[activeIdx] : null;
     const leadData = lead?.leadData || lead?.jobBuilder?.leadData || {};
     return {
       ...leadData,
@@ -58,6 +67,7 @@ export function useOutcomeLogging(opts: {
   }, [outcomeForm, outcomeStatus, calculators, activeIdx, lead]);
 
   useEffect(() => {
+    if (disabled) return;
     if (!visible || !leadId) {
       setSectionsReady(false);
       return;
@@ -74,9 +84,10 @@ export function useOutcomeLogging(opts: {
       .catch(() => {
         setSectionsReady(true);
       });
-  }, [visible, leadId]);
+  }, [visible, leadId, disabled]);
 
   useEffect(() => {
+    if (disabled) return;
     if (!visible) {
       stepViewedRef.current = false;
       autoLoggedRef.current = false;
@@ -90,23 +101,11 @@ export function useOutcomeLogging(opts: {
 
     if (!stepViewedRef.current) {
       stepViewedRef.current = true;
-      logEvent('view', {
-        user_id: userId,
-        created_by: userId,
-        module_type: 'lead_result_field_entry',
-        meta: {
-          leadId,
-          jobBuilderId: leadId,
-          section: 'lead_result',
-          fieldCategory: 'lead_result',
-          action: 'lead_result_step_viewed',
-          stepStartedAt: new Date().toISOString(),
-        },
-      });
     }
-  }, [visible, user, leadId]);
+  }, [visible, user, leadId, activeIdx, disabled]);
 
   useEffect(() => {
+    if (disabled) return;
     if (!visible || !sectionsReady) return;
 
     const userId = user?._id || user?.id;
@@ -147,10 +146,11 @@ export function useOutcomeLogging(opts: {
     fireAutoLogs();
     prevFormRef.current = JSON.parse(JSON.stringify(outcomeForm || {}));
     prevActiveIdxRef.current = activeIdx;
-  }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx]);
+  }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx, disabled]);
 
   // Calculator switch logging (web parity: selectedCalculatorId change)
   useEffect(() => {
+    if (disabled) return;
     if (!visible) return;
     const userId = user?._id || user?.id;
     if (!userId || !leadId) return;
@@ -177,9 +177,10 @@ export function useOutcomeLogging(opts: {
       });
       prevActiveIdxRef.current = activeIdx;
     }
-  }, [activeIdx, visible, user, leadId, calculators]);
+  }, [activeIdx, visible, user, leadId, calculators, disabled]);
 
   useEffect(() => {
+    if (disabled) return;
     if (!visible) return;
     const userId = user?._id || user?.id;
     if (!userId || !leadId || !prevFormRef.current) return;
@@ -278,9 +279,10 @@ export function useOutcomeLogging(opts: {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [outcomeForm, visible, user, leadId]);
+  }, [outcomeForm, visible, user, leadId, disabled]);
 
   const logReset = useCallback(() => {
+    if (disabled) return;
     const userId = user?._id || user?.id;
     if (!userId || !leadId) return;
     logEvent('reset', {
@@ -294,7 +296,8 @@ export function useOutcomeLogging(opts: {
     });
     autoLoggedRef.current = false;
     stepViewedRef.current = false;
-  }, [user, leadId]);
+  }, [user, leadId, disabled]);
 
   return { logReset };
 }
+

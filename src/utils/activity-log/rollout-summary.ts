@@ -53,7 +53,7 @@ export const logRolloutAndDropSummary = async (opts: {
     allCalculators?.reduce(
       (acc, calc) => ({
         totalRetail: acc.totalRetail + (parseFloat(String(calc.price)) || 0),
-        totalCost: acc.totalCost + (parseFloat(String(calc.cost)) || 0),
+        totalCost: acc.totalCost + (parseFloat(String(calc.cost)) || calculateTiers(calc, !!isLowesLead).cost),
       }),
       { totalRetail: 0, totalCost: 0 }
     ) || { totalRetail: 0, totalCost: 0 };

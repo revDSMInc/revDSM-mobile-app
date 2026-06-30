@@ -3,6 +3,8 @@
  * Ported from web src/api/auto-fields.js
  */
 
+import { logEvent } from '../../services/api/LoggerService';
+
 export const AUTO_FIELDS_BY_SECTION: Record<string, any[]> = {
   gutter: [
     { key: 'extras_wedges', label: 'Wedges', getValue: (cd: any) => cd?.wedges },
@@ -69,8 +71,15 @@ export function getAutoFieldEntriesForSection(section: string, calculatorData: a
   const entries: Array<{ key: string; label: string; value: any; fieldType?: string }> = [];
   const fields = AUTO_FIELDS_BY_SECTION[section] || [];
 
+  // DealCenter passes nested { inputs, extras }, LeadCenter passes flat.
+  const flat = {
+    ...(calculatorData?.inputs || {}),
+    ...(calculatorData?.extras || {}),
+    ...(calculatorData || {}),
+  };
+
   for (const field of fields) {
-    const value = field.getValue(calculatorData);
+    const value = field.getValue(flat);
     if (isQualifyingValue(value)) {
       entries.push({ key: field.key, label: field.label, value, fieldType: field.fieldType });
     }
@@ -83,7 +92,7 @@ export function getAutoFieldEntriesForSection(section: string, calculatorData: a
       { key: 'lighting_3rd_story_footage', label: 'Lighting 3rd Story Footage', getValue: (cd: any) => parseFloat(cd?.lighting3rdStory) || 0 },
     ];
     storyFields.forEach((f) => {
-      const value = f.getValue(calculatorData);
+      const value = f.getValue(flat);
       if (isQualifyingValue(value)) {
         entries.push({
           key: f.key,
@@ -96,7 +105,7 @@ export function getAutoFieldEntriesForSection(section: string, calculatorData: a
   }
 
   if (section === 'leaffilter') {
-    const combinations = calculatorData?.leaffilter?.combinations;
+    const combinations = flat?.leaffilter?.combinations;
     if (Array.isArray(combinations)) {
       combinations.forEach((combo: any, index: number) => {
         if (!combo?.isLocked) return;
@@ -138,7 +147,6 @@ export async function logAutoPopulatedSection(opts: {
 }) {
   if (opts.alreadyLogged?.[opts.section]) return 0;
 
-  const { logEvent } = await import('../../services/api/LoggerService');
   const entries = getAutoFieldEntriesForSection(opts.section, opts.calculatorData);
   const moduleType = opts.moduleType || 'job_builder';
 

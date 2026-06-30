@@ -16,6 +16,8 @@ import { launchCamera, launchImageLibrary, Asset, PhotoQuality } from 'react-nat
 import { LeadService } from '../../services/api/leads';
 import { ENV } from '../../config/env';
 import { checkOnlineStatus, enqueueOfflineUpload, getOfflineImagesForJob } from '../../services/api/offlineUploadManager';
+import { useAuth } from '../../hooks/useAuth';
+import { logEvent } from '../../services/api/LoggerService';
 
 interface JobImageUploadModalProps {
   visible: boolean;
@@ -33,6 +35,7 @@ export const JobImageUploadModal = ({
   onUploadSuccess,
 }: JobImageUploadModalProps) => {
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState<'before' | 'after' | null>(initialType || null);
   const [images, setImages] = useState<Asset[]>([]);
@@ -270,6 +273,28 @@ export const JobImageUploadModal = ({
           })),
         });
 
+        const userId = user?._id || user?.id;
+        if (userId) {
+          logEvent('add', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              type,
+              job_number: selectedJob.jobNumber,
+              company_id: selectedJob.companyId,
+              isOffline: true,
+              imageData: images.map((img: any) => ({
+                s3url: img.uri || '',
+                bucketName: null,
+                uploadedAt: null,
+                category: type === 'before' ? 'Before' : 'After',
+                fileName: img.fileName || null,
+              })),
+            },
+          });
+        }
+
         Alert.alert(
           'Offline Mode',
           'Internet connection is unavailable. Your images have been saved locally and will upload automatically once connection is restored.'
@@ -307,6 +332,32 @@ export const JobImageUploadModal = ({
           : await LeadService.updateAfterImages(formData);
 
       if (response.data) {
+        const uploadedImages =
+          type === 'before'
+            ? response.data?.data?.images?.beforeImages || response.data?.images?.beforeImages || []
+            : response.data?.data?.images?.afterImages || response.data?.images?.afterImages || [];
+
+        const userId = user?._id || user?.id;
+        if (userId) {
+          logEvent('add', {
+            user_id: userId,
+            module_type: 'before_after_images',
+            created_by: userId,
+            meta: {
+              type,
+              job_number: selectedJob.jobNumber,
+              company_id: selectedJob.companyId,
+              imageData: uploadedImages.map((img: any) => ({
+                s3url: img?.s3url?.filePath || img?.s3url || img?.url || img?.imagePath || img?.filePath || img,
+                bucketName: img?.s3url?.bucketName || img?.bucketName || null,
+                uploadedAt: img?.s3url?.uploadedAt || img?.uploadedAt || null,
+                category: type === 'before' ? 'Before' : 'After',
+                fileName: img?.fileName || img?.name || null,
+              })),
+            },
+          });
+        }
+
         Alert.alert('Success', 'Images uploaded successfully');
         onUploadSuccess?.(response.data?.data || response.data);
         // Return to selection screen instead of just closing if preferred, 

@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { calculateQuote } from '../utils/calculator/calculation-utils';
-import { calculateResultUtil } from '../utils/calculator/calculation-results-util';
-import { getUpdatedCalculatorTitles } from '../utils/calculator/tab-naming.utils';
-import { pricing, extrasList, extrasList50 } from '../utils/calculator/pricing-data';
+import { getTierResults } from '../utils/calculator/calculator-calculation';
+import { mapCalculatorNumericField } from '../utils/calculator/calculator-field-map';
+import { getUpdatedCalculatorTitles, getPresentComponents } from '../utils/calculator/tab-naming.utils';
+import { computeTitleSaveOrder } from '../utils/calculator/title-save-order';
+import { pricing, extrasList, extrasList50, markups } from '../utils/calculator/pricing-data';
 import { paymentPlans } from '../utils/calculator/payment-plans';
 import { getDefaultPaymentMethod } from '../utils/calculator/lowes-payment-util';
 import { LeadService } from '../services/api/leads';
@@ -62,6 +64,8 @@ export const useDealCalculator = (lead: any) => {
     },
   ]);
   const [activeIdx, setActiveIdx] = useState(0);
+  const activeIdxRef = useRef(activeIdx);
+  activeIdxRef.current = activeIdx;
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
@@ -89,6 +93,19 @@ export const useDealCalculator = (lead: any) => {
   useEffect(() => {
     hasLoggedCalculatorViewRef.current = false;
   }, [leadId]);
+
+  // Save previous active calculator immediately upon tab switch if there are pending changes
+  const prevActiveIdxRef = useRef(activeIdx);
+  useEffect(() => {
+    const prevIdx = prevActiveIdxRef.current;
+    prevActiveIdxRef.current = activeIdx;
+    if (prevIdx !== activeIdx && isPendingSave.current) {
+      const prevCalc = calculators[prevIdx];
+      if (prevCalc && prevCalc._id) {
+        saveCalculatorRef.current(prevCalc);
+      }
+    }
+  }, [activeIdx, calculators]);
 
   const getInputLabelAndCategory = (name: string): { label: string; category: string } => {
     switch (name) {
@@ -160,10 +177,9 @@ export const useDealCalculator = (lead: any) => {
     });
   };
 
-  // Mirror web lf-calculator-view: log calculator viewed once on initial render, not per tab switch.
+  // Log calculator viewed on active calculator change to match Web parity
   useEffect(() => {
-    if (active?._id && user?._id && !hasLoggedCalculatorViewRef.current) {
-      hasLoggedCalculatorViewRef.current = true;
+    if (active?._id && user?._id) {
       logEvent('view', {
         user_id: user._id,
         created_by: user._id,
@@ -173,10 +189,13 @@ export const useDealCalculator = (lead: any) => {
           appointmentId: active.appointmentId || appointmentId,
           calculatorTitle: sanitizeCalculatorLogTitle(active.name || active.title || ''),
           action: 'calculator viewed',
+          leadId,
+          resetCycle: 0,
         },
       });
     }
-  }, [active?._id, user?._id, appointmentId]);
+  }, [active?._id, user?._id, appointmentId, leadId]);
+
 
   // Clean up and flush pending change logs on active calculator switch or unmount
   useEffect(() => {
@@ -193,46 +212,18 @@ export const useDealCalculator = (lead: any) => {
 
   const results = useMemo(() => {
     const n = (v: any) => Number(v) || 0;
-    const price50 = calculateResultUtil({
-      details: active,
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      markupKey: '50',
-      hideScreens: true,
-      isLowesLead,
-    });
-    const finalTotal = calculateResultUtil({
-      details: active,
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
+    const selectedPaymentMethod = inputs.paymentPlan || 'check';
+
+    const tiers = getTierResults(active, {
+      selectedPaymentMethod,
       markupKey: inputs.markup || '100',
-      hideScreens: true,
       isLowesLead,
+      discounts,
+      ckToInstallers: n(inputs.ckToInstallers),
     });
-    const price65 = calculateResultUtil({
-      details: active,
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      markupKey: '65',
-      hideScreens: true,
-      isLowesLead,
-    });
-    const price100 = calculateResultUtil({
-      details: active,
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      markupKey: '100',
-      hideScreens: true,
-      isLowesLead,
-    });
+
+    const { price50, price65, price100, costAtCheck, parAtCheck, retailAtCheck, total: finalTotal } =
+      tiers;
 
     const items: any[] = [];
     if (n(inputs.gutter5DsE))
@@ -259,7 +250,7 @@ export const useDealCalculator = (lead: any) => {
     });
 
     extrasList.forEach((e: any) => {
-      const val = n(extras[e.id]);
+      const val = n(extras[e.id]) || n(inputs[e.id]);
       if (val > 0)
         items.push({
           label: e.label,
@@ -269,17 +260,18 @@ export const useDealCalculator = (lead: any) => {
         });
     });
 
-    if (n(inputs.extraLabor)) {
-      items.push({
-        label: 'Extra Labor',
-        value: inputs.extraLabor,
-        category: 'Additional Services',
-      });
-    }
 
-
-    return { price50, price65, price100, total: finalTotal, items };
-  }, [active]);
+    return {
+      price50,
+      price65,
+      price100,
+      costAtCheck,
+      parAtCheck,
+      retailAtCheck,
+      total: finalTotal,
+      items,
+    };
+  }, [active, inputs.paymentPlan, inputs.markup, inputs.ckToInstallers, isLowesLead, discounts]);
 
   const latestActiveRef = useRef<any>(null);
   const isAutoSavingRef = useRef(false);
@@ -340,7 +332,7 @@ export const useDealCalculator = (lead: any) => {
       if (calculatorsData.length === 0) {
         const defaultPay = user?.defaultPaymentMethod || (isLowesLead ? 'lowes_ach' : 'check');
         const fullPayload = {
-          title: 'Calculator',
+          title: targetTitle,
           position: 1,
           ...INITIAL_INPUTS,
           paymentPlan: defaultPay,
@@ -349,28 +341,29 @@ export const useDealCalculator = (lead: any) => {
           ...Object.keys(INITIAL_EXTRAS).reduce((acc, k) => ({ ...acc, [k]: 0 }), {}),
           price: 0,
         };
-        const createRes = await LeadService.createCalculator(apptId, fullPayload);
+        await LeadService.createCalculator(apptId, fullPayload);
         const reCalcRes = await LeadService.getCalculators(apptId);
         calculatorsData = reCalcRes.data?.data || reCalcRes.data || [];
 
+        const createdCalc = calculatorsData[0];
         const userId = user?._id || user?.id;
-        if (userId) {
-          const createdData = (createRes as any)?.data?.data || (createRes as any)?.data;
-          const createdId = createdData?._id;
+        if (userId && createdCalc) {
+          const createdId = createdCalc._id;
           await logCalculatorCreated({
             userId,
             calculatorId: createdId,
-            appointmentId: createdData?.appointmentId || apptId,
-            calculatorTitle: createdData?.title || 'Calculator',
+            appointmentId: createdCalc.appointmentId || apptId,
+            calculatorTitle: createdCalc.title || targetTitle,
             isFirstCalculator: true,
             calculatorPosition: 1,
+            leadId,
           });
           if (defaultPay) {
             await logPaymentMethodInherited({
               userId,
               calculatorId: createdId,
               appointmentId: apptId,
-              calculatorTitle: createdData?.title || 'Calculator',
+              calculatorTitle: createdCalc.title || targetTitle,
               paymentMethod: defaultPay,
               inheritanceSource: 'default payment method',
               toCalculator: createdId,
@@ -379,6 +372,7 @@ export const useDealCalculator = (lead: any) => {
         }
       }
 
+
       if (calculatorsData.length > 0) {
         const mappedCalculators = calculatorsData.map((c: any, idx: number) => ({
           _id: c._id,
@@ -386,35 +380,46 @@ export const useDealCalculator = (lead: any) => {
           position: c.position !== undefined ? c.position : idx,
           inputs: {
             ...INITIAL_INPUTS,
-            gutter5DsE: String(c.gutter5DsE || c.gutter_footage || ''),
-            gutter6Ft1: String(c.gutter6Ft1 || c.gutter_6_footage || ''),
-            gutter7DsE: String(c.gutter7DsE || c.gutter_7_footage || ''),
-            miters: String(c.miters || ''),
-            endCaps: String(c.end_caps || ''),
-            spoutSavers: String(c.spout_savers || ''),
-            versaMaxFt1: String(c.versaMaxFt1 || c.versa_max_footage || ''),
-            versa6Ft1: String(c.versa6Ft1 || c.versa_6_footage || ''),
-            versa7Ft1: String(c.versa7Ft1 || c.versa_7_footage || ''),
-            filter45Ft1: String(c.filter45Ft1 || c.filter_45_footage || ''),
-            versa6Ft2: String(c.versa6Ft2 || c.versa_6_footage_2 || ''),
-            versa7Ft2: String(c.versa7Ft2 || c.versa_7_footage_2 || ''),
-            filter45Ft2: String(c.filter45Ft2 || c.filter_45_footage_2 || ''),
-            versa6Ft3: String(c.versa6Ft3 || c.versa_6_footage_3 || ''),
-            versa7Ft3: String(c.versa7Ft3 || c.versa_7_footage_3 || ''),
-            filter45Ft3: String(c.filter45Ft3 || c.filter_45_footage_3 || ''),
-            ckToInstallers: String(c.ckToInstallers || c.check_to_installers || ''),
-            extraLabor: String(c.extraLabor || c.extra_labor_hours || ''),
+            gutter5DsE: mapCalculatorNumericField(c, 'gutter5DsE'),
+            gutter6Ft1: mapCalculatorNumericField(c, 'gutter6Ft1'),
+            gutter7DsE: mapCalculatorNumericField(c, 'gutter7DsE'),
+            miters: mapCalculatorNumericField(c, 'miters'),
+            endCaps: mapCalculatorNumericField(c, 'endCaps'),
+            spoutSavers: mapCalculatorNumericField(c, 'spoutSavers'),
+            versaMaxFt1: mapCalculatorNumericField(c, 'versaMaxFt1'),
+            versa6Ft1: mapCalculatorNumericField(c, 'versa6Ft1'),
+            versa7Ft1: mapCalculatorNumericField(c, 'versa7Ft1'),
+            filter45Ft1: mapCalculatorNumericField(c, 'filter45Ft1'),
+            versa6Ft2: mapCalculatorNumericField(c, 'versa6Ft2'),
+            versa7Ft2: mapCalculatorNumericField(c, 'versa7Ft2'),
+            filter45Ft2: mapCalculatorNumericField(c, 'filter45Ft2'),
+            versa6Ft3: mapCalculatorNumericField(c, 'versa6Ft3'),
+            versa7Ft3: mapCalculatorNumericField(c, 'versa7Ft3'),
+            filter45Ft3: mapCalculatorNumericField(c, 'filter45Ft3'),
+            ckToInstallers: mapCalculatorNumericField(c, 'ckToInstallers'),
+            extraLabor: mapCalculatorNumericField(c, 'extraLabor'),
             paymentPlan: getDefaultPaymentMethod(isLowesLead, c.paymentMethod),
             markup: String(c.pricemarkup || '100'),
             discountPercentage: Number(c.discountPercentage || 15),
             isDefaultDiscount: !!c.isDefaultDiscount,
+            ...Object.keys(c).reduce((acc, key) => {
+              if (
+                key.startsWith('rf') ||
+                key.startsWith('win') ||
+                key.startsWith('fl') ||
+                key.startsWith('rm')
+              ) {
+                acc[key] = mapCalculatorNumericField(c, key);
+              }
+              return acc;
+            }, {} as Record<string, string>),
           },
           extras: extrasList.reduce(
             (acc, e: any) => ({
               ...acc,
-              [e.apiKey || e.id]: String(c[e.apiKey || e.id] || ''),
+              [e.id]: mapCalculatorNumericField(c, e.id),
             }),
-            {}
+            {} as Record<string, string>
           ),
           discounts: {
             seniorVet: c.discounts?.seniorVet || false,
@@ -430,10 +435,18 @@ export const useDealCalculator = (lead: any) => {
 
         // Apply dynamic naming/warnings on load
         const getRetailPrice = (calc: any) => {
-          const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
-            seniorVet: false,
-            preOrder: false,
-          });
+          const res = calculateQuote(
+            calc.inputs,
+            calc.extras,
+            '3',
+            '100',
+            'check',
+            { seniorVet: false, preOrder: false },
+            pricing,
+            markups,
+            paymentPlans,
+            calc.inputs
+          );
           return res.baseRetailTotal;
         };
         const titles = getUpdatedCalculatorTitles(mappedCalculators, getRetailPrice);
@@ -539,9 +552,10 @@ export const useDealCalculator = (lead: any) => {
   const updateActive = useCallback(
     (patch: any, bypassAutoSave: boolean = false) => {
       setCalculators((prev) => {
+        const idx = activeIdxRef.current;
         const next = [...prev];
-        if (!next[activeIdx]) return prev;
-        const current = { ...next[activeIdx] };
+        if (!next[idx]) return prev;
+        const current = { ...next[idx] };
 
         // Queue field changes for web parity logging
         const userId = user?._id || user?.id;
@@ -626,7 +640,16 @@ export const useDealCalculator = (lead: any) => {
           }, 1000);
         }
 
-        if (patch.inputs) current.inputs = { ...current.inputs, ...patch.inputs };
+        if (patch.inputs) {
+          current.inputs = { ...current.inputs, ...patch.inputs };
+          const syncedExtras = { ...current.extras };
+          Object.entries(patch.inputs).forEach(([key, value]) => {
+            if (extrasList.some((e: any) => e.id === key)) {
+              syncedExtras[key] = value;
+            }
+          });
+          current.extras = syncedExtras;
+        }
         if (patch.extras) current.extras = { ...current.extras, ...patch.extras };
         if (patch.discounts) current.discounts = { ...current.discounts, ...patch.discounts };
         if (patch.price !== undefined) current.price = patch.price;
@@ -635,11 +658,11 @@ export const useDealCalculator = (lead: any) => {
         if (patch.isDefaultPayment !== undefined) {
           current.isDefaultPayment = patch.isDefaultPayment;
           if (patch.isDefaultPayment === true) {
-            next.forEach((c, idx) => {
-              if (idx !== activeIdx) {
+            next.forEach((c, i) => {
+              if (i !== idx) {
                 c.isDefaultPayment = false;
                 if (c._id) {
-                  saveCalculator(c);
+                  saveCalculatorRef.current(c);
                 }
               }
             });
@@ -648,52 +671,181 @@ export const useDealCalculator = (lead: any) => {
         if (patch.dropPrice) current.dropPrice = patch.dropPrice;
         if (patch.name) current.name = patch.name;
         if (patch.downPayment !== undefined) current.downPayment = patch.downPayment;
-        next[activeIdx] = current;
+        next[idx] = current;
 
         const getRetailPrice = (calc: any) => {
-          const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
-            seniorVet: false,
-            preOrder: false,
-          });
+          const res = calculateQuote(
+            calc.inputs,
+            calc.extras,
+            '3',
+            '100',
+            'check',
+            { seniorVet: false, preOrder: false },
+            pricing,
+            markups,
+            paymentPlans,
+            calc.inputs
+          );
           return res.baseRetailTotal;
         };
         const titles = getUpdatedCalculatorTitles(next, getRetailPrice);
-        const displacedToSave: any[] = [];
         next.forEach((c, idx) => {
           const key = c._id || `temp-${idx}`;
           if (titles[key]) c.name = titles[key];
-          if (idx !== activeIdx && c._id) {
-            const oldTitle = lastSavedTitlesRef.current[c._id];
-            if (oldTitle && c.name && oldTitle !== c.name) {
-              displacedToSave.push({ ...c });
-            }
-          }
         });
-
-        if (displacedToSave.length > 0) {
-          setTimeout(() => {
-            displacedToSave.forEach((c) => saveCalculatorRef.current(c));
-          }, 0);
-        }
 
         if (bypassAutoSave) {
           isPendingSave.current = false;
         } else {
           isPendingSave.current = true;
         }
-        latestActiveRef.current = next[activeIdx];
+        latestActiveRef.current = next[idx];
         return next;
       });
     },
-    [activeIdx]
+    []
   );
 
+  const getRetailPrice = useCallback((calc: any) => {
+    try {
+      const res = calculateQuote(
+        calc.inputs,
+        calc.extras,
+        '3',
+        '100',
+        'check',
+        { seniorVet: false, preOrder: false },
+        pricing,
+        markups,
+        paymentPlans,
+        calc.inputs
+      );
+      return res.baseRetailTotal || 0;
+    } catch {
+      return 0;
+    }
+  }, []);
+
+  const toApiPayload = useCallback((c: any, titleOverride?: string) => {
+    let rawDrops = (c.dropPrice || []).map(({ _clientId, ...rest }: any) => rest);
+    return {
+      title: titleOverride !== undefined ? titleOverride : c.name,
+      position: c.position,
+      gutter5DsE: Number(c.inputs.gutter5DsE),
+      gutter6Ft1: Number(c.inputs.gutter6Ft1),
+      gutter7DsE: Number(c.inputs.gutter7DsE),
+      miters: Number(c.inputs.miters),
+      endCaps: Number(c.inputs.endCaps),
+      spoutSavers: Number(c.inputs.spoutSavers),
+      versaMaxFt1: Number(c.inputs.versaMaxFt1),
+      versaMaxFt2: Number(c.inputs.versaMaxFt2),
+      versaMaxFt3: Number(c.inputs.versaMaxFt3),
+      versa6Ft1: Number(c.inputs.versa6Ft1),
+      versa7Ft1: Number(c.inputs.versa7Ft1),
+      filter45Ft1: Number(c.inputs.filter45Ft1),
+      versa6Ft2: Number(c.inputs.versa6Ft2),
+      versa7Ft2: Number(c.inputs.versa7Ft2),
+      filter45Ft2: Number(c.inputs.filter45Ft2),
+      versa6Ft3: Number(c.inputs.versa6Ft3),
+      versa7Ft3: Number(c.inputs.versa7Ft3),
+      filter45Ft3: Number(c.inputs.filter45Ft3),
+      ckToInstallers: Number(c.inputs.ckToInstallers),
+      extraLabor: Number(c.inputs.extraLabor),
+      paymentMethod: c.inputs.paymentPlan,
+      pricemarkup: c.inputs.markup,
+      price: c.price,
+      downPayment: c.downPayment,
+      isRolloutConfirmed: c.isRolloutConfirmed,
+      isDefaultPayment: c.isDefaultPayment,
+      discounts: c.discounts,
+      discountPercentage: Number(c.inputs.discountPercentage || 15),
+      isDefaultDiscount: !!c.inputs.isDefaultDiscount,
+      dropPrice: rawDrops,
+      ...Object.keys(c.inputs).reduce((acc, k) => {
+        if (
+          k.startsWith('rf') ||
+          k.startsWith('win') ||
+          k.startsWith('fl') ||
+          k.startsWith('rm')
+        ) {
+          const val = c.inputs[k];
+          acc[k] = val !== '' && val !== undefined && val !== null ? Number(val) : null;
+        }
+        return acc;
+      }, {} as Record<string, any>),
+      ...Object.keys(c.extras).reduce(
+        (acc, k) => ({
+          ...acc,
+          [(extrasList as any[]).find((e: any) => e.id === k)?.apiKey || k]: Number(
+            c.extras[k]
+          ),
+        }),
+        {}
+      ),
+    };
+  }, []);
+
+  const saveQueueRef = useRef<Array<{ id: string; payload: any; resolve: () => void; reject: (err: any) => void }>>([]);
+  const isSavingRef = useRef(false);
+
+  const queueSave = useCallback((id: string, payload: any, resolve: () => void, reject: (err: any) => void) => {
+    const existingIdx = saveQueueRef.current.findIndex(item => item.id === id);
+    if (existingIdx !== -1) {
+      const oldResolve = saveQueueRef.current[existingIdx].resolve;
+      const oldReject = saveQueueRef.current[existingIdx].reject;
+      saveQueueRef.current[existingIdx].payload = payload;
+      saveQueueRef.current[existingIdx].resolve = () => {
+        oldResolve();
+        resolve();
+      };
+      saveQueueRef.current[existingIdx].reject = (err) => {
+        oldReject(err);
+        reject(err);
+      };
+    } else {
+      saveQueueRef.current.push({ id, payload, resolve, reject });
+    }
+    processSaveQueue();
+  }, []);
+
+  const processSaveQueue = useCallback(async () => {
+    if (isSavingRef.current || saveQueueRef.current.length === 0) return;
+    isSavingRef.current = true;
+    setIsAutoSaving(true);
+    try {
+      while (saveQueueRef.current.length > 0) {
+        const item = saveQueueRef.current.shift();
+        if (item) {
+          try {
+            await LeadService.updateCalculator(item.id, item.payload);
+            item.resolve();
+          } catch (err) {
+            item.reject(err);
+          }
+        }
+      }
+      const now = new Date();
+      setLastUpdatedAt(
+        now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
+      );
+    } catch (err) {
+      console.warn('Queue save failed', err);
+    } finally {
+      isSavingRef.current = false;
+      setIsAutoSaving(false);
+      isAutoSavingRef.current = false;
+      if (saveQueueRef.current.length > 0) {
+        processSaveQueue();
+      }
+    }
+  }, []);
+
   const saveCalculator = async (data: any) => {
-    if (!data?._id || isAutoSavingRef.current) return;
+    if (!data?._id) return;
     try {
       setIsAutoSaving(true);
+      isAutoSavingRef.current = true;
 
-      // Check if title changed to trigger auto_rename log
       const oldTitle = lastSavedTitlesRef.current[data._id];
       const newTitle = data.name;
       if (oldTitle && newTitle && oldTitle !== newTitle) {
@@ -709,13 +861,64 @@ export const useDealCalculator = (lead: any) => {
               appointmentId: data.appointmentId || appointmentId,
               calculatorTitle: newTitle,
               action: 'calculator_auto_renamed',
+              leadId,
+              resetCycle: 0,
             },
           });
         }
       } else if (!oldTitle && newTitle) {
         lastSavedTitlesRef.current[data._id] = newTitle;
       }
-      isAutoSavingRef.current = true;
+
+      const changedCalcData = { ...data };
+      const freshCalculators = calculators.map((c) =>
+        c._id === data._id ? changedCalcData : c
+      );
+
+      const snapshot = freshCalculators;
+      const newTitles = getUpdatedCalculatorTitles(snapshot, getRetailPrice);
+
+      const saveOrder = computeTitleSaveOrder({
+        allCalculators: freshCalculators,
+        changedCalcId: data._id,
+        changedCalcData,
+        getTitles: getUpdatedCalculatorTitles,
+        getRetailPrice,
+      });
+
+      const savedIds = new Set(saveOrder.map((entry) => entry.calculatorId));
+
+      freshCalculators.forEach((c) => {
+        if (!c._id) return;
+        const currentTitle = c.title || c.name || '';
+        const newTitle = newTitles[c._id];
+        if (newTitle && currentTitle && currentTitle !== newTitle && !savedIds.has(c._id)) {
+          const payloadBase = c._id === data._id ? changedCalcData : c;
+          saveOrder.unshift({
+            calculatorId: c._id,
+            appointmentId: payloadBase.appointmentId || appointmentId,
+            newTitle: newTitle,
+            data: { ...payloadBase, title: newTitle },
+          });
+          savedIds.add(c._id);
+        }
+      });
+
+      const updatedTitlesMap: Record<string, string> = {};
+      saveOrder.forEach((entry) => {
+        updatedTitlesMap[entry.calculatorId] = entry.newTitle;
+      });
+
+      setCalculators((prevCalcs) =>
+        prevCalcs.map((c) => {
+          if (updatedTitlesMap[c._id]) {
+            return { ...c, name: updatedTitlesMap[c._id] };
+          }
+          return c;
+        })
+      );
+
+      const displacedEntries = saveOrder.slice(0, -1);
 
       let rawDrops = (data.dropPrice || []).map(({ _clientId, ...rest }: any) => rest);
       const targetApptId = data.appointmentId || appointmentId;
@@ -744,54 +947,40 @@ export const useDealCalculator = (lead: any) => {
         }
       }
 
-      const payload = {
-        title: data.name,
-        position: data.position,
-        gutter5DsE: Number(data.inputs.gutter5DsE),
-        gutter6Ft1: Number(data.inputs.gutter6Ft1),
-        gutter7DsE: Number(data.inputs.gutter7DsE),
-        miters: Number(data.inputs.miters),
-        endCaps: Number(data.inputs.endCaps),
-        spoutSavers: Number(data.inputs.spoutSavers),
-        versaMaxFt1: Number(data.inputs.versaMaxFt1),
-        versaMaxFt2: Number(data.inputs.versaMaxFt2),
-        versaMaxFt3: Number(data.inputs.versaMaxFt3),
-        versa6Ft1: Number(data.inputs.versa6Ft1),
-        versa7Ft1: Number(data.inputs.versa7Ft1),
-        filter45Ft1: Number(data.inputs.filter45Ft1),
-        versa6Ft2: Number(data.inputs.versa6Ft2),
-        versa7Ft2: Number(data.inputs.versa7Ft2),
-        filter45Ft2: Number(data.inputs.filter45Ft2),
-        versa6Ft3: Number(data.inputs.versa6Ft3),
-        versa7Ft3: Number(data.inputs.versa7Ft3),
-        filter45Ft3: Number(data.inputs.filter45Ft3),
-        ckToInstallers: Number(data.inputs.ckToInstallers),
-        extraLabor: Number(data.inputs.extraLabor),
-        paymentMethod: data.inputs.paymentPlan,
-        pricemarkup: data.inputs.markup,
-        price: data.price,
-        downPayment: data.downPayment,
-        isRolloutConfirmed: data.isRolloutConfirmed,
-        isDefaultPayment: data.isDefaultPayment,
-        discounts: data.discounts,
-        discountPercentage: Number(data.inputs.discountPercentage || 15),
-        isDefaultDiscount: !!data.inputs.isDefaultDiscount,
-        dropPrice: rawDrops,
-        ...Object.keys(data.extras).reduce(
-          (acc, k) => ({
-            ...acc,
-            [(extrasList as any[]).find((e: any) => e.id === k)?.apiKey || k]: Number(
-              data.extras[k]
-            ),
-          }),
-          {}
-        ),
-      };
-      await LeadService.updateCalculator(data._id, payload);
-      const now = new Date();
-      setLastUpdatedAt(
-        now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
-      );
+      for (const entry of displacedEntries) {
+        const userId = user?._id || user?.id;
+        if (userId) {
+          logEvent('auto_rename', {
+            user_id: userId,
+            created_by: userId,
+            module_type: 'calculator',
+            meta: {
+              calculatorId: entry.calculatorId,
+              appointmentId: entry.appointmentId || appointmentId,
+              calculatorTitle: entry.newTitle,
+              action: 'calculator_auto_renamed',
+              leadId,
+              resetCycle: 0,
+            },
+          });
+        }
+      }
+
+      const promises = saveOrder.map((entry) => {
+        let calcData = entry.data;
+        if (entry.calculatorId === data._id) {
+          calcData = { ...data, dropPrice: rawDrops };
+        }
+        const payload = toApiPayload(calcData, entry.newTitle);
+        return new Promise<void>((resolve, reject) => {
+          queueSave(entry.calculatorId, payload, resolve, reject);
+        });
+      });
+
+      await Promise.all(promises);
+      saveOrder.forEach((entry) => {
+        lastSavedTitlesRef.current[entry.calculatorId] = entry.newTitle;
+      });
       isPendingSave.current = false;
     } catch (e) {
       console.warn('Auto-save failed', e);
@@ -819,14 +1008,14 @@ export const useDealCalculator = (lead: any) => {
   useEffect(() => {
     const timer = setInterval(() => {
       if (isPendingSave.current && !isAutoSavingRef.current && latestActiveRef.current) {
-        saveCalculator(latestActiveRef.current);
+        saveCalculatorRef.current(latestActiveRef.current);
       }
     }, 3000);
 
     return () => {
       clearInterval(timer);
       if (isPendingSave.current && latestActiveRef.current) {
-        saveCalculator(latestActiveRef.current);
+        saveCalculatorRef.current(latestActiveRef.current);
       }
     };
   }, []);
@@ -855,7 +1044,7 @@ export const useDealCalculator = (lead: any) => {
       const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
 
       const fullPayload = {
-        title: '.',
+        title: '',
         position: nextPosition,
         ...INITIAL_INPUTS,
         paymentPlan: defaultPay,
@@ -883,7 +1072,7 @@ export const useDealCalculator = (lead: any) => {
             calculatorTitle: createdCalc.name,
             isFirstCalculator: false,
             calculatorPosition: createdCalc.position ?? nextPosition,
-            action: 'calculator_created',
+            leadId,
           });
           const inheritedPaymentMethod = defaultPay || '';
           if (inheritedPaymentMethod) {
@@ -935,11 +1124,19 @@ export const useDealCalculator = (lead: any) => {
       const positions = calculators.map((c) => c.position ?? 0);
       const nextPosition = positions.length > 0 ? Math.max(...positions) + 1 : 1;
 
-      const cleanBaseName = duplicate.name
-        .replace(/⚠️/g, '')
-        .replace(/\s\((SM|MD|LG|XL|XXL(-[0-9])?)\)$/i, '')
-        .trim();
-      const warningTitle = `⚠️ ${cleanBaseName} ⚠️`;
+      const presentComponents = getPresentComponents(duplicate);
+      const hasNoComponents = presentComponents.size === 0;
+
+      let warningTitle: string;
+      if (hasNoComponents) {
+        warningTitle = '';
+      } else {
+        const cleanBaseName = duplicate.name
+          .replace(/⚠️/g, '')
+          .replace(/\s\((SM|MD|LG|XL|XXL(-[0-9])?)\)$/i, '')
+          .trim();
+        warningTitle = `⚠️ ${cleanBaseName} ⚠️`;
+      }
 
       const dataExcludingKeys: any = {
         title: warningTitle,
@@ -1022,8 +1219,7 @@ export const useDealCalculator = (lead: any) => {
             newCalculatorTitle: sanitizeCalculatorLogTitle(warningTitle),
             appointmentId: apptId,
             position: nextPosition,
-            action: 'Calculator',
-            duplicateAction: 'calculator_duplicated',
+            action: 'calculator_duplicated',
           },
         },
       });
@@ -1068,10 +1264,18 @@ export const useDealCalculator = (lead: any) => {
     }));
 
     const getRetailPrice = (calc: any) => {
-      const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
-        seniorVet: false,
-        preOrder: false,
-      });
+      const res = calculateQuote(
+        calc.inputs,
+        calc.extras,
+        '3',
+        '100',
+        'check',
+        { seniorVet: false, preOrder: false },
+        pricing,
+        markups,
+        paymentPlans,
+        calc.inputs
+      );
       return res.baseRetailTotal;
     };
     const titles = getUpdatedCalculatorTitles(updated, getRetailPrice);
@@ -1163,10 +1367,18 @@ export const useDealCalculator = (lead: any) => {
 
         // Re-calculate pricing/names to clear duplicate warning signs if no duplicate exists anymore
         const getRetailPrice = (calc: any) => {
-          const res = calculateQuote(calc.inputs, calc.extras, '3', '100', 'check', {
-            seniorVet: false,
-            preOrder: false,
-          });
+          const res = calculateQuote(
+            calc.inputs,
+            calc.extras,
+            '3',
+            '100',
+            'check',
+            { seniorVet: false, preOrder: false },
+            pricing,
+            markups,
+            paymentPlans,
+            calc.inputs
+          );
           return res.baseRetailTotal;
         };
         const titles = getUpdatedCalculatorTitles(remaining, getRetailPrice);

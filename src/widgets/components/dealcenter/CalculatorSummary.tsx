@@ -56,6 +56,33 @@ const getOrdinal = (n: number) => {
   return n + 'th';
 };
 
+function getPlanLabel(key: string): string {
+  if (!key) return '';
+
+  if (key === 'check') return 'CK';
+  if (key === 'mcVisaDscvr') return 'MC/VISA';
+  if (key === 'amex') return 'AMEX';
+
+  if (key === 'lowes_ach') return 'ACH';
+  if (key === 'lowes_cc') return 'CC';
+
+  if (key.startsWith('greensky')) {
+    return `GS ${key.replace('greensky', '')}`;
+  }
+
+  if (key.startsWith('wf')) {
+    return `WF ${key.replace('wf', '')}`;
+  }
+
+  if (key.startsWith('lowes_')) {
+    const number = key.replace('lowes_', '').replace('m', '');
+    return `Lowes ${number}M`;
+  }
+
+  return key;
+}
+
+
 const alpha = (hex: string, opacity: number) => {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -456,8 +483,17 @@ export const CalculatorSummary = ({
             pointerEvents="auto"
             className={`flex-1 flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}
           >
-            {calculators.length <= 3 ? (
-              <View className="flex-1 flex-row">
+            <View className="flex-1 relative flex-row items-center h-full">
+              <ScrollView
+                ref={summaryTabsScrollViewRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                className="flex-1"
+                scrollEventThrottle={16}
+                onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
+                onContentSizeChange={(w) => setContentWidth(w)}
+                onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+              >
                 {calculators.map((calc: any, idx: number) => {
                   const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
                   const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
@@ -468,116 +504,116 @@ export const CalculatorSummary = ({
                     <TouchableOpacity
                       key={idx}
                       onPress={() => setActiveIdx(idx)}
-                      className={`flex-1 flex-row items-center justify-center h-full border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                      onLayout={(e) => onTabLayout(idx, e)}
+                      className={`flex-row items-center h-full px-3 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
                         }`}
                     >
-                      {isLocked && (
-                        <Ionicons
-                          name="lock-closed"
-                          size={10}
-                          color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
-                          style={{ marginRight: 4 }}
-                        />
-                      )}
-                      {isTabDuplicate && (
-                        <Ionicons
-                          name="warning"
-                          size={10}
-                          color="#FF990F"
-                          style={{ marginRight: 4 }}
-                        />
-                      )}
-                      <Text
-                        numberOfLines={1}
-                        className={`font-black  ${calculators.length > 1 ? 'text-[10px]' : 'text-sm'
-                          } ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'}`}
-                      >
-                        {!getCalculatorBaseName(calc) ? '' : calc.name || `R${idx + 1}`}
-                      </Text>
+                      <View className="flex-row items-center">
+                        {isLocked && (
+                          <Ionicons
+                            name="lock-closed"
+                            size={12}
+                            color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
+                            style={{ marginRight: 6 }}
+                          />
+                        )}
+                        {isTabDuplicate && (
+                          <Ionicons
+                            name="warning"
+                            size={12}
+                            color="#FF990F"
+                            style={{ marginRight: 6 }}
+                          />
+                        )}
+                        <Text
+                          numberOfLines={1}
+                          className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
+                            }`}
+                        >
+                          {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 })}
-              </View>
-            ) : (
-              <View className="flex-1 relative flex-row items-center h-full">
-                <ScrollView
-                  ref={summaryTabsScrollViewRef}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  className="flex-1"
-                  scrollEventThrottle={16}
-                  onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
-                  onContentSizeChange={(w) => setContentWidth(w)}
-                  onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
-                >
-                  {calculators.map((calc: any, idx: number) => {
-                    const isLocked = !!calc.dropPrice?.find((d: any) => d.status === 'accepted');
-                    const isTabDuplicate = calculators.some((c: any, cIdx: number) => {
-                      if (idx === cIdx) return false;
-                      return isCalculatorIdentical(calc, c);
-                    });
-                    return (
-                      <TouchableOpacity
-                        key={idx}
-                        onPress={() => setActiveIdx(idx)}
-                        onLayout={(e) => onTabLayout(idx, e)}
-                        className={`flex-row items-center h-full px-2 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
-                          }`}
-                      >
-                        <View className="flex-row items-center">
-                          {isLocked && (
-                            <Ionicons
-                              name="lock-closed"
-                              size={12}
-                              color={idx === activeIdx ? '#16A34A' : '#94A3B8'}
-                              style={{ marginRight: 6 }}
-                            />
-                          )}
-                          {isTabDuplicate && (
-                            <Ionicons
-                              name="warning"
-                              size={12}
-                              color="#FF990F"
-                              style={{ marginRight: 6 }}
-                            />
-                          )}
-                          <Text
-                            className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
-                              }`}
-                          >
-                            {!getCalculatorBaseName(calc) ? '' : calc.name || `Rollout ${idx + 1}`}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+              </ScrollView>
 
-                {/* Left Blur/Fade Overlay */}
-                {scrollOffset > 5 && (
-                  <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
-                    <BlurView
-                      style={StyleSheet.absoluteFill}
-                      blurType={isDark ? 'dark' : 'light'}
-                      blurAmount={1}
-                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
-                    />
-                  </View>
-                )}
+              {/* Left Blur/Fade Overlay */}
+              {scrollOffset > 5 && (
+                <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                  {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
+                    <View
+                      key={`left-blur-${idx}`}
+                      style={{
+                        width: 4,
+                        height: '100%',
+                        opacity: opacity,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <BlurView
+                        style={{
+                          position: 'absolute',
+                          left: -idx * 4,
+                          top: 0,
+                          bottom: 0,
+                          width: 24,
+                        }}
+                        blurType={isDark ? 'dark' : 'light'}
+                        blurAmount={10}
+                        reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255, 255, 255, 1)'}
+                      />
+                      {!isDark && (
+                        <View
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: 'rgba(255, 255, 255, 0.45)' }
+                          ]}
+                        />
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
 
-                {/* Right Blur/Fade Overlay */}
-                {scrollOffset + scrollViewWidth < contentWidth - 5 && (
-                  <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, overflow: 'hidden' }} pointerEvents="none">
-                    <BlurView
-                      style={StyleSheet.absoluteFill}
-                      blurType={isDark ? 'dark' : 'light'}
-                      blurAmount={1}
-                      reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
-                    />
-                  </View>
-                )}
-              </View>
-            )}
+              {/* Right Blur/Fade Overlay */}
+              {scrollOffset + scrollViewWidth < contentWidth - 5 && (
+                <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                  {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
+                    <View
+                      key={`right-blur-${idx}`}
+                      style={{
+                        width: 4,
+                        height: '100%',
+                        opacity: opacity,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <BlurView
+                        style={{
+                          position: 'absolute',
+                          left: -idx * 4,
+                          top: 0,
+                          bottom: 0,
+                          width: 24,
+                        }}
+                        blurType={isDark ? 'dark' : 'light'}
+                        blurAmount={10}
+                        reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255, 255, 255, 1)'}
+                      />
+                      {!isDark && (
+                        <View
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: 'rgba(255, 255, 255, 0.45)' }
+                          ]}
+                        />
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
           </View>
         </View>
 
@@ -1263,7 +1299,7 @@ export const CalculatorSummary = ({
                         }}
                         onSubmitEditing={() => {
                           const num = Number(dropValue.replace(/[^0-9.]/g, ''));
-                          const costPrice = Math.round(results.price50);
+                          const costPrice = Math.round(results.costAtCheck ?? results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
 
                           if (num > 0) {
@@ -1297,7 +1333,7 @@ export const CalculatorSummary = ({
                         }}
                         onBlur={() => {
                           const num = Number(dropValue.replace(/[^0-9.]/g, ''));
-                          const costPrice = Math.round(results.price50);
+                          const costPrice = Math.round(results.costAtCheck ?? results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
 
                           if (num > 0) {
@@ -1350,7 +1386,7 @@ export const CalculatorSummary = ({
                     onPress={() => {
                       if (showDropInput) {
                         const num = Number(dropValue.replace(/[^0-9.]/g, ''));
-                        const costPrice = Math.round(results.price50);
+                        const costPrice = Math.round(results.costAtCheck ?? results.price50);
                         const endPrice = Number(activeCalc.price) || 0;
 
                         if (num > 0) {
@@ -1922,10 +1958,7 @@ export const CalculatorSummary = ({
                         const isSelected = selectedPlan === planKey;
                         const belowMin = !!(plan?.minPrice && currentDropPrice > 0 && currentDropPrice < plan.minPrice);
 
-                        const planCode = planKey
-                          .toUpperCase()
-                          .replace(/([A-Z]+)(\d+)/, '$1 $2');
-                        const planTitle = planCode || plan.label.split('(')[0].trim();
+                        const planTitle = getPlanLabel(planKey);
                         const planDesc = plan.label.includes('(')
                           ? plan.label.split('(')[1].split(')')[0]
                           : plan.label;

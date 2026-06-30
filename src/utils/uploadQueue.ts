@@ -3,6 +3,7 @@ import Geolocation from 'react-native-geolocation-service';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { LeadService } from '../services/api/leads';
 import { logEvent } from '../services/api/LoggerService';
+import { queryClient } from '../services/api/queryClient';
 
 export interface UploadQueueItem {
   id: string;
@@ -78,6 +79,22 @@ class UploadQueueManager {
     return newItem.id;
   }
 
+  private async checkOnline(): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      await fetch('https://www.google.com', {
+        method: 'HEAD',
+        signal: controller.signal,
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      clearTimeout(timeoutId);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   public async processQueue() {
     if (this.isProcessing) return;
     this.isProcessing = true;
@@ -85,6 +102,14 @@ class UploadQueueManager {
     console.log(`[UploadQueue] Processing started. Queue length: ${this.queue.length}`);
 
     while (this.queue.length > 0) {
+      const isOnline = await this.checkOnline();
+      if (!isOnline) {
+        console.log('[UploadQueue] Device is offline. Pausing queue processing.');
+        // Schedule next check in 5 seconds
+        setTimeout(() => this.processQueue(), 5000);
+        break;
+      }
+
       const activeItem = this.queue[0];
       try {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
@@ -95,11 +120,20 @@ class UploadQueueManager {
         this.saveQueue();
         console.log(`[UploadQueue] Upload success: ${activeItem.id}`);
       } catch (error) {
+        // Double-check if we became offline during the upload attempt
+        const stillOnline = await this.checkOnline();
+        if (!stillOnline) {
+          console.log('[UploadQueue] Connection lost during upload. Retrying without incrementing retry count.');
+          // Schedule next check in 5 seconds
+          setTimeout(() => this.processQueue(), 5000);
+          break;
+        }
+
         const retryCount = (activeItem.retryCount || 0) + 1;
         console.error(`[UploadQueue] Upload failed for item: ${activeItem.id} (attempt ${retryCount}):`, error);
 
         if (retryCount >= 5) {
-          // Permanent failure after 5 attempts — drop this item to unblock the queue
+          // Permanent failure after 5 attempts while online (e.g. invalid file, server rejection) — drop this item
           console.warn(`[UploadQueue] Giving up on item ${activeItem.id} after ${retryCount} attempts. Dropping.`);
           this.queue.shift();
           this.saveQueue();
@@ -107,8 +141,8 @@ class UploadQueueManager {
           // Update retry count in place and persist
           this.queue[0] = { ...activeItem, retryCount };
           this.saveQueue();
-          // Wait before retrying, using exponential backoff (5s, 10s, 20s...)
-          const backoffMs = Math.min(5000 * retryCount, 30000);
+          // Wait before retrying (exponential backoff 3s, 6s, 12s...)
+          const backoffMs = Math.min(3000 * retryCount, 15000);
           console.log(`[UploadQueue] Waiting ${backoffMs}ms before retry...`);
           await new Promise<void>(resolve => setTimeout(resolve, backoffMs));
         }
@@ -118,6 +152,7 @@ class UploadQueueManager {
     this.isProcessing = false;
     console.log('[UploadQueue] Processing finished.');
   }
+
 
   private async uploadItem(item: UploadQueueItem): Promise<void> {
     // 1. Get location with 5 mins cache
@@ -157,17 +192,48 @@ class UploadQueueManager {
     formData.append('images', JSON.stringify(imageInfo));
     formData.append('category', 'salesPhotos');
 
+    // Fetch existing photo URLs before upload to prevent matching them in the success handler
+    const existingUrls = new Set<string>();
+    const userId = item.userId;
+    if (userId) {
+      try {
+        const beforeLeadRes = await LeadService.workLead(item.leadId, userId);
+        const beforeLead = beforeLeadRes.data?.data || beforeLeadRes.data;
+        if (beforeLead?.salesPhotos && Array.isArray(beforeLead.salesPhotos)) {
+          beforeLead.salesPhotos.forEach((p: any) => {
+            if (p.s3url) existingUrls.add(p.s3url);
+          });
+        }
+      } catch (err) {
+        console.warn('[UploadQueue] Failed to fetch existing photos before upload:', err);
+      }
+    }
+
     // 3. Upload S3 image
     const response = await LeadService.uploadImages(item.leadId, formData);
 
     // 3b. Log analytical event on upload success
     try {
       const isAnnotated = item.subcategory?.includes('(Annotated)');
-      const userId = item.userId;
       if (userId) {
         let s3url = '';
         let bucketName = '';
-        try {
+
+        // Try to match the photo from the upload response first
+        const responseSalesPhotos = response.data?.salesPhotos || response.data?.data?.salesPhotos || [];
+        const immediateMatch = [...responseSalesPhotos].reverse().find(
+          (p: any) =>
+            p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+            p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
+            p.s3url &&
+            !existingUrls.has(p.s3url)
+        );
+
+        if (immediateMatch && immediateMatch.s3url) {
+          s3url = immediateMatch.s3url;
+          bucketName = immediateMatch.bucketName || '';
+        } else {
+          // Fallback to polling
           let refreshAttempt = 0;
           const maxRefreshAttempts = 5;
           let waitTime = 1000;
@@ -182,7 +248,9 @@ class UploadQueueManager {
                 const matched = [...refreshedLead.salesPhotos].reverse().find(
                   (p: any) =>
                     p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-                    p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase()
+                    p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
+                    p.s3url &&
+                    !existingUrls.has(p.s3url)
                 );
                 if (matched && matched.s3url) {
                   s3url = matched.s3url;
@@ -197,8 +265,14 @@ class UploadQueueManager {
             refreshAttempt++;
             waitTime = Math.min(waitTime + 1000, 5000);
           }
-        } catch (err) {
-          console.warn('[UploadQueue] Could not extract s3url by polling:', err);
+        }
+
+        // Invalidate React Query cache to refresh the UI immediately for each upload
+        try {
+          queryClient.invalidateQueries({ queryKey: ['leads'] });
+          queryClient.invalidateQueries({ queryKey: ['lead', item.leadId] });
+        } catch (qcErr) {
+          console.warn('[UploadQueue] Failed to invalidate queries:', qcErr);
         }
 
         logEvent('add', {
@@ -227,6 +301,7 @@ class UploadQueueManager {
     } catch (logErr) {
       console.warn('[UploadQueue] Analytics logging failed:', logErr);
     }
+
 
     // 4. Cleanup local cache file if applicable
     try {

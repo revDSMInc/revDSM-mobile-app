@@ -255,15 +255,19 @@ export default function JobBuilderScreen() {
     async (sectionKey: string) => {
       const uId = user?._id || user?.id;
       if (!uId || !calculatorData || autoFieldsLoggedRef.current[sectionKey]) return;
-      await logAutoPopulatedSection({
-        userId: uId,
-        section: sectionKey,
-        calculatorData,
-        leadId,
-        jobBuilderId: leadId,
-        alreadyLogged: autoFieldsLoggedRef.current,
-        onSectionLogged: markSectionLogged,
-      });
+      try {
+        await logAutoPopulatedSection({
+          userId: uId,
+          section: sectionKey,
+          calculatorData,
+          leadId,
+          jobBuilderId: leadId,
+          alreadyLogged: autoFieldsLoggedRef.current,
+          onSectionLogged: markSectionLogged,
+        });
+      } catch (err) {
+        console.warn(`[JobBuilder] auto-populated logging failed for section ${sectionKey}:`, err);
+      }
     },
     [user, calculatorData, leadId, markSectionLogged]
   );
@@ -301,15 +305,18 @@ export default function JobBuilderScreen() {
     }
   }, [user, leadId, calculatorData, leadData, outcomeForm]);
 
-  // Init-time auto-populated logs — gutter + lighting (web parity)
+  // Init-time auto-populated logs — first available step + lighting (web parity)
   useEffect(() => {
     const uId = user?._id || user?.id;
     if (!uId || !calculatorData || initDoneRef.current) return;
 
     initDoneRef.current = true;
-    fireAutoPopulatedSection('gutter');
+    const firstSectionKey = availableStepsInfo.find((s: any) => !s.isLocked)?.category;
+    if (firstSectionKey) {
+      fireAutoPopulatedSection(firstSectionKey);
+    }
     fireAutoPopulatedSection('lighting');
-  }, [user, calculatorData, fireAutoPopulatedSection]);
+  }, [user, calculatorData, fireAutoPopulatedSection, availableStepsInfo]);
 
   // 2. Active step view and auto-populated logging
   useEffect(() => {
@@ -373,10 +380,10 @@ export default function JobBuilderScreen() {
           meta: {
             draft: true,
             leadId,
-            fieldCategory: fieldInfo.fieldCategory || getFieldCategory(fieldInfo.fieldName),
-            autoSelected: false,
-            locked: false,
             ...fieldInfo,
+            fieldCategory: fieldInfo.fieldCategory || getFieldCategory(fieldInfo.fieldName),
+            autoSelected: fieldInfo.autoSelected || false,
+            locked: fieldInfo.locked || false,
           },
         });
       }, 1000);
