@@ -38,6 +38,10 @@ interface AgreementSignatureModalProps {
     buyerSignature?: any;
     buyerInitials?: any;
   };
+  pdfDimensions?: {
+    width: number;
+    height: number;
+  };
 }
 
 export const AgreementSignatureModal = ({
@@ -49,6 +53,7 @@ export const AgreementSignatureModal = ({
   onSuccess,
   payload,
   signatureFields,
+  pdfDimensions,
 }: AgreementSignatureModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -334,11 +339,12 @@ export const AgreementSignatureModal = ({
                         }}
                       />
 
-                      {/* Precision Signature/Initial Overlays */}
                       {signatureFields &&
                         containerLayout.width > 0 &&
                         (() => {
-                          const PDF_ASPECT_RATIO = 0.7727; // 8.5 / 11
+                          const pdfWidth = pdfDimensions?.width ?? 794;
+                          const pdfHeight = pdfDimensions?.height ?? 1028;
+                          const PDF_ASPECT_RATIO = pdfWidth / pdfHeight;
                           const containerAR = containerLayout.width / containerLayout.height;
 
                           let renderedW, renderedH, offsetX, offsetY;
@@ -354,20 +360,12 @@ export const AgreementSignatureModal = ({
                             offsetY = (containerLayout.height - renderedH) / 2;
                           }
 
-                          // ── Compute absolute pixel heights so we can position boxes
-                          // by their BOTTOM edge (the Y value = where the box ends, not starts).
-                          const initialsBoxH = Math.max(
-                            renderedH * 0.035,
-                            (Number(signatureFields.buyerInitials?.heightPercent ?? 0) / 100) * renderedH * 0.8
-                          );
-                          const signatureBoxH = Math.max(
-                            renderedH * 0.05,
-                            (Number(signatureFields.buyerSignature?.heightPercent ?? 0) / 100) * renderedH * 0.65
-                          );
+                          const initialsBoxH = (Number(signatureFields.buyerInitials?.heightPercent ?? 0) / 100) * renderedH;
+                          const signatureBoxH = (Number(signatureFields.buyerSignature?.heightPercent ?? 0) / 100) * renderedH;
 
                           return (
                             <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
-                              {/* Buyer Initials Box — bottom edge sits at yPercent */}
+                              {/* Buyer Initials Box */}
                               {signatureFields.buyerInitials &&
                                 currentPage === signatureFields.buyerInitials.page && (
                                   <TouchableOpacity
@@ -380,18 +378,14 @@ export const AgreementSignatureModal = ({
                                       left:
                                         offsetX +
                                         (Number(signatureFields.buyerInitials.xPercent) / 100) *
-                                        renderedW -
-                                        renderedW * 0.01,
-                                      // Y = bottom of box → subtract height so box grows upward
+                                        renderedW,
                                       top:
                                         offsetY +
                                         (Number(signatureFields.buyerInitials.yPercent) / 100) *
-                                        renderedH -
-                                        initialsBoxH,
-                                      width: Math.max(
-                                        renderedW * 0.15,
-                                        (Number(signatureFields.buyerInitials.widthPercent) / 100) * renderedW * 1.2
-                                      ),
+                                        renderedH,
+                                      width:
+                                        (Number(signatureFields.buyerInitials.widthPercent) / 100) *
+                                        renderedW,
                                       height: initialsBoxH,
                                       backgroundColor:
                                         initialsPaths.length > 0
@@ -407,10 +401,10 @@ export const AgreementSignatureModal = ({
                                   >
                                     {initialsPaths.length === 0 ? (
                                       <View style={{ alignItems: 'center' }}>
-                                        <Text style={{ fontSize: 7, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: -0.5 }}>
+                                        {/* <Text style={{ fontSize: 7, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: -0.5 }}>
                                           Initial
                                         </Text>
-                                        <Icon name="pencil-plus" size={12} color="#94A3B8" />
+                                        <Icon name="pencil-plus" size={12} color="#94A3B8" /> */}
                                       </View>
                                     ) : (
                                       <Svg
@@ -434,7 +428,7 @@ export const AgreementSignatureModal = ({
                                   </TouchableOpacity>
                                 )}
 
-                              {/* Buyer Signature Box — bottom edge sits at yPercent */}
+                              {/* Buyer Signature Box */}
                               {signatureFields.buyerSignature &&
                                 currentPage === signatureFields.buyerSignature.page && (
                                   <TouchableOpacity
@@ -447,18 +441,14 @@ export const AgreementSignatureModal = ({
                                       left:
                                         offsetX +
                                         (Number(signatureFields.buyerSignature.xPercent) / 100) *
-                                        renderedW -
-                                        renderedW * 0.005 + 10,
-                                      // Y = bottom of box → subtract height so box grows upward
+                                        renderedW,
                                       top:
                                         offsetY +
                                         (Number(signatureFields.buyerSignature.yPercent) / 100) *
-                                        renderedH -
-                                        signatureBoxH,
-                                      width: Math.max(
-                                        renderedW * 0.16,
-                                        (Number(signatureFields.buyerSignature.widthPercent) / 100) * renderedW * 0.65
-                                      ),
+                                        renderedH,
+                                      width:
+                                        (Number(signatureFields.buyerSignature.widthPercent) / 100) *
+                                        renderedW,
                                       height: signatureBoxH,
                                       backgroundColor:
                                         signaturePaths.length > 0
@@ -474,10 +464,10 @@ export const AgreementSignatureModal = ({
                                   >
                                     {signaturePaths.length === 0 ? (
                                       <View style={{ alignItems: 'center' }}>
-                                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 }}>
+                                        {/* <Text style={{ fontSize: 8, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 }}>
                                           Sign Here
                                         </Text>
-                                        <Icon name="signature-freehand" size={16} color="#94A3B8" />
+                                        <Icon name="signature-freehand" size={16} color="#94A3B8" /> */}
                                       </View>
                                     ) : (
                                       <Svg
@@ -620,10 +610,10 @@ export const AgreementSignatureModal = ({
                 </View>
               </View>
             )}
-            </View>
-          </SafeAreaProvider>
-        </GestureHandlerRootView>
-      </Modal>
+          </View>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </Modal>
   );
 };
 

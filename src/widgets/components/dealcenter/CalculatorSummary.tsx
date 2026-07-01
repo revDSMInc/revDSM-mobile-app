@@ -1297,10 +1297,11 @@ export const CalculatorSummary = ({
                           setDropValue(v);
                           if (error) setError(null);
                         }}
-                        onSubmitEditing={() => {
+                         onSubmitEditing={() => {
                           const num = Number(dropValue.replace(/[^0-9.]/g, ''));
                           const costPrice = Math.round(results.costAtCheck ?? results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
+                          const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
 
                           if (num > 0) {
                             if (num < costPrice) {
@@ -1312,6 +1313,12 @@ export const CalculatorSummary = ({
                             if (endPrice > 0 && num > endPrice) {
                               setError(
                                 `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
+                              );
+                              return;
+                            }
+                            if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && num < WF_HIGH_MIN_PRICE) {
+                              setError(
+                                `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`
                               );
                               return;
                             }
@@ -1335,6 +1342,7 @@ export const CalculatorSummary = ({
                           const num = Number(dropValue.replace(/[^0-9.]/g, ''));
                           const costPrice = Math.round(results.costAtCheck ?? results.price50);
                           const endPrice = Number(activeCalc.price) || 0;
+                          const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
 
                           if (num > 0) {
                             if (num < costPrice) {
@@ -1346,6 +1354,12 @@ export const CalculatorSummary = ({
                             if (endPrice > 0 && num > endPrice) {
                               setError(
                                 `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
+                              );
+                              return;
+                            }
+                            if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && num < WF_HIGH_MIN_PRICE) {
+                              setError(
+                                `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`
                               );
                               return;
                             }
@@ -1399,6 +1413,13 @@ export const CalculatorSummary = ({
                           if (endPrice > 0 && num > endPrice) {
                             setError(
                               `Drop price cannot exceed rollout end price ($${endPrice.toLocaleString()})`
+                            );
+                            return;
+                          }
+                          const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
+                          if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && num < WF_HIGH_MIN_PRICE) {
+                            setError(
+                              `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`
                             );
                             return;
                           }
@@ -1754,6 +1775,25 @@ export const CalculatorSummary = ({
 
           const handleCurrentDecline = () => {
             const price = currentDropPrice;
+            const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
+            const costPrice = Math.round(results.costAtCheck ?? results.price50);
+
+            if (price < costPrice) {
+              Alert.alert(
+                'Invalid Price',
+                `Drop price must be at least the cost price ($${costPrice.toLocaleString()}).`
+              );
+              return;
+            }
+
+            if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && price < WF_HIGH_MIN_PRICE) {
+              Alert.alert(
+                'Invalid Price',
+                `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`
+              );
+              return;
+            }
+
             // Close drop modal immediately and show declined modal right away
             if (showDropModal) setShowDropModal(false);
             if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }
@@ -1767,6 +1807,26 @@ export const CalculatorSummary = ({
           };
 
           const handleCurrentAccept = () => {
+            const price = currentDropPrice;
+            const dropPaymentMethod = selectedPlan || activeCalc.inputs.paymentPlan;
+            const costPrice = Math.round(results.costAtCheck ?? results.price50);
+
+            if (price < costPrice) {
+              Alert.alert(
+                'Invalid Price',
+                `Drop price must be at least the cost price ($${costPrice.toLocaleString()}).`
+              );
+              return;
+            }
+
+            if (WELLS_FARGO_HIGH_KEYS.includes(dropPaymentMethod) && price < WF_HIGH_MIN_PRICE) {
+              Alert.alert(
+                'Invalid Price',
+                `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`
+              );
+              return;
+            }
+
             // Close drop modal immediately and show result modal right away
             if (showDropModal) setShowDropModal(false);
             if (displayDropIndex !== -1) { setDisplayDrop(null); setDisplayDropIndex(-1); }

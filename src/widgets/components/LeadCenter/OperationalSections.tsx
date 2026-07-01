@@ -5,7 +5,7 @@ import YearDropdown from '../../components/YearDropdown';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
-import { RevRenderHistoryModal } from '../../modals/lead-center/RevRenderHistoryModal';
+import { RevRenderHistoryModal, prefetchToLocalCache } from '../../modals/lead-center/RevRenderHistoryModal';
 
 export const ToolsSection = ({
   lead,
@@ -52,15 +52,29 @@ export const ToolsSection = ({
     (j: any) => j.status !== 'completed' && j.status !== 'failed'
   );
   const { data: runs, isLoading, refetch: refetchRuns } = useRevRenderRunsQuery(
-    lead?._id || '',
-    lead?.hasRendered,
-    hasActiveJobs
+    lead?._id || ''
   );
 
   const orderedRuns = React.useMemo(() => {
     const pairs = buildRevRenderPairs(runs || []);
     return [...pairs].reverse();
   }, [runs]);
+
+  // Pre-fetch all images into persistent filesystem cache early when lead is loaded
+  React.useEffect(() => {
+    if (orderedRuns && orderedRuns.length > 0) {
+      orderedRuns.forEach((run: any) => {
+        const before = run.originalUrl || run.originalS3url;
+        const after = run.generatedUrl || run.generatedS3url;
+        if (before) {
+          prefetchToLocalCache(before);
+        }
+        if (after) {
+          prefetchToLocalCache(after);
+        }
+      });
+    }
+  }, [orderedRuns]);
 
   const [historyModal, setHistoryModal] = useState({ visible: false, index: 0 });
   const [selectedYear, setSelectedYear] = useState(3);

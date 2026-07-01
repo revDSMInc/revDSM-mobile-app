@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, View, TouchableOpacity, StatusBar } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { Modal, View, TouchableOpacity, StatusBar, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../common/MainHeader';
@@ -25,6 +25,7 @@ export default function ZoneCanvasserMap({
   navigation,
 }: ZoneCanvasserMapProps) {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const workMutation = useWorkLeadMutation();
   const z = useZoneCanvasser({ visible, user });
 
@@ -85,28 +86,28 @@ export default function ZoneCanvasserMap({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <SafeAreaProvider>
-        <View
-          className="flex-1"
-          style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
-        >
-        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-        <SafeAreaView edges={['top']} style={{ backgroundColor: '#ffffff' }}>
-          <Header
-            onFilterPress={() => z.setSearchModalVisible(true)}
-            onNavigate={(route: string) => {
-              if (route === 'Leads') {
-                onClose();
-              } else {
-                onClose();
-                setTimeout(() => {
-                  navigation.navigate(route);
-                }, 400);
-              }
-            }}
-          />
-        </SafeAreaView>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={onClose}>
+      <View
+        className="flex-1"
+        style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={isDark ? colors.background : '#101828'} translucent />
+        {(Platform.OS === 'ios' || Platform.OS === 'android') && (
+          <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#101828' }} />
+        )}
+        <Header
+          onFilterPress={() => z.setSearchModalVisible(true)}
+          onNavigate={(route: string) => {
+            if (route === 'Leads') {
+              onClose();
+            } else {
+              onClose();
+              setTimeout(() => {
+                navigation.navigate(route);
+              }, 400);
+            }
+          }}
+        />
 
         {z.isDrawingMode && <DrawingInfoBanner drawType={z.drawType} />}
 
@@ -219,7 +220,6 @@ export default function ZoneCanvasserMap({
           onStartAppointment={handleStartAppointment}
         />
         </View>
-      </SafeAreaProvider>
     </Modal>
   );
 }

@@ -14,10 +14,126 @@ import {
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Reanimated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
+import Reanimated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
+import ReactNativeBlobUtil from 'react-native-blob-util';
+
+// Global Map to track active download promises and prevent duplicate parallel writes/corruption
+const activeDownloads = new Map<string, Promise<boolean>>();
+
+// Helper to resolve clean cache path for pre-signed S3 URL
+const getLocalCachePath = (url: string) => {
+  if (!url) return null;
+  const cleanUrl = url.split('?')[0];
+  const filename = cleanUrl.split('/').pop();
+  if (!filename) return null;
+  return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${filename}`;
+};
+
+// Unified download helper ensuring only one download occurs per cache path
+const downloadImage = (url: string, path: string): Promise<boolean> => {
+  const existingTask = activeDownloads.get(path);
+  if (existingTask) {
+    return existingTask;
+  }
+
+  const promise = (async () => {
+    const tempPath = `${path}.tmp`;
+    try {
+      const exists = await ReactNativeBlobUtil.fs.exists(path);
+      if (exists) return true;
+
+      const res = await ReactNativeBlobUtil.config({ path: tempPath }).fetch('GET', url);
+      const status = res.info().status;
+      if (status === 200) {
+        await ReactNativeBlobUtil.fs.mv(tempPath, path);
+        return true;
+      } else {
+        await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+        return false;
+      }
+    } catch (err) {
+      await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+      return false;
+    } finally {
+      activeDownloads.delete(path);
+    }
+  })();
+
+  activeDownloads.set(path, promise);
+  return promise;
+};
+
+// Prefetch function using local filesystem caching (atomic write)
+export const prefetchToLocalCache = async (url: string) => {
+  const path = getLocalCachePath(url);
+  if (!path) return;
+  await downloadImage(url, path);
+};
+
+// High-performance CachedImage component targeting pre-signed S3 URLs (atomic write)
+const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
+  const [sourceUri, setSourceUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uri) {
+      setSourceUri(null);
+      return;
+    }
+
+    const localPath = getLocalCachePath(uri);
+    if (!localPath) {
+      setSourceUri(uri);
+      return;
+    }
+
+    let isMounted = true;
+
+    ReactNativeBlobUtil.fs.exists(localPath)
+      .then((exists) => {
+        if (!isMounted) return;
+        if (exists) {
+          setSourceUri(`file://${localPath}`);
+        } else {
+          // Use S3 network URL
+          setSourceUri(uri);
+
+          // Cache in the background for subsequent visits, but do NOT change
+          // the active sourceUri mid-load to prevent native React Native image loader bugs/hangs.
+          downloadImage(uri, localPath);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setSourceUri(uri);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [uri]);
+
+  if (!sourceUri) return null;
+
+  return (
+    <Image
+      source={{ uri: sourceUri }}
+      style={style}
+      resizeMode={resizeMode}
+      onLoad={onLoad}
+      onError={() => {
+        // If loading from local file fails, delete it and fallback to network URL
+        if (sourceUri.startsWith('file://')) {
+          const rawPath = sourceUri.replace('file://', '');
+          ReactNativeBlobUtil.fs.unlink(rawPath).catch(() => {});
+          setSourceUri(uri);
+        }
+        if (onError) onError();
+      }}
+    />
+  );
+};
 
 interface RevRenderHistoryModalProps {
   visible: boolean;
@@ -42,10 +158,61 @@ export const RevRenderHistoryModal = ({
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Persistent cache of loaded image runs
+  const [loadedImages, setLoadedImages] = useState<Record<number, { before: boolean; after: boolean }>>({});
+  const [beforeLoaded, setBeforeLoaded] = useState(false);
+  const [afterLoaded, setAfterLoaded] = useState(false);
 
   useEffect(() => {
     setCurrentIndex(initialIndex);
   }, [initialIndex, visible]);
+
+  // Clean up any incomplete/corrupted temp files from the cache directory on mount
+  useEffect(() => {
+    if (visible) {
+      const cacheDir = ReactNativeBlobUtil.fs.dirs.CacheDir;
+      ReactNativeBlobUtil.fs.lstat(cacheDir)
+        .then((files) => {
+          files.forEach((file) => {
+            const isTemp = file.filename.startsWith('revrender_') && file.filename.endsWith('.tmp');
+            const isCorrupted = file.filename.startsWith('revrender_') && Number(file.size) < 10240; // under 10KB is corrupted
+            if (isTemp || isCorrupted) {
+              ReactNativeBlobUtil.fs.unlink(`${cacheDir}/${file.filename}`).catch(() => {});
+            }
+          });
+        })
+        .catch(() => {});
+    }
+  }, [visible]);
+
+  const currentRun = runs[currentIndex];
+  const beforeImage = currentRun ? (currentRun.originalUrl || currentRun.s3UrlOriginal) : null;
+  const afterImage = currentRun ? (currentRun.generatedUrl || currentRun.s3UrlGenerated) : null;
+
+  // Track if current slide is fully loaded (prioritizing persistent cache)
+  useEffect(() => {
+    const cached = loadedImages[currentIndex];
+    setBeforeLoaded(!beforeImage || !!cached?.before);
+    setAfterLoaded(!afterImage || !!cached?.after);
+  }, [currentIndex, loadedImages, beforeImage, afterImage]);
+
+  const isCurrentLoaded = beforeLoaded && afterLoaded;
+
+  const fadeOpacity = useSharedValue(0);
+
+  const fadeAnimStyle = useAnimatedStyle(() => ({
+    opacity: fadeOpacity.value,
+  }));
+
+  // Trigger smooth fade-in whenever current index or its loaded state updates
+  useEffect(() => {
+    if (isCurrentLoaded) {
+      fadeOpacity.value = withTiming(1, { duration: 300 });
+    } else {
+      fadeOpacity.value = 0;
+    }
+  }, [currentIndex, isCurrentLoaded, fadeOpacity]);
 
   useEffect(() => {
     if (visible && runs.length === 0) {
@@ -53,25 +220,24 @@ export const RevRenderHistoryModal = ({
     }
   }, [runs, visible, onClose]);
 
-  // Preload all render images on modal open
+  // Preload ONLY adjacent render images (prev and next) to keep network pipeline clear
   useEffect(() => {
     if (visible && runs && runs.length > 0) {
-      runs.forEach((run) => {
+      const adjacentIndices = [currentIndex - 1, currentIndex + 1];
+      adjacentIndices.forEach((idx) => {
+        const run = runs[idx];
+        if (!run) return;
         const before = run.originalUrl || run.s3UrlOriginal;
         const after = run.generatedUrl || run.s3UrlGenerated;
         if (before) {
-          Image.prefetch(before).catch((err) =>
-            console.warn('[RevRenderHistoryModal] Prefetch before failed:', err)
-          );
+          prefetchToLocalCache(before);
         }
         if (after) {
-          Image.prefetch(after).catch((err) =>
-            console.warn('[RevRenderHistoryModal] Prefetch after failed:', err)
-          );
+          prefetchToLocalCache(after);
         }
       });
     }
-  }, [visible, runs]);
+  }, [visible, runs, currentIndex]);
 
 
   // ── render_result: view — fires on open and when the user navigates to a new render ──
@@ -192,7 +358,7 @@ export const RevRenderHistoryModal = ({
       const userId = user?._id || user?.id;
       const newScale = scale.value;
       if (userId && newScale !== 1) {
-        logEvent('pinch', {
+        runOnJS(logEvent)('pinch', {
           user_id: userId,
           module_type: 'rev_render',
           created_by: userId,
@@ -289,30 +455,13 @@ export const RevRenderHistoryModal = ({
     }
   };
 
-  const currentRun = runs[currentIndex];
   if (!currentRun) return null;
-
-  const beforeImage = currentRun.originalUrl || currentRun.s3UrlOriginal;
-  const afterImage = currentRun.generatedUrl || currentRun.s3UrlGenerated;
 
   return (
     <Modal visible={visible} transparent animationType="fade">
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.95)' }]}>
-          {/* Preload adjacent images in memory */}
-          <View style={{ width: 0, height: 0, opacity: 0, position: 'absolute', overflow: 'hidden' }}>
-            {runs.map((run, idx) => {
-              if (Math.abs(idx - currentIndex) > 1) return null;
-              const before = run.originalUrl || run.s3UrlOriginal;
-              const after = run.generatedUrl || run.s3UrlGenerated;
-              return (
-                <React.Fragment key={idx}>
-                  {before && <Image source={{ uri: before }} style={{ width: 1, height: 1 }} />}
-                  {after && <Image source={{ uri: after }} style={{ width: 1, height: 1 }} />}
-                </React.Fragment>
-              );
-            })}
-          </View>
+
 
           {/* Header */}
           <View style={styles.header}>
@@ -340,52 +489,97 @@ export const RevRenderHistoryModal = ({
             <Reanimated.View
               style={[styles.sliderContainer, { width: imageWidth, height: imageHeight }, imageAnimStyle]}
             >
-              {/* AFTER — background */}
-              <Image
-                source={{ uri: afterImage }}
-                style={{ position: 'absolute', width: imageWidth, height: imageHeight }}
-                resizeMode="cover"
-              />
+              <Reanimated.View style={[{ width: '100%', height: '100%' }, fadeAnimStyle]}>
+                {/* AFTER — background */}
+                {afterImage && (
+                  <CachedImage
+                    uri={afterImage}
+                    style={{
+                      position: 'absolute',
+                      width: imageWidth,
+                      height: imageHeight,
+                    }}
+                    resizeMode="cover"
+                    onLoad={() => {
+                      setAfterLoaded(true);
+                      setLoadedImages((prev) => ({
+                        ...prev,
+                        [currentIndex]: { ...(prev[currentIndex] || { before: false, after: false }), after: true },
+                      }));
+                    }}
+                    onError={() => {
+                      setAfterLoaded(true);
+                      setLoadedImages((prev) => ({
+                        ...prev,
+                        [currentIndex]: { ...(prev[currentIndex] || { before: false, after: false }), after: true },
+                      }));
+                    }}
+                  />
+                )}
 
-              {/* BEFORE — clipped left portion, driven by sliderX */}
-              <Reanimated.View
-                style={[
-                  {
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    height: imageHeight,
-                    overflow: 'hidden',
-                    borderRightWidth: 1,
-                    borderRightColor: 'rgba(255,255,255,0.5)',
-                  },
-                  maskAnimStyle,
-                ]}
-              >
-                <Image
-                  source={{ uri: beforeImage }}
-                  style={{ width: imageWidth, height: imageHeight }}
-                  resizeMode="cover"
-                />
+                {/* BEFORE — clipped left portion, driven by sliderX */}
+                {beforeImage && (
+                  <Reanimated.View
+                    style={[
+                      {
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        height: imageHeight,
+                        overflow: 'hidden',
+                        borderRightWidth: 1,
+                        borderRightColor: 'rgba(255,255,255,0.5)',
+                      },
+                      maskAnimStyle,
+                    ]}
+                  >
+                    <CachedImage
+                      uri={beforeImage}
+                      style={{ width: imageWidth, height: imageHeight }}
+                      resizeMode="cover"
+                      onLoad={() => {
+                        setBeforeLoaded(true);
+                        setLoadedImages((prev) => ({
+                          ...prev,
+                          [currentIndex]: { ...(prev[currentIndex] || { before: false, after: false }), before: true },
+                        }));
+                      }}
+                      onError={() => {
+                        setBeforeLoaded(true);
+                        setLoadedImages((prev) => ({
+                          ...prev,
+                          [currentIndex]: { ...(prev[currentIndex] || { before: false, after: false }), before: true },
+                        }));
+                      }}
+                    />
+                  </Reanimated.View>
+                )}
+
+                {/* Labels */}
+                <View style={[styles.label, styles.labelBefore]}>
+                  <Text style={styles.labelText}>Before</Text>
+                </View>
+                <View style={[styles.label, styles.labelAfter]}>
+                  <Text style={styles.labelText}>After</Text>
+                </View>
+
+                {/* Draggable handle — uses its own RNGH Pan so it doesn't fight PanResponder */}
+                <GestureDetector gesture={sliderPan}>
+                  <Reanimated.View style={[styles.handle, { height: imageHeight }, handleAnimStyle]}>
+                    <View style={styles.handleLine} />
+                    <View style={styles.handleCircle}>
+                      <Icon name="compare-horizontal" size={20} color="#1C252E" />
+                    </View>
+                  </Reanimated.View>
+                </GestureDetector>
               </Reanimated.View>
 
-              {/* Labels */}
-              <View style={[styles.label, styles.labelBefore]}>
-                <Text style={styles.labelText}>Before</Text>
-              </View>
-              <View style={[styles.label, styles.labelAfter]}>
-                <Text style={styles.labelText}>After</Text>
-              </View>
-
-              {/* Draggable handle — uses its own RNGH Pan so it doesn't fight PanResponder */}
-              <GestureDetector gesture={sliderPan}>
-                <Reanimated.View style={[styles.handle, { height: imageHeight }, handleAnimStyle]}>
-                  <View style={styles.handleLine} />
-                  <View style={styles.handleCircle}>
-                    <Icon name="compare-horizontal" size={20} color="#1C252E" />
-                  </View>
-                </Reanimated.View>
-              </GestureDetector>
+              {/* Green loader overlay while images are loading */}
+              {!isCurrentLoaded && (
+                <View style={styles.imageLoaderContainer}>
+                  <ActivityIndicator size="large" color="#72BD00" />
+                </View>
+              )}
             </Reanimated.View>
           </GestureDetector>
 
@@ -513,6 +707,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     overflow: 'hidden',
     backgroundColor: '#1E1E1E',
+  },
+  imageLoaderContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#1E1E1E',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
   },
   label: {
     position: 'absolute',

@@ -127,8 +127,16 @@ export const LeadService = {
     }),
   logReportGeneration: (payload: any): Promise<AxiosResponse<any>> =>
     api.post('/job/v1/generate-report-logs', payload),
-  generateRevRender: (payload: any): Promise<AxiosResponse<any>> =>
-    api.post('/rev-render/v1/generate', payload, { timeout: 120000 }),
+  generateRevRender: (payload: any): Promise<AxiosResponse<any>> => {
+    const body = payload && payload.payloads
+      ? payload
+      : {
+          payloads: [payload],
+          leadId: payload?.leadId,
+          jobId: payload?.leadId || payload?.jobId,
+        };
+    return api.post('/rev-render/v1/batches', body, { timeout: 120000 });
+  },
   getRevRenderRuns: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(`/rev-render/v1/runs?leadId=${leadId}`),
   getRevRenderBatchStatus: (batchId: string): Promise<AxiosResponse<any>> =>

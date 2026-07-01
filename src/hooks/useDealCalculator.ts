@@ -296,15 +296,22 @@ export const useDealCalculator = (lead: any) => {
         `${activeLead.customerDetails?.firstName || ''} ${activeLead.customerDetails?.lastName || ''}`.trim() ||
         'test user';
 
-      const findMyAppt = (list: any[]) =>
-        list.find(
+      const findMyAppt = (list: any[]) => {
+        // 1. Try strict ID match first to prevent collision/leak between leads with same name
+        const strictMatch = list.find(
           (a: any) =>
-            a.selfGenLeadId === activeLead._id ||
-            a.leadId === activeLead._id ||
-            a._id === activeLead.appointmentId ||
-            a.id === activeLead.appointmentId ||
+            (a.selfGenLeadId && a.selfGenLeadId === activeLead._id) ||
+            (a.leadId && a.leadId === activeLead._id) ||
+            (activeLead.appointmentId && (a._id === activeLead.appointmentId || a.id === activeLead.appointmentId))
+        );
+        if (strictMatch) return strictMatch;
+
+        // 2. Fallback to title matching only if no ID matches
+        return list.find(
+          (a: any) =>
             a.title?.trim().toLowerCase() === targetTitle.trim().toLowerCase()
         );
+      };
       let myAppt = findMyAppt(appointments);
 
       if (!myAppt) {
@@ -376,6 +383,7 @@ export const useDealCalculator = (lead: any) => {
       if (calculatorsData.length > 0) {
         const mappedCalculators = calculatorsData.map((c: any, idx: number) => ({
           _id: c._id,
+          title: c.title,
           name: c.title || `${idx + 1}`,
           position: c.position !== undefined ? c.position : idx,
           inputs: {
@@ -691,7 +699,10 @@ export const useDealCalculator = (lead: any) => {
         const titles = getUpdatedCalculatorTitles(next, getRetailPrice);
         next.forEach((c, idx) => {
           const key = c._id || `temp-${idx}`;
-          if (titles[key]) c.name = titles[key];
+          if (titles[key]) {
+            c.name = titles[key];
+            c.title = titles[key];
+          }
         });
 
         if (bypassAutoSave) {
@@ -875,11 +886,20 @@ export const useDealCalculator = (lead: any) => {
         c._id === data._id ? changedCalcData : c
       );
 
+      const dbCalculators = freshCalculators.map((c) => {
+        const dbTitle = lastSavedTitlesRef.current[c._id] || c.title || c.name || '';
+        return {
+          ...c,
+          title: dbTitle,
+          name: dbTitle,
+        };
+      });
+
       const snapshot = freshCalculators;
       const newTitles = getUpdatedCalculatorTitles(snapshot, getRetailPrice);
 
       const saveOrder = computeTitleSaveOrder({
-        allCalculators: freshCalculators,
+        allCalculators: dbCalculators,
         changedCalcId: data._id,
         changedCalcData,
         getTitles: getUpdatedCalculatorTitles,
@@ -890,7 +910,7 @@ export const useDealCalculator = (lead: any) => {
 
       freshCalculators.forEach((c) => {
         if (!c._id) return;
-        const currentTitle = c.title || c.name || '';
+        const currentTitle = lastSavedTitlesRef.current[c._id] || c.title || c.name || '';
         const newTitle = newTitles[c._id];
         if (newTitle && currentTitle && currentTitle !== newTitle && !savedIds.has(c._id)) {
           const payloadBase = c._id === data._id ? changedCalcData : c;
@@ -912,7 +932,7 @@ export const useDealCalculator = (lead: any) => {
       setCalculators((prevCalcs) =>
         prevCalcs.map((c) => {
           if (updatedTitlesMap[c._id]) {
-            return { ...c, name: updatedTitlesMap[c._id] };
+            return { ...c, name: updatedTitlesMap[c._id], title: updatedTitlesMap[c._id] };
           }
           return c;
         })
@@ -966,18 +986,22 @@ export const useDealCalculator = (lead: any) => {
         }
       }
 
-      const promises = saveOrder.map((entry) => {
-        let calcData = entry.data;
-        if (entry.calculatorId === data._id) {
-          calcData = { ...data, dropPrice: rawDrops };
-        }
-        const payload = toApiPayload(calcData, entry.newTitle);
-        return new Promise<void>((resolve, reject) => {
+      const activeEntry = saveOrder.find((entry) => entry.calculatorId === data._id);
+
+      for (const entry of displacedEntries) {
+        const payload = toApiPayload(entry.data, entry.newTitle);
+        await new Promise<void>((resolve, reject) => {
           queueSave(entry.calculatorId, payload, resolve, reject);
         });
-      });
+      }
 
-      await Promise.all(promises);
+      if (activeEntry) {
+        const calcData = { ...data, dropPrice: rawDrops };
+        const payload = toApiPayload(calcData, activeEntry.newTitle);
+        await new Promise<void>((resolve, reject) => {
+          queueSave(activeEntry.calculatorId, payload, resolve, reject);
+        });
+      }
       saveOrder.forEach((entry) => {
         lastSavedTitlesRef.current[entry.calculatorId] = entry.newTitle;
       });
@@ -1281,7 +1305,10 @@ export const useDealCalculator = (lead: any) => {
     const titles = getUpdatedCalculatorTitles(updated, getRetailPrice);
     updated.forEach((c, idx) => {
       const key = c._id || `temp-${idx}`;
-      if (titles[key] !== undefined) c.name = titles[key];
+      if (titles[key] !== undefined) {
+        c.name = titles[key];
+        c.title = titles[key];
+      }
     });
 
     setCalculators(updated);
@@ -1461,7 +1488,7 @@ export const useDealCalculator = (lead: any) => {
       setLoading(true);
       setCalculators((prev) => {
         const next = [...prev];
-        next[idx] = { ...next[idx], name: trimmed };
+        next[idx] = { ...next[idx], name: trimmed, title: trimmed };
         return next;
       });
 

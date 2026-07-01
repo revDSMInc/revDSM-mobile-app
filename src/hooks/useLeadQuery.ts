@@ -20,7 +20,7 @@ export const useLeadQuery = (leadId: string, initialData?: any) => {
   });
 };
 
-export const useRevRenderRunsQuery = (leadId: string, hasRendered?: boolean, hasActiveJobs?: boolean) => {
+export const useRevRenderRunsQuery = (leadId: string) => {
   return useQuery({
     queryKey: ['revrender-runs', leadId],
     queryFn: async () => {
@@ -28,6 +28,6 @@ export const useRevRenderRunsQuery = (leadId: string, hasRendered?: boolean, has
       const res = await LeadService.getRevRenderRuns(leadId);
       return res.data?.runs || res.data?.data?.runs || [];
     },
-    enabled: !!leadId && (hasRendered === undefined ? true : (hasRendered || !!hasActiveJobs)),
+    enabled: !!leadId,
   });
 };

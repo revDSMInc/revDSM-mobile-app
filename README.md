@@ -93,6 +93,49 @@ The app uses a centralized theme system in `src/theme/`.
 
 ---
 
+## 🧪 Testing
+
+Tests are isolated to `__tests__/`, `jest.config.js`, `jest.setup.js`, and `__mocks__/`. **No production source files are modified** — the test suite is entirely additive.
+
+### Running Tests
+
+```bash
+# Run all tests (440 tests across 34 suites)
+npm test            # or: yarn test
+
+# Run a specific file or directory
+npx jest __tests__/utils/calculator/
+npx jest __tests__/hooks/useTeamChannelPermission.test.ts
+
+# Watch mode during development
+npx jest --watch
+
+# Verbose output (show every test name)
+npx jest --verbose
+```
+
+### Test Categories
+
+| Category | Suites | Tests | What It Covers |
+|----------|--------|-------|----------------|
+| **Calculator** | 14 | 202 | Pricing math, fee formulas, commission rates (thresholds/overage), payment plan validation (GreenSky, WF, Concora, Lowes), auto-confirm scheduling (MMKV), data normalization, tier ordering, tab naming, quote calculation object shape, title save order. |
+| **Non-Calculator Utils** | 15 | 215 | Date parsing (`parseSafeISO`), error parsing (`parseApiError`), phone formatting (`formatUSPhoneNumber`), property normalization, distance (Haversine), S3 URL resolution, email/password/name validation, job builder summary/validation (gutter/LF/soffit/fascia), MMKV storage CRUD, zone canvasser constants/math, activity-log auto-field extraction. |
+| **Hooks** | 1 | 11 | `useTeamChannelPermission` — channel permission logic (announcements/files blocked, general/sales-wins allowed). |
+| **Parity** | 2 | 13 | Web parity comparison helpers (LF Calculator pricing alignment). |
+| **App Smoke** | 1 | 1 | `App.tsx` renders without crashing (native modules mocked). |
+
+### Test Design Principles
+
+- **Pure unit tests preferred** — no React Native runtime mocking for business logic tests.
+- **Calculator tests are highest priority** — pricing errors cause direct financial loss.
+- **Mock strategy varies by dependency**:
+  - Pure functions → no mock needed.
+  - MMKV-dependent → mock `../../utils/storage` directly (not `react-native-mmkv`).
+  - Complex hooks (Redux, Navigation) → deferred, only simple hooks covered.
+- **Shared mutable state across tests is avoided** using per-test `beforeEach` store setup.
+
+---
+
 ## 🚀 Getting Started
 
 1. **Install Dependencies**: `npm install`

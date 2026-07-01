@@ -1922,6 +1922,7 @@ export const SummarySection = ({
           previewBase64={agreementData.previewBase64}
           payload={agreementData.payload}
           signatureFields={agreementData.signatureFields}
+          pdfDimensions={agreementData.pdfDimensions}
           onSuccess={(pdfUrl) => {
             // Refresh outcome to pull S3 version once processed
             fetchOutcome();
