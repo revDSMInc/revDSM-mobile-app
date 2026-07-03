@@ -67,7 +67,10 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
     return payload.map(sanitizeCalculatorPayload);
   }
   const sanitized = { ...payload };
-  const stringKeys = ['title', 'name', 'paymentMethod', 'paymentPlan', 'originalCalculatorId', 'status', 'action', 'sendMode', 'recipient', 'subject'];
+  const stringKeys = ['title', 'name', 'paymentMethod', 'paymentPlan', 'originalCalculatorId', 'status', 'action', 'sendMode', 'recipient', 'subject',
+    // Calculator-entry descriptor fields are strings — an empty one must stay ''
+    // (web sends e.g. `unit: ""`, `productName: ""`), never be coerced to 0.
+    'unit', 'label', 'productName', 'sectionId', 'categoryId', 'fieldId', 'schemaSnapshotId', 'leadId', 'enteredBy', 'enteredAt'];
   Object.keys(sanitized).forEach((key) => {
     const val = sanitized[key];
     if (val === '' && !stringKeys.includes(key)) {

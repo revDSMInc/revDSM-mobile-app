@@ -21,6 +21,7 @@ import AuthenticatorOTPScreen from '../screens/auth/authenticator-otp';
 import JobBuilderScreen from '../screens/JobBuilder/index';
 import RevRenderScreen from '../screens/RevRender/index';
 import ImageAnnotationScreen from '../screens/ImageAnnotation/index';
+import DynamicDealCenterScreen from '../screens/DynamicDealCenter/components/DynamicDealCenterScreen';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -89,6 +90,10 @@ export type RootStackParamList = {
     lead: any;
     onSaveSuccess?: () => void;
   };
+  DynamicDealCenter: {
+    lead?: any;
+    initialVerticalId?: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -124,6 +129,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
     'MyLearning',
     'LeadCenter',
     'DealCenter',
+    'DynamicDealCenter',
     'Pitchbook',
     'RooflineDeck',
     'MapDetail',
@@ -168,6 +174,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="Pitchbook" component={PitchbookScreen} />
                 <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
                 <Stack.Screen name="DealCenter" component={DealCenter} />
+                <Stack.Screen name="DynamicDealCenter" component={DynamicDealCenterScreen} />
                 <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
                 <Stack.Screen name="RevRender" component={RevRenderScreen} />
                 <Stack.Screen name="ImageAnnotation" component={ImageAnnotationScreen} options={{ gestureEnabled: false }} />

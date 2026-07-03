@@ -1349,6 +1349,7 @@ export default function LeadCenterPage() {
                     console.warn('Failed to pre-initialize calculator:', err);
                   }
                 }}
+                onShowDynamicDealCenter={() => navigation.navigate('DynamicDealCenter', { lead })}
                 onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
                 onShowRooflineDeck={() => navigation.navigate('RooflineDeck', { lead })}
                 onShowInspectionGrid={() => toggleModal('showInspectionGrid', true)}

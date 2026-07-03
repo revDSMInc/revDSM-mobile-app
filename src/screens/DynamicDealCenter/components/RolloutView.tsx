@@ -1,0 +1,1130 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Switch, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import type { CalculatorSchema } from '../types/calculator';
+import { resolveSchemaStyle } from '../utils/icon-color';
+import { FlashMessage } from '../../../config/message';
+import { useAuth } from '../../../hooks/useAuth';
+import { SettingsService } from '../../../services/api/SettingsService';
+import {
+  DealPricing,
+  DealPlan,
+  PayCategory,
+  planLabelOf,
+  calcMonthly,
+  withPlanFee,
+  isFinancing,
+  planBelowMin,
+  belowMinMsg,
+} from '../hooks/useDealPricing';
+
+const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+/** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
+const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
+  calc.paymentMethod || userDefault || defaultMethod || 'check';
+
+/**
+ * The **$200 job-minimum floor** applied to a tier value. The regular rollout AND
+ * the web app run every COST/PAR/RETAIL tier through `calculateResultUtil`, which
+ * bumps any priced job to $200 **INDEPENDENTLY per tier**, so a tiny job can read
+ * $200 across all three. Gated on the calc having items (`retail > 0`).
+ */
+const floorTier = (value: number, hasItems: boolean) =>
+  hasItems && value < 200 ? 200 : value;
+
+/**
+ * The calculator's cost with the $200 job-minimum floor applied — the value the
+ * end price / drop price is validated against.
+ */
+function effectiveCostOf(calc: CalculatorTab): number {
+  return floorTier(calc.totals?.cost || 0, (calc.totals?.retail || 0) > 0);
+}
+
+/**
+ * Most-specific reason an end price is invalid (else null) — below the (floored)
+ * cost, then below the selected plan's own minimum. Minimum-price-driven exactly
+ * like the web (`validatePriceForPaymentMethod`), so no Wells-Fargo-high special
+ * case is needed: a plan's `minPrice` (e.g. 7,500) is the single source of truth.
+ */
+function endPriceError(plans: Record<string, DealPlan>, price: number, calc: CalculatorTab, method: string): string | null {
+  if (price <= 0) return null;
+  const cost = effectiveCostOf(calc);
+  if (price < cost) return `Price cannot be less than cost (${fmtMoney(cost)})`;
+  const min = plans[method]?.minPrice || 0;
+  if (min && price < min) return `This plan requires a minimum price of ${fmtMoney(min)}.`;
+  return null;
+}
+
+interface CalculatorTab {
+  id: string;
+  title: string;
+  entries: Record<string, any>;
+  totals: { cost: number; par: number; retail: number };
+  isRolloutConfirmed?: boolean;
+  price?: number;
+  paymentMethod?: string;
+  dropPrice?: any[];
+  downPayment?: number;
+  discountPercentage?: number;
+}
+
+interface RolloutViewProps {
+  calculators: CalculatorTab[];
+  /** All configured verticals — used to label the quote-card category pills. */
+  verticals?: CalculatorSchema[];
+  /** Backend-driven payment plans + discount config (static fallback). */
+  pricing: DealPricing;
+  /** Lowe's leads get the Lowe's-only plan groups + `lowes_ach` default. */
+  isLowesLead?: boolean;
+  onBack?: () => void;
+  onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
+  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number) => void;
+  /** Persist a calculator's payment plan (auto-saves like a field change). */
+  onPaymentMethodChange?: (id: string, method: string) => void;
+  /** Persist a calculator's drop-price list. */
+  onDropChange?: (id: string, drops: any[]) => void;
+  /** Persist a calculator's pre-order discount % (result-section selector). */
+  onDiscountChange?: (id: string, discount: number) => void;
+  /** Persist a calculator's rollout down payment. */
+  onDownPaymentChange?: (id: string, downPayment: number) => void;
+}
+
+type CatStyle = { color: string; icon: string; bg: string };
+
+// Same palette as the calculator so pills stay consistent across the flow.
+const CATEGORY_STYLE_MAP: Record<string, CatStyle> = {
+  gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+  gutter: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+  leaffilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  'leaf filter': { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  leaf: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+  fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+  lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
+  additional: { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+  'additional services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+  miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
+};
+
+function styleForKey(name: string, color?: string): CatStyle {
+  const found = CATEGORY_STYLE_MAP[(name || '').toLowerCase()];
+  if (found) return found;
+  const c = color || '#637381';
+  return { color: c, icon: 'pricetag', bg: color ? `${c}1A` : '#F4F6F8' };
+}
+
+/**
+ * Grouped payment-plan picker — mirrors the regular rollout's picker
+ * (`CalculatorSummary` line ~1541): plans bucketed under colored headers
+ * (Basic Options, GreenSky Plans, Wells Fargo Plans, Wells Fargo High, Concora,
+ * or the Lowe's groups). Plans below their `minPrice` for the current end price
+ * are greyed out and warn instead of selecting. `getRolloutPaymentCategories`
+ * is the shared source of truth for the group order/labels/colors.
+ */
+function PaymentPlanModal({ visible, selected, price, plans, categories, onSelect, onClose }: {
+  visible: boolean; selected: string; price: number;
+  plans: Record<string, DealPlan>; categories: PayCategory[];
+  onSelect: (key: string) => void; onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={onClose}>
+        <Pressable style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '82%' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+            <Text style={{ fontSize: 16, fontWeight: '900', color: '#1C252E' }}>Payment Plan</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={22} color="#637381" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 14 }} showsVerticalScrollIndicator={false}>
+            {categories.map((cat) => (
+              <View key={cat.title || 'basic'} style={{ marginBottom: cat.title ? 16 : 8 }}>
+                {!!cat.title && (
+                  <View style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, marginBottom: 8, backgroundColor: cat.bg }}>
+                    <Text style={{ fontSize: 10, fontWeight: '900', letterSpacing: 1.5, color: cat.text }}>{cat.title.toUpperCase()}</Text>
+                  </View>
+                )}
+                {cat.plans.map((key) => {
+                  const plan = plans[key];
+                  if (!plan) return null;
+                  const belowMin = planBelowMin(plans, key, price);
+                  const isSel = key === selected;
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      onPress={() => {
+                        if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
+                        onSelect(key);
+                      }}
+                      style={{
+                        padding: 14, borderRadius: 12, borderWidth: 1.5, marginBottom: 8,
+                        borderColor: isSel ? '#4CBB17' : '#E2E8F0',
+                        backgroundColor: isSel ? '#4CBB170D' : belowMin ? '#F1F5F9' : '#fff',
+                        opacity: belowMin ? 0.6 : 1,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : '#1C252E' }}>{plan.label}</Text>
+                        {isSel && <Ionicons name="checkmark-circle" size={20} color="#4CBB17" />}
+                      </View>
+                      {plan.minPrice && belowMin ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 4 }}>Requires ${plan.minPrice.toLocaleString()}+</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ))}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** One label/value line inside the program-comparison boxes. */
+function PriceRow({ label, value, green, small }: { label: string; value: string; green?: boolean; small?: boolean }) {
+  const fs = small ? 10 : 11;
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: small ? 6 : 10 }}>
+      <Text style={{ fontSize: fs, fontWeight: '600', color: green ? '#16a34a' : '#637381' }}>{label}</Text>
+      <Text style={{ fontSize: fs, fontWeight: '900', color: green ? '#16a34a' : '#1C252E' }}>{value}</Text>
+    </View>
+  );
+}
+
+/**
+ * The financing plans the rep can add to the drop modal's "Monthly Options" list —
+ * grouped exactly like the regular rollout's Add-Plan picker (`getDropAddPlanCategories`).
+ */
+function DropAddPlanModal({ visible, price, plans, categories, added, onAdd, onClose }: {
+  visible: boolean; price: number;
+  plans: Record<string, DealPlan>; categories: PayCategory[]; added: string[];
+  onAdd: (key: string) => void; onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', paddingHorizontal: 24 }} onPress={onClose}>
+        <Pressable style={{ backgroundColor: '#fff', borderRadius: 24, overflow: 'hidden', maxHeight: '70%' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: '#F8FAFC' }}>
+            <Text style={{ fontSize: 14, fontWeight: '900', color: '#1C252E' }}>Add Payment Plan</Text>
+            <TouchableOpacity onPress={onClose} style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="close" size={16} color="#919EAB" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 14 }} showsVerticalScrollIndicator={false}>
+            {categories.map((cat) => (
+              <View key={cat.title || 'basic'} style={{ marginBottom: cat.title ? 12 : 6 }}>
+                {!!cat.title && (
+                  <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, marginBottom: 8, alignSelf: 'flex-start', backgroundColor: cat.bg }}>
+                    <Text style={{ fontSize: 10, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase', color: cat.text }}>{cat.title}</Text>
+                  </View>
+                )}
+                {cat.plans.map((key) => {
+                  const plan = plans[key];
+                  if (!plan) return null;
+                  const belowMin = planBelowMin(plans, key, price);
+                  const isAdded = added.includes(key);
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      disabled={isAdded}
+                      onPress={() => {
+                        if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
+                        onAdd(key);
+                      }}
+                      style={{ padding: 12, borderRadius: 12, borderWidth: 1, marginBottom: 8, borderColor: isAdded ? '#31D076' : '#F1F5F9', backgroundColor: isAdded ? '#F0FDF4' : belowMin ? '#F1F5F9' : '#fff', opacity: belowMin ? 0.6 : 1 }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Text style={{ flex: 1, paddingRight: 8, fontSize: 11, fontWeight: '800', color: isAdded ? '#15803D' : '#0F172A' }}>{plan.label}</Text>
+                        {isAdded && <Ionicons name="checkmark-circle" size={18} color="#31D076" />}
+                      </View>
+                      {plan.minPrice && belowMin ? (
+                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8', marginTop: 2 }}>Requires ${plan.minPrice.toLocaleString()}+</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ))}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/**
+ * Drop-price negotiation modal — a faithful port of the regular rollout's drop
+ * modal (`CalculatorSummary` drop modal / web `DropPriceModal`): a CENTERED card
+ * (not a bottom sheet) with a green check, the "UPDATED PRICE" eyebrow, the price
+ * with CK/CC (or ACH/CC) method badges, an Add Down Payment → Balance block, a
+ * "Monthly Options" list of financing plans (add/select/remove, each showing its
+ * monthly on the balance), and **Decline** / **Secure This Price** actions. Secure
+ * is disabled until a plan is selected and the down payment does not exceed the
+ * drop price (web parity). Records the drop only on Secure/Decline.
+ */
+function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
+  visible: boolean;
+  dropPrice: number;
+  method: string;
+  isLowesLead: boolean;
+  plans: Record<string, DealPlan>;
+  dropAddCategories: PayCategory[];
+  onSecure: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
+  onDecline: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
+  onClose: () => void;
+}) {
+  const badges = isLowesLead
+    ? [{ key: 'lowes_ach', label: 'ACH' }, { key: 'lowes_cc', label: 'CC' }]
+    : [{ key: 'check', label: 'CK' }, { key: 'mcVisaDscvr', label: 'CC' }];
+
+  const [selectedPlan, setSelectedPlan] = useState(method);
+  const [addedPlans, setAddedPlans] = useState<string[]>(isFinancing(plans, method) ? [method] : []);
+  const [downText, setDownText] = useState('');
+  const [showDown, setShowDown] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+
+  // Reset for each newly-entered drop price (the modal stays mounted).
+  useEffect(() => {
+    if (visible) {
+      setSelectedPlan(method);
+      setAddedPlans(isFinancing(plans, method) ? [method] : []);
+      setDownText('');
+      setShowDown(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, method]);
+
+  const down = parseFloat(downText) || 0;
+  const balance = Math.max(0, dropPrice - down);
+  const downExceeds = down > dropPrice;
+  const canSecure = !!selectedPlan && !downExceeds;
+  const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+  const addPlan = (key: string) => {
+    setAddedPlans((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    setSelectedPlan(key);
+    setShowPicker(false);
+  };
+  const removePlan = (key: string) => {
+    setAddedPlans((prev) => prev.filter((k) => k !== key));
+    if (selectedPlan === key) setSelectedPlan(badges[0].key);
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%' }}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Header — green check + UPDATED PRICE + price + method badges */}
+              <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#F0FDF4', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                  <Ionicons name="checkmark" size={24} color="#31D076" />
+                </View>
+                <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 2, marginBottom: 8 }}>UPDATED PRICE</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Text style={{ fontSize: 34, fontWeight: '900', color: '#1C252E' }}>{fmt(dropPrice)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {badges.map((b) => {
+                      const sel = selectedPlan === b.key;
+                      return (
+                        <TouchableOpacity key={b.key} onPress={() => setSelectedPlan(b.key)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#31D076' : '#fff' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '900', color: sel ? '#fff' : '#94A3B8' }}>{b.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              </View>
+
+              {/* Add Down Payment → Down Payment + Balance */}
+              {showDown ? (
+                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
+                  <View style={{ flex: 1, backgroundColor: '#fff', borderWidth: 2, borderColor: downExceeds ? '#D32F2F' : '#0F172A', borderRadius: 16, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8 }}>
+                    <Text style={{ position: 'absolute', top: -8, left: 12, backgroundColor: '#fff', paddingHorizontal: 4, fontSize: 10, fontWeight: '900', color: '#0F172A' }}>Down Payment</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A', marginRight: 4 }}>$</Text>
+                      <TextInput
+                        style={{ flex: 1, fontSize: 16, fontWeight: '900', color: '#0F172A', padding: 0 }}
+                        value={downText}
+                        onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                        placeholder="0" placeholderTextColor="#94A3B8" keyboardType="numeric"
+                      />
+                    </View>
+                  </View>
+                  <View style={{ flex: 1, backgroundColor: '#F8FAFC', borderWidth: 2, borderColor: '#F1F5F9', borderRadius: 16, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, opacity: 0.7 }}>
+                    <Text style={{ position: 'absolute', top: -8, left: 12, backgroundColor: '#F8FAFC', paddingHorizontal: 4, fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>Balance</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '900', color: '#94A3B8' }}>${balance.toLocaleString()}</Text>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={() => setShowDown(true)} style={{ alignSelf: 'flex-start', marginBottom: 24, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: '#E2E8F0', borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="add" size={16} color="#919EAB" />
+                  <Text style={{ marginLeft: 4, fontSize: 14, fontWeight: '700', color: '#919EAB' }}>Add Down Payment</Text>
+                </TouchableOpacity>
+              )}
+              {downExceeds && <Text style={{ fontSize: 10, fontWeight: '700', color: '#D32F2F', marginTop: -14, marginBottom: 16 }}>Down payment cannot exceed the drop price.</Text>}
+
+              <View style={{ height: 1, backgroundColor: '#F1F5F9', width: '100%', marginBottom: 20 }} />
+
+              {/* Monthly Options — financing plans, each showing its monthly on the balance */}
+              <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 }}>Monthly Options</Text>
+              {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
+                const plan = plans[key] || ({} as DealPlan);
+                const sel = selectedPlan === key;
+                const monthly = calcMonthly(plans, balance, key);
+                return (
+                  <View key={key} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <TouchableOpacity style={{ flex: 1, marginRight: 8 }} onPress={() => setSelectedPlan(key)}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
+                        {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                        <Text style={{ fontSize: 20, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }}>${Math.round(monthly).toLocaleString()}</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginLeft: 2 }}>/mo</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <TouchableOpacity onPress={() => setSelectedPlan(key)} style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                        {sel && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => removePlan(key)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="close-circle" size={20} color="#FF5630" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+              <TouchableOpacity onPress={() => setShowPicker(true)} style={{ height: 52, borderWidth: 2, borderStyle: 'dashed', borderColor: '#31D076', borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', marginBottom: 20 }}>
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#31D076' }}>+ Add Plan</Text>
+              </TouchableOpacity>
+
+              {/* Actions — Decline / Secure This Price */}
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity onPress={() => onDecline({ paymentMethod: selectedPlan, downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Decline</Text>
+                </TouchableOpacity>
+                <TouchableOpacity disabled={!canSecure} onPress={() => onSecure({ paymentMethod: selectedPlan, downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '900', color: canSecure ? '#fff' : '#94A3B8' }}>Secure This Price</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+
+            <DropAddPlanModal
+              visible={showPicker}
+              price={dropPrice}
+              plans={plans}
+              categories={dropAddCategories}
+              added={addedPlans}
+              onAdd={addPlan}
+              onClose={() => setShowPicker(false)}
+            />
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+/**
+ * Small "Result Job {name}" Sale/Demo chooser — mirrors the regular rollout's
+ * inline chooser (`CalculatorSummary` ~L1683): a centered card with a document
+ * icon, the calculator name, the most-recent price, and Sale (green) / Demo
+ * (orange) / Cancel. Choosing an outcome hands off to the full Result Lead
+ * (outcome) modal at the screen level.
+ */
+function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
+  visible: boolean; name: string; price: number; onSale: () => void; onDemo: () => void; onClose: () => void;
+}) {
+  const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16 }}>
+          <View style={{ alignItems: 'center' }}>
+            <View style={{ padding: 16, marginBottom: 24, backgroundColor: '#FFF0D9', borderRadius: 12 }}>
+              <Ionicons name="document-text" size={28} color="#FF9800" />
+            </View>
+          </View>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#1C252E', textAlign: 'center', marginBottom: 12 }}>Result Job {name}</Text>
+          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>Most recent price: {fmt(price)}</Text>
+          <View style={{ gap: 12 }}>
+            <TouchableOpacity onPress={onSale} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#4CBB17', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>Sale</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onDemo} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#FF9800', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>Demo</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity onPress={onClose} style={{ borderRadius: 8, marginTop: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#1C252E' }}>Cancel</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
+  calculator: CalculatorTab; initialPrice?: number;
+  categoryMeta: Record<string, { label: string; style: CatStyle }>;
+  isLowesLead: boolean;
+  pricing: DealPricing;
+  onPriceChange: (id: string, price: number) => void;
+  onResult: (id: string, result: 'sale' | 'demo', price?: number) => void;
+  onPaymentMethodChange: (id: string, method: string) => void;
+  onDropChange: (id: string, drops: any[]) => void;
+  onDiscountChange: (id: string, discount: number) => void;
+  onDownPaymentChange: (id: string, downPayment: number) => void;
+}) {
+  const { user, refreshUser } = useAuth();
+  const [endPrice, setEndPrice] = useState(initialPrice ? String(initialPrice) : String(calculator.price || ''));
+  const [focused, setFocused] = useState(false);
+  const [showPlanPicker, setShowPlanPicker] = useState(false);
+  const [dropText, setDropText] = useState('');
+  const [downText, setDownText] = useState(calculator.downPayment ? String(calculator.downPayment) : '');
+  const [showDownInput, setShowDownInput] = useState((calculator.downPayment || 0) > 0);
+  // Collapsed-by-default breakdown once the rollout is locked; the chevron on the
+  // Rollout End Price box toggles it (web `isRolloutExpanded`).
+  const [showLockedDetails, setShowLockedDetails] = useState(false);
+  // Pending drop price waiting on the Secure/Decline modal (web `DropPriceModal`).
+  const [pendingDrop, setPendingDrop] = useState(0);
+  const [showDropModal, setShowDropModal] = useState(false);
+  // Sale/Demo chooser (web `showResultModal`) — opened from Result Lead or after
+  // securing a drop; picking an outcome opens the full Result Lead outcome modal.
+  const [showChooser, setShowChooser] = useState(false);
+  const [chooserPrice, setChooserPrice] = useState(0);
+
+  const plans = pricing.plans;
+  const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
+  const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
+  const drops: any[] = calculator.dropPrice || [];
+
+  // COST/PAR/RETAIL each reflect the selected payment plan (fee-inflated via
+  // `withPlanFee`) AND the $200 job-minimum floor — mirroring `calculateResultUtil`
+  // exactly, where every tier runs through the same `price < 200 → 200` clamp
+  // independently (fee gross-up first, then the floor). So on a tiny job all three
+  // read $200; once a tier's own fee-inflated basis clears $200 it grows normally.
+  // This is why "if cost is 200, par and retail are according to 200, not the raw
+  // price of the selected items".
+  const tiers = useMemo(() => {
+    const hasItems = calculator.totals.retail > 0;
+    return [
+      { label: 'COST', value: floorTier(withPlanFee(plans, calculator.totals.cost, method), hasItems), isRetail: false },
+      { label: 'PAR', value: floorTier(withPlanFee(plans, calculator.totals.par, method), hasItems), isRetail: false },
+      { label: 'RETAIL', value: floorTier(withPlanFee(plans, calculator.totals.retail, method), hasItems), isRetail: true },
+    ];
+  }, [calculator.totals.cost, calculator.totals.par, calculator.totals.retail, method, plans]);
+
+  const markup = useMemo(() => {
+    const price = parseFloat(endPrice) || 0;
+    if (price <= 0) return null;
+    for (const tier of [...tiers].reverse()) {
+      if (tier.value > 0 && price >= tier.value) {
+        const pct = ((price - tier.value) / tier.value * 100).toFixed(0);
+        return `${tier.label} + ${pct}%`;
+      }
+    }
+    return 'Below COST';
+  }, [endPrice, tiers]);
+
+  const categoryChips = useMemo(() => {
+    const cats = new Set<string>();
+    // Only categories with an entered value (entries now hold the full seeded
+    // field list, so untouched fields must be excluded).
+    Object.values(calculator.entries || {}).forEach((e: any) => { if (e?.categoryId && e.inputValue > 0) cats.add(e.categoryId); });
+    return Array.from(cats);
+  }, [calculator.entries]);
+
+  // Entered line-items, grouped by category (mirrors the old mobile locked view).
+  const itemRows = useMemo(() => {
+    const rows = Object.values(calculator.entries || {}).filter((e: any) => e && e.inputValue > 0) as any[];
+    return rows.sort((a, b) => String(a.categoryId).localeCompare(String(b.categoryId)));
+  }, [calculator.entries]);
+
+  const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+  const priceNum = parseFloat(endPrice) || 0;
+  // Below-cost / below-plan-minimum / below-$200 — the full web check set.
+  const priceErr = endPriceError(plans, priceNum, calculator, method);
+  const finalPrice = drops.length ? drops[drops.length - 1].price : (calculator.price || priceNum);
+
+  // ── Result-section values (mirror the regular rollout, CalculatorSummary.tsx:422-429) ──
+  // Shown live once a valid end price is entered. Schema-driven calcs have no
+  // dedicated "check to installers" screens field yet → screensCount is 0, so
+  // "End Price w/ Screens" equals the end price. MSRP grosses the price up by the
+  // Sr+Vet % + pre-order discount (both from the backend discount config), then
+  // each program subtracts its discounts.
+  const discountPct = calculator.discountPercentage || pricing.defaultPreOrder;
+  const seniorVetPct = pricing.seniorVetPct;
+  const isDefaultDiscount = !!user?.defaultPercentage && user.defaultPercentage === discountPct;
+  const screensCount = 0;
+  const priceWithScreens = (priceNum > 0 ? priceNum : tiers[2].value) + screensCount * 75;
+  const msrp = priceWithScreens / (1 - (discountPct + seniorVetPct) / 100);
+  const srVetDiscount = msrp * (seniorVetPct / 100);
+  const preOrderDiscountVal = msrp * (discountPct / 100);
+  const oneYearGrandTotal = msrp - srVetDiscount;
+  const preOrderGrandTotal = msrp - srVetDiscount - preOrderDiscountVal;
+  const downPay = calculator.downPayment || 0;
+  const preOrderMonthly = calcMonthly(plans, preOrderGrandTotal - downPay, method);
+  // Before lock: the breakdown auto-shows as soon as a valid end price is entered.
+  // After lock: it's collapsed behind the end-price box's chevron (web parity —
+  // `(price>0 && !error && !confirmed) || (confirmed && isRolloutExpanded)`).
+  const showResult = calculator.isRolloutConfirmed ? showLockedDetails : (priceNum > 0 && !priceErr);
+
+  const toggleDefault = async (next: boolean) => {
+    try {
+      await SettingsService.updateCalculatorsSetting({ defaultPaymentMethod: next ? method : null });
+      await refreshUser?.();
+      FlashMessage.success(next ? 'Default payment method set' : 'Default payment method cleared');
+    } catch (e: any) {
+      FlashMessage.error('Could not update default', e?.message || 'Please try again.');
+    }
+  };
+
+  const toggleDefaultDiscount = async (next: boolean) => {
+    try {
+      await SettingsService.updateCalculatorsSetting({ defaultPercentage: next ? discountPct : null });
+      await refreshUser?.();
+      FlashMessage.success(next ? 'Default discount set' : 'Default discount cleared');
+    } catch (e: any) {
+      FlashMessage.error('Could not update default discount', e?.message || 'Please try again.');
+    }
+  };
+
+  const commitDownPayment = () => {
+    let v = parseFloat(downText) || 0;
+    // Web parity (PremiumQuoteCard): a down payment can't exceed the end price.
+    if (priceNum > 0 && v > priceNum) {
+      FlashMessage.warning('Down payment', `Down payment cannot be greater than the end price (${fmt(priceNum)}).`);
+      v = priceNum;
+      setDownText(String(v));
+    }
+    onDownPaymentChange(calculator.id, v);
+  };
+
+  const clearDownPayment = () => {
+    setDownText('');
+    setShowDownInput(false);
+    onDownPaymentChange(calculator.id, 0);
+  };
+
+  // Validate the typed drop price (same checks as the regular rollout), then open
+  // the Secure/Decline modal — the drop is only RECORDED once the rep secures or
+  // declines it (web parity: entering a drop opens the negotiation modal).
+  const openDrop = () => {
+    const v = parseFloat(dropText) || 0;
+    if (v <= 0) return;
+    // Mirrors the regular rollout's drop checks: below the floored cost → exceeds
+    // the rollout end price → the selected plan's own minimum (minPrice-driven,
+    // web parity — a plan's minPrice, e.g. 7,500, is the single source of truth).
+    const cost = effectiveCostOf(calculator);
+    if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price cannot be less than cost (${fmt(cost)})`); return; }
+    if (priceNum > 0 && v > priceNum) { FlashMessage.error('Invalid drop price', `Drop price cannot exceed rollout end price (${fmt(priceNum)})`); return; }
+    const planMin = plans[method]?.minPrice || 0;
+    if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
+    setPendingDrop(v);
+    setShowDropModal(true);
+    setDropText('');
+  };
+
+  // Secure the pending drop → record it accepted (single-accepted: demote any
+  // previously-accepted drop to declined, matching web `handleSecurePrice`), then
+  // open the Result Lead outcome modal carrying the drop price.
+  const secureDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
+    const cleared = drops.map((d) => (d.status === 'accepted' ? { ...d, status: 'declined' } : d));
+    onDropChange(calculator.id, [...cleared, { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', ...data }]);
+    setShowDropModal(false);
+    // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
+    setChooserPrice(pendingDrop);
+    setShowChooser(true);
+  };
+
+  // Decline the pending drop → record it declined (web shows a "Price Declined"
+  // confirmation; the drop then lists as Declined and Result Lead stays available).
+  const declineDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
+    onDropChange(calculator.id, [...drops, { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', ...data }]);
+    setShowDropModal(false);
+    FlashMessage.warning('Price declined', `${fmt(pendingDrop)} was recorded as a declined price.`);
+  };
+
+  // Shared payment-method block (heading follows it, matching the regular rollout:
+  // name → payment method → items → cost/par/retail → end price → actions).
+  const paymentMethodBlock = (
+    <View style={{ marginHorizontal: 14, marginBottom: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <Text style={{ fontSize: 12, fontWeight: '900', color: '#1A237E' }}>Payment Method</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginRight: 6 }}>Set as Default</Text>
+          <Switch
+            value={isDefaultMethod}
+            onValueChange={toggleDefault}
+            trackColor={{ false: '#E2E8F0', true: '#4CBB17' }}
+            thumbColor="#fff"
+          />
+        </View>
+      </View>
+      <TouchableOpacity
+        onPress={() => setShowPlanPicker(true)}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12 }}
+      >
+        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E', flex: 1, marginRight: 8 }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
+        <Ionicons name="chevron-down" size={16} color="#637381" />
+      </TouchableOpacity>
+    </View>
+  );
+
+  return (
+    <View style={{ backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 20, paddingBottom: 16, marginBottom: 24 }}>
+      {/* 1. Heading — calculator name + locked badge */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
+        <Text style={{ fontSize: 20, fontWeight: '900', color: '#1C252E', flex: 1 }}>{calculator.title}</Text>
+        {calculator.isRolloutConfirmed && (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="lock-closed" size={14} color="#ffb300" style={{ marginRight: 4 }} />
+            <Text style={{ fontSize: 11, fontWeight: '900', color: '#4baf51', letterSpacing: 0.5 }}>LOCKED</Text>
+          </View>
+        )}
+      </View>
+
+      {/* 2. Payment Method selector + Set-as-Default toggle (matches web QuoteResultCard order) */}
+      {paymentMethodBlock}
+
+      {/* 3. List of items — category pills */}
+      {categoryChips.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
+          {categoryChips.map((catId) => {
+            const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
+            return (
+              <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
+                <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
+                <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* 3. List of items — entered item rows (grouped by category) */}
+      {itemRows.map((item, i) => {
+        const meta = categoryMeta[item.categoryId] || { label: item.categoryId, style: styleForKey(item.categoryId) };
+        return (
+          <View key={item.fieldId || i}>
+            <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 13 }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+                <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
+              </View>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
+                <Text style={{ fontWeight: '900' }}>{item.inputValue}{item.unit || "'"}</Text>{'  '}{item.label}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
+      {itemRows.length > 0 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />}
+
+      {/* 4. COST / PAR / RETAIL tiles */}
+      <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
+        {tiers.map((tier) => (
+          <View key={tier.label} style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 12, borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#4CBB17' : '#E2E8F0' }}>
+            <Text style={{ fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4, color: '#94A3B8', textTransform: 'uppercase' }}>{tier.label}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#444c97' : '#1C252E' }}>{fmt(tier.value)}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* 5. Rollout End Price sub-card */}
+      <View style={{ marginHorizontal: 14, backgroundColor: '#F0FDF4', borderRadius: 14, borderWidth: 1.5, borderColor: '#4CBB17', overflow: 'hidden' }}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748B', marginBottom: 6 }}>Rollout End Price</Text>
+          {calculator.isRolloutConfirmed ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setShowLockedDetails((v) => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+            >
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>{(calculator.price || 0) > 0 ? fmt(calculator.price || 0) : '—'}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+                  <Ionicons name="lock-closed" size={14} color="#ffb300" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: '#4baf51', letterSpacing: 0.5 }}>LOCKED</Text>
+                </View>
+                <Ionicons name={showLockedDetails ? 'chevron-up' : 'chevron-down'} size={18} color="#15803D" />
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: priceErr ? '#D32F2F' : focused ? '#4CBB17' : '#BBF7D0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12 }}>
+              <Text style={{ fontSize: 18, fontWeight: '900', color: '#94A3B8', marginRight: 4 }}>$</Text>
+              <TextInput
+                style={{ flex: 1, fontSize: 18, fontWeight: '900', color: '#15803D', paddingVertical: 12 }}
+                value={endPrice}
+                onChangeText={(t) => { const c = t.replace(/[^0-9.]/g, ''); setEndPrice(c); onPriceChange(calculator.id, parseFloat(c) || 0); }}
+                onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+                placeholder="Enter End Price" placeholderTextColor="#94A3B8" keyboardType="numeric"
+              />
+            </View>
+          )}
+          {priceErr ? (
+            <Text style={{ fontSize: 11, color: '#D32F2F', marginTop: 8, fontWeight: '700' }}>{priceErr}</Text>
+          ) : (
+            markup && <Text style={{ fontSize: 11, color: '#15803D', marginTop: 8, fontWeight: '700' }}>{markup}</Text>
+          )}
+        </View>
+      </View>
+
+      {/* 5b. Result breakdown — appears live once a valid end price is entered
+          (mirrors the regular rollout's CalculatorSummary result section). */}
+      {showResult && (
+        <View style={{ marginHorizontal: 14, marginTop: 16 }}>
+          {/* End Price w/ Screens  +  Pre-Order Discount selector */}
+          <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
+            <View style={{ flex: 1, paddingVertical: 18, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: '#E2E8F0' }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginBottom: 6, textAlign: 'center' }}>End Price w/ Screens</Text>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>{fmt(priceWithScreens)}</Text>
+            </View>
+            <View style={{ flex: 1, padding: 12, justifyContent: 'center' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>Pre Order{'\n'}Discount</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 4 }}>Default</Text>
+                  <Switch value={isDefaultDiscount} onValueChange={toggleDefaultDiscount} trackColor={{ false: '#E2E8F0', true: '#4CBB17' }} thumbColor="#fff" />
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {pricing.preOrderOptions.map((d) => {
+                  const active = discountPct === d;
+                  return (
+                    <TouchableOpacity key={d} onPress={() => onDiscountChange(calculator.id, d)} style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+
+          {/* MSRP */}
+          <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 16 }}>
+            <Text style={{ fontSize: 10, fontWeight: '900', letterSpacing: 1.5, color: '#1C252E', marginBottom: 2 }}>MSRP</Text>
+            <Text style={{ fontSize: 20, fontWeight: '900', color: '#4CAF50' }}>{fmt(msrp)}</Text>
+          </View>
+
+          {/* 1 Year Program  vs  In-Home Pre Order */}
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <View style={{ flex: 1, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 14 }}>
+              <Text style={{ fontSize: 11, fontWeight: '900', color: '#1C252E', marginBottom: 16 }}>1 Year Program</Text>
+              <PriceRow label="Total" value={fmt(msrp)} />
+              <PriceRow label={`${seniorVetPct}% Sr + Vet`} value={`-${fmt(srVetDiscount)}`} green />
+              <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 10 }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 11, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
+                <Text style={{ fontSize: 13, fontWeight: '900', color: '#1C252E' }}>{fmt(oneYearGrandTotal)}</Text>
+              </View>
+            </View>
+
+            <View style={{ flex: 1, borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 16, overflow: 'hidden' }}>
+              <View style={{ backgroundColor: '#4CBB17', paddingVertical: 8, alignItems: 'center' }}>
+                <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>In Home Pre Order</Text>
+              </View>
+              <View style={{ padding: 12 }}>
+                <PriceRow label="Total" value={fmt(msrp)} small />
+                <PriceRow label={`${seniorVetPct}% Sr + Vet`} value={`-${fmt(srVetDiscount)}`} green small />
+                <PriceRow label={`${discountPct}% Discount`} value={`-${fmt(preOrderDiscountVal)}`} green small />
+                <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>Grand total</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#15803D' }}>{fmt(preOrderGrandTotal)}</Text>
+                </View>
+
+                {/* Down payment (shown as a separate deduction line; not part of the grand total) */}
+                {showDownInput ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, marginBottom: 10 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginRight: 4 }}>$</Text>
+                    <TextInput
+                      style={{ flex: 1, fontSize: 11, fontWeight: '900', color: '#1C252E', paddingVertical: 8 }}
+                      value={downText}
+                      onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                      onEndEditing={commitDownPayment}
+                      onBlur={commitDownPayment}
+                      placeholder="Down Payment"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                    />
+                    {downPay > 0 && (
+                      <TouchableOpacity onPress={clearDownPayment} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="close-circle" size={16} color="#FF5630" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : (
+                  <TouchableOpacity onPress={() => setShowDownInput(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8, marginBottom: 10 }}>
+                    <Ionicons name="add" size={13} color="#2196F3" />
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{downPay > 0 ? `Down Payment: ${fmt(downPay)}` : 'Add Down Payment'}</Text>
+                  </TouchableOpacity>
+                )}
+                {downPay > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#16a34a' }}>Down Payment</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#16a34a' }}>-{fmt(downPay)}</Text>
+                  </View>
+                )}
+
+                {/* Monthly payment — financing plans only (base = grand total − down payment) */}
+                {preOrderMonthly > 0 && (
+                  <View style={{ alignItems: 'center', marginTop: 4 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '900', color: '#60A5FA', marginBottom: 2 }}>{fmt(preOrderMonthly)}/mo</Text>
+                    <Text style={{ fontSize: 8, color: '#94A3B8', textAlign: 'center' }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* 6. Actions */}
+      {!calculator.isRolloutConfirmed ? (
+        <View style={{ alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14 }}>
+          <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>Enter price, then confirm below to lock</Text>
+        </View>
+      ) : (
+        <View style={{ paddingHorizontal: 14, marginTop: 16 }}>
+          {/* Dropped prices list — matches the regular rollout (CalculatorSummary
+              listings): green "Nth Dropped Price" header + ✓ SECURED badge, then a
+              white border-2 price box (green when secured, slate otherwise). */}
+          {drops.map((d, i) => {
+            const ordinal = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][i] || `${i + 1}th`;
+            const declined = d.status === 'declined';
+            const secured = !declined;
+            const dp = d.price ?? d.dropedPrice ?? 0;
+            return (
+              <View key={i} style={{ marginBottom: 24 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8', marginRight: 8 }}>{ordinal} Dropped Price</Text>
+                    {secured ? (
+                      <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>✓ SECURED</Text>
+                      </View>
+                    ) : (
+                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#DC2626' }}>DECLINED</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => { setChooserPrice(dp); setShowChooser(true); }} style={{ marginRight: 12 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: secured ? '#16A34A' : '#64748B' }}>Result</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.filter((_, idx) => idx !== i))} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: secured ? '#22C55E' : '#E2E8F0', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{fmt(dp)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {!!d.paymentMethod && (
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginRight: 10, maxWidth: 130 }} numberOfLines={1}>{planLabelOf(plans, d.paymentMethod)}</Text>
+                    )}
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : '#DC2626' }}>{secured ? 'SECURED' : 'DECLINED'}</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+
+          {/* Add-drop input */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12 }}>
+              <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 4 }}>$</Text>
+              <TextInput
+                style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E', paddingVertical: 10 }}
+                value={dropText}
+                onChangeText={(t) => setDropText(t.replace(/[^0-9.]/g, ''))}
+                onSubmitEditing={openDrop}
+                placeholder={`Add ${['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][drops.length] || `${drops.length + 1}th`} drop price`}
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+              />
+            </View>
+            <TouchableOpacity onPress={openDrop} style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: '#1976D2', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="add" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Result Lead — opens the Sale/Demo chooser, then the outcome modal,
+              carrying the latest drop (or end) price. */}
+          <TouchableOpacity onPress={() => { setChooserPrice(finalPrice); setShowChooser(true); }} style={{ borderWidth: 1, borderColor: '#eb5a0c', backgroundColor: '#eb5a0c0A', borderRadius: 10, paddingVertical: 13, alignItems: 'center' }}>
+            <Text style={{ fontSize: 14, fontWeight: '900', color: '#eb5a0c' }}>Result Lead{finalPrice > 0 ? ` · ${fmt(finalPrice)}` : ''}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <PaymentPlanModal
+        visible={showPlanPicker}
+        selected={method}
+        price={priceNum}
+        plans={plans}
+        categories={pricing.categories}
+        onSelect={(key) => { onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false); }}
+        onClose={() => setShowPlanPicker(false)}
+      />
+
+      <DropOutcomeModal
+        visible={showDropModal}
+        dropPrice={pendingDrop}
+        method={method}
+        isLowesLead={isLowesLead}
+        plans={plans}
+        dropAddCategories={pricing.dropAddCategories}
+        onSecure={secureDrop}
+        onDecline={declineDrop}
+        onClose={() => setShowDropModal(false)}
+      />
+
+      <ResultJobChooser
+        visible={showChooser}
+        name={calculator.title}
+        price={chooserPrice}
+        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice); }}
+        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice); }}
+        onClose={() => setShowChooser(false)}
+      />
+    </View>
+  );
+}
+
+export function RolloutView({ calculators, verticals, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: RolloutViewProps) {
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const [selectedTabId, setSelectedTabId] = useState(calculators[0]?.id || '');
+  const [prices, setPrices] = useState<Record<string, number>>({});
+  // Effective end price for a calculator: the freshly-entered value, else the
+  // one already persisted on the tab (e.g. from a duplicated calculator).
+  const effectivePrice = (c: CalculatorTab) => prices[c.id] ?? c.price ?? 0;
+  // Web parity (`ViewAllCalculators.visibleCalculators`): a calculator whose title
+  // is still a bare number is empty (no entries → derived name is just its
+  // position) and must NOT appear in the rollout — only real, named calculators
+  // can be priced/confirmed.
+  const visibleCalculators = useMemo(
+    () => calculators.filter((c) => !/^\d+$/.test((c.title || '').trim())),
+    [calculators]
+  );
+  const allConfirmed = visibleCalculators.length > 0 && visibleCalculators.every((c) => c.isRolloutConfirmed);
+  const allHavePrices = visibleCalculators.length > 0 && visibleCalculators.every((c) => effectivePrice(c) > 0);
+  // Progress tracks calculators with an END PRICE ENTERED (web `ConfirmRolloutPrices`
+  // counts `price > 0`, not confirmations), so the bar fills as the rep prices each
+  // calculator — instead of sitting at 0% until everything is confirmed at the end.
+  const enteredCount = visibleCalculators.filter((c) => effectivePrice(c) > 0).length;
+  const progress = visibleCalculators.length > 0 ? (enteredCount / visibleCalculators.length) * 100 : 0;
+  const selectedCalc = visibleCalculators.find((c) => c.id === selectedTabId) || visibleCalculators[0];
+
+  // Map categoryId -> { label, style } across all verticals so quote-card pills
+  // and item rows read nicely. Icon/color are schema-driven (Iconify → Ionicons).
+  const categoryMeta = useMemo(() => {
+    const map: Record<string, { label: string; style: CatStyle }> = {};
+    (verticals || []).forEach((v) => (v.categories || []).forEach((cat) => {
+      const named = CATEGORY_STYLE_MAP[(cat.name || '').toLowerCase()] || CATEGORY_STYLE_MAP[(cat.label || '').toLowerCase()];
+      map[cat.id] = { label: cat.label, style: resolveSchemaStyle({ icon: cat.icon, color: cat.color }, named) };
+    }));
+    return map;
+  }, [verticals]);
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+    >
+      <View style={{ backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingHorizontal: 12 }}>
+          <TouchableOpacity onPress={onBack} style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: '#4CBB17', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+            <Ionicons name="arrow-back" size={18} color="#fff" />
+          </TouchableOpacity>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+            {visibleCalculators.map((calc) => {
+              const isActive = calc.id === selectedCalc?.id;
+              return (
+                <TouchableOpacity key={calc.id} onPress={() => setSelectedTabId(calc.id)} style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: isActive ? 3 : 2, borderBottomColor: isActive ? '#4CBB17' : 'transparent' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={{ fontSize: 13, fontWeight: isActive ? '800' : '500', color: isActive ? '#1C252E' : 'rgba(28,37,46,0.5)' }}>{calc.title}</Text>
+                    {calc.isRolloutConfirmed && <Ionicons name="checkmark-circle" size={13} color="#4CBB17" />}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+        <View style={{ maxWidth: 600, alignSelf: 'center', width: '100%' }}>
+          {selectedCalc ? (
+            <PremiumQuoteCard key={selectedCalc.id} calculator={selectedCalc}
+              initialPrice={effectivePrice(selectedCalc)}
+              categoryMeta={categoryMeta}
+              isLowesLead={isLowesLead}
+              pricing={pricing}
+              onPriceChange={(id, price) => setPrices((p) => ({ ...p, [id]: price }))}
+              onResult={(id, result, price) => onResultJob?.(id, result, price)}
+              onPaymentMethodChange={(id, m) => onPaymentMethodChange?.(id, m)}
+              onDropChange={(id, drops) => onDropChange?.(id, drops)}
+              onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
+              onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)} />
+          ) : (
+            <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+              <Ionicons name="cube-outline" size={44} color="#CBD5E1" />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#637381', marginTop: 12, marginBottom: 8 }}>No Calculators</Text>
+              <Text style={{ fontSize: 14, color: '#94A3B8' }}>Add calculators to see pricing</Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {visibleCalculators.length > 0 && !allConfirmed && (
+        <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
+          <View style={{ maxWidth: 1200, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 24 }}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#637381' }}>{enteredCount} of {visibleCalculators.length} entered</Text>
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#637381' }}>{Math.round(progress)}%</Text>
+              </View>
+              <View style={{ height: 6, backgroundColor: 'rgba(145,158,171,0.1)', borderRadius: 12, overflow: 'hidden' }}>
+                <View style={{ height: '100%', backgroundColor: allHavePrices ? '#4CBB17' : '#2169f3', borderRadius: 12, width: `${progress}%` }} />
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => {
+              const pending = visibleCalculators.filter((c) => !c.isRolloutConfirmed);
+              // Web parity: every calculator needs a price (> 0) that clears its
+              // floored cost, the payment plan's minimum, and the Wells-Fargo-high
+              // minimum — the same checks the card enforces inline.
+              const missing = pending.find((c) => effectivePrice(c) <= 0);
+              if (missing) {
+                FlashMessage.error('Missing Price', `Enter an end price for “${missing.title}”.`);
+                return;
+              }
+              for (const c of pending) {
+                const err = endPriceError(pricing.plans, effectivePrice(c), c, resolveMethod(c, user?.defaultPaymentMethod, pricing.defaultMethod));
+                if (err) {
+                  FlashMessage.error('Price too low', `“${c.title}”: ${err}`);
+                  return;
+                }
+              }
+              const confirmed = pending.map((c) => ({ id: c.id, price: effectivePrice(c) }));
+              onConfirmRollouts?.(confirmed);
+            }} disabled={!allHavePrices} style={{ minWidth: 200, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: allHavePrices ? '#4CBB17' : 'rgba(145,158,171,0.12)' }}>
+              <Text style={{ fontSize: 14, fontWeight: '700', textAlign: 'center', color: allHavePrices ? '#fff' : 'rgba(145,158,171,0.4)' }}>Confirm Rollouts</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </KeyboardAvoidingView>
+  );
+}

@@ -1,5 +1,5 @@
 // Centralised config — update API_URL to match your environment
-const API_URL = 'https://api.revdsm.com/';
+const API_URL = 'https://demo-api.revdsm.com/';
 
 const getS3Bucket = (url: string): string => {
   if (url.includes('dev-api') || url.includes('staging-api')) {

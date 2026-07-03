@@ -21,6 +21,13 @@ interface HorizontalDraggableTabsProps {
   onDragStateChange?: (isDragging: boolean) => void;
   tabsScrollViewRef?: React.RefObject<ScrollView | null>;
   scrollXRef?: React.MutableRefObject<number>;
+  /**
+   * Optional override for the "identical calculator" warning. The default
+   * detection compares gutter/leaf-filter input keys, which don't exist on the
+   * schema-driven Dynamic Deal Center tabs (so every tab would falsely read as a
+   * duplicate). Dynamic callers pass `() => false` to opt out.
+   */
+  getIsDuplicate?: (calc: any, idx: number) => boolean;
 }
 
 const isCalculatorIdentical = (c1: any, c2: any) => {
@@ -60,6 +67,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   onDragStateChange,
   tabsScrollViewRef,
   scrollXRef,
+  getIsDuplicate,
 }) => {
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
 
@@ -76,9 +84,6 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   if (shiftAnims.current.length !== calculators.length) {
     shiftAnims.current = calculators.map(() => new Animated.Value(0));
   }
-
-  // Active calculator tracking
-  const activeCalcId = calculators[activeIdx]?._id;
 
   const longPressTimer = useRef<any>(null);
   const isDraggingActiveRef = useRef<boolean>(false);
@@ -276,10 +281,12 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   return (
     <View style={styles.container}>
       {calculators.map((calc, idx) => {
-        const isDuplicate = calculators.some((otherCalc, otherIdx) => {
-          if (idx === otherIdx) return false;
-          return isCalculatorIdentical(calc, otherCalc);
-        });
+        const isDuplicate = getIsDuplicate
+          ? getIsDuplicate(calc, idx)
+          : calculators.some((otherCalc, otherIdx) => {
+            if (idx === otherIdx) return false;
+            return isCalculatorIdentical(calc, otherCalc);
+          });
         const isWarning = (calc.name?.startsWith('⚠️') && calc.name?.endsWith('⚠️')) || isDuplicate;
         const isActive = idx === activeIdx;
         const isCurrentlyDragging = idx === draggingIdx;

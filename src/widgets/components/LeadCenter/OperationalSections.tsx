@@ -14,6 +14,7 @@ export const ToolsSection = ({
   riskJob,
   onShowJobBuilder,
   onShowCalculator,
+  onShowDynamicDealCenter,
   onShowPitchbook,
   onShowRooflineDeck,
   revRenderJobs = [],
@@ -129,6 +130,12 @@ export const ToolsSection = ({
         icon="handshake"
         onPress={onShowCalculator}
         isLoading={isCalculatorLoading}
+      />
+      <ToolCard
+        title="Dynamic Deal Center"
+        desc="Configurable calculator & job builder"
+        icon="cog"
+        onPress={onShowDynamicDealCenter}
       />
       <TouchableOpacity
         onPress={() => onAction('revrender')}
