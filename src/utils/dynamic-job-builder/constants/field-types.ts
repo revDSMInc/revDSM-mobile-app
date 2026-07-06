@@ -268,16 +268,40 @@ function createDefaultRoomOptions(roomSet: string) {
 export function migrateLegacyColorField(field: any) {
   if (!field) return field;
 
-  if (field.type === 'inputWithColor' || field.type === 'lockedWithColor') {
-    const next: any = {
+  const effectiveType = field.widget || field.inputType || field.type;
+
+  if (effectiveType === 'inputWithColor' || effectiveType === 'lockedWithColor' || effectiveType === 'colorSelection' || effectiveType === 'color') {
+    return {
       id: field.id,
       type: 'swatch',
       label: field.label || 'Color',
       key: field.colorKey || 'color',
       productId: field.productId,
+      palette: field.palette,
+      colors: field.colors,
+      required: field.required,
+      options: field.options,
     };
-    if (field.required !== undefined) next.required = field.required;
-    return next;
+  }
+
+  const recognizedTypes = new Set([
+    'swatch', 'optionList', 'dropdown', 'toggle', 'text', 'number',
+    'textarea', 'locationGrid', 'roomPicker', 'sectionLabel', 'allocation',
+  ]);
+
+  if (!recognizedTypes.has(effectiveType)) {
+    if (field.palette || field.colors?.length) {
+      return { ...field, type: 'swatch' };
+    }
+    if ((field.options || field.choices || field.items)?.length) {
+      return { ...field, type: 'optionList' };
+    }
+    if (effectiveType === 'select' || effectiveType === 'dropdown') {
+      return { ...field, type: 'optionList' };
+    }
+    if (field.widget === 'swatch' || field.inputType === 'swatch') {
+      return { ...field, type: 'swatch' };
+    }
   }
 
   return field;

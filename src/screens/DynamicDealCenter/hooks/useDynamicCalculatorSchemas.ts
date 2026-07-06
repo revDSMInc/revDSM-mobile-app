@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../../services/api';
 import { createDefaultJobBuilderConfig } from '../../../utils/dynamic-job-builder/constants/default-config';
 import { ensureVerticalSummaryTabs } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
+import { migrateConfigTabFields } from '../../../utils/dynamic-job-builder/engine/combination-utils';
 import type { JobBuilderConfig, Vertical } from '../../../utils/dynamic-job-builder/types';
 
 /**
@@ -57,7 +58,9 @@ export function useDynamicCalculatorSchemas(
       if (response?.code !== 200) return null;
       const normalized = normalizeLightweight(response.data);
       if (!normalized) return null;
-      return ensureVerticalSummaryTabs(normalized) as JobBuilderConfig;
+      return ensureVerticalSummaryTabs(
+        migrateConfigTabFields(normalized)
+      ) as JobBuilderConfig;
     },
     enabled,
     staleTime: 5 * 60 * 1000,

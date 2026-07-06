@@ -38,14 +38,14 @@ export function buildDefaultItemFromFields(fields: any[] = [], existing: any = {
   flattenLeafFields(fields).forEach((field) => {
     if (field.key && field.key.startsWith('_')) return;
 
-    if (field.type === 'toggle' || field.type === 'optionList') {
-      item[field.id] = field.multiSelect ? [] : '';
-      return;
-    }
-
     const dcValue = resolveFieldDealCenterValue(field, dealCenterData);
     if (isLockedField(field) && dcValue !== undefined) {
       item[field.id] = dcValue;
+      return;
+    }
+
+    if (field.type === 'toggle' || field.type === 'optionList') {
+      item[field.id] = field.multiSelect ? [] : '';
       return;
     }
 

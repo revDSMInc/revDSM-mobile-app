@@ -207,7 +207,7 @@ config instead of hardcoded verticals. It is the mobile counterpart of the web
   `ToggleGroup`, `LockedField`, `DynamicTabRenderer`).
 - Types: `src/screens/DynamicDealCenter/types/calculator.ts`.
 
-**Status: 🟡 calculator + rollout corrected; Job Builder wiring still pending.**
+**Status: 🟡 calculator + rollout corrected; Job Builder wiring done (core UI + session + API config).**
 
 Done (calculator + rollout):
 - **Payment plans + discount tiers are now BACKEND-DRIVEN (web parity), not static constants.** New hook
@@ -443,27 +443,37 @@ Done (calculator + rollout):
   matching `OutcomeModal`). So the end-price / drop / down-payment inputs stay above the keyboard instead of
   being covered.
 
-Still pending (deferred — the Job Builder step):
-- `DynamicJobBuilderScreen.tsx` uses `createDefaultJobBuilderConfig()` directly and ignores its
-  `initialConfig` prop — it should consume the fetched System-B config and use
-  `useDynamicJobBuilderSession`.
-- The resulted calculator (id + result data from `ResultJobModal`) is not yet carried into the Job
-  Builder (`handleResultConfirm`'s `data` and `jobBuilderCalculatorId` are unused).
-- The outcome modal now captures the full regular field set (one-leg / demo reason + explain / contract /
-  down / balance / payment methods / versatile / pineapple) in its `onConfirm` payload, but the backend
-  wiring to **persist** those extra fields (web `handleFinishOutcome`) is not done yet — confirming records
-  the outcome locally and proceeds to the job builder.
+Done (job builder — 2026-07-06):
+- **DynamicJobBuilderScreen.tsx rewritten** — now consumes `initialConfig` from the API-backed
+  `useDynamicCalculatorSchemas` hook (System B), uses `useDynamicJobBuilderSession` for state
+  (config + jobState + lockedTabIds + previewSnapshot), and renders a step-based progress tracker
+  (circular numbered pills) matching the legacy JobBuilder UI.
+- **DynamicTabRenderer.tsx rewritten** — full field-type support: renders `text`, `number`, `textarea`,
+  `toggle`, `optionList`, `swatch`, `locationGrid`, `roomPicker`, `sectionLabel`, `allocation`
+  (via `AllocatorBar`), `locked` (via `LockedField`/`LockedFieldWithColor`), combination sections
+  (add/remove combos + `GrandTotalCard`), simple sections, and summary tabs (via `VerticalSummaryTab`).
+  Uses all existing widgets from `src/widgets/components/dynamic-job-builder/`.
+- **Data flow wired** — `DynamicDealCenterScreen` passes `jobBuilderConfig` (from `useDynamicCalculatorSchemas`)
+  as `initialConfig` and the result modal's `onConfirm` payload as `calculatorResultData` into the job
+  builder screen. `onJobComplete` resets navigation to LeadCenter.
+- **Auto-save** — 2-second debounced `PUT lead/v1/{leadId}/outcome` (matching legacy behaviour).
+- **Activity logging** — `job_builder_opened` on mount, `job_builder_completed` on finalize submission.
+
+Still pending (deferred — advanced features):
+- The outcome modal now captures the full regular field set (one-leg / demo reason + explain /
+  contract / down / balance / payment methods / versatile / pineapple) in its `onConfirm` payload, but
+  the backend wiring to **persist** those extra fields (web `handleFinishOutcome`) is not done yet.
 - The template fallback remains in `useCalculatorSchema` for offline / not-yet-configured companies;
   once the manager configures the deal center, `isConfigured` flips true and the real schema is used.
 - `useDealPricing`'s two endpoints (`/payment-plans/v1/sales/provider-plans`,
   `/company/v1/discount-config/sales`) are ported from the web but **not yet runtime-verified** on the
-  mobile demo API (the app couldn't be safely bundled while the `tailwind.config.js` malware history was
-  live). If either 404s / returns unconfigured, the static fallback keeps the flow working (`isDynamic:false`);
-  confirm the response shapes on-device once builds are safe again.
-- Web pull (2026-07-02) added job-builder engine work that the pending mobile Job Builder wiring should
-  mirror: persistence & activity logging, allocation visibility/exclusion, toggle-deselect + field
-  validation, default-combo pruning before state storage, and **appointment-required-before-finalize**
-  (web commits `8ddaaa7`, `102fa4e`, `5c24a8f`, `9a833e7`, `08643b7`).
+  mobile demo API.
+- Appointment scheduling modal and document scanning/signature modals exist but are not yet integrated
+  into the dynamic job builder summary step.
+- Web pull (2026-07-02) added job-builder engine work that the mobile could still mirror: allocation
+  visibility/exclusion, toggle-deselect + field validation, default-combo pruning before state storage,
+  and appointment-required-before-finalize (web commits `8ddaaa7`, `102fa4e`, `5c24a8f`, `9a833e7`,
+  `08643b7`).
 
 ---
 

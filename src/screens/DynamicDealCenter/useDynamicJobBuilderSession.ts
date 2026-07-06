@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import type { JobBuilderConfig, JobState, Vertical, Tab } from '../../utils/dynamic-job-builder/types';
+import type { JobBuilderConfig, JobState, Vertical } from '../../utils/dynamic-job-builder/types';
 import { createEmptyVertical, createEmptyTab, createDefaultJobBuilderConfig } from '../../utils/dynamic-job-builder/constants/default-config';
 import { buildInitialJobState, computePreviewSnapshot } from '../../utils/dynamic-job-builder/engine/preview-compute';
 import { getLockedTabIds } from '../../utils/dynamic-job-builder/engine/dependency-engine';
@@ -8,11 +8,12 @@ import { migrateConfigTabFields } from '../../utils/dynamic-job-builder/engine/c
 interface UseDynamicJobBuilderSessionOptions {
   initialConfig?: JobBuilderConfig;
   initialJobState?: JobState;
+  dealCenterData?: any;
   onJobStateChange?: (state: JobState) => void;
 }
 
 export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSessionOptions = {}) {
-  const { initialConfig, initialJobState, onJobStateChange } = options;
+  const { initialConfig, initialJobState, dealCenterData, onJobStateChange } = options;
 
   const [config, setConfig] = useState<JobBuilderConfig>(() => {
     const cfg = initialConfig || createDefaultJobBuilderConfig();
@@ -21,17 +22,26 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
 
   const [jobState, setJobState] = useState<JobState>(() => {
     if (initialJobState) return initialJobState;
-    return buildInitialJobState(config);
+    return buildInitialJobState(config, dealCenterData);
   });
 
+  const lockedTabIdsByVertical = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    (config.verticals || []).forEach((v: any) => {
+      // Pass dealCenterData so tab visibility rules have access to dealCenterData variables
+      result[v.id] = getLockedTabIds(v, dealCenterData || {});
+    });
+    return result;
+  }, [config, dealCenterData]);
+
   const lockedTabIds = useMemo(() => {
-    const vertical = config.verticals?.[0];
-    return getLockedTabIds(vertical, jobState[vertical?.id] || {});
-  }, [config, jobState]);
+    const firstV = config.verticals?.[0];
+    return firstV ? lockedTabIdsByVertical[firstV.id] || [] : [];
+  }, [config, lockedTabIdsByVertical]);
 
   const previewSnapshot = useMemo(
-    () => computePreviewSnapshot({ config, dealCenterData: jobState }),
-    [config, jobState, lockedTabIds]
+    () => computePreviewSnapshot({ config, dealCenterData: dealCenterData || {} }),
+    [config, dealCenterData]
   );
 
   const updateJobState = useCallback(
@@ -119,6 +129,7 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
     jobState,
     setJobState,
     lockedTabIds,
+    lockedTabIdsByVertical,
     previewSnapshot,
     updateJobState,
     updateTabState,

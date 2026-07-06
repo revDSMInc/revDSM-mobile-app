@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo } from 'react';
-import type { JobBuilderConfig, Vertical, Field, JobState } from '../../utils/dynamic-job-builder/types';
+import type { JobBuilderConfig, JobState } from '../../utils/dynamic-job-builder/types';
 import { computePreviewSnapshot } from '../../utils/dynamic-job-builder/engine/preview-compute';
 
 interface DynamicJobBuilderContextValue {
@@ -19,17 +19,19 @@ export function useDynamicJobBuilderContext(): DynamicJobBuilderContextValue {
 interface DynamicJobBuilderProviderProps {
   config: JobBuilderConfig;
   jobState: JobState;
+  dealCenterData?: any;
   children: React.ReactNode;
 }
 
 export function DynamicJobBuilderProvider({
   config,
   jobState,
+  dealCenterData,
   children,
 }: DynamicJobBuilderProviderProps) {
   const previewSnapshot = useMemo(
-    () => computePreviewSnapshot({ config, dealCenterData: jobState }),
-    [config, jobState]
+    () => computePreviewSnapshot({ config, dealCenterData: dealCenterData || {} }),
+    [config, dealCenterData]
   );
 
   const value = useMemo<DynamicJobBuilderContextValue>(

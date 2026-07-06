@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TextInput } from 'react-native';
-import { computeGridTotal, computeColumnTotal, resolveLocationGridConfig } from '../../../utils/dynamic-job-builder/engine/location-grid-utils';
+import { computeGridTotal } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
+import { computeColumnTotal, resolveLocationGridConfig } from '../../../utils/dynamic-job-builder/engine/location-grid-utils';
 
 interface LocationGridProps {
   label?: string;

@@ -5,11 +5,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCalculatorSchema } from '../hooks/useCalculatorSchema';
 import { useDynamicCalculators } from '../hooks/useDynamicCalculators';
+import { useDynamicCalculatorSchemas } from '../hooks/useDynamicCalculatorSchemas';
 import { useDealPricing } from '../hooks/useDealPricing';
 import { CalculatorView } from './CalculatorView';
 import { RolloutView } from './RolloutView';
 import { ResultJobModal } from './ResultJobModal';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
+import { buildDealCenterData } from '../utils/build-deal-center-data';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -22,6 +24,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const lead = route?.params?.lead;
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
   const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number }>({ visible: false });
+  const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
+
+  const { config: jobBuilderConfig } = useDynamicCalculatorSchemas();
 
   const { schema, configuredSchemas, isLoading: isSchemaLoading } = useCalculatorSchema();
   // Backend-driven payment plans + discount tiers (web parity), static fallback.
@@ -72,8 +77,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     setResultModal({ visible: true, calculatorId, resultType: result, price });
   }, []);
 
-  const handleResultConfirm = useCallback(() => {
+  const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
+    setCalculatorResultData(data);
     setFlowStep('jobBuilder');
   }, []);
 
@@ -81,8 +87,44 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     setFlowStep('calculator');
   }, []);
 
+  const handleJobBuilderComplete = useCallback((config: any, state: any) => {
+    navigation?.reset({
+      index: 1,
+      routes: [
+        { name: 'Leads' },
+        {
+          name: 'LeadCenter',
+          params: { lead, tab: 'job_docs' },
+        },
+      ],
+    });
+  }, [navigation, lead]);
+
+  // Build the dealCenterData map using the same algorithm as the web's
+  // buildDealCenterSessionData — extracts field-option aliases from the
+  // calculator form schemas so that tab.dcField references (which may use
+  // a field's legacy name rather than its id) are correctly resolved.
+  const consolidatedDealCenterData = useMemo(() => {
+    return buildDealCenterData({
+      entries: activeTab?.entries || {},
+      resultData: calculatorResultData || {},
+      schemas: verticals,   // CalculatorSchema[] — same array used by the calculator
+      lead: lead || {},
+    });
+  }, [lead, calculatorResultData, activeTab, verticals]);
+
   if (flowStep === 'jobBuilder') {
-    return <DynamicJobBuilderScreen navigation={navigation} onGoBack={handleJobBuilderBack} />;
+    return (
+      <DynamicJobBuilderScreen
+        navigation={navigation}
+        initialConfig={jobBuilderConfig}
+        dealCenterData={consolidatedDealCenterData}
+        calculatorResultData={calculatorResultData}
+        leadId={lead?._id || lead?.leadId || lead?.id}
+        onGoBack={handleJobBuilderBack}
+        onJobComplete={handleJobBuilderComplete}
+      />
+    );
   }
 
   if (flowStep === 'rollout') {

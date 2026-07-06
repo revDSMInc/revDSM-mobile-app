@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface ProgressTrackerStep {
   id: string;
@@ -12,45 +13,102 @@ interface ProgressTrackerStep {
 interface ProgressTrackerProps {
   steps?: ProgressTrackerStep[];
   activeStepId?: string;
+  onStepPress?: (index: number) => void;
 }
 
-export function ProgressTracker({ steps = [], activeStepId }: ProgressTrackerProps) {
+export function ProgressTracker({ steps = [], activeStepId, onStepPress }: ProgressTrackerProps) {
   return (
-    <View className="flex-row px-4 py-3 gap-1">
+    <View className="flex-row px-4 pt-1 pb-2 gap-1">
       {steps.map((step, index) => {
-        const isActive = step.id === activeStepId;
-        const color = step.complete ? '#22c55e' : isActive ? '#3b82f6' : step.locked ? '#999' : '#ddd';
+        const isActive = step.id === activeStepId || step.active;
+
+        const bgColor = isActive
+          ? '#0EA5E9'
+          : step.complete
+            ? '#10b981'
+            : step.locked
+              ? '#FAD9D3'
+              : 'white';
+
+        const borderColor = isActive
+          ? '#0EA5E9'
+          : step.complete
+            ? '#10b981'
+            : step.locked
+              ? '#FE6644'
+              : '#e2e8f0';
+
+        const labelColor = isActive
+          ? '#0EA5E9'
+          : step.complete
+            ? '#10b981'
+            : step.locked
+              ? '#FE6644'
+              : '#94a3b8';
+
+        const handlePress = () => {
+          if (step.locked) return;
+          if (isActive) return;
+          onStepPress?.(index);
+        };
 
         return (
           <React.Fragment key={step.id}>
-            <View className="items-center flex-1">
+            <Pressable
+              onPress={handlePress}
+              className="items-center"
+              style={{ flex: 1 }}
+            >
               <View
-                className="w-7 h-7 rounded-full items-center justify-center mb-1"
-                style={{ backgroundColor: color }}
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 4,
+                  borderWidth: 2,
+                  backgroundColor: bgColor,
+                  borderColor: borderColor,
+                }}
               >
                 {step.locked ? (
-                  <Text className="text-white text-[10px]">🔒</Text>
+                  <Icon name="lock" size={16} color="#FE6644" />
                 ) : step.complete ? (
-                  <Text className="text-white text-[11px] font-bold">✓</Text>
+                  <Icon name="check" size={18} color="white" />
                 ) : (
-                  <Text className="text-white text-[11px] font-bold">{index + 1}</Text>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: '900',
+                      color: isActive ? 'white' : '#94a3b8',
+                    }}
+                  >
+                    {index + 1}
+                  </Text>
                 )}
               </View>
               <Text
-                className="text-[9px] text-center"
                 style={{
-                  color: isActive ? '#3b82f6' : step.complete ? '#22c55e' : '#999',
-                  fontWeight: isActive ? '700' : '400',
+                  fontSize: 8,
+                  fontWeight: '900',
+                  letterSpacing: -0.3,
+                  color: labelColor,
                 }}
                 numberOfLines={1}
               >
                 {step.label}
               </Text>
-            </View>
+            </Pressable>
             {index < steps.length - 1 && (
               <View
-                className="h-0.5 flex-1 mt-3.5"
-                style={{ backgroundColor: step.complete ? '#22c55e' : '#e5e5ea' }}
+                style={{
+                  height: 2,
+                  flex: 1,
+                  alignSelf: 'center',
+                  marginBottom: 16,
+                  backgroundColor: step.complete ? '#10b981' : '#e2e8f0',
+                }}
               />
             )}
           </React.Fragment>
