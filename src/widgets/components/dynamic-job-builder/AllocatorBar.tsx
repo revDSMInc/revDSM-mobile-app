@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface AllocatorBarProps {
   label?: string;
@@ -8,46 +9,63 @@ interface AllocatorBarProps {
   unit?: string;
 }
 
+// Styled to match the normal Job Builder footage tracker card
+// (GutterSection renderAllocationCard): #A5E1ED border, sky/amber stat colors,
+// #22C55E "Perfectly allocated" banner, red over-allocation banner.
 export function AllocatorBar({ label, avail = 0, used = 0, unit = '' }: AllocatorBarProps) {
   const left = avail - used;
-  const complete = left === 0;
-  const over = left < 0;
-  const borderColor = over ? '#ef4444' : complete ? '#22c55e' : '#38bdf8';
-  const accentColor = over ? '#ef4444' : complete ? '#22c55e' : '#0ea5e9';
+  const complete = Math.abs(left) <= 0.1 && avail > 0;
+  const over = left < -0.1;
 
   return (
     <View
-      className="mx-3 mb-3 rounded-[14px] p-3 bg-white"
-      style={{ borderWidth: 2, borderColor }}
+      className="mx-3 mb-3 py-2 rounded-2xl border-2 bg-white"
+      style={{
+        borderColor: '#A5E1ED',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 15,
+        elevation: 2,
+      }}
     >
       {label && (
-        <Text className="text-[13px] font-bold text-center mb-2" style={{ color: accentColor }}>
+        <Text className="text-[10px] font-black text-[#0EA5E9] mb-1 text-center tracking-tight">
           {label}
         </Text>
       )}
-      <View className="flex-row justify-around">
-        {[
-          ['Avail', avail, '#0ea5e9'],
-          ['Used', used, '#f59e0b'],
-          ['Left', left, over ? '#ef4444' : complete ? '#22c55e' : '#0ea5e9'],
-        ].map(([l, v, c]) => (
-          <View key={l as string} className="items-center">
-            <Text className="text-[11px] text-gray-400">{l as string}</Text>
-            <Text className="text-lg font-extrabold" style={{ color: c as string }}>
-              {v as number}{unit}
-            </Text>
-          </View>
-        ))}
+      <View className="flex-row justify-around px-1">
+        <View className="items-center">
+          <Text className="text-[8px] font-bold text-slate-400 mb-0.5">Avail</Text>
+          <Text className="text-base font-black text-[#7DD3FC]">{avail}{unit}</Text>
+        </View>
+        <View className="items-center">
+          <Text className="text-[8px] font-bold text-slate-400 mb-0.5">Used</Text>
+          <Text className="text-base font-black text-[#F59E0B]">{used}{unit}</Text>
+        </View>
+        <View className="items-center">
+          <Text className="text-[8px] font-bold text-slate-400 mb-0.5">Left</Text>
+          <Text className={`text-base font-black ${over ? 'text-red-500' : 'text-slate-800'}`}>
+            {left}{unit}
+          </Text>
+        </View>
       </View>
-      {!complete && !over && (
-        <Text className="mt-2 text-[11px] font-semibold text-center text-amber-500">
-          ⚠️ INCOMPLETE — {left}{unit} remaining
-        </Text>
+
+      {complete && (
+        <View className="bg-[#22C55E] rounded-xl py-2 px-2 mt-1.5 mx-2 flex-row items-center justify-center">
+          <Icon name="check" size={12} color="#fff" />
+          <Text className="text-white text-[9px] font-black tracking-tight ml-1">
+            Perfectly allocated!
+          </Text>
+        </View>
       )}
       {over && (
-        <Text className="mt-2 text-[11px] font-semibold text-center text-red-500">
-          ⛔ OVER ALLOCATED — {Math.abs(left)}{unit} excess
-        </Text>
+        <View className="bg-red-500 rounded-xl py-2 px-2 mt-1.5 mx-2 flex-row items-center justify-center">
+          <Icon name="alert" size={12} color="#fff" />
+          <Text className="text-white text-[9px] font-black tracking-tight ml-1">
+            Over by {Math.abs(left)}{unit}
+          </Text>
+        </View>
       )}
     </View>
   );

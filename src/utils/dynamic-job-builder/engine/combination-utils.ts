@@ -38,14 +38,16 @@ export function buildDefaultItemFromFields(fields: any[] = [], existing: any = {
   flattenLeafFields(fields).forEach((field) => {
     if (field.key && field.key.startsWith('_')) return;
 
-    const dcValue = resolveFieldDealCenterValue(field, dealCenterData);
-    if (isLockedField(field) && dcValue !== undefined) {
-      item[field.id] = dcValue;
+    // Web parity: toggle/optionList always seed empty, even when locked with a
+    // dcValue — this block must come before the locked/dcValue check below.
+    if (field.type === 'toggle' || field.type === 'optionList') {
+      item[field.id] = field.multiSelect ? [] : '';
       return;
     }
 
-    if (field.type === 'toggle' || field.type === 'optionList') {
-      item[field.id] = field.multiSelect ? [] : '';
+    const dcValue = resolveFieldDealCenterValue(field, dealCenterData);
+    if (isLockedField(field) && dcValue !== undefined) {
+      item[field.id] = dcValue;
       return;
     }
 

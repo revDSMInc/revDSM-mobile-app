@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../../services/api';
-import { createDefaultJobBuilderConfig } from '../../../utils/dynamic-job-builder/constants/default-config';
 import { ensureVerticalSummaryTabs } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
 import { migrateConfigTabFields } from '../../../utils/dynamic-job-builder/engine/combination-utils';
 import type { JobBuilderConfig, Vertical } from '../../../utils/dynamic-job-builder/types';
@@ -14,7 +13,8 @@ import type { JobBuilderConfig, Vertical } from '../../../utils/dynamic-job-buil
  * Mirrors the web implementation (`src/api/job-builder-products.js`):
  *   GET /company/v1/job-builder-products  ->  { code: 200, data: { verticals[], products[], ... } }
  * We normalize the lightweight document and ensure each vertical has a Summary
- * tab, then fall back to the bundled default config when nothing is published.
+ * tab. There is NO bundled-default fallback: when nothing is published, `config`
+ * is null and `isConfigured` is false — the caller must not render demo data.
  */
 
 const JOB_BUILDER_PRODUCTS_URL = '/company/v1/job-builder-products';
@@ -39,9 +39,12 @@ interface UseDynamicCalculatorSchemasOptions {
 
 interface UseDynamicCalculatorSchemasResult {
   verticals: Vertical[];
-  config: JobBuilderConfig;
-  /** true when the config came from the backend rather than the bundled default */
+  /** null when the backend has no published job-builder config */
+  config: JobBuilderConfig | null;
+  /** true when a config with verticals came from the backend */
   isRemote: boolean;
+  /** true when the backend published a usable (has verticals) config */
+  isConfigured: boolean;
   isLoading: boolean;
 }
 
@@ -68,13 +71,13 @@ export function useDynamicCalculatorSchemas(
   });
 
   return useMemo(() => {
-    const fallbackConfig = createDefaultJobBuilderConfig();
     const isRemote = Boolean(data?.verticals?.length);
-    const config = isRemote ? (data as JobBuilderConfig) : fallbackConfig;
+    const config = isRemote ? (data as JobBuilderConfig) : null;
     return {
-      verticals: config.verticals,
+      verticals: config?.verticals ?? [],
       config,
       isRemote,
+      isConfigured: isRemote,
       isLoading,
     };
   }, [data, isLoading]);

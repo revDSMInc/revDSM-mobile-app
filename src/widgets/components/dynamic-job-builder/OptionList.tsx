@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface OptionListProps {
   label?: string;
@@ -9,11 +10,13 @@ interface OptionListProps {
   color?: string;
 }
 
-export function OptionList({ label, options = [], value, onChange, color = '#22c55e' }: OptionListProps) {
+// Matches the normal Job Builder selector styling: #22C55E selected, slate idle,
+// rounded-xl border-2, font-black, MCIcon "✓ value" confirmation.
+export function OptionList({ label, options = [], value, onChange, color = '#22C55E' }: OptionListProps) {
   return (
     <View className="mb-4">
       {label && (
-        <Text className="text-[13px] font-bold text-gray-500 mb-2">{label}</Text>
+        <Text className="text-[11px] font-black text-slate-400 mb-2">{label}</Text>
       )}
       {options.map((opt) => {
         const selected = value === opt;
@@ -21,16 +24,15 @@ export function OptionList({ label, options = [], value, onChange, color = '#22c
           <TouchableOpacity
             key={opt}
             onPress={() => onChange?.(opt)}
-            className="w-full py-3.5 px-7 rounded-xl mb-2 items-start"
+            className="w-full py-3.5 px-5 rounded-xl mb-2 items-start border-2"
             style={{
-              borderWidth: selected ? 2 : 1.5,
-              borderColor: selected ? color : '#e5e5ea',
+              borderColor: selected ? color : '#F1F5F9',
               backgroundColor: selected ? `${color}12` : '#fff',
             }}
           >
             <Text
-              className="text-[13px]"
-              style={{ color: selected ? color : '#333', fontWeight: selected ? '700' : '400' }}
+              className="text-[12px] font-black"
+              style={{ color: selected ? color : '#64748B' }}
             >
               {opt}
             </Text>
@@ -38,9 +40,10 @@ export function OptionList({ label, options = [], value, onChange, color = '#22c
         );
       })}
       {value && (
-        <Text className="text-[11px] font-bold mt-1" style={{ color }}>
-          ✓ {value}
-        </Text>
+        <View className="flex-row items-center mt-1">
+          <Icon name="check" size={12} color={color} />
+          <Text className="text-[11px] font-black ml-1" style={{ color }}>{value}</Text>
+        </View>
       )}
     </View>
   );

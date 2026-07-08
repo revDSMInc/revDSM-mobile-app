@@ -1,24 +1,22 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface AddCombinationButtonProps {
   onClick?: () => void;
   label?: string;
 }
 
-export function AddCombinationButton({ onClick, label = '+ Add Combination' }: AddCombinationButtonProps) {
+// Matches the normal Job Builder "Add Combination" button (LeafFilter variant):
+// h-14 rounded-2xl slate border, plus icon, slate font-black.
+export function AddCombinationButton({ onClick, label = 'Add Combination' }: AddCombinationButtonProps) {
   return (
     <TouchableOpacity
       onPress={onClick}
-      className="mx-3 mb-4 py-4 rounded-2xl items-center justify-center flex-row gap-2"
-      style={{
-        borderWidth: 2,
-        borderStyle: 'dashed',
-        borderColor: '#a78bfa',
-        backgroundColor: 'rgba(167,139,250,0.04)',
-      }}
+      className="mx-3 mb-6 h-14 rounded-2xl border border-slate-200 items-center justify-center flex-row bg-white"
     >
-      <Text className="text-sm font-bold text-purple-600">{label}</Text>
+      <Icon name="plus" size={16} color="#94A3B8" />
+      <Text className="text-slate-400 font-black text-[11px] ml-2">{label}</Text>
     </TouchableOpacity>
   );
 }

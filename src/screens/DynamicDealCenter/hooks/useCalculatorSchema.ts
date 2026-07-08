@@ -7,7 +7,6 @@ import type {
   CalculatorSection,
   CalculatorField,
 } from '../types/calculator';
-import { DEMO_CALCULATOR_SCHEMA } from '../constants/mock-calculator-schema';
 
 /**
  * Loads the category-shaped calculator schema that drives the Dynamic Deal
@@ -19,8 +18,9 @@ import { DEMO_CALCULATOR_SCHEMA } from '../constants/mock-calculator-schema';
  * `price: { retail, cost, par }`. We normalize the payload exactly like the web
  * does and keep only "configured" schemas (those that actually contain fields).
  *
- * If the backend returns nothing configured (or the request fails) we fall back
- * to the bundled template schema so the flow keeps working offline / pre-config.
+ * There is NO mock fallback: when the backend returns nothing configured, `schema`
+ * is null and `isConfigured` is false — callers must surface a not-configured
+ * state (or fall back to the normal builder) rather than render demo data.
  */
 
 const DEAL_CENTER_SCHEMAS_URL = '/calculator-form-schemas/deal-center';
@@ -76,8 +76,8 @@ interface UseCalculatorSchemaOptions {
 }
 
 interface UseCalculatorSchemaResult {
-  /** primary schema for the single-schema screen (first configured, else template) */
-  schema: CalculatorSchema;
+  /** primary schema (first configured); null when nothing is configured */
+  schema: CalculatorSchema | null;
   /** all normalized schemas returned by the backend */
   schemas: CalculatorSchema[];
   /** normalized schemas that actually have fields configured */
@@ -111,7 +111,7 @@ export function useCalculatorSchema(
     const configuredSchemas = schemas.filter(isConfiguredDealCenterSchema);
     const isConfigured = configuredSchemas.length > 0;
     return {
-      schema: configuredSchemas[0] ?? DEMO_CALCULATOR_SCHEMA,
+      schema: configuredSchemas[0] ?? null,
       schemas,
       configuredSchemas,
       isRemote: isConfigured,

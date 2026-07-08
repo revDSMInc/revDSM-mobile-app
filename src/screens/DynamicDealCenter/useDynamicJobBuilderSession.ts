@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import type { JobBuilderConfig, JobState, Vertical } from '../../utils/dynamic-job-builder/types';
-import { createEmptyVertical, createEmptyTab, createDefaultJobBuilderConfig } from '../../utils/dynamic-job-builder/constants/default-config';
+import { createEmptyVertical, createEmptyTab } from '../../utils/dynamic-job-builder/constants/default-config';
 import { buildInitialJobState, computePreviewSnapshot } from '../../utils/dynamic-job-builder/engine/preview-compute';
 import { getLockedTabIds } from '../../utils/dynamic-job-builder/engine/dependency-engine';
 import { migrateConfigTabFields } from '../../utils/dynamic-job-builder/engine/combination-utils';
@@ -16,7 +16,9 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
   const { initialConfig, initialJobState, dealCenterData, onJobStateChange } = options;
 
   const [config, setConfig] = useState<JobBuilderConfig>(() => {
-    const cfg = initialConfig || createDefaultJobBuilderConfig();
+    // No mock/default fallback: the screen only mounts this hook once a real
+    // backend config is present. An empty config is the safe inert default.
+    const cfg = initialConfig || ({ name: '', verticals: [] } as JobBuilderConfig);
     return migrateConfigTabFields(cfg);
   });
 

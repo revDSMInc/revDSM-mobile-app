@@ -14,58 +14,48 @@ interface GrandTotalCardProps {
   accentColor?: string;
 }
 
+// Matches the normal LeafFilter "Grand Total - All Combinations" card:
+// rounded-[32px], emerald border, per-combo slate cards, #22C55E totals.
 export function GrandTotalCard({
   combinations = [],
   fields = [],
   summaryField,
   sectionLabel,
-  accentColor = '#22c55e',
+  accentColor = '#22C55E',
 }: GrandTotalCardProps) {
   const columns = resolveGrandTotalColumns(fields, summaryField);
   const total = computeSectionCombinationsTotal(fields, combinations, summaryField);
   const totalUnit = getSectionTotalUnit(fields, summaryField);
-  const title = summaryField?.label || 'GRAND TOTAL - ALL COMBINATIONS';
+  const title = summaryField?.label || 'Grand Total - All Combinations';
   const footerLabel = buildSectionTotalLabel(sectionLabel, summaryField?.footerLabel);
 
   if (!columns.length || !combinations.length) return null;
 
   return (
-    <View
-      className="rounded-lg p-4"
-      style={{ backgroundColor: `${accentColor}08`, borderWidth: 2, borderColor: `${accentColor}30` }}
-    >
-      <Text
-        className="text-sm font-bold mb-3 tracking-wide uppercase"
-        style={{ color: accentColor }}
-      >
+    <View className="bg-white rounded-[32px] p-6 border border-emerald-100 mx-3 mb-6">
+      <Text className="text-[12px] font-black mb-5" style={{ color: accentColor }}>
         {title}
       </Text>
 
       {combinations.map((combo, index) => (
         <View
           key={index}
-          className="p-3 rounded mb-2 border"
-          style={{ borderColor: `${accentColor}20`, backgroundColor: 'rgba(255,255,255,0.5)' }}
+          className="mb-4 bg-slate-50/60 p-4 rounded-2xl border border-slate-100"
         >
-          <View className="flex-row items-center gap-2 mb-2">
-            <View className="bg-blue-50 px-2 py-0.5 rounded">
-              <Text className="text-[10px] font-bold text-blue-500">#{index + 1}</Text>
-            </View>
+          <View className="self-start px-2 py-0.5 rounded-lg mb-3" style={{ backgroundColor: `${accentColor}20` }}>
+            <Text className="text-[10px] font-black" style={{ color: accentColor }}>#{index + 1}</Text>
           </View>
-          <View className="flex-row flex-wrap gap-2">
+          <View className="flex-row flex-wrap gap-3">
             {columns.map((field, colIndex) => {
               const { text, variant } = formatComboFieldSummaryValue(field, combo, {
                 emptyMessage: field.emptyMessage,
               });
               return (
                 <View key={field.id || colIndex} className="min-w-[80px]">
-                  <Text className="text-[10px] text-gray-500">{field.label || field.key}</Text>
+                  <Text className="text-[8px] font-bold text-slate-400 mb-0.5">{field.label || field.key}</Text>
                   <Text
-                    className="text-[11px]"
-                    style={{
-                      color: variant === 'missing' ? '#ef4444' : variant === 'total' ? accentColor : '#333',
-                      fontWeight: variant === 'total' ? '700' : '600',
-                    }}
+                    className="text-[10px] font-black"
+                    style={{ color: variant === 'missing' ? '#EF4444' : variant === 'total' ? accentColor : '#1E293B' }}
                   >
                     {text}
                   </Text>
@@ -77,10 +67,9 @@ export function GrandTotalCard({
       ))}
 
       {columns.some((field) => field.type === 'locationGrid' && !field.unmapped) && (
-        <View className="mt-3 pt-3 border-t border-gray-200">
-          <Text className="text-base font-bold" style={{ color: accentColor }}>
-            {footerLabel}: {total} {totalUnit}
-          </Text>
+        <View className="mt-4 pt-4 border-t-2 flex-row justify-between items-center px-1" style={{ borderColor: accentColor }}>
+          <Text className="text-[14px] font-black" style={{ color: accentColor }}>{footerLabel}</Text>
+          <Text className="text-[20px] font-black" style={{ color: accentColor }}>{total} {totalUnit}</Text>
         </View>
       )}
     </View>

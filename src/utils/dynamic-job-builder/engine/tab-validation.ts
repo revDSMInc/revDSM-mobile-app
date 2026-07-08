@@ -1,90 +1,466 @@
 import {
   getTabSections,
-  getFlattenedCombinationSectionRowFields,
-  flattenLeafFields,
+  getCombinationSectionHeaderFields,
+  getCombinationSectionRowFields,
+  buildComboGroupSectionState,
 } from './combination-utils';
-import { isContainerFieldType } from '../constants/field-types';
-import { isFieldVisible } from './dependency-engine';
-import { computeGridTotal } from './allocation-utils';
-import { isRequiredFieldValueMissing } from './field-value-utils';
+import { isAllocationField, computeGridTotal } from './allocation-utils';
+import {
+  buildAllocationStatus,
+  isAllocationCardActive,
+  normalizeAllocationStatusMessages,
+} from './allocation-config-utils';
+import { resolveAllocationMetrics } from './allocation-value-resolver';
+import { resolveAccordionAllocationStatus } from './accordion-allocation-utils';
+import {
+  evaluateRuleGroup,
+  isAllocationExcluded,
+  isFieldRequired,
+  isFieldVisibleWithConditions,
+} from './dependency-engine';
+import { filterVisibleToggleOptions } from './toggle-utils';
+import { isRequiredNumberValueMissing } from './field-value-utils';
+import { getWarningConfig } from './field-layout-utils';
+
+// Ported to full web parity. Previously this file was a heavily stripped
+// reimplementation that omitted section-visibility gating, per-field visibleWhen
+// skipping, allocation-balance gating, toggle option-visibility skipping and
+// warningConfig blocking — so tabs (esp. gutter/leaffilter) could report complete
+// while allocations were unbalanced or conditionally-hidden fields were empty.
+// Web ref: src/components/dynamic-job-builder/engine/tab-validation.js
+
+const SKIPPED_FIELD_TYPES = new Set([
+  'locked',
+  'lockedWithColor',
+  'allocation',
+  'combinationSummary',
+  'sectionLabel',
+]);
+
+// mobile bridge: web sources these from field-blocks-renderer.js (absent here).
+// getCombinationSectionComboFields === getCombinationSectionRowFields; and the
+// section allocation set is the section's top-level allocation fields — their
+// visibility/exclusion gating happens inside isAllocationComplete below.
+const getCombinationSectionComboFields = (section: any) => getCombinationSectionRowFields(section);
+const getCombinationSectionAllocations = (section: any) =>
+  (section?.fields || []).filter(isAllocationField);
+
+function buildFlatTabState(tabState: any, tab: any) {
+  const state: any = {};
+  const sections = getTabSections(tab);
+  sections.forEach((s: any) => {
+    if (s.sectionType === 'simple') {
+      const sectionState = tabState?.sectionFields?.[s.id] || {};
+      Object.keys(sectionState).forEach((key) => {
+        if (key !== 'colorValues') state[key] = sectionState[key];
+      });
+    } else {
+      const combos = tabState?.comboGroups?.[s.id]?.combinations || [];
+      if (combos.length > 0) {
+        Object.keys(combos[0]).forEach((key) => {
+          if (key !== 'colorValues') state[key] = combos[0][key];
+        });
+      }
+    }
+  });
+  return state;
+}
+
+function isSectionVisible(section: any, tabState: any, dealCenterData: any, tab: any) {
+  const visibleWhen = section?.dependencies?.visibleWhen;
+  if (!visibleWhen) return true;
+  const state = buildFlatTabState(tabState, tab);
+  return evaluateRuleGroup(visibleWhen, {
+    dealCenterData: dealCenterData || {},
+    state,
+    tab,
+    tabState,
+    section,
+  });
+}
+
+function buildInitialSectionState(section: any) {
+  const state: any = { colorValues: {} };
+  (section.fields || []).forEach((field: any) => {
+    if (!field.id || (field.key && field.key.startsWith('_'))) return;
+    if (field.type === 'locationGrid') state[field.id] = null;
+    else if (field.type === 'roomPicker') state[field.id] = [];
+    else state[field.id] = '';
+  });
+  return state;
+}
+
+function getSectionCombos(section: any, tabState: any) {
+  const fromGroups = tabState?.comboGroups?.[section.id]?.combinations;
+  if (fromGroups?.length) return fromGroups;
+
+  if (section.id === 'default' && tabState?.combinations?.length) {
+    return tabState.combinations;
+  }
+
+  return [{ ...(section.defaultItem || {}) }];
+}
+
+function resolveFieldStateValue(field: any, state: any, colorValues: any = {}) {
+  const byId = state?.[field.id];
+  if (byId !== undefined && byId !== null && byId !== '') return byId;
+
+  if (field.key) {
+    const byKey = state?.[field.key];
+    if (byKey !== undefined && byKey !== null && byKey !== '') return byKey;
+    const colorByKey = colorValues?.[field.key];
+    if (colorByKey) return colorByKey;
+  }
+
+  const colorById = colorValues?.[field.id];
+  if (colorById) return colorById;
+
+  return byId;
+}
+
+function isStackWarningActive(field: any, state: any, ctx: any = {}) {
+  const warning = getWarningConfig(field);
+  if (!warning) return false;
+
+  if (!warning.visibleWhen) return true;
+
+  return evaluateRuleGroup(warning.visibleWhen, {
+    dealCenterData: ctx.dealCenterData || {},
+    state,
+    tab: ctx.tab,
+    tabState: ctx.tabState,
+    section: ctx.section,
+  });
+}
+
+function isEmptyRequiredValue(field: any, state: any, colorValues: any = {}) {
+  const value = resolveFieldStateValue(field, state, colorValues);
+
+  switch (field.type) {
+    case 'text':
+    case 'toggle':
+    case 'optionList':
+    case 'dropdown':
+    case 'textarea':
+      return !value;
+    case 'number':
+      return isRequiredNumberValueMissing(value);
+    case 'roomPicker':
+      return !Array.isArray(value) || value.length === 0;
+    case 'swatch':
+    case 'colorSelection':
+      return !value;
+    case 'inputWithColor': {
+      const inputType = field.inputType || 'text';
+      const hasUsage = inputType === 'number' ? parseFloat(value) > 0 : Boolean(value);
+      if (!hasUsage) return false;
+      const colorKey = field.colorKey || 'color';
+      const color = colorValues?.[colorKey] || state?.[colorKey] || '';
+      return !color;
+    }
+    case 'locationGrid':
+      return !value || Object.keys(value).length === 0 || computeGridTotal(value) === 0;
+    default:
+      return false;
+  }
+}
+
+function buildDepCtx(ctx: any, state: any) {
+  return {
+    dealCenterData: ctx.dealCenterData,
+    sectionFields: ctx.sectionFields,
+    tab: ctx.tab,
+    tabState: ctx.tabState,
+    section: ctx.section,
+    sectionState: ctx.sectionState ?? state,
+    combos: ctx.combos,
+  };
+}
 
 export function isFieldValueComplete(field: any, state: any, ctx: any = {}) {
-  const value = state?.[field.id];
-  if (!isRequiredFieldValueMissing(field, value)) return true;
+  if (SKIPPED_FIELD_TYPES.has(field.type)) return true;
 
-  return !isFieldRequired(field, state, ctx);
-}
+  const { applyConditions = true, dealCenterData, colorValues = {} } = ctx;
+  const depCtx = buildDepCtx(ctx, state);
 
-function isFieldRequired(field: any, state: any, ctx: any) {
-  if (field?.required) return true;
-  const requiredWhen = field?.dependencies?.requiredWhen;
-  if (!requiredWhen) return false;
-  const { evaluateRuleGroup } = require('./dependency-engine');
-  return evaluateRuleGroup(requiredWhen, { dealCenterData: ctx.dealCenterData || {}, state });
-}
+  if (applyConditions && !isFieldVisibleWithConditions(field, state, depCtx, applyConditions)) {
+    return true;
+  }
 
-function isCombinationIncomplete(section: any, combo: any, ctx: any = {}) {
-  const rowFields = getFlattenedCombinationSectionRowFields(section);
-  return rowFields.some((field) => {
-    if (field.type === 'sectionLabel' || field.type === 'allocation') return false;
-    if (field.type === 'locationGrid') {
-      const grid = combo[field.id];
-      return !grid || computeGridTotal(grid) === 0;
+  if (field.type === 'toggle' || field.type === 'optionList') {
+    const visibleOptions = filterVisibleToggleOptions(field, dealCenterData, state, applyConditions);
+    if (!visibleOptions.length) {
+      return true;
     }
-    return isRequiredFieldValueMissing(field, combo[field.id]);
-  });
+  }
+
+  if (!isFieldRequired(field, state, depCtx)) {
+    return true;
+  }
+
+  const effectiveColorValues = colorValues || state?.colorValues || {};
+  const empty = isEmptyRequiredValue(field, state, effectiveColorValues);
+  return !empty;
 }
 
-function validateFieldTree(fields: any[], state: any, ctx: any) {
-  return fields.every((field) => {
-    if (isContainerFieldType(field.type) && field.fields?.length) {
-      return validateFieldTree(field.fields, state, ctx);
+function validateFieldTree(field: any, state: any, ctx: any): boolean {
+  if (!field) return true;
+
+  if (field.type === 'stack') {
+    const { applyConditions = true } = ctx;
+    const depCtx = buildDepCtx(ctx, state);
+
+    if (applyConditions && !isFieldVisibleWithConditions(field, state, depCtx, applyConditions)) {
+      return true;
     }
-    return isFieldValueComplete(field, state, ctx);
-  });
+
+    if (isStackWarningActive(field, state, ctx)) {
+      return false;
+    }
+
+    const children = field.fields || [];
+    return children.every((child: any) => validateFieldTree(child, state, ctx));
+  }
+
+  if (field.type === 'accordion') {
+    const { applyConditions = true } = ctx;
+    const depCtx = buildDepCtx(ctx, state);
+
+    if (applyConditions && !isFieldVisibleWithConditions(field, state, depCtx, applyConditions)) {
+      return true;
+    }
+
+    const children = field.fields || [];
+    const allChildrenValid = children.every((child: any) => validateFieldTree(child, state, ctx));
+    if (!allChildrenValid) {
+      return false;
+    }
+
+    const warning = getWarningConfig(field);
+    if (warning) {
+      const showWarning =
+        !warning.visibleWhen ||
+        evaluateRuleGroup(warning.visibleWhen, {
+          dealCenterData: ctx.dealCenterData || {},
+          state: state || ctx.tabState || {},
+          tab: ctx.tab,
+          tabState: ctx.tabState || {},
+          section: ctx.section,
+        });
+      if (showWarning) {
+        return false;
+      }
+    }
+
+    const badge = resolveAccordionAllocationStatus(field, ctx);
+    if (badge && (badge.type === 'warning' || badge.type === 'error')) {
+      return false;
+    }
+    return true;
+  }
+
+  if (isAllocationField(field)) {
+    return isAllocationComplete(field, ctx);
+  }
+
+  return isFieldValueComplete(field, state, ctx);
 }
 
-function validateSimpleSection(section: any, tabState: any, ctx: any) {
-  const sectionState = tabState?.sectionFields?.[section.id] || {};
-  return validateFieldTree(section.fields || [], sectionState, ctx);
+function isAllocationTrackerVisible(field: any, ctx: any = {}) {
+  const { tabState, sectionState, dealCenterData = {}, applyConditions = true } = ctx;
+
+  if (isAllocationExcluded(field, dealCenterData)) {
+    return false;
+  }
+
+  const state = sectionState ?? tabState ?? {};
+  const depCtx = buildDepCtx(ctx, state);
+
+  if (applyConditions && !isFieldVisibleWithConditions(field, state, depCtx, applyConditions)) {
+    return false;
+  }
+
+  return true;
 }
 
-function validateCombinationSection(section: any, tabState: any, ctx: any) {
-  const combos =
-    tabState?.comboGroups?.[section.id]?.combinations ||
-    (section.id === 'default' ? tabState?.combinations : null) ||
-    [];
+function isAllocationComplete(field: any, ctx: any = {}) {
+  const { tabState, tab, section, sectionState, combos = [], dealCenterData = {} } = ctx;
 
-  if (!combos.length) return false;
-  return combos.every((combo) => !isCombinationIncomplete(section, combo, ctx));
-}
+  if (!isAllocationTrackerVisible(field, ctx)) {
+    return true;
+  }
 
-function isAllocationComplete(field: any, tabState: any, ctx: any) {
-  if (field.type !== 'allocation') return true;
-  const { resolveAllocationMetrics } = require('./allocation-value-resolver');
+  if (!isAllocationCardActive(field, tabState, tab)) {
+    return false;
+  }
+
+  const statusMessages = normalizeAllocationStatusMessages(field?.statusMessages);
+  if (!statusMessages.enabled) return true;
+
+  const fields = ctx.sectionFields || [];
+  const fieldIndex = fields.findIndex((f: any) => f.id === field.id);
+
   const resolved = resolveAllocationMetrics(field, {
     field,
     tabState,
-    tab: ctx.tab,
-    section: ctx.section,
-    sectionState: ctx.sectionState,
-    combos: ctx.combos,
-    fields: ctx.fields,
-    fieldIndex: ctx.fieldIndex,
-    dealCenterData: ctx.dealCenterData || {},
+    tab,
+    section,
+    sectionState,
+    combos,
+    fields,
+    fieldIndex: fieldIndex >= 0 ? fieldIndex : 0,
+    dealCenterData,
   });
-  const tolerance = Number(field?.statusMessages?.tolerance) || 0.1;
-  return Math.abs(resolved.remaining) <= tolerance;
+
+  const status = buildAllocationStatus(field, resolved.remaining, field.unit || 'ft');
+  if (!status) return true;
+  return status.type === 'success';
 }
 
-export function isTabComplete(tab: any, tabState: any, ctx: any = {}) {
-  const sections = getTabSections(tab);
-  if (!sections.length) return true;
+export function isCombinationIncomplete(section: any, combo: any, ctx: any = {}) {
+  const comboFields = getCombinationSectionComboFields(section);
+  const fieldCtx = {
+    ...ctx,
+    section,
+    sectionFields: section.fields || [],
+    sectionState: combo,
+    colorValues: combo?.colorValues || {},
+    combos: ctx.combos || [],
+  };
 
-  return sections.every((section) => {
-    if (section.sectionType === 'simple') {
-      return validateSimpleSection(section, tabState, ctx);
+  return comboFields.some((field: any) => !validateFieldTree(field, combo, fieldCtx));
+}
+
+function validateFieldsList(fields: any[], state: any, ctx: any) {
+  return (fields || []).every((field: any) => validateFieldTree(field, state, ctx));
+}
+
+function validateSectionAllocations(section: any, _tabState: any, ctx: any) {
+  const allocations = getCombinationSectionAllocations(section);
+
+  return allocations.every((field: any) =>
+    isAllocationComplete(field, {
+      ...ctx,
+      section,
+      sectionFields: section.fields || [],
+    })
+  );
+}
+
+function validateSimpleSection(section: any, tabState: any, ctx: any) {
+  const sectionState = tabState?.sectionFields?.[section.id] || buildInitialSectionState(section);
+  const sectionCtx = {
+    ...ctx,
+    section,
+    sectionState,
+    sectionFields: section.fields || [],
+    colorValues: sectionState.colorValues || {},
+    combos: [],
+  };
+
+  if (!validateSectionAllocations(section, tabState, sectionCtx)) return false;
+
+  const contentFields = getCombinationSectionComboFields(section);
+  if (!validateFieldsList(contentFields, sectionState, sectionCtx)) return false;
+
+  const warning = getWarningConfig(section);
+  if (warning) {
+    const showWarning =
+      !warning.visibleWhen ||
+      evaluateRuleGroup(warning.visibleWhen, {
+        dealCenterData: ctx.dealCenterData || {},
+        state: tabState || {},
+        tab: ctx.tab,
+        tabState: tabState || {},
+        section,
+      });
+    if (showWarning) {
+      return false;
     }
-    return validateCombinationSection(section, tabState, ctx);
+  }
+
+  return true;
+}
+
+function validateCombinationSection(section: any, tabState: any, ctx: any) {
+  const combos = getSectionCombos(section, tabState);
+  const sectionState =
+    tabState?.comboGroups?.[section.id]?.sectionState ||
+    buildComboGroupSectionState(section, ctx.dealCenterData);
+  const sectionCtx = {
+    ...ctx,
+    section,
+    sectionFields: section.fields || [],
+    combos,
+    sectionState,
+    colorValues: sectionState?.colorValues || {},
+  };
+
+  if (!validateSectionAllocations(section, tabState, sectionCtx)) return false;
+
+  const headerFields = getCombinationSectionHeaderFields(section);
+  if (headerFields.length && !validateFieldsList(headerFields, sectionState, sectionCtx)) {
+    return false;
+  }
+
+  return combos.every((combo: any) => !isCombinationIncomplete(section, combo, sectionCtx));
+}
+
+export function isTabComplete(tab: any, tabState: any = {}, ctx: any = {}) {
+  if (!tab || tab.isSummary) {
+    return true;
+  }
+
+  const sections = getTabSections(tab);
+  const tabFields = tab.fields || [];
+  const hasTabFields = tabFields.length > 0;
+  const hasRenderableSections = sections.some((s: any) => (s.fields || []).length > 0);
+
+  if (!hasTabFields && !hasRenderableSections) return true;
+
+  const validationCtx = {
+    dealCenterData: ctx.dealCenterData || {},
+    applyConditions: ctx.applyConditions !== false,
+    products: ctx.products,
+    tab,
+    tabState,
+  };
+
+  if (hasTabFields) {
+    const tabFieldCtx = {
+      ...validationCtx,
+      section: null,
+      sectionState: tabState,
+      sectionFields: tabFields,
+      colorValues: tabState?.colorValues || {},
+      combos: [],
+    };
+
+    const tabFieldsValid = tabFields.every((field: any) => {
+      if (isAllocationField(field)) {
+        return isAllocationComplete(field, tabFieldCtx);
+      }
+      return validateFieldTree(field, tabState, tabFieldCtx);
+    });
+
+    if (!tabFieldsValid) return false;
+  }
+
+  return sections.every((section: any) => {
+    if (!(section.fields || []).length) {
+      return true;
+    }
+    if (
+      validationCtx.applyConditions &&
+      !isSectionVisible(section, tabState, validationCtx.dealCenterData, tab)
+    ) {
+      return true;
+    }
+
+    if (section.sectionType === 'simple') {
+      return validateSimpleSection(section, tabState, validationCtx);
+    }
+
+    return validateCombinationSection(section, tabState, validationCtx);
   });
 }

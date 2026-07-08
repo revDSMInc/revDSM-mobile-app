@@ -2,6 +2,7 @@ import React, { useMemo, Fragment } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import {
   getTabSections,
+  getCombinationSectionRowFields,
   canAddMoreCombinations,
   createNextCombinationItem,
   getCombinationDisplayNumber,
@@ -13,7 +14,16 @@ import {
   resolveGrandTotalColumns,
   formatComboFieldSummaryValue,
 } from '../../../utils/dynamic-job-builder/engine/grand-total-utils';
-import { isFieldVisibleWithConditions } from '../../../utils/dynamic-job-builder/engine/dependency-engine';
+import {
+  isFieldVisibleWithConditions,
+  isAllocationExcluded,
+  evaluateRuleGroup,
+} from '../../../utils/dynamic-job-builder/engine/dependency-engine';
+import { isAllocationField } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
+import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
+import { filterVisibleToggleOptions } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
+import { getEffectiveDropdownOptions } from '../../../utils/dynamic-job-builder/engine/dropdown-utils';
+import { getWarningConfig } from '../../../utils/dynamic-job-builder/engine/field-layout-utils';
 import { resolveColorPalette } from '../../../utils/dynamic-job-builder/constants/color-palettes';
 import { buildTabSummaryEntries, isSummarySectionVisible } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SectionCard } from './SectionCard';
@@ -44,22 +54,70 @@ const COMBINATION_COLORS = [
   '#ec4899', // pink
 ];
 
-function isFieldVisible(field: any, state: any, tab: any, tabState: any, section: any, sectionState: any, combos: any[], dealCenterData: any, applyConditions: boolean) {
+// `stateObj` MUST be the full state object at this field's level (tabState /
+// sectionState / the combo) — the engine's resolveSourceValue (source:'state')
+// and dropdown reveal (isVisibleByDropdownMapping reads state[dropdown.id]) look
+// up sibling values on it. Passing a single field value here silently breaks
+// combo-sibling visibleWhen rules (e.g. leaffilter exactSize / Versa-Max reveal).
+function isFieldVisible(field: any, stateObj: any, tab: any, tabState: any, section: any, sectionState: any, combos: any[], dealCenterData: any, applyConditions: boolean, sectionFieldsOverride?: any[]) {
   if (!applyConditions) return true;
-  return isFieldVisibleWithConditions(field, state, {
+  return isFieldVisibleWithConditions(field, stateObj || {}, {
     dealCenterData,
     tab,
     tabState,
     section,
     sectionState,
-    sectionFields: section?.fields || tab?.fields || [],
+    sectionFields: sectionFieldsOverride || section?.fields || tab?.fields || [],
     combos,
   }, applyConditions);
 }
 
-function filterFields(fields: any[], tabState: any, tab: any, section: any, sectionState: any, combos: any[], dealCenterData: any, applyConditions: boolean) {
+function filterFields(fields: any[], tabState: any, tab: any, section: any, stateObj: any, combos: any[], dealCenterData: any, applyConditions: boolean, sectionFieldsOverride?: any[]) {
   return (fields || []).filter((f: any) =>
-    isFieldVisible(f, sectionState?.[f.id] ?? tabState?.[f.id], tab, tabState, section, sectionState, combos, dealCenterData, applyConditions)
+    isFieldVisible(f, stateObj, tab, tabState, section, stateObj, combos, dealCenterData, applyConditions, sectionFieldsOverride)
+  );
+}
+
+// Engine-driven allocation card: budget/used/remaining come from
+// resolveAllocationMetrics (dealCenterData + contributors + computed), and a card
+// whose Deal Center budget resolves to 0 is dropped (isAllocationExcluded).
+// This is what makes "which sizes appear" + allocation balancing backend-driven.
+function renderAllocationCard(field: any, ctx: any = {}) {
+  const {
+    dealCenterData = {},
+    tab,
+    tabState,
+    section,
+    sectionState,
+    combos = [],
+  } = ctx;
+
+  if (isAllocationExcluded(field, dealCenterData)) return null;
+
+  const fields = ctx.sectionFields?.length ? ctx.sectionFields : section?.fields || tab?.fields || [];
+  const idx = fields.findIndex((f: any) => f.id === field.id);
+
+  const resolved = resolveAllocationMetrics(field, {
+    field,
+    tabState,
+    tab,
+    section,
+    sectionState,
+    combos,
+    fields,
+    fieldIndex: idx >= 0 ? idx : 0,
+    dealCenterData,
+  });
+
+  const unit = field.unit || field.allocUnit || 'ft';
+  return (
+    <AllocatorBar
+      key={field.id}
+      label={field.label}
+      avail={Number(resolved?.available) || 0}
+      used={Number(resolved?.allocated) || 0}
+      unit={unit}
+    />
   );
 }
 
@@ -83,15 +141,28 @@ function renderField(
   field: any,
   value: any,
   onChange: (val: any) => void,
-  options?: {
+  ctx?: {
     readOnly?: boolean;
     dealCenterData?: any;
+    applyConditions?: boolean;
     verticalColor?: string;
     state?: Record<string, any>;
     onFieldChange?: (fieldId: string, val: any) => void;
+    tab?: any;
+    tabState?: any;
+    section?: any;
+    sectionState?: any;
+    combos?: any[];
+    sectionFields?: any[];
   }
 ) {
-  const { readOnly = false, verticalColor = '#22c55e' } = options || {};
+  const {
+    readOnly = false,
+    verticalColor = '#22c55e',
+    dealCenterData = {},
+    applyConditions = true,
+    state = {},
+  } = ctx || {};
 
   if (readOnly || field.locked) {
     if (field.colorKey && (field.palette || field.colors)) {
@@ -132,11 +203,13 @@ function renderField(
         );
       }
       if ((field.options || field.choices || field.items)?.length) {
+        const baseOpts = field.options || field.choices || field.items;
+        const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
         return (
           <OptionList
             key={field.id}
             label={field.label}
-            options={field.options || field.choices || field.items}
+            options={visOpts}
             value={value || ''}
             onChange={onChange}
             color={verticalColor}
@@ -179,31 +252,51 @@ function renderField(
         />
       );
 
-    case 'toggle':
+    case 'toggle': {
+      const baseOpts = field.options || field.choices || field.items || [];
+      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
       return (
         <ToggleGroup
           key={field.id}
           label={field.label}
-          options={field.options || field.choices || field.items || []}
+          options={visOpts}
           value={value || ''}
           onChange={onChange}
           color={verticalColor}
         />
       );
+    }
 
-    case 'optionList':
-    case 'dropdown':
-    case 'select':
+    case 'optionList': {
+      const baseOpts = field.options || field.choices || field.items || [];
+      const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
       return (
         <OptionList
           key={field.id}
           label={field.label}
-          options={field.options || field.choices || field.items || []}
+          options={visOpts}
           value={value || ''}
           onChange={onChange}
           color={verticalColor}
         />
       );
+    }
+
+    case 'dropdown':
+    case 'select': {
+      const dOpts = getEffectiveDropdownOptions(field);
+      const opts = (dOpts && dOpts.length ? dOpts : field.options || field.choices || field.items) || [];
+      return (
+        <OptionList
+          key={field.id}
+          label={field.label}
+          options={opts}
+          value={value || ''}
+          onChange={onChange}
+          color={verticalColor}
+        />
+      );
+    }
 
     case 'swatch':
     case 'colorSelection':
@@ -229,6 +322,9 @@ function renderField(
           onChange={onChange}
           field={field}
           singleStory={field.singleStory}
+          dealCenterData={dealCenterData}
+          state={state}
+          applyConditions={applyConditions}
         />
       );
 
@@ -251,15 +347,7 @@ function renderField(
       );
 
     case 'allocation':
-      return (
-        <AllocatorBar
-          key={field.id}
-          label={field.label}
-          avail={field.allocAvail || field.avail || 0}
-          used={value || 0}
-          unit={field.allocUnit || field.unit || ''}
-        />
-      );
+      return renderAllocationCard(field, ctx || {});
 
     case 'locked':
       return (
@@ -272,10 +360,10 @@ function renderField(
 
     case 'inputWithColor':
     case 'lockedWithColor': {
-      const colorFromState = field.colorKey ? options?.state?.[field.colorKey] : undefined;
+      const colorFromState = field.colorKey ? ctx?.state?.[field.colorKey] : undefined;
       const colorVal = colorFromState ?? value;
-      const handleColorChange = field.colorKey && options?.onFieldChange
-        ? (v: any) => options.onFieldChange!(field.colorKey, v)
+      const handleColorChange = field.colorKey && ctx?.onFieldChange
+        ? (v: any) => ctx.onFieldChange!(field.colorKey, v)
         : onChange;
 
       if (field.locked || field.type === 'lockedWithColor') {
@@ -329,22 +417,73 @@ function renderField(
     case 'accordion': {
       const childFields = field.fields || [];
       if (!childFields.length) return null;
+
+      // Container children live FLAT in the parent state: buildDefaultItemFromFields
+      // seeds them via flattenLeafFields (combo[childId], not combo[containerId][childId])
+      // and tab-validation reads them flat. So read children from `state` (the flat
+      // parent) and write via the flat `onFieldChange` — NOT a nested container slot.
+      // Matches web field-registry (containers are pure layout). Using the nested
+      // `value` slot here would make required container children uncompletable.
+      const parentState = state || {};
+      const writeChild = ctx?.onFieldChange || onChange;
+
+      // Per-child visibility from the schema (visibleWhen / dropdown reveal), scoped
+      // to the container's own children so intra-container dropdown reveal resolves.
+      const visibleChildren = childFields.filter((child: any) =>
+        !applyConditions ||
+        isFieldVisibleWithConditions(
+          child,
+          parentState,
+          {
+            dealCenterData,
+            tab: ctx?.tab,
+            tabState: ctx?.tabState,
+            section: ctx?.section,
+            sectionState: ctx?.sectionState,
+            sectionFields: childFields,
+            combos: ctx?.combos,
+          },
+          applyConditions
+        )
+      );
+
+      const warning = getWarningConfig(field);
+      const showWarning =
+        !!warning &&
+        (!warning.visibleWhen ||
+          evaluateRuleGroup(warning.visibleWhen, {
+            dealCenterData,
+            state: parentState,
+            tab: ctx?.tab,
+            tabState: ctx?.tabState,
+            section: ctx?.section,
+          }));
+
       return (
         <View key={field.id} className={field.label ? 'mb-4' : ''}>
           {field.label && <SectionLabel title={field.label} />}
-          {childFields.map((child: any) => {
-            const childVal = value?.[child.id];
-            const childOnChange = (v: any) => {
-              onChange({ ...(value || {}), [child.id]: v });
-            };
+          {visibleChildren.map((child: any) => {
+            const childVal = parentState?.[child.id];
+            const childOnChange = (v: any) => writeChild(child.id, v);
             return renderField(child, childVal, childOnChange, {
-              ...options,
-              state: value || {},
-              onFieldChange: (childFieldId: string, v: any) => {
-                onChange({ ...(value || {}), [childFieldId]: v });
-              },
+              ...(ctx || {}),
+              sectionFields: childFields,
             });
           })}
+          {showWarning && (
+            <View
+              className="mt-1 mb-2 px-3 py-2 rounded-lg"
+              style={{
+                backgroundColor: `${warning.color || '#f59e0b'}1A`,
+                borderWidth: 1,
+                borderColor: warning.color || '#f59e0b',
+              }}
+            >
+              <Text className="text-[12px] font-semibold" style={{ color: warning.color || '#b45309' }}>
+                ⚠️ {warning.message}
+              </Text>
+            </View>
+          )}
         </View>
       );
     }
@@ -381,10 +520,27 @@ function CombinationSectionBlock({
   dealCenterData?: any;
   applyConditions?: boolean;
 }) {
+  const applyDep = applyConditions !== false;
+  const allFields = section.fields || [];
+
   const headerFields = getCombinationSectionHeaderFields(section);
-  const visibleHeaderFields = filterFields(headerFields, tabState, tab, section, sectionState, combos, dealCenterData, applyConditions !== false);
-  const rowFields = filterFields(section.fields || [], tabState, tab, section, sectionState, combos, dealCenterData, applyConditions !== false);
+  const visibleHeaderFields = filterFields(headerFields, tabState, tab, section, sectionState, combos, dealCenterData, applyDep);
+  // Section-level allocation trackers (aggregate across all combos), rendered once.
+  const allocationFields = filterFields(allFields.filter(isAllocationField), tabState, tab, section, sectionState, combos, dealCenterData, applyDep);
+  // Per-combo repeatable fields (excludes allocation / section-scoped / summary / label).
+  // Visibility is resolved per-combo below so combo-sibling visibleWhen rules work.
+  const baseRowFields = getCombinationSectionRowFields(section);
   const canAddCombo = canAddMoreCombinations(section);
+
+  const allocCtx = {
+    dealCenterData,
+    tab,
+    tabState,
+    section,
+    sectionState,
+    combos,
+    sectionFields: allFields,
+  };
 
   const handleSectionStateChange = (fieldId: string, val: any) => {
     if (readOnly) return;
@@ -415,13 +571,23 @@ function CombinationSectionBlock({
     <View className="mb-3">
       {section.label && <SectionLabel title={section.label} />}
 
+      {allocationFields.map((field: any) => renderAllocationCard(field, allocCtx))}
+
       {visibleHeaderFields.map((field: any) => {
         const val = sectionState?.[field.id];
         return renderField(field, val, (v) => handleSectionStateChange(field.id, v), {
           readOnly,
           verticalColor,
+          dealCenterData,
+          applyConditions: applyDep,
           state: sectionState,
           onFieldChange: handleSectionStateChange,
+          tab,
+          tabState,
+          section,
+          sectionState,
+          combos,
+          sectionFields: allFields,
         });
       })}
 
@@ -432,26 +598,34 @@ function CombinationSectionBlock({
         return (
           <SectionCard key={combo._combinationNumber ?? comboIndex} borderColor={borderThemeColor}>
             <View className="flex-row items-center justify-between mb-3">
-              <View className="px-2 py-0.5 rounded" style={{ backgroundColor: `${borderThemeColor}1A` }}>
-                <Text className="text-[10px] font-bold" style={{ color: borderThemeColor }}>
+              <View className="px-3 py-1 rounded-lg" style={{ backgroundColor: `${borderThemeColor}1A` }}>
+                <Text className="text-[10px] font-black" style={{ color: borderThemeColor }}>
                   Combination #{combinationNumber}
                 </Text>
               </View>
               {combos.length > 1 && !readOnly && (
                 <TouchableOpacity onPress={() => handleRemoveCombo(comboIndex)}>
-                  <Text className="text-xs text-red-500 font-bold">Remove</Text>
+                  <Text className="text-xs text-red-500 font-black">Remove</Text>
                 </TouchableOpacity>
               )}
             </View>
 
-            {rowFields.map((field: any) => {
+            {filterFields(baseRowFields, tabState, tab, section, combo, combos, dealCenterData, applyDep, allFields).map((field: any) => {
               const val = combo?.[field.id];
               const comboOnFieldChange = (fieldId: string, v: any) => handleComboFieldChange(comboIndex, fieldId, v);
               return renderField(field, val, (v) => handleComboFieldChange(comboIndex, field.id, v), {
                 readOnly,
                 verticalColor,
+                dealCenterData,
+                applyConditions: applyDep,
                 state: combo,
                 onFieldChange: comboOnFieldChange,
+                tab,
+                tabState,
+                section,
+                sectionState: combo,
+                combos,
+                sectionFields: allFields,
               });
             })}
           </SectionCard>
@@ -494,33 +668,40 @@ function SimpleSectionBlock({
   };
 
   const allFields = section.fields || [];
-  const allocationFields = filterFields(allFields.filter((f: any) => f.type === 'allocation'), tabState, tab, section, sectionState, [], dealCenterData, applyDep);
-  const otherFields = filterFields(allFields.filter((f: any) => f.type !== 'allocation'), tabState, tab, section, sectionState, [], dealCenterData, applyDep);
+  const allocationFields = filterFields(allFields.filter(isAllocationField), tabState, tab, section, sectionState, [], dealCenterData, applyDep);
+  const otherFields = filterFields(allFields.filter((f: any) => !isAllocationField(f)), tabState, tab, section, sectionState, [], dealCenterData, applyDep);
+
+  const allocCtx = {
+    dealCenterData,
+    tab,
+    tabState,
+    section,
+    sectionState,
+    combos: [],
+    sectionFields: allFields,
+  };
 
   return (
     <SectionCard>
       {section.label && <SectionLabel title={section.label} />}
 
-      {allocationFields.map((field: any) => {
-        const val = sectionState[field.id];
-        return (
-          <AllocatorBar
-            key={field.id}
-            label={field.label}
-            avail={field.allocAvail || field.avail || 0}
-            used={val || 0}
-            unit={field.allocUnit || field.unit || ''}
-          />
-        );
-      })}
+      {allocationFields.map((field: any) => renderAllocationCard(field, allocCtx))}
 
       {otherFields.map((field: any) => {
         const val = sectionState[field.id];
         return renderField(field, val, (v) => handleFieldChange(field.id, v), {
           readOnly,
           verticalColor,
+          dealCenterData,
+          applyConditions: applyDep,
           state: sectionState,
           onFieldChange: handleFieldChange,
+          tab,
+          tabState,
+          section,
+          sectionState,
+          combos: [],
+          sectionFields: allFields,
         });
       })}
     </SectionCard>
@@ -652,13 +833,32 @@ export function DynamicTabRenderer({
     <View className="p-3">
       {hasTabFields && (
         <SectionCard>
-          {filterFields(tabFields, tabState, tab, null, {}, [], dealCenterData, applyConditions).map((field: any) => {
+          {filterFields(tabFields, tabState, tab, null, tabState, [], dealCenterData, applyConditions).map((field: any) => {
+            if (isAllocationField(field)) {
+              return renderAllocationCard(field, {
+                dealCenterData,
+                tab,
+                tabState,
+                section: null,
+                sectionState: tabState,
+                combos: [],
+                sectionFields: tabFields,
+              });
+            }
             const val = tabState?.[field.id];
             return renderField(field, val, (v) => updateField(field.id, v), {
               readOnly,
               verticalColor,
+              dealCenterData,
+              applyConditions,
               state: tabState,
               onFieldChange: updateField,
+              tab,
+              tabState,
+              section: null,
+              sectionState: tabState,
+              combos: [],
+              sectionFields: tabFields,
             });
           })}
         </SectionCard>
@@ -720,4 +920,3 @@ export function DynamicTabRenderer({
     </View>
   );
 }
-

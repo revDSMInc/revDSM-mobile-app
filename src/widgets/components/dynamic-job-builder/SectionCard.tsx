@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface SectionCardProps {
   children: React.ReactNode;
@@ -8,19 +9,24 @@ interface SectionCardProps {
   className?: string;
 }
 
+// Matches the normal Job Builder combination card: rounded-[24px], slate border,
+// p-5 shadow; amber-400 border + alert-circle warning when incomplete.
 export function SectionCard({ children, incomplete, borderColor, className = '' }: SectionCardProps) {
   return (
     <View
-      className={`bg-white rounded-2xl mx-3 mb-3 p-4 shadow-sm ${className}`}
+      className={`bg-white rounded-[24px] mx-3 mb-4 p-5 shadow-sm ${className}`}
       style={{
-        borderWidth: incomplete ? 2 : borderColor ? 2 : 1.5,
-        borderColor: incomplete ? '#f59e0b' : borderColor || 'rgba(0,0,0,0.05)',
+        borderWidth: incomplete || borderColor ? 2 : 1,
+        borderColor: incomplete ? '#FBBF24' : borderColor || '#E2E8F0',
       }}
     >
       {incomplete && (
-        <Text className="text-xs font-bold text-amber-500 mb-3">
-          ⚠️ INCOMPLETE — Profile and Color Required
-        </Text>
+        <View className="flex-row items-center mb-3">
+          <Icon name="alert-circle" size={14} color="#FBBF24" />
+          <Text className="text-[#FBBF24] text-[10px] font-black ml-2">
+            Incomplete — required fields remaining
+          </Text>
+        </View>
       )}
       {children}
     </View>

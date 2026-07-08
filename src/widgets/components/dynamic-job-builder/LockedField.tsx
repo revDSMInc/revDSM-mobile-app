@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface LockedFieldProps {
   label?: string;
@@ -7,19 +8,16 @@ interface LockedFieldProps {
   caption?: string;
 }
 
-export function LockedField({ label, value, caption = 'Locked from Job Summary' }: LockedFieldProps) {
+// Matches the normal Job Builder locked extras row (GutterSection/LeafFilter):
+// label + value stacked left, #CBD5E1 lock icon right, slate + font-black.
+export function LockedField({ label, value }: LockedFieldProps) {
   return (
-    <View className="mb-4">
-      <View className="relative">
-        {label && (
-          <Text className="text-xs text-gray-400 absolute top-2 left-3.5 z-10">{label}</Text>
-        )}
-        <View className="pt-7 pb-2.5 px-3.5 rounded-xl border border-gray-200 bg-gray-50 flex-row items-center justify-between">
-          <Text className="text-base font-semibold text-gray-400">{value ?? '—'}</Text>
-          <Text className="text-base text-gray-300">🔒</Text>
-        </View>
+    <View className="flex-row justify-between items-center border-b border-slate-50 pb-4 mb-4">
+      <View className="flex-1 pr-3">
+        {label && <Text className="text-[10px] font-black text-slate-400 mb-1">{label}</Text>}
+        <Text className="text-xs font-black text-slate-800">{value ?? '—'}</Text>
       </View>
-      <Text className="text-[11px] text-gray-400 italic mt-1 pl-1">{caption}</Text>
+      <Icon name="lock" size={18} color="#CBD5E1" />
     </View>
   );
 }

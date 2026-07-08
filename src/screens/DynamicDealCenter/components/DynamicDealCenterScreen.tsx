@@ -26,19 +26,22 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
 
-  const { config: jobBuilderConfig } = useDynamicCalculatorSchemas();
+  const {
+    config: jobBuilderConfig,
+    isConfigured: hasJobBuilderConfig,
+    isLoading: isJobBuilderConfigLoading,
+  } = useDynamicCalculatorSchemas();
 
-  const { schema, configuredSchemas, isLoading: isSchemaLoading } = useCalculatorSchema();
+  const {
+    configuredSchemas,
+    isConfigured: hasCalculatorSchema,
+    isLoading: isSchemaLoading,
+  } = useCalculatorSchema();
   // Backend-driven payment plans + discount tiers (web parity), static fallback.
   const pricing = useDealPricing(lead);
-  // The top scroller lists the configured verticals (products); fall back to the
-  // single template schema so the flow still works pre-config / offline.
-  // Memoized so its reference is stable across renders (the calculators hook
-  // re-derives titles when this changes).
-  const verticals = useMemo(
-    () => (configuredSchemas.length ? configuredSchemas : [schema]),
-    [configuredSchemas, schema]
-  );
+  // The top scroller lists the configured verticals (products). No mock fallback:
+  // when nothing is configured this is empty and we render a not-configured state.
+  const verticals = useMemo(() => configuredSchemas, [configuredSchemas]);
 
   // Calculators are persisted to the backend (list/create/save/delete) via this
   // hook; entries auto-save (debounced) on every field change.
@@ -117,7 +120,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     return (
       <DynamicJobBuilderScreen
         navigation={navigation}
-        initialConfig={jobBuilderConfig}
+        initialConfig={jobBuilderConfig ?? undefined}
         dealCenterData={consolidatedDealCenterData}
         calculatorResultData={calculatorResultData}
         leadId={lead?._id || lead?.leadId || lead?.id}
@@ -161,7 +164,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     );
   }
 
-  const isLoading = isSchemaLoading || isCalcLoading;
+  const isLoading = isSchemaLoading || isCalcLoading || isJobBuilderConfigLoading;
+  // Web parity (isDynamicJobBuilderEnabled): the dynamic flow requires BOTH a
+  // configured calculator schema AND a published job-builder config. There is no
+  // mock fallback — if either is missing we surface a not-configured state.
+  const isDynamicConfigured = hasCalculatorSchema && hasJobBuilderConfig;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['bottom']}>
@@ -195,6 +202,26 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#4CBB17" />
           <Text style={{ marginTop: 12, fontSize: 13, color: '#94A3B8' }}>Loading calculator…</Text>
+        </View>
+      ) : !isDynamicConfigured ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Ionicons name="construct-outline" size={40} color="#CBD5E1" />
+          <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '800', color: '#475569', textAlign: 'center' }}>
+            Deal Center isn’t configured yet
+          </Text>
+          <Text style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', textAlign: 'center', lineHeight: 18 }}>
+            {!hasCalculatorSchema
+              ? 'No calculator form schema has been published for this company.'
+              : 'No job-builder configuration has been published for this company.'}
+            {'\n'}Ask an admin to configure it in the web portal. In the meantime, use
+            {'\n'}“Classic Deal Center” on the previous screen.
+          </Text>
+          <TouchableOpacity
+            onPress={() => navigation?.goBack()}
+            style={{ marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#4CBB17' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Use Classic Deal Center</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <CalculatorView

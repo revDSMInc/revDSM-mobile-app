@@ -1,3 +1,8 @@
+// Uses the canonical rule evaluator (matches web toggle-utils.js). The
+// dependency-engine <-> toggle-utils relationship is not circular; even the
+// grid cycle web has is safe because the binding is only called at runtime.
+import { evaluateRuleGroup } from './dependency-engine';
+
 export function filterVisibleToggleOptions(field: any = {}, dealCenterData: any = {}, state: any = {}, applyConditions = true) {
   const options = field.options || [];
   const visibilityMap = field.optionVisibility || {};
@@ -26,38 +31,4 @@ export function pruneOptionVisibility(optionVisibility: any = {}, options: strin
   });
 
   return changed ? pruned : optionVisibility;
-}
-
-function evaluateRuleGroup(group: any, ctx: any = {}) {
-  if (!group) return true;
-  const rules = group.rules || (group.field || group.fields ? [group] : []);
-  if (!rules.length) return true;
-  const match = group.match || 'all';
-  const results = rules.map((rule: any) => evaluateRule(rule, ctx));
-  if (match === 'any') return results.some(Boolean);
-  return results.every(Boolean);
-}
-
-function evaluateRule(rule: any, ctx: any = {}) {
-  if (!rule) return true;
-  const operator = rule.operator || 'truthy';
-  const operand = rule.value;
-  const source = rule.source || 'dealCenter';
-  const data = source === 'dealCenter' ? ctx.dealCenterData : ctx.state;
-  const fieldValue = data?.[rule.field];
-
-  switch (operator) {
-    case 'truthy': return Boolean(fieldValue);
-    case 'falsy': return !fieldValue;
-    case 'eq': return fieldValue === operand;
-    case 'neq': return fieldValue !== operand;
-    case 'gt': return Number(fieldValue) > Number(operand);
-    case 'gte': return Number(fieldValue) >= Number(operand);
-    case 'lt': return Number(fieldValue) < Number(operand);
-    case 'lte': return Number(fieldValue) <= Number(operand);
-    case 'in': return Array.isArray(operand) && operand.includes(fieldValue);
-    case 'notIn': return Array.isArray(operand) && !operand.includes(fieldValue);
-    case 'exists': return fieldValue !== undefined && fieldValue !== null;
-    default: return Boolean(fieldValue);
-  }
 }

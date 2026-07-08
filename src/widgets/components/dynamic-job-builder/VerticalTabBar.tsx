@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface VerticalTabBarVertical {
   id: string;
@@ -20,44 +21,51 @@ interface VerticalTabBarProps {
   lockedTabIds?: string[];
 }
 
+// Product/vertical selector — slate pills, font-black, #22C55E (or vertical color)
+// when active, MCIcon lock when locked. Consistent with the normal JB palette.
 export function VerticalTabBar({
   verticals = [],
   selectedVerticalId,
   activeId,
   onVerticalChange,
   onChange,
-  jobState,
   lockedTabIds = [],
 }: VerticalTabBarProps) {
   const activeIdResolved = selectedVerticalId || activeId;
   const handleChange = onVerticalChange || onChange;
 
-  return (
-    <View className="flex-row overflow-hidden gap-3 px-4 py-2.5">
-      {verticals.map((v) => {
-        const active = v.id === activeIdResolved;
-        const isLocked = lockedTabIds.includes(v.id);
-        const label = v.label || v.title || v.name || v.id;
+  if (verticals.length <= 1) return null;
 
-        return (
-          <TouchableOpacity
-            key={v.id}
-            onPress={() => !isLocked && handleChange?.(v.id)}
-            disabled={isLocked}
-            className="shrink-0 py-2 px-3.5 rounded-full"
-            style={{
-              backgroundColor: active ? (v.color || '#22c55e') : isLocked ? '#ccc' : '#e5e5ea',
-            }}
-          >
-            <Text
-              className="text-[11px] whitespace-nowrap"
-              style={{ color: active ? '#fff' : '#666', fontWeight: active ? '700' : '400' }}
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row px-4 py-2.5">
+      <View className="flex-row gap-2">
+        {verticals.map((v) => {
+          const active = v.id === activeIdResolved;
+          const isLocked = lockedTabIds.includes(v.id);
+          const label = v.label || v.title || v.name || v.id;
+
+          return (
+            <TouchableOpacity
+              key={v.id}
+              onPress={() => !isLocked && handleChange?.(v.id)}
+              disabled={isLocked}
+              className="shrink-0 py-2 px-4 rounded-full flex-row items-center"
+              style={{
+                backgroundColor: active ? (v.color || '#22C55E') : '#F1F5F9',
+                opacity: isLocked ? 0.5 : 1,
+              }}
             >
-              {isLocked ? '🔒 ' : ''}{v.icon ? `${v.icon} ` : ''}{label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
+              {isLocked && <Icon name="lock" size={12} color="#94A3B8" style={{ marginRight: 4 }} />}
+              <Text
+                className="text-[11px] font-black"
+                style={{ color: active ? '#fff' : '#64748B' }}
+              >
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </ScrollView>
   );
 }

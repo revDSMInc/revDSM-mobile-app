@@ -1,4 +1,8 @@
 import { LOCATIONS, STORIES } from '../constants/color-palettes';
+// Canonical rule evaluator (matches web location-grid-utils.js). The
+// dependency-engine <-> location-grid-utils import cycle is safe: both bindings
+// are only invoked at runtime, never at module-load. Web has the identical cycle.
+import { evaluateRuleGroup } from './dependency-engine';
 
 export function createDefaultLocationGridConfig(singleStory = false) {
   return {
@@ -52,37 +56,4 @@ export function resolveVisibleColumns(gridConfig: any = {}, dealCenterData: any 
     if (!col.visibleWhen) return true;
     return evaluateRuleGroup(col.visibleWhen, { dealCenterData, state });
   });
-}
-
-function evaluateRuleGroup(rules: any, ctx: any) {
-  if (!rules || typeof rules !== 'object') return true;
-  if (Array.isArray(rules)) {
-    return rules.every((rule: any) => evaluateRule(rule, ctx));
-  }
-  const { _operator = 'and', _rules = [] } = rules;
-  if (_operator === 'and') {
-    return _rules.every((rule: any) => evaluateRule(rule, ctx));
-  }
-  return _rules.some((rule: any) => evaluateRule(rule, ctx));
-}
-
-function evaluateRule(rule: any, ctx: any) {
-  if (!rule || typeof rule !== 'object') return true;
-  const { source = 'state', field, operator = 'truthy', value: compareValue } = rule;
-  const data = source === 'dealCenter' ? ctx.dealCenterData : ctx.state;
-  const fieldValue = data?.[field];
-  switch (operator) {
-    case 'truthy': return Boolean(fieldValue);
-    case 'falsy': return !fieldValue;
-    case 'eq': return fieldValue === compareValue;
-    case 'neq': return fieldValue !== compareValue;
-    case 'gt': return Number(fieldValue) > Number(compareValue);
-    case 'gte': return Number(fieldValue) >= Number(compareValue);
-    case 'lt': return Number(fieldValue) < Number(compareValue);
-    case 'lte': return Number(fieldValue) <= Number(compareValue);
-    case 'in': return Array.isArray(compareValue) && compareValue.includes(fieldValue);
-    case 'notIn': return Array.isArray(compareValue) && !compareValue.includes(fieldValue);
-    case 'exists': return fieldValue !== undefined && fieldValue !== null;
-    default: return Boolean(fieldValue);
-  }
 }

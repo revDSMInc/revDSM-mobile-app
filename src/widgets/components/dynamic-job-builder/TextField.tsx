@@ -9,19 +9,21 @@ interface TextFieldProps {
   editable?: boolean;
 }
 
+// Matches the normal Job Builder text inputs: h-12 rounded-2xl border-2 slate,
+// font-black.
 export function TextField({ label, placeholder, value, onChange, editable = true }: TextFieldProps) {
   return (
     <View className="mb-3">
       {label && (
-        <Text className="text-xs text-gray-500 mb-1.5 font-semibold">{label}</Text>
+        <Text className="text-[11px] font-black text-slate-400 mb-1.5">{label}</Text>
       )}
       <TextInput
-        className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-base"
+        className="h-12 bg-white rounded-2xl border-2 border-slate-100 px-5 text-[12px] font-black text-black"
         placeholder={placeholder || ''}
         value={value || ''}
         onChangeText={onChange}
         editable={editable}
-        placeholderTextColor="#999"
+        placeholderTextColor="#CBD5E1"
       />
     </View>
   );

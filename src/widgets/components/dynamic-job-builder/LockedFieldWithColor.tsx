@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TextInput } from 'react-native';
+import { View, Text } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface LockedFieldWithColorProps {
   label?: string;
@@ -9,46 +10,38 @@ interface LockedFieldWithColorProps {
   colors?: Array<{ name: string; hex: string }>;
 }
 
+// Matches the normal Job Builder locked row + inline color swatches: slate +
+// font-black, #CBD5E1 lock, #22C55E selected swatch ring.
 export function LockedFieldWithColor({
   label,
   value,
   colorValue,
-  onColorChange,
   colors = [],
 }: LockedFieldWithColorProps) {
   return (
-    <View className="flex-row gap-2 mb-4">
-      <View className="flex-1">
-        {label && (
-          <Text className="text-xs text-gray-400 mb-1">{label}</Text>
-        )}
-        <View className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 flex-row items-center justify-between">
-          <Text className="text-sm font-semibold text-gray-400">{value ?? '—'}</Text>
-          <Text className="text-sm text-gray-300">🔒</Text>
+    <View className="border-b border-slate-50 pb-4 mb-4">
+      <View className="flex-row justify-between items-center">
+        <View className="flex-1 pr-3">
+          {label && <Text className="text-[10px] font-black text-slate-400 mb-1">{label}</Text>}
+          <Text className="text-xs font-black text-slate-800">{value ?? '—'}</Text>
         </View>
+        <Icon name="lock" size={18} color="#CBD5E1" />
       </View>
-      <View className="w-24">
-        <Text className="text-xs text-gray-400 mb-1">Color</Text>
-        {colors.length > 0 ? (
-          <View className="flex-row flex-wrap gap-1">
-            {colors.slice(0, 4).map((c) => (
-              <View
-                key={c.name}
-                className="w-5 h-5 rounded"
-                style={{
-                  backgroundColor: c.hex,
-                  borderWidth: colorValue === c.name ? 2 : 1,
-                  borderColor: colorValue === c.name ? '#22c55e' : '#e5e5ea',
-                }}
-              />
-            ))}
-          </View>
-        ) : (
-          <View className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-            <Text className="text-sm text-gray-400">—</Text>
-          </View>
-        )}
-      </View>
+      {colors.length > 0 && (
+        <View className="flex-row flex-wrap gap-2 mt-2">
+          {colors.slice(0, 6).map((c) => (
+            <View
+              key={c.name}
+              className="w-6 h-6 rounded-lg"
+              style={{
+                backgroundColor: c.hex,
+                borderWidth: colorValue === c.name ? 3 : 1,
+                borderColor: colorValue === c.name ? '#22C55E' : '#E2E8F0',
+              }}
+            />
+          ))}
+        </View>
+      )}
     </View>
   );
 }
