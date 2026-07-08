@@ -7,19 +7,23 @@ interface AllocatorBarProps {
   avail?: number;
   used?: number;
   unit?: string;
+  inactive?: boolean;
+  compact?: boolean;
 }
 
 // Styled to match the normal Job Builder footage tracker card
 // (GutterSection renderAllocationCard): #A5E1ED border, sky/amber stat colors,
 // #22C55E "Perfectly allocated" banner, red over-allocation banner.
-export function AllocatorBar({ label, avail = 0, used = 0, unit = '' }: AllocatorBarProps) {
+// `compact` drops the outer horizontal margin so the card fills its grid column
+// inside the collapsible Footage Allocation Tracker.
+export function AllocatorBar({ label, avail = 0, used = 0, unit = '', inactive = false, compact = false }: AllocatorBarProps) {
   const left = avail - used;
   const complete = Math.abs(left) <= 0.1 && avail > 0;
   const over = left < -0.1;
 
   return (
     <View
-      className="mx-3 mb-3 py-2 rounded-2xl border-2 bg-white"
+      className={`${compact ? 'mb-2' : 'mx-3 mb-3'} py-2 rounded-2xl border-2 bg-white`}
       style={{
         borderColor: '#A5E1ED',
         shadowColor: '#000',
@@ -27,6 +31,7 @@ export function AllocatorBar({ label, avail = 0, used = 0, unit = '' }: Allocato
         shadowOpacity: 0.05,
         shadowRadius: 15,
         elevation: 2,
+        opacity: inactive ? 0.45 : 1,
       }}
     >
       {label && (
@@ -51,7 +56,7 @@ export function AllocatorBar({ label, avail = 0, used = 0, unit = '' }: Allocato
         </View>
       </View>
 
-      {complete && (
+      {!inactive && complete && (
         <View className="bg-[#22C55E] rounded-xl py-2 px-2 mt-1.5 mx-2 flex-row items-center justify-center">
           <Icon name="check" size={12} color="#fff" />
           <Text className="text-white text-[9px] font-black tracking-tight ml-1">
@@ -59,7 +64,7 @@ export function AllocatorBar({ label, avail = 0, used = 0, unit = '' }: Allocato
           </Text>
         </View>
       )}
-      {over && (
+      {!inactive && over && (
         <View className="bg-red-500 rounded-xl py-2 px-2 mt-1.5 mx-2 flex-row items-center justify-center">
           <Icon name="alert" size={12} color="#fff" />
           <Text className="text-white text-[9px] font-black tracking-tight ml-1">

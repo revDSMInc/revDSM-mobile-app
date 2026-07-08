@@ -493,6 +493,9 @@ export function CalculatorView({
   const [selectedVerticalId, setSelectedVerticalId] = useState<string | undefined>(verticals[0]?.id);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [isDragging, setIsDragging] = useState(false);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const tabsScrollRef = useRef<ScrollView>(null);
   const scrollXRef = useRef(0);
 
@@ -558,7 +561,7 @@ export function CalculatorView({
   }, [entries]);
 
   // Adapt the id-based tab model to the index-based draggable-tabs component.
-  const tabCalcs = useMemo(() => tabs.map((t) => ({ _id: t.id, name: t.title, isRolloutConfirmed: t.isRolloutConfirmed })), [tabs]);
+  const tabCalcs = useMemo(() => tabs.map((t) => ({ _id: t.id, name: /^\d+$/.test(t.title) ? '' : t.title, isRolloutConfirmed: t.isRolloutConfirmed })), [tabs]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
   const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
@@ -650,7 +653,9 @@ export function CalculatorView({
               horizontal
               showsHorizontalScrollIndicator={false}
               scrollEnabled={!isDragging}
-              onScroll={(e) => { scrollXRef.current = e.nativeEvent.contentOffset.x; }}
+              onScroll={(e) => { scrollXRef.current = e.nativeEvent.contentOffset.x; setScrollOffset(e.nativeEvent.contentOffset.x); }}
+              onContentSizeChange={(w) => setContentWidth(w)}
+              onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
               scrollEventThrottle={16}
               style={{ overflow: isDragging ? 'visible' : 'hidden' }}
               contentContainerStyle={{ alignItems: 'center' }}
@@ -666,7 +671,26 @@ export function CalculatorView({
                 scrollXRef={scrollXRef}
                 getIsDuplicate={() => false}
               />
+              <View style={{ width: 40 }} />
             </ScrollView>
+
+            {/* Left progressive fade overlay */}
+            {!isDragging && scrollOffset > 5 && (
+              <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
+                  <View key={`left-fade-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
+                ))}
+              </View>
+            )}
+
+            {/* Right progressive fade overlay */}
+            {!isDragging && scrollOffset + scrollViewWidth < contentWidth - 5 && (
+              <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
+                  <View key={`right-fade-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
+                ))}
+              </View>
+            )}
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

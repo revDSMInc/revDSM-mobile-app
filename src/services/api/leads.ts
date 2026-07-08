@@ -11,6 +11,7 @@ export const LeadEndpoints = {
   work: (leadId: string) => `lead/v1/${leadId}/work`,
   jobBuilder: (leadId: string) => `lead/v1/${leadId}/job-builder`,
   outcome: (leadId: string) => `lead/v1/${leadId}/outcome`,
+  outcomeByCalculator: (leadId: string, calculatorId: string) => `lead/v1/${leadId}/outcome/${calculatorId}`,
   appointments: 'appointments',
   calculators: (appointmentId: string) => `appointments/${appointmentId}/lfcalculators`,
   updateCalculator: (id: string) => `lfcalculators/${id}`,
@@ -96,6 +97,8 @@ export const LeadService = {
     api.get(LeadEndpoints.outcome(leadId)),
   getLeadOutcome: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.outcome(leadId)),
+  getLeadOutcomeByCalculator: (leadId: string, calculatorId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.outcomeByCalculator(leadId, calculatorId)),
   downloadOutcomeDocuments: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.downloadOutcomeDocuments(leadId)),
   submitJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
@@ -104,6 +107,8 @@ export const LeadService = {
     api.put(LeadEndpoints.jobBuilder(leadId), payload),
   updateLeadOutcome: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.outcome(leadId), payload),
+  updateLeadOutcomeByCalculator: (leadId: string, calculatorId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.outcomeByCalculator(leadId, calculatorId), payload),
 
   uploadImages: (leadId: string, formData: FormData): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.images(leadId), formData, {

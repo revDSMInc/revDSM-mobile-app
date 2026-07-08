@@ -37,7 +37,7 @@ export function VerticalTabBar({
   if (verticals.length <= 1) return null;
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row px-4 py-2.5">
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row py-2.5">
       <View className="flex-row gap-2">
         {verticals.map((v) => {
           const active = v.id === activeIdResolved;

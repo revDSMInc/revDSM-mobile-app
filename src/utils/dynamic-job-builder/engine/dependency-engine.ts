@@ -500,6 +500,18 @@ export function isFieldRequired(field: any, state: any = {}, ctx: any = {}) {
   return evaluateRuleGroup(requiredWhen, buildRuleEvaluationContext(ctx, state));
 }
 
+/** True when a configured default color should apply for the current state.
+ * Web parity: src/components/dynamic-job-builder/engine/dependency-engine.js. */
+export function isDefaultColorActive(field: any, state: any = {}, ctx: any = {}) {
+  const useDefault = field?.useDefaultColor ?? Boolean(field?.defaultValue);
+  if (!useDefault || !field?.defaultValue) return false;
+
+  const defaultWhen = field?.dependencies?.defaultWhen;
+  if (!defaultWhen) return true;
+
+  return evaluateRuleGroup(defaultWhen, buildRuleEvaluationContext(ctx, state));
+}
+
 function walkFields(fields: any[], visitor: (field: any) => void) {
   (fields || []).forEach((field) => visitor(field));
 }

@@ -15,6 +15,7 @@ import { resolveAccordionAllocationStatus } from './accordion-allocation-utils';
 import {
   evaluateRuleGroup,
   isAllocationExcluded,
+  isDefaultColorActive,
   isFieldRequired,
   isFieldVisibleWithConditions,
 } from './dependency-engine';
@@ -133,7 +134,7 @@ function isStackWarningActive(field: any, state: any, ctx: any = {}) {
   });
 }
 
-function isEmptyRequiredValue(field: any, state: any, colorValues: any = {}) {
+function isEmptyRequiredValue(field: any, state: any, colorValues: any = {}, depCtx: any = {}) {
   const value = resolveFieldStateValue(field, state, colorValues);
 
   switch (field.type) {
@@ -148,8 +149,13 @@ function isEmptyRequiredValue(field: any, state: any, colorValues: any = {}) {
     case 'roomPicker':
       return !Array.isArray(value) || value.length === 0;
     case 'swatch':
-    case 'colorSelection':
-      return !value;
+    case 'colorSelection': {
+      // Web parity: a field with a configured (active) default color counts as
+      // filled even when the rep hasn't tapped a swatch yet — otherwise required
+      // gutter/leaffilter color swatches with a default block the tab forever.
+      if (value) return false;
+      return !isDefaultColorActive(field, state, depCtx);
+    }
     case 'inputWithColor': {
       const inputType = field.inputType || 'text';
       const hasUsage = inputType === 'number' ? parseFloat(value) > 0 : Boolean(value);
@@ -199,7 +205,13 @@ export function isFieldValueComplete(field: any, state: any, ctx: any = {}) {
   }
 
   const effectiveColorValues = colorValues || state?.colorValues || {};
-  const empty = isEmptyRequiredValue(field, state, effectiveColorValues);
+  const empty = isEmptyRequiredValue(field, state, effectiveColorValues, depCtx);
+  if (empty && typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.log(
+      `[TabCheck] required field "${field?.label || field?.id}" (type=${field?.type}) blocks completion: value is empty` +
+        (field?.type === 'number' ? ' (note: a required number of 0 counts as empty).' : '.')
+    );
+  }
   return !empty;
 }
 
@@ -291,6 +303,11 @@ function isAllocationComplete(field: any, ctx: any = {}) {
   }
 
   if (!isAllocationCardActive(field, tabState, tab)) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log(
+        `[TabCheck] allocation "${field?.label || field?.id}" blocks completion: card is active but its optionBinding is not satisfied (bound toggle not set / combos empty).`
+      );
+    }
     return false;
   }
 
@@ -314,7 +331,23 @@ function isAllocationComplete(field: any, ctx: any = {}) {
 
   const status = buildAllocationStatus(field, resolved.remaining, field.unit || 'ft');
   if (!status) return true;
-  return status.type === 'success';
+  const ok = status.type === 'success';
+  if (!ok && typeof __DEV__ !== 'undefined' && __DEV__) {
+    // Prime suspect for "filled everything but tab won't complete": the budget
+    // (available) resolves to 0 because dealCenterData lacks the dcField key(s)
+    // this allocation references — so remaining can never reach zero.
+    const dcRefs = field?.dcFields?.length ? field.dcFields : field?.dcField ? [field.dcField] : [];
+    const dcPresent = dcRefs.filter((k: string) => dealCenterData && dealCenterData[k] !== undefined);
+    console.log(
+      `[TabCheck] allocation "${field?.label || field?.id}" blocks completion: status=${status.type} ` +
+        `available=${resolved.available} used=${resolved.allocated} remaining=${resolved.remaining}. ` +
+        `dcField(s)=${JSON.stringify(dcRefs)} present-in-dealCenterData=${JSON.stringify(dcPresent)}` +
+        (dcRefs.length && dcPresent.length === 0
+          ? ' → BUDGET FELL BACK TO field.avail because none of the dcField keys are in dealCenterData (calculator not filled, or config dcField ≠ calculator field id/name).'
+          : '')
+    );
+  }
+  return ok;
 }
 
 export function isCombinationIncomplete(section: any, combo: any, ctx: any = {}) {

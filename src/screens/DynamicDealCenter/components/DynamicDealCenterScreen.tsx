@@ -25,6 +25,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
   const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
+  const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
 
   const {
     config: jobBuilderConfig,
@@ -78,13 +79,14 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number) => {
     setResultModal({ visible: true, calculatorId, resultType: result, price });
+    setCurrentCalculatorId(calculatorId);
   }, []);
 
   const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
-    setCalculatorResultData(data);
+    setCalculatorResultData({ ...data, calculatorId: currentCalculatorId });
     setFlowStep('jobBuilder');
-  }, []);
+  }, [currentCalculatorId]);
 
   const handleJobBuilderBack = useCallback(() => {
     setFlowStep('calculator');
@@ -148,6 +150,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDropChange={handleSetDrops}
           onDiscountChange={handleSetDiscount}
           onDownPaymentChange={handleSetDownPayment}
+          activeTabId={activeTabId}
+          onTabSelect={setActiveTabId}
         />
         <ResultJobModal
           visible={resultModal.visible}

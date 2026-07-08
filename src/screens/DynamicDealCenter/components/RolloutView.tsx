@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Switch, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -89,6 +89,10 @@ interface RolloutViewProps {
   onDiscountChange?: (id: string, discount: number) => void;
   /** Persist a calculator's rollout down payment. */
   onDownPaymentChange?: (id: string, downPayment: number) => void;
+  /** Controlled active tab — syncs with the calculator view so switching views
+   *  preserves which calculator the user was working on. */
+  activeTabId?: string;
+  onTabSelect?: (id: string) => void;
 }
 
 type CatStyle = { color: string; icon: string; bg: string };
@@ -487,6 +491,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const [focused, setFocused] = useState(false);
   const [showPlanPicker, setShowPlanPicker] = useState(false);
   const [dropText, setDropText] = useState('');
+  const [showDropInput, setShowDropInput] = useState(false);
   const [downText, setDownText] = useState(calculator.downPayment ? String(calculator.downPayment) : '');
   const [showDownInput, setShowDownInput] = useState((calculator.downPayment || 0) > 0);
   // Collapsed-by-default breakdown once the rollout is locked; the chevron on the
@@ -630,6 +635,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
     setPendingDrop(v);
     setShowDropModal(true);
+    setShowDropInput(false);
     setDropText('');
   };
 
@@ -640,6 +646,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const cleared = drops.map((d) => (d.status === 'accepted' ? { ...d, status: 'declined' } : d));
     onDropChange(calculator.id, [...cleared, { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', ...data }]);
     setShowDropModal(false);
+    setShowDropInput(false);
     // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
     setChooserPrice(pendingDrop);
     setShowChooser(true);
@@ -650,6 +657,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const declineDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
     onDropChange(calculator.id, [...drops, { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', ...data }]);
     setShowDropModal(false);
+    setShowDropInput(false);
     FlashMessage.warning('Price declined', `${fmt(pendingDrop)} was recorded as a declined price.`);
   };
 
@@ -657,247 +665,260 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // name → payment method → items → cost/par/retail → end price → actions).
   const paymentMethodBlock = (
     <View style={{ marginHorizontal: 14, marginBottom: 14 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <Text style={{ fontSize: 12, fontWeight: '900', color: '#1A237E' }}>Payment Method</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginRight: 6 }}>Set as Default</Text>
-          <Switch
-            value={isDefaultMethod}
-            onValueChange={toggleDefault}
-            trackColor={{ false: '#E2E8F0', true: '#4CBB17' }}
-            thumbColor="#fff"
-          />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 24, marginBottom: 12 }}>
+        <Text style={{ fontSize: 14, fontWeight: '500', color: '#212B36' }}>Payment Method</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={{ fontSize: 12, color: '#637381' }}>Set as Default</Text>
+          <TouchableOpacity
+            onPress={() => toggleDefault(!isDefaultMethod)}
+            style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultMethod ? '#22C55E' : '#CBD5E1', alignItems: isDefaultMethod ? 'flex-end' : 'flex-start' }}
+          >
+            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff' }} />
+          </TouchableOpacity>
         </View>
       </View>
       <TouchableOpacity
         onPress={() => setShowPlanPicker(true)}
-        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12 }}
+        style={{ minHeight: 56, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
-        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E', flex: 1, marginRight: 8 }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
+        <View style={{ flex: 1, paddingRight: 16 }}>
+          <Text style={{ fontSize: 8, fontWeight: '900', color: '#637381', letterSpacing: 1.5, marginBottom: 2, textTransform: 'uppercase' }}>{pricing.categories.find((c) => c.plans.includes(method))?.title || 'BASIC'}</Text>
+          <Text style={{ fontSize: 14, fontWeight: '900', color: '#212B36' }}>{planLabelOf(plans, method)}</Text>
+        </View>
         <Ionicons name="chevron-down" size={16} color="#637381" />
       </TouchableOpacity>
     </View>
   );
 
   return (
-    <View style={{ backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 20, paddingBottom: 16, marginBottom: 24 }}>
-      {/* 1. Heading — calculator name + locked badge */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
-        <Text style={{ fontSize: 20, fontWeight: '900', color: '#1C252E', flex: 1 }}>{calculator.title}</Text>
-        {calculator.isRolloutConfirmed && (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="lock-closed" size={14} color="#ffb300" style={{ marginRight: 4 }} />
-            <Text style={{ fontSize: 11, fontWeight: '900', color: '#4baf51', letterSpacing: 0.5 }}>LOCKED</Text>
+    <>
+      {/* ── Main card ── */}
+      <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: calculator.isRolloutConfirmed ? '#16A34A' : '#DFE3E8', borderRadius: 24, paddingBottom: 16 }}>
+        {/* 1. Heading — calculator name + confirmed/required badge (old UI parity) */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
+          <Text style={{ fontSize: 12, fontWeight: '600', color: '#212B36', flex: 1 }}>{calculator.title}</Text>
+          {calculator.isRolloutConfirmed ? (
+            <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="lock-closed" size={10} color="#fff" />
+              <Text style={{ fontSize: 10, fontWeight: '900', color: '#fff', marginLeft: 4 }}>Confirmed</Text>
+            </View>
+          ) : !calculator.price ? (
+            <View style={{ backgroundColor: '#FF990F', paddingHorizontal: 4, paddingVertical: 4, borderRadius: 6 }}>
+              <Text style={{ fontSize: 10, fontWeight: '600', color: '#fff' }}>Required</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* 2. Payment Method selector + Set-as-Default toggle */}
+        {paymentMethodBlock}
+
+        {/* 3. Category pills */}
+        {categoryChips.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
+            {categoryChips.map((catId) => {
+              const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
+              return (
+                <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
+                  <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+                </View>
+              );
+            })}
           </View>
         )}
-      </View>
 
-      {/* 2. Payment Method selector + Set-as-Default toggle (matches web QuoteResultCard order) */}
-      {paymentMethodBlock}
-
-      {/* 3. List of items — category pills */}
-      {categoryChips.length > 0 && (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-          {categoryChips.map((catId) => {
-            const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
-            return (
-              <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
-                <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
-                <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+        {/* 3. Item rows */}
+        {itemRows.map((item, i) => {
+          const meta = categoryMeta[item.categoryId] || { label: item.categoryId, style: styleForKey(item.categoryId) };
+          return (
+            <View key={item.fieldId || i}>
+              <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 13 }}>
+                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+                  <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
+                </View>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
+                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{item.unit || "'"}</Text>{'  '}{item.label}
+                </Text>
               </View>
-            );
-          })}
-        </View>
-      )}
-
-      {/* 3. List of items — entered item rows (grouped by category) */}
-      {itemRows.map((item, i) => {
-        const meta = categoryMeta[item.categoryId] || { label: item.categoryId, style: styleForKey(item.categoryId) };
-        return (
-          <View key={item.fieldId || i}>
-            <View style={{ height: 1, backgroundColor: '#F1F5F9' }} />
-            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 13 }}>
-              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
-                <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
-              </View>
-              <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                <Text style={{ fontWeight: '900' }}>{item.inputValue}{item.unit || "'"}</Text>{'  '}{item.label}
-              </Text>
             </View>
-          </View>
-        );
-      })}
-      {itemRows.length > 0 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />}
+          );
+        })}
+        {itemRows.length > 0 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />}
 
-      {/* 4. COST / PAR / RETAIL tiles */}
-      <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
-        {tiers.map((tier) => (
-          <View key={tier.label} style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 12, borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#4CBB17' : '#E2E8F0' }}>
-            <Text style={{ fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4, color: '#94A3B8', textTransform: 'uppercase' }}>{tier.label}</Text>
-            <Text style={{ fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#444c97' : '#1C252E' }}>{fmt(tier.value)}</Text>
-          </View>
-        ))}
-      </View>
+        {/* 4. COST / PAR / RETAIL tiles */}
+        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
+          {tiers.map((tier) => (
+            <View key={tier.label} style={{ flex: 1, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#fff', borderWidth: tier.isRetail ? 1.5 : 1, borderColor: tier.isRetail ? '#16A34A' : '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+              <Text style={{ fontSize: 9, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4, color: '#94A3B8', textTransform: 'uppercase' }}>{tier.label}</Text>
+              <Text style={{ fontSize: 14, fontWeight: '900', color: tier.isRetail ? '#16A34A' : '#212B36' }}>{fmt(tier.value)}</Text>
+            </View>
+          ))}
+        </View>
 
-      {/* 5. Rollout End Price sub-card */}
-      <View style={{ marginHorizontal: 14, backgroundColor: '#F0FDF4', borderRadius: 14, borderWidth: 1.5, borderColor: '#4CBB17', overflow: 'hidden' }}>
-        <View style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
-          <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748B', marginBottom: 6 }}>Rollout End Price</Text>
+        {/* 5. Rollout End Price — old UI style */}
+        <View style={{ marginHorizontal: 14, marginBottom: 4 }}>
+          <Text style={{ fontSize: 10, fontWeight: '900', color: calculator.isRolloutConfirmed ? '#16A34A' : '#F59E0B', marginBottom: 8, marginLeft: 4, letterSpacing: 1 }}>ROLLOUT END PRICE</Text>
           {calculator.isRolloutConfirmed ? (
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => setShowLockedDetails((v) => !v)}
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', borderWidth: 2, borderColor: '#16A34A', borderRadius: 16, paddingHorizontal: 16, height: 64, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}
             >
-              <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>{(calculator.price || 0) > 0 ? fmt(calculator.price || 0) : '—'}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
-                  <Ionicons name="lock-closed" size={14} color="#ffb300" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11, fontWeight: '900', color: '#4baf51', letterSpacing: 0.5 }}>LOCKED</Text>
+                <Text style={{ fontSize: 20, fontWeight: '900', color: '#16A34A' }}>
+                  {(calculator.price ?? 0) > 0 ? fmt(calculator.price ?? 0) : '—'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(22,163,74,0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(22,163,74,0.2)' }}>
+                  <Ionicons name="lock-closed" size={12} color="#16A34A" />
+                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#16A34A', marginLeft: 6, letterSpacing: 0.5 }}>LOCKED</Text>
                 </View>
-                <Ionicons name={showLockedDetails ? 'chevron-up' : 'chevron-down'} size={18} color="#15803D" />
+                <Ionicons name={showLockedDetails ? 'chevron-up' : 'chevron-down'} size={16} color="#16A34A" />
               </View>
             </TouchableOpacity>
           ) : (
-            <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: priceErr ? '#D32F2F' : focused ? '#4CBB17' : '#BBF7D0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12 }}>
-              <Text style={{ fontSize: 18, fontWeight: '900', color: '#94A3B8', marginRight: 4 }}>$</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderWidth: 2, borderColor: priceErr ? '#EF4444' : focused ? '#16A34A' : '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, height: 64, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+              <Text style={{ fontSize: 16, fontWeight: '900', color: focused ? '#16A34A' : '#637381', marginRight: 8, lineHeight: 20 }}>$</Text>
               <TextInput
-                style={{ flex: 1, fontSize: 18, fontWeight: '900', color: '#15803D', paddingVertical: 12 }}
+                style={{ flex: 1, fontSize: 16, fontWeight: '900', color: focused ? '#16A34A' : '#212B36', padding: 0, margin: 0, height: '100%', lineHeight: 20, textAlignVertical: 'center' }}
                 value={endPrice}
                 onChangeText={(t) => { const c = t.replace(/[^0-9.]/g, ''); setEndPrice(c); onPriceChange(calculator.id, parseFloat(c) || 0); }}
                 onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-                placeholder="Enter End Price" placeholderTextColor="#94A3B8" keyboardType="numeric"
+                placeholder="Enter End Price" placeholderTextColor="#919EAB" keyboardType="numeric"
               />
             </View>
           )}
           {priceErr ? (
-            <Text style={{ fontSize: 11, color: '#D32F2F', marginTop: 8, fontWeight: '700' }}>{priceErr}</Text>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 8, marginLeft: 4 }}>{priceErr}</Text>
           ) : (
-            markup && <Text style={{ fontSize: 11, color: '#15803D', marginTop: 8, fontWeight: '700' }}>{markup}</Text>
+            markup && <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A', marginTop: 8, marginLeft: 4 }}>{markup}</Text>
           )}
         </View>
+
+        {/* 5b. Result breakdown */}
+        {showResult && (
+          <View style={{ marginHorizontal: 14, marginTop: 16 }}>
+            <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
+              <View style={{ flex: 1, paddingVertical: 18, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: '#E2E8F0' }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginBottom: 6, textAlign: 'center' }}>End Price w/ Screens</Text>
+                <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>{fmt(priceWithScreens)}</Text>
+              </View>
+              <View style={{ flex: 1, padding: 12, justifyContent: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>Pre Order{'\n'}Discount</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 4 }}>Default</Text>
+                    <Switch value={isDefaultDiscount} onValueChange={toggleDefaultDiscount} trackColor={{ false: '#E2E8F0', true: '#4CBB17' }} thumbColor="#fff" />
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {pricing.preOrderOptions.map((d) => {
+                    const active = discountPct === d;
+                    return (
+                      <TouchableOpacity key={d} onPress={() => onDiscountChange(calculator.id, d)} style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+
+            <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 10, fontWeight: '900', letterSpacing: 1.5, color: '#1C252E', marginBottom: 2 }}>MSRP</Text>
+              <Text style={{ fontSize: 20, fontWeight: '900', color: '#4CAF50' }}>{fmt(msrp)}</Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flex: 1, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 14 }}>
+                <Text style={{ fontSize: 11, fontWeight: '900', color: '#1C252E', marginBottom: 16 }}>1 Year Program</Text>
+                <PriceRow label="Total" value={fmt(msrp)} />
+                <PriceRow label={`${seniorVetPct}% Sr + Vet`} value={`-${fmt(srVetDiscount)}`} green />
+                <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 10 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '900', color: '#1C252E' }}>{fmt(oneYearGrandTotal)}</Text>
+                </View>
+              </View>
+
+              <View style={{ flex: 1, borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 16, overflow: 'hidden' }}>
+                <View style={{ backgroundColor: '#4CBB17', paddingVertical: 8, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>In Home Pre Order</Text>
+                </View>
+                <View style={{ padding: 12 }}>
+                  <PriceRow label="Total" value={fmt(msrp)} small />
+                  <PriceRow label={`${seniorVetPct}% Sr + Vet`} value={`-${fmt(srVetDiscount)}`} green small />
+                  <PriceRow label={`${discountPct}% Discount`} value={`-${fmt(preOrderDiscountVal)}`} green small />
+                  <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 }} />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>Grand total</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '900', color: '#15803D' }}>{fmt(preOrderGrandTotal)}</Text>
+                  </View>
+
+                  {showDownInput ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, marginBottom: 10, height: 36 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginRight: 4, lineHeight: 14 }}>$</Text>
+                      <TextInput
+                        style={{ flex: 1, fontSize: 11, fontWeight: '900', color: '#1C252E', padding: 0, margin: 0, height: '100%', lineHeight: 14, textAlignVertical: 'center' }}
+                        value={downText}
+                        onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                        onEndEditing={commitDownPayment}
+                        onBlur={commitDownPayment}
+                        placeholder="Down Payment"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="numeric"
+                      />
+                      {downPay > 0 && (
+                        <TouchableOpacity onPress={clearDownPayment} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                          <Ionicons name="close-circle" size={16} color="#FF5630" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ) : (
+                    <TouchableOpacity onPress={() => setShowDownInput(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8, marginBottom: 10 }}>
+                      <Ionicons name="add" size={13} color="#2196F3" />
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{downPay > 0 ? `Down Payment: ${fmt(downPay)}` : 'Add Down Payment'}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {downPay > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '600', color: '#16a34a' }}>Down Payment</Text>
+                      <Text style={{ fontSize: 10, fontWeight: '900', color: '#16a34a' }}>-{fmt(downPay)}</Text>
+                    </View>
+                  )}
+
+                  {preOrderMonthly > 0 && (
+                    <View style={{ alignItems: 'center', marginTop: 4 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#60A5FA', marginBottom: 2 }}>{fmt(preOrderMonthly)}/mo</Text>
+                      <Text style={{ fontSize: 8, color: '#94A3B8', textAlign: 'center' }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Unconfirmed prompt (stays inside card) */}
+        {!calculator.isRolloutConfirmed && (
+          <View style={{ alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14 }}>
+            <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>Enter price, then confirm below to lock</Text>
+          </View>
+        )}
       </View>
 
-      {/* 5b. Result breakdown — appears live once a valid end price is entered
-          (mirrors the regular rollout's CalculatorSummary result section). */}
-      {showResult && (
-        <View style={{ marginHorizontal: 14, marginTop: 16 }}>
-          {/* End Price w/ Screens  +  Pre-Order Discount selector */}
-          <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
-            <View style={{ flex: 1, paddingVertical: 18, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: '#E2E8F0' }}>
-              <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginBottom: 6, textAlign: 'center' }}>End Price w/ Screens</Text>
-              <Text style={{ fontSize: 22, fontWeight: '900', color: '#15803D' }}>{fmt(priceWithScreens)}</Text>
-            </View>
-            <View style={{ flex: 1, padding: 12, justifyContent: 'center' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>Pre Order{'\n'}Discount</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 4 }}>Default</Text>
-                  <Switch value={isDefaultDiscount} onValueChange={toggleDefaultDiscount} trackColor={{ false: '#E2E8F0', true: '#4CBB17' }} thumbColor="#fff" />
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {pricing.preOrderOptions.map((d) => {
-                  const active = discountPct === d;
-                  return (
-                    <TouchableOpacity key={d} onPress={() => onDiscountChange(calculator.id, d)} style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}>
-                      <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
+      {/* ── Outside card: Installers Check + Drops + Actions (old UI parity) ── */}
+      {calculator.isRolloutConfirmed && (
+        <View style={{ marginTop: 16, marginBottom: 24 }}>
+          {/* Installers Check bar */}
+          <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E' }}>Check to installers (screens)</Text>
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(screensCount * 75)}</Text>
           </View>
 
-          {/* MSRP */}
-          <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', letterSpacing: 1.5, color: '#1C252E', marginBottom: 2 }}>MSRP</Text>
-            <Text style={{ fontSize: 20, fontWeight: '900', color: '#4CAF50' }}>{fmt(msrp)}</Text>
-          </View>
-
-          {/* 1 Year Program  vs  In-Home Pre Order */}
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <View style={{ flex: 1, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 14 }}>
-              <Text style={{ fontSize: 11, fontWeight: '900', color: '#1C252E', marginBottom: 16 }}>1 Year Program</Text>
-              <PriceRow label="Total" value={fmt(msrp)} />
-              <PriceRow label={`${seniorVetPct}% Sr + Vet`} value={`-${fmt(srVetDiscount)}`} green />
-              <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 10 }} />
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 11, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
-                <Text style={{ fontSize: 13, fontWeight: '900', color: '#1C252E' }}>{fmt(oneYearGrandTotal)}</Text>
-              </View>
-            </View>
-
-            <View style={{ flex: 1, borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 16, overflow: 'hidden' }}>
-              <View style={{ backgroundColor: '#4CBB17', paddingVertical: 8, alignItems: 'center' }}>
-                <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>In Home Pre Order</Text>
-              </View>
-              <View style={{ padding: 12 }}>
-                <PriceRow label="Total" value={fmt(msrp)} small />
-                <PriceRow label={`${seniorVetPct}% Sr + Vet`} value={`-${fmt(srVetDiscount)}`} green small />
-                <PriceRow label={`${discountPct}% Discount`} value={`-${fmt(preOrderDiscountVal)}`} green small />
-                <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>Grand total</Text>
-                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#15803D' }}>{fmt(preOrderGrandTotal)}</Text>
-                </View>
-
-                {/* Down payment (shown as a separate deduction line; not part of the grand total) */}
-                {showDownInput ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, marginBottom: 10 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginRight: 4 }}>$</Text>
-                    <TextInput
-                      style={{ flex: 1, fontSize: 11, fontWeight: '900', color: '#1C252E', paddingVertical: 8 }}
-                      value={downText}
-                      onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
-                      onEndEditing={commitDownPayment}
-                      onBlur={commitDownPayment}
-                      placeholder="Down Payment"
-                      placeholderTextColor="#94A3B8"
-                      keyboardType="numeric"
-                    />
-                    {downPay > 0 && (
-                      <TouchableOpacity onPress={clearDownPayment} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Ionicons name="close-circle" size={16} color="#FF5630" />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ) : (
-                  <TouchableOpacity onPress={() => setShowDownInput(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8, marginBottom: 10 }}>
-                    <Ionicons name="add" size={13} color="#2196F3" />
-                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{downPay > 0 ? `Down Payment: ${fmt(downPay)}` : 'Add Down Payment'}</Text>
-                  </TouchableOpacity>
-                )}
-                {downPay > 0 && (
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#16a34a' }}>Down Payment</Text>
-                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#16a34a' }}>-{fmt(downPay)}</Text>
-                  </View>
-                )}
-
-                {/* Monthly payment — financing plans only (base = grand total − down payment) */}
-                {preOrderMonthly > 0 && (
-                  <View style={{ alignItems: 'center', marginTop: 4 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '900', color: '#60A5FA', marginBottom: 2 }}>{fmt(preOrderMonthly)}/mo</Text>
-                    <Text style={{ fontSize: 8, color: '#94A3B8', textAlign: 'center' }} numberOfLines={2}>{planLabelOf(plans, method)}</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* 6. Actions */}
-      {!calculator.isRolloutConfirmed ? (
-        <View style={{ alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14 }}>
-          <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>Enter price, then confirm below to lock</Text>
-        </View>
-      ) : (
-        <View style={{ paddingHorizontal: 14, marginTop: 16 }}>
-          {/* Dropped prices list — matches the regular rollout (CalculatorSummary
-              listings): green "Nth Dropped Price" header + ✓ SECURED badge, then a
-              white border-2 price box (green when secured, slate otherwise). */}
+          {/* Drops list with old-UI View/Unselect/Display */}
           {drops.map((d, i) => {
             const ordinal = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][i] || `${i + 1}th`;
             const declined = d.status === 'declined';
@@ -905,65 +926,96 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             const dp = d.price ?? d.dropedPrice ?? 0;
             return (
               <View key={i} style={{ marginBottom: 24 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8', marginRight: 8 }}>{ordinal} Dropped Price</Text>
-                    {secured ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#16A34A', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
+                    {secured && (
                       <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>✓ SECURED</Text>
                       </View>
-                    ) : (
-                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
-                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#DC2626' }}>DECLINED</Text>
-                      </View>
                     )}
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity onPress={() => { setChooserPrice(dp); setShowChooser(true); }} style={{ marginRight: 12 }}>
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: secured ? '#16A34A' : '#64748B' }}>Result</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.filter((_, idx) => idx !== i))} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                      <Ionicons name="close-circle" size={18} color="#94A3B8" />
-                    </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                    {!declined && (
+                      <TouchableOpacity onPress={() => { setChooserPrice(dp); setShowChooser(true); }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: secured ? '#16A34A' : '#64748B' }}>View</Text>
+                      </TouchableOpacity>
+                    )}
+                    {secured && (
+                      <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.filter((_, idx) => idx !== i))}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
                 <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: secured ? '#22C55E' : '#E2E8F0', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 20, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{fmt(dp)}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    {!!d.paymentMethod && (
-                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginRight: 10, maxWidth: 130 }} numberOfLines={1}>{planLabelOf(plans, d.paymentMethod)}</Text>
-                    )}
-                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : '#DC2626' }}>{secured ? 'SECURED' : 'DECLINED'}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        // Display action — in old UI opens the drop modal for re-negotiation
+                        setPendingDrop(dp);
+                        setShowDropModal(true);
+                      }}
+                      style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : '#E2E8F0' }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '900', color: secured ? '#fff' : '#64748B' }}>Display</Text>
+                    </TouchableOpacity>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: secured ? '#16A34A' : '#94A3B8' }}>{secured ? 'SECURED' : 'LOCKED'}</Text>
                   </View>
                 </View>
               </View>
             );
           })}
 
-          {/* Add-drop input */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12 }}>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 4 }}>$</Text>
-              <TextInput
-                style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E', paddingVertical: 10 }}
-                value={dropText}
-                onChangeText={(t) => setDropText(t.replace(/[^0-9.]/g, ''))}
-                onSubmitEditing={openDrop}
-                placeholder={`Add ${['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][drops.length] || `${drops.length + 1}th`} drop price`}
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-              />
+          {/* Inline drop input */}
+          {showDropInput && (
+            <View style={{ marginBottom: 16 }}>
+              <View style={{ backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 16, height: 56, flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
+                <TextInput
+                  style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
+                  value={dropText}
+                  onChangeText={(t) => setDropText(t.replace(/[^0-9.]/g, ''))}
+                  onSubmitEditing={openDrop}
+                  placeholder="Enter price..."
+                  placeholderTextColor="#919EAB"
+                  keyboardType="numeric"
+                  autoFocus
+                />
+              </View>
             </View>
-            <TouchableOpacity onPress={openDrop} style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: '#1976D2', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="add" size={22} color="#fff" />
+          )}
+
+          {/* Drop + Result Lead buttons */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => {
+                if (showDropInput) {
+                  openDrop();
+                } else {
+                  setDropText('');
+                  setShowDropInput(true);
+                }
+              }}
+              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#1976D2', backgroundColor: '#fff' }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '900', color: '#1976D2' }}>
+                {`+ ${['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][drops.length] || `${drops.length + 1}th`} Drop`}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => { setChooserPrice(finalPrice); setShowChooser(true); }}
+              style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F97316', backgroundColor: '#fff' }}
+            >
+              <Ionicons name="document-text-outline" size={16} color="#EA580C" style={{ marginBottom: 2 }} />
+              <Text style={{ fontSize: 12, fontWeight: '900', color: '#EA580C', marginBottom: 1 }}>Result Lead</Text>
+              <Text style={{ fontSize: 14, fontWeight: '900', color: '#EA580C' }}>
+                {finalPrice > 0 ? fmt(finalPrice) : ''}
+              </Text>
             </TouchableOpacity>
           </View>
-
-          {/* Result Lead — opens the Sale/Demo chooser, then the outcome modal,
-              carrying the latest drop (or end) price. */}
-          <TouchableOpacity onPress={() => { setChooserPrice(finalPrice); setShowChooser(true); }} style={{ borderWidth: 1, borderColor: '#eb5a0c', backgroundColor: '#eb5a0c0A', borderRadius: 10, paddingVertical: 13, alignItems: 'center' }}>
-            <Text style={{ fontSize: 14, fontWeight: '900', color: '#eb5a0c' }}>Result Lead{finalPrice > 0 ? ` · ${fmt(finalPrice)}` : ''}</Text>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -997,14 +1049,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice); }}
         onClose={() => setShowChooser(false)}
       />
-    </View>
+    </>
   );
 }
 
-export function RolloutView({ calculators, verticals, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  const [selectedTabId, setSelectedTabId] = useState(calculators[0]?.id || '');
   const [prices, setPrices] = useState<Record<string, number>>({});
   // Effective end price for a calculator: the freshly-entered value, else the
   // one already persisted on the tab (e.g. from a duplicated calculator).
@@ -1024,7 +1075,7 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
   // calculator — instead of sitting at 0% until everything is confirmed at the end.
   const enteredCount = visibleCalculators.filter((c) => effectivePrice(c) > 0).length;
   const progress = visibleCalculators.length > 0 ? (enteredCount / visibleCalculators.length) * 100 : 0;
-  const selectedCalc = visibleCalculators.find((c) => c.id === selectedTabId) || visibleCalculators[0];
+  const selectedCalc = visibleCalculators.find((c) => c.id === activeTabId) || visibleCalculators[0];
 
   // Map categoryId -> { label, style } across all verticals so quote-card pills
   // and item rows read nicely. Icon/color are schema-driven (Iconify → Ionicons).
@@ -1037,30 +1088,68 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
     return map;
   }, [verticals]);
 
+  // Tab-scroll state for progressive fade overlays (old UI parity)
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const summaryTabsScrollViewRef = useRef<ScrollView>(null);
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+      style={{ flex: 1, backgroundColor: '#fff' }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 120 : 24}
     >
-      <View style={{ backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingHorizontal: 12 }}>
-          <TouchableOpacity onPress={onBack} style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: '#4CBB17', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-            <Ionicons name="arrow-back" size={18} color="#fff" />
-          </TouchableOpacity>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-            {visibleCalculators.map((calc) => {
-              const isActive = calc.id === selectedCalc?.id;
-              return (
-                <TouchableOpacity key={calc.id} onPress={() => setSelectedTabId(calc.id)} style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: isActive ? 3 : 2, borderBottomColor: isActive ? '#4CBB17' : 'transparent' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ fontSize: 13, fontWeight: isActive ? '800' : '500', color: isActive ? '#1C252E' : 'rgba(28,37,46,0.5)' }}>{calc.title}</Text>
-                    {calc.isRolloutConfirmed && <Ionicons name="checkmark-circle" size={13} color="#4CBB17" />}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+      <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#DFE3E8', backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center' }}>
+        <TouchableOpacity onPress={onBack} style={{ padding: 8, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 12, backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+          <Ionicons name="arrow-back" size={18} color="#212B36" />
+        </TouchableOpacity>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', height: 40 }}>
+          <View style={{ flex: 1, position: 'relative', flexDirection: 'row', alignItems: 'center', height: '100%' }}>
+            <ScrollView
+              ref={summaryTabsScrollViewRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ flex: 1 }}
+              scrollEventThrottle={16}
+              onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
+              onContentSizeChange={(w) => setContentWidth(w)}
+              onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+            >
+              {visibleCalculators.map((calc) => {
+                const isActive = calc.id === selectedCalc?.id;
+                const hasLockedDrop = (calc.dropPrice || []).some((d: any) => d.status === 'accepted');
+                return (
+                  <TouchableOpacity key={calc.id} onPress={() => onTabSelect?.(calc.id)} style={{ flexDirection: 'row', alignItems: 'center', height: '100%', paddingHorizontal: 12, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {hasLockedDrop && (
+                        <Ionicons name="lock-closed" size={12} color={isActive ? '#16A34A' : '#94A3B8'} style={{ marginRight: 6 }} />
+                      )}
+                      <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#212B36' : '#637381' }}>{calc.title}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Left progressive fade overlay */}
+            {scrollOffset > 5 && (
+              <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
+                  <View key={`lb-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
+                ))}
+              </View>
+            )}
+
+            {/* Right progressive fade overlay */}
+            {scrollOffset + scrollViewWidth < contentWidth - 5 && (
+              <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
+                  <View key={`rb-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
+                ))}
+              </View>
+            )}
+          </View>
         </View>
       </View>
 

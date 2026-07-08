@@ -277,9 +277,11 @@ export default function MapDetailScreen() {
     result = result.filter((item) => {
       // Job Number / Search Text - only filter by text if NOT performing a location search
       if (filters.jobNumber && !filters.centerCoords) {
-        const search = filters.jobNumber.toLowerCase();
-        const matchesJob = item.jobNumber?.toLowerCase().includes(search);
-        const matchesAddress = item.fullAddress?.toLowerCase().includes(search);
+        // Coerce to string — jobNumber/fullAddress can be numeric in API data,
+        // where `?.toLowerCase()` would throw "undefined is not a function".
+        const search = String(filters.jobNumber).toLowerCase();
+        const matchesJob = String(item.jobNumber ?? '').toLowerCase().includes(search);
+        const matchesAddress = String(item.fullAddress ?? '').toLowerCase().includes(search);
         if (!matchesJob && !matchesAddress) return false;
       }
 

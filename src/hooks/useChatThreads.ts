@@ -102,8 +102,8 @@ export const useChatThreads = (
         (c) =>
           c.leadDetails?.customerDetails?.firstName?.toLowerCase().includes(query) ||
           c.leadDetails?.customerDetails?.lastName?.toLowerCase().includes(query) ||
-          c.leadDetails?.leadId?.toLowerCase().includes(query) ||
-          c.leadDetails?.fullAddress?.toLowerCase().includes(query) ||
+          String(c.leadDetails?.leadId ?? '').toLowerCase().includes(query) ||
+          String(c.leadDetails?.fullAddress ?? '').toLowerCase().includes(query) ||
           (c.title || '').toLowerCase().includes(query)
       );
     }

@@ -52,6 +52,47 @@ export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModa
       return;
     }
 
+    // data:<mime>;base64,<...> — the native <Pdf>/<Image> viewers can't consume a
+    // data URI directly, and the remote-download path below can't HTTP-GET one, so
+    // decode it to a temp file first. This is how a SAVED agreement / order-sheet
+    // fetched as base64 (downloadOutcomeDocuments) gets previewed.
+    if (uri.startsWith('data:')) {
+      const writeInlineDoc = async () => {
+        try {
+          setDownloading(true);
+          setError(null);
+          const commaIdx = uri.indexOf(',');
+          if (commaIdx === -1) {
+            setError('This document could not be read.');
+            setDownloading(false);
+            return;
+          }
+          const header = uri.slice(5, commaIdx); // strip leading 'data:'
+          const mime = (header.split(';')[0] || 'application/pdf').trim();
+          const base64Body = uri.slice(commaIdx + 1);
+          const isImgData = mime.startsWith('image/');
+          setIsImage(isImgData);
+          const ext = isImgData ? (mime.split('/')[1] || 'jpg') : 'pdf';
+          const { dirs } = ReactNativeBlobUtil.fs;
+          const dir = `${dirs.DocumentDir}/revdsm_pdfs`;
+          if (!(await ReactNativeBlobUtil.fs.exists(dir))) {
+            await ReactNativeBlobUtil.fs.mkdir(dir);
+          }
+          const filePath = `${dir}/inline_${Date.now()}.${ext}`;
+          await ReactNativeBlobUtil.fs.writeFile(filePath, base64Body, 'base64');
+          const formatted = Platform.OS === 'android' ? `file://${filePath}` : filePath;
+          setLocalUri(formatted);
+        } catch (err) {
+          console.error('[PdfPreviewModal] Failed to decode inline document:', err);
+          setError('Failed to load document. Please try again.');
+        } finally {
+          setDownloading(false);
+        }
+      };
+      writeInlineDoc();
+      return;
+    }
+
     const isImg = isImageUri(uri);
     setIsImage(isImg);
 

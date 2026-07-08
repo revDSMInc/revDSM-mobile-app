@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { buildVerticalSummarySections } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
+import { SummaryFinalizeCards } from './agreement/SummaryFinalizeCards';
 
 interface VerticalSummaryTabProps {
   vertical?: any;
@@ -8,6 +9,23 @@ interface VerticalSummaryTabProps {
   lockedTabIds?: string[];
   dealCenterData?: any;
   applyConditions?: boolean;
+  // Finalize extras (appointment / agreement / order-sheet). Provided only when
+  // rendered inside the live Job Builder; absent in preview/config contexts.
+  products?: any[];
+  leadId?: string;
+  calculatorResultData?: any;
+  customerName?: string;
+  isSale?: boolean;
+  isDemo?: boolean;
+  scheduleTime?: any;
+  agreements?: any[];
+  orderSheets?: any[];
+  rootJobState?: any;
+  onUpdateRootState?: (key: string, value: any) => void;
+  resolvedDocuments?: { agreements: any[]; orderSheets: any[] };
+  setResolvedDocuments?: React.Dispatch<React.SetStateAction<{ agreements: any[]; orderSheets: any[] }>>;
+  isDocUploadingRef?: React.MutableRefObject<boolean>;
+  onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<boolean>;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
@@ -110,14 +128,33 @@ export function VerticalSummaryTab({
   lockedTabIds = [],
   dealCenterData = {},
   applyConditions = true,
+  leadId,
+  calculatorResultData,
+  customerName,
+  isSale,
+  isDemo,
+  scheduleTime,
+  agreements,
+  orderSheets,
+  rootJobState,
+  onUpdateRootState,
+  resolvedDocuments,
+  setResolvedDocuments,
+  isDocUploadingRef,
+  onUploadDocs,
 }: VerticalSummaryTabProps) {
   const summarySections = useMemo(
     () => buildVerticalSummarySections(vertical, verticalState, { lockedTabIds, dealCenterData, applyConditions }),
     [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions]
   );
 
+  // Only show the finalize cards inside the live builder (a root-state setter is
+  // present); preview/config renders pass none of these and skip the section.
+  const showFinalize = Boolean(onUpdateRootState);
+  const productKey = vertical?.productId || vertical?.id;
+
   return (
-    <ScrollView className="p-4" showsVerticalScrollIndicator={false}>
+    <ScrollView style={{ flex: 1 }} className="p-4" showsVerticalScrollIndicator={false}>
       <View className="mb-4">
         <Text className="text-xl font-extrabold text-slate-850">Job Builder Summary</Text>
         <Text className="text-xs text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>
@@ -187,6 +224,29 @@ export function VerticalSummaryTab({
           );
         })
       )}
+
+      {showFinalize && (
+        <SummaryFinalizeCards
+          leadId={leadId}
+          isSale={isSale}
+          isDemo={isDemo}
+          customerName={customerName}
+          scheduleTime={scheduleTime}
+          agreements={agreements}
+          orderSheets={orderSheets}
+          onUpdateRootState={onUpdateRootState}
+          resolvedDocuments={resolvedDocuments}
+          setResolvedDocuments={setResolvedDocuments}
+          isDocUploadingRef={isDocUploadingRef}
+          onUploadDocs={onUploadDocs}
+          productKey={productKey}
+          verticalState={verticalState}
+          jobState={rootJobState}
+          calculatorResultData={calculatorResultData}
+        />
+      )}
+
+      <View style={{ height: 24 }} />
     </ScrollView>
   );
 }

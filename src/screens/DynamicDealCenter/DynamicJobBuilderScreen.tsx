@@ -2,24 +2,29 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useQuery } from '@tanstack/react-query';
 import { useDynamicJobBuilderSession } from './useDynamicJobBuilderSession';
 import { DynamicTabRenderer } from '../../widgets/components/dynamic-job-builder/DynamicTabRenderer';
 import { ProgressTracker } from '../../widgets/components/dynamic-job-builder/ProgressTracker';
 import { VerticalTabBar } from '../../widgets/components/dynamic-job-builder/VerticalTabBar';
 import { FlashMessage } from '../../config/message';
 import { LeadService } from '../../services/api/leads';
-import { logEvent } from '../../services/api/LoggerService';
+import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
 import { isTabComplete } from '../../utils/dynamic-job-builder/engine/tab-validation';
+import {
+  serializeDynamicJobStateForStorage,
+  deserializeDynamicJobStateFromStorage,
+} from '../../utils/dynamic-job-builder/engine/dynamic-job-state-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme } from '../../theme/ThemeProvider';
 
 interface DynamicJobBuilderScreenProps {
   navigation?: NativeStackNavigationProp<any>;
@@ -49,17 +54,136 @@ function DynamicJobBuilderInner({
   onJobComplete,
   onGoBack,
 }: DynamicJobBuilderScreenProps) {
+  const insets = useSafeAreaInsets();
   const verticalList = useMemo(
     () => initialConfig?.verticals || [],
     [initialConfig]
   );
+  const { colors, isDark } = useTheme();
+
+  // Fetch saved job state on mount via the calculator-scoped outcome endpoint
+  // (web parity: GET /lead/v1/{leadId}/outcome/{calculatorId}). Web stores the
+  // SERIALIZED job state at outcome.jobBuilder.dynamicJobState (storage keys);
+  // we unwrap + deserialize it back to runtime ids below so already-set data
+  // displays. Documents live under `leadOutcomeDocuments`. 404 = fresh start.
+  const calcId = (calculatorResultData as any)?.calculatorId;
+  const { data: outcomeData, isFetched: isOutcomeFetched } = useQuery({
+    queryKey: ['leadOutcome', leadId, calcId],
+    queryFn: async () => {
+      try {
+        const res = await LeadService.getLeadOutcomeByCalculator(leadId!, calcId);
+        const body = res.data;
+        // Unwrap exactly like web's extractCalculatorOutcome
+        // (calculator-outcome-api.js): data.outcome ?? outcome ?? data ?? body.
+        const outcome =
+          body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
+
+        // Web contract (JobBuilderContext.loadCalculatorDraft): the serialized
+        // dynamic state lives at outcome.jobBuilder.dynamicJobState. Tolerate older
+        // mobile saves that stored the raw runtime state directly under jobBuilder.
+        const savedState =
+          outcome?.jobBuilder?.dynamicJobState ??
+          outcome?.dynamicJobState ??
+          outcome?.jobBuilder ??
+          null;
+
+        // Deserialize storage-keys → runtime ids with the SAME config web used to
+        // serialize (deserializeDynamicJobStateFromStorage). Idempotent for legacy
+        // raw saves — keys without the `__` storage marker pass through unchanged —
+        // so both web-written and old-mobile-written state rehydrate correctly.
+        const jobState =
+          savedState && typeof savedState === 'object'
+            ? deserializeDynamicJobStateFromStorage(savedState, initialConfig)
+            : undefined;
+
+        // Resolve documents independently so a doc error doesn't wipe jobState
+        const docs = outcome?.leadOutcomeDocuments;
+        let resolvedDocuments: { agreements: any[]; orderSheets: any[] } = { agreements: [], orderSheets: [] };
+        try {
+          if (docs) {
+            const all = [
+              ...((docs.agreements || []) as any[]).map((d) => ({ ...d, _group: 'agreement' })),
+              ...((docs.orderSheets || []) as any[]).map((d) => ({ ...d, _group: 'orderSheet' })),
+            ];
+            const paths = all
+              .map((d) => ({ filePath: d.filePath, bucketName: d.bucketName }))
+              .filter((p) => p.filePath && p.bucketName);
+            if (all.length) {
+              let urls: any[] = [];
+              if (paths.length) {
+                try {
+                  const urlRes = await LeadService.getSecureUrls(paths);
+                  urls = (urlRes.data?.data || urlRes.data || []) as any[];
+                } catch (e) {
+                  console.warn('[DynamicJobBuilder] secure URL resolution failed:', e);
+                }
+              }
+              const mapped = all.map((d) => {
+                const u = urls.find((x) => x.filePath === d.filePath);
+                const type = d.documentType || d._group;
+                return {
+                  uri: u?.secureUrl || u?.url || d.filePath,
+                  name: d.name || (type === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                  serverId: d._id,
+                  filePath: d.filePath,
+                  bucketName: d.bucketName,
+                  contentType: d.fileData?.contentType,
+                  isNew: false,
+                  documentType: type,
+                };
+              });
+              resolvedDocuments = {
+                agreements: mapped.filter((m) => m.documentType === 'agreement'),
+                orderSheets: mapped.filter((m) => m.documentType === 'orderSheet'),
+              };
+            }
+          }
+        } catch (e) {
+          console.warn('[DynamicJobBuilder] doc resolution failed:', e);
+        }
+
+        // If the calculator-scoped outcome didn't echo the S3 doc rows, fall back to
+        // the lead-scoped download endpoint (web dynamic-reopen parity) so uploaded
+        // agreements/order-sheets still display. Returns base64 per doc.
+        if (!resolvedDocuments.agreements.length && !resolvedDocuments.orderSheets.length) {
+          try {
+            const dl = await LeadService.downloadOutcomeDocuments(leadId!);
+            const dd = dl.data?.data || dl.data || {};
+            const mapDl = (arr: any[], type: 'agreement' | 'orderSheet') =>
+              (arr || []).map((d: any) => ({
+                uri: d.base64Data
+                  ? `data:${d.fileData?.contentType || 'application/pdf'};base64,${d.base64Data}`
+                  : d.filePath,
+                name: d.name || (type === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: d._id,
+                contentType: d.fileData?.contentType || 'application/pdf',
+                isNew: false,
+                documentType: type,
+              }));
+            const a = mapDl(dd.agreements, 'agreement');
+            const o = mapDl(dd.orderSheets, 'orderSheet');
+            if (a.length || o.length) resolvedDocuments = { agreements: a, orderSheets: o };
+          } catch (e) {
+            console.warn('[DynamicJobBuilder] downloadOutcomeDocuments fallback failed:', e);
+          }
+        }
+
+        return { initialJobState: jobState, resolvedDocuments };
+      } catch {
+        return { initialJobState: undefined, resolvedDocuments: { agreements: [], orderSheets: [] } };
+      }
+    },
+    enabled: Boolean(leadId && calcId),
+    staleTime: 30_000,
+  });
 
   const session = useDynamicJobBuilderSession({
     initialConfig,
     dealCenterData,
+    initialJobState: outcomeData?.initialJobState,
   });
 
-  const { jobState, updateTabState, lockedTabIdsByVertical } = session;
+  const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
 
   const [selectedVerticalId, setSelectedVerticalId] = useState(
     verticalList[0]?.id || ''
@@ -67,36 +191,113 @@ function DynamicJobBuilderInner({
   const [selectedTabId, setSelectedTabId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const openedLoggedRef = useRef(false);
+  // Server-hydrated agreement / order-sheet docs (secure URLs), mirrored from the
+  // lead outcome. Local drafts live on jobState.agreements / .orderSheets.
+  const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
+    agreements: [],
+    orderSheets: [],
+  });
+  // Blocks the debounced auto-save while a document upload is mid-flight so we
+  // don't race the outcome PUT (mirrors normal JB's isDocUploadingRef).
+  const isDocUploadingRef = useRef(false);
+
+  // Hydrate previously-saved (server) documents into the display state once the
+  // outcome + secure URLs resolve — so a reopened job shows its agreement/order
+  // sheet. commitUploaded appends freshly-uploaded ones on top of these.
+  useEffect(() => {
+    if (outcomeData?.resolvedDocuments) {
+      setResolvedDocuments(outcomeData.resolvedDocuments);
+    }
+  }, [outcomeData?.resolvedDocuments]);
+
+  // Sale vs demo drives which cards render and the completion gate (web parity:
+  // isSale = result.toLowerCase() === 'sale'; demo = any non-sale).
+  const resultType = (calculatorResultData?.resultType || '').toString().toLowerCase();
+  const isSale = resultType === 'sale';
+  const isDemo = Boolean(resultType) && !isSale;
+
+  // --- Activity logging (web parity: use-dynamic-job-builder-activity-log) -----
+  const configId = initialConfig?.configId || initialConfig?._id || null;
+  const loggedAutoFieldTabsRef = useRef<Set<string>>(new Set());
+  const activityLog = useDynamicJobBuilderActivityLog({
+    enabled: Boolean(leadId),
+    leadId,
+    jobId: leadId,
+    calculatorId: (calculatorResultData as any)?.calculatorId,
+    calculatorType: 'dynamic',
+    result: (calculatorResultData as any)?.resultType || (calculatorResultData as any)?.result,
+    dealCenterData,
+    configId,
+    verticals: verticalList,
+    markAutoFieldsLoggedTab: (tabKey: string) => {
+      loggedAutoFieldTabsRef.current.add(tabKey);
+    },
+  });
+
+  // job_builder_opened — fires once when user + leadId are ready (idempotent).
+  useEffect(() => {
+    activityLog.logOpened();
+  }, [activityLog]);
+
+  // Defer auto-save until the initial outcome fetch completes (web parity).
+  // Without this guard, the auto-save fires with empty/default state before the
+  // GET populates the session, overwriting saved server data.
+  const initialFetchDoneRef = useRef(false);
+  useEffect(() => {
+    if (isOutcomeFetched && !initialFetchDoneRef.current) {
+      initialFetchDoneRef.current = true;
+    }
+  }, [isOutcomeFetched]);
 
   useEffect(() => {
-    if (openedLoggedRef.current || !leadId) return;
-    openedLoggedRef.current = true;
-    logEvent('view', {
-      module_type: 'job_builder',
-      meta: {
-        draft: true,
-        leadId,
-        action: 'job_builder_opened',
-        fieldCategory: 'job_builder',
-      },
-    });
-  }, [leadId]);
-
-  useEffect(() => {
-    if (!leadId) return;
+    if (!leadId || !initialFetchDoneRef.current) return;
 
     const timer = setTimeout(async () => {
+      // Skip while a document upload is in flight — that upload PUTs the outcome
+      // itself; auto-saving here would race it and can clobber the new files.
+      if (isDocUploadingRef.current) return;
+      if (!calcId) return;
       try {
-        const payload = { jobBuilder: jobState };
-        await LeadService.updateLeadOutcome(leadId, payload);
+        // Never resend agreements/orderSheets here: they're uploaded separately as
+        // base64 PDFs (and rehydrated from leadOutcomeDocuments); echoing them back
+        // trips the backend's "agreements[i].file required" validation. scheduleTime
+        // still rides along (root passthrough); everything else is the job state.
+        const { agreements: _a, orderSheets: _o, ...stateNoDocs } = (jobState || {}) as any;
+        // Web shape (JobBuilderContext.buildSavePayload → updateCalculatorJobBuilderOutcome):
+        // the SERIALIZED job state is nested under jobBuilder.dynamicJobState so web
+        // and mobile store/read it identically. serializeDynamicJobStateForStorage
+        // maps runtime ids → stable storage keys (buildStorageKey / `__`).
+        const dynamicJobState = serializeDynamicJobStateForStorage(
+          stateNoDocs,
+          initialConfig,
+          dealCenterData
+        );
+        await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
+          selectedCalculatorId: calcId,
+          jobBuilder: {
+            dynamicJobState,
+            configId: (initialConfig as any)?.id || null,
+            configSnapshotId:
+              (initialConfig as any)?.id || 'dynamic',
+            calculatorType: 'dynamic',
+            status: 'draft',
+          },
+        });
       } catch (error) {
         console.warn('[DynamicJobBuilder] Auto-save failed:', error);
       }
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [leadId, jobState]);
+  }, [leadId, jobState, calcId, initialConfig, dealCenterData]);
+
+  // Web parity (dynamic-job-builder.js:111-121): once a non-sale result exists,
+  // any lingering install appointment is cleared from root state.
+  useEffect(() => {
+    if (isDemo && jobState?.scheduleTime) {
+      clearRootState('scheduleTime');
+    }
+  }, [isDemo, jobState?.scheduleTime, clearRootState]);
 
   const selectedVertical = useMemo(
     () => verticalList.find((v: any) => v.id === selectedVerticalId) || verticalList[0],
@@ -158,6 +359,37 @@ function DynamicJobBuilderInner({
     }
   }, [nonSummaryTabs, summaryTab, selectedTabId]);
 
+  // step_viewed + auto-populated + baseline seed on each tab activation. Must be
+  // defined BEFORE the field-change effect so the baseline is seeded first on a
+  // tab switch (then the change effect diffs against it → no spurious log).
+  const firstTabActivatedRef = useRef(false);
+  useEffect(() => {
+    if (!currentTab || currentTab.isSummary || !selectedVerticalId) return;
+    const isFirst = !firstTabActivatedRef.current;
+    firstTabActivatedRef.current = true;
+    activityLog.handleTabActivated({
+      verticalId: selectedVerticalId,
+      tab: currentTab,
+      stepNumber: currentTabIndex + 1,
+      isTabLogged: (k: string) => loggedAutoFieldTabsRef.current.has(k),
+      isFirstTabAfterOpen: isFirst,
+      tabState: jobState?.[selectedVerticalId]?.[currentTab.id] || {},
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTab?.id, selectedVerticalId]);
+
+  // Field-change tracking — debounced 'change' logs for the active tab.
+  const activeTabState = jobState?.[selectedVerticalId]?.[currentTab?.id || ''];
+  useEffect(() => {
+    if (!currentTab || currentTab.isSummary || !selectedVerticalId) return;
+    activityLog.trackTabStateChanges({
+      verticalId: selectedVerticalId,
+      tab: currentTab,
+      tabState: activeTabState || {},
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabState]);
+
   const validationCtx = useMemo(() => ({
     dealCenterData: dealCenterData || {},
     applyConditions: true,
@@ -202,12 +434,23 @@ function DynamicJobBuilderInner({
     return nonSummaryTabs.every((t: any) => tabCompletionById[t.id]);
   }, [nonSummaryTabs, tabCompletionById]);
 
+  const isAppointmentSet = Boolean(jobState?.scheduleTime?.date);
+
+  const canComplete = useMemo(() => {
+    if (!areAllTabsComplete) return false;
+    // Web parity (dynamic-job-builder.js isAppointmentSchedulingComplete): a sale
+    // requires the install appointment; a demo / unknown result needs nothing
+    // beyond tab completion. The agreement/order-sheet are NOT gated by web.
+    if (isSale) return isAppointmentSet;
+    return true;
+  }, [areAllTabsComplete, isSale, isAppointmentSet]);
+
   const canProceed = useMemo(() => {
     if (currentTabIndex === nonSummaryTabs.length) {
-      return areAllTabsComplete;
+      return canComplete;
     }
     return isCurrentTabComplete;
-  }, [currentTabIndex, nonSummaryTabs.length, areAllTabsComplete, isCurrentTabComplete]);
+  }, [currentTabIndex, nonSummaryTabs.length, canComplete, isCurrentTabComplete]);
 
   const handleVerticalSelect = useCallback((verticalId: string) => {
     setSelectedVerticalId(verticalId);
@@ -217,14 +460,12 @@ function DynamicJobBuilderInner({
   const handleTabStateChange = useCallback(
     (tabStateOrUpdater: any) => {
       if (!selectedVertical?.id || !currentTab?.id) return;
-      const currentTabState = jobState?.[selectedVertical.id]?.[currentTab.id] || {};
-      const nextTabState =
-        typeof tabStateOrUpdater === 'function'
-          ? tabStateOrUpdater(currentTabState)
-          : tabStateOrUpdater;
-      updateTabState(selectedVertical.id, currentTab.id, nextTabState);
+      // Pass the updater straight through — updateTabState resolves it inside the
+      // setter against React's latest state, so batched edits chain instead of
+      // clobbering (web parity). No `jobState` in deps → no stale snapshot.
+      updateTabState(selectedVertical.id, currentTab.id, tabStateOrUpdater);
     },
-    [selectedVertical, currentTab, updateTabState, jobState]
+    [selectedVertical, currentTab, updateTabState]
   );
 
   const handleGoToTab = useCallback(
@@ -244,40 +485,137 @@ function DynamicJobBuilderInner({
   const handleNext = useCallback(() => {
     if (!canProceed) return;
     const nextIdx = currentTabIndex + 1;
-    if (nextIdx < nonSummaryTabs.length) {
-      setSelectedTabId(nonSummaryTabs[nextIdx].id);
-    } else if (nextIdx === nonSummaryTabs.length && summaryTab) {
-      setSelectedTabId(summaryTab.id);
+    const toTab = nextIdx < nonSummaryTabs.length ? nonSummaryTabs[nextIdx] : summaryTab;
+    if (toTab) {
+      activityLog.logNavigate({
+        fromTab: currentTab,
+        toTab,
+        fromStep: currentTabIndex + 1,
+        toStep: nextIdx + 1,
+        direction: 'forward',
+        verticalId: selectedVerticalId,
+      });
+      setSelectedTabId(toTab.id);
     }
-  }, [currentTabIndex, nonSummaryTabs, summaryTab, canProceed]);
+  }, [currentTabIndex, nonSummaryTabs, summaryTab, canProceed, currentTab, selectedVerticalId, activityLog]);
 
   const handleBack = useCallback(() => {
     const prevIdx = currentTabIndex - 1;
     if (prevIdx >= 0) {
-      setSelectedTabId(nonSummaryTabs[prevIdx].id);
+      const toTab = nonSummaryTabs[prevIdx];
+      activityLog.logNavigate({
+        fromTab: currentTab,
+        toTab,
+        fromStep: currentTabIndex + 1,
+        toStep: prevIdx + 1,
+        direction: 'backward',
+        verticalId: selectedVerticalId,
+      });
+      setSelectedTabId(toTab.id);
     }
-  }, [currentTabIndex, nonSummaryTabs]);
+  }, [currentTabIndex, nonSummaryTabs, currentTab, selectedVerticalId, activityLog]);
 
   const handleComplete = useCallback(async () => {
-    if (!areAllTabsComplete) return;
+    if (!canComplete) return;
     try {
       setIsSaving(true);
 
-      if (leadId) {
-        logEvent('submit', {
-          module_type: 'job_builder',
-          meta: {
-            leadId,
-            fieldCategory: 'summary',
-            action: 'job_builder_completed',
-          },
-        });
+      activityLog.logSubmit(jobState);
+
+      // scheduleTime rides inside jobBuilder (web parity); installDate/timeWindow
+      // are also surfaced flat. Agreements/order-sheets are NOT re-sent here — they
+      // were already uploaded to the outcome as base64 PDFs; echoing them back would
+      // trip the backend's "file required" validation. Strip them from jobBuilder.
+      const { agreements: _a, orderSheets: _o, ...jobBuilderNoDocs } = (jobState || {}) as any;
+
+      // Serialize once (runtime ids → storage keys) — reused by both the outcome
+      // finalize PUT and the /job-builder POST so both persist the identical state.
+      const dynamicJobState = serializeDynamicJobStateForStorage(
+        jobBuilderNoDocs,
+        initialConfig,
+        dealCenterData
+      );
+      const configId = (initialConfig as any)?.id || null;
+      const jobBuilderWrapper = {
+        dynamicJobState,
+        configId,
+        configSnapshotId: configId || 'dynamic',
+        calculatorType: 'dynamic',
+        status: 'submitted',
+      };
+
+      // Finalize the calculator outcome in the SAME web shape as the autosave, but
+      // status:'submitted' (web parity: TabbedCalculator writes the outcome on
+      // complete). This is what a reopen (GET /outcome/{calcId}) rehydrates from, so
+      // a submitted deal shows its already-set data. Best-effort — a failure here
+      // must not block the /job-builder finalize below.
+      if (leadId && calcId) {
+        try {
+          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
+            selectedCalculatorId: calcId,
+            jobBuilder: jobBuilderWrapper,
+          });
+        } catch (e) {
+          console.warn('[DynamicJobBuilder] outcome finalize failed:', e);
+        }
       }
 
+      // Re-send the agreements/order-sheets (uploaded eagerly to the outcome) as
+      // top-level base64 in the /job-builder POST so it populates the
+      // JobBuilderDocument collection — that is what LeadCenter's contract details
+      // reads (lead.jobBuilderDocuments → resolvedDocuments). Without this, a
+      // dynamic-resulted lead shows NO agreement there (the outcome/LeadOutcomeDocument
+      // store the summary reads from is separate). Mirrors the normal JB complete.
+      let agreementsPayload: any[] = [];
+      let orderSheetsPayload: any[] = [];
+      if (leadId) {
+        try {
+          const dl = await LeadService.downloadOutcomeDocuments(leadId);
+          const dd = dl.data?.data || dl.data || {};
+          const toDocPayload = (arr: any[], type: 'agreement' | 'orderSheet') =>
+            (arr || [])
+              .filter((d: any) => d?.base64Data)
+              .map((d: any) => {
+                const ct = d.fileData?.contentType || 'application/pdf';
+                const file = String(d.base64Data).startsWith('data:')
+                  ? d.base64Data
+                  : `data:${ct};base64,${d.base64Data}`;
+                return { name: d.name || '', file, type };
+              });
+          agreementsPayload = toDocPayload(dd.agreements, 'agreement');
+          orderSheetsPayload = toDocPayload(dd.orderSheets, 'orderSheet');
+        } catch (e) {
+          console.warn('[DynamicJobBuilder] prefetch outcome docs failed:', e);
+        }
+      }
+
+      // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
+      // `jobState` (web TabbedCalculator payload). The previous
+      // `{ jobBuilder, ...resultData }` shape 400'd with
+      // "Both leadData and jobState are required in the request body".
+      const rd = (calculatorResultData || {}) as any;
+      const result = isSale ? 'Sale' : 'Demo';
       const payload = {
-        jobBuilder: jobState,
-        ...calculatorResultData,
-        leadId,
+        leadData: {
+          ...rd,
+          result,
+          status: result,
+          jobBuilder: jobBuilderWrapper,
+          calculatorId: calcId || rd.calculatorId || null,
+          selectedCalculatorId: calcId || rd.calculatorId || null,
+          selectedAppointmentId: rd.selectedAppointmentId || leadId,
+          appointmentId: rd.appointmentId || leadId,
+          installDate: jobState?.scheduleTime?.date,
+          timeWindow: jobState?.scheduleTime?.timeWindow,
+          originalContractPrice: rd.contractPrice ?? rd.originalContractPrice,
+          lastPriceQuoted: rd.contractPrice ?? rd.lastPriceQuoted,
+        },
+        jobState: dynamicJobState,
+        agreements: agreementsPayload,
+        orderSheets: orderSheetsPayload,
+        isDynamic: true,
+        configId,
+        configSnapshotId: configId || 'dynamic',
       };
 
       if (leadId) {
@@ -295,19 +633,60 @@ function DynamicJobBuilderInner({
     } finally {
       setIsSaving(false);
     }
-  }, [jobState, initialConfig, calculatorResultData, leadId, onJobComplete, areAllTabsComplete]);
+  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog]);
+
+  // Persist a generated/scanned agreement or order-sheet. Web parity
+  // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the
+  // outcome PUT — that is what upserts the LeadOutcomeDocument S3 rows (the display
+  // source, read back via downloadOutcomeDocuments / leadOutcomeDocuments). We also
+  // send the SERIALIZED jobBuilder.dynamicJobState + Sale context so the field state
+  // and result aren't clobbered. Docs are sale-only, so result/status are 'Sale'
+  // (matches the working normal JB SummarySection payload). Returns true on success.
+  const handleUploadDocs = useCallback(
+    async (cat: 'agreement' | 'orderSheet', payloads: any[]) => {
+      if (!leadId || !payloads?.length) return false;
+      try {
+        const rootKey = cat === 'agreement' ? 'agreements' : 'orderSheets';
+        const { agreements: _a, orderSheets: _o, ...stateNoDocs } = (jobState || {}) as any;
+        const dynamicJobState = serializeDynamicJobStateForStorage(
+          stateNoDocs,
+          initialConfig,
+          dealCenterData
+        );
+        const rd = (calculatorResultData || {}) as any;
+        await LeadService.updateLeadOutcome(leadId, {
+          result: 'Sale',
+          status: 'Sale',
+          selectedCalculatorId: calcId || rd.calculatorId || null,
+          jobBuilder: {
+            dynamicJobState,
+            configId: (initialConfig as any)?.id || null,
+            configSnapshotId: (initialConfig as any)?.id || 'dynamic',
+            calculatorType: 'dynamic',
+            status: 'draft',
+          },
+          [rootKey]: payloads,
+        });
+        return true;
+      } catch (e) {
+        console.warn('[DynamicJobBuilder] doc upload failed:', e);
+        return false;
+      }
+    },
+    [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData]
+  );
 
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
   const isFirstStep = currentTabIndex <= 0;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ flex: 1 }}>
         <View
           style={{
-            paddingHorizontal: 16,
+            paddingHorizontal: 24,
             paddingTop: 8,
-            paddingBottom: 16,
+            paddingBottom: 24,
             borderBottomWidth: 1,
             borderBottomColor: '#E2E8F0',
             backgroundColor: '#fff',
@@ -318,16 +697,25 @@ function DynamicJobBuilderInner({
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
-              marginBottom: 12,
+              marginBottom: 0,
             }}
           >
-            <TouchableOpacity onPress={onGoBack || (() => navigation?.goBack())}>
-              <Text style={{ color: '#1976D2', fontSize: 14, fontWeight: '600' }}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={{ fontSize: 16, fontWeight: '700', flex: 1, textAlign: 'center' }}>
-              Job Builder
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
+              Job Builder{isSaving ? '  • Saving...' : ''}
             </Text>
-            <View style={{ width: 48 }} />
+            <TouchableOpacity
+              onPress={onGoBack || (() => navigation?.goBack())}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#F4F6F8',
+              }}
+            >
+              <Icon name="close" size={20} color="#1C252E" />
+            </TouchableOpacity>
           </View>
 
           {verticalList.length > 1 && (
@@ -360,44 +748,58 @@ function DynamicJobBuilderInner({
           />
         </View>
 
+        {/* The renderer owns its own scroll now (fixed footage tracker + inner
+            ScrollView, like the normal JB sections); the summary tab scrolls itself.
+            So there is no outer ScrollView here — that keeps the tracker pinned. */}
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
+          style={{ flex: 1, backgroundColor: '#F8FAFC' }}
         >
-          <ScrollView
-            style={{ flex: 1, backgroundColor: '#F8FAFC' }}
-            showsVerticalScrollIndicator={false}
-          >
-            {currentTab ? (
-              <DynamicTabRenderer
-                tab={currentTab}
-                vertical={selectedVertical}
-                tabState={jobState?.[selectedVertical?.id]?.[currentTab.id] || {}}
-                verticalState={jobState?.[selectedVertical?.id] || {}}
-                lockedTabIds={currentVerticalLockedTabIds}
-                onStateChange={handleTabStateChange}
-                dealCenterData={dealCenterData}
-                readOnly={false}
-                applyConditions={true}
-                verticalId={selectedVertical?.id}
-                verticalColor={selectedVertical?.color || '#22c55e'}
-                products={initialConfig?.products || []}
-                schemas={initialConfig?.schemas || []}
-              />
-            ) : (
-              <View style={{ alignItems: 'center', paddingTop: 60 }}>
-                <Text style={{ color: '#94A3B8', fontSize: 14 }}>
-                  Select a tab to begin
-                </Text>
-              </View>
-            )}
-          </ScrollView>
+          {currentTab ? (
+            <DynamicTabRenderer
+              key={currentTab.id}
+              tab={currentTab}
+              vertical={selectedVertical}
+              tabState={jobState?.[selectedVertical?.id]?.[currentTab.id] || {}}
+              verticalState={jobState?.[selectedVertical?.id] || {}}
+              lockedTabIds={currentVerticalLockedTabIds}
+              onStateChange={handleTabStateChange}
+              dealCenterData={dealCenterData}
+              readOnly={false}
+              applyConditions={true}
+              verticalId={selectedVertical?.id}
+              verticalColor={selectedVertical?.color || '#22c55e'}
+              products={initialConfig?.products || []}
+              schemas={initialConfig?.schemas || []}
+              leadId={leadId}
+              calculatorResultData={calculatorResultData}
+              customerName={dealCenterData?.customerName || dealCenterData?.customer?.name || ''}
+              isSale={isSale}
+              isDemo={isDemo}
+              scheduleTime={jobState?.scheduleTime}
+              agreements={jobState?.agreements || []}
+              orderSheets={jobState?.orderSheets || []}
+              rootJobState={jobState}
+              onUpdateRootState={updateRootState}
+              resolvedDocuments={resolvedDocuments}
+              setResolvedDocuments={setResolvedDocuments}
+              isDocUploadingRef={isDocUploadingRef}
+              onUploadDocs={handleUploadDocs}
+            />
+          ) : (
+            <View style={{ alignItems: 'center', paddingTop: 60 }}>
+              <Text style={{ color: '#94A3B8', fontSize: 14 }}>
+                Select a tab to begin
+              </Text>
+            </View>
+          )}
         </KeyboardAvoidingView>
 
         <View
           style={{
-            paddingHorizontal: 16,
-            paddingVertical: 12,
+            paddingHorizontal: 24,
+            paddingTop: 12,
+            paddingBottom: Math.max(insets.bottom, 16),
             borderTopWidth: 1,
             borderTopColor: '#E2E8F0',
             backgroundColor: '#fff',
@@ -414,17 +816,17 @@ function DynamicJobBuilderInner({
               <TouchableOpacity
                 onPress={handleBack}
                 style={{
-                  paddingHorizontal: 20,
-                  paddingVertical: 12,
-                  borderRadius: 10,
+                  padding: 6,
+                  borderRadius: 8,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 1,
-                  borderColor: '#E2E8F0',
-                  backgroundColor: '#fff',
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  width: 80
                 }}
               >
-                <Text style={{ fontWeight: '600', fontSize: 13, color: '#1C252E' }}>
+                <Text style={{ fontWeight: '600', fontSize: 12, color: colors.text }}>
                   Back
                 </Text>
               </TouchableOpacity>
@@ -435,21 +837,22 @@ function DynamicJobBuilderInner({
             {isLastStep && summaryTab ? (
               <TouchableOpacity
                 onPress={handleComplete}
-                disabled={isSaving || !areAllTabsComplete}
+                disabled={isSaving || !canComplete}
                 style={{
-                  flex: 1,
-                  paddingVertical: 12,
+                  paddingHorizontal: 24,
+                  paddingVertical: 10,
                   borderRadius: 12,
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexDirection: 'row',
-                  backgroundColor: isSaving || !areAllTabsComplete ? '#94A3B8' : '#22C55E',
+                  backgroundColor: canComplete ? '#22C55E' : '#CBD5E1',
+                  opacity: isSaving ? 0.7 : 1,
                 }}
               >
                 {isSaving ? (
                   <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />
                 ) : (
-                  <Icon name="check-all" size={18} color="white" style={{ marginRight: 6 }} />
+                  <Icon name="check-all" size={18} color="white" style={{ marginRight: 8 }} />
                 )}
                 <Text
                   style={{
@@ -466,15 +869,17 @@ function DynamicJobBuilderInner({
                 onPress={handleNext}
                 disabled={!canProceed}
                 style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: 12,
+                  padding: 6,
+                  flexDirection: 'row',
+                  borderRadius: 8,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: canProceed ? '#1C252E' : '#CBD5E1',
+                  backgroundColor: canProceed ? '#000000' : '#CBD5E1',
+                  opacity: canProceed ? 1 : 0.8,
+                  width: 80
                 }}
               >
-                <Text style={{ fontWeight: '600', fontSize: 13, color: 'white' }}>
+                <Text style={{ fontWeight: '600', fontSize: 12, color: 'white' }}>
                   Next
                 </Text>
               </TouchableOpacity>
@@ -482,7 +887,7 @@ function DynamicJobBuilderInner({
           </View>
         </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 

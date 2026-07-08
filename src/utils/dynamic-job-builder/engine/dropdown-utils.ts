@@ -49,7 +49,9 @@ export function isVisibleByDropdownMapping(field: any, sectionFields: any[] = []
   dropdowns.forEach((dropdown: any) => {
     const map = dropdown.optionShowFields || {};
     const matchingOptions = Object.entries(map).filter(([, fieldIds]) =>
-      (fieldIds as string[]).includes(field.id)
+      // Guard non-array optionShowFields values (web uses `(fieldIds || [])`);
+      // an unguarded .includes on null/undefined would throw, not report incomplete.
+      (Array.isArray(fieldIds) ? fieldIds : []).includes(field.id)
     );
 
     if (!matchingOptions.length) return;

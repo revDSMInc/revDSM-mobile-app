@@ -18,7 +18,7 @@ interface ProgressTrackerProps {
 
 export function ProgressTracker({ steps = [], activeStepId, onStepPress }: ProgressTrackerProps) {
   return (
-    <View className="flex-row px-4 pt-1 pb-2 gap-1">
+    <View className="flex-row pt-1 pb-2 gap-1">
       {steps.map((step, index) => {
         const isActive = step.id === activeStepId || step.active;
 

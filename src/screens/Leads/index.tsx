@@ -251,11 +251,17 @@ export default function LeadsPage() {
     const filtered = leads.filter((l) => {
       const name = `${l.customerDetails?.firstName || ''} ${l.customerDetails?.lastName || ''
         }`.toLowerCase();
+      // Coerce to string before toLowerCase — leadId/leadCode/fullAddress can come
+      // back as numbers (or objects) from the API, where `?.` doesn't guard and
+      // `(123).toLowerCase()` throws "undefined is not a function".
+      const addr = String(l.fullAddress ?? '').toLowerCase();
+      const lid = String(l.leadId ?? '').toLowerCase();
+      const lcode = String(l.leadCode ?? '').toLowerCase();
       return (
         name.includes(q) ||
-        l.fullAddress?.toLowerCase().includes(q) ||
-        l.leadId?.toLowerCase().includes(q) ||
-        l.leadCode?.toLowerCase().includes(q)
+        addr.includes(q) ||
+        lid.includes(q) ||
+        lcode.includes(q)
       );
     });
 

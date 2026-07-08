@@ -140,6 +140,50 @@ export interface VerticalState {
   [tabId: string]: TabState;
 }
 
+// Install-appointment written to the ROOT of jobState (web parity:
+// dynamic-job-builder.js handleAppointmentConfirm). `date` is 'M/d/yyyy' or the
+// literal 'TBD'; TBD carries a `reason`, a dated slot carries a `timeWindow`.
+export interface ScheduleTime {
+  customerName?: string;
+  date: string;
+  timeWindow?: string;
+  reason?: string;
+}
+
+// A single agreement / order-sheet file. Covers freshly-captured (isNew, blob/uri
+// or base64 `file`) and server-hydrated (serverId, bucketName/filePath, secure
+// URLs) variants — the union of the web FileObj and mobile outcome-doc shapes.
+export interface JobBuilderFile {
+  id?: string;
+  serverId?: string;
+  name?: string;
+  uri?: string;
+  url?: string;
+  displayUrl?: string;
+  secureUrl?: string;
+  thumbnailUrl?: string;
+  blob?: any;
+  file?: string; // 'data:...;base64,...' for upload
+  contentType?: string;
+  mimeType?: string;
+  bucketName?: string;
+  filePath?: string;
+  documentType?: 'agreement' | 'orderSheet';
+  type?: 'agreement' | 'orderSheet' | string;
+  isSystemGenerated?: boolean;
+  isNew?: boolean;
+}
+
+// agreements / orderSheets are arrays of document GROUPS: [{ files: [...] }]
+// (usually a single group). Matches web document-summary-cards + mobile scanner.
+export interface DocumentGroup {
+  name?: string;
+  files: JobBuilderFile[];
+}
+
+// NOTE: the root keys stay loosely typed (`any`) so `jobState[verticalId]` keeps
+// resolving to VerticalState under the string index signature. Use the concrete
+// interfaces above (ScheduleTime / DocumentGroup) at the UI/handler layer.
 export interface JobState {
   [verticalId: string]: VerticalState;
   scheduleTime?: any;

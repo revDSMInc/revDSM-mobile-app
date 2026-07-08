@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface AccordionSectionProps {
@@ -53,9 +53,9 @@ export function AccordionSection({
         </View>
       </TouchableOpacity>
       {expanded && (
-        <View className="px-4 py-3 bg-white">
+        <ScrollView className="px-4 py-3 bg-white" style={{ maxHeight: 220 }} nestedScrollEnabled>
           {children}
-        </View>
+        </ScrollView>
       )}
     </View>
   );

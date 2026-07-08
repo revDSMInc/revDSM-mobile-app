@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { JobBuilderConfig, JobState, Vertical } from '../../utils/dynamic-job-builder/types';
 import { createEmptyVertical, createEmptyTab } from '../../utils/dynamic-job-builder/constants/default-config';
 import { buildInitialJobState, computePreviewSnapshot } from '../../utils/dynamic-job-builder/engine/preview-compute';
@@ -26,6 +26,15 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
     if (initialJobState) return initialJobState;
     return buildInitialJobState(config, dealCenterData);
   });
+
+  // React to async-fetched initialJobState (e.g., from outcome GET on mount)
+  const initialJobStateSetRef = useRef(false);
+  useEffect(() => {
+    if (initialJobState && !initialJobStateSetRef.current) {
+      initialJobStateSetRef.current = true;
+      setJobState(initialJobState);
+    }
+  }, [initialJobState]);
 
   const lockedTabIdsByVertical = useMemo(() => {
     const result: Record<string, string[]> = {};
@@ -58,11 +67,44 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
   );
 
   const updateTabState = useCallback(
-    (verticalId: string, tabId: string, tabState: any) => {
-      updateJobState((prev) => ({
-        ...prev,
-        [verticalId]: { ...(prev[verticalId] || {}), [tabId]: tabState },
-      }));
+    (verticalId: string, tabId: string, tabStateOrUpdater: any) => {
+      // Resolve a functional updater INSIDE the setter, against React's latest
+      // `prev`, so multiple edits in one tick chain instead of clobbering (web
+      // parity). Accepts a concrete object too (backward compatible).
+      updateJobState((prev) => {
+        const currentTabState = prev[verticalId]?.[tabId] || {};
+        const nextTabState =
+          typeof tabStateOrUpdater === 'function'
+            ? tabStateOrUpdater(currentTabState)
+            : tabStateOrUpdater;
+        return {
+          ...prev,
+          [verticalId]: { ...(prev[verticalId] || {}), [tabId]: nextTabState },
+        };
+      });
+    },
+    [updateJobState]
+  );
+
+  // Write a ROOT-level key on jobState (scheduleTime / agreements / orderSheets).
+  // Storage already round-trips these as pass-through keys; this is the missing
+  // writer so the summary tab can persist appointment + document state.
+  const updateRootState = useCallback(
+    (key: string, value: any) => {
+      updateJobState((prev) => ({ ...prev, [key]: value }));
+    },
+    [updateJobState]
+  );
+
+  // Remove a root-level key (used for the demo → clear scheduleTime rule).
+  const clearRootState = useCallback(
+    (key: string) => {
+      updateJobState((prev) => {
+        if (prev[key] === undefined) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     },
     [updateJobState]
   );
@@ -135,6 +177,8 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
     previewSnapshot,
     updateJobState,
     updateTabState,
+    updateRootState,
+    clearRootState,
     updateVertical,
     addVertical,
     removeVertical,
