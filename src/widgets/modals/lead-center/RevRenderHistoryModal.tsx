@@ -51,11 +51,11 @@ const downloadImage = (url: string, path: string): Promise<boolean> => {
         await ReactNativeBlobUtil.fs.mv(tempPath, path);
         return true;
       } else {
-        await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+        await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => { });
         return false;
       }
     } catch (err) {
-      await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+      await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => { });
       return false;
     } finally {
       activeDownloads.delete(path);
@@ -126,7 +126,7 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
         // If loading from local file fails, delete it and fallback to network URL
         if (sourceUri.startsWith('file://')) {
           const rawPath = sourceUri.replace('file://', '');
-          ReactNativeBlobUtil.fs.unlink(rawPath).catch(() => {});
+          ReactNativeBlobUtil.fs.unlink(rawPath).catch(() => { });
           setSourceUri(uri);
         }
         if (onError) onError();
@@ -158,7 +158,7 @@ export const RevRenderHistoryModal = ({
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
-  
+
   // Persistent cache of loaded image runs
   const [loadedImages, setLoadedImages] = useState<Record<number, { before: boolean; after: boolean }>>({});
   const [beforeLoaded, setBeforeLoaded] = useState(false);
@@ -178,11 +178,11 @@ export const RevRenderHistoryModal = ({
             const isTemp = file.filename.startsWith('revrender_') && file.filename.endsWith('.tmp');
             const isCorrupted = file.filename.startsWith('revrender_') && Number(file.size) < 10240; // under 10KB is corrupted
             if (isTemp || isCorrupted) {
-              ReactNativeBlobUtil.fs.unlink(`${cacheDir}/${file.filename}`).catch(() => {});
+              ReactNativeBlobUtil.fs.unlink(`${cacheDir}/${file.filename}`).catch(() => { });
             }
           });
         })
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [visible]);
 
@@ -270,7 +270,7 @@ export const RevRenderHistoryModal = ({
         runId: run.runId || run._id || null,
       },
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, currentIndex]);
 
   useEffect(() => {
@@ -316,7 +316,7 @@ export const RevRenderHistoryModal = ({
           },
         });
       }
-      
+
       if (onDeleteSuccess) {
         onDeleteSuccess();
       }
@@ -342,7 +342,7 @@ export const RevRenderHistoryModal = ({
 
   const screenWidth = Dimensions.get('window').width;
   const imageWidth = screenWidth - 40;
-  const imageHeight = 400;
+  const imageHeight = "75%";
 
   // ── Pinch / pan for zooming ───────────────────────────────────────────
   const scale = useSharedValue(1);
@@ -497,7 +497,7 @@ export const RevRenderHistoryModal = ({
                     style={{
                       position: 'absolute',
                       width: imageWidth,
-                      height: imageHeight,
+                      height: "100%",
                     }}
                     resizeMode="cover"
                     onLoad={() => {
@@ -525,7 +525,7 @@ export const RevRenderHistoryModal = ({
                         position: 'absolute',
                         top: 0,
                         left: 0,
-                        height: imageHeight,
+                        height: "100%",
                         overflow: 'hidden',
                         borderRightWidth: 1,
                         borderRightColor: 'rgba(255,255,255,0.5)',
@@ -535,7 +535,7 @@ export const RevRenderHistoryModal = ({
                   >
                     <CachedImage
                       uri={beforeImage}
-                      style={{ width: imageWidth, height: imageHeight }}
+                      style={{ width: imageWidth, height: "100%" }}
                       resizeMode="cover"
                       onLoad={() => {
                         setBeforeLoaded(true);
@@ -565,7 +565,7 @@ export const RevRenderHistoryModal = ({
 
                 {/* Draggable handle — uses its own RNGH Pan so it doesn't fight PanResponder */}
                 <GestureDetector gesture={sliderPan}>
-                  <Reanimated.View style={[styles.handle, { height: imageHeight }, handleAnimStyle]}>
+                  <Reanimated.View style={[styles.handle, { height: "100%" }, handleAnimStyle]}>
                     <View style={styles.handleLine} />
                     <View style={styles.handleCircle}>
                       <Icon name="compare-horizontal" size={20} color="#1C252E" />

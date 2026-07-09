@@ -79,11 +79,15 @@ export default function Chat({ onClose, lead }: Props) {
 
   const fetchSecureUrls = async (newMessages: any[]) => {
     try {
-      const rawPaths = ChatService.extractFilePaths(newMessages);
-      const cleanedPaths = Array.from(new Set(rawPaths.map(cleanFilePath)));
-      if (cleanedPaths.length === 0) return;
+      // Carry each file's bucketName so the signed URL is requested against the
+      // right bucket — otherwise reloaded images come back blank.
+      const seen = new Set<string>();
+      const cleaned = ChatService.extractFileRefs(newMessages)
+        .map((r) => ({ filePath: cleanFilePath(r.filePath), bucketName: r.bucketName }))
+        .filter((r) => r.filePath && !seen.has(r.filePath) && !!seen.add(r.filePath));
+      if (cleaned.length === 0) return;
 
-      const links = await ChatService.getSecureFileUrls(cleanedPaths).catch(() => ({}));
+      const links = await ChatService.getSecureFileUrls(cleaned).catch(() => ({}));
       setImageUrls((prev) => ({ ...prev, ...links }));
     } catch (error) {
       console.error('Failed to fetch secure links:', error);

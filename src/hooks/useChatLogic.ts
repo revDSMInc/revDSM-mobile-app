@@ -61,6 +61,53 @@ export const useChatLogic = (
   const [searchIndex, setSearchIndex] = useState(0);
   const [searchResults, setSearchResults] = useState<string[]>([]);
 
+  // Attachments staged in the composer (previews) — sent on the main Send, with
+  // the images uploaded BEFORE the typed message. Mirrors the web MessageInput
+  // (`files` + `pendingAppointmentPhotos`).
+  type PendingAppointmentPhoto = {
+    _id?: string;
+    s3url: string;
+    bucketName?: string;
+    category?: string;
+    subcategory?: string;
+    label?: string;
+    secureUrl?: string;
+  };
+  type PendingAttachment =
+    | {
+        id: string;
+        kind: 'appointment';
+        photo: PendingAppointmentPhoto;
+        previewUri?: string;
+        label?: string;
+      }
+    | {
+        id: string;
+        kind: 'gallery';
+        asset: { uri?: string; fileName?: string; type?: string };
+        previewUri?: string;
+        isImage: boolean;
+      };
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+
+  const addPendingAppointmentPhotos = useCallback((photos: PendingAppointmentPhoto[]) => {
+    if (!photos?.length) return;
+    setPendingAttachments((prev) => [
+      ...prev,
+      ...photos.map((p, i) => ({
+        id: `appt_${Date.now()}_${i}_${Math.random()}`,
+        kind: 'appointment' as const,
+        photo: p,
+        previewUri: p.secureUrl,
+        label: p.label || p.subcategory || p.category || 'Photo',
+      })),
+    ]);
+  }, []);
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
   useEffect(() => {
     const showSub = Keyboard.addListener(
       Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
@@ -209,63 +256,373 @@ export const useChatLogic = (
     [chatId, replyingTo, editingMessage, setMessages, currentUserId, user, composerText, isChannel, leadId]
   );
 
+  // Pick gallery images/videos and STAGE them as composer previews (not sent
+  // until the main Send — so a caption can be added first). Web parity.
   const handleAttach = useCallback(() => {
-    launchImageLibrary({ mediaType: 'mixed', selectionLimit: 5 }, async (response) => {
-      if (response.assets && chatId) {
-        const assets = response.assets;
-        if (user?._id) {
-          const firstAsset = assets[0];
-          const fileType = getWebMessageType({
-            name: firstAsset?.fileName,
-            type: firstAsset?.type,
-          });
-
-          logEvent('send', {
-            user_id: user._id,
-            module_type: isChannel ? 'team_channel' : 'chat',
-            created_by: user._id,
-            meta: {
-              leadId,
-              type: isChannel ? 'team_channel' : 'chat',
-              isEdit: false,
-              isReply: false,
-              messageType: fileType,
-              fileName: firstAsset?.fileName || 'Attachment',
-              fileSize: firstAsset?.fileSize || 12000,
-              message: '',
-              action: 'sent an attachment',
-            },
-          });
-        }
-        const optimistics = assets.map((f) => {
-          const isImg = f.type?.startsWith('image');
-          return {
-            _id: `temp_${Date.now()}_${Math.random()}`,
-            text: isImg ? '' : f.fileName,
-            image: isImg ? f.uri : undefined,
-            createdAt: new Date(),
-            user: { _id: String(currentUserId) },
-            files: [
-              { url: f.uri, name: f.fileName, mimeType: f.type, type: isImg ? 'image' : 'file' },
-            ],
-            pending: true,
-            sent: false,
-            received: false,
-          };
-        });
-        setMessages((prev: any[]) => GiftedChat.append(prev, optimistics));
-        try {
-          await Promise.all(assets.map((f) =>
-            ChatService.sendFileMessage(chatId, { uri: f.uri, name: f.fileName, type: f.type }, '')
-          ));
-        } catch (err: any) {
-          console.warn('[Media] send failed:', err?.message || err);
-          setMessages((prev: any[]) => prev.filter((m) => typeof m._id === 'string' && m._id.startsWith('temp_')));
-          Alert.alert('Send Failed', 'Failed to send attachment. Please try again.');
-        }
-      }
+    launchImageLibrary({ mediaType: 'mixed', selectionLimit: 5 }, (response) => {
+      if (!response.assets?.length) return;
+      setPendingAttachments((prev) => [
+        ...prev,
+        ...response.assets!.map((f, i) => ({
+          id: `gal_${Date.now()}_${i}_${Math.random()}`,
+          kind: 'gallery' as const,
+          asset: { uri: f.uri, fileName: f.fileName, type: f.type },
+          previewUri: f.uri,
+          isImage: !!f.type?.startsWith('image'),
+        })),
+      ]);
     });
-  }, [chatId, currentUserId, setMessages, user, leadId, isChannel]);
+  }, []);
+
+  // Upload staged gallery assets as ONE message carrying all files — so a batch
+  // selected together renders as a single WhatsApp-style grid (same as
+  // appointment photos), not one bubble per photo. Optimistic bubble renders
+  // instantly from the local uris.
+  const sendGalleryAssets = useCallback(
+    async (
+      assets: Array<{ uri?: string; fileName?: string; type?: string }>,
+      reply?: any
+    ) => {
+      if (!assets?.length || !chatId) return;
+      if (user?._id) {
+        const first = assets[0];
+        logEvent('send', {
+          user_id: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          created_by: user._id,
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            isEdit: false,
+            isReply: !!reply,
+            messageType: getWebMessageType({ name: first?.fileName, type: first?.type }),
+            fileName: assets.map((a) => a.fileName || 'Attachment').join(', '),
+            fileSize: assets.length,
+            message: '',
+            action: `sent ${assets.length} attachment(s)`,
+          },
+        });
+      }
+      const tempId = `temp_${Date.now()}_${Math.random()}`;
+      const files = assets.map((f, i) => {
+        const isImg = f.type?.startsWith('image');
+        return {
+          url: f.uri,
+          uri: f.uri,
+          name: f.fileName || `file_${i}`,
+          mimeType: f.type,
+          type: isImg ? 'image' : 'file',
+        };
+      });
+      const firstIsImg = assets[0]?.type?.startsWith('image');
+      const optimistic = {
+        _id: tempId,
+        text: '',
+        // Top-level image only helps the single-image render path.
+        image: assets.length === 1 && firstIsImg ? assets[0].uri : undefined,
+        createdAt: new Date(),
+        user: { _id: String(currentUserId) },
+        files,
+        replyTo: reply?._id,
+        replyToDetails: reply,
+        pending: true,
+        sent: false,
+        received: false,
+      };
+      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
+      try {
+        await ChatService.sendFilesMessage(
+          chatId,
+          assets.map((f) => ({ uri: f.uri, name: f.fileName, type: f.type })),
+          '',
+          reply?._id
+        );
+      } catch (err: any) {
+        console.warn('[Media] send failed:', err?.message || err);
+        setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
+        Alert.alert('Send Failed', 'Failed to send attachment. Please try again.');
+      }
+    },
+    [chatId, currentUserId, setMessages, user, leadId, isChannel]
+  );
+
+  // Send a single image (local OR remote) as a chat message. Used by the
+  // "Annotated Photos" picker, whose images are remote signed S3 URLs.
+  // Remote images must be downloaded to a local file first — React Native's
+  // FormData multipart engine cannot read an http(s) URL as a file (see
+  // ChatService.sendFileMessage, which passes http URIs through untouched).
+  const sendImageAsMessage = useCallback(
+    async (uri: string, fileName = 'Photo') => {
+      if (!uri || !chatId) return;
+      const tempId = `temp_${Date.now()}_${Math.random()}`;
+      const safeName = /\.(jpe?g|png|gif|webp)$/i.test(fileName) ? fileName : `${fileName}.jpg`;
+
+      if (user?._id) {
+        logEvent('send', {
+          user_id: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          created_by: user._id,
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            isEdit: false,
+            isReply: false,
+            messageType: 'image',
+            fileName: safeName,
+            fileSize: 12000,
+            message: '',
+            action: 'sent an attachment',
+          },
+        });
+      }
+
+      // Optimistic bubble uses the (remote) uri directly so it renders instantly.
+      const optimistic = {
+        _id: tempId,
+        text: '',
+        image: uri,
+        createdAt: new Date(),
+        user: { _id: String(currentUserId) },
+        files: [{ url: uri, name: safeName, mimeType: 'image/jpeg', type: 'image' }],
+        pending: true,
+        sent: false,
+        received: false,
+      };
+      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
+
+      try {
+        let uploadUri = uri;
+        // Remote images must be downloaded locally before the multipart upload.
+        if (/^https?:\/\//i.test(uri)) {
+          const localPath = `${RNFS.CachesDirectoryPath}/chat_photo_${Date.now()}.jpg`;
+          const { statusCode } = await RNFS.downloadFile({ fromUrl: uri, toFile: localPath }).promise;
+          if (statusCode && statusCode >= 200 && statusCode < 300) {
+            uploadUri = localPath;
+          } else {
+            throw new Error(`Download failed with status ${statusCode}`);
+          }
+        }
+        await ChatService.sendFileMessage(chatId, { uri: uploadUri, name: safeName, type: 'image/jpeg' }, '');
+      } catch (err: any) {
+        console.warn('[Media] annotated photo send failed:', err?.message || err);
+        setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
+        Alert.alert('Send Failed', 'Failed to send photo. Please try again.');
+      }
+    },
+    [chatId, currentUserId, setMessages, user, leadId, isChannel]
+  );
+
+  // Send multiple appointment photos (the lead's sales photos) as ONE message.
+  // These already live in S3, so we send their references — NOT re-uploads —
+  // exactly like the web (MessageInput.handleSend). A single bubble carries all
+  // selected photos and renders as a WhatsApp-style grid (see ChatMessageBubble).
+  const sendAppointmentPhotos = useCallback(
+    async (
+      photos: Array<{
+        _id?: string;
+        s3url: string;
+        bucketName?: string;
+        category?: string;
+        subcategory?: string;
+        label?: string;
+        secureUrl?: string;
+      }>,
+      reply?: any
+    ) => {
+      if (!photos?.length || !chatId) return;
+      const tempId = `temp_${Date.now()}_${Math.random()}`;
+
+      const filesPayload = photos.map((p) => {
+        // Human caption ("Front of Home") the chat grid shows under the photo.
+        // Stored as BOTH subcategory and (base of) fileName so it survives even
+        // if the server echoes only one of them back on reload.
+        const label = p.label || p.subcategory || p.category || 'Appointment Photo';
+        const fileName = `${label.replace(/[\/\\]/g, '-')}.jpg`;
+        return {
+          _id: p._id,
+          bucketName: p.bucketName,
+          filePath: p.s3url,
+          category: p.category || '',
+          subcategory: label,
+          fileName,
+          fileType: 'image/jpeg',
+        };
+      });
+
+      if (user?._id) {
+        logEvent('send', {
+          user_id: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          created_by: user._id,
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            isEdit: false,
+            isReply: !!reply,
+            messageType: 'appointment_photo',
+            fileName: filesPayload.map((f) => f.fileName).join(', '),
+            fileSize: filesPayload.length,
+            message: '',
+            action: `sent ${filesPayload.length} appointment photo(s)`,
+          },
+        });
+      }
+
+      // Optimistic bubble — all photos in one message. `previewUrl` carries the
+      // already-signed URL so the grid shows instantly before the server echo.
+      const optimistic = {
+        _id: tempId,
+        text: '',
+        createdAt: new Date(),
+        user: { _id: String(currentUserId) },
+        files: filesPayload.map((f, i) => ({
+          ...f,
+          name: f.fileName,
+          type: 'image',
+          mimeType: 'image/jpeg',
+          path: f.filePath,
+          previewUrl: photos[i].secureUrl || undefined,
+          isAppointmentPhoto: true,
+        })),
+        replyTo: reply?._id,
+        replyToDetails: reply,
+        pending: true,
+        sent: false,
+        received: false,
+      };
+      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
+
+      try {
+        await ChatService.sendAppointmentPhotos(chatId, filesPayload, ' ', reply?._id);
+      } catch (err: any) {
+        console.warn('[Media] appointment photos send failed:', err?.message || err);
+        setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
+        Alert.alert('Send Failed', 'Failed to send photos. Please try again.');
+      }
+    },
+    [chatId, currentUserId, setMessages, user, leadId, isChannel]
+  );
+
+  // Send a plain text message (optimistic + REST). Extracted so the unified
+  // send can fire it AFTER the staged images have uploaded.
+  const sendTextMessage = useCallback(
+    async (text: string, reply?: any) => {
+      if (!chatId || !text?.trim()) return;
+      const tempId = `temp_${Date.now()}`;
+      if (user?._id) {
+        logEvent('send', {
+          user_id: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          created_by: user._id,
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            action: 'Sent text message',
+            messageType: 'text',
+            isReply: !!reply,
+            message: text,
+          },
+        });
+      }
+      const optimistic = {
+        _id: tempId,
+        text,
+        createdAt: new Date(),
+        user: { _id: String(currentUserId), name: user?.firstName || 'Me' },
+        pending: true,
+        sent: false,
+        replyTo: reply?._id,
+        replyToDetails: reply,
+      };
+      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic]));
+      try {
+        await ChatService.sendMessageREST({ chatId, message: text, replyTo: reply?._id });
+      } catch {
+        setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
+      }
+    },
+    [chatId, currentUserId, user, setMessages, isChannel, leadId]
+  );
+
+  // Unified send for the composer's Send button: flush any staged attachments
+  // (images upload FIRST, per product spec), then send the typed message. Also
+  // handles the edit case (text-only).
+  const handleSend = useCallback(async () => {
+    if (!chatId) return;
+    const text = (composerTextRef.current || composerText || '').trim();
+
+    if (editingMessage) {
+      const editedText = text;
+      if (user?._id) {
+        logEvent('edit', {
+          user_id: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          created_by: user._id,
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            action: 'Edited message',
+            messageType: 'text',
+            messageId: editingMessage._id,
+            message: editedText,
+          },
+        });
+      }
+      setMessages((prev: any[]) =>
+        prev.map((m) => (m._id === editingMessage._id ? { ...m, text: editedText, isEdited: true } : m))
+      );
+      try {
+        await ChatService.editMessage(editingMessage._id, editedText);
+      } catch (e) {
+        console.warn('[Chat] edit failed:', e);
+      }
+      setEditingMessage(null);
+      setComposerText('');
+      composerTextRef.current = '';
+      return;
+    }
+
+    const atts = pendingAttachments;
+    if (!text && atts.length === 0) return;
+
+    const reply = replyingTo;
+    const appointmentPhotos = atts
+      .filter((a) => a.kind === 'appointment')
+      .map((a: any) => a.photo);
+    const galleryAssets = atts.filter((a) => a.kind === 'gallery').map((a: any) => a.asset);
+
+    // Clear the composer immediately for a snappy feel.
+    setPendingAttachments([]);
+    setComposerText('');
+    composerTextRef.current = '';
+    setReplyingTo(null);
+    if (chatId) {
+      if (isChannel) ChatService.emitChannelTyping(chatId, false);
+      else ChatService.emitTyping(chatId, false);
+    }
+
+    try {
+      // Images upload FIRST, then the message (per product spec / screenshot).
+      if (appointmentPhotos.length) await sendAppointmentPhotos(appointmentPhotos, reply);
+      if (galleryAssets.length) await sendGalleryAssets(galleryAssets, reply);
+      if (text) await sendTextMessage(text, reply);
+    } catch (e) {
+      console.warn('[Chat] handleSend failed:', e);
+    }
+  }, [
+    chatId,
+    composerText,
+    pendingAttachments,
+    editingMessage,
+    replyingTo,
+    isChannel,
+    user,
+    leadId,
+    setMessages,
+    sendAppointmentPhotos,
+    sendGalleryAssets,
+    sendTextMessage,
+  ]);
 
   const handleDocumentAttach = useCallback(async () => {
     try {
@@ -405,8 +762,13 @@ export const useChatLogic = (
     isKeyboardVisible,
     handleComposerChange,
     onSend,
+    handleSend,
     handleAttach,
     handleDocumentAttach,
+    sendImageAsMessage,
+    pendingAttachments,
+    addPendingAppointmentPhotos,
+    removePendingAttachment,
     handleSendVoiceNote,
     recordingState,
     recordingTime,

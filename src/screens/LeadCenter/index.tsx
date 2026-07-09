@@ -436,6 +436,9 @@ export default function LeadCenterPage() {
         const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
         return `${lead.office || ''} Lead ${dateStr} - ${lead.leadId || 'N/A'}`.trim() || 'Discussion';
       })(),
+      // Hand the loaded photos to the Appointment Photos picker (web parity —
+      // web passes selectedJob.salesPhotos straight into the chat composer).
+      salesPhotos: lead.salesPhotos || [],
     });
   };
 
@@ -535,7 +538,7 @@ export default function LeadCenterPage() {
     setIsConsentGenerating(true);
     try {
       const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
-      
+
       // Log successful consent form submission
       if (user?._id || user?.id) {
         logEvent('submit', {
@@ -816,10 +819,10 @@ export default function LeadCenterPage() {
           },
         });
       }
-      
+
       // Close the modal first so that the flash message and sharesheet appear on the main screen
       toggleModal('showInspectionModal', false);
-      
+
       setTimeout(async () => {
         try {
           await downloadPdfToDevice(pdfPath, 'Inspection Report', false);
@@ -1011,7 +1014,7 @@ export default function LeadCenterPage() {
               </View>
 
               <View className="flex-col gap-4">
-                <Text className="text-base text-right" style={{ color: colors.primary.main }}>
+                <Text className="text-base" style={{ color: colors.primary.main }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}

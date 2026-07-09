@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from '
 import {
   View,
   Text,
+  Image,
+  ScrollView,
   ActivityIndicator,
   TouchableOpacity,
   KeyboardAvoidingView,
@@ -13,8 +15,9 @@ import {
   Alert,
   Vibration,
 } from 'react-native';
-import { GiftedChat, IMessage, Send, InputToolbar, Composer, Day, Message } from 'react-native-gifted-chat';
+import { GiftedChat, IMessage, InputToolbar, Composer, Day, Message } from 'react-native-gifted-chat';
 import Icon from 'react-native-vector-icons/Ionicons';
+import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { launchImageLibrary } from 'react-native-image-picker';
@@ -23,6 +26,7 @@ import { useAuth } from '../../hooks/useAuth';
 import ChatService from '../../services/api/ChatService';
 import { ChatReplyBar, ChatEditBar } from '../../widgets/components/chat/ChatBars';
 import { ChatMessageBubble } from '../../widgets/components/chat/ChatMessageBubble';
+import { LeadImagePickerModal } from '../../widgets/components/chat/LeadImagePickerModal';
 import {
   SearchBar,
   ParticipantsModal,
@@ -135,7 +139,7 @@ export default function ChatDetailScreen() {
   const { user } = useAuth();
   const route = useRoute<RouteProp<RootStackParamList, 'ChatDetail'>>();
   const navigation = useNavigation<any>();
-  const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [] } = route.params;
+  const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [], salesPhotos: routeSalesPhotos } = route.params;
   const isChannel = chatType === 'channel';
 
   // Log chat open
@@ -193,8 +197,12 @@ export default function ChatDetailScreen() {
     isKeyboardVisible,
     handleComposerChange,
     onSend,
+    handleSend,
     handleAttach,
     handleDocumentAttach,
+    pendingAttachments,
+    addPendingAppointmentPhotos,
+    removePendingAttachment,
     handleSendVoiceNote,
     recordingState,
     recordingTime,
@@ -242,6 +250,28 @@ export default function ChatDetailScreen() {
   }, []);
 
   const [isSearching, setIsSearching] = useState(false);
+  const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
+  const [showLeadImagePicker, setShowLeadImagePicker] = useState(false);
+  // Action queued while the attachment menu closes. A native picker (gallery /
+  // files) or another modal (annotated photos) cannot be presented on iOS until
+  // the menu's own modal has fully dismissed, so we defer it to onDismiss.
+  const pendingAttachmentAction = useRef<null | (() => void)>(null);
+
+  const runPendingAttachmentAction = useCallback(() => {
+    const action = pendingAttachmentAction.current;
+    pendingAttachmentAction.current = null;
+    action?.();
+  }, []);
+
+  // Close the menu, then run the chosen action once it's off-screen.
+  const selectAttachmentOption = useCallback((action: () => void) => {
+    pendingAttachmentAction.current = action;
+    setShowAttachmentSheet(false);
+    // Android's <Modal> has no onDismiss; run after it unmounts.
+    if (Platform.OS === 'android') {
+      setTimeout(runPendingAttachmentAction, 220);
+    }
+  }, [runPendingAttachmentAction]);
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
   const [showPinned, setShowPinned] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
@@ -444,43 +474,46 @@ export default function ChatDetailScreen() {
 
   const renderComposer = useCallback(
     (composerProps: any) => (
-      <View
-        className="flex-1 flex-row items-center rounded-[28px] px-4 min-h-[44px]"
-        style={{ backgroundColor: colors.surface }}
-      >
-        <Composer
-          {...composerProps}
-          textInputProps={{
-            ...composerProps.textInputProps,
-            accessibilityLabel: 'ChatInput',
-            inputAccessoryViewID: '',
-            onChangeText: (text: string) => {
-              composerProps.onTextChanged?.(text);
-              handleComposerChange(text);
-            }
+      <View className="flex-1 flex-row items-center">
+        {/* Attachment "+" — opens the action sheet (Photos / Files / Annotated / Voice) */}
+        <TouchableOpacity
+          onPress={() => {
+            Keyboard.dismiss();
+            setShowAttachmentSheet(true);
           }}
-          textInputStyle={{
-            color: colors.text,
-            fontSize: 15,
-            flex: 1,
-            paddingTop: 8,
-            paddingBottom: 8,
-          }}
-        />
-        <View className="flex-row items-center gap-3 ml-2">
-          <TouchableOpacity onPress={handleAttach}>
-            <Icon name="images-outline" size={22} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleDocumentAttach}>
-            <Icon name="document-attach-outline" size={22} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleVoicePress}>
-            <Icon name="mic" size={22} color="#4CBB17" />
-          </TouchableOpacity>
+          accessibilityLabel="AttachmentPlus"
+          className="w-11 h-11 rounded-full items-center justify-center mr-2"
+          style={{ backgroundColor: colors.surface }}
+        >
+          <Icon name="add" size={28} color={colors.text} />
+        </TouchableOpacity>
+        <View
+          className="flex-1 flex-row items-center rounded-[28px] px-4 min-h-[44px]"
+          style={{ backgroundColor: colors.surface }}
+        >
+          <Composer
+            {...composerProps}
+            textInputProps={{
+              ...composerProps.textInputProps,
+              accessibilityLabel: 'ChatInput',
+              inputAccessoryViewID: '',
+              onChangeText: (text: string) => {
+                composerProps.onTextChanged?.(text);
+                handleComposerChange(text);
+              }
+            }}
+            textInputStyle={{
+              color: colors.text,
+              fontSize: 15,
+              flex: 1,
+              paddingTop: 8,
+              paddingBottom: 8,
+            }}
+          />
         </View>
       </View>
     ),
-    [isDark, colors.surface, colors.text, colors.textSecondary, handleAttach, handleDocumentAttach, handleVoicePress, handleComposerChange]
+    [colors.surface, colors.text, handleComposerChange]
   );
 
   const renderBubble = useCallback(
@@ -701,45 +734,111 @@ export default function ChatDetailScreen() {
         );
       }
 
+      // Selected-attachment previews — rendered ABOVE the input bar (gifted-chat's
+      // renderAccessory sits BELOW the composer row, so it can't go there).
+      const pendingStrip =
+        pendingAttachments.length > 0 ? (
+          <View
+            className="px-2 pt-3 pb-1 border-t"
+            style={{ backgroundColor: colors.card, borderTopColor: colors.border }}
+          >
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingRight: 8, paddingTop: 4 }}
+            >
+              {pendingAttachments.map((att: any) => {
+                const showImg = att.previewUri && (att.kind === 'appointment' || att.isImage);
+                return (
+                  <View key={att.id} style={{ marginRight: 10, width: 56 }}>
+                    <View
+                      className="rounded-xl overflow-hidden"
+                      style={{ width: 56, height: 56, backgroundColor: colors.surface }}
+                    >
+                      {showImg ? (
+                        <Image
+                          source={{ uri: att.previewUri }}
+                          style={{ width: '100%', height: '100%' }}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View className="flex-1 items-center justify-center">
+                          <Icon
+                            name={att.kind === 'gallery' ? 'videocam' : 'document'}
+                            size={22}
+                            color={colors.textSecondary}
+                          />
+                        </View>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => removePendingAttachment(att.id)}
+                      className="absolute w-5 h-5 rounded-full items-center justify-center"
+                      style={{ top: -2, right: -2, backgroundColor: '#1f2937' }}
+                    >
+                      <Icon name="close" size={12} color="#fff" />
+                    </TouchableOpacity>
+                    {att.kind === 'appointment' && !!att.label && (
+                      <Text
+                        numberOfLines={1}
+                        className="text-[8px] font-bold mt-1 text-center"
+                        style={{ color: colors.textSecondary }}
+                      >
+                        {att.label}
+                      </Text>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null;
+
       return (
-        <InputToolbar
-          {...props}
-          containerStyle={{
-            backgroundColor: colors.card,
-            borderTopWidth: 1,
-            borderTopColor: colors.border,
-            paddingHorizontal: 4,
-            paddingVertical: 4,
-            overflow: 'visible',
-          }}
-          primaryStyle={{ overflow: 'visible' }}
-          renderAccessory={() => (
-            <View style={{ overflow: 'visible' }}>
-              <ChatReplyBar replyingTo={replyingTo} currentUserId={currentUserId || ''} onCancel={() => setReplyingTo(null)} />
-              <ChatEditBar
-                editingMessage={editingMessage}
-                onCancel={() => setEditingMessage(null)}
-              />
-            </View>
-          )}
-          renderComposer={renderComposer}
-          renderSend={(sendProps) => {
-            if (!sendProps.text?.trim()) return null;
-            return (
-              <Send
-                {...sendProps}
-                containerStyle={{ marginLeft: 10, justifyContent: 'center', marginBottom: 5 }}
-              >
-                <View
-                  className="w-10 h-10 rounded-full items-center justify-center"
-                  style={{ backgroundColor: colors.primary.main }}
+        <View style={{ overflow: 'visible' }}>
+          {pendingStrip}
+          <InputToolbar
+            {...props}
+            containerStyle={{
+              backgroundColor: colors.card,
+              borderTopWidth: pendingStrip ? 0 : 1,
+              borderTopColor: colors.border,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              overflow: 'visible',
+            }}
+            primaryStyle={{ overflow: 'visible' }}
+            renderAccessory={() => (
+              <View style={{ overflow: 'visible' }}>
+                <ChatReplyBar replyingTo={replyingTo} currentUserId={currentUserId || ''} onCancel={() => setReplyingTo(null)} />
+                <ChatEditBar
+                  editingMessage={editingMessage}
+                  onCancel={() => setEditingMessage(null)}
+                />
+              </View>
+            )}
+            renderComposer={renderComposer}
+            renderSend={(sendProps: any) => {
+              const hasContent = !!sendProps.text?.trim() || pendingAttachments.length > 0;
+              if (!hasContent) return null;
+              return (
+                <TouchableOpacity
+                  onPress={handleSend}
+                  accessibilityLabel="SendMessage"
+                  style={{ marginLeft: 10, justifyContent: 'center', marginBottom: 5 }}
                 >
-                  <Icon name="send" size={20} color="#fff" />
-                </View>
-              </Send>
-            );
-          }}
-        />
+                  <View
+                    className="w-10 h-10 rounded-full items-center justify-center"
+                    style={{ backgroundColor: colors.primary.main }}
+                  >
+                    <Icon name="send" size={20} color="#fff" />
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
       );
     },
     [
@@ -763,6 +862,9 @@ export default function ChatDetailScreen() {
       cancelRecording,
       handleVoicePress,
       reset,
+      pendingAttachments,
+      handleSend,
+      removePendingAttachment,
     ]
   );
 
@@ -1033,6 +1135,109 @@ export default function ChatDetailScreen() {
         visible={historyModalVisible}
         onClose={() => setHistoryModalVisible(false)}
         history={historyData}
+      />
+
+      {/* Attachment menu — floating context card anchored above the composer */}
+      <Modal
+        visible={showAttachmentSheet}
+        animationType="fade"
+        transparent
+        statusBarTranslucent
+        onRequestClose={() => setShowAttachmentSheet(false)}
+        onDismiss={runPendingAttachmentAction}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setShowAttachmentSheet(false)}
+          style={StyleSheet.absoluteFillObject}
+          className="justify-end items-start"
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+            className="ml-3 rounded-[26px] overflow-hidden"
+            style={{
+              backgroundColor: 'rgba(28,28,30,0.98)',
+              width: '78%',
+              maxWidth: 340,
+              marginBottom: insets.bottom + 72,
+            }}
+          >
+            {[
+              // "Appointment Photos" surfaces the lead's annotated photos —
+              // only meaningful in a lead chat (needs a leadId).
+              ...(leadId && !isChannel
+                ? [
+                  {
+                    key: 'annotated',
+                    label: 'Appointment Photos',
+                    render: (c: string) => <Icon name="apps-outline" size={24} color={c} />,
+                    onPress: () => selectAttachmentOption(() => setShowLeadImagePicker(true)),
+                  },
+                ]
+                : []),
+              {
+                key: 'gallery',
+                label: 'Personal Gallery Photos',
+                render: (c: string) => <Icon name="images-outline" size={24} color={c} />,
+                onPress: () => selectAttachmentOption(handleAttach),
+              },
+              {
+                key: 'files',
+                label: 'Files',
+                render: (c: string) => <Icon name="document-outline" size={24} color={c} />,
+                onPress: () => selectAttachmentOption(handleDocumentAttach),
+              },
+              {
+                key: 'voice',
+                label: 'Voice Memo',
+                render: (c: string) => (
+                  <View
+                    className="w-[24px] h-[24px] rounded-full items-center justify-center"
+                    style={{ borderWidth: 2, borderColor: c }}
+                  >
+                    <MCIcon name="waveform" size={12} color={c} />
+                  </View>
+                ),
+                onPress: () => selectAttachmentOption(handleVoicePress),
+              },
+            ].map((opt, idx, arr) => (
+              <TouchableOpacity
+                key={opt.key}
+                onPress={opt.onPress}
+                activeOpacity={0.6}
+                className="flex-row items-center px-5 py-4"
+                style={
+                  idx < arr.length - 1
+                    ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' }
+                    : undefined
+                }
+              >
+                <View className="w-9 items-center justify-center mr-4">
+                  {opt.render('#FFFFFF')}
+                </View>
+                <Text
+                  className="flex-1 text-md text-white"
+                >
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <LeadImagePickerModal
+        visible={showLeadImagePicker}
+        onClose={() => setShowLeadImagePicker(false)}
+        leadId={leadId}
+        initialSalesPhotos={routeSalesPhotos}
+        onConfirm={(photos) => {
+          setShowLeadImagePicker(false);
+          // Stage the photos as composer previews — the user can add a caption
+          // and then Send (images upload first, then the message).
+          addPendingAppointmentPhotos(photos);
+        }}
       />
     </SafeAreaView>
   );
