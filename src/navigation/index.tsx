@@ -6,6 +6,8 @@ import LoginPage from '../screens/auth/login';
 import LeadsPage from '../screens/Leads/index';
 import ProfilePage from '../screens/Profile/index';
 import JobTrackerPage from '../screens/JobTracker/index';
+import MyDealsPage from '../screens/MyDeals/index';
+import DealDetailPage from '../screens/DealDetail/index';
 import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
@@ -93,7 +95,15 @@ export type RootStackParamList = {
   DynamicDealCenter: {
     lead?: any;
     initialVerticalId?: string;
+    // 'edit' opens a saved deal straight in the dynamic job builder (My Deals /
+    // LeadCenter Products → Edit). `calculatorResultData` carries the calculatorId.
+    mode?: 'new' | 'edit';
+    calculatorResultData?: any;
   };
+  MyDeals: undefined;
+  // Deal Detail — opened from My Deals; hosts the contract summary + the Edit
+  // pencil that launches the 4-step dynamic edit wizard (DynamicDealCenter edit).
+  DealDetail: { lead?: any; leadId?: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -162,6 +172,8 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="Leads" component={LeadsPage} />
                 <Stack.Screen name="Profile" component={ProfilePage} />
                 <Stack.Screen name="JobTracker" component={JobTrackerPage} />
+                <Stack.Screen name="MyDeals" component={MyDealsPage} />
+                <Stack.Screen name="DealDetail" component={DealDetailPage} />
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />

@@ -43,6 +43,32 @@ interface DynamicJobBuilderScreenProps {
   leadId?: string;
   onJobComplete?: (config: any, state: any) => void;
   onGoBack?: () => void;
+  // --- Deal-edit flow (web PortalDynamicJobBuilderModal) ----------------------
+  // 'edit' rewires this screen to the PortalJobBuilder: it skips the calculator
+  // outcome GET (parent supplies `initialJobState`), saves via
+  // upsertPortalJobBuilder instead of the outcome PUT, and does NOT re-run the
+  // /job-builder POST on complete (editing doesn't re-create the job).
+  mode?: 'new' | 'edit';
+  // Pre-deserialized job state for edit mode (parent loaded + deserialized it).
+  initialJobState?: any;
+  // Web `portalUnrestrictedEdit`: unlock every tab, show all fields/sections
+  // (applyConditions off). Defaults to true in edit mode.
+  portalUnrestrictedEdit?: boolean;
+  // Web `hideAllocationTrackers`: hide the pinned footage/allocation trackers.
+  // Defaults to true in edit mode.
+  hideAllocationTrackers?: boolean;
+  appointmentId?: string;
+  // --- Embedded (4-step deal-edit wizard, step "Job Build") -------------------
+  // When true this renders as the wizard's inner build step (web `<DynamicJobBuilder
+  // embedded editMode>`): its own header + close are hidden (the wizard supplies
+  // them), its auto-save/submit are suppressed (the wizard owns the single addendum
+  // submit at the end), edited state streams out via `onStateChange`, the finalize
+  // button becomes "Next · Price" (`onEditComplete`), and Back from the first tab
+  // calls `onEditBack` (→ the wizard's Install Date step).
+  embedded?: boolean;
+  onStateChange?: (jobState: any) => void;
+  onEditComplete?: (jobState: any) => void;
+  onEditBack?: () => void;
 }
 
 function DynamicJobBuilderInner({
@@ -53,7 +79,20 @@ function DynamicJobBuilderInner({
   leadId,
   onJobComplete,
   onGoBack,
+  mode = 'new',
+  initialJobState: initialJobStateProp,
+  portalUnrestrictedEdit: portalUnrestrictedEditProp,
+  hideAllocationTrackers: hideAllocationTrackersProp,
+  appointmentId,
+  embedded = false,
+  onStateChange,
+  onEditComplete,
+  onEditBack,
 }: DynamicJobBuilderScreenProps) {
+  const isEdit = mode === 'edit';
+  // In edit mode both flags default ON (web parity); callers can still override.
+  const portalUnrestrictedEdit = portalUnrestrictedEditProp ?? isEdit;
+  const hideAllocationTrackers = hideAllocationTrackersProp ?? isEdit;
   const insets = useSafeAreaInsets();
   const verticalList = useMemo(
     () => initialConfig?.verticals || [],
@@ -173,17 +212,29 @@ function DynamicJobBuilderInner({
         return { initialJobState: undefined, resolvedDocuments: { agreements: [], orderSheets: [] } };
       }
     },
-    enabled: Boolean(leadId && calcId),
+    // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
+    // via `initialJobStateProp`, so the calculator-outcome GET is skipped entirely.
+    enabled: Boolean(leadId && calcId) && !isEdit,
     staleTime: 30_000,
   });
 
   const session = useDynamicJobBuilderSession({
     initialConfig,
     dealCenterData,
-    initialJobState: outcomeData?.initialJobState,
+    initialJobState: isEdit ? initialJobStateProp : outcomeData?.initialJobState,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
+
+  // Embedded (wizard step 1): stream the edited job state up so the wizard can
+  // price the delta (Job Price step), diff it (Review step), and submit it. The
+  // callback is held in a ref so an inline parent handler doesn't re-fire the
+  // effect every render — it fires only when jobState actually changes.
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+  useEffect(() => {
+    if (embedded) onStateChangeRef.current?.(jobState);
+  }, [embedded, jobState]);
 
   const [selectedVerticalId, setSelectedVerticalId] = useState(
     verticalList[0]?.id || ''
@@ -244,19 +295,26 @@ function DynamicJobBuilderInner({
   // GET populates the session, overwriting saved server data.
   const initialFetchDoneRef = useRef(false);
   useEffect(() => {
-    if (isOutcomeFetched && !initialFetchDoneRef.current) {
+    // Edit mode skips the outcome fetch, so release the auto-save gate immediately
+    // (the initial state is already present via initialJobStateProp).
+    if ((isOutcomeFetched || isEdit) && !initialFetchDoneRef.current) {
       initialFetchDoneRef.current = true;
     }
-  }, [isOutcomeFetched]);
+  }, [isOutcomeFetched, isEdit]);
 
   useEffect(() => {
     if (!leadId || !initialFetchDoneRef.current) return;
+    // Embedded in the 4-step edit wizard: the wizard owns persistence (it submits a
+    // single addendum draft at the end), so the builder must NOT auto-save/upsert.
+    if (embedded) return;
 
     const timer = setTimeout(async () => {
       // Skip while a document upload is in flight — that upload PUTs the outcome
       // itself; auto-saving here would race it and can clobber the new files.
       if (isDocUploadingRef.current) return;
-      if (!calcId) return;
+      // New flow requires a calculator id (outcome is calculator-scoped). Edit mode
+      // saves to the lead-scoped PortalJobBuilder and does not need one.
+      if (!calcId && !isEdit) return;
       try {
         // Never resend agreements/orderSheets here: they're uploaded separately as
         // base64 PDFs (and rehydrated from leadOutcomeDocuments); echoing them back
@@ -272,24 +330,40 @@ function DynamicJobBuilderInner({
           initialConfig,
           dealCenterData
         );
-        await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
-          selectedCalculatorId: calcId,
-          jobBuilder: {
+        const configId = (initialConfig as any)?.id || null;
+
+        if (isEdit) {
+          // Edit flow (web PortalDynamicJobBuilderModal.handleComplete shape, draft):
+          // PUT /lead/v1/{leadId}/portal-job-builder/upsert with the serialized state.
+          const rd = (calculatorResultData || {}) as any;
+          await LeadService.upsertPortalJobBuilder(leadId, {
+            isDynamic: true,
             dynamicJobState,
-            configId: (initialConfig as any)?.id || null,
-            configSnapshotId:
-              (initialConfig as any)?.id || 'dynamic',
-            calculatorType: 'dynamic',
+            configId,
+            configSnapshotId: configId || 'dynamic',
+            calculatorId: calcId || rd.calculatorId || null,
+            appointmentId: appointmentId || rd.appointmentId || null,
             status: 'draft',
-          },
-        });
+          });
+        } else {
+          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
+            selectedCalculatorId: calcId,
+            jobBuilder: {
+              dynamicJobState,
+              configId,
+              configSnapshotId: configId || 'dynamic',
+              calculatorType: 'dynamic',
+              status: 'draft',
+            },
+          });
+        }
       } catch (error) {
         console.warn('[DynamicJobBuilder] Auto-save failed:', error);
       }
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [leadId, jobState, calcId, initialConfig, dealCenterData]);
+  }, [leadId, jobState, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
 
   // Web parity (dynamic-job-builder.js:111-121): once a non-sale result exists,
   // any lingering install appointment is cleared from root state.
@@ -305,8 +379,11 @@ function DynamicJobBuilderInner({
   );
 
   const currentVerticalLockedTabIds = useMemo(() => {
+    // Web `portalUnrestrictedEdit`: every tab is unlocked so the user can freely
+    // revise any product in the deal (dynamic-job-builder.js lockedTabIds = []).
+    if (portalUnrestrictedEdit) return [];
     return selectedVertical ? lockedTabIdsByVertical[selectedVertical.id] || [] : [];
-  }, [selectedVertical, lockedTabIdsByVertical]);
+  }, [selectedVertical, lockedTabIdsByVertical, portalUnrestrictedEdit]);
 
   const tabs = useMemo(() => selectedVertical?.tabs || [], [selectedVertical]);
 
@@ -390,11 +467,14 @@ function DynamicJobBuilderInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabState]);
 
+  // In unrestricted edit, conditions are off (web effectiveApplyConditions=false):
+  // all fields/sections show and tab-completion isn't gated by dealCenter rules.
+  const applyConditions = !portalUnrestrictedEdit;
   const validationCtx = useMemo(() => ({
     dealCenterData: dealCenterData || {},
-    applyConditions: true,
+    applyConditions,
     products: initialConfig?.products || [],
-  }), [dealCenterData, initialConfig]);
+  }), [dealCenterData, initialConfig, applyConditions]);
 
   const tabCompletionById = useMemo(() => {
     const verticalState = jobState?.[selectedVerticalId] || {};
@@ -437,20 +517,24 @@ function DynamicJobBuilderInner({
   const isAppointmentSet = Boolean(jobState?.scheduleTime?.date);
 
   const canComplete = useMemo(() => {
+    // Unrestricted edit never blocks saving (web effectiveApplyConditions=false):
+    // the user is revising an already-resulted deal, not completing a fresh one.
+    if (portalUnrestrictedEdit) return true;
     if (!areAllTabsComplete) return false;
     // Web parity (dynamic-job-builder.js isAppointmentSchedulingComplete): a sale
     // requires the install appointment; a demo / unknown result needs nothing
     // beyond tab completion. The agreement/order-sheet are NOT gated by web.
     if (isSale) return isAppointmentSet;
     return true;
-  }, [areAllTabsComplete, isSale, isAppointmentSet]);
+  }, [portalUnrestrictedEdit, areAllTabsComplete, isSale, isAppointmentSet]);
 
   const canProceed = useMemo(() => {
+    if (portalUnrestrictedEdit) return true;
     if (currentTabIndex === nonSummaryTabs.length) {
       return canComplete;
     }
     return isCurrentTabComplete;
-  }, [currentTabIndex, nonSummaryTabs.length, canComplete, isCurrentTabComplete]);
+  }, [portalUnrestrictedEdit, currentTabIndex, nonSummaryTabs.length, canComplete, isCurrentTabComplete]);
 
   const handleVerticalSelect = useCallback((verticalId: string) => {
     setSelectedVerticalId(verticalId);
@@ -544,6 +628,30 @@ function DynamicJobBuilderInner({
         status: 'submitted',
       };
 
+      // EDIT FLOW (web PortalDynamicJobBuilderModal.handleComplete): editing a saved
+      // deal only upserts the PortalJobBuilder (status:'submitted'). It does NOT
+      // finalize the calculator outcome and does NOT re-run the /job-builder POST —
+      // the job already exists; we're only updating its products. Then bounce back.
+      if (isEdit) {
+        const rd = (calculatorResultData || {}) as any;
+        if (leadId) {
+          await LeadService.upsertPortalJobBuilder(leadId, {
+            isDynamic: true,
+            dynamicJobState,
+            configId,
+            configSnapshotId: configId || 'dynamic',
+            calculatorId: calcId || rd.calculatorId || null,
+            appointmentId: appointmentId || rd.appointmentId || null,
+            status: 'submitted',
+          });
+        }
+        FlashMessage.success('Deal Updated', 'Products saved successfully');
+        if (onJobComplete) {
+          onJobComplete(initialConfig, jobState);
+        }
+        return;
+      }
+
       // Finalize the calculator outcome in the SAME web shape as the autosave, but
       // status:'submitted' (web parity: TabbedCalculator writes the outcome on
       // complete). This is what a reopen (GET /outcome/{calcId}) rehydrates from, so
@@ -633,7 +741,7 @@ function DynamicJobBuilderInner({
     } finally {
       setIsSaving(false);
     }
-  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog]);
+  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId]);
 
   // Persist a generated/scanned agreement or order-sheet. Web parity
   // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the
@@ -678,6 +786,11 @@ function DynamicJobBuilderInner({
 
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
   const isFirstStep = currentTabIndex <= 0;
+  // Embedded (wizard) finalize point: the summary tab when present, else the last
+  // product tab. Reaching it turns the primary button into "Next · Price".
+  const isFinalBuildStep = summaryTab
+    ? isLastStep
+    : nonSummaryTabs.length > 0 && currentTabIndex >= nonSummaryTabs.length - 1;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
@@ -692,31 +805,33 @@ function DynamicJobBuilderInner({
             backgroundColor: '#fff',
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 0,
-            }}
-          >
-            <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
-              Job Builder{isSaving ? '  • Saving...' : ''}
-            </Text>
-            <TouchableOpacity
-              onPress={onGoBack || (() => navigation?.goBack())}
+          {!embedded && (
+            <View
               style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
+                flexDirection: 'row',
                 alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#F4F6F8',
+                justifyContent: 'space-between',
+                marginBottom: 0,
               }}
             >
-              <Icon name="close" size={20} color="#1C252E" />
-            </TouchableOpacity>
-          </View>
+              <Text style={{ fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
+                {isEdit ? 'Edit Deal' : 'Job Builder'}{isSaving ? '  • Saving...' : ''}
+              </Text>
+              <TouchableOpacity
+                onPress={onGoBack || (() => navigation?.goBack())}
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#F4F6F8',
+                }}
+              >
+                <Icon name="close" size={20} color="#1C252E" />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {verticalList.length > 1 && (
             <VerticalTabBar
@@ -766,7 +881,8 @@ function DynamicJobBuilderInner({
               onStateChange={handleTabStateChange}
               dealCenterData={dealCenterData}
               readOnly={false}
-              applyConditions={true}
+              applyConditions={applyConditions}
+              hideAllocationTrackers={hideAllocationTrackers}
               verticalId={selectedVertical?.id}
               verticalColor={selectedVertical?.color || '#22c55e'}
               products={initialConfig?.products || []}
@@ -830,11 +946,69 @@ function DynamicJobBuilderInner({
                   Back
                 </Text>
               </TouchableOpacity>
+            ) : embedded ? (
+              // First build tab: Back returns to the wizard's Install Date step.
+              <TouchableOpacity
+                onPress={() => onEditBack?.()}
+                style={{
+                  padding: 6,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  width: 80
+                }}
+              >
+                <Text style={{ fontWeight: '600', fontSize: 12, color: colors.text }}>
+                  Back
+                </Text>
+              </TouchableOpacity>
             ) : (
               <View style={{ width: 80 }} />
             )}
 
-            {isLastStep && summaryTab ? (
+            {embedded ? (
+              // Wizard: advance to the Job Price step once the build is finalized,
+              // otherwise page through the build tabs. No submit happens here.
+              isFinalBuildStep ? (
+                <TouchableOpacity
+                  onPress={() => onEditComplete?.(jobState)}
+                  style={{
+                    paddingHorizontal: 24,
+                    paddingVertical: 10,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'row',
+                    backgroundColor: '#22C55E',
+                  }}
+                >
+                  <Text style={{ fontWeight: '700', fontSize: 13, color: 'white', marginRight: 6 }}>
+                    Next · Price
+                  </Text>
+                  <Icon name="arrow-right" size={16} color="white" />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  onPress={handleNext}
+                  disabled={!canProceed}
+                  style={{
+                    padding: 6,
+                    flexDirection: 'row',
+                    borderRadius: 8,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: canProceed ? '#000000' : '#CBD5E1',
+                    opacity: canProceed ? 1 : 0.8,
+                    width: 80
+                  }}
+                >
+                  <Text style={{ fontWeight: '600', fontSize: 12, color: 'white' }}>Next</Text>
+                </TouchableOpacity>
+              )
+            ) : isLastStep && summaryTab ? (
               <TouchableOpacity
                 onPress={handleComplete}
                 disabled={isSaving || !canComplete}
@@ -861,7 +1035,7 @@ function DynamicJobBuilderInner({
                     color: 'white',
                   }}
                 >
-                  {isSaving ? 'Completing...' : 'Complete Job'}
+                  {isSaving ? 'Saving...' : isEdit ? 'Save Deal' : 'Complete Job'}
                 </Text>
               </TouchableOpacity>
             ) : (

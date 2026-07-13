@@ -60,6 +60,27 @@ export const LeadEndpoints = {
     reset: (reportId: string) => `pdf-reports/v1/weather/report/${reportId}/reset`,
   },
   downloadOutcomeDocuments: (leadId: string) => `lead/v1/${leadId}/outcome/documents/download`,
+  // Portal Job Builder (deal editing) — mirrors web `endpoints.portalJobBuilder.*`.
+  // Server returns the PortalJobBuilder when present, else falls back to the sales
+  // JobBuilder record. `upsert` is the save target for the dynamic edit flow.
+  portalJobBuilder: {
+    get: (leadId: string) => `lead/v1/${leadId}/portal-job-builder`,
+    upsert: (leadId: string) => `lead/v1/${leadId}/portal-job-builder/upsert`,
+  },
+  // My Deals list + deal detail (web parity: MyDealsView `/demo/v1/leads/sales`,
+  // DealDetailsView `/demo/v1/leads/sales/:id`). Distinct from `salesPortal`
+  // (`sales-portal`) which feeds the issued/self-gen leads panel.
+  salesDeals: 'demo/v1/leads/sales',
+  salesDealById: (id: string) => `demo/v1/leads/sales/${id}`,
+  // Addendum drafts — the DYNAMIC deal-edit wizard submits here (NOT the
+  // /job-builder POST). Mirrors web `submitJobBuilderDraft`/`sendDraftSubmitEmail`
+  // + the DealDetailsView drafts list/summary.
+  jobBuilderDraft: {
+    create: (leadId: string) => `lead/v1/${leadId}/job-builder-draft`,
+    submit: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/submit`,
+    list: (leadId: string) => `lead/v1/${leadId}/job-builder-drafts`,
+    summary: (draftId: string) => `lead/v1/job-builder-draft/${draftId}/public`,
+  },
 };
 
 export const sanitizeCalculatorPayload = (payload: any): any => {
@@ -172,6 +193,89 @@ export const LeadService = {
   getSecureUrls: (
     filePaths: { bucketName: string; filePath: string }[]
   ): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.secureUrls, { filePaths }),
+
+  // --- Portal Job Builder (deal editing) --------------------------------------
+  // Faithful port of web `src/api/portal-job-builder.js`. `getPortalJobBuilder`
+  // normalizes the response into { portalJobBuilder, documents, source } so the
+  // enrich util can decide dynamic-vs-static exactly as web does. Returns null on
+  // any error / empty payload (a lead simply may not have a portal record yet).
+  getPortalJobBuilder: async (
+    leadId: string
+  ): Promise<{ portalJobBuilder: any; documents: any; source: 'portal' | 'jobBuilder' | null } | null> => {
+    try {
+      const res = await api.get<any>(LeadEndpoints.portalJobBuilder.get(leadId));
+      const payload = res.data?.data;
+      if (!payload) return null;
+
+      const record = payload.portalJobBuilder || payload;
+      const documents = payload.documents || record.documents || null;
+
+      let source: 'portal' | 'jobBuilder' | null =
+        payload._productSource || record._productSource || null;
+      if (!source) {
+        source = record.jobBuilderId ? 'portal' : 'jobBuilder';
+      }
+
+      return { portalJobBuilder: record, documents, source };
+    } catch (err) {
+      console.warn('[LeadService] getPortalJobBuilder failed:', err);
+      return null;
+    }
+  },
+  // Create/update the PortalJobBuilder for a lead. `status:'draft'` on auto-save,
+  // `status:'submitted'` on complete. This is the ONLY write the dynamic edit flow
+  // makes — editing does NOT re-run the /job-builder POST (web parity).
+  upsertPortalJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.portalJobBuilder.upsert(leadId), payload),
+
+  // --- My Deals list + Deal Detail (web parity) -------------------------------
+  // Paginated resulted-deals list. `scheduleFilter` = 'scheduled' | 'TBD' | omitted
+  // (All). Mirrors web MyDealsView `/demo/v1/leads/sales?page&limit&scheduleFilter`.
+  getSalesDeals: (params: { page?: number; limit?: number; scheduleFilter?: string | null }): Promise<AxiosResponse<any>> => {
+    const q: Record<string, string> = {
+      page: String(params.page ?? 1),
+      limit: String(params.limit ?? 12),
+    };
+    if (params.scheduleFilter) q.scheduleFilter = params.scheduleFilter;
+    return api.get(`${LeadEndpoints.salesDeals}?${new URLSearchParams(q).toString()}`);
+  },
+  // Single deal for the Deal Detail screen (web DealDetailsView load).
+  getSalesDealById: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.salesDealById(leadId)),
+
+  // --- Dynamic deal-edit addendum draft (web parity) --------------------------
+  // Final submit of the 4-step edit wizard. Creates a pending-signature addendum
+  // draft; editing does NOT re-run the /job-builder POST or upsert the portal
+  // record. Mirrors web `submitJobBuilderDraft`.
+  submitJobBuilderDraft: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.jobBuilderDraft.create(leadId), payload),
+  // SMS/email the customer the addendum link after the draft is created.
+  sendDraftSubmitEmail: (draftId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.jobBuilderDraft.submit(draftId), payload),
+  // Addendum drafts list + a single draft's public summary (Deal Detail addendums).
+  getJobBuilderDrafts: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.jobBuilderDraft.list(leadId)),
+  getDraftSummary: (draftId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.jobBuilderDraft.summary(draftId)),
+  // "Cancel Job" from the wizard's Install Date step. Marks the lead cancelled via
+  // the job-builder endpoint (web `cancelLead`), NOT a delete/archive.
+  cancelLead: (leadId: string, leadData: any = {}): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.jobBuilder(leadId), {
+      leadData: {
+        oneLeg: leadData?.oneLeg ?? '',
+        result: 'cancelled',
+        reason: leadData?.reason ?? '',
+        lastPriceQuoted: leadData?.lastPriceQuoted ?? '',
+        originalContractPrice: leadData?.originalContractPrice ?? '',
+        downPayment: leadData?.downPayment ?? '',
+        paymentMethod: leadData?.paymentMethod ?? '',
+        balancePaymentMethod: leadData?.balancePaymentMethod ?? '',
+        balance: leadData?.balance ?? '',
+        selectedCalculatorId: leadData?.selectedCalculatorId ?? null,
+        selectedAppointmentId: leadData?.selectedAppointmentId ?? null,
+      },
+      jobState: {},
+    }),
   logEvent: (action: string, payload: any): Promise<AxiosResponse<any> | void> =>
     api.post('lead/v1/event-logs', { action, ...payload }).catch(() => {
       // Fail silently as logging is a non-critical background task

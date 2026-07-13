@@ -11,16 +11,33 @@ import { CalculatorView } from './CalculatorView';
 import { RolloutView } from './RolloutView';
 import { ResultJobModal } from './ResultJobModal';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
+import { DynamicDealEditScreen } from './DynamicDealEditScreen';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
 interface DynamicDealCenterScreenProps {
   navigation?: NativeStackNavigationProp<any>;
-  route?: { params?: { lead?: any; initialVerticalId?: string } };
+  route?: {
+    params?: {
+      lead?: any;
+      initialVerticalId?: string;
+      // 'edit' bypasses the calculator/rollout/result steps and opens the saved
+      // deal straight in the dynamic job builder (web PortalDynamicJobBuilderModal).
+      mode?: 'new' | 'edit';
+      calculatorResultData?: any;
+    };
+  };
 }
 
 export default function DynamicDealCenterScreen({ navigation, route }: DynamicDealCenterScreenProps) {
+  // Edit flow is a distinct screen (its own hooks/loading). Branch BEFORE any hook
+  // below runs — `mode` is stable for a navigated screen instance, so this keeps
+  // hook order consistent across renders.
+  if (route?.params?.mode === 'edit') {
+    return <DynamicDealEditScreen navigation={navigation} route={route} />;
+  }
+
   const lead = route?.params?.lead;
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
   const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number }>({ visible: false });

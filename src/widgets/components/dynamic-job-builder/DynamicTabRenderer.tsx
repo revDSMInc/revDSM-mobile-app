@@ -141,6 +141,10 @@ interface DynamicTabRendererProps {
   dealCenterData?: any;
   readOnly?: boolean;
   applyConditions?: boolean;
+  // Deal-edit flow (web `hideAllocationTrackers`): hide the pinned footage
+  // allocation grid + accordion tracker. Field sections already render without
+  // their own allocation UI, so this is the only allocation chrome to suppress.
+  hideAllocationTrackers?: boolean;
   verticalId?: string;
   verticalColor?: string;
   products?: any[];
@@ -835,6 +839,7 @@ export function DynamicTabRenderer({
   verticalColor = '#22c55e',
   products = [],
   schemas = [],
+  hideAllocationTrackers = false,
   leadId,
   calculatorResultData,
   customerName,
@@ -1114,7 +1119,7 @@ export function DynamicTabRenderer({
           move while the user scrolls the measurement fields. Just the tracker cards
           (no header bar, no collapse); 3 per row, wrapping. Each card shows its own
           Avail / Used / Left + status banner, matching the normal JB. */}
-      {showAllocationGrid && (
+      {!hideAllocationTrackers && showAllocationGrid && (
         <View
           className="bg-white border-b border-slate-100"
           style={{ zIndex: 50, paddingHorizontal: 8, paddingTop: 8, paddingBottom: 2 }}
@@ -1142,7 +1147,7 @@ export function DynamicTabRenderer({
       {/* FIXED footage accordion tracker — pinned below the allocation grid, same
           fixed position so it does NOT scroll. Collapsible card wrapping the same
           allocation fields for an open/close view. */}
-      {accordionItems.length > 0 && (
+      {!hideAllocationTrackers && accordionItems.length > 0 && (
         <View className="bg-white border-b border-slate-100" style={{ zIndex: 50, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 4 }}>
           {accordionItems.map(({ field, ctx }) => {
             const childFields = field.fields || [];

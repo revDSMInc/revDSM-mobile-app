@@ -90,29 +90,46 @@ function resolveExistingColorValue(field: any, colorValues: any = {}, source: an
   return undefined;
 }
 
-function hydrateFieldValue(field: any, existing: any = {}, colorValues: any = {}, dealCenterData: any = {}) {
+function hydrateFieldValue(
+  field: any,
+  existing: any = {},
+  colorValues: any = {},
+  dealCenterData: any = {},
+  preserveExisting = false
+) {
   if (!field?.id || (field.key && field.key.startsWith('_'))) return undefined;
 
+  const existingValue = resolveExistingFieldValue(field, existing);
+
   if (isFieldLocked(field)) {
+    // In edit mode the rep can override a locked (calculator-driven) field. Keep
+    // their explicit entry instead of re-resolving it from the (often stale)
+    // dealCenterData snapshot, which would silently revert the change on save.
+    if (preserveExisting && existingValue !== undefined) return existingValue;
     const locked = resolveLockedValue(field, dealCenterData);
     if (locked !== undefined && locked !== '—') return locked;
   }
 
-  const existingValue = resolveExistingFieldValue(field, existing);
   if (existingValue !== undefined) return existingValue;
 
   const defaults = buildDefaultItemFromFields([field], {}, dealCenterData);
   return defaults[field.id];
 }
 
-function hydrateFieldMap(fields: any[] = [], existing: any = {}, colorValues: any = {}, dealCenterData: any = {}) {
+function hydrateFieldMap(
+  fields: any[] = [],
+  existing: any = {},
+  colorValues: any = {},
+  dealCenterData: any = {},
+  preserveExisting = false
+) {
   const item: any = {};
   const nextColorValues = { ...(colorValues || {}) };
 
   flattenFields(fields).forEach((field) => {
     if (!field?.id || (field.key && field.key.startsWith('_'))) return;
 
-    const value = hydrateFieldValue(field, existing, nextColorValues, dealCenterData);
+    const value = hydrateFieldValue(field, existing, nextColorValues, dealCenterData, preserveExisting);
     if (value !== undefined) {
       item[field.id] = value;
     }
@@ -126,7 +143,7 @@ function hydrateFieldMap(fields: any[] = [], existing: any = {}, colorValues: an
   return { item, colorValues: nextColorValues };
 }
 
-function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any = {}) {
+function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any = {}, preserveExisting = false) {
   const next: any = {
     colorValues: { ...(tabState.colorValues || {}) },
     sectionFields: { ...(tabState.sectionFields || {}) },
@@ -150,7 +167,8 @@ function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any =
           rowFields,
           combo,
           combo.colorValues || {},
-          dealCenterData
+          dealCenterData,
+          preserveExisting
         );
         return {
           ...item,
@@ -164,7 +182,8 @@ function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any =
         headerFields,
         group.sectionState || {},
         group.sectionState?.colorValues || {},
-        dealCenterData
+        dealCenterData,
+        preserveExisting
       );
 
       next.comboGroups[section.id] = {
@@ -185,7 +204,8 @@ function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any =
         tab.combinations.fields || [],
         combo,
         combo.colorValues || {},
-        dealCenterData
+        dealCenterData,
+        preserveExisting
       );
       return {
         ...item,
@@ -201,7 +221,8 @@ function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any =
       section.fields || [],
       existingSection,
       existingSection.colorValues || {},
-      dealCenterData
+      dealCenterData,
+      preserveExisting
     );
 
     next.sectionFields[section.id] = {
@@ -214,14 +235,20 @@ function ensureTabStateShape(tabState: any = {}, tab: any, dealCenterData: any =
     flattenFields(tab.fields || []),
     tabState,
     next.colorValues,
-    dealCenterData
+    dealCenterData,
+    preserveExisting
   );
   next.colorValues = tabLevelColors.colorValues;
 
   return next;
 }
 
-export function hydrateJobStateForPersistence(jobState: any = {}, config: any, dealCenterData: any = {}) {
+export function hydrateJobStateForPersistence(
+  jobState: any = {},
+  config: any,
+  dealCenterData: any = {},
+  preserveExisting = false
+) {
   const source = jobState && typeof jobState === 'object' ? jobState : {};
   const hydrated: any = {};
 
@@ -236,7 +263,12 @@ export function hydrateJobStateForPersistence(jobState: any = {}, config: any, d
     hydrated[vertical.id] = {};
 
     (vertical.tabs || []).forEach((tab: any) => {
-      hydrated[vertical.id][tab.id] = ensureTabStateShape(verticalState[tab.id] || {}, tab, dealCenterData);
+      hydrated[vertical.id][tab.id] = ensureTabStateShape(
+        verticalState[tab.id] || {},
+        tab,
+        dealCenterData,
+        preserveExisting
+      );
     });
   });
 
@@ -452,14 +484,124 @@ function remapTabStateFromStorage(tabState: any, index: any) {
   return next;
 }
 
-export function serializeDynamicJobStateForStorage(jobState: any, config: any, dealCenterData: any = {}) {
-  const hydrated = hydrateJobStateForPersistence(jobState, config, dealCenterData);
+// ─── Pruning: drop fabricated default/empty combinations before persistence ───
+// Faithful port of web `pruneHydratedStateForStorage` & helpers. Structure is
+// preserved (verticals/tabs/sectionState/simple sections) so the builder
+// re-hydrates editable empty rows on reload; only untouched combinations are
+// removed so they are never stored as phantom products.
+
+function gridObjectHasValue(grid: any): boolean {
+  if (!grid || typeof grid !== 'object') return false;
+  return Object.values(grid).some(
+    (stories: any) =>
+      stories &&
+      typeof stories === 'object' &&
+      Object.values(stories).some((v: any) => Number(v) > 0)
+  );
+}
+
+function normalizeComparableValue(value: any): any {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number') return value === 0 ? '' : String(value);
+  return value;
+}
+
+/**
+ * A field value counts as "entered" only when it is non-empty AND differs from
+ * the field's default. Text descriptors left at their configured defaultValue are
+ * treated as not-entered; grids count only when they hold a real measurement;
+ * arrays count when non-empty.
+ */
+function isEnteredFieldValue(value: any, defaultValue: any): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === 'object') return gridObjectHasValue(value);
+  const normalized = normalizeComparableValue(value);
+  if (normalized === '') return false;
+  return normalized !== normalizeComparableValue(defaultValue);
+}
+
+/** A combination is meaningful when any of its fields (or colors) was actually entered. */
+function comboHasEnteredData(combo: any, defaults: any = {}): boolean {
+  if (!combo || typeof combo !== 'object') return false;
+  const colorValues =
+    combo.colorValues && typeof combo.colorValues === 'object' ? combo.colorValues : {};
+  const keys = new Set([...Object.keys(combo), ...Object.keys(colorValues)]);
+
+  return [...keys].some((key) => {
+    if (key === 'colorValues' || key === '_combinationNumber') return false;
+    const value = combo[key] !== undefined ? combo[key] : colorValues[key];
+    return isEnteredFieldValue(value, defaults[key]);
+  });
+}
+
+function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): any {
+  if (!tabState || typeof tabState !== 'object') return tabState;
+
+  const sections = getTabSections(tab);
+  const sectionById = new Map(sections.map((section: any) => [String(section.id), section]));
+  const next: any = { ...tabState };
+
+  if (next.comboGroups) {
+    const prunedGroups: any = {};
+    Object.entries(next.comboGroups).forEach(([sectionId, group]: [string, any]) => {
+      const section = sectionById.get(String(sectionId));
+      const defaults = section ? buildComboGroupDefaultItem(section, dealCenterData) : {};
+      const combinations = (group?.combinations || []).filter((combo: any) =>
+        comboHasEnteredData(combo, defaults)
+      );
+      prunedGroups[sectionId] = { ...group, combinations };
+    });
+    next.comboGroups = prunedGroups;
+  }
+
+  if (next.combinations) {
+    const defaults = sections[0] ? buildComboGroupDefaultItem(sections[0], dealCenterData) : {};
+    next.combinations = (next.combinations || []).filter((combo: any) =>
+      comboHasEnteredData(combo, defaults)
+    );
+  }
+
+  return next;
+}
+
+function pruneHydratedStateForStorage(hydrated: any, config: any, dealCenterData: any): any {
+  const result: any = {};
+
+  Object.keys(hydrated || {}).forEach((key) => {
+    if (ROOT_PASSTHROUGH_KEYS.has(key)) result[key] = hydrated[key];
+  });
+
+  (config?.verticals || []).forEach((vertical: any) => {
+    const verticalState = hydrated?.[vertical.id];
+    if (!verticalState) return;
+
+    const prunedVertical: any = {};
+    (vertical.tabs || []).forEach((tab: any) => {
+      if (verticalState[tab.id] === undefined) return;
+      prunedVertical[tab.id] = pruneTabStateForStorage(verticalState[tab.id], tab, dealCenterData);
+    });
+
+    result[vertical.id] = prunedVertical;
+  });
+
+  return result;
+}
+
+export function serializeDynamicJobStateForStorage(
+  jobState: any,
+  config: any,
+  dealCenterData: any = {},
+  preserveExisting = false
+) {
+  const hydrated = hydrateJobStateForPersistence(jobState, config, dealCenterData, preserveExisting);
+  const pruned = pruneHydratedStateForStorage(hydrated, config, dealCenterData);
   const index = buildConfigStorageIndex(config);
   const serialized: any = {
     _storageVersion: DYNAMIC_JOB_STATE_STORAGE_VERSION,
   };
 
-  Object.entries(hydrated).forEach(([key, value]) => {
+  Object.entries(pruned).forEach(([key, value]) => {
     if (ROOT_PASSTHROUGH_KEYS.has(key)) {
       serialized[key] = value;
       return;

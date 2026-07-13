@@ -78,7 +78,7 @@ export default function LeadsPage() {
 
   const [currentTab, setCurrentTab] = useState<'issued' | 'selfGen' | 'rehash'>('issued');
   const [issuedSubTab, setIssuedSubTab] = useState<'today' | 'tomorrow'>('today');
-  const [selfGenSubTab, setSelfGenSubTab] = useState<'today' | 'archived'>('today');
+  const [selfGenSubTab, setSelfGenSubTab] = useState<'today' | 'archived' | 'sold'>('today');
   const [searchQuery, setSearchQuery] = useState('');
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [zoneCanvasserVisible, setZoneCanvasserVisible] = useState(false);
@@ -119,6 +119,8 @@ export default function LeadsPage() {
     if (currentTab === 'issued') return { status: 'lfLead', period: issuedSubTab };
     if (currentTab === 'selfGen') {
       if (selfGenSubTab === 'archived') return { status: 'archive' };
+      // Web parity (job-list.js): the Sold sub-tab lists resulted self-gen leads.
+      if (selfGenSubTab === 'sold') return { status: 'resulted' };
       return { status: 'selfGenerated', period: 'today' };
     }
     return {};
@@ -265,13 +267,18 @@ export default function LeadsPage() {
       );
     });
 
-    // Web Parity: Always sort by time (earliest first)
+    // Web parity (job-list.js): the Archived + Sold self-gen tabs are shown
+    // as-returned by the API (not time-sorted).
+    if (currentTab === 'selfGen' && (selfGenSubTab === 'archived' || selfGenSubTab === 'sold')) {
+      return filtered;
+    }
+    // Otherwise sort by time (earliest first)
     return filtered.sort((a, b) => {
       const timeA = getScheduledDateTime(a)?.getTime() || 0;
       const timeB = getScheduledDateTime(b)?.getTime() || 0;
       return timeA - timeB;
     });
-  }, [leads, searchQuery]);
+  }, [leads, searchQuery, currentTab, selfGenSubTab]);
 
   useFocusEffect(
     useCallback(() => {
@@ -405,6 +412,7 @@ export default function LeadsPage() {
             </TouchableOpacity>
           ))}
           <TouchableOpacity
+            onPress={() => navigation.navigate('MyDeals')}
             style={{
               backgroundColor: '#EAB308',
               borderRadius: 8,
@@ -459,6 +467,11 @@ export default function LeadsPage() {
               label="Archived"
               active={selfGenSubTab === 'archived'}
               onPress={() => setSelfGenSubTab('archived')}
+            />
+            <SubTab
+              label="Sold"
+              active={selfGenSubTab === 'sold'}
+              onPress={() => setSelfGenSubTab('sold')}
             />
           </>
         ) : (
