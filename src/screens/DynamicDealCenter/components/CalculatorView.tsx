@@ -632,14 +632,16 @@ export function CalculatorView({
 
             <JobSummary entries={entries} catMeta={catMeta} />
 
-            <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(145,158,171,0.12)', padding: 14 }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#637381', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Totals</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Cost</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.cost.toFixed(2)}</Text></View>
-                <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Par</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.par.toFixed(2)}</Text></View>
-                <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Retail</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#444c97' }}>${totals.retail.toFixed(2)}</Text></View>
+            {(totals.cost > 0 || totals.par > 0 || totals.retail > 0) && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(145,158,171,0.12)', padding: 14 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#637381', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Totals</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Cost</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.cost.toFixed(2)}</Text></View>
+                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Par</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.par.toFixed(2)}</Text></View>
+                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Retail</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#444c97' }}>${totals.retail.toFixed(2)}</Text></View>
+                </View>
               </View>
-            </View>
+            )}
           </>
         )}
       </ScrollView>

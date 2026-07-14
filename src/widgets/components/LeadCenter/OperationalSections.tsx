@@ -127,13 +127,13 @@ export const ToolsSection = ({
       {/* Dynamic is now the primary Deal Center (schema-driven, backend config).
           The classic calculator stays as an inert fallback directly below — used
           when the backend hasn't published a dynamic config yet. */}
-      <ToolCard
+      {/* <ToolCard
         title="Deal Center"
         desc="Legacy calculator (fallback)"
         icon="handshake"
         onPress={onShowCalculator}
         isLoading={isCalculatorLoading}
-      />
+      /> */}
       <ToolCard
         title="Dynamic Deal Center"
         desc="Calculator & job builder"
