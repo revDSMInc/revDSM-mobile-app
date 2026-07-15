@@ -30,6 +30,19 @@ class JobService {
     return res.data?.data || res.data;
   }
 
+  /**
+   * The job already added to job tracker for an appointment (web parity:
+   * `useGetJobsByAppointment` → `GET /job-tracker/{appointmentId}`). Returns null
+   * when none exists so callers can show the "Add" vs "already added" state.
+   */
+  async getJobByAppointment(appointmentId: string): Promise<JobEntry | null> {
+    if (!appointmentId) return null;
+    const res = await api.get<any>(`/job-tracker/${appointmentId}`);
+    const data = res.data?.data ?? res.data;
+    if (!data) return null;
+    return Array.isArray(data) ? (data[0] || null) : data;
+  }
+
   async updateJob(id: string, payload: Partial<JobEntry>): Promise<JobEntry> {
     const res = await api.put<any>(`/job-tracker/${id}`, payload);
     return res.data?.data || res.data;

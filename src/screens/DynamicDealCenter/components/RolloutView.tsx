@@ -533,6 +533,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
   const drops: any[] = calculator.dropPrice || [];
+  const acceptedDrop = drops.find((d) => d.status === 'accepted');
+  const activeMethod = acceptedDrop?.paymentMethod || method;
 
   // COST/PAR/RETAIL are recomputed LIVE from the entered quantities × the current
   // schema field prices (web `getCalculationResult` parity) — NOT from the stored
@@ -562,7 +564,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       { label: 'PAR', value: tierValue('par'), isRetail: false },
       { label: 'RETAIL', value: tierValue('retail'), isRetail: true },
     ];
-  }, [liveTotals.cost, liveTotals.par, liveTotals.retail, method, plans, pricingConfig]);
+  }, [liveTotals, method, plans, pricingConfig]);
 
   const markup = useMemo(() => {
     const price = parseFloat(endPrice) || 0;
@@ -1121,8 +1123,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         visible={showChooser}
         name={calculator.title}
         price={chooserPrice}
-        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, calculator.paymentMethod); }}
-        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, calculator.paymentMethod); }}
+        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, activeMethod); }}
+        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, activeMethod); }}
         onClose={() => setShowChooser(false)}
       />
     </>

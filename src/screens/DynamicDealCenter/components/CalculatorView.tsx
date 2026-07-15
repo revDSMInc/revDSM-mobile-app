@@ -13,11 +13,14 @@ import {
 } from '../utils/field-dependency';
 import { directSectionId } from '../utils/build-all-entries';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
+import { JobTrackerButton } from './JobTrackerButton';
+import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 
 interface CalculatorTabLite {
   id: string;
   title: string;
   isRolloutConfirmed?: boolean;
+  paymentMethod?: string;
 }
 
 interface CalculatorViewProps {
@@ -43,6 +46,10 @@ interface CalculatorViewProps {
   drops?: any[];
   /** Company pricing config — the locked receipt adds the per-tier static fee (web parity). */
   pricingConfig?: PricingConfig | null;
+  /** Resolved appointment id — enables the "Add This Job to Job Tracker" button. */
+  appointmentId?: string;
+  /** Lowe's lead flag — drives the job-tracker modal's payment-method grouping. */
+  isLowesLead?: boolean;
 }
 
 type CatStyle = SchemaStyle;
@@ -61,6 +68,20 @@ const CATEGORY_STYLE_MAP: Record<string, CatStyle> = {
   additional: { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
   'additional services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
   miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
+};
+
+/**
+ * Unit suffix shown before a line-item label (web parity):
+ *  - "Number of Screen" is a plain count → NO unit ("3 Number of Screen").
+ *  - a "ft" unit (e.g. the Lighting stories) renders as the foot mark "'"
+ *    ("5' Lighting 1st Story"), never the word "ft".
+ *  - any other field falls back to the foot mark when it has no unit.
+ */
+const unitOf = (item: { unit?: string; label?: string }) => {
+  if (/number\s*of\s*screen|screen/i.test(item.label || '')) return '';
+  const unit = (item.unit || '').trim();
+  if (!unit || /^ft$/i.test(unit)) return "'";
+  return unit;
 };
 
 // Icon + color are read from the schema first (Iconify → Ionicons + hex/token
@@ -265,23 +286,34 @@ function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, on
 }
 
 /**
- * Job Summary card — mirrors the old deal center summary block: entered items
- * grouped by category with an item count. Spans every vertical the calculator
- * has entries in.
+ * Job Summary card — matches the web deal center summary block: one card with a
+ * header + item-count badge, a single row of category pills across every vertical
+ * with entries, then a FLAT list of the entered items (each row carries its own
+ * category icon/color). The items are NOT split into separate per-category
+ * sub-sections (that was the mobile-only divergence). Spans every vertical the
+ * calculator has entries in.
  */
 function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEntry>; catMeta: Record<string, { label: string; style: CatStyle }> }) {
-  const grouped = useMemo(() => {
-    const map: Record<string, CalculatorEntry[]> = {};
+  // Entered items ordered by category (so rows of the same category stay
+  // together), flattened into a single list — web parity.
+  const { items, categories } = useMemo(() => {
+    const grouped: Record<string, CalculatorEntry[]> = {};
+    const order: string[] = [];
     Object.values(entries).forEach((e) => {
       if (!e || e.inputValue <= 0) return;
       const key = e.categoryId || 'other';
-      if (!map[key]) map[key] = [];
-      map[key].push(e);
+      if (!grouped[key]) { grouped[key] = []; order.push(key); }
+      grouped[key].push(e);
     });
-    return map;
+    return {
+      items: order.flatMap((key) => grouped[key]),
+      categories: order,
+    };
   }, [entries]);
 
-  const totalItems = Object.values(grouped).reduce((n, items) => n + items.length, 0);
+  const metaFor = (catId: string) =>
+    catMeta[catId] || { label: catId, style: { color: '#637381', icon: 'list', bg: '#F4F6F8' } };
+  const totalItems = items.length;
 
   return (
     <View style={{ marginBottom: 24, backgroundColor: '#F8F7FF', borderRadius: 32, borderWidth: 1, borderColor: '#E5D9FF' }}>
@@ -300,38 +332,44 @@ function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEn
         </View>
       </View>
 
-      <View style={{ paddingHorizontal: 20 }}>
+      <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
         {totalItems === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 24, paddingBottom: 32 }}>
             <Ionicons name="cube-outline" size={30} color="#CBD5E1" />
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginTop: 8 }}>No items yet — enter values above</Text>
           </View>
         ) : (
-          Object.entries(grouped).map(([catId, items]) => {
-            const meta = catMeta[catId] || { label: catId, style: { color: '#637381', icon: 'list', bg: '#F4F6F8' } };
-            return (
-              <View key={catId} style={{ marginBottom: 24 }}>
-                <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: meta.style.bg }}>
-                    <Ionicons name={meta.style.icon} size={14} color={meta.style.color} />
-                    <Text style={{ marginLeft: 8, fontSize: 10, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+          <>
+            {/* All category pills in a single row (web parity) */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              {categories.map((catId) => {
+                const meta = metaFor(catId);
+                return (
+                  <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: meta.style.bg }}>
+                    <Ionicons name={meta.style.icon} size={13} color={meta.style.color} />
+                    <Text style={{ marginLeft: 6, fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
                   </View>
-                </View>
-                <View style={{ gap: 12 }}>
-                  {items.map((item) => (
-                    <View key={item.fieldId} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#F4F6F8' }}>
-                      <View style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 16, backgroundColor: meta.style.bg }}>
-                        <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>{item.inputValue}{item.unit || "'"} {item.label}</Text>
-                      </View>
+                );
+              })}
+            </View>
+
+            {/* Flat list of entered items */}
+            <View style={{ gap: 12 }}>
+              {items.map((item) => {
+                const meta = metaFor(item.categoryId || 'other');
+                return (
+                  <View key={item.fieldId} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#F4F6F8' }}>
+                    <View style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 16, backgroundColor: meta.style.bg }}>
+                      <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                     </View>
-                  ))}
-                </View>
-              </View>
-            );
-          })
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>{item.inputValue}{unitOf(item)} {item.label}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </>
         )}
       </View>
     </View>
@@ -343,14 +381,14 @@ function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEn
  * center `LockedCalculatorView` (`CalculatorForm.tsx`). Rendered instead of the
  * editable category list once a tab's rollout price is confirmed (`readOnly`).
  */
-function LockedCalculatorView({ name, entries, totals, catMeta, price, drops, pricingConfig }: {
+function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals }: {
   name: string;
   entries: Record<string, CalculatorEntry>;
-  totals: CalculatorTotals;
   catMeta: Record<string, { label: string; style: CatStyle }>;
   price: number;
   drops: any[];
   pricingConfig?: PricingConfig | null;
+  verticals: CalculatorSchema[];
 }) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -374,8 +412,13 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops, pr
 
   const visibleItems = selectedCat ? items.filter((it) => it.categoryId === selectedCat) : items;
 
+  const liveTotals = useMemo(
+    () => computeCalculatorTiers(entries, verticals, pricingConfig),
+    [entries, verticals, pricingConfig],
+  );
+
   // $200 job-minimum floor per tile (only once there's a real retail total).
-  const floorTier = (v: number) => (totals.retail > 0 && v < 200 ? 200 : v);
+  const floorTier = (v: number) => (liveTotals.retail > 0 && v < 200 ? 200 : v);
   // Web `calculateResultUtil` adds the per-tier static company fee (e.g. a par-only
   // fee) on top of the stored pure `totals` before the floor — the same fee applied
   // in the rollout tiles. (Bank-fee gross-up for `check` is 0; a financing method
@@ -383,9 +426,9 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops, pr
   const withFee = (v: number, key: 'cost' | 'par' | 'retail') =>
     applyFeesToTier(v, key, pricingConfig, { hasLineItems: v > 0 });
   const tiers = [
-    { label: 'COST', value: floorTier(withFee(totals.cost, 'cost')), isRetail: false },
-    { label: 'PAR', value: floorTier(withFee(totals.par, 'par')), isRetail: false },
-    { label: 'RETAIL', value: floorTier(withFee(totals.retail, 'retail')), isRetail: true },
+    { label: 'COST', value: floorTier(withFee(liveTotals.cost, 'cost')), isRetail: false },
+    { label: 'PAR', value: floorTier(withFee(liveTotals.par, 'par')), isRetail: false },
+    { label: 'RETAIL', value: floorTier(withFee(liveTotals.retail, 'retail')), isRetail: true },
   ];
 
   const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
@@ -443,7 +486,7 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops, pr
                     <Ionicons name={style.icon} size={18} color={style.color} />
                   </View>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                    <Text style={{ fontWeight: '900' }}>{item.value}{item.unit || "'"}</Text>{'  '}{item.label}
+                    <Text style={{ fontWeight: '900' }}>{item.value}{unitOf(item)}</Text>{'  '}{item.label}
                   </Text>
                 </View>
               </View>
@@ -498,10 +541,11 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops, pr
 }
 
 export function CalculatorView({
-  verticals, entries, onEntryChange, totals, readOnly = false,
+  verticals, entries, onEntryChange, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
-  price = 0, drops = [], pricingConfig,
+  price = 0, drops = [], appointmentId, isLowesLead = false,pricingConfig,
 }: CalculatorViewProps) {
+  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; tabId: string; name: string }>({ visible: false, tabId: '', name: '' });
   const [selectedVerticalId, setSelectedVerticalId] = useState<string | undefined>(verticals[0]?.id);
@@ -616,11 +660,11 @@ export function CalculatorView({
           <LockedCalculatorView
             name={tabs.find((t) => t.id === activeTabId)?.title || 'Calculator'}
             entries={entries}
-            totals={totals}
             catMeta={catMeta}
             price={price}
             drops={drops}
             pricingConfig={pricingConfig}
+            verticals={verticals}
           />
         ) : (
           <>
@@ -647,15 +691,17 @@ export function CalculatorView({
 
             <JobSummary entries={entries} catMeta={catMeta} />
 
-            {(totals.cost > 0 || totals.par > 0 || totals.retail > 0) && (
-              <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(145,158,171,0.12)', padding: 14 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#637381', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Totals</Text>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Cost</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.cost.toFixed(2)}</Text></View>
-                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Par</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.par.toFixed(2)}</Text></View>
-                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Retail</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#444c97' }}>${totals.retail.toFixed(2)}</Text></View>
-                </View>
-              </View>
+            {/* Add This Job to Job Tracker — web parity (rendered under the Job
+                Summary in the editable calculator view, hidden when locked). */}
+            {appointmentId && (
+              <JobTrackerButton
+                appointmentId={appointmentId}
+                calculatorId={activeTabId}
+                title={activeTab?.title}
+                endPrice={price}
+                paymentMethod={activeTab?.paymentMethod}
+                isLowesLead={isLowesLead}
+              />
             )}
           </>
         )}

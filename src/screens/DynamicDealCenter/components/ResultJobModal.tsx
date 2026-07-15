@@ -16,6 +16,20 @@ import { FlashMessage } from '../../../config/message';
 
 const ONE_LEG_OPTIONS = ['No', 'MR', 'MRS'];
 
+/**
+ * Unit suffix shown before a line-item label (web parity):
+ *  - "Number of Screen" is a plain count → NO unit ("3 Number of Screen").
+ *  - a "ft" unit (e.g. the Lighting stories) renders as the foot mark "'"
+ *    ("5' Lighting 1st Story"), never the word "ft".
+ *  - any other field falls back to the foot mark when it has no unit.
+ */
+const unitOf = (item: { unit?: string; label?: string }) => {
+  if (/number\s*of\s*screen|screen/i.test(item.label || '')) return '';
+  const unit = (item.unit || '').trim();
+  if (!unit || /^ft$/i.test(unit)) return "'";
+  return unit;
+};
+
 // Same 19 reasons the regular outcome flow uses (ResultViews.tsx demoReasons).
 // These stay STATIC intentionally: demo/result reasons have NO backend endpoint
 // on either platform — the web hardcodes them everywhere too. Payment plans and
@@ -385,7 +399,7 @@ export function ResultJobModal({
                           <Ionicons name="cube" size={14} color="#637381" />
                         </View>
                         <Text style={{ fontSize: 13, fontWeight: '700', color: '#1C252E', flex: 1 }}>
-                          {item.inputValue}{item.unit || "'"} {item.label}
+                          {item.inputValue}{unitOf(item)} {item.label}
                         </Text>
                       </View>
                     ))}
