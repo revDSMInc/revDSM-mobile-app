@@ -73,10 +73,10 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
 
   const panX = useRef(new Animated.Value(0)).current;
   const panY = useRef(new Animated.Value(0)).current;
-  
+
   // Track layouts of all tabs
   const layouts = useRef<{ x: number; width: number }[]>([]);
-  
+
   // Array of Animated.Values to shift other tabs smoothly
   const shiftAnims = useRef<Animated.Value[]>([]);
 
@@ -213,7 +213,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
         if (draggedLayout) {
           const scrollDelta = scrollXRef ? (scrollXRef.current - initialScrollX.current) : 0;
           const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx + scrollDelta;
-          
+
           let minDistance = Infinity;
           for (let i = 0; i < calculators.length; i++) {
             const layout = layouts.current[i];
@@ -241,7 +241,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           panX.setValue(0);
           panY.setValue(0);
           shiftAnims.current.forEach(anim => anim.setValue(0));
-          
+
           onReorder(updated, newActiveIdx >= 0 ? newActiveIdx : 0);
         } else {
           Animated.parallel([

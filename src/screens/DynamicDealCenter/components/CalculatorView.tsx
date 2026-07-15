@@ -543,7 +543,7 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
 export function CalculatorView({
   verticals, entries, onEntryChange, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
-  price = 0, drops = [], appointmentId, isLowesLead = false,pricingConfig,
+  price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig,
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
@@ -720,8 +720,8 @@ export function CalculatorView({
               onContentSizeChange={(w) => setContentWidth(w)}
               onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
               scrollEventThrottle={16}
-              style={{ overflow: isDragging ? 'visible' : 'hidden' }}
-              contentContainerStyle={{ alignItems: 'center' }}
+              style={{ flex: 1, overflow: isDragging ? 'visible' : 'hidden' }}
+              contentContainerStyle={{ alignItems: 'center', paddingHorizontal: 16 }}
             >
               <HorizontalDraggableTabs
                 calculators={tabCalcs}
@@ -734,29 +734,11 @@ export function CalculatorView({
                 scrollXRef={scrollXRef}
                 getIsDuplicate={() => false}
               />
-              <View style={{ width: 40 }} />
+              <View style={{ width: "150%", backgroundColor: 'red' }} />
             </ScrollView>
-
-            {/* Left progressive fade overlay */}
-            {!isDragging && scrollOffset > 5 && (
-              <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
-                {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
-                  <View key={`left-fade-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
-                ))}
-              </View>
-            )}
-
-            {/* Right progressive fade overlay */}
-            {!isDragging && scrollOffset + scrollViewWidth < contentWidth - 5 && (
-              <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
-                {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
-                  <View key={`right-fade-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
-                ))}
-              </View>
-            )}
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {onAddTab && (
               <TouchableOpacity onPress={onAddTab} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="add" size={24} color="#1C252E" />
