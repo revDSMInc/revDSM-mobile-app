@@ -18,8 +18,33 @@ import {
   planBelowMin,
   belowMinMsg,
 } from '../hooks/useDealPricing';
+import {
+  endPriceError as computeEndPriceError,
+  effectiveCostOf as computeEffectiveCost,
+  floorTier as computeFloorTier,
+  computeRolloutResult,
+  computeCalculatorTiers,
+  screensCountFromEntries,
+  markupLabel,
+  WELLS_FARGO_HIGH_KEYS,
+  WF_HIGH_MIN_PRICE,
+} from '../utils/dynamic-rollout-pricing';
+import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
 
-const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString()}`;
+/**
+ * Format a field's unit for the entered-item rows:
+ *   ft/feet  → `'`   ("1ft ..." → "1' ...")
+ *   in/inch  → `"`
+ *   ea/each  → ``    (a countable unit shows no suffix: "1ea Number of screens" → "1 Number of screens")
+ * Anything else (sqft, lf, …) renders verbatim.
+ */
+const formatUnit = (unit?: string): string => {
+  const u = (unit || '').toLowerCase().trim();
+  if (u === 'ft' || u === 'feet' || u === "'") return "'";
+  if (u === 'in' || u === 'inch' || u === 'inches' || u === '"') return '"';
+  if (u === 'ea' || u === 'each' || u === 'unit' || u === 'units' || u === 'qty' || u === 'pcs' || u === 'pc') return '';
+  return unit || '';
+};
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -31,30 +56,24 @@ const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?
  * bumps any priced job to $200 **INDEPENDENTLY per tier**, so a tiny job can read
  * $200 across all three. Gated on the calc having items (`retail > 0`).
  */
-const floorTier = (value: number, hasItems: boolean) =>
-  hasItems && value < 200 ? 200 : value;
+const floorTier = computeFloorTier;
 
 /**
  * The calculator's cost with the $200 job-minimum floor applied — the value the
  * end price / drop price is validated against.
  */
 function effectiveCostOf(calc: CalculatorTab): number {
-  return floorTier(calc.totals?.cost || 0, (calc.totals?.retail || 0) > 0);
+  return computeEffectiveCost(calc.totals);
 }
 
 /**
  * Most-specific reason an end price is invalid (else null) — below the (floored)
- * cost, then below the selected plan's own minimum. Minimum-price-driven exactly
- * like the web (`validatePriceForPaymentMethod`), so no Wells-Fargo-high special
- * case is needed: a plan's `minPrice` (e.g. 7,500) is the single source of truth.
+ * cost, then the Wells-Fargo-high $7,500 hardcoded floor (web safety net), then
+ * the selected plan's own minimum. Strings match the web app exactly. Delegates
+ * to the unit-tested `dynamic-rollout-pricing` module.
  */
 function endPriceError(plans: Record<string, DealPlan>, price: number, calc: CalculatorTab, method: string): string | null {
-  if (price <= 0) return null;
-  const cost = effectiveCostOf(calc);
-  if (price < cost) return `Price cannot be less than cost (${fmtMoney(cost)})`;
-  const min = plans[method]?.minPrice || 0;
-  if (min && price < min) return `This plan requires a minimum price of ${fmtMoney(min)}.`;
-  return null;
+  return computeEndPriceError(plans, price, calc.totals, method);
 }
 
 interface CalculatorTab {
@@ -72,8 +91,11 @@ interface CalculatorTab {
 
 interface RolloutViewProps {
   calculators: CalculatorTab[];
-  /** All configured verticals — used to label the quote-card category pills. */
+  /** All configured verticals — used to label the quote-card category pills AND to
+   *  recompute the COST/PAR/RETAIL tiles live from the schema field prices. */
   verticals?: CalculatorSchema[];
+  /** Company pricing config (tier derivation + static fees) for the tile recompute. */
+  pricingConfig?: PricingConfig | null;
   /** Backend-driven payment plans + discount config (static fallback). */
   pricing: DealPricing;
   /** Lowe's leads get the Lowe's-only plan groups + `lowes_ach` default. */
@@ -474,11 +496,13 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
   pricing: DealPricing;
+  verticals: CalculatorSchema[];
+  pricingConfig?: PricingConfig | null;
   onPriceChange: (id: string, price: number) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
@@ -510,21 +534,35 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
   const drops: any[] = calculator.dropPrice || [];
 
-  // COST/PAR/RETAIL each reflect the selected payment plan (fee-inflated via
-  // `withPlanFee`) AND the $200 job-minimum floor — mirroring `calculateResultUtil`
-  // exactly, where every tier runs through the same `price < 200 → 200` clamp
-  // independently (fee gross-up first, then the floor). So on a tiny job all three
-  // read $200; once a tier's own fee-inflated basis clears $200 it grows normally.
-  // This is why "if cost is 200, par and retail are according to 200, not the raw
-  // price of the selected items".
+  // COST/PAR/RETAIL are recomputed LIVE from the entered quantities × the current
+  // schema field prices (web `getCalculationResult` parity) — NOT from the stored
+  // `calculator.totals`, which for a blank-tier schema (only retail priced) carried
+  // par/cost = 0 and floored every tile to $200. `computeCalculatorTiers` resolves
+  // each tier via the company pricing config's derivation rules (par/cost derived
+  // from retail) as a PURE tier sum (this mirrors web's stored `totals`, which are
+  // pre-fee — DealCenterContext `computeTotals`).
+  const liveTotals = useMemo(
+    () => computeCalculatorTiers(calculator.entries, verticals, pricingConfig),
+    [calculator.entries, verticals, pricingConfig],
+  );
+  // The DISPLAYED tile then reproduces web `calculateResultUtil` EXACTLY, per tier:
+  //   pure tier sum  →  applyFeesToTier (static company fee, e.g. a par-only fee)
+  //   →  withPlanFee (bank-fee gross-up for the selected plan)  →  $200 floor.
+  // Applying the static fee here (not inside the sum) matches web: web stores pure
+  // totals and adds the tier fee only at render, so e.g. PAR shows `sum + parFee`
+  // (this closed the mobile↔web PAR gap where mobile showed the raw sum).
   const tiers = useMemo(() => {
-    const hasItems = calculator.totals.retail > 0;
+    const hasItems = liveTotals.retail > 0;
+    const tierValue = (key: 'cost' | 'par' | 'retail') => {
+      const withFee = applyFeesToTier(liveTotals[key], key, pricingConfig, { hasLineItems: liveTotals[key] > 0 });
+      return floorTier(withPlanFee(plans, withFee, method), hasItems);
+    };
     return [
-      { label: 'COST', value: floorTier(withPlanFee(plans, calculator.totals.cost, method), hasItems), isRetail: false },
-      { label: 'PAR', value: floorTier(withPlanFee(plans, calculator.totals.par, method), hasItems), isRetail: false },
-      { label: 'RETAIL', value: floorTier(withPlanFee(plans, calculator.totals.retail, method), hasItems), isRetail: true },
+      { label: 'COST', value: tierValue('cost'), isRetail: false },
+      { label: 'PAR', value: tierValue('par'), isRetail: false },
+      { label: 'RETAIL', value: tierValue('retail'), isRetail: true },
     ];
-  }, [calculator.totals.cost, calculator.totals.par, calculator.totals.retail, method, plans]);
+  }, [liveTotals.cost, liveTotals.par, liveTotals.retail, method, plans, pricingConfig]);
 
   const markup = useMemo(() => {
     const price = parseFloat(endPrice) || 0;
@@ -539,11 +577,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   }, [endPrice, tiers]);
 
   const categoryChips = useMemo(() => {
-    const cats = new Set<string>();
-    // Only categories with an entered value (entries now hold the full seeded
-    // field list, so untouched fields must be excluded).
-    Object.values(calculator.entries || {}).forEach((e: any) => { if (e?.categoryId && e.inputValue > 0) cats.add(e.categoryId); });
-    return Array.from(cats);
+    // Count of entered line items per category — the pill shows "Gutters (10)".
+    // Only categories with an entered value (entries hold the full seeded field
+    // list, so untouched fields must be excluded).
+    const counts: Record<string, number> = {};
+    const order: string[] = [];
+    Object.values(calculator.entries || {}).forEach((e: any) => {
+      if (e?.categoryId && e.inputValue > 0) {
+        if (counts[e.categoryId] === undefined) order.push(e.categoryId);
+        counts[e.categoryId] = (counts[e.categoryId] || 0) + 1;
+      }
+    });
+    return order.map((id) => ({ id, count: counts[id] }));
   }, [calculator.entries]);
 
   // Entered line-items, grouped by category (mirrors the old mobile locked view).
@@ -560,23 +605,41 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const finalPrice = drops.length ? drops[drops.length - 1].price : (calculator.price || priceNum);
 
   // ── Result-section values (mirror the regular rollout, CalculatorSummary.tsx:422-429) ──
-  // Shown live once a valid end price is entered. Schema-driven calcs have no
-  // dedicated "check to installers" screens field yet → screensCount is 0, so
-  // "End Price w/ Screens" equals the end price. MSRP grosses the price up by the
-  // Sr+Vet % + pre-order discount (both from the backend discount config), then
-  // each program subtracts its discounts.
+  // Shown live once a valid end price is entered. Computed via the unit-tested
+  // `computeRolloutResult`: MSRP/programs are DATA-DRIVEN from the backend discount
+  // config when present (web parity — includeInMsrp sum, per-program linked
+  // discounts, ≥100% clamp), else the pre-order + Sr/Vet two-program fallback.
+  // Screens (`number_of_screen`) fold into End-Price-w/-Screens + MSRP; the
+  // financing monthly base is endPrice − downPayment (excludes screens), per web.
   const discountPct = calculator.discountPercentage || pricing.defaultPreOrder;
   const seniorVetPct = pricing.seniorVetPct;
   const isDefaultDiscount = !!user?.defaultPercentage && user.defaultPercentage === discountPct;
-  const screensCount = 0;
-  const priceWithScreens = (priceNum > 0 ? priceNum : tiers[2].value) + screensCount * 75;
-  const msrp = priceWithScreens / (1 - (discountPct + seniorVetPct) / 100);
+  const screensCount = screensCountFromEntries(calculator.entries);
+  const downPay = calculator.downPayment || 0;
+  const rolloutResult = useMemo(
+    () =>
+      computeRolloutResult({
+        endPrice: priceNum > 0 ? priceNum : tiers[2].value,
+        screensCount,
+        discountConfig: pricing.discountConfig,
+        discountPct,
+        seniorVetPct,
+        downPayment: downPay,
+        plan: plans[method],
+      }),
+    [priceNum, tiers, screensCount, pricing.discountConfig, discountPct, seniorVetPct, downPay, plans, method],
+  );
+  const priceWithScreens = rolloutResult.priceWithScreens;
+  const msrp = rolloutResult.msrp;
+  // Map the (fallback or config) programs onto the two-box layout: highlighted =
+  // In-Home Pre-Order, the other = 1-Year Program.
+  const inHomeProgram = rolloutResult.programs.find((p) => p.isHighlighted) || rolloutResult.programs[rolloutResult.programs.length - 1];
+  const oneYearProgram = rolloutResult.programs.find((p) => !p.isHighlighted) || rolloutResult.programs[0];
+  const oneYearGrandTotal = oneYearProgram?.grandTotal ?? msrp;
+  const preOrderGrandTotal = inHomeProgram?.grandTotal ?? msrp;
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
-  const oneYearGrandTotal = msrp - srVetDiscount;
-  const preOrderGrandTotal = msrp - srVetDiscount - preOrderDiscountVal;
-  const downPay = calculator.downPayment || 0;
-  const preOrderMonthly = calcMonthly(plans, preOrderGrandTotal - downPay, method);
+  const preOrderMonthly = rolloutResult.monthly;
   // Before lock: the breakdown auto-shows as soon as a valid end price is entered.
   // After lock: it's collapsed behind the end-price box's chevron (web parity —
   // `(price>0 && !error && !confirmed) || (confirmed && isRolloutExpanded)`).
@@ -604,10 +667,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
 
   const commitDownPayment = () => {
     let v = parseFloat(downText) || 0;
-    // Web parity (PremiumQuoteCard): a down payment can't exceed the end price.
-    if (priceNum > 0 && v > priceNum) {
-      FlashMessage.warning('Down payment', `Down payment cannot be greater than the end price (${fmt(priceNum)}).`);
-      v = priceNum;
+    // Web parity (PremiumQuoteCard `validatedDownPaymentChange`): a down payment
+    // can't exceed the end price. The cap reference is `rolloutPrice || calculator.price`,
+    // so it still applies when the end price was persisted but not re-typed this session.
+    const cap = priceNum > 0 ? priceNum : (calculator.price || 0);
+    if (cap > 0 && v > cap) {
+      FlashMessage.warning('Down payment', `Down payment cannot be greater than the end price (${fmt(cap)}).`);
+      v = cap;
       setDownText(String(v));
     }
     onDownPaymentChange(calculator.id, v);
@@ -631,6 +697,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const cost = effectiveCostOf(calculator);
     if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price cannot be less than cost (${fmt(cost)})`); return; }
     if (priceNum > 0 && v > priceNum) { FlashMessage.error('Invalid drop price', `Drop price cannot exceed rollout end price (${fmt(priceNum)})`); return; }
+    // Wells Fargo "high" $7,500 hardcoded floor (web `handleAddDrop`) — enforced
+    // even if the backend plan omits minPrice.
+    if (WELLS_FARGO_HIGH_KEYS.includes(method) && v < WF_HIGH_MIN_PRICE) {
+      FlashMessage.error('Invalid drop price', `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`);
+      return;
+    }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
     setPendingDrop(v);
@@ -644,7 +716,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // open the Result Lead outcome modal carrying the drop price.
   const secureDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
     const cleared = drops.map((d) => (d.status === 'accepted' ? { ...d, status: 'declined' } : d));
-    onDropChange(calculator.id, [...cleared, { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', ...data }]);
+    // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
+    // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
+    const pricemarkup = markupLabel(pendingDrop, calculator.totals);
+    onDropChange(calculator.id, [...cleared, { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data }]);
     setShowDropModal(false);
     setShowDropInput(false);
     // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
@@ -655,7 +730,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // Decline the pending drop → record it declined (web shows a "Price Declined"
   // confirmation; the drop then lists as Declined and Result Lead stays available).
   const declineDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
-    onDropChange(calculator.id, [...drops, { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', ...data }]);
+    const pricemarkup = markupLabel(pendingDrop, calculator.totals);
+    onDropChange(calculator.id, [...drops, { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', pricemarkup, ...data }]);
     setShowDropModal(false);
     setShowDropInput(false);
     FlashMessage.warning('Price declined', `${fmt(pendingDrop)} was recorded as a declined price.`);
@@ -715,12 +791,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         {/* 3. Category pills */}
         {categoryChips.length > 0 && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-            {categoryChips.map((catId) => {
+            {categoryChips.map(({ id: catId, count }) => {
               const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
               return (
                 <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
                   <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label} ({count})</Text>
                 </View>
               );
             })}
@@ -738,7 +814,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                 </View>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{item.unit || "'"}</Text>{'  '}{item.label}
+                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{formatUnit(item.unit)}</Text>{'  '}{item.label}
                 </Text>
               </View>
             </View>
@@ -1053,7 +1129,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -1197,6 +1273,8 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
               categoryMeta={categoryMeta}
               isLowesLead={isLowesLead}
               pricing={pricing}
+              verticals={verticals || []}
+              pricingConfig={pricingConfig}
               onPriceChange={(id, price) => {
                 setPrices((p) => ({ ...p, [id]: price }));
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };

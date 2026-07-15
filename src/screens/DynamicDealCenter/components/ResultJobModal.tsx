@@ -21,7 +21,9 @@ const ONE_LEG_OPTIONS = ['No', 'MR', 'MRS'];
 // on either platform — the web hardcodes them everywhere too. Payment plans and
 // discount tiers are the only dynamic (backend-driven) data (see useDealPricing).
 const DEMO_REASONS = [
-  "Can't Afford", 'Didn’t Like', 'DIY', 'Lowes Demo', 'Lowes Pending Sale',
+  // Straight apostrophe in "Didn't Like" to match the web reason string byte-for-byte
+  // (web uses U+0027); a curly apostrophe would fork the persisted/reported reason.
+  "Can't Afford", "Didn't Like", 'DIY', 'Lowes Demo', 'Lowes Pending Sale',
   'Lowes Rehash', 'Moving', 'No Job', 'No Need / Want', 'No Snap Decision',
   'Other Projects', 'Rental Property', 'Rushed - No Time', 'Shop Around',
   'Talk to Spouse', 'Think About It', 'Too Much Money', 'Would Not Commit',
@@ -46,6 +48,8 @@ interface ResultJobModalProps {
     resultType: 'sale' | 'demo';
     oneLeg?: string;
     contractPrice?: number;
+    /** Demo only: the last price quoted (web `lastPriceQuoted`), previously dropped on mobile. */
+    lastPriceQuoted?: number;
     downPayment?: number;
     balance?: number;
     downPaymentMethod?: string;
@@ -232,10 +236,13 @@ export function ResultJobModal({
     [entries]
   );
 
+  // Web `isFormValid` (result-lead-modal.js): a Sale needs a contract price AND a
+  // balance payment method; a Demo needs a reason AND a last price quoted > 0.
   const buildDisabled =
     !resultType ||
-    (resultType === 'demo' && (!demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()))) ||
-    (resultType === 'sale' && !(contractNum > 0));
+    (resultType === 'demo' &&
+      (!demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()) || !(contractNum > 0))) ||
+    (resultType === 'sale' && (!(contractNum > 0) || !balancePaymentMethod));
 
   const handleBuild = () => {
     if (resultType === 'sale' && downNum > contractNum) {
@@ -246,6 +253,9 @@ export function ResultJobModal({
       resultType,
       oneLeg,
       contractPrice: resultType === 'sale' ? contractNum || undefined : undefined,
+      // Demo persists the last price quoted (web parity) — the read-only value shown
+      // in the demo branch; previously dropped so the demo outcome saved an empty price.
+      lastPriceQuoted: resultType === 'demo' ? contractNum || undefined : undefined,
       downPayment: resultType === 'sale' ? downNum || undefined : undefined,
       balance: resultType === 'sale' ? balance : undefined,
       downPaymentMethod: downPaymentMethod || undefined,

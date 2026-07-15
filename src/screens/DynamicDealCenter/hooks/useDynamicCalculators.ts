@@ -5,6 +5,7 @@ import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../typ
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
 import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
+import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename } from '../../../utils/activity-log/calculator-log';
 
 /**
  * Persistence hook for the Dynamic Deal Center calculators — the schema-driven
@@ -157,6 +158,17 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
   }
 }
 
+/** Inherited defaults / lineage seeded onto a new or duplicated calculator (web parity). */
+interface CreateExtra {
+  /** user.defaultPercentage (web `addTab` seeds this when set). */
+  discountPercentage?: number;
+  /** Lowe's → lowes_ach, else user.defaultPaymentMethod (web addTab). */
+  paymentMethod?: string;
+  paymentMethodLabel?: string;
+  /** Duplicate lineage — the source calculator's backend id (web `handleDuplicateSubmit`). */
+  originalCalculatorId?: string;
+}
+
 async function createRemoteTab(
   appointmentId: string,
   title: string,
@@ -164,7 +176,8 @@ async function createRemoteTab(
   leadId: string | undefined,
   enteredBy: string | undefined,
   schemas: CalculatorSchema[],
-  position: number
+  position: number,
+  extra: CreateExtra = {}
 ): Promise<CalcTab | null> {
   try {
     // Web parity: a new calculator is seeded with the FULL flattened field list
@@ -181,6 +194,11 @@ async function createRemoteTab(
       leadId,
       enteredBy,
       enteredAt: new Date().toISOString(),
+      // Web parity (tab-action-utils.js:48-60 / 166-188): inherited rep defaults +
+      // duplicate lineage. Only sent when present so we don't clobber with blanks.
+      ...(extra.discountPercentage != null ? { discountPercentage: extra.discountPercentage } : {}),
+      ...(extra.paymentMethod ? { paymentMethod: extra.paymentMethod, paymentMethodLabel: extra.paymentMethodLabel } : {}),
+      ...(extra.originalCalculatorId ? { originalCalculatorId: extra.originalCalculatorId } : {}),
     });
     const c = res.data?.data || res.data;
     const id = c?._id || c?.id;
@@ -192,6 +210,8 @@ async function createRemoteTab(
       entries: c.entries ? mergeFullEntries(parseEntries(c.entries), schemas) : seeded,
       totals: c.totals || totals,
       persisted: true,
+      paymentMethod: extra.paymentMethod || c.paymentMethod,
+      discountPercentage: extra.discountPercentage ?? c.discountPercentage,
     };
   } catch {
     return null;
@@ -200,6 +220,17 @@ async function createRemoteTab(
 
 export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = []) {
   const { user } = useAuth();
+
+  // Web parity (tab-action-utils.js:48-60): a newly-created/duplicated calculator
+  // inherits the rep's default discount % and payment method (Lowe's → lowes_ach).
+  const inheritedDefaults = useCallback((): CreateExtra => {
+    const isLowesLead = lead?.lowesLead === true;
+    const paymentMethod = isLowesLead ? 'lowes_ach' : (user?.defaultPaymentMethod || undefined);
+    return {
+      ...(user?.defaultPercentage ? { discountPercentage: Number(user.defaultPercentage) } : {}),
+      ...(paymentMethod ? { paymentMethod } : {}),
+    };
+  }, [lead?.lowesLead, user?.defaultPaymentMethod, user?.defaultPercentage]);
 
   const [tabs, setTabs] = useState<CalcTab[]>([
     { id: 'local-1', title: '1', entries: {}, totals: { ...ZERO } },
@@ -446,6 +477,8 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const handleEntryChange = useCallback(
     (fieldId: string, entry: CalculatorEntry) => {
       setTabs((prev) => {
+        const prevActive = prev.find((t) => t.id === activeTabId);
+        const oldEntry = prevActive?.entries?.[fieldId] as any;
         const updated = prev.map((t) => {
           if (t.id !== activeTabId) return t;
           const entries = { ...t.entries, [fieldId]: entry };
@@ -456,27 +489,55 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
         if (active) {
           tabsRef.current = retitled; // let the debounced flush read this immediately
           markDirty(active.id);
+          // Web parity (DealCenterContext.js:218-234): log the field change. Only
+          // when the value actually changed, so re-renders don't spam events.
+          const e = entry as any;
+          if (enteredBy && (oldEntry?.inputValue ?? '') !== (e?.inputValue ?? '')) {
+            logCalculatorFieldEntry({
+              userId: enteredBy,
+              calculatorId: (active as any).calculatorId || active.id,
+              appointmentId: (active as any).appointmentId,
+              calculatorTitle: active.title,
+              fieldLabel: e?.label,
+              fieldValue: e?.inputValue,
+              fieldCategory: e?.categoryId,
+              oldValue: oldEntry?.inputValue ?? '',
+              newValue: e?.inputValue,
+              leadId: leadId || undefined,
+            }).catch(() => {});
+          }
         }
         return retitled;
       });
     },
-    [activeTabId, retitle, markDirty]
+    [activeTabId, retitle, markDirty, enteredBy, leadId]
   );
 
   const handleAddTab = useCallback(async () => {
     const placeholder = String(tabs.length + 1);
     if (appointmentId) {
-      const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, tabs.length + 1);
+      const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, tabs.length + 1, inheritedDefaults());
       if (created) {
         setTabs((p) => retitle([...p, created]));
         setActiveTabId(created.id);
+        // Web parity (tab-action-utils.js:62): calculator_created activity event.
+        if (enteredBy) {
+          logCalculatorCreated({
+            userId: enteredBy,
+            calculatorId: (created as any).calculatorId || created.id,
+            appointmentId: appointmentId,
+            calculatorTitle: created.title,
+            calculatorPosition: tabs.length + 1,
+            leadId: leadId || undefined,
+          }).catch(() => {});
+        }
         return;
       }
     }
     const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries: buildAllEntriesMap(schemasRef.current), totals: { ...ZERO } };
     setTabs((p) => retitle([...p, local]));
     setActiveTabId(local.id);
-  }, [tabs.length, appointmentId, leadId, enteredBy, retitle]);
+  }, [tabs.length, appointmentId, leadId, enteredBy, retitle, inheritedDefaults]);
 
   const handleDuplicateTab = useCallback(
     async (tabId: string) => {
@@ -486,7 +547,11 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       // Copy the source's full entries (back-filled from schema so nothing is lost).
       const entries = mergeFullEntries(JSON.parse(JSON.stringify(source.entries)), schemasRef.current);
       if (appointmentId) {
-        const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, tabs.length + 1);
+        const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, tabs.length + 1, {
+          ...inheritedDefaults(),
+          // Web parity (tab-action-utils.js:166-188): carry the duplicate lineage.
+          ...(isBackendId(source.id) ? { originalCalculatorId: source.id } : {}),
+        });
         if (created) {
           setTabs((p) => retitle([...p, created]));
           setActiveTabId(created.id);
@@ -497,7 +562,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       setTabs((p) => retitle([...p, local]));
       setActiveTabId(local.id);
     },
-    [tabs, appointmentId, leadId, enteredBy, retitle]
+    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults]
   );
 
   const handleDeleteTab = useCallback(
@@ -524,14 +589,25 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const handleRenameTab = useCallback(
     (tabId: string, name: string) => {
       setTabs((prev) => {
+        const before = prev.find((t) => t.id === tabId);
         const updated = prev.map((t) => (t.id === tabId ? { ...t, manualTitle: name } : t));
         const retitled = retitle(updated);
         tabsRef.current = retitled;
         markDirty(tabId);
+        // Web parity (tab-action-utils.js:126): calculator_rename activity event.
+        if (enteredBy && before && before.title !== name) {
+          logCalculatorRename({
+            userId: enteredBy,
+            calculatorId: (before as any).calculatorId || before.id,
+            appointmentId: (before as any).appointmentId || '',
+            previousCalculatorTitle: before.title,
+            newCalculatorTitle: name,
+          }).catch(() => {});
+        }
         return retitled;
       });
     },
-    [retitle, markDirty]
+    [retitle, markDirty, enteredBy]
   );
 
   const handleReorderTabs = useCallback(
@@ -539,7 +615,19 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       setTabs((prev) => {
         const byId = new Map(prev.map((t) => [t.id, t]));
         const next = orderedIds.map((id) => byId.get(id)).filter(Boolean) as CalcTab[];
-        return next.length === prev.length ? retitle(next) : prev;
+        if (next.length !== prev.length) return prev;
+        // Web parity (tab-action-utils.js:282 updateLfCalculatorPositions): persist
+        // the new order as [{ id, position }] for the backend calculators. Previously
+        // reorder was local-only, so a reload lost the order.
+        const positions = next
+          .map((t, position) => ({ id: t.id, position }))
+          .filter((p) => isBackendId(p.id));
+        if (positions.length) {
+          LeadService.reorderCalculators(positions).catch((e) =>
+            console.warn('[DynamicCalculators] reorder persist failed:', e?.message || e),
+          );
+        }
+        return retitle(next);
       });
       if (activeId) setActiveTabId(activeId);
     },

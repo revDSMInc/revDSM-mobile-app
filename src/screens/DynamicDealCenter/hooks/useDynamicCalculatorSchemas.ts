@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../../services/api';
-import { ensureVerticalSummaryTabs } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
+import { ensureVerticalSummaryTabs, enrichConfigWithProductColors } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
 import { migrateConfigTabFields } from '../../../utils/dynamic-job-builder/engine/combination-utils';
 import type { JobBuilderConfig, Vertical } from '../../../utils/dynamic-job-builder/types';
 
@@ -61,8 +61,12 @@ export function useDynamicCalculatorSchemas(
       if (response?.code !== 200) return null;
       const normalized = normalizeLightweight(response.data);
       if (!normalized) return null;
+      // Attach product colors (from Product Management) to each tab so swatch
+      // fields can list every color + resolve a product image (web parity —
+      // `api/job-builder-products.js` wraps the config in this before use).
+      const enriched = enrichConfigWithProductColors(normalized, normalized.products || []);
       return ensureVerticalSummaryTabs(
-        migrateConfigTabFields(normalized)
+        migrateConfigTabFields(enriched)
       ) as JobBuilderConfig;
     },
     enabled,

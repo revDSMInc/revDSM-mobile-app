@@ -49,3 +49,7 @@ jest.mock('react-native-flash-message', () => {
     hideMessage: jest.fn(),
   };
 });
+
+// react-native-mmkv loads Nitro TurboModules which cannot initialize under jest.
+// Route it to the in-memory mock in __mocks__/react-native-mmkv.js.
+jest.mock('react-native-mmkv');

@@ -15,6 +15,7 @@ export const LeadEndpoints = {
   appointments: 'appointments',
   calculators: (appointmentId: string) => `appointments/${appointmentId}/lfcalculators`,
   updateCalculator: (id: string) => `lfcalculators/${id}`,
+  arrangeCalculators: 'lfcalculators/positions',
   favourite: 'job/v1/favorite',
   archive: (id: string) => `lead/v1/archive/${id}`,
   delete: (id: string) => `lead/v1/delete/${id}`,
@@ -89,10 +90,13 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
     return payload.map(sanitizeCalculatorPayload);
   }
   const sanitized = { ...payload };
-  const stringKeys = ['title', 'name', 'paymentMethod', 'paymentPlan', 'originalCalculatorId', 'status', 'action', 'sendMode', 'recipient', 'subject',
+  const stringKeys = ['title', 'name', 'paymentMethod', 'paymentMethodLabel', 'paymentPlan', 'originalCalculatorId', 'status', 'action', 'sendMode', 'recipient', 'subject',
     // Calculator-entry descriptor fields are strings — an empty one must stay ''
     // (web sends e.g. `unit: ""`, `productName: ""`), never be coerced to 0.
-    'unit', 'label', 'productName', 'sectionId', 'categoryId', 'fieldId', 'schemaSnapshotId', 'leadId', 'enteredBy', 'enteredAt'];
+    'unit', 'label', 'productName', 'sectionId', 'categoryId', 'fieldId', 'schemaSnapshotId', 'leadId', 'enteredBy', 'enteredAt',
+    // `pricemarkup` is a markup LABEL string (e.g. "RETAIL + 5%"), and reason/explain
+    // are free text — coercing an empty one to 0 would corrupt the value.
+    'pricemarkup', 'reason', 'explain', 'demoReason', 'reasonExplanation'];
   Object.keys(sanitized).forEach((key) => {
     const val = sanitized[key];
     if (val === '' && !stringKeys.includes(key)) {
@@ -285,6 +289,14 @@ export const LeadService = {
   updateLeadTimelineProgress: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.patch(`lead/v1/${leadId}/timeline-progress`, payload),
   deleteCalculator: (id: string): Promise<AxiosResponse<any>> => api.delete(`lfcalculators/${id}`),
+
+  /**
+   * Persist calculator tab order. Web parity (`updateLfCalculatorPositions` →
+   * `PUT /lfcalculators/positions`) — mobile previously reordered only in local
+   * state, so a reload lost the order.
+   */
+  reorderCalculators: (positions: Array<{ id: string; position: number }>): Promise<AxiosResponse<any>> =>
+    api.put(LeadEndpoints.arrangeCalculators, positions),
   getProductImage: (productName: string, colorCode: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.productBuilder, {
       params: { productName, colorCode, matchType: 'like' },

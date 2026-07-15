@@ -1,356 +1,65 @@
+/**
+ * Calculator parity: the MOBILE lf-calculator engine must match the WEB engine.
+ *
+ * The web-expected values live in fixtures/parity-golden.json, generated from the
+ * web source of truth by __tests__/_generators/parity-golden.gen.ts. This keeps
+ * the test portable (no dependency on the web repo being present at test time).
+ * Regenerate the golden with:
+ *   GEN_GOLDEN=1 WEB_REPO=/path/to/mhalt-revDSM-sales-frontend \
+ *     node ./node_modules/.bin/jest __tests__/_generators/parity-golden.gen.ts
+ */
 import { calculateResultUtil as mobileCalcResult } from '../src/utils/calculator/calculation-results-util';
-// @ts-ignore
-import { calculateResultUtil as webCalcResult } from '/Users/apple/Downloads/mhalt-revDSM-sales-frontend-staging/src/sections/lf-calculator/components/utils/calculation-results-util';
 import { pricing, extrasList, extrasList50 } from '../src/utils/calculator/pricing-data';
 import { paymentPlans } from '../src/utils/calculator/payment-plans';
+import { PARITY_CASES } from './fixtures/parity-cases';
+import golden from './fixtures/parity-golden.json';
 
-// Mock vertical items function for web/mobile if needed, but they are imported internally and should work.
-
-describe('Calculator Parity Tests', () => {
-  const runParityCheck = (details: any, markupKey: string, paymentMethod: string, isLowesLead = false, ckToInstallers = 0) => {
-    // Web expectation: web normalizes details
-    // Mobile expectation: mobile normalizes details
-
-    // Let's call both and compare
-    const webRes = webCalcResult({
+const mobile = (details: any, c: { markupKey: string; paymentMethod: string; isLowesLead?: boolean; ckToInstallers?: number }) =>
+  Math.round(
+    mobileCalcResult({
       details,
-      markupKey,
+      markupKey: c.markupKey,
       pricing,
       extrasList,
       extrasList50,
       paymentPlans,
-      paymentMethod,
-      isLowesLead,
-      ckToInstallers,
-    });
+      paymentMethod: c.paymentMethod,
+      isLowesLead: c.isLowesLead ?? false,
+      ckToInstallers: c.ckToInstallers ?? 0,
+    }),
+  );
 
-    const mobRes = mobileCalcResult({
-      details,
-      markupKey,
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod,
-      isLowesLead,
-      ckToInstallers,
-    });
-
-    expect(Math.round(mobRes)).toBe(Math.round(webRes));
-  };
-
-  test('Simple gutter and versa6 calculations', () => {
-    const details = {
-      gutter5DsE: '100',
-      versa6Ft1: '50',
-      paymentMethod: 'wf4103',
-    };
-    runParityCheck(details, '50', 'wf4103');
-    runParityCheck(details, '65', 'wf4103');
-    runParityCheck(details, '100', 'wf4103');
+describe('Calculator Parity Tests (mobile vs web golden)', () => {
+  test.each(PARITY_CASES.map((c) => [c.key, c]))('%s — flat details matches web golden', (_key, c: any) => {
+    const expected = (golden as Record<string, number>)[c.key];
+    expect(expected).toBeDefined();
+    expect(mobile(c.details, c)).toBe(expected);
   });
 
-  test('Calculations with extra labor and other extras', () => {
-    const details = {
-      gutter5DsE: '100',
-      versa6Ft1: '50',
-      extraLabor: '15',
-      wedges: '10',
-      paymentMethod: 'wf4103',
-    };
-    runParityCheck(details, '50', 'wf4103');
-    runParityCheck(details, '65', 'wf4103');
-    runParityCheck(details, '100', 'wf4103');
+  test.each(PARITY_CASES.filter((c) => c.mobileNested).map((c) => [c.key, c]))(
+    '%s — nested { inputs, extras } shape matches the same web golden',
+    (_key, c: any) => {
+      const expected = (golden as Record<string, number>)[c.key];
+      expect(mobile(c.mobileNested, c)).toBe(expected);
+    },
+  );
+
+  test('golden covers exactly the shared parity cases', () => {
+    expect(Object.keys(golden as object).sort()).toEqual(PARITY_CASES.map((c) => c.key).sort());
   });
 
-  test('Calculations with screens (ckToInstallers)', () => {
-    const details = {
-      gutter5DsE: '100',
-      versa6Ft1: '50',
-      ckToInstallers: '20',
-      screens: '20',
-      paymentMethod: 'wf4103',
-    };
-    // Testing with non-zero ckToInstallers parameter
-    runParityCheck(details, '50', 'wf4103', false, 20);
-    runParityCheck(details, '65', 'wf4103', false, 20);
-    runParityCheck(details, '100', 'wf4103', false, 20);
-  });
-
-  test('Nested vs Flat calculation parity', () => {
-    const active = {
-      _id: 'calc-1',
-      inputs: {
-        gutter5DsE: '',
-        gutter6Ft1: '45',
-        gutter7DsE: '',
-        versaMaxFt1: '225',
-        versa6Ft1: '80',
-        versa6Ft2: '',
-        versa6Ft3: '',
-        versa7Ft1: '',
-        versa7Ft2: '',
-        versa7Ft3: '',
-        filter45Ft1: '',
-        filter45Ft2: '',
-        filter45Ft3: '',
-        extraLabor: '23',
-        screens: '',
-        ckToInstallers: '',
-        paymentPlan: 'check'
-      },
-      extras: {
-        wedges: '60',
-        straps: '',
-        modifyHeight: '',
-        csr: '',
-        nailerBuildOut: '',
-        vinylSoffit: '',
-        porchCeiling: '',
-        fasciaBoard: '',
-        aluminumFasciaBoard: '',
-        trimWrap: '',
-        extendedSplashGuard: '',
-        extendedSplashGuard032: '',
-        replaceCorner: '',
-        groundSpout: '',
-        extraLabor: '23',
-      }
-    };
-
-    const webDetails = {
-      ...active.extras,
-      ...active.inputs,
-    };
-
-    const webResCost = webCalcResult({
-      details: webDetails,
-      markupKey: '50',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      isLowesLead: false,
-    });
-
-    const mobResCost = mobileCalcResult({
-      details: active,
-      markupKey: '50',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      isLowesLead: false,
-    });
-
-    const webResRetail = webCalcResult({
-      details: webDetails,
-      markupKey: '100',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      isLowesLead: false,
-    });
-
-    const mobResRetail = mobileCalcResult({
-      details: active,
-      markupKey: '100',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-      isLowesLead: false,
-    });
-
-    expect(Math.round(mobResCost)).toBe(Math.round(webResCost));
-    expect(Math.round(mobResRetail)).toBe(Math.round(webResRetail));
-    expect(Math.round(webResCost)).toBe(8575);
-    expect(Math.round(webResRetail)).toBe(18080);
-  });
-
-  test('extraLabor only in inputs matches web flat object', () => {
-    const flat = {
-      gutter6Ft1: '45',
-      versaMaxFt1: '225',
-      versa6Ft1: '80',
-      extraLabor: '1',
-      wedges: '60',
-      paymentPlan: 'check',
-    };
-
-    const nested = {
-      inputs: {
-        gutter6Ft1: '45',
-        versaMaxFt1: '225',
-        versa6Ft1: '80',
-        extraLabor: '1',
-        paymentPlan: 'check',
-      },
-      extras: {
-        wedges: '60',
-        extraLabor: '',
-      },
-    };
-
-    ['50', '65', '100'].forEach((markupKey) => {
-      const webRes = webCalcResult({
-        details: flat,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      const mobRes = mobileCalcResult({
-        details: nested,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      expect(Math.round(mobRes)).toBe(Math.round(webRes));
-    });
+  test('nested baseline pins the historical 8575 / 18080 constants', () => {
+    expect((golden as Record<string, number>)['nested#50']).toBe(8575);
+    expect((golden as Record<string, number>)['nested#100']).toBe(18080);
   });
 
   test('tier prices reflect selected payment plan bank fee', () => {
     const active = {
-      inputs: {
-        gutter6Ft1: '45',
-        versaMaxFt1: '225',
-        versa6Ft1: '80',
-        paymentPlan: 'mcVisaDscvr',
-      },
+      inputs: { gutter6Ft1: '45', versaMaxFt1: '225', versa6Ft1: '80', paymentPlan: 'mcVisaDscvr' },
       extras: { wedges: '60' },
     };
-
-    const withCheck = mobileCalcResult({
-      details: active,
-      markupKey: '100',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'check',
-    });
-
-    const withCard = mobileCalcResult({
-      details: active,
-      markupKey: '100',
-      pricing,
-      extrasList,
-      extrasList50,
-      paymentPlans,
-      paymentMethod: 'mcVisaDscvr',
-    });
-
-    expect(Math.round(withCard)).toBeGreaterThan(Math.round(withCheck));
-  });
-
-  test('filter45Ft3 does not double-count vs web flat object', () => {
-    const flat = {
-      gutter6Ft1: '45',
-      versaMaxFt1: '225',
-      versa6Ft1: '80',
-      filter45Ft3: '2',
-      wedges: '60',
-    };
-    const nested = {
-      inputs: {
-        gutter6Ft1: '45',
-        versaMaxFt1: '225',
-        versa6Ft1: '80',
-        filter45Ft3: '2',
-      },
-      extras: { wedges: '60' },
-    };
-
-    ['50', '65', '100'].forEach((markupKey) => {
-      const webRes = webCalcResult({
-        details: flat,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      const mobFlat = mobileCalcResult({
-        details: flat,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      const mobNested = mobileCalcResult({
-        details: nested,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      expect(Math.round(mobFlat)).toBe(Math.round(webRes));
-      expect(Math.round(mobNested)).toBe(Math.round(webRes));
-    });
-  });
-
-  test('Calculations with vertical items (Roofing, Windows, Flooring, Remodeling)', () => {
-    const flat = {
-      gutter6Ft1: '45',
-      versaMaxFt1: '225',
-      versa6Ft1: '80',
-      wedges: '60',
-      rfShngl3Tab: '10',
-      winSH_VinylStd: '5',
-      flMatCarpet: '200',
-      rmTubReplace: '1',
-    };
-
-    const nested = {
-      inputs: {
-        gutter6Ft1: '45',
-        versaMaxFt1: '225',
-        versa6Ft1: '80',
-      },
-      extras: { wedges: '60' },
-      rfShngl3Tab: '10',
-      winSH_VinylStd: '5',
-      flMatCarpet: '200',
-      rmTubReplace: '1',
-    };
-
-    ['50', '65', '100'].forEach((markupKey) => {
-      const webRes = webCalcResult({
-        details: flat,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      const mobNested = mobileCalcResult({
-        details: nested,
-        markupKey,
-        pricing,
-        extrasList,
-        extrasList50,
-        paymentPlans,
-        paymentMethod: 'check',
-      });
-      expect(Math.round(mobNested)).toBe(Math.round(webRes));
-    });
+    const withCheck = mobile(active, { markupKey: '100', paymentMethod: 'check' });
+    const withCard = mobile(active, { markupKey: '100', paymentMethod: 'mcVisaDscvr' });
+    expect(withCard).toBeGreaterThan(withCheck);
   });
 });
-

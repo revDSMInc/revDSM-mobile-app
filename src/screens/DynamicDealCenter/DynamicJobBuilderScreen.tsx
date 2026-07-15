@@ -18,6 +18,10 @@ import { VerticalTabBar } from '../../widgets/components/dynamic-job-builder/Ver
 import { FlashMessage } from '../../config/message';
 import { LeadService } from '../../services/api/leads';
 import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
+import { buildCalculatorOutcomePayload } from './utils/build-outcome-payload';
+import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedReason } from './utils/finalize-gate';
+import { useAuth } from '../../hooks/useAuth';
+import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
 import { isTabComplete } from '../../utils/dynamic-job-builder/engine/tab-validation';
 import {
   serializeDynamicJobStateForStorage,
@@ -99,6 +103,7 @@ function DynamicJobBuilderInner({
     [initialConfig]
   );
   const { colors, isDark } = useTheme();
+  const { user: authUser } = useAuth();
 
   // Fetch saved job state on mount via the calculator-scoped outcome endpoint
   // (web parity: GET /lead/v1/{leadId}/outcome/{calculatorId}). Web stores the
@@ -302,83 +307,101 @@ function DynamicJobBuilderInner({
     }
   }, [isOutcomeFetched, isEdit]);
 
-  useEffect(() => {
-    if (!leadId || !initialFetchDoneRef.current) return;
-    // Embedded in the 4-step edit wizard: the wizard owns persistence (it submits a
-    // single addendum draft at the end), so the builder must NOT auto-save/upsert.
-    if (embedded) return;
+  // Web parity (JobBuilderContext.flushSave, ported from System A's save engine):
+  // a per-save in-flight guard + follow-up so two outcome PUTs never overlap and
+  // the latest state is re-saved after an in-flight save resolves; a dirty ref
+  // drives an unmount flush so an edit made in the 2s debounce window right before
+  // navigating away is not dropped.
+  const saveInFlightRef = useRef(false);
+  const needsFollowUpRef = useRef(false);
+  const autoSaveDirtyRef = useRef(false);
 
-    const timer = setTimeout(async () => {
-      // Skip while a document upload is in flight — that upload PUTs the outcome
-      // itself; auto-saving here would race it and can clobber the new files.
-      if (isDocUploadingRef.current) return;
-      // New flow requires a calculator id (outcome is calculator-scoped). Edit mode
-      // saves to the lead-scoped PortalJobBuilder and does not need one.
-      if (!calcId && !isEdit) return;
-      try {
-        // Never resend agreements/orderSheets here: they're uploaded separately as
-        // base64 PDFs (and rehydrated from leadOutcomeDocuments); echoing them back
-        // trips the backend's "agreements[i].file required" validation. scheduleTime
-        // still rides along (root passthrough); everything else is the job state.
-        const { agreements: _a, orderSheets: _o, ...stateNoDocs } = (jobState || {}) as any;
-        // Web shape (JobBuilderContext.buildSavePayload → updateCalculatorJobBuilderOutcome):
-        // the SERIALIZED job state is nested under jobBuilder.dynamicJobState so web
-        // and mobile store/read it identically. serializeDynamicJobStateForStorage
-        // maps runtime ids → stable storage keys (buildStorageKey / `__`).
-        const dynamicJobState = serializeDynamicJobStateForStorage(
-          stateNoDocs,
-          initialConfig,
-          dealCenterData
-        );
-        const configId = (initialConfig as any)?.id || null;
+  const performAutoSave = useCallback(async () => {
+    if (!leadId || !initialFetchDoneRef.current || embedded) return;
+    // Skip while a document upload is in flight — that upload PUTs the outcome
+    // itself; auto-saving here would race it and can clobber the new files.
+    if (isDocUploadingRef.current) return;
+    // New flow requires a calculator id (outcome is calculator-scoped). Edit mode
+    // saves to the lead-scoped PortalJobBuilder and does not need one.
+    if (!calcId && !isEdit) return;
+    // In-flight guard: coalesce a concurrent request into a single follow-up.
+    if (saveInFlightRef.current) {
+      needsFollowUpRef.current = true;
+      return;
+    }
+    saveInFlightRef.current = true;
+    autoSaveDirtyRef.current = false;
+    try {
+      const { agreements: _a, orderSheets: _o, ...stateNoDocs } = (jobState || {}) as any;
+      const dynamicJobState = serializeDynamicJobStateForStorage(stateNoDocs, initialConfig, dealCenterData);
+      const configId = (initialConfig as any)?.id || null;
+      // Web parity (JobBuilderContext.buildSavePayload): persist which sections
+      // already had their auto-populated fields logged, so a reopen dedups them
+      // instead of re-firing the activity events.
+      const autoFieldsLogged = Array.from(loggedAutoFieldTabsRef.current);
 
-        if (isEdit) {
-          // Edit flow (web PortalDynamicJobBuilderModal.handleComplete shape, draft):
-          // PUT /lead/v1/{leadId}/portal-job-builder/upsert with the serialized state.
-          const rd = (calculatorResultData || {}) as any;
-          await LeadService.upsertPortalJobBuilder(leadId, {
-            isDynamic: true,
-            dynamicJobState,
-            configId,
-            configSnapshotId: configId || 'dynamic',
-            calculatorId: calcId || rd.calculatorId || null,
-            appointmentId: appointmentId || rd.appointmentId || null,
-            status: 'draft',
-          });
-        } else {
-          // Web parity (ResultLeadModal.handleUpdateJobBuilder): include the
-          // outcome fields (oneLeg, result, reason, explain, contract price, etc.)
-          // in the auto-save so they persist even if the user never completes the
-          // job builder. Without this, a partially-filled outcome is lost on close.
-          const rd = (calculatorResultData || {}) as any;
-          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
-            selectedCalculatorId: calcId,
-            oneLeg: rd.oneLeg,
-            result: rd.resultType === 'sale' ? 'Sale' : rd.resultType === 'demo' ? 'Demo' : undefined,
-            reason: rd.demoReason,
-            explain: rd.reasonExplanation,
-            lastPriceQuoted: rd.contractPrice,
-            originalContractPrice: rd.contractPrice,
-            downPayment: rd.downPayment,
-            paymentMethod: rd.downPaymentMethod,
-            balancePaymentMethod: rd.balancePaymentMethod,
-            balance: rd.balance,
+      if (isEdit) {
+        const rd = (calculatorResultData || {}) as any;
+        await LeadService.upsertPortalJobBuilder(leadId, {
+          isDynamic: true,
+          dynamicJobState,
+          configId,
+          configSnapshotId: configId || 'dynamic',
+          calculatorId: calcId || rd.calculatorId || null,
+          appointmentId: appointmentId || rd.appointmentId || null,
+          status: 'draft',
+        });
+      } else {
+        const rd = (calculatorResultData || {}) as any;
+        await LeadService.updateLeadOutcomeByCalculator(
+          leadId,
+          calcId,
+          buildCalculatorOutcomePayload({
+            rd,
+            calcId,
+            fallbackAppointmentId: appointmentId || leadId,
             jobBuilder: {
               dynamicJobState,
               configId,
               configSnapshotId: configId || 'dynamic',
               calculatorType: 'dynamic',
+              autoFieldsLogged,
               status: 'draft',
             },
-          });
-        }
-      } catch (error) {
-        console.warn('[DynamicJobBuilder] Auto-save failed:', error);
+          }),
+        );
       }
-    }, 2000);
-
-    return () => clearTimeout(timer);
+    } catch (error) {
+      console.warn('[DynamicJobBuilder] Auto-save failed:', error);
+    } finally {
+      saveInFlightRef.current = false;
+      // A save requested while this one was in flight → run one follow-up now.
+      if (needsFollowUpRef.current) {
+        needsFollowUpRef.current = false;
+        void performAutoSave();
+      }
+    }
   }, [leadId, jobState, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
+
+  // Keep the latest saver in a ref so the unmount flush calls the current closure.
+  const performAutoSaveRef = useRef(performAutoSave);
+  performAutoSaveRef.current = performAutoSave;
+
+  useEffect(() => {
+    if (!leadId || !initialFetchDoneRef.current || embedded) return;
+    autoSaveDirtyRef.current = true;
+    const timer = setTimeout(() => void performAutoSave(), 2000);
+    return () => clearTimeout(timer);
+  }, [performAutoSave, leadId, embedded]);
+
+  // Unmount flush: if a debounced edit is still pending, persist it immediately so
+  // a value changed then quickly navigated away from is not lost (web parity).
+  useEffect(
+    () => () => {
+      if (autoSaveDirtyRef.current) void performAutoSaveRef.current();
+    },
+    [],
+  );
 
   // Web parity (dynamic-job-builder.js:111-121): once a non-sale result exists,
   // any lingering install appointment is cleared from root state.
@@ -531,17 +554,27 @@ function DynamicJobBuilderInner({
 
   const isAppointmentSet = Boolean(jobState?.scheduleTime?.date);
 
-  const canComplete = useMemo(() => {
-    // Unrestricted edit never blocks saving (web effectiveApplyConditions=false):
-    // the user is revising an already-resulted deal, not completing a fresh one.
-    if (portalUnrestrictedEdit) return true;
-    if (!areAllTabsComplete) return false;
-    // Web parity (dynamic-job-builder.js isAppointmentSchedulingComplete): a sale
-    // requires the install appointment; a demo / unknown result needs nothing
-    // beyond tab completion. The agreement/order-sheet are NOT gated by web.
-    if (isSale) return isAppointmentSet;
-    return true;
-  }, [portalUnrestrictedEdit, areAllTabsComplete, isSale, isAppointmentSet]);
+  // Web parity (dynamic-job-builder.js:325-335 `isRequiredDocumentationComplete`):
+  // a Sale requires a signed AGREEMENT, a Demo requires an ORDER SHEET. Web reads
+  // `jobState.agreements[].files`; mobile also has server-hydrated `resolvedDocuments`,
+  // so accept either a local draft doc OR a persisted one.
+  const hasAgreementDoc = useMemo(() => {
+    const local = ((jobState?.agreements || []) as any[]).some((d) => d?.files && d.files.length > 0);
+    return local || (resolvedDocuments.agreements?.length || 0) > 0;
+  }, [jobState?.agreements, resolvedDocuments.agreements]);
+  const hasOrderSheetDoc = useMemo(() => {
+    const local = ((jobState?.orderSheets || []) as any[]).some((d) => d?.files && d.files.length > 0);
+    return local || (resolvedDocuments.orderSheets?.length || 0) > 0;
+  }, [jobState?.orderSheets, resolvedDocuments.orderSheets]);
+  const gateInput = useMemo(
+    () => ({ portalUnrestrictedEdit, areAllTabsComplete, isSale, isDemo, isAppointmentSet, hasAgreementDoc, hasOrderSheetDoc }),
+    [portalUnrestrictedEdit, areAllTabsComplete, isSale, isDemo, isAppointmentSet, hasAgreementDoc, hasOrderSheetDoc],
+  );
+  // Web parity (dynamic-job-builder.js:500-504): a sale requires the install
+  // appointment AND a signed agreement; a demo requires an order sheet. Logic lives
+  // in the unit-tested `finalize-gate` module.
+  const canComplete = useMemo(() => canCompleteJobBuilder(gateInput), [gateInput]);
+  const finalizeBlockedReason = useMemo(() => computeFinalizeBlockedReason(gateInput), [gateInput]);
 
   const canProceed = useMemo(() => {
     if (portalUnrestrictedEdit) return true;
@@ -621,6 +654,30 @@ function DynamicJobBuilderInner({
 
       activityLog.logSubmit(jobState);
 
+      // Web parity (TabbedCalculator.js:923 logRolloutDropSummaryOnSubmit): emit the
+      // aggregate rollout/drop summary on the dynamic submit too — previously only the
+      // regular JobBuilder fired it, so the dynamic flow logged job_builder_completed
+      // without its companion rollout_and_drop_summary event.
+      try {
+        const rdForSummary = (calculatorResultData || {}) as any;
+        const selectedCalc = rdForSummary.LFCalculator && Object.keys(rdForSummary.LFCalculator).length
+          ? rdForSummary.LFCalculator
+          : null;
+        const uid = authUser?._id || authUser?.id;
+        if (uid && leadId && selectedCalc) {
+          await logRolloutAndDropSummary({
+            userId: uid,
+            leadId,
+            allCalculators: [selectedCalc],
+            selectedCalculator: selectedCalc,
+            leadData: rdForSummary,
+            isLowesLead: Boolean((initialConfig as any)?.lowesLead) || Boolean(rdForSummary?.isLowesLead),
+          });
+        }
+      } catch (e) {
+        console.warn('[DynamicJobBuilder] rollout summary log failed:', e);
+      }
+
       // scheduleTime rides inside jobBuilder (web parity); installDate/timeWindow
       // are also surfaced flat. Agreements/order-sheets are NOT re-sent here — they
       // were already uploaded to the outcome as base64 PDFs; echoing them back would
@@ -678,20 +735,16 @@ function DynamicJobBuilderInner({
       if (leadId && calcId) {
         try {
           const rd = (calculatorResultData || {}) as any;
-          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
-            selectedCalculatorId: calcId,
-            oneLeg: rd.oneLeg,
-            result: isSale ? 'Sale' : 'Demo',
-            reason: rd.demoReason,
-            explain: rd.reasonExplanation,
-            lastPriceQuoted: rd.contractPrice,
-            originalContractPrice: rd.contractPrice,
-            downPayment: rd.downPayment,
-            paymentMethod: rd.downPaymentMethod,
-            balancePaymentMethod: rd.balancePaymentMethod,
-            balance: rd.balance,
-            jobBuilder: jobBuilderWrapper,
-          });
+          await LeadService.updateLeadOutcomeByCalculator(
+            leadId,
+            calcId,
+            buildCalculatorOutcomePayload({
+              rd,
+              calcId,
+              fallbackAppointmentId: appointmentId || leadId,
+              jobBuilder: jobBuilderWrapper,
+            }),
+          );
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome finalize failed:', e);
         }
@@ -721,6 +774,15 @@ function DynamicJobBuilderInner({
               });
           agreementsPayload = toDocPayload(dd.agreements, 'agreement');
           orderSheetsPayload = toDocPayload(dd.orderSheets, 'orderSheet');
+          // Web parity (TabbedCalculator.js:831-836): for a non-Sale result, an
+          // uploaded agreement-typed doc is filed under orderSheets, not agreements.
+          if (!isSale && agreementsPayload.length) {
+            orderSheetsPayload = [
+              ...orderSheetsPayload,
+              ...agreementsPayload.map((d) => ({ ...d, type: 'orderSheet' as const })),
+            ];
+            agreementsPayload = [];
+          }
         } catch (e) {
           console.warn('[DynamicJobBuilder] prefetch outcome docs failed:', e);
         }
@@ -799,7 +861,7 @@ function DynamicJobBuilderInner({
     } finally {
       setIsSaving(false);
     }
-  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId]);
+  }, [jobState, initialConfig, calculatorResultData, leadId, calcId, dealCenterData, isSale, onJobComplete, canComplete, activityLog, isEdit, appointmentId, authUser]);
 
   // Persist a generated/scanned agreement or order-sheet. Web parity
   // (TabbedCalculator outcomePayload): the base64 PDFs go at the TOP LEVEL of the
@@ -979,6 +1041,12 @@ function DynamicJobBuilderInner({
             backgroundColor: '#fff',
           }}
         >
+          {/* Why Complete is blocked (web `finalizeBlockedReason` tooltip parity). */}
+          {isLastStep && summaryTab && !!finalizeBlockedReason && (
+            <Text style={{ fontSize: 12, color: '#B45309', marginBottom: 8, textAlign: 'center' }}>
+              {finalizeBlockedReason}
+            </Text>
+          )}
           <View
             style={{
               flexDirection: 'row',

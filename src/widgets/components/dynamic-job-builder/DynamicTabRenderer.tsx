@@ -26,8 +26,17 @@ import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/eng
 import { resolveAccordionAllocationStatus } from '../../../utils/dynamic-job-builder/engine/accordion-allocation-utils';
 import { filterVisibleToggleOptions } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
 import { getEffectiveDropdownOptions } from '../../../utils/dynamic-job-builder/engine/dropdown-utils';
-import { getWarningConfig } from '../../../utils/dynamic-job-builder/engine/field-layout-utils';
+import { getWarningConfig, getOptionGridSize } from '../../../utils/dynamic-job-builder/engine/field-layout-utils';
+
+// Web parity: optionList/select render in a wrapping grid whose columns come from
+// `field.columns` (`getOptionGridSize` → a 12-col span; 12/span = columns per row).
+// legacyStackedDefault → unset columns fall back to 1 (stacked), matching web.
+const optionColumnsFor = (field: any): number => {
+  const span = getOptionGridSize(field?.columns, { legacyStackedDefault: true });
+  return span ? Math.max(1, Math.round(12 / span)) : 1;
+};
 import { resolveColorPalette } from '../../../utils/dynamic-job-builder/constants/color-palettes';
+import { resolveColorsForField } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
 import { buildTabSummaryEntries, isSummarySectionVisible } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SectionCard } from './SectionCard';
 import { SectionLabel } from './SectionLabel';
@@ -35,7 +44,7 @@ import { InputField } from './InputField';
 import { TextField } from './TextField';
 import { TextareaField } from './TextareaField';
 import { ToggleGroup } from './ToggleGroup';
-import { OptionList } from './OptionList';
+import { DynamicOptionField } from './DynamicOptionField';
 import { SwatchPicker } from './SwatchPicker';
 import { LockedField } from './LockedField';
 import { LockedFieldWithColor } from './LockedFieldWithColor';
@@ -184,6 +193,7 @@ function renderField(
     sectionState?: any;
     combos?: any[];
     sectionFields?: any[];
+    products?: any[];
   }
 ) {
   const {
@@ -213,6 +223,15 @@ function renderField(
     return (isDefaultColorActive(field, state, depCtx) ? field.defaultValue : '') || '';
   };
 
+  // Web parity: swatch colors come from the tab's product colors first (attached
+  // by `enrichConfigWithProductColors`), then the legacy field palette/colors.
+  // These carry imageUrl/bucketName/filePath so the picker can show a product image.
+  const resolveSwatchColors = () => {
+    const fromProduct = resolveColorsForField(field, ctx?.tab, ctx?.products);
+    if (fromProduct.length) return fromProduct;
+    return field.palette ? resolveColorPalette(field.palette) : field.colors || undefined;
+  };
+
   if (readOnly || field.locked) {
     if (field.colorKey && (field.palette || field.colors)) {
       return (
@@ -221,7 +240,7 @@ function renderField(
           label={field.label}
           value={value ?? field.defaultValue ?? '—'}
           colorValue={value}
-          colors={field.palette ? resolveColorPalette(field.palette) : field.colors}
+          colors={resolveSwatchColors()}
         />
       );
     }
@@ -246,7 +265,7 @@ function renderField(
             label={field.label}
             value={resolveSwatchValue()}
             onChange={onChange}
-            colors={field.palette ? resolveColorPalette(field.palette) : field.colors}
+            colors={resolveSwatchColors()}
             accentColor={verticalColor}
           />
         );
@@ -255,13 +274,16 @@ function renderField(
         const baseOpts = field.options || field.choices || field.items;
         const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
         return (
-          <OptionList
+          <DynamicOptionField
             key={field.id}
+            field={field}
             label={field.label}
             options={visOpts}
-            value={value || ''}
+            value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
             onChange={onChange}
             color={verticalColor}
+            columns={optionColumnsFor(field)}
+            isMulti={!!field.multiSelect}
           />
         );
       }
@@ -309,9 +331,10 @@ function renderField(
           key={field.id}
           label={field.label}
           options={visOpts}
-          value={value || ''}
+          value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
           onChange={onChange}
           color={verticalColor}
+          isMulti={!!field.multiSelect}
         />
       );
     }
@@ -320,13 +343,16 @@ function renderField(
       const baseOpts = field.options || field.choices || field.items || [];
       const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
       return (
-        <OptionList
+        <DynamicOptionField
           key={field.id}
+          field={field}
           label={field.label}
           options={visOpts}
-          value={value || ''}
+          value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
           onChange={onChange}
           color={verticalColor}
+          columns={optionColumnsFor(field)}
+          isMulti={!!field.multiSelect}
         />
       );
     }
@@ -336,13 +362,16 @@ function renderField(
       const dOpts = getEffectiveDropdownOptions(field);
       const opts = (dOpts && dOpts.length ? dOpts : field.options || field.choices || field.items) || [];
       return (
-        <OptionList
+        <DynamicOptionField
           key={field.id}
+          field={field}
           label={field.label}
           options={opts}
-          value={value || ''}
+          value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
           onChange={onChange}
           color={verticalColor}
+          columns={optionColumnsFor(field)}
+          isMulti={!!field.multiSelect}
         />
       );
     }
@@ -356,10 +385,29 @@ function renderField(
           label={field.label}
           value={resolveSwatchValue()}
           onChange={onChange}
-          colors={field.palette ? resolveColorPalette(field.palette) : field.colors || undefined}
+          colors={resolveSwatchColors()}
           accentColor={verticalColor}
         />
       );
+
+    // Widget-owned palette (web `customColor`, field-registry.js:451) — its own
+    // admin-defined swatches (e.g. the Lightning "wire box" selection), NOT product
+    // colors. Was unhandled → fell through to `default: null`, so the selection UI
+    // was missing while a required message for it still showed elsewhere.
+    case 'customColor': {
+      const customColors = field.customColors || [];
+      if (!customColors.length) return null;
+      return (
+        <SwatchPicker
+          key={field.id}
+          label={field.showLabel === false ? undefined : field.label}
+          value={resolveSwatchValue()}
+          onChange={onChange}
+          colors={customColors}
+          accentColor={verticalColor}
+        />
+      );
+    }
 
     case 'locationGrid':
     case 'grid':
@@ -423,7 +471,7 @@ function renderField(
               label={field.label}
               value={value ?? field.defaultValue ?? '—'}
               colorValue={colorVal}
-              colors={field.palette ? resolveColorPalette(field.palette) : field.colors}
+              colors={resolveSwatchColors()}
             />
           );
         }
@@ -450,7 +498,7 @@ function renderField(
                 label="Color"
                 value={colorVal || ''}
                 onChange={handleColorChange}
-                colors={field.palette ? resolveColorPalette(field.palette) : field.colors}
+                colors={resolveSwatchColors()}
                 accentColor={verticalColor}
               />
             </View>
@@ -1253,9 +1301,8 @@ export function DynamicTabRenderer({
             />
             {isLastCombinationSection && showTabGrandTotal && (
               <GrandTotalCard
-                combinations={combos}
-                fields={section.fields || []}
-                sectionLabel={tab.label}
+                entries={tabSummaryEntries}
+                tabLabel={tab.label}
                 accentColor={verticalColor}
               />
             )}

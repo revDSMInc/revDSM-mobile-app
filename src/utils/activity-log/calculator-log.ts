@@ -28,6 +28,43 @@ export const logCalculatorCreated = async (opts: {
 };
 
 
+/**
+ * Web parity (DealCenterContext.js:218-234): a `calculator_field_entry` change per
+ * edited calculator field. Fired by the dynamic calculator save engine, which
+ * previously emitted no calculator activity events at all.
+ */
+export const logCalculatorFieldEntry = async (opts: {
+  userId: string;
+  calculatorId: string;
+  appointmentId?: string;
+  calculatorTitle?: string;
+  fieldLabel?: string;
+  fieldValue?: any;
+  fieldCategory?: string;
+  oldValue?: any;
+  newValue?: any;
+  leadId?: string;
+}) => {
+  if (!opts.userId || !opts.calculatorId) return;
+  await logEvent('change', {
+    user_id: opts.userId,
+    created_by: opts.userId,
+    module_type: 'calculator_field_entry',
+    meta: {
+      calculatorId: opts.calculatorId,
+      appointmentId: opts.appointmentId,
+      calculatorTitle: opts.calculatorTitle,
+      fieldLabel: opts.fieldLabel,
+      fieldValue: opts.fieldValue,
+      fieldCategory: opts.fieldCategory,
+      oldValue: opts.oldValue ?? '',
+      newValue: opts.newValue ?? opts.fieldValue,
+      action: 'calculator field changed',
+      ...(opts.leadId && { leadId: opts.leadId }),
+    },
+  });
+};
+
 export const logSectionCleared = async (opts: {
   userId: string;
   calculatorId: string;

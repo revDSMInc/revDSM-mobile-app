@@ -12,6 +12,7 @@ import {
   resolveConditionalFixedValue,
 } from '../utils/field-dependency';
 import { directSectionId } from '../utils/build-all-entries';
+import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
 
 interface CalculatorTabLite {
   id: string;
@@ -40,6 +41,8 @@ interface CalculatorViewProps {
   price?: number;
   /** Confirmed drop-price list — the last drop shows as "Updated End Price". */
   drops?: any[];
+  /** Company pricing config — the locked receipt adds the per-tier static fee (web parity). */
+  pricingConfig?: PricingConfig | null;
 }
 
 type CatStyle = SchemaStyle;
@@ -182,14 +185,18 @@ function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, on
 
   const handleFieldChange = useCallback((field: CalculatorField, sectionId: string, value: number) => {
     const price = field.price || { cost: 0, par: 0, retail: 0 };
+    // Preserve the seeded `productName` (build-all-entries sets it from schema.name)
+    // instead of reading a non-existent `category.productName`, which blanked it on
+    // every touched field and diverged from the zero-seed for the same field.
+    const productName = (entries[field.id] as any)?.productName ?? (category as any)._productName ?? (category as any).productName ?? '';
     onEntryChange(field.id, {
-      fieldId: field.id, categoryId: category.id, sectionId, productName: (category as any).productName || '',
+      fieldId: field.id, categoryId: category.id, sectionId, productName,
       name: field.name, label: field.label, unit: field.unit || '',
       inputValue: value,
       computed: { cost: value * price.cost, par: value * price.par, retail: value * price.retail },
       pricingAtTimeOfEntry: { cost: String(price.cost), par: String(price.par), retail: String(price.retail) },
     });
-  }, [category, onEntryChange]);
+  }, [category, onEntryChange, entries]);
 
   // Clear all fields in this category (mirrors web's category "Clear" button).
   const clearCategory = useCallback(() => {
@@ -336,13 +343,14 @@ function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEn
  * center `LockedCalculatorView` (`CalculatorForm.tsx`). Rendered instead of the
  * editable category list once a tab's rollout price is confirmed (`readOnly`).
  */
-function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: {
+function LockedCalculatorView({ name, entries, totals, catMeta, price, drops, pricingConfig }: {
   name: string;
   entries: Record<string, CalculatorEntry>;
   totals: CalculatorTotals;
   catMeta: Record<string, { label: string; style: CatStyle }>;
   price: number;
   drops: any[];
+  pricingConfig?: PricingConfig | null;
 }) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -368,10 +376,16 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: 
 
   // $200 job-minimum floor per tile (only once there's a real retail total).
   const floorTier = (v: number) => (totals.retail > 0 && v < 200 ? 200 : v);
+  // Web `calculateResultUtil` adds the per-tier static company fee (e.g. a par-only
+  // fee) on top of the stored pure `totals` before the floor — the same fee applied
+  // in the rollout tiles. (Bank-fee gross-up for `check` is 0; a financing method
+  // would gross up in the rollout step, not this locked receipt.)
+  const withFee = (v: number, key: 'cost' | 'par' | 'retail') =>
+    applyFeesToTier(v, key, pricingConfig, { hasLineItems: v > 0 });
   const tiers = [
-    { label: 'COST', value: floorTier(totals.cost), isRetail: false },
-    { label: 'PAR', value: floorTier(totals.par), isRetail: false },
-    { label: 'RETAIL', value: floorTier(totals.retail), isRetail: true },
+    { label: 'COST', value: floorTier(withFee(totals.cost, 'cost')), isRetail: false },
+    { label: 'PAR', value: floorTier(withFee(totals.par, 'par')), isRetail: false },
+    { label: 'RETAIL', value: floorTier(withFee(totals.retail, 'retail')), isRetail: true },
   ];
 
   const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
@@ -486,7 +500,7 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: 
 export function CalculatorView({
   verticals, entries, onEntryChange, totals, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
-  price = 0, drops = [],
+  price = 0, drops = [], pricingConfig,
 }: CalculatorViewProps) {
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; tabId: string; name: string }>({ visible: false, tabId: '', name: '' });
@@ -606,6 +620,7 @@ export function CalculatorView({
             catMeta={catMeta}
             price={price}
             drops={drops}
+            pricingConfig={pricingConfig}
           />
         ) : (
           <>

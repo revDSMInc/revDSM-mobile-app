@@ -7,6 +7,11 @@ import type {
   CalculatorSection,
   CalculatorField,
 } from '../types/calculator';
+import {
+  bakeFieldPrice,
+  normalizeSalesPricingConfig,
+  type PricingConfig,
+} from '../utils/pricing-config-util';
 
 /**
  * Loads the category-shaped calculator schema that drives the Dynamic Deal
@@ -24,41 +29,40 @@ import type {
  */
 
 const DEAL_CENTER_SCHEMAS_URL = '/calculator-form-schemas/deal-center';
+const PRICING_CONFIG_URL = '/company/v1/pricing-config/sales';
 
-function normalizePrice(price: any): { retail: number; cost: number; par: number } {
-  if (!price) return { retail: 0, cost: 0, par: 0 };
-  return {
-    retail: Number(price.retail) || 0,
-    cost: Number(price.cost) || 0,
-    par: Number(price.par) || 0,
-  };
+// Web parity (`calculator-form-schemas.js` normalizePrice): resolve every tier to a
+// concrete number ONCE, at load — an explicit per-field value wins, otherwise it's
+// derived as `percentOf% of` another tier via the company pricing config. Without
+// this, a field priced only at retail returns cost/par = 0 and the rollout PAR/COST
+// tiles floor to $200.
+function normalizeField(field: any, pricingConfig: PricingConfig | null): CalculatorField {
+  return { ...field, price: bakeFieldPrice(field?.price, pricingConfig) };
 }
 
-function normalizeField(field: any): CalculatorField {
-  return { ...field, price: normalizePrice(field?.price) };
+function normalizeSection(section: any, pricingConfig: PricingConfig | null): CalculatorSection {
+  return { ...section, fields: (section?.fields || []).map((f: any) => normalizeField(f, pricingConfig)) };
 }
 
-function normalizeSection(section: any): CalculatorSection {
-  return { ...section, fields: (section?.fields || []).map(normalizeField) };
-}
-
-function normalizeCategory(category: any): CalculatorCategory {
-  const directFields = (category?.directFields || category?.fields || []).map(normalizeField);
+function normalizeCategory(category: any, pricingConfig: PricingConfig | null): CalculatorCategory {
+  const directFields = (category?.directFields || category?.fields || []).map((f: any) =>
+    normalizeField(f, pricingConfig),
+  );
   return {
     ...category,
     directFields,
-    sections: (category?.sections || []).map(normalizeSection),
+    sections: (category?.sections || []).map((s: any) => normalizeSection(s, pricingConfig)),
   };
 }
 
-function normalizeSchema(entity: any): CalculatorSchema {
+function normalizeSchema(entity: any, pricingConfig: PricingConfig | null): CalculatorSchema {
   const formSchema = entity?.calculatorFormSchema || {};
   return {
     id: entity?._id,
     product: { name: entity?.name, icon: entity?.icon, color: entity?.color },
     icon: entity?.icon,
     color: entity?.color,
-    categories: (formSchema.categories || []).map(normalizeCategory),
+    categories: (formSchema.categories || []).map((c: any) => normalizeCategory(c, pricingConfig)),
   };
 }
 
@@ -86,6 +90,8 @@ interface UseCalculatorSchemaResult {
   isRemote: boolean;
   /** true when the backend has at least one configured deal-center schema */
   isConfigured: boolean;
+  /** company pricing config (dynamic tiers / fees / derivation); null pre-config */
+  pricingConfig: PricingConfig | null;
   isLoading: boolean;
 }
 
@@ -94,12 +100,27 @@ export function useCalculatorSchema(
 ): UseCalculatorSchemaResult {
   const { enabled = true } = options;
 
-  const { data, isLoading } = useQuery<CalculatorSchema[]>({
+  // Company pricing config drives per-field tier derivation (par/cost from retail)
+  // and static fees. Fetched alongside the schemas and baked into the field prices.
+  const { data: pricingConfig, isLoading: pricingLoading } = useQuery<PricingConfig | null>({
+    queryKey: ['dealCenterPricingConfig'],
+    queryFn: async () => {
+      const res = await api.get<any>(PRICING_CONFIG_URL);
+      return normalizeSalesPricingConfig(res.data?.data?.config ?? res.data?.config);
+    },
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  // Fetch the RAW schema entities; normalization (with derivation) happens in the
+  // memo below once the pricing config resolves, so blank tiers derive correctly.
+  const { data: rawEntities, isLoading } = useQuery<any[]>({
     queryKey: ['dealCenterCalculatorSchemas'],
     queryFn: async () => {
       const res = await api.get<any>(DEAL_CENTER_SCHEMAS_URL);
       const raw = (res.data as any)?.data || [];
-      return (Array.isArray(raw) ? raw : []).map(normalizeSchema);
+      return Array.isArray(raw) ? raw : [];
     },
     enabled,
     staleTime: 5 * 60 * 1000,
@@ -107,7 +128,8 @@ export function useCalculatorSchema(
   });
 
   return useMemo(() => {
-    const schemas = data || [];
+    const cfg = pricingConfig ?? null;
+    const schemas = (rawEntities || []).map((e) => normalizeSchema(e, cfg));
     const configuredSchemas = schemas.filter(isConfiguredDealCenterSchema);
     const isConfigured = configuredSchemas.length > 0;
     return {
@@ -116,7 +138,8 @@ export function useCalculatorSchema(
       configuredSchemas,
       isRemote: isConfigured,
       isConfigured,
-      isLoading,
+      pricingConfig: cfg,
+      isLoading: isLoading || pricingLoading,
     };
-  }, [data, isLoading]);
+  }, [rawEntities, pricingConfig, isLoading, pricingLoading]);
 }

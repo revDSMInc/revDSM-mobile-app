@@ -8,6 +8,7 @@ import {
   getOutcomeDownPaymentMethods,
   getDefaultPaymentMethod,
 } from '../../../utils/calculator/lowes-payment-util';
+import type { DiscountConfig } from '../utils/dynamic-discount';
 
 /**
  * Backend-driven pricing for the Dynamic Deal Center — payment plans + discount
@@ -71,6 +72,8 @@ export interface DealPricing {
   defaultPreOrder: number;
   /** Sr+Vet discount % that grosses up MSRP (usually 10). */
   seniorVetPct: number;
+  /** Raw backend discount config (discounts[] + programs[]) for data-driven MSRP/program math. Null pre-config. */
+  discountConfig: DiscountConfig | null;
   /** true when the backend supplied plans (vs the static fallback). */
   isDynamic: boolean;
   isLoading: boolean;
@@ -182,11 +185,14 @@ interface DiscountShape {
   preOrderOptions: number[];
   defaultPreOrder: number;
   seniorVetPct: number;
+  /** Raw config (discounts[] + programs[]) for data-driven MSRP/program math; null pre-config. */
+  discountConfig: DiscountConfig | null;
 }
 const DISCOUNT_FALLBACK: DiscountShape = {
   preOrderOptions: [15, 20, 25],
   defaultPreOrder: 25,
   seniorVetPct: 10,
+  discountConfig: null,
 };
 function normalizeDiscount(raw: any): DiscountShape {
   const config = raw?.data?.config;
@@ -202,6 +208,8 @@ function normalizeDiscount(raw: any): DiscountShape {
     preOrderOptions: values.length ? values : DISCOUNT_FALLBACK.preOrderOptions,
     defaultPreOrder: def ? Number(def.value) : values[values.length - 1] || DISCOUNT_FALLBACK.defaultPreOrder,
     seniorVetPct: seniors && seniors.type === 'fixed' ? Number(seniors.value) || 10 : DISCOUNT_FALLBACK.seniorVetPct,
+    // Preserve the full config so the rollout can compute MSRP/programs data-driven (web parity).
+    discountConfig: { discounts: config.discounts, programs: config.programs || [], isActive: config.isActive },
   };
 }
 
@@ -256,6 +264,7 @@ export function useDealPricing(lead: any): DealPricing {
         preOrderOptions: discount.preOrderOptions,
         defaultPreOrder: discount.defaultPreOrder,
         seniorVetPct: discount.seniorVetPct,
+        discountConfig: discount.discountConfig,
         isDynamic: true,
         isLoading: plansLoading || discountLoading,
       };
@@ -271,6 +280,7 @@ export function useDealPricing(lead: any): DealPricing {
       preOrderOptions: discount.preOrderOptions,
       defaultPreOrder: discount.defaultPreOrder,
       seniorVetPct: discount.seniorVetPct,
+      discountConfig: discount.discountConfig,
       isDynamic: false,
       isLoading: plansLoading || discountLoading,
     };
@@ -288,12 +298,31 @@ export function isFinancing(plans: Record<string, DealPlan>, key?: string): bool
   return plans[key || '']?.type === 'financing';
 }
 
-/** Monthly payment for a financing plan (pf-based multiply, else duration divide). */
+/**
+ * Monthly payment for a financing plan. Ports web
+ * `calculateMonthlyPaymentForPlan` (PremiumQuoteCard.js:25-49) EXACTLY, including
+ * the $35 minimum-payment floor and the plan-label special cases — previously
+ * missing on mobile, so reps could quote a monthly the paperwork won't honor:
+ *   - labels starting `3198`/`1529` → flat $35 when basePrice < 2500
+ *   - labels starting `1148`/`1019` → floor the pf-based payment to $35
+ */
+const MIN_MONTHLY_PAYMENT = 35;
 export function calcMonthly(plans: Record<string, DealPlan>, principal: number, key?: string): number {
   const plan = plans[key || ''] as DealPlan | undefined;
   if (!plan || plan.type !== 'financing' || !principal || principal <= 0) return 0;
-  if (plan.pf) return principal * plan.pf;
-  return principal / (plan.duration || 12);
+
+  const label = plan.label || '';
+  const isLowBasePricePlan = label.startsWith('3198') || label.startsWith('1529');
+  if (isLowBasePricePlan && principal < 2500) return MIN_MONTHLY_PAYMENT;
+
+  if (plan.pf && plan.pf > 0) {
+    const payment = principal * plan.pf;
+    const isMinPaymentPlan = label.startsWith('1148') || label.startsWith('1019');
+    if (isMinPaymentPlan && payment < MIN_MONTHLY_PAYMENT) return MIN_MONTHLY_PAYMENT;
+    return payment;
+  }
+  if (plan.duration && plan.duration > 0) return principal / plan.duration;
+  return 0;
 }
 
 /** Inflate a tier value by the selected plan's bank fee (web `calculateResultUtil`). */
@@ -312,7 +341,9 @@ export function belowMinMsg(plans: Record<string, DealPlan>, key: string, price:
   const min = plans[key]?.minPrice || 0;
   if (!min) return '';
   const n = Number(price) || 0;
+  // Web (`validatePriceForPaymentMethod`) validates the END PRICE against the plan
+  // minimum, not a "cost price" — string aligned to web.
   return n === 0
-    ? `This plan requires a minimum cost price of $${min.toLocaleString()}.`
-    : `This plan requires a minimum cost price of $${min.toLocaleString()} (cost: $${n.toLocaleString()}).`;
+    ? `This payment plan requires a minimum price of $${min.toLocaleString()}.`
+    : `This payment plan requires a minimum price of $${min.toLocaleString()}. Current price: $${n.toLocaleString()}.`;
 }

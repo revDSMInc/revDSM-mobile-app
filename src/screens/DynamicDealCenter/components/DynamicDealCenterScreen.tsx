@@ -13,6 +13,7 @@ import { ResultJobModal } from './ResultJobModal';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
 import { DynamicDealEditScreen } from './DynamicDealEditScreen';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
+import { LeadService } from '../../../services/api/leads';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -54,6 +55,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     configuredSchemas,
     isConfigured: hasCalculatorSchema,
     isLoading: isSchemaLoading,
+    pricingConfig,
   } = useCalculatorSchema();
   // Backend-driven payment plans + discount tiers (web parity), static fallback.
   const pricing = useDealPricing(lead);
@@ -101,9 +103,27 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
-    setCalculatorResultData({ ...data, calculatorId: currentCalculatorId });
+    // Attach the calculator snapshot + appointment so the outcome payload can send
+    // `LFCalculator` and `selectedAppointmentId` (web parity — every outcome save
+    // carries the associated calculator object; previously omitted on mobile).
+    const calc: any = tabs.find((t) => t.id === currentCalculatorId);
+    setCalculatorResultData({
+      ...data,
+      calculatorId: currentCalculatorId,
+      LFCalculator: calc || {},
+      selectedAppointmentId: calc?.appointmentId,
+    });
+    // Web parity (ResultJobModal Sale/Demo pick): advance the lead's sales-pipeline
+    // stage. Previously never called on mobile, so a resulted lead never moved.
+    const leadIdForProgress = lead?._id || lead?.leadId || lead?.id;
+    if (leadIdForProgress) {
+      LeadService.updateLeadTimelineProgress(leadIdForProgress, {
+        salesProcess: 'completed',
+        leadResulted: 'active',
+      }).catch((e: any) => console.warn('[DynamicDealCenter] timeline progress failed:', e?.message || e));
+    }
     setFlowStep('jobBuilder');
-  }, [currentCalculatorId]);
+  }, [currentCalculatorId, tabs, lead]);
 
   const handleJobBuilderBack = useCallback(() => {
     setFlowStep('calculator');
@@ -158,6 +178,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         <RolloutView
           calculators={tabs}
           verticals={verticals}
+          pricingConfig={pricingConfig}
           pricing={pricing}
           isLowesLead={lead?.lowesLead === true}
           onBack={() => setFlowStep('calculator')}
@@ -248,6 +269,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       ) : (
         <CalculatorView
           verticals={verticals}
+          pricingConfig={pricingConfig}
           entries={activeTab?.entries || {}}
           onEntryChange={handleEntryChange}
           totals={activeTab?.totals || { cost: 0, par: 0, retail: 0 }}
