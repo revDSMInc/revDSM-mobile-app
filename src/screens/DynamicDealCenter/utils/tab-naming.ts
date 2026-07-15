@@ -7,6 +7,11 @@
  *   - values in "6\"/7\"/4\"&5\" Versa"  → Versa
  *   - values in gutters                 → G
  *   - values in gutter extras           → G Misc
+ *   - values in Lighting 1st/2nd/3rd    → Light
+ *   - values in Control Box / WiFi /    → Light Misc
+ *     Booster Box / Electrical Outlet
+ *   - values in Extra Labor             → Labor
+ *   - values in Number of Screen        → Screens
  * so gutters + Versa Max + C-S-R reads "G+VMax+LF Misc" (matching web). Unlike
  * the regular deal center's `getPresentComponents`, the dynamic flow does NOT
  * suppress the "misc" components when a primary product is present — the web
@@ -25,19 +30,33 @@ import type { CalculatorSchema, CalculatorEntry } from '../types/calculator';
 
 const SIZING_LABELS = ['SM', 'MD', 'LG', 'XL', 'XXL', 'XXL-2', 'XXL-3', 'XXL-4', 'XXL-5'];
 
-/** Display order for the component parts (mirrors the regular deal center ORDER). */
+/**
+ * Display order for the component parts. The dynamic deal center orders them by
+ * the schema's on-screen CATEGORY order (Gutters → LeafFilter → Soffit → Fascia
+ * → Lighting → Additional Services) — matching web, e.g. "Light+Light Misc+Labor
+ * +Screens". (This differs from the regular deal center's ORDER, which lists
+ * Labor before Lighting.)
+ */
 const COMPONENT_ORDER = [
+  // Gutters
   'G',
+  'G Misc',
+  // LeafFilter
   'Versa',
   'VMax',
+  'LF Misc',
+  // Soffit
   'S',
+  // Fascia
   'FWrap',
   'FBoard',
   'FAluminum',
-  'Labor',
-  'LF Misc',
-  'G Misc',
+  // Lighting
   'Light',
+  'Light Misc',
+  // Additional Services
+  'Labor',
+  'Screens',
 ];
 
 /** Exact stable field keys → component, for schemas that key fields the regular way. */
@@ -52,12 +71,16 @@ const KEY_COMPONENT: Record<string, string> = {
   fasciaBoard: 'FBoard',
   aluminumFasciaBoard: 'FAluminum',
   extraLabor: 'Labor',
+  numberOfScreen: 'Screens', screens: 'Screens', numberOfScreens: 'Screens',
   cornersFilter: 'LF Misc', sawzallHanger: 'LF Misc', removeProtection: 'LF Misc',
   csr: 'LF Misc', ribbedRoof: 'LF Misc',
   wedges: 'G Misc', straps: 'G Misc', modifyHeight: 'G Misc', groundSpout: 'G Misc',
   replaceCorner: 'G Misc', extendedSplashGuard: 'G Misc', extendedSplashGuard032: 'G Misc',
+  // Lighting stories → "Light"; lighting accessories → "Light Misc" (web parity).
   lighting1stStory: 'Light', lighting2ndStory: 'Light', lighting3rdStory: 'Light',
-  lightingWifiExtender: 'Light', lightingBoosterBox: 'Light', lightingElectricalOutlet: 'Light',
+  lightingControlBox: 'Light Misc', controlBox: 'Light Misc',
+  lightingWifiExtender: 'Light Misc', lightingBoosterBox: 'Light Misc', lightingElectricalOutlet: 'Light Misc',
+  wifiExtender: 'Light Misc', boosterBox: 'Light Misc', electricalOutlet: 'Light Misc',
 };
 
 /**
@@ -71,10 +94,18 @@ const LABEL_RULES: Array<{ test: RegExp; component: string }> = [
   { test: /\bc[-\s]?s[-\s]?r\b|sawzall|remove\s*protection|ribbed\s*roof|corners?\s*filter/i, component: 'LF Misc' },
   { test: /versa|micro\s*mesh/i, component: 'Versa' },
   { test: /soffit|porch\s*ceiling|nailer/i, component: 'S' },
-  { test: /aluminum\s*fascia/i, component: 'FAluminum' },
+  // "Aluminum 2\"x2\" Fascia Board" — the size text between "Aluminum" and
+  // "Fascia" breaks a simple `aluminum\s*fascia`, so match aluminum + fascia/board
+  // loosely. Kept BEFORE the generic fascia-board rule so it wins.
+  { test: /aluminum.*(fascia|board)/i, component: 'FAluminum' },
   { test: /fascia\s*board/i, component: 'FBoard' },
   { test: /trim\s*wrap/i, component: 'FWrap' },
   { test: /labor/i, component: 'Labor' },
+  { test: /number\s*of\s*screen|screen/i, component: 'Screens' },
+  // Lighting accessories (Control Box / WiFi Extender / Booster Box / Electrical
+  // Outlet) carry no "light" text — match them explicitly, BEFORE the general
+  // lighting rule, so they read "Light Misc" (web parity).
+  { test: /control\s*box|wifi\s*extender|booster\s*box|electrical\s*outlet/i, component: 'Light Misc' },
   { test: /light/i, component: 'Light' },
   { test: /gutter/i, component: 'G' },
 ];

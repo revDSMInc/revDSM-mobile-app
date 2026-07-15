@@ -67,6 +67,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     tabs,
     activeTabId,
     setActiveTabId,
+    appointmentId,
     loading: isCalcLoading,
     isSaving,
     lastUpdated,
@@ -262,6 +263,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDeleteTab={handleDeleteTab}
           onReorderTabs={handleReorderTabs}
           onViewAll={() => setFlowStep('rollout')}
+          appointmentId={appointmentId || undefined}
+          isLowesLead={lead?.lowesLead === true}
         />
       )}
 

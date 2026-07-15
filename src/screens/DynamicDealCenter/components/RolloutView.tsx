@@ -21,6 +21,20 @@ import {
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
+/**
+ * Unit suffix shown before a line-item label (web parity):
+ *  - "Number of Screen" is a plain count → NO unit ("3 Number of Screen").
+ *  - a "ft" unit (e.g. the Lighting stories) renders as the foot mark "'"
+ *    ("5' Lighting 1st Story"), never the word "ft".
+ *  - any other field falls back to the foot mark when it has no unit.
+ */
+const unitOf = (item: { unit?: string; label?: string }) => {
+  if (/number\s*of\s*screen|screen/i.test(item.label || '')) return '';
+  const unit = (item.unit || '').trim();
+  if (!unit || /^ft$/i.test(unit)) return "'";
+  return unit;
+};
+
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
   calc.paymentMethod || userDefault || defaultMethod || 'check';
@@ -539,11 +553,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   }, [endPrice, tiers]);
 
   const categoryChips = useMemo(() => {
-    const cats = new Set<string>();
-    // Only categories with an entered value (entries now hold the full seeded
-    // field list, so untouched fields must be excluded).
-    Object.values(calculator.entries || {}).forEach((e: any) => { if (e?.categoryId && e.inputValue > 0) cats.add(e.categoryId); });
-    return Array.from(cats);
+    // Count of entered items per category — the pill shows "{label} {count}"
+    // (web parity, e.g. "Gutters 9"). Entries now hold the full seeded field
+    // list, so untouched fields (inputValue 0) must be excluded from the count.
+    const counts = new Map<string, number>();
+    Object.values(calculator.entries || {}).forEach((e: any) => {
+      if (e?.categoryId && e.inputValue > 0) counts.set(e.categoryId, (counts.get(e.categoryId) || 0) + 1);
+    });
+    return Array.from(counts, ([catId, count]) => ({ catId, count }));
   }, [calculator.entries]);
 
   // Entered line-items, grouped by category (mirrors the old mobile locked view).
@@ -715,12 +732,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         {/* 3. Category pills */}
         {categoryChips.length > 0 && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-            {categoryChips.map((catId) => {
+            {categoryChips.map(({ catId, count }) => {
               const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
               return (
                 <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
                   <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label} {count}</Text>
                 </View>
               );
             })}
@@ -738,7 +755,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                 </View>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{item.unit || "'"}</Text>{'  '}{item.label}
+                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{unitOf(item)}</Text>{'  '}{item.label}
                 </Text>
               </View>
             </View>
