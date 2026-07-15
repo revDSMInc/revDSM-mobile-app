@@ -346,8 +346,23 @@ function DynamicJobBuilderInner({
             status: 'draft',
           });
         } else {
+          // Web parity (ResultLeadModal.handleUpdateJobBuilder): include the
+          // outcome fields (oneLeg, result, reason, explain, contract price, etc.)
+          // in the auto-save so they persist even if the user never completes the
+          // job builder. Without this, a partially-filled outcome is lost on close.
+          const rd = (calculatorResultData || {}) as any;
           await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
             selectedCalculatorId: calcId,
+            oneLeg: rd.oneLeg,
+            result: rd.resultType === 'sale' ? 'Sale' : rd.resultType === 'demo' ? 'Demo' : undefined,
+            reason: rd.demoReason,
+            explain: rd.reasonExplanation,
+            lastPriceQuoted: rd.contractPrice,
+            originalContractPrice: rd.contractPrice,
+            downPayment: rd.downPayment,
+            paymentMethod: rd.downPaymentMethod,
+            balancePaymentMethod: rd.balancePaymentMethod,
+            balance: rd.balance,
             jobBuilder: {
               dynamicJobState,
               configId,
@@ -657,10 +672,24 @@ function DynamicJobBuilderInner({
       // complete). This is what a reopen (GET /outcome/{calcId}) rehydrates from, so
       // a submitted deal shows its already-set data. Best-effort — a failure here
       // must not block the /job-builder finalize below.
+      // Web parity (ResultLeadModal.handleUpdateJobBuilder): include the outcome
+      // fields (oneLeg, result, reason, explain, contract price, etc.) so they
+      // persist in the calculator-scoped outcome for rehydration on reopen.
       if (leadId && calcId) {
         try {
+          const rd = (calculatorResultData || {}) as any;
           await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, {
             selectedCalculatorId: calcId,
+            oneLeg: rd.oneLeg,
+            result: isSale ? 'Sale' : 'Demo',
+            reason: rd.demoReason,
+            explain: rd.reasonExplanation,
+            lastPriceQuoted: rd.contractPrice,
+            originalContractPrice: rd.contractPrice,
+            downPayment: rd.downPayment,
+            paymentMethod: rd.downPaymentMethod,
+            balancePaymentMethod: rd.balancePaymentMethod,
+            balance: rd.balance,
             jobBuilder: jobBuilderWrapper,
           });
         } catch (e) {
@@ -703,9 +732,14 @@ function DynamicJobBuilderInner({
       // "Both leadData and jobState are required in the request body".
       const rd = (calculatorResultData || {}) as any;
       const result = isSale ? 'Sale' : 'Demo';
+      // Web parity: the outcome uses `paymentMethod` for the down payment method
+      // (not `downPaymentMethod` as in the result modal's state). Map them here so
+      // the spread of `...rd` doesn't send the wrong key name.
+      const { downPaymentMethod: _dpm, ...rdWithoutDpm } = rd;
       const payload = {
         leadData: {
-          ...rd,
+          ...rdWithoutDpm,
+          paymentMethod: rd.downPaymentMethod,
           result,
           status: result,
           jobBuilder: jobBuilderWrapper,
@@ -730,7 +764,31 @@ function DynamicJobBuilderInner({
         await LeadService.submitJobBuilder(leadId, payload);
       }
 
-      FlashMessage.success('Job Complete', 'Job builder submitted successfully');
+      // Web parity (TabbedCalculator.js ~L872-917): mirror the outcome fields +
+      // agreements/order-sheets to PUT /lead/v1/{leadId}/outcome so the
+      // LeadOutcome collection is populated (the source read by
+      // downloadOutcomeDocuments and rendered in ContractDetails). Without this,
+      // the outcome fields (oneLeg, result, reason, explain, contract price, etc.)
+      // and uploaded documents are only in the JobBuilderDocument collection and
+      // invisible to the LeadOutcome-based views.
+      if (leadId) {
+        try {
+          const outcomePayload: Record<string, any> = {
+            ...rdWithoutDpm,
+            paymentMethod: rd.downPaymentMethod,
+            result,
+            status: result,
+            selectedCalculatorId: calcId || rd.calculatorId || null,
+            selectedAppointmentId: rd.selectedAppointmentId || leadId,
+            jobBuilder: jobBuilderWrapper,
+          };
+          if (agreementsPayload.length > 0) outcomePayload.agreements = agreementsPayload;
+          if (orderSheetsPayload.length > 0) outcomePayload.orderSheets = orderSheetsPayload;
+          await LeadService.updateLeadOutcome(leadId, outcomePayload);
+        } catch (e) {
+          console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
+        }
+      }
 
       if (onJobComplete) {
         onJobComplete(initialConfig, jobState);

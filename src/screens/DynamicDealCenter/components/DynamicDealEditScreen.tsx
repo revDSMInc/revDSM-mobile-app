@@ -68,7 +68,7 @@ interface DynamicDealEditScreenProps {
 
 export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScreenProps) {
   const insets = useSafeAreaInsets();
-  const lead = route?.params?.lead || {};
+  const lead = useMemo(() => route?.params?.lead || {}, [route?.params?.lead]);
   const calculatorResultData = route?.params?.calculatorResultData;
   const leadId = lead?._id || lead?.leadId || lead?.id;
 
@@ -219,6 +219,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         paymentMethod: resolveTierPaymentMethod(balanceMethodKey),
         isLowesLead: lead?.lowesLead === true,
         originalContractPrice: lead?.originalContractPrice,
+        pricingConfig: null,
       }),
     [calculatorData, dealCenterData, jobBuilderConfig, initialState, effectiveJobState, configuredSchemas, balanceMethodKey, lead]
   );
@@ -227,7 +228,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     `${lead?.customerDetails?.firstName || ''} ${lead?.customerDetails?.lastName || ''}`.trim() ||
     'Customer';
   const balance = Math.max(0, (Number(contractPrice) || 0) - (Number(downPayment) || 0));
-  const newMarkup = getMarkupInfo(contractPrice, tierResult.next);
+  const newMarkup = getMarkupInfo(contractPrice, tierResult.next, undefined);
 
   // ── change detection + diff ─────────────────────────────────────────────────
   const buildChangeGroups = useMemo(

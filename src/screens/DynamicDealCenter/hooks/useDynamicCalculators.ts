@@ -4,6 +4,7 @@ import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
+import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 
 /**
  * Persistence hook for the Dynamic Deal Center calculators — the schema-driven
@@ -61,6 +62,8 @@ export interface CalcTab {
   discountPercentage?: number;
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
+  /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
+  pricemarkup?: string;
   /** true when `id` is a real backend id (so it can be saved/deleted remotely) */
   persisted?: boolean;
 }
@@ -93,7 +96,7 @@ function tabSignature(tab: CalcTab): string {
     .map(([id, e]) => `${id}:${e?.inputValue ?? ''}`)
     .join('|');
   const dropSig = (tab.dropPrice || []).map((d: any) => d?.price ?? '').join(',');
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}`;
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -242,6 +245,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       totals: tab.totals,
       isRolloutConfirmed: tab.isRolloutConfirmed,
       price: tab.price,
+      pricemarkup: tab.pricemarkup,
       paymentMethod: tab.paymentMethod,
       dropPrice: tab.dropPrice || [],
       downPayment: tab.downPayment,
@@ -600,7 +604,14 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       setTabs((prev) => {
         const next = prev.map((t) => {
           if (!priceById.has(t.id)) return t;
-          return { ...t, isRolloutConfirmed: true, price: priceById.get(t.id) };
+          const endPrice = priceById.get(t.id) || 0;
+          // Web parity (ViewAllCalculators.calculateMarkup): compute the markup
+          // string (e.g. "COST + 25%") using the raw schema totals as anchors.
+          const cost = Math.round(t.totals?.cost || 0);
+          const par = Math.round(t.totals?.par || 0);
+          const retail = Math.round(t.totals?.retail || 0);
+          const pricemarkup = endPrice > 0 ? calculateMarkupLabel(endPrice, cost, par, retail) : undefined;
+          return { ...t, isRolloutConfirmed: true, price: endPrice, pricemarkup };
         });
         tabsRef.current = next;
         next.forEach((t) => {

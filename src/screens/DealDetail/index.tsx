@@ -148,13 +148,18 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     [drafts]
   );
 
+  const pendingDraftsArr = drafts.filter((d) => String(d?.status || '').toLowerCase() === 'pending');
+  const pendingCount = pendingDraftsArr.length;
   const bannerText = isCancelled
-    ? 'LEAD CANCELLED'
+    ? 'JOB CANCELLED'
     : pendingDraft
-    ? 'SALE - PENDING CUSTOMER SIGNATURE'
+    ? `PENDING ADDENDUM${pendingCount > 1 ? 'S' : ''} - AWAITING CUSTOMER SIGNATURE`
     : isSale
     ? 'SALE - LEAD RESULTED'
     : 'DEMO - LEAD RESULTED';
+  const bannerSubtitle = pendingDraft
+    ? `${pendingCount} addendum${pendingCount > 1 ? 's' : ''} awaiting customer approval`
+    : '';
   const bannerBg = isCancelled ? '#B91C1C' : pendingDraft ? '#F59E0B' : '#22C55E';
 
   const openDoc = useCallback(async (doc: any) => {
@@ -263,7 +268,7 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
           {lead?.leadId ? `#${lead.leadId}` : 'Deal'}
         </Text>
       </View>
-      {isResulted && hasDetails && !isCancelled && (
+      {!isCancelled && (
         <TouchableOpacity
           onPress={onEdit}
           style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}
@@ -309,9 +314,14 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#22C55E" />}
       >
         {/* Status banner */}
-        <View style={{ backgroundColor: bannerBg, borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginBottom: 14, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
-          <Icon name={pendingDraft ? 'clock-outline' : isCancelled ? 'close-circle-outline' : 'check'} size={16} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 13, letterSpacing: 0.3 }}>{bannerText}</Text>
+        <View style={{ backgroundColor: bannerBg, borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <Icon name={pendingDraft ? 'clock-outline' : isCancelled ? 'close-circle-outline' : 'check'} size={16} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 13, letterSpacing: 0.3 }}>{bannerText}</Text>
+          </View>
+          {bannerSubtitle ? (
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 11, marginTop: 2, opacity: 0.9 }}>{bannerSubtitle}</Text>
+          ) : null}
         </View>
 
         {/* Contract Details */}

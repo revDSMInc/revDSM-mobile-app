@@ -1,8 +1,8 @@
 // Centralised config — update API_URL to match your environment
-const API_URL = 'https://demo-api.revdsm.com/';
+const API_URL = 'https://api.np.revdsm.com/';
 
 const getS3Bucket = (url: string): string => {
-  if (url.includes('dev-api') || url.includes('staging-api')) {
+  if (url.includes('dev-api') || url.includes('api.np')) {
     return 'np-revdsm-staging';
   }
   // Production bucket name

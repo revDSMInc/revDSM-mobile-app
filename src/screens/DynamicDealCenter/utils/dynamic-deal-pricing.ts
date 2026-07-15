@@ -1,25 +1,6 @@
 // Pricing helpers for the DYNAMIC deal-edit flow (mobile).
 //
 // FAITHFUL port of web `src/sections/deal/components/dynamic-deal-pricing.js`.
-// The dynamic job builder itself computes NO dollar price — money lives on the
-// deal-center calculator (schema `field.price` × quantities). For the guided
-// "Job Price" (rollout reconfirm) step we therefore:
-//   1. `previous` = the deal's CURRENT stored cost/PAR/retail tiers (what the
-//      customer is paying), from the saved calculator (`totals`/`entries`), grossed
-//      up by the balance payment method's bank fee — exactly as web's tier engine.
-//   2. `next` = `previous + delta`, where `delta` is the difference between the
-//      edited and original dynamic build, PRICED THROUGH THE CALCULATOR SCHEMA
-//      (each build quantity — direct `dcField` fields AND allocation-derived
-//      gutter/downspout footage — mapped onto the schema fields and summed at
-//      `field.price[tier]`). Unedited fields cancel; edited fields drive the delta.
-//      `changed` is true only when the delta is non-zero.
-//
-// Unlike web this does NOT touch the shared `calculation-results-util.ts` (used by
-// RolloutView/Summary): the schema-sum pricing is implemented self-contained here,
-// which is exactly the branch web's `computeEditedTiers` exercises (it strips
-// `totals`/`entries` so only the schema path runs). When the backend supplies no
-// schemas (should not happen in the configured dynamic flow — Phase B requires
-// them) the delta safely degrades to 0 and the rep sets the price manually.
 
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
@@ -42,6 +23,8 @@ export interface EditedTiersResult {
 interface TierOpts {
   schemas: any[];
   paymentMethod?: string;
+  isLowesLead?: boolean;
+  pricingConfig?: any;
 }
 
 export const parsePrice = (val: any): number => {
@@ -82,7 +65,7 @@ const normName = (s: any): string =>
  * exactly the web tier engine, for both the stored (`previous`) and the
  * schema-priced (`next` delta) computations.
  */
-function tierFor(details: any, markupKey: string, { schemas, paymentMethod }: TierOpts): number {
+function tierFor(details: any, markupKey: string, { schemas, paymentMethod, isLowesLead: _isLowesLead, pricingConfig: _pricingConfig }: TierOpts): number {
   const tierKey = markupToTierKey(markupKey);
   const plan = paymentPlans[paymentMethod || 'check'] || {};
   const fee = Number(plan.fee) || 0;
@@ -195,8 +178,14 @@ export function extractQuantitiesByFieldId(jobState: any): Record<string, number
         if (group?.sectionState) ingestFieldMap(secId, group.sectionState);
       });
 
-      // Tab-level direct fields / legacy tab-level combinations.
-      const { sectionFields, comboGroups, combinations, ...rest } = tab;
+      // Tab-level direct fields / legacy tab-level combinations — skip sectionFields/comboGroups
+      // as they are handled above (sectionFields) and comboGroups.
+      const rest: Record<string, any> = {};
+      Object.keys(tab).forEach((k) => {
+        if (k !== 'sectionFields' && k !== 'comboGroups') rest[k] = (tab as any)[k];
+      });
+      const combinations = rest.combinations;
+      delete rest.combinations;
       ingestFieldMap(tabId, rest);
       (combinations || []).forEach((combo: any) => ingestFieldMap(tabId, combo));
     });
@@ -309,7 +298,7 @@ function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any =
           allocated =
             resolveAllocationMetrics(alloc, { field: alloc, tab: t, tabState, dealCenterData })
               ?.allocated || 0;
-        } catch (err) {
+        } catch {
           allocated = 0;
         }
         if (!allocated) return;
@@ -322,6 +311,148 @@ function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any =
   );
 
   return map;
+}
+
+/**
+ * Index the edited build's quantities under every key a calculator entry might
+ * match on: by dcField (authoritative), by field id, by normalized name, and
+ * by section label. Quantities feeding the same key across sections are summed.
+ */
+function buildBuilderQtyIndex(jobState: any, config: any, dealCenterData: any = {}): {
+  byDcField: Record<string, number>;
+  byId: Record<string, number>;
+  byName: Record<string, number>;
+  bySection: Record<string, number>;
+} {
+  const flat = extractQuantitiesByFieldId(jobState);
+  const byDcField: Record<string, number> = {};
+  const byId: Record<string, number> = {};
+  const byName: Record<string, number> = {};
+  const bySection: Record<string, number> = {};
+
+  const addSum = (bucket: Record<string, number>, key: any, qty: number) => {
+    if (key === undefined || key === null || key === '') return;
+    bucket[key] = (bucket[key] || 0) + qty;
+  };
+
+  const walk = (fields: any[], sectionLabel: string, scopeId: string) =>
+    (fields || []).forEach((f: any) => {
+      if (f?.id) {
+        const qty = flat[qualify(scopeId, f.id)];
+        if (qty !== undefined) {
+          const dcs = f.dcFields?.length ? f.dcFields : f.dcField ? [f.dcField] : [];
+          dcs.forEach((d: string) => {
+            addSum(byDcField, d, qty);
+            addSum(byDcField, normName(d), qty);
+          });
+          addSum(byId, f.id, qty);
+          const base = String(f.id).split('__')[0];
+          if (base !== f.id) addSum(byId, base, qty);
+          addSum(byName, normName(f.label), qty);
+          addSum(byName, normName(f.name), qty);
+          addSum(byName, normName(f.key), qty);
+          addSum(bySection, normName(sectionLabel), qty);
+        }
+      }
+      if (f?.fields) walk(f.fields, sectionLabel, scopeId);
+    });
+
+  (config?.verticals || []).forEach((v: any) =>
+    (v.tabs || []).forEach((t: any) => {
+      walk(t.fields, t.label, t.id);
+      (t.sections || []).forEach((s: any) => walk(s.fields, s.label, s.id));
+      if (t.combinations?.fields) walk(t.combinations.fields, t.label, t.id);
+      (t.combinationGroups || []).forEach((cg: any) => walk(cg.fields, cg.label || cg.id, cg.id));
+    })
+  );
+
+  // Overlay allocation-derived quantities.
+  const allocMap = buildAllocationQtyMap(jobState, config, dealCenterData);
+  Object.entries(allocMap).forEach(([ref, qty]) => {
+    addSum(byDcField, ref, qty);
+    addSum(byDcField, normName(ref), qty);
+  });
+
+  return { byDcField, byId, byName, bySection };
+}
+
+/**
+ * Rebuild calculator entries from the edited build: for each priced entry,
+ * find its build quantity by the strongest available link (dcField, id,
+ * name, section) and recompute tiers. Returns null when the calculator has
+ * no entries array.
+ */
+export function rebuildCalculatorEntries(
+  calculatorData: any,
+  editedJobState: any,
+  originalJobState: any,
+  config: any,
+  dealCenterData: any = {}
+): { entries: any[]; changed: boolean } | null {
+  const entries = calculatorData?.entries;
+  if (!Array.isArray(entries) || !entries.length || !editedJobState || !config) return null;
+
+  const editedIdx = buildBuilderQtyIndex(editedJobState, config, dealCenterData);
+  const originalIdx = originalJobState
+    ? buildBuilderQtyIndex(originalJobState, config, dealCenterData)
+    : editedIdx;
+  let changed = false;
+
+  const resolveQty = (idx: ReturnType<typeof buildBuilderQtyIndex>, entry: any): number | undefined => {
+    const fid = entry?.fieldId;
+    if (fid !== undefined && fid !== null && fid !== '') {
+      if (idx.byDcField[fid] !== undefined) return idx.byDcField[fid];
+      if (idx.byId[fid] !== undefined) return idx.byId[fid];
+      const fidN = normName(fid);
+      if (fidN && idx.byDcField[fidN] !== undefined) return idx.byDcField[fidN];
+      if (fidN && idx.byName[fidN] !== undefined) return idx.byName[fidN];
+    }
+    const cands = [entry?.name, entry?.label].map(normName).filter(Boolean);
+    for (let i = 0; i < cands.length; i += 1) {
+      if (idx.byName[cands[i]] !== undefined) return idx.byName[cands[i]];
+    }
+    for (let i = 0; i < cands.length; i += 1) {
+      if (idx.byDcField[cands[i]] !== undefined) return idx.byDcField[cands[i]];
+    }
+    for (let i = 0; i < cands.length; i += 1) {
+      if (idx.bySection[cands[i]] !== undefined) return idx.bySection[cands[i]];
+    }
+    return undefined;
+  };
+
+  const nextEntries = entries.map((e: any) => {
+    const editedQty = resolveQty(editedIdx, e);
+    if (editedQty === undefined) return e;
+    const originalQty = resolveQty(originalIdx, e) ?? 0;
+    if (editedQty === originalQty) return e;
+
+    const inputValue = Number(e.inputValue) || 0;
+    const newQty = Math.max(0, editedQty);
+
+    const unit = e.pricingAtTimeOfEntry && typeof e.pricingAtTimeOfEntry === 'object'
+      ? e.pricingAtTimeOfEntry
+      : inputValue
+        ? {
+            cost: (Number(e.computed?.cost) || 0) / inputValue,
+            par: (Number(e.computed?.par) || 0) / inputValue,
+            retail: (Number(e.computed?.retail) || 0) / inputValue,
+          }
+        : null;
+    if (!unit) return e;
+
+    changed = true;
+    return {
+      ...e,
+      inputValue: newQty,
+      computed: {
+        cost: newQty * (Number(unit.cost) || 0),
+        par: newQty * (Number(unit.par) || 0),
+        retail: newQty * (Number(unit.retail) || 0),
+      },
+    };
+  });
+
+  return { entries: nextEntries, changed };
 }
 
 /**
@@ -396,6 +527,8 @@ export function computeEditedTiers({
   schemas = [],
   paymentMethod = 'check',
   originalContractPrice,
+  isLowesLead = false,
+  pricingConfig = null,
 }: {
   calculatorData: any;
   dealCenterData?: any;
@@ -406,16 +539,15 @@ export function computeEditedTiers({
   paymentMethod?: string;
   isLowesLead?: boolean;
   originalContractPrice?: any;
+  pricingConfig?: any;
 }): EditedTiersResult {
-  const opts: TierOpts = { schemas, paymentMethod };
+  const opts: TierOpts = { schemas, paymentMethod, isLowesLead, pricingConfig };
   const clamp = (v: number) => Math.max(0, Math.round(v));
   const stored = storedTiersWithFallback(calculatorData, opts, originalContractPrice);
 
   const hasSchema = Array.isArray(schemas) && schemas.length > 0;
   if (hasSchema && config && (editedJobState || originalJobState)) {
     const fieldOptions = extractDealCenterFieldOptions(schemas);
-    // Strip totals/entries so the schema-sum path prices the overlaid build
-    // quantities (never the stale stored totals) — exactly web's `stripped(d)`.
     const stripped = (d: any) => ({ ...d, totals: undefined, entries: undefined });
     const prevDetails = buildCalculatorDetails(dealCenterData, originalJobState, config, fieldOptions);
     const nextDetails = buildCalculatorDetails(dealCenterData, editedJobState, config, fieldOptions);
@@ -439,19 +571,66 @@ export function computeEditedTiers({
     };
   }
 
-  // No schemas configured — safe degradation: no delta, rep sets the price.
+  // Entry-based rebuild path: when calculator has entries but no schemas,
+  // rebuild entries from the edited build and recompute tiers.
+  const rebuilt = rebuildCalculatorEntries(calculatorData, editedJobState, originalJobState, config, dealCenterData);
+  if (rebuilt) {
+    const calcNoTotals = { ...calculatorData, totals: undefined };
+    const entriesPrev = tiersFromDetails(
+      { ...calcNoTotals, entries: calculatorData.entries },
+      opts
+    );
+    const entriesNext = tiersFromDetails({ ...calcNoTotals, entries: rebuilt.entries }, opts);
+    const delta: Tiers = {
+      cost: entriesNext.cost - entriesPrev.cost,
+      par: entriesNext.par - entriesPrev.par,
+      retail: entriesNext.retail - entriesPrev.retail,
+    };
+    const previous = stored.retail || stored.par || stored.cost ? stored : entriesPrev;
+    return {
+      previous,
+      next: {
+        cost: clamp(previous.cost + delta.cost),
+        par: clamp(previous.par + delta.par),
+        retail: clamp(previous.retail + delta.retail),
+      },
+      delta,
+      changed: rebuilt.changed,
+    };
+  }
+
+  // Schema-overlay bridge fallback: price build fields against schema.
+  const prevDc = tiersFromDetails(
+    buildCalculatorDetails(dealCenterData, originalJobState, config, []),
+    opts
+  );
+  const nextDc = tiersFromDetails(
+    buildCalculatorDetails(dealCenterData, editedJobState, config, []),
+    opts
+  );
+  const delta: Tiers = {
+    cost: nextDc.cost - prevDc.cost,
+    par: nextDc.par - prevDc.par,
+    retail: nextDc.retail - prevDc.retail,
+  };
+  const previous = stored.retail || stored.par || stored.cost ? stored : prevDc;
   return {
-    previous: stored,
-    next: { ...stored },
-    delta: { cost: 0, par: 0, retail: 0 },
-    changed: false,
+    previous,
+    next: {
+      cost: clamp(previous.cost + delta.cost),
+      par: clamp(previous.par + delta.par),
+      retail: clamp(previous.retail + delta.retail),
+    },
+    delta,
+    changed: delta.cost !== 0 || delta.par !== 0 || delta.retail !== 0,
   };
 }
 
 /** COST/PAR/RETAIL markup label + % vs the closest tier, for the price input badge. */
 export function getMarkupInfo(
   price: any,
-  tiers: Tiers | undefined | null
+  tiers: Tiers | undefined | null,
+  tierLabels?: Record<string, string> | null
 ): { text: string; markupPct: number | null } {
   const p = Number(price) || 0;
   if (p === 0 || !tiers?.retail) return { text: '—', markupPct: null };
@@ -463,5 +642,6 @@ export function getMarkupInfo(
   const base = Object.keys(diffs).reduce((a, b) => (diffs[a] <= diffs[b] ? a : b));
   const baseVal = { RETAIL: tiers.retail, PAR: tiers.par, COST: tiers.cost }[base] || 0;
   const pct = baseVal > 0 ? Math.round(((p - baseVal) / baseVal) * 100) : 0;
-  return { text: base, markupPct: pct };
+  const text = tierLabels ? (tierLabels[base.toLowerCase()] || base).toUpperCase() : base;
+  return { text, markupPct: pct };
 }

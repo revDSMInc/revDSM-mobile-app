@@ -327,7 +327,7 @@ export default function MyDeals({ navigation }: MyDealsProps) {
       {showInitialLoader ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#22C55E" />
-          <Text style={{ marginTop: 12, fontSize: 13, color: '#94A3B8' }}>Loading your deals…</Text>
+          <Text style={{ marginTop: 12, fontSize: 13, color: '#94A3B8' }}>Loading leads...</Text>
         </View>
       ) : (
         <FlatList
@@ -344,10 +344,7 @@ export default function MyDeals({ navigation }: MyDealsProps) {
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 64 }}>
                 <Icon name="calendar-blank-outline" size={44} color="#CBD5E1" />
                 <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '800', color: '#475569' }}>
-                  {activeTab === 0 ? 'No deals found' : activeTab === 1 ? 'No scheduled deals' : 'No TBD deals'}
-                </Text>
-                <Text style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', textAlign: 'center', paddingHorizontal: 32, lineHeight: 18 }}>
-                  Deals you result from the Deal Center show up here for editing.
+                  {activeTab === 0 ? 'No leads found' : activeTab === 1 ? 'No scheduled leads' : 'No TBD leads'}
                 </Text>
               </View>
             ) : null
@@ -356,7 +353,7 @@ export default function MyDeals({ navigation }: MyDealsProps) {
             loading && leads.length > 0 ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 8 }}>
                 <ActivityIndicator size="small" color="#22C55E" />
-                <Text style={{ fontSize: 13, color: '#94A3B8' }}>Loading more…</Text>
+                <Text style={{ fontSize: 13, color: '#94A3B8' }}>Loading more leads...</Text>
               </View>
             ) : !hasMore && leads.length > 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 16 }}>

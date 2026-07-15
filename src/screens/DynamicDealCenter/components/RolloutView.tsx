@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Switch, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -80,7 +80,7 @@ interface RolloutViewProps {
   isLowesLead?: boolean;
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
-  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number) => void;
+  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => void;
   /** Persist a calculator's payment plan (auto-saves like a field change). */
   onPaymentMethodChange?: (id: string, method: string) => void;
   /** Persist a calculator's drop-price list. */
@@ -480,7 +480,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   isLowesLead: boolean;
   pricing: DealPricing;
   onPriceChange: (id: string, price: number) => void;
-  onResult: (id: string, result: 'sale' | 'demo', price?: number) => void;
+  onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
   onDropChange: (id: string, drops: any[]) => void;
   onDiscountChange: (id: string, discount: number) => void;
@@ -1045,8 +1045,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         visible={showChooser}
         name={calculator.title}
         price={chooserPrice}
-        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice); }}
-        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice); }}
+        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, calculator.paymentMethod); }}
+        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, calculator.paymentMethod); }}
         onClose={() => setShowChooser(false)}
       />
     </>
@@ -1076,6 +1076,42 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
   const enteredCount = visibleCalculators.filter((c) => effectivePrice(c) > 0).length;
   const progress = visibleCalculators.length > 0 ? (enteredCount / visibleCalculators.length) * 100 : 0;
   const selectedCalc = visibleCalculators.find((c) => c.id === activeTabId) || visibleCalculators[0];
+
+  // Web parity (ViewAllCalculators): auto-confirm after 10 minutes of inactivity.
+  // Track the last time each calculator's price or payment method was changed.
+  const AUTO_CONFIRM_DELAY = 600000; // 10 min
+  const rolloutLastChangedRef = useRef<Record<string, number>>({});
+  const onConfirmRolloutsRef = useRef(onConfirmRollouts);
+  onConfirmRolloutsRef.current = onConfirmRollouts;
+
+  const checkAndAutoConfirm = useCallback(async (calc: CalculatorTab) => {
+    if (calc.isRolloutConfirmed) return;
+    if (/^\d+$/.test((calc.title || '').trim())) return; // empty calc
+    const enteredPrice = prices[calc.id] ?? calc.price ?? 0;
+    if (enteredPrice <= 0) return;
+    const lastChanged = rolloutLastChangedRef.current[calc.id];
+    if (!lastChanged) return;
+    const elapsed = Date.now() - lastChanged;
+    if (elapsed < AUTO_CONFIRM_DELAY) return;
+    const method = resolveMethod(calc, user?.defaultPaymentMethod, pricing.defaultMethod);
+    const err = endPriceError(pricing.plans, enteredPrice, calc, method);
+    if (err) return;
+    onConfirmRolloutsRef.current?.([{ id: calc.id, price: enteredPrice }]);
+  }, [prices, pricing, user]);
+
+  // Check on mount and every 30 seconds (web parity: mount + polling interval).
+  useEffect(() => {
+    if (selectedCalc) checkAndAutoConfirm(selectedCalc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!visibleCalculators.length) return;
+    const interval = setInterval(() => {
+      visibleCalculators.forEach((calc) => checkAndAutoConfirm(calc));
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [visibleCalculators, checkAndAutoConfirm]);
 
   // Map categoryId -> { label, style } across all verticals so quote-card pills
   // and item rows read nicely. Icon/color are schema-driven (Iconify → Ionicons).
@@ -1161,9 +1197,15 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
               categoryMeta={categoryMeta}
               isLowesLead={isLowesLead}
               pricing={pricing}
-              onPriceChange={(id, price) => setPrices((p) => ({ ...p, [id]: price }))}
-              onResult={(id, result, price) => onResultJob?.(id, result, price)}
-              onPaymentMethodChange={(id, m) => onPaymentMethodChange?.(id, m)}
+              onPriceChange={(id, price) => {
+                setPrices((p) => ({ ...p, [id]: price }));
+                rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
+              }}
+              onResult={(id, result, price, paymentMethod) => onResultJob?.(id, result, price, paymentMethod)}
+              onPaymentMethodChange={(id, m) => {
+                onPaymentMethodChange?.(id, m);
+                rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
+              }}
               onDropChange={(id, drops) => onDropChange?.(id, drops)}
               onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
               onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)} />

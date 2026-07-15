@@ -34,6 +34,8 @@ interface ResultJobModalProps {
   resultType?: 'sale' | 'demo' | null;
   /** prefill for the contract price (the rollout end / latest drop price) */
   initialPrice?: number;
+  /** prefill for the payment method from the calculator's selected plan (web parity) */
+  initialPaymentMethod?: string;
   /** entered line items → the Job Summary card */
   entries?: Record<string, CalculatorEntry>;
   isLowesLead?: boolean;
@@ -192,6 +194,7 @@ export function ResultJobModal({
   calculatorTitle,
   resultType: initialResultType,
   initialPrice,
+  initialPaymentMethod,
   entries = {},
   pricing,
   onClose,
@@ -214,9 +217,11 @@ export function ResultJobModal({
     setResultType(initialResultType || 'sale');
     setContractPrice(initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '');
     setDownPayment('');
+    setDownPaymentMethod(initialPaymentMethod || '');
+    setBalancePaymentMethod(initialPaymentMethod || '');
     setDemoReason('');
     setReasonExplanation('');
-  }, [visible, initialResultType, initialPrice]);
+  }, [visible, initialResultType, initialPrice, initialPaymentMethod]);
 
   const contractNum = parseFloat(contractPrice) || 0;
   const downNum = parseFloat(downPayment) || 0;

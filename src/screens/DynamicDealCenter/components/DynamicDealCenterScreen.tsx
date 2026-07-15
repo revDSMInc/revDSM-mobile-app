@@ -40,7 +40,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const lead = route?.params?.lead;
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
-  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number }>({ visible: false });
+  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
   const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
 
@@ -94,8 +94,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     : lead?.title || lead?.customerName || 'Lead Center';
   const leadTime = lead?.leadTime || '';
 
-  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number) => {
-    setResultModal({ visible: true, calculatorId, resultType: result, price });
+  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => {
+    setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod });
     setCurrentCalculatorId(calculatorId);
   }, []);
 
@@ -175,6 +175,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
+          initialPaymentMethod={resultModal.paymentMethod}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
           isLowesLead={lead?.lowesLead === true}
           pricing={pricing}
@@ -265,17 +266,18 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         />
       )}
 
-      <ResultJobModal
-        visible={resultModal.visible}
-        calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
-        resultType={resultModal.resultType}
-        initialPrice={resultModal.price}
-        entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
-        isLowesLead={lead?.lowesLead === true}
-        pricing={pricing}
-        onClose={() => setResultModal({ visible: false })}
-        onConfirm={handleResultConfirm}
-      />
+        <ResultJobModal
+          visible={resultModal.visible}
+          calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
+          resultType={resultModal.resultType}
+          initialPrice={resultModal.price}
+          initialPaymentMethod={resultModal.paymentMethod}
+          entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          isLowesLead={lead?.lowesLead === true}
+          pricing={pricing}
+          onClose={() => setResultModal({ visible: false })}
+          onConfirm={handleResultConfirm}
+        />
     </SafeAreaView>
   );
 }
