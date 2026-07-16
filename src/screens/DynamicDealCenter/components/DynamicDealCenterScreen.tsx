@@ -13,6 +13,7 @@ import { ResultJobModal } from './ResultJobModal';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
 import { DynamicDealEditScreen } from './DynamicDealEditScreen';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
+import { buildSectionLabelMap } from '../utils/item-format';
 import { LeadService } from '../../../services/api/leads';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
@@ -87,6 +88,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   } = useDynamicCalculators(lead, verticals);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  // sectionId → label for the Result Lead Job Summary rows (web parity).
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
   // Header shows the LEAD (customer name + lead time), matching the regular
   // DealCenter header (`src/screens/DealCenter/index.tsx`). The active calculator
@@ -214,6 +217,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          sectionLabelMap={sectionLabelMap}
           isLowesLead={lead?.lowesLead === true}
           pricing={pricing}
           onClose={() => setResultModal({ visible: false })}
@@ -313,6 +317,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          sectionLabelMap={sectionLabelMap}
           isLowesLead={lead?.lowesLead === true}
           pricing={pricing}
           onClose={() => setResultModal({ visible: false })}

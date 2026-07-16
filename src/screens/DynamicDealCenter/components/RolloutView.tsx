@@ -33,21 +33,7 @@ import {
   WF_HIGH_MIN_PRICE,
 } from '../utils/dynamic-rollout-pricing';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
-
-/**
- * Format a field's unit for the entered-item rows:
- *   ft/feet  → `'`   ("1ft ..." → "1' ...")
- *   in/inch  → `"`
- *   ea/each  → ``    (a countable unit shows no suffix: "1ea Number of screens" → "1 Number of screens")
- * Anything else (sqft, lf, …) renders verbatim.
- */
-const formatUnit = (unit?: string): string => {
-  const u = (unit || '').toLowerCase().trim();
-  if (u === 'ft' || u === 'feet' || u === "'") return "'";
-  if (u === 'in' || u === 'inch' || u === 'inches' || u === '"') return '"';
-  if (u === 'ea' || u === 'each' || u === 'unit' || u === 'units' || u === 'qty' || u === 'pcs' || u === 'pc') return '';
-  return unit || '';
-};
+import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -641,6 +627,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     return rows.sort((a, b) => String(a.categoryId).localeCompare(String(b.categoryId)));
   }, [calculator.entries]);
 
+  // sectionId → label so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
+
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
   const priceNum = parseFloat(endPrice) || 0;
@@ -890,7 +879,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                 </View>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{formatUnit(item.unit)}</Text>{'  '}{item.label}
+                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{unitSuffix(item)}</Text>{'  '}{labelWithSection(item.label, item.sectionId, sectionLabelMap)}
                 </Text>
               </View>
             </View>
