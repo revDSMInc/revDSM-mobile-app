@@ -24,6 +24,8 @@ import JobBuilderScreen from '../screens/JobBuilder/index';
 import RevRenderScreen from '../screens/RevRender/index';
 import ImageAnnotationScreen from '../screens/ImageAnnotation/index';
 import DynamicDealCenterScreen from '../screens/DynamicDealCenter/components/DynamicDealCenterScreen';
+import InstallerDashboard from '../screens/Installer/index';
+import InstallerJobDetail from '../screens/Installer/JobDetail';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -104,11 +106,16 @@ export type RootStackParamList = {
   // Deal Detail — opened from My Deals; hosts the contract summary + the Edit
   // pencil that launches the 4-step dynamic edit wizard (DynamicDealCenter edit).
   DealDetail: { lead?: any; leadId?: string };
+  // Installer role — landing screen + per-job install timeline. Gated on the
+  // `installer_dashboard` dashboard permission (see useUserRole).
+  InstallerDashboard: undefined;
+  InstallerJobDetail: { job: any };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 import { Header, HeaderContext } from '../widgets/common/MainHeader';
+import { useUserRole } from '../hooks/useUserRole';
 import { useTheme } from '../theme/ThemeProvider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createNavigationContainerRef } from '@react-navigation/native';
@@ -118,6 +125,7 @@ export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 export default function RootNavigator({ currentRouteName }: { currentRouteName: string | null }) {
   const { isAuthenticated, loading, isInitialized } = useAuth();
+  const { isInstaller } = useUserRole();
   const { colors, isDark } = useTheme();
 
   const [headerActions, setHeaderActions] = useState<{
@@ -143,6 +151,8 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
     'Pitchbook',
     'RooflineDeck',
     'MapDetail',
+    'InstallerDashboard',
+    'InstallerJobDetail',
   ].includes(currentRouteName);
 
   if (loading || !isInitialized) {
@@ -166,6 +176,23 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="EmailOTP" component={EmailOTPScreen} />
                 <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
                 <Stack.Screen name="AuthenticatorOTP" component={AuthenticatorOTPScreen} />
+              </>
+            ) : isInstaller ? (
+              // Installers get a dedicated screen set. Their permissions carry no
+              // leads/deal access, so the sales screens are not registered at all
+              // rather than merely hidden — and InstallerDashboard being first makes
+              // it the landing route without needing an explicit initialRouteName.
+              <>
+                <Stack.Screen name="InstallerDashboard" component={InstallerDashboard} />
+                <Stack.Screen
+                  name="InstallerJobDetail"
+                  component={InstallerJobDetail}
+                  options={{ gestureEnabled: true }}
+                />
+                <Stack.Screen name="Profile" component={ProfilePage} />
+                <Stack.Screen name="MyLearning" component={LearningPage} />
+                <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
+                <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
               </>
             ) : (
               <>
