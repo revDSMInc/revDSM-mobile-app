@@ -19,6 +19,7 @@ import {
   evaluateRuleGroup,
   isAllocationExcluded,
   isDefaultColorActive,
+  isFieldRequired,
 } from '../../../utils/dynamic-job-builder/engine/dependency-engine';
 import { isAllocationField } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
 import { isAllocationCardActive } from '../../../utils/dynamic-job-builder/engine/allocation-config-utils';
@@ -31,9 +32,13 @@ import { getWarningConfig, getOptionGridSize } from '../../../utils/dynamic-job-
 // Web parity: optionList/select render in a wrapping grid whose columns come from
 // `field.columns` (`getOptionGridSize` → a 12-col span; 12/span = columns per row).
 // legacyStackedDefault → unset columns fall back to 1 (stacked), matching web.
+// Capped at 2 columns for phone widths — even when the backend authors 3/4 columns
+// (fine on desktop) we never render more than two option boxes per row on mobile.
+const OPTION_MAX_COLS = 2;
 const optionColumnsFor = (field: any): number => {
   const span = getOptionGridSize(field?.columns, { legacyStackedDefault: true });
-  return span ? Math.max(1, Math.round(12 / span)) : 1;
+  const cols = span ? Math.max(1, Math.round(12 / span)) : 1;
+  return Math.min(cols, OPTION_MAX_COLS);
 };
 import { resolveColorPalette } from '../../../utils/dynamic-job-builder/constants/color-palettes';
 import { resolveColorsForField } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';
@@ -311,7 +316,53 @@ function renderField(
         />
       );
 
-    case 'textarea':
+    case 'textarea': {
+      // Web parity (field-registry textarea): show the amber "INCOMPLETE — Reason
+      // Required" state when the reason is still needed. A reason field can signal
+      // that two ways, so we honour BOTH:
+      //   1. `required`/`requiredWhen` (via isFieldRequired) — Extra Labor Reason is
+      //      only required once Extra Labor > 0.
+      //   2. an authored `warningConfig` whose `visibleWhen` is satisfied — this is
+      //      where the "Why is there additional labor?" copy comes from (same path
+      //      the stack/accordion cases use).
+      const taDepCtx = {
+        dealCenterData,
+        tab: ctx?.tab,
+        tabState: ctx?.tabState,
+        section: ctx?.section,
+        sectionState: ctx?.sectionState,
+        combos: ctx?.combos,
+        sectionFields: ctx?.sectionFields,
+      };
+      const taRuleCtx = {
+        dealCenterData,
+        state,
+        tab: ctx?.tab,
+        tabState: ctx?.tabState,
+        section: ctx?.section,
+        sectionState: ctx?.sectionState,
+        combos: ctx?.combos,
+      };
+      // isFieldRequired covers `required` + `dependencies.requiredWhen`; some schemas
+      // author the rule at the top level (`field.requiredWhen`), so honour that too.
+      const taTopRequiredWhen = field?.requiredWhen;
+      const taRequired =
+        isFieldRequired(field, state, taDepCtx) ||
+        (!!taTopRequiredWhen && evaluateRuleGroup(taTopRequiredWhen, taRuleCtx));
+      const taEmpty = value == null || String(value).trim() === '';
+      const taWarning = getWarningConfig(field);
+      const taWarningVisible =
+        !!taWarning &&
+        (!taWarning.visibleWhen ||
+          evaluateRuleGroup(taWarning.visibleWhen, {
+            dealCenterData,
+            state,
+            tab: ctx?.tab,
+            tabState: ctx?.tabState,
+            section: ctx?.section,
+            sectionState: ctx?.sectionState,
+          }));
+      const taIncomplete = !readOnly && ((taRequired && taEmpty) || taWarningVisible);
       return (
         <TextareaField
           key={field.id}
@@ -320,8 +371,11 @@ function renderField(
           value={value != null ? String(value) : ''}
           onChange={onChange}
           rows={field.rows || 3}
+          incomplete={taIncomplete}
+          incompleteMessage={taWarning?.message || 'Reason Required'}
         />
       );
+    }
 
     case 'toggle': {
       const baseOpts = field.options || field.choices || field.items || [];
@@ -612,9 +666,13 @@ function renderField(
         );
       }
 
+      // Web parity (field-registry `labelNode`): a stack/layout container only shows
+      // its label when `showLabel !== false`. Containers authored with showLabel:false
+      // (e.g. the Fascia Wrap "Stack" group) are pure layout — no heading is drawn.
+      const showStackLabel = !!field.label && field.showLabel !== false;
       return (
-        <View key={field.id} className={field.label ? 'mb-4' : ''}>
-          {field.label && <SectionLabel title={field.label} />}
+        <View key={field.id} className={showStackLabel ? 'mb-4' : ''}>
+          {showStackLabel && <SectionLabel title={field.label} />}
           {renderedChildren}
           {warningBanner}
         </View>

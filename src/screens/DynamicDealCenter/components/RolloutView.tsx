@@ -520,7 +520,7 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
             </View>
           </View>
           <Text style={{ fontSize: 16, fontWeight: '600', color: '#1C252E', textAlign: 'center', marginBottom: 12 }}>Result Job {name}</Text>
-          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>Most recent price: {fmt(price)}</Text>
+          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>How Would You Like to Result this Lead?</Text>
           <View style={{ gap: 12 }}>
             <TouchableOpacity onPress={onSale} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#4CBB17', alignItems: 'center' }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>Sale</Text>
