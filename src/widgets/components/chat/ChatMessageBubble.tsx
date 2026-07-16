@@ -27,6 +27,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 
 import { useTheme } from '../../../theme/ThemeProvider';
 import { MediaViewerModal } from '../../modals/MediaViewerModal';
+import { ImageGalleryModal } from '../../modals/ImageGalleryModal';
 import { REACTION_EMOJIS, MORE_EMOJIS } from './chat-constants';
 import { ENV } from '../../../config/env';
 import { getFileType, getAvatarProps, getNativeModules, cleanFilePath } from './chat-utils';
@@ -85,6 +86,95 @@ const getDocStyleAndIcon = (fileName: string) => {
       };
   }
 };
+
+// A single grid tile. Defined at MODULE level (not inside the component) so its
+// function identity is stable across renders — otherwise every re-render of
+// ChatMessageBubble (e.g. opening/closing the photo viewer) would be seen by
+// React as a "new component type", unmounting and remounting the <Image> and
+// forcing it to reload (the grey-flash-then-reappear bug). `force-cache` makes
+// any legitimate redisplay instant from the native image cache.
+const GridImageCell = React.memo(function GridImageCell({
+  src,
+  label,
+  overlayText,
+  w,
+  h,
+  isDark,
+  spinnerColor,
+  labelColor,
+  onPress,
+  onLongPress,
+}: {
+  src: string;
+  label: string;
+  overlayText?: string;
+  w: number;
+  h: number;
+  isDark: boolean;
+  spinnerColor: string;
+  labelColor: string;
+  onPress: () => void;
+  onLongPress: () => void;
+}) {
+  return (
+    <View style={{ width: w }}>
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        style={{
+          width: w,
+          height: h,
+          borderRadius: 8,
+          overflow: 'hidden',
+          backgroundColor: isDark ? '#1B2B34' : '#F2F2F7',
+        }}
+      >
+        {src ? (
+          <Image
+            source={{ uri: src, cache: 'force-cache' }}
+            style={{ width: '100%', height: '100%' }}
+            resizeMode="cover"
+          />
+        ) : (
+          <View className="flex-1 items-center justify-center">
+            <ActivityIndicator size="small" color={spinnerColor} />
+          </View>
+        )}
+        {!!overlayText && (
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 26 }}>{overlayText}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+      {!!label && (
+        <Text
+          numberOfLines={1}
+          style={{
+            fontSize: 12,
+            fontWeight: '900',
+            marginTop: 4,
+            textAlign: 'center',
+            color: labelColor,
+          }}
+        >
+          {label}
+        </Text>
+      )}
+    </View>
+  );
+});
 
 interface Props {
   bubbleProps: any;
@@ -178,7 +268,18 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
 
 
   const mediaUri = useMemo(() => {
+    // Only a LOCAL file:// URI (an optimistic, just-sent image) is trusted
+    // directly — that keeps the sender's own image visible instantly instead of
+    // blanking while its signed URL is fetched. Server http(s) URLs are NOT used
+    // raw: a reloaded message carries a bare/unsigned S3 URL that 403s (renders
+    // blank), so it MUST go through the signed-URL path below via `filePath` —
+    // exactly like received images, which render correctly. This is why images
+    // went blank after leaving and re-entering the chat.
+    const localUri = [primaryFile?.url, msg.image, msg.imageUrl, msg.video, msg.videoUrl].find(
+      (u) => typeof u === 'string' && u.startsWith('file://')
+    );
     const raw =
+      localUri ||
       primaryFile?.filePath ||
       primaryFile?.path ||
       primaryFile?.url ||
@@ -187,13 +288,65 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
       msg.video ||
       msg.videoUrl;
     if (!raw || typeof raw !== 'string') return '';
-    // Priority: 1. Signed URL from cache, 2. Raw local/remote URI
-    let resolved = imageUrls[raw] || imageUrls[cleanFilePath(raw)] || raw;
+    // Priority: 1. Signed URL from cache, 2. optimistic just-signed previewUrl
+    // (a single appointment photo before its server echo), 3. Raw local/remote URI
+    let resolved = imageUrls[raw] || imageUrls[cleanFilePath(raw)];
+    if (
+      !resolved &&
+      typeof primaryFile?.previewUrl === 'string' &&
+      /^https?:\/\//.test(primaryFile.previewUrl)
+    ) {
+      resolved = primaryFile.previewUrl;
+    }
+    if (!resolved) resolved = raw;
     if (resolved && !resolved.startsWith('http://') && !resolved.startsWith('https://') && !resolved.startsWith('file://')) {
       resolved = `${ENV.API_URL}${resolved.startsWith('/') ? resolved.slice(1) : resolved}`;
     }
     return resolved;
   }, [primaryFile, msg.image, msg.imageUrl, msg.video, msg.videoUrl, imageUrls]);
+
+  // Every image file on this message (appointment photos arrive as a single
+  // message carrying many image refs → rendered as a WhatsApp-style grid below).
+  const imageFiles = useMemo(() => {
+    return files.filter((f: any) => {
+      if (!f) return false;
+      if (f.isAppointmentPhoto) return true;
+      const t = (f.type || f.mimeType || f.contentType || '').toLowerCase();
+      if (t.startsWith('image')) return true;
+      return getFileType(f) === 'image';
+    });
+  }, [files]);
+
+  // Resolve a grid image's display URL. Prefer the signed URL (keyed by S3
+  // filePath); fall back to a just-signed optimistic `previewUrl` or a local
+  // file:// — never a bare S3 URL (which 403s → blank). Empty string ⇒ spinner.
+  const getGridSrc = (f: any): string => {
+    const fp = f?.filePath || f?.path;
+    const signed = fp ? imageUrls[fp] || imageUrls[cleanFilePath(fp)] : undefined;
+    if (signed) return signed;
+    if (typeof f?.previewUrl === 'string' && /^https?:\/\//.test(f.previewUrl)) return f.previewUrl;
+    // Local, just-picked images (gallery batch). Android can hand back content://
+    // URIs, which RN's <Image> renders natively — pass those through too.
+    const local = [f?.url, f?.uri].find(
+      (u: any) => typeof u === 'string' && (u.startsWith('file://') || u.startsWith('content://'))
+    );
+    return (local as string) || '';
+  };
+
+  // Caption shown under each APPOINTMENT photo in the grid — the same human label
+  // the Manage Photos grid / picker shows (e.g. "Front of Home"). Sent as the
+  // file's subcategory AND fileName so either survives a reload. Gallery photos
+  // carry none of these signals, so they grid WITHOUT captions.
+  const getPhotoLabel = (f: any): string => {
+    const isAppt =
+      f?.isAppointmentPhoto ||
+      !!f?.subcategory ||
+      !!f?.category ||
+      (f?.filePath || f?.path || '').includes('SelfGen');
+    if (!isAppt) return '';
+    const raw = f?.subcategory || f?.category || f?.fileName || f?.name || '';
+    return String(raw).replace(/\.[^/.]+$/, '').trim();
+  };
 
   const isMsgVoice = !!voiceUri || msg.isVoiceNote || msg.type === 'audio' || fileType === 'audio';
 
@@ -227,6 +380,14 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   const [isDownloading, setIsDownloading] = useState(false);
   const [imageAspectRatio, setImageAspectRatio] = useState(1);
   const [isImageLoading, setIsImageLoading] = useState(false);
+  const [galleryVisible, setGalleryVisible] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+
+  // Every album image as a {uri,label} for the full-screen swipe viewer.
+  const galleryImages = useMemo(
+    () => imageFiles.map((f: any) => ({ uri: getGridSrc(f), label: getPhotoLabel(f) })),
+    [imageFiles, imageUrls]
+  );
 
   useEffect(() => {
     if (fileType === 'image' && mediaUri) {
@@ -834,6 +995,88 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
     );
   };
 
+  // WhatsApp-style photo album for messages carrying ≥2 images (appointment
+  // photos). 2 → side-by-side, 3 → 2-over-1, 4+ → 2×2 with a "+N" overlay on the
+  // last tile. Mirrors the web MessageItem renderImageGrid.
+  const openGalleryAt = (i: number) => {
+    setGalleryIndex(Math.max(0, i));
+    setGalleryVisible(true);
+  };
+
+  const renderImageGrid = () => {
+    const GAP = 3;
+    const W = SCREEN_WIDTH * 0.65;
+    const H = 140;
+    const half = (W - GAP) / 2;
+    const count = imageFiles.length;
+
+    // Render a tile via the stable module-level GridImageCell. This is a plain
+    // helper that RETURNS <GridImageCell/> — it is NOT a component defined in
+    // render, so the underlying <Image> keeps its identity across re-renders and
+    // never remounts/reloads when the viewer opens or closes.
+    //
+    // Label rule: appointment photos always show their caption (at every count),
+    // while gallery photos stay caption-free — getPhotoLabel returns '' for
+    // non-appointment files, so no per-count gate is needed. The "+N" overlay
+    // tile shows no label.
+    const cell = (file: any, index: number, w: number, h: number, overlayText?: string) => (
+      <GridImageCell
+        src={getGridSrc(file)}
+        label={overlayText ? '' : getPhotoLabel(file)}
+        overlayText={overlayText}
+        w={w}
+        h={h}
+        isDark={isDark}
+        spinnerColor={isMe ? '#fff' : colors.primary.main}
+        labelColor={isMe ? '#fff' : colors.text}
+        onPress={() => openGalleryAt(index)}
+        onLongPress={() => setShowReactionBar(true)}
+      />
+    );
+
+    let body: React.ReactNode = null;
+    if (count === 2) {
+      body = (
+        <View style={{ flexDirection: 'row', gap: GAP }}>
+          {cell(imageFiles[0], 0, half, H)}
+          {cell(imageFiles[1], 1, half, H)}
+        </View>
+      );
+    } else if (count === 3) {
+      body = (
+        <View style={{ gap: GAP }}>
+          <View style={{ flexDirection: 'row', gap: GAP }}>
+            {cell(imageFiles[0], 0, half, H)}
+            {cell(imageFiles[1], 1, half, H)}
+          </View>
+          {cell(imageFiles[2], 2, W, H)}
+        </View>
+      );
+    } else {
+      // 4 → clean 2×2; >4 → same 2×2 with a "+N" overlay on the 4th tile.
+      const shown = imageFiles.slice(0, 4);
+      const remaining = count - 4;
+      body = (
+        <View style={{ gap: GAP }}>
+          <View style={{ flexDirection: 'row', gap: GAP }}>
+            {cell(shown[0], 0, half, H)}
+            {cell(shown[1], 1, half, H)}
+          </View>
+          <View style={{ flexDirection: 'row', gap: GAP }}>
+            {cell(shown[2], 2, half, H)}
+            {cell(shown[3], 3, half, H, remaining > 0 ? `+${remaining + 1}` : undefined)}
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View className="p-2">
+        <View style={{ width: W }}>{body}</View>
+      </View>
+    );
+  };
+
   const statusLayer = (
     <View className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-lg flex-row items-center bg-black/40">
       <Text className="text-[9px] text-white/90 mr-1">
@@ -866,6 +1109,12 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
         mediaUri={viewerUri}
         mediaType={viewerType}
         fileName={primaryFile?.name || 'Media'}
+      />
+      <ImageGalleryModal
+        visible={galleryVisible}
+        images={galleryImages}
+        initialIndex={galleryIndex}
+        onClose={() => setGalleryVisible(false)}
       />
       <View
         style={{
@@ -994,7 +1243,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                         {mediaUri ? (
                           <>
                             <Image
-                              source={{ uri: mediaUri }}
+                              source={{ uri: mediaUri, cache: 'force-cache' }}
                               style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.8 }}
                               resizeMode="cover"
                             />
@@ -1010,7 +1259,8 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                       </TouchableOpacity>
                     </View>
                   )}
-                  {fileType === 'image' && (
+                  {imageFiles.length >= 2 && renderImageGrid()}
+                  {fileType === 'image' && imageFiles.length < 2 && (
                     <View className="p-2 items-center">
                       <TouchableOpacity
                         onPress={() => handleMediaPress('image')}
@@ -1029,7 +1279,7 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                         {mediaUri ? (
                           <>
                             <Image
-                              source={{ uri: mediaUri }}
+                              source={{ uri: mediaUri, cache: 'force-cache' }}
                               style={{ width: '100%', height: '100%' }}
                               resizeMode="cover"
                               onLoadStart={() => setIsImageLoading(true)}
@@ -1047,6 +1297,27 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
                           </View>
                         )}
                       </TouchableOpacity>
+                      {/* Caption for a lone appointment photo — same label the grid
+                          shows (e.g. "Front of Home"). Gallery photos return an
+                          empty label, so they stay caption-free like the grid. */}
+                      {(() => {
+                        const label = getPhotoLabel(primaryFile);
+                        return label ? (
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              fontSize: 12,
+                              fontWeight: '900',
+                              marginTop: 4,
+                              textAlign: 'center',
+                              maxWidth: SCREEN_WIDTH * 0.65,
+                              color: isMe ? '#fff' : colors.text,
+                            }}
+                          >
+                            {label}
+                          </Text>
+                        ) : null;
+                      })()}
                     </View>
                   )}
                   {['file', 'pdf', 'xls', 'word', 'doc'].includes(fileType) && (() => {

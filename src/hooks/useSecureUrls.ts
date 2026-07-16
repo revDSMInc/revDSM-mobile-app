@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
+import { ENV } from '../config/env';
+import { resolveS3Url } from '../utils/s3-utils';
 
 interface PhotoAsset {
   s3url: string;
@@ -15,7 +17,9 @@ export function useSecureUrls(photos: PhotoAsset[] | null | undefined) {
       if (!photos || photos.length === 0) return {};
       
       const filePaths = photos.map((p) => ({
-        bucketName: p.bucketName || '',
+        // The secure-URL API needs a real bucket; fall back to the env bucket
+        // exactly like the LeadCenter photo grid does (useLeadCenterData).
+        bucketName: p.bucketName || ENV.S3_BUCKET,
         filePath: p.s3url,
       }));
 
@@ -33,7 +37,9 @@ export function useSecureUrls(photos: PhotoAsset[] | null | undefined) {
           (s: any) => s.s3url === photo.s3url || s.filePath === photo.s3url
         );
         map[catName].push({
-          uri: secured?.secureUrl || photo.s3url,
+          // Fall back to a fully-qualified S3 URL (not the bare key) so the
+          // <Image> can actually render when the secure lookup misses.
+          uri: secured?.secureUrl || resolveS3Url(photo.s3url),
           s3url: photo.s3url,
           subcategory: photo.subcategory || '',
         });

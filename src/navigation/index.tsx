@@ -49,6 +49,9 @@ export type RootStackParamList = {
     description?: string;
     chatType?: 'lead' | 'channel';
     initialParticipants?: any[];
+    // Full lead photo array, handed straight from an already-loaded lead
+    // (LeadCenter) so the Appointment Photos picker doesn't have to refetch.
+    salesPhotos?: any[];
   };
   MapDetail: { currentLead?: any };
   Pitchbook: { lead: any };

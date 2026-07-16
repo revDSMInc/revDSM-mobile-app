@@ -49,8 +49,12 @@ export const useChatSession = (
 
   const fetchSecureUrls = async (newMessages: IMessage[]) => {
     try {
-      const paths = ChatService.extractFilePaths(newMessages).map(cleanFilePath);
-      const cleaned = Array.from(new Set(paths)).filter(Boolean);
+      // Carry each file's bucketName so the signed URL is requested against the
+      // right bucket — otherwise reloaded images come back blank.
+      const seen = new Set<string>();
+      const cleaned = ChatService.extractFileRefs(newMessages)
+        .map((r) => ({ filePath: cleanFilePath(r.filePath), bucketName: r.bucketName }))
+        .filter((r) => r.filePath && !seen.has(r.filePath) && !!seen.add(r.filePath));
       if (cleaned.length === 0) return;
       const links = await ChatService.getSecureFileUrls(cleaned).catch(() => ({}));
       console.log('[useChatSession] Fetched Secure URLs:', JSON.stringify(links, null, 2));

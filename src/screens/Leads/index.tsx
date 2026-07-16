@@ -425,7 +425,7 @@ export default function LeadsPage() {
           >
             <Feather name="calendar" size={24} color={'#FFFFFF'} />
           </TouchableOpacity>
-          <TouchableOpacity
+          {/* <TouchableOpacity
             onPress={() => navigation.navigate('Appointments')}
             style={{
               backgroundColor: '#22C55E',
@@ -438,7 +438,7 @@ export default function LeadsPage() {
             }}
           >
             <Feather name="clock" size={22} color={'#FFFFFF'} />
-          </TouchableOpacity>
+          </TouchableOpacity> */}
           <TouchableOpacity
             onPress={() => setZoneCanvasserVisible(true)}
             style={{
@@ -512,8 +512,8 @@ export default function LeadsPage() {
 
       {currentTab === 'rehash' ? (
         <View className="flex-1 items-center pt-[30%]">
-          <MaterialDesignIcon name="briefcase-off-outline" style={{ opacity: 0.7 }} size={64} color={colors.textSecondary} />
-          <Text className="text-xs text-center mt-4" style={{ color: colors.textSecondary }}>
+          <Clipboard className="text-text-secondary" />
+          <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
             No jobs available
           </Text>
         </View>
