@@ -15,6 +15,7 @@ import { directSectionId } from '../utils/build-all-entries';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
 import { JobTrackerButton } from './JobTrackerButton';
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
+import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 
 interface CalculatorTabLite {
   id: string;
@@ -68,20 +69,6 @@ const CATEGORY_STYLE_MAP: Record<string, CatStyle> = {
   additional: { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
   'additional services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
   miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
-};
-
-/**
- * Unit suffix shown before a line-item label (web parity):
- *  - "Number of Screen" is a plain count → NO unit ("3 Number of Screen").
- *  - a "ft" unit (e.g. the Lighting stories) renders as the foot mark "'"
- *    ("5' Lighting 1st Story"), never the word "ft".
- *  - any other field falls back to the foot mark when it has no unit.
- */
-const unitOf = (item: { unit?: string; label?: string }) => {
-  if (/number\s*of\s*screen|screen/i.test(item.label || '')) return '';
-  const unit = (item.unit || '').trim();
-  if (!unit || /^ft$/i.test(unit)) return "'";
-  return unit;
 };
 
 // Icon + color are read from the schema first (Iconify → Ionicons + hex/token
@@ -293,7 +280,7 @@ function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, on
  * sub-sections (that was the mobile-only divergence). Spans every vertical the
  * calculator has entries in.
  */
-function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEntry>; catMeta: Record<string, { label: string; style: CatStyle }> }) {
+function JobSummary({ entries, catMeta, sectionLabelMap }: { entries: Record<string, CalculatorEntry>; catMeta: Record<string, { label: string; style: CatStyle }>; sectionLabelMap: Record<string, string> }) {
   // Entered items ordered by category (so rows of the same category stay
   // together), flattened into a single list — web parity.
   const { items, categories } = useMemo(() => {
@@ -363,7 +350,7 @@ function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEn
                       <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>{item.inputValue}{unitOf(item)} {item.label}</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>{item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}</Text>
                     </View>
                   </View>
                 );
@@ -399,8 +386,11 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
   const items = useMemo(() => (
     Object.values(entries)
       .filter((e) => e && e.inputValue > 0)
-      .map((e) => ({ value: e.inputValue, unit: e.unit, label: e.label, categoryId: e.categoryId }))
+      .map((e) => ({ value: e.inputValue, unit: e.unit, label: e.label, categoryId: e.categoryId, sectionId: e.sectionId }))
   ), [entries]);
+
+  // sectionId → label, so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
   // Distinct categories among entered items + per-category counts.
   const categoryCounts = useMemo(() => {
@@ -486,7 +476,7 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
                     <Ionicons name={style.icon} size={18} color={style.color} />
                   </View>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                    <Text style={{ fontWeight: '900' }}>{item.value}{unitOf(item)}</Text>{'  '}{item.label}
+                    <Text style={{ fontWeight: '900' }}>{item.value}{unitSuffix(item)}</Text>{'  '}{labelWithSection(item.label, item.sectionId, sectionLabelMap)}
                   </Text>
                 </View>
               </View>
@@ -546,6 +536,8 @@ export function CalculatorView({
   price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig,
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  // sectionId → label so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)".
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; tabId: string; name: string }>({ visible: false, tabId: '', name: '' });
   const [selectedVerticalId, setSelectedVerticalId] = useState<string | undefined>(verticals[0]?.id);
@@ -655,7 +647,7 @@ export function CalculatorView({
         </View>
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 140 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {readOnly ? (
           <LockedCalculatorView
             name={tabs.find((t) => t.id === activeTabId)?.title || 'Calculator'}
@@ -689,7 +681,7 @@ export function CalculatorView({
               </View>
             )}
 
-            <JobSummary entries={entries} catMeta={catMeta} />
+            <JobSummary entries={entries} catMeta={catMeta} sectionLabelMap={sectionLabelMap} />
 
             {/* Add This Job to Job Tracker — web parity (rendered under the Job
                 Summary in the editable calculator view, hidden when locked). */}
