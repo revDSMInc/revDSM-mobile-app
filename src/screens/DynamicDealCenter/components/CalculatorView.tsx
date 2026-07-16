@@ -611,7 +611,13 @@ export function CalculatorView({
   }, [entries]);
 
   // Adapt the id-based tab model to the index-based draggable-tabs component.
-  const tabCalcs = useMemo(() => tabs.map((t) => ({ _id: t.id, name: /^\d+$/.test(t.title) ? '' : t.title, isRolloutConfirmed: t.isRolloutConfirmed })), [tabs]);
+  const tabCalcs = useMemo(() => tabs.map((t) => ({
+    _id: t.id,
+    // Numeric draft titles are internal identifiers. New tabs intentionally
+    // remain untitled and display only their overflow menu.
+    name: /^\d+$/.test(t.title) ? '' : t.title,
+    isRolloutConfirmed: t.isRolloutConfirmed,
+  })), [tabs]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
   const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
@@ -712,8 +718,8 @@ export function CalculatorView({
               onContentSizeChange={(w) => setContentWidth(w)}
               onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
               scrollEventThrottle={16}
-              style={{ flex: 1, overflow: isDragging ? 'visible' : 'hidden' }}
-              contentContainerStyle={{ alignItems: 'center', paddingHorizontal: 16 }}
+              style={{ flex: 1, overflow: isDragging ? 'visible' : 'hidden'}}
+              contentContainerStyle={{ alignItems: 'center', flexGrow: 0,paddingEnd:20 }}
             >
               <HorizontalDraggableTabs
                 calculators={tabCalcs}
@@ -726,7 +732,6 @@ export function CalculatorView({
                 scrollXRef={scrollXRef}
                 getIsDuplicate={() => false}
               />
-              <View style={{ width: "150%", backgroundColor: 'red' }} />
             </ScrollView>
           </View>
 
