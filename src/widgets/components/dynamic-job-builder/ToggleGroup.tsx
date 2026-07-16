@@ -12,11 +12,19 @@ interface ToggleGroupProps {
   isMulti?: boolean;
 }
 
+const GAP = 8; // matches gap-2, aligns with OptionList/SwatchPicker spacing
+
+// Toggle options always lay out in a fixed 2-column grid — so a single option is
+// full-width-in-a-column, three wrap 2 + 1, and four render as a clean 2×2 (e.g.
+// Soffit Type's four long-labelled options) instead of being crammed into one row.
+const TOGGLE_COLS = 2;
+
 // Matches the normal Job Builder toggle/selector buttons (GutterSection size /
 // partial, LeafFilter profile): #22C55E selected, slate idle, h-11 rounded-xl
 // border-2, font-black, and a "✓ value" confirmation line. When `isMulti`, value
 // is an array and multiple toggles stay selected (web `option-selector.js`).
 export function ToggleGroup({ label, options = [], value, onChange, color = '#22C55E', isMulti = false }: ToggleGroupProps) {
+  const cols = TOGGLE_COLS;
   const selectedValues = isMulti ? (Array.isArray(value) ? value : []) : [];
   const isSelected = (opt: string) =>
     isMulti ? selectedValues.includes(opt) : value === opt;
@@ -40,27 +48,27 @@ export function ToggleGroup({ label, options = [], value, onChange, color = '#22
       {label && (
         <Text className="text-[11px] font-black text-slate-400 mb-2">{label}</Text>
       )}
-      <View className="flex-row flex-wrap gap-2">
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -GAP / 2 }}>
         {options.map((opt) => {
           const selected = isSelected(opt);
           return (
-            <TouchableOpacity
-              key={opt}
-              onPress={() => handlePress(opt)}
-              className="flex-1 h-11 rounded-xl items-center justify-center border-2"
-              style={{
-                borderColor: selected ? color : '#F1F5F9',
-                backgroundColor: selected ? color : '#fff',
-                minWidth: 80,
-              }}
-            >
-              <Text
-                className="text-[11px] font-black text-center"
-                style={{ color: selected ? '#fff' : '#64748B' }}
+            <View key={opt} style={{ width: `${100 / cols}%`, padding: GAP / 2 }}>
+              <TouchableOpacity
+                onPress={() => handlePress(opt)}
+                className="h-11 rounded-xl items-center justify-center border-2"
+                style={{
+                  borderColor: selected ? color : '#F1F5F9',
+                  backgroundColor: selected ? color : '#fff',
+                }}
               >
-                {opt}
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  className="text-[11px] font-black text-center"
+                  style={{ color: selected ? '#fff' : '#64748B' }}
+                >
+                  {opt}
+                </Text>
+              </TouchableOpacity>
+            </View>
           );
         })}
       </View>

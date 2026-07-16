@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import type { CalculatorEntry } from '../types/calculator';
+import { BlurView } from '@react-native-community/blur';
+import { useTheme } from '../../../theme/ThemeProvider';
+import type { CalculatorEntry, CalculatorSchema } from '../types/calculator';
+import { buildCategoryMeta, styleForKey } from '../utils/icon-color';
 import { DealPricing, DealPlan, PayCategory, planBelowMin, belowMinMsg } from '../hooks/useDealPricing';
 import { FlashMessage } from '../../../config/message';
 import { unitSuffix, labelWithSection } from '../utils/item-format';
@@ -39,8 +42,12 @@ interface ResultJobModalProps {
   initialPrice?: number;
   /** prefill for the payment method from the calculator's selected plan (web parity) */
   initialPaymentMethod?: string;
+  /** prefill for the down payment carried from a secured/viewed drop price */
+  initialDownPayment?: number;
   /** entered line items → the Job Summary card */
   entries?: Record<string, CalculatorEntry>;
+  /** all configured verticals — used to resolve Job Summary category pills + icons */
+  verticals?: CalculatorSchema[];
   /** sectionId → label, so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)". */
   sectionLabelMap?: Record<string, string>;
   isLowesLead?: boolean;
@@ -202,12 +209,15 @@ export function ResultJobModal({
   resultType: initialResultType,
   initialPrice,
   initialPaymentMethod,
+  initialDownPayment,
   entries = {},
+  verticals = [],
   sectionLabelMap = {},
   pricing,
   onClose,
   onConfirm,
 }: ResultJobModalProps) {
+  const { isDark } = useTheme();
   const [oneLeg, setOneLeg] = useState('No');
   const [resultType, setResultType] = useState<'sale' | 'demo'>(initialResultType || 'sale');
   const [demoReason, setDemoReason] = useState('');
@@ -224,21 +234,42 @@ export function ResultJobModal({
     if (!visible) return;
     setResultType(initialResultType || 'sale');
     setContractPrice(initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '');
-    setDownPayment('');
+    setDownPayment(initialDownPayment && initialDownPayment > 0 ? String(Math.round(initialDownPayment)) : '');
     setDownPaymentMethod(initialPaymentMethod || '');
     setBalancePaymentMethod(initialPaymentMethod || '');
     setDemoReason('');
     setReasonExplanation('');
-  }, [visible, initialResultType, initialPrice, initialPaymentMethod]);
+  }, [visible, initialResultType, initialPrice, initialPaymentMethod, initialDownPayment]);
 
   const contractNum = parseFloat(contractPrice) || 0;
   const downNum = parseFloat(downPayment) || 0;
   const balance = Math.max(0, contractNum - downNum);
 
+  // Entered line items, grouped by category (sorted) so the Job Summary reads the
+  // same as the rollout quote card — category pills + per-row schema icons.
   const items = useMemo(
-    () => Object.values(entries).filter((e) => e && e.inputValue > 0) as CalculatorEntry[],
+    () =>
+      (Object.values(entries).filter((e) => e && e.inputValue > 0) as CalculatorEntry[]).sort((a, b) =>
+        String(a.categoryId).localeCompare(String(b.categoryId)),
+      ),
     [entries]
   );
+
+  // categoryId → { label, style }; icon/color are schema-driven (Iconify → Ionicons).
+  const categoryMeta = useMemo(() => buildCategoryMeta(verticals), [verticals]);
+
+  // Count of entered items per category → the "Gutters (3)" pills, in entry order.
+  const categoryChips = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const order: string[] = [];
+    Object.values(entries).forEach((e) => {
+      if (e && e.inputValue > 0 && e.categoryId) {
+        if (counts[e.categoryId] === undefined) order.push(e.categoryId);
+        counts[e.categoryId] = (counts[e.categoryId] || 0) + 1;
+      }
+    });
+    return order.map((id) => ({ id, count: counts[id] }));
+  }, [entries]);
 
   // Web `isFormValid` (result-lead-modal.js): a Sale needs a contract price AND a
   // balance payment method; a Demo needs a reason AND a last price quoted > 0.
@@ -274,7 +305,15 @@ export function ResultJobModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 16 }}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose}>
+            <BlurView
+              style={StyleSheet.absoluteFill}
+              blurType={isDark ? 'dark' : 'light'}
+              blurAmount={5}
+              reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+            />
+          </TouchableOpacity>
           <View style={{ backgroundColor: '#fff', borderRadius: 16, maxHeight: '85%', overflow: 'hidden' }}>
             {/* Header */}
             <View style={{ paddingHorizontal: 20, paddingVertical: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#4CBB17' }}>
@@ -285,12 +324,6 @@ export function ResultJobModal({
             </View>
 
             <ScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
-              {!!calculatorTitle && (
-                <View style={{ marginBottom: 20, padding: 12, backgroundColor: '#F4F6F8', borderRadius: 8 }}>
-                  <Text style={{ fontSize: 11, color: '#919EAB' }}>Calculator</Text>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1C252E' }}>{calculatorTitle}</Text>
-                </View>
-              )}
 
               <SelectField
                 label="One Leg"
@@ -366,6 +399,13 @@ export function ResultJobModal({
                 </>
               )}
 
+              {!!calculatorTitle && (
+                <View style={{ marginBottom: 20, padding: 12, backgroundColor: '#F4F6F8', borderRadius: 8 }}>
+                  <Text style={{ fontSize: 11, color: '#919EAB' }}>Calculator</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1C252E' }}>{calculatorTitle}</Text>
+                </View>
+              )}
+
               {/* Job Summary */}
               <View style={{ backgroundColor: '#F7F6FD', borderRadius: 16, padding: 16, marginTop: 4, marginBottom: 8, borderWidth: 1, borderColor: '#E8E6F8' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -382,18 +422,37 @@ export function ResultJobModal({
                 {items.length === 0 ? (
                   <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600', paddingVertical: 8 }}>No items</Text>
                 ) : (
-                  <View style={{ gap: 8 }}>
-                    {items.map((item, i) => (
-                      <View key={item.fieldId || i} style={{ backgroundColor: '#fff', borderRadius: 8, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
-                        <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F4F6F8', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                          <Ionicons name="cube" size={14} color="#637381" />
-                        </View>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1C252E', flex: 1 }}>
-                          {item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}
-                        </Text>
+                  <>
+                    {/* Category pills (schema-driven icon + color) */}
+                    {categoryChips.length > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                        {categoryChips.map(({ id: catId, count }) => {
+                          const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
+                          return (
+                            <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
+                              <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
+                              <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label} ({count})</Text>
+                            </View>
+                          );
+                        })}
                       </View>
-                    ))}
-                  </View>
+                    )}
+                    <View style={{ gap: 8 }}>
+                      {items.map((item, i) => {
+                        const meta = categoryMeta[item.categoryId] || { label: item.categoryId, style: styleForKey(item.categoryId) };
+                        return (
+                          <View key={item.fieldId || i} style={{ backgroundColor: '#fff', borderRadius: 8, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: meta.style.bg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                              <Ionicons name={meta.style.icon} size={14} color={meta.style.color} />
+                            </View>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1C252E', flex: 1 }}>
+                              {item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </>
                 )}
               </View>
 

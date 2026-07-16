@@ -127,6 +127,17 @@ function groupColor(group: string, fallback?: string): string {
   return '#f5f5f5';
 }
 
+/**
+ * Is this a Lowe's plan? Lowe's leads must ONLY see Lowe's plans and non-Lowe's
+ * leads must NEVER see them (web parity — see `getRolloutPaymentCategories`). We
+ * detect by the plan key prefix (`lowes_ach`, `lowes_60m`, …) or provider name.
+ */
+function isLowesPlan(p: DealPlan): boolean {
+  const key = (p.key || '').toLowerCase();
+  const prov = (p.provider || '').toLowerCase();
+  return key.startsWith('lowes') || prov.includes('lowe');
+}
+
 /** Build the rollout picker groups from dynamic plans: basics flat, financing per provider. */
 function buildCategories(plans: DealPlan[]): PayCategory[] {
   const basics = plans.filter((p) => p.type === 'cash' || p.type === 'card');
@@ -246,12 +257,16 @@ export function useDealPricing(lead: any): DealPricing {
     const discount = discountData || DISCOUNT_FALLBACK;
 
     if (isDynamic) {
+      // Full lookup map keeps every key resolvable (labels for already-saved
+      // methods), but the picker/categories only surface plans relevant to the
+      // lead: Lowe's leads see Lowe's plans only, others see non-Lowe's only.
       const plans: Record<string, DealPlan> = {};
       dyn.forEach((p) => {
         plans[p.key] = p;
       });
-      const categories = buildCategories(dyn);
-      const basics = dyn.filter((p) => p.type === 'cash' || p.type === 'card');
+      const relevant = dyn.filter((p) => (isLowesLead ? isLowesPlan(p) : !isLowesPlan(p)));
+      const categories = buildCategories(relevant);
+      const basics = relevant.filter((p) => p.type === 'cash' || p.type === 'card');
       const preferred = isLowesLead
         ? basics.find((p) => /ach/i.test(p.key)) || basics[0]
         : basics.find((p) => p.key === 'check') || basics[0];

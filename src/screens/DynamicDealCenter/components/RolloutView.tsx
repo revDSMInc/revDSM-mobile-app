@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Switch, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { BlurView } from '@react-native-community/blur';
+import { useTheme } from '../../../theme/ThemeProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -91,7 +93,7 @@ interface RolloutViewProps {
   isLowesLead?: boolean;
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
-  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => void;
+  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   /** Persist a calculator's payment plan (auto-saves like a field change). */
   onPaymentMethodChange?: (id: string, method: string) => void;
   /** Persist a calculator's drop-price list. */
@@ -318,6 +320,7 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
   onDecline: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
   onClose: () => void;
 }) {
+  const { isDark } = useTheme();
   const badges = isLowesLead
     ? [{ key: 'lowes_ach', label: 'ACH' }, { key: 'lowes_cc', label: 'CC' }]
     : [{ key: 'check', label: 'CK' }, { key: 'mcVisaDscvr', label: 'CC' }];
@@ -361,7 +364,14 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+          <BlurView
+            style={StyleSheet.absoluteFill}
+            blurType={isDark ? 'dark' : 'light'}
+            blurAmount={5}
+            reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+            pointerEvents="none"
+          />
           <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%' }}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Header — green check + UPDATED PRICE + price + method badges */}
@@ -406,7 +416,7 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
                   </View>
                 </View>
               ) : (
-                <TouchableOpacity onPress={() => setShowDown(true)} style={{ alignSelf: 'flex-start', marginBottom: 24, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: '#E2E8F0', borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity onPress={() => setShowDown(true)} style={{ alignSelf: 'center', marginBottom: 24, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: '#E2E8F0', borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name="add" size={16} color="#919EAB" />
                   <Text style={{ marginLeft: 4, fontSize: 14, fontWeight: '700', color: '#919EAB' }}>Add Down Payment</Text>
                 </TouchableOpacity>
@@ -491,10 +501,18 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
 function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
   visible: boolean; name: string; price: number; onSale: () => void; onDemo: () => void; onClose: () => void;
 }) {
+  const { isDark } = useTheme();
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+      <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        <BlurView
+          style={StyleSheet.absoluteFill}
+          blurType={isDark ? 'dark' : 'light'}
+          blurAmount={10}
+          reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+          pointerEvents="none"
+        />
         <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16 }}>
           <View style={{ alignItems: 'center' }}>
             <View style={{ padding: 16, marginBottom: 24, backgroundColor: '#FFF0D9', borderRadius: 12 }}>
@@ -528,7 +546,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   verticals: CalculatorSchema[];
   pricingConfig?: PricingConfig | null;
   onPriceChange: (id: string, price: number) => void;
-  onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => void;
+  onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
   onDropChange: (id: string, drops: any[]) => void;
   onDiscountChange: (id: string, discount: number) => void;
@@ -556,6 +574,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // securing a drop; picking an outcome opens the full Result Lead outcome modal.
   const [showChooser, setShowChooser] = useState(false);
   const [chooserPrice, setChooserPrice] = useState(0);
+  // Down payment carried into the Result Lead modal — seeded from the drop being
+  // resulted (secured/viewed) or the accepted drop, so a down payment entered in
+  // the drop price flow prefills the outcome modal (web parity).
+  const [chooserDown, setChooserDown] = useState(0);
 
   const plans = pricing.plans;
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
@@ -563,6 +585,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const drops: any[] = calculator.dropPrice || [];
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
+  const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
 
   // COST/PAR/RETAIL are recomputed LIVE from the entered quantities × the current
   // schema field prices (web `getCalculationResult` parity) — NOT from the stored
@@ -781,6 +804,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setPendingDropIndex(-1);
     // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
     setChooserPrice(pendingDrop);
+    setChooserDown(Number(data.downPayment) || 0);
     setShowChooser(true);
   };
 
@@ -950,8 +974,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                   <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>Pre Order{'\n'}Discount</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 4 }}>Default</Text>
-                    <Switch value={isDefaultDiscount} onValueChange={toggleDefaultDiscount} trackColor={{ false: '#E2E8F0', true: '#4CBB17' }} thumbColor="#fff" />
+                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 6 }}>Default</Text>
+                    <TouchableOpacity
+                      onPress={() => toggleDefaultDiscount(!isDefaultDiscount)}
+                      style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultDiscount ? '#22C55E' : '#CBD5E1', alignItems: isDefaultDiscount ? 'flex-end' : 'flex-start' }}
+                    >
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff' }} />
+                    </TouchableOpacity>
                   </View>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -1078,7 +1107,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     {!declined && (
-                      <TouchableOpacity onPress={() => { setChooserPrice(dp); setShowChooser(true); }}>
+                      <TouchableOpacity onPress={() => { setChooserPrice(dp); setChooserDown(Number(d.downPayment) || 0); setShowChooser(true); }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: secured ? '#16A34A' : '#64748B' }}>View</Text>
                       </TouchableOpacity>
                     )}
@@ -1149,7 +1178,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => { setChooserPrice(finalPrice); setShowChooser(true); }}
+              onPress={() => { setChooserPrice(finalPrice); setChooserDown(activeDownPayment); setShowChooser(true); }}
               style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F97316', backgroundColor: '#fff' }}
             >
               <Ionicons name="document-text-outline" size={16} color="#EA580C" style={{ marginBottom: 2 }} />
@@ -1189,8 +1218,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         visible={showChooser}
         name={calculator.title}
         price={chooserPrice}
-        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, activeMethod); }}
-        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, activeMethod); }}
+        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, activeMethod, chooserDown); }}
+        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, activeMethod, chooserDown); }}
         onClose={() => setShowChooser(false)}
       />
     </>
@@ -1347,7 +1376,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 setPrices((p) => ({ ...p, [id]: price }));
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
               }}
-              onResult={(id, result, price, paymentMethod) => onResultJob?.(id, result, price, paymentMethod)}
+              onResult={(id, result, price, paymentMethod, downPayment) => onResultJob?.(id, result, price, paymentMethod, downPayment)}
               onPaymentMethodChange={(id, m) => {
                 onPaymentMethodChange?.(id, m);
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };

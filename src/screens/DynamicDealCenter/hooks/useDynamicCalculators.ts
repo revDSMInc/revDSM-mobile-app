@@ -267,6 +267,11 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   schemasRef.current = schemas;
   const snapshotId = () => schemasRef.current?.[0]?.id || 'static';
 
+  // Lead display name, kept in a ref so the stable retitle callback can name the
+  // first calculator after the lead without churning its identity.
+  const leadNameRef = useRef(customerTitleOf(lead));
+  leadNameRef.current = customerTitleOf(lead);
+
   // Latest payload builder in a ref so the unmount flush (a [] effect) always
   // uses current leadId/enteredBy/schema instead of the mount-time closure.
   const buildPayload = useCallback(
@@ -298,7 +303,8 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const retitle = useCallback((list: CalcTab[]): CalcTab[] => {
     const titles = computeDerivedTitles(
       list.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
-      schemasRef.current || []
+      schemasRef.current || [],
+      leadNameRef.current
     );
     let changed = false;
     const next = list.map((t) => {

@@ -100,3 +100,8 @@ export function getCategoryDirectFields(cat: CalculatorCategory): CalculatorFiel
 export function getCategorySectionFields(cat: CalculatorCategory): CalculatorField[] {
   return (cat.sections || []).flatMap((s) => s.fields);
 }
+
+/** Every field in a category — direct fields + all section fields (web `getCategoryAllFields`). */
+export function getCategoryAllFields(cat: CalculatorCategory): CalculatorField[] {
+  return [...getCategoryDirectFields(cat), ...getCategorySectionFields(cat)];
+}

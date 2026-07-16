@@ -42,7 +42,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const lead = route?.params?.lead;
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
-  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string }>({ visible: false });
+  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string; downPayment?: number }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
   const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
 
@@ -100,8 +100,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     : lead?.title || lead?.customerName || 'Lead Center';
   const leadTime = lead?.leadTime || '';
 
-  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string) => {
-    setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod });
+  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => {
+    setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
     setCurrentCalculatorId(calculatorId);
   }, []);
 
@@ -216,7 +216,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
+          initialDownPayment={resultModal.downPayment}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          verticals={verticals}
           sectionLabelMap={sectionLabelMap}
           isLowesLead={lead?.lowesLead === true}
           pricing={pricing}
@@ -316,7 +318,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
+          initialDownPayment={resultModal.downPayment}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          verticals={verticals}
           sectionLabelMap={sectionLabelMap}
           isLowesLead={lead?.lowesLead === true}
           pricing={pricing}
