@@ -21,7 +21,9 @@ const TOGGLE_COLS = 2;
 
 // Matches the normal Job Builder toggle/selector buttons (GutterSection size /
 // partial, LeafFilter profile): #22C55E selected, slate idle, h-11 rounded-xl
-// border-2, font-black, and a "✓ value" confirmation line. When `isMulti`, value
+// border-2, font-black. The selected value is echoed below as a PLAIN "✓ value"
+// text line (web `option-selector.js` renders it as a success-colored caption) —
+// never a filled chip, which read as a second selection. When `isMulti`, value
 // is an array and multiple toggles stay selected (web `option-selector.js`).
 export function ToggleGroup({ label, options = [], value, onChange, color = '#22C55E', isMulti = false }: ToggleGroupProps) {
   const cols = TOGGLE_COLS;
@@ -73,12 +75,9 @@ export function ToggleGroup({ label, options = [], value, onChange, color = '#22
         })}
       </View>
       {!!summaryText && (
-        <View
-          className="rounded-full py-2 px-4 self-start flex-row items-center mt-2"
-          style={{ backgroundColor: color }}
-        >
-          <Icon name="check" size={12} color="#fff" />
-          <Text className="text-white text-[10px] font-black ml-1">{summaryText}</Text>
+        <View className="flex-row items-center mt-1">
+          <Icon name="check" size={12} color={color} />
+          <Text className="text-[11px] font-black ml-1" style={{ color }}>{summaryText}</Text>
         </View>
       )}
     </View>

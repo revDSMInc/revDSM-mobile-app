@@ -628,8 +628,37 @@ function DynamicJobBuilderInner({
     [selectedVertical, currentTab, updateTabState]
   );
 
+  // The current step's index in the STEPPER's own list (allNonSummaryTabs + summary).
+  // NOTE: this is a different index space from `currentTabIndex`, which is relative
+  // to `nonSummaryTabs` (available/unlocked only) — mixing them misaligns whenever a
+  // vertical has locked tabs. `tabProgress` and `handleGoToTab` both use this space.
+  const currentStepIndex = useMemo(() => {
+    if (!currentTab) return -1;
+    if (summaryTab && currentTab.id === summaryTab.id) return allNonSummaryTabs.length;
+    return allNonSummaryTabs.findIndex((t: any) => t.id === currentTab.id);
+  }, [allNonSummaryTabs, summaryTab, currentTab]);
+
   const handleGoToTab = useCallback(
     (index: number) => {
+      // Web parity (dynamic-job-builder.js): the rep can't skip ahead past a step
+      // with incomplete required fields. Web's ProgressTracker takes no click
+      // handler at all — its stepper is display-only and Next (gated on
+      // `canProceed`) is the only way forward. Mobile keeps the stepper tappable,
+      // so it's gated by the SAME rule instead: backward is always allowed;
+      // forward requires the current step to be complete AND every step jumped
+      // over to be complete (locked steps aren't applicable, so they don't block).
+      // Deal-edit mode moves freely — web parity ("the rep may move through every
+      // step freely" in edit mode), which `canProceed` already reflects.
+      if (!portalUnrestrictedEdit && currentStepIndex >= 0 && index > currentStepIndex) {
+        if (!canProceed) return;
+        for (let i = currentStepIndex + 1; i < index; i += 1) {
+          const skipped = allNonSummaryTabs[i];
+          if (!skipped) continue;
+          if (currentVerticalLockedTabIds.includes(skipped.id)) continue;
+          if (!tabCompletionById[skipped.id]) return;
+        }
+      }
+
       if (index >= 0 && index < allNonSummaryTabs.length) {
         const tab = allNonSummaryTabs[index];
         if (tab && !currentVerticalLockedTabIds.includes(tab.id)) {
@@ -639,7 +668,15 @@ function DynamicJobBuilderInner({
         setSelectedTabId(summaryTab.id);
       }
     },
-    [allNonSummaryTabs, currentVerticalLockedTabIds, summaryTab]
+    [
+      allNonSummaryTabs,
+      currentVerticalLockedTabIds,
+      summaryTab,
+      portalUnrestrictedEdit,
+      currentStepIndex,
+      canProceed,
+      tabCompletionById,
+    ]
   );
 
   const handleNext = useCallback(() => {

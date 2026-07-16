@@ -34,6 +34,20 @@ function stripToVisibleColumns(value: any, visibleKeys: Set<string>) {
   return next;
 }
 
+/**
+ * The text shown in a grid cell. Web parity (`location-grid.js`): 0 / '0' / empty
+ * render blank so the "0" placeholder shows through.
+ *
+ * The value MUST be stringified: `update()` stores cell values as numbers, and
+ * React Native's TextInput only renders a `string` — passing the raw number left
+ * the cell blank even though the row/column totals (which read state directly)
+ * counted it. Web gets away with the raw value because an HTML input coerces it.
+ */
+function cellText(raw: any): string {
+  if (raw === 0 || raw === '0' || raw == null || raw === '') return '';
+  return String(raw);
+}
+
 // Styled to match the normal Job Builder measurement grid (GutterSection /
 // LeafFilterSection): slate-50 rounded input cells, font-black, sky totals,
 // #22C55E grand-total bar.
@@ -80,11 +94,7 @@ export function LocationGrid({ label = 'Measurements', value = {}, onChange, fie
                 <TextInput
                   className="h-10 bg-slate-50 rounded-xl border border-slate-200 text-center text-[12px] font-black text-black"
                   keyboardType="number-pad"
-                  value={
-                    value?.[row.key]?.[col.key] === 0 || value?.[row.key]?.[col.key] === '0'
-                      ? ''
-                      : value?.[row.key]?.[col.key] || ''
-                  }
+                  value={cellText(value?.[row.key]?.[col.key])}
                   onChangeText={(val) => update(row.key, col.key, val)}
                   placeholder="0"
                   placeholderTextColor="#CBD5E1"

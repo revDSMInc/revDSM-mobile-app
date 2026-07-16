@@ -645,7 +645,6 @@ export function CalculatorView({
                 >
                   <Ionicons name={style.icon} size={15} color={isActive ? '#fff' : style.color} style={{ marginRight: 6 }} />
                   <Text style={{ fontSize: 13, fontWeight: isActive ? '800' : '600', color: isActive ? '#fff' : '#637381' }}>{name}</Text>
-                  {isActive && <Ionicons name="close" size={14} color="#fff" style={{ marginLeft: 6, opacity: 0.85 }} />}
                 </TouchableOpacity>
               );
             })}

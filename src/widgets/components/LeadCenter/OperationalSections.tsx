@@ -135,7 +135,7 @@ export const ToolsSection = ({
         isLoading={isCalculatorLoading}
       /> */}
       <ToolCard
-        title="Dynamic Deal Center"
+        title="Deal Center"
         desc="Calculator & job builder"
         icon="cog"
         onPress={onShowDynamicDealCenter}

@@ -7,6 +7,7 @@ import {
   createNextCombinationItem,
   getCombinationDisplayNumber,
   getCombinationSectionHeaderFields,
+  getFlattenedCombinationSectionRowFields,
   buildComboGroupSectionState,
 } from '../../../utils/dynamic-job-builder/engine/combination-utils';
 import {
@@ -21,13 +22,18 @@ import {
   isDefaultColorActive,
   isFieldRequired,
 } from '../../../utils/dynamic-job-builder/engine/dependency-engine';
-import { isAllocationField } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
+import { isRequiredFieldValueMissing } from '../../../utils/dynamic-job-builder/engine/field-value-utils';
+import { isAllocationField, computeGridTotal, resolveLockedValue } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
 import { isAllocationCardActive } from '../../../utils/dynamic-job-builder/engine/allocation-config-utils';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
 import { resolveAccordionAllocationStatus } from '../../../utils/dynamic-job-builder/engine/accordion-allocation-utils';
 import { filterVisibleToggleOptions } from '../../../utils/dynamic-job-builder/engine/toggle-utils';
 import { getEffectiveDropdownOptions } from '../../../utils/dynamic-job-builder/engine/dropdown-utils';
-import { getWarningConfig, getOptionGridSize } from '../../../utils/dynamic-job-builder/engine/field-layout-utils';
+import {
+  getWarningConfig,
+  getOptionGridSize,
+  getEffectiveBorderColor,
+} from '../../../utils/dynamic-job-builder/engine/field-layout-utils';
 
 // Web parity: optionList/select render in a wrapping grid whose columns come from
 // `field.columns` (`getOptionGridSize` → a 12-col span; 12/span = columns per row).
@@ -46,6 +52,7 @@ import { buildTabSummaryEntries, isSummarySectionVisible } from '../../../utils/
 import { SectionCard } from './SectionCard';
 import { SectionLabel } from './SectionLabel';
 import { InputField } from './InputField';
+import { IncompleteWarning } from './IncompleteWarning';
 import { TextField } from './TextField';
 import { TextareaField } from './TextareaField';
 import { ToggleGroup } from './ToggleGroup';
@@ -75,6 +82,29 @@ const COMBINATION_COLORS = [
 // green, regardless of the vertical's own accent color — matches GutterSection /
 // LeafFilterSection where every selected control is #22C55E.
 const SELECTED_ACCENT = '#22C55E';
+
+/**
+ * Port of web `field-registry.js` → `resolveEffectiveColorBehavior`.
+ *
+ * Opt-in (colorSelection only): when the field's requiredWhen condition is not
+ * met (its linked deal-center value — e.g. the gutter Extra — is empty), render
+ * it as a read-only "—" locked field instead of an editable colour picker.
+ * Portal-controlled via `lockWhenNotRequired`; defaults off, and `required ===
+ * false` guards it so fields that don't pass a required flag (e.g. plain
+ * `swatch`) are never affected.
+ */
+function resolveEffectiveColorBehavior(field: any, state: any, depCtx: any, required?: boolean) {
+  const lockWhenNotRequired =
+    field.type === 'colorSelection' && field.lockWhenNotRequired === true && required === false;
+
+  if (!isDefaultColorActive(field, state, depCtx)) {
+    return { effectiveDefault: '', effectiveLocked: lockWhenNotRequired };
+  }
+  return {
+    effectiveDefault: field.defaultValue ?? '',
+    effectiveLocked: Boolean(field.locked) || field.type === 'locked' || lockWhenNotRequired,
+  };
+}
 
 // `stateObj` MUST be the full state object at this field's level (tabState /
 // sectionState / the combo) — the engine's resolveSourceValue (source:'state')
@@ -210,21 +240,24 @@ function renderField(
   // Selected controls are always green (normal-JB parity), not the vertical color.
   const verticalColor = SELECTED_ACCENT;
 
+  // Shared dependency-rule context — drives conditional defaults (isDefaultColorActive)
+  // and conditional required-ness (isFieldRequired → `dependencies.requiredWhen`).
+  const depCtx = {
+    dealCenterData,
+    sectionFields: ctx?.sectionFields,
+    tab: ctx?.tab,
+    tabState: ctx?.tabState,
+    section: ctx?.section,
+    sectionState: ctx?.sectionState ?? state,
+    combos: ctx?.combos,
+  };
+
   // Web parity (resolveEffectiveColorBehavior): a color field with an active
   // configured default shows that default as its selected swatch when the rep
   // hasn't picked one — so a field that validation counts as complete (via
   // isDefaultColorActive) is not rendered blank.
   const resolveSwatchValue = () => {
     if (value) return value;
-    const depCtx = {
-      dealCenterData,
-      sectionFields: ctx?.sectionFields,
-      tab: ctx?.tab,
-      tabState: ctx?.tabState,
-      section: ctx?.section,
-      sectionState: ctx?.sectionState ?? state,
-      combos: ctx?.combos,
-    };
     return (isDefaultColorActive(field, state, depCtx) ? field.defaultValue : '') || '';
   };
 
@@ -303,18 +336,29 @@ function renderField(
         />
       );
 
-    case 'number':
+    case 'number': {
+      // Web parity (field-registry.js `case 'number'`): a field that is required —
+      // either statically (`field.required`) or conditionally via
+      // `dependencies.requiredWhen` (e.g. Miters becomes required once measurements
+      // are entered) — shows an "INCOMPLETE — Value Required" warning above it and
+      // a ` *` on its label until a value is entered. `isRequiredFieldValueMissing`
+      // treats 0/'0' as missing for number fields.
+      const showRequired =
+        isFieldRequired(field, state, depCtx) && isRequiredFieldValueMissing(field, value);
       return (
-        <InputField
-          key={field.id}
-          label={field.label}
-          placeholder={field.placeholder}
-          value={value != null ? String(value) : ''}
-          onChange={onChange}
-          unit={field.unit}
-          editable={!readOnly}
-        />
+        <View key={field.id}>
+          {showRequired && <IncompleteWarning message="INCOMPLETE — Value Required" />}
+          <InputField
+            label={field.label ? `${field.label}${showRequired ? ' *' : ''}` : undefined}
+            placeholder={field.placeholder}
+            value={value != null ? String(value) : ''}
+            onChange={onChange}
+            unit={field.unit}
+            editable={!readOnly}
+          />
+        </View>
       );
+    }
 
     case 'textarea': {
       // Web parity (field-registry textarea): show the amber "INCOMPLETE — Reason
@@ -430,8 +474,41 @@ function renderField(
       );
     }
 
+    // Web parity (field-registry.js `case 'colorSelection'`): the colour slot for a
+    // gutter Extra is locked while its linked extra has no value — the portal opts
+    // in per-field via `lockWhenNotRequired`, and the field's `requiredWhen` decides
+    // when it becomes editable. Locked → the compact "—" + padlock row instead of
+    // the editable picker, so an untouched Extra no longer shows a colour selector.
+    // Only `colorSelection` is gated; plain `swatch`/`color` fields are untouched.
+    case 'colorSelection': {
+      const { effectiveDefault, effectiveLocked } = resolveEffectiveColorBehavior(
+        field,
+        state,
+        depCtx,
+        isFieldRequired(field, state, depCtx)
+      );
+      if (effectiveLocked) {
+        return (
+          <LockedField
+            key={field.id}
+            label={field.showLabel === false ? undefined : field.label || 'Color'}
+            value={resolveLockedValue(field, dealCenterData) || effectiveDefault || '—'}
+          />
+        );
+      }
+      return (
+        <SwatchPicker
+          key={field.id}
+          label={field.label}
+          value={resolveSwatchValue()}
+          onChange={onChange}
+          colors={resolveSwatchColors()}
+          accentColor={verticalColor}
+        />
+      );
+    }
+
     case 'swatch':
-    case 'colorSelection':
     case 'color':
       return (
         <SwatchPicker
@@ -619,6 +696,7 @@ function renderField(
             section: ctx?.section,
           }));
 
+      // The accordion keeps its existing filled banner.
       const warningBanner = showWarning ? (
         <View
           className="mt-1 mb-2 px-3 py-2 rounded-lg"
@@ -632,6 +710,17 @@ function renderField(
             ⚠️ {warning.message}
           </Text>
         </View>
+      ) : null;
+
+      // Web parity (field-registry `case 'stack'`): the stack's warning is PLAIN
+      // amber text rendered inside the bordered container above the fields — web
+      // gives it no fill/border of its own (the filled banner was a mobile-only
+      // divergence). Colour + weight mirror web's `<Typography variant="caption"
+      // fontWeight={700} color={warning.color}>`.
+      const warningNode = showWarning ? (
+        <Text className="text-[12px] font-bold mb-2" style={{ color: warning.color || '#f59e0b' }}>
+          ⚠️ {warning.message}
+        </Text>
       ) : null;
 
       // `accordion` → collapsible card with an allocation status badge in the header
@@ -670,11 +759,41 @@ function renderField(
       // its label when `showLabel !== false`. Containers authored with showLabel:false
       // (e.g. the Fascia Wrap "Stack" group) are pure layout — no heading is drawn.
       const showStackLabel = !!field.label && field.showLabel !== false;
+      const labelNode = showStackLabel ? <SectionLabel title={field.label} /> : null;
+
+      // Web parity (field-registry `case 'stack'`): a stack renders inside a
+      // bordered container when it's explicitly `bordered` OR currently warning.
+      // The warning colour wins for the border, and the container carries a very
+      // faint tint of it (`${color}08`). Colours only — child field layout/sizing
+      // is untouched.
+      const showContainer = field.bordered === true || showWarning;
+      const effectiveBorderColor =
+        (showWarning && warning?.color ? warning.color : getEffectiveBorderColor(field)) || undefined;
+
+      if (!showContainer) {
+        return (
+          <View key={field.id} className={showStackLabel ? 'mb-4' : ''}>
+            {labelNode}
+            {renderedChildren}
+          </View>
+        );
+      }
+
       return (
-        <View key={field.id} className={showStackLabel ? 'mb-4' : ''}>
-          {showStackLabel && <SectionLabel title={field.label} />}
+        <View
+          key={field.id}
+          className="mb-4"
+          style={{
+            borderWidth: 2,
+            borderColor: effectiveBorderColor || 'rgba(0,0,0,0.08)',
+            borderRadius: 8,
+            padding: 12,
+            backgroundColor: showWarning && effectiveBorderColor ? `${effectiveBorderColor}08` : '#fff',
+          }}
+        >
+          {labelNode}
+          {warningNode}
           {renderedChildren}
-          {warningBanner}
         </View>
       );
     }
@@ -722,6 +841,10 @@ function CombinationSectionBlock({
   // Visibility is resolved per-combo below so combo-sibling visibleWhen rules work.
   const baseRowFields = getCombinationSectionRowFields(section).filter((f: any) => f.type !== 'accordion');
   const canAddCombo = canAddMoreCombinations(section);
+  // Web parity (dynamic-tab-renderer.js): each combination shows its own footage
+  // total, read from the combo's locationGrid field, under that combo's fields.
+  const gridField = getFlattenedCombinationSectionRowFields(section).find((f: any) => f.type === 'locationGrid');
+  const gridKey = gridField?.id || gridField?.key || 'grid';
 
   const handleSectionStateChange = (fieldId: string, val: any) => {
     if (readOnly) return;
@@ -784,6 +907,7 @@ function CombinationSectionBlock({
       {combos.map((combo: any, comboIndex: number) => {
         const borderThemeColor = COMBINATION_COLORS[comboIndex % COMBINATION_COLORS.length];
         const combinationNumber = getCombinationDisplayNumber(combo, comboIndex, comboIndexOffset);
+        const comboTotal = gridField ? computeGridTotal(combo[gridKey]) : 0;
 
         return (
           <SectionCard key={combo._combinationNumber ?? comboIndex} borderColor={borderThemeColor}>
@@ -818,6 +942,12 @@ function CombinationSectionBlock({
                 sectionFields: allFields,
               });
             })}
+
+            {comboTotal > 0 && (
+              <Text className="text-[11px] font-bold mt-3" style={{ color: SELECTED_ACCENT }}>
+                Combination total: {comboTotal} ft
+              </Text>
+            )}
           </SectionCard>
         );
       })}
