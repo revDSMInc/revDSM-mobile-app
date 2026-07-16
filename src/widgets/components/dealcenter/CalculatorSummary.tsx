@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import Animated, { useAnimatedStyle, SharedValue, LinearTransition, SlideOutLeft
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
+import { calculateMonthlyPayment } from '../../../utils/calculator/calculation-utils';
 import {
   validatePriceForPaymentMethod,
   WELLS_FARGO_HIGH_KEYS,
@@ -427,6 +428,49 @@ export const CalculatorSummary = ({
   const preOrderDiscountVal = msrp * (currentDiscount / 100);
   const oneYearGrandTotal = msrp - srVetDiscount;
   const preOrderGrandTotal = msrp - srVetDiscount - preOrderDiscountVal;
+
+  // Deferred Financing Scenarios (web parity: calculation-utils.js calculateQuote +
+  // summary/DeferredScenarios.js). Only surfaced for a deferred-interest financing plan.
+  const deferredInfo = useMemo(() => {
+    const plan: any = paymentPlans[activeCalc?.inputs?.paymentPlan];
+    if (!plan || plan.type !== 'financing' || !plan.deferredMonths || plan.deferredMonths <= 0) {
+      return { show: false, scenarios: null as any };
+    }
+    // Financed base = the after-discounts In-Home Pre-Order grand total shown above.
+    const afterDiscounts = preOrderGrandTotal;
+    const loanPrincipal = afterDiscounts * (1 + (plan.pf || 0));
+    const monthlyRateAfterDeferred = (plan.aprAfterDeferred || 0) / 12;
+    const deferredInterest =
+      loanPrincipal * ((1 + monthlyRateAfterDeferred) ** plan.deferredMonths - 1);
+    const balanceAfterDeferred = loanPrincipal + deferredInterest;
+    const remainingMonths = plan.totalLoanMonths - plan.deferredMonths;
+    let monthlyPaymentAfterDeferred = 0;
+    if (remainingMonths > 0) {
+      monthlyPaymentAfterDeferred = calculateMonthlyPayment(
+        balanceAfterDeferred,
+        plan.aprAfterDeferred || 0,
+        remainingMonths
+      );
+    }
+    const totalPostPromoPayments = monthlyPaymentAfterDeferred * remainingMonths;
+    return {
+      show: true,
+      scenarios: {
+        scenario1: {
+          totalPaidDuringPromo: afterDiscounts,
+          balanceAtEndPromo: 0,
+          interestCharged: 0,
+          totalAmountPaid: afterDiscounts,
+        },
+        scenario2: {
+          totalPaidDuringPromo: 0,
+          balanceAtEndPromo: balanceAfterDeferred,
+          interestCharged: deferredInterest,
+          totalAmountPaid: totalPostPromoPayments,
+        },
+      },
+    };
+  }, [activeCalc?.inputs?.paymentPlan, preOrderGrandTotal]);
 
   const confirmedCount = calculators.filter((c: any) => c.price > 0).length;
   const totalCount = calculators.length;
@@ -1160,6 +1204,77 @@ export const CalculatorSummary = ({
                       </View>
                     </View>
                   </View>
+
+                  {/* Deferred Financing Scenarios (web parity: summary/DeferredScenarios.js) */}
+                  {deferredInfo.show && deferredInfo.scenarios && (
+                    <View className="rounded-3xl p-5 mb-6 border border-[#FFAB0033] bg-[#FFAB000D]">
+                      <Text className="text-sm font-black text-[#B76E00] mb-4">
+                        Deferred Financing Scenarios
+                      </Text>
+
+                      {/* Scenario 1: Paid Off Within Promo Period */}
+                      <View className="rounded-2xl p-4 mb-4 bg-[#00B8D90D]">
+                        <Text className="text-xs font-black text-[#006C9C] mb-3">
+                          Scenario 1: Paid Off Within Promo Period
+                        </Text>
+                        <View className="flex-row justify-between mb-1.5">
+                          <Text className="text-[10px] font-medium text-text-secondary">Payments During Promo:</Text>
+                          <Text className="text-[10px] font-black text-text-primary">
+                            ${deferredInfo.scenarios.scenario1.totalPaidDuringPromo.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between mb-1.5">
+                          <Text className="text-[10px] font-medium text-text-secondary">Balance at End of Promo:</Text>
+                          <Text className="text-[10px] font-black text-text-primary">
+                            ${deferredInfo.scenarios.scenario1.balanceAtEndPromo.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between mb-1.5">
+                          <Text className="text-[10px] font-medium text-text-secondary">Interest Charged:</Text>
+                          <Text className="text-[10px] font-black text-text-primary">
+                            ${deferredInfo.scenarios.scenario1.interestCharged.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between">
+                          <Text className="text-[10px] font-medium text-text-secondary">Total Amount Paid:</Text>
+                          <Text className="text-[10px] font-black text-[#118D57]">
+                            ${deferredInfo.scenarios.scenario1.totalAmountPaid.toFixed(2)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Scenario 2: Not Paid Off Within Promo Period */}
+                      <View className="rounded-2xl p-4 bg-[#FF56300D]">
+                        <Text className="text-xs font-black text-[#B71D18] mb-3">
+                          Scenario 2: Not Paid Off Within Promo Period
+                        </Text>
+                        <View className="flex-row justify-between mb-1.5">
+                          <Text className="text-[10px] font-medium text-text-secondary">Payments During Promo:</Text>
+                          <Text className="text-[10px] font-black text-text-primary">
+                            ${deferredInfo.scenarios.scenario2.totalPaidDuringPromo.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between mb-1.5">
+                          <Text className="text-[10px] font-medium text-text-secondary">Balance at End of Promo:</Text>
+                          <Text className="text-[10px] font-black text-text-primary">
+                            ${deferredInfo.scenarios.scenario2.balanceAtEndPromo.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between mb-1.5">
+                          <Text className="text-[10px] font-medium text-text-secondary">Interest Charged (Deferred):</Text>
+                          <Text className="text-[10px] font-black text-text-primary">
+                            ${deferredInfo.scenarios.scenario2.interestCharged.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between">
+                          <Text className="text-[10px] font-medium text-text-secondary">Total Amount Paid:</Text>
+                          <Text className="text-[10px] font-black text-[#B71D18]">
+                            ${deferredInfo.scenarios.scenario2.totalAmountPaid.toFixed(2)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
                 </View>
               )}
 

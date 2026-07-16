@@ -21,6 +21,7 @@ import {
 import type { MapCoordinate, ZoneCanvasserBuilding } from '../../../types/zone-canvasser';
 import { BuildingMapMarker } from './BuildingMapMarker';
 import { ClusterMapMarker } from './ClusterMapMarker';
+import { UserLocationMarker } from './UserLocationMarker';
 
 // Mapbox access token (idempotent — safe to set from multiple map screens).
 Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
@@ -36,6 +37,12 @@ type Props = {
   zones: any[];
   allBuildings: ZoneCanvasserBuilding[];
   searchCoords: MapCoordinate | null;
+  liveLocation?: {
+    latitude: number;
+    longitude: number;
+    heading: number | null;
+    accuracy: number | null;
+  } | null;
   onMapPress: (e: any) => void;
   onBuildingPress: (building: ZoneCanvasserBuilding) => void;
   onPolygonPress: (zone: any) => void;
@@ -89,6 +96,7 @@ export function MapCanvas({
   zones,
   allBuildings,
   searchCoords,
+  liveLocation,
   onMapPress,
   onBuildingPress,
   onPolygonPress,
@@ -289,7 +297,18 @@ export function MapCanvas({
           rotateEnabled={!rectangleDrawing}
         >
           <Camera ref={cameraRef} defaultSettings={cameraDefault} />
-          <UserLocation visible={true} />
+          {/* Custom live blue-dot marker (web parity: user-location-marker.js). Falls
+              back to Mapbox's native dot until the first live fix arrives. */}
+          {liveLocation ? (
+            <UserLocationMarker
+              latitude={liveLocation.latitude}
+              longitude={liveLocation.longitude}
+              heading={liveLocation.heading}
+              accuracy={liveLocation.accuracy}
+            />
+          ) : (
+            <UserLocation visible={true} />
+          )}
 
           {/* Saved zones */}
           {!isDrawingMode && zonesFC.features.length > 0 && (

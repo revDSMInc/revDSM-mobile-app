@@ -8,6 +8,7 @@ import ProfilePage from '../screens/Profile/index';
 import JobTrackerPage from '../screens/JobTracker/index';
 import MyDealsPage from '../screens/MyDeals/index';
 import DealDetailPage from '../screens/DealDetail/index';
+import AppointmentsPage from '../screens/Appointments/index';
 import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
@@ -37,6 +38,7 @@ export type RootStackParamList = {
   };
   Profile: undefined;
   AppointmentDetails: { leadId: string };
+  Appointments: undefined;
   JobTracker: undefined;
   MyLearning: undefined;
   ChatThreads: undefined;
@@ -174,6 +176,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="JobTracker" component={JobTrackerPage} />
                 <Stack.Screen name="MyDeals" component={MyDealsPage} />
                 <Stack.Screen name="DealDetail" component={DealDetailPage} />
+                <Stack.Screen name="Appointments" component={AppointmentsPage} />
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />

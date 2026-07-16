@@ -147,14 +147,29 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   // buildDealCenterSessionData — extracts field-option aliases from the
   // calculator form schemas so that tab.dcField references (which may use
   // a field's legacy name rather than its id) are correctly resolved.
+  //
+  // Source the entries from the RESULTED calculator (the one the job builder
+  // belongs to), NOT `activeTab` — they can differ, and the job builder's
+  // LOCKED, dcField-driven fields (e.g. gutter Extras: Wedges/Straps/Modify
+  // Height) resolve their values from THIS map on reopen. If it were built from
+  // the wrong/empty tab, those locked fields resolve to their blank default and
+  // the saved values are wiped on load (confirmed against live data). Falls back
+  // to the active tab, then the resulted calc snapshot carried on resultData.
   const consolidatedDealCenterData = useMemo(() => {
+    const resultedId = calculatorResultData?.calculatorId || currentCalculatorId;
+    const resultedTab = resultedId ? tabs.find((t) => t.id === resultedId) : undefined;
+    const entries =
+      resultedTab?.entries ||
+      calculatorResultData?.LFCalculator?.entries ||
+      activeTab?.entries ||
+      {};
     return buildDealCenterData({
-      entries: activeTab?.entries || {},
+      entries,
       resultData: calculatorResultData || {},
       schemas: verticals,   // CalculatorSchema[] — same array used by the calculator
       lead: lead || {},
     });
-  }, [lead, calculatorResultData, activeTab, verticals]);
+  }, [lead, calculatorResultData, currentCalculatorId, tabs, activeTab, verticals]);
 
   if (flowStep === 'jobBuilder') {
     return (

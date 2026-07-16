@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import {
   View,
@@ -21,6 +21,10 @@ import {
   ChannelThreadItem,
 } from '../../widgets/components/chat/ThreadItems';
 import { useChatThreads } from '../../hooks/useChatThreads';
+import CreateChannelModal from '../../widgets/modals/chat/CreateChannelModal';
+import ChatService from '../../services/api/ChatService';
+import SocketManager from '../../services/SocketManager';
+import { FlashMessage } from '../../config/message';
 
 const STATUS_OPTIONS = [
   'All',
@@ -42,6 +46,31 @@ export default function ChatThreadsScreen({ navigation }: any) {
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('Unresulted Leads');
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+
+  // Refresh the channel list + surface a success toast when the backend confirms a
+  // new channel (web parity: `use-team-channels.js` handles `team-channel-created`).
+  // The threads hook keeps a live `team-channels-response` listener, so re-emitting
+  // `get-team-channels` here is enough to pull the freshly-created channel into view.
+  useEffect(() => {
+    const unsub = SocketManager.on('team-channel-created', (data: any) => {
+      if (data?.success === false) {
+        FlashMessage.error('Failed to create channel', data?.message || '');
+        return;
+      }
+      FlashMessage.success('Channel created', data?.channel?.title || data?.channel?.name || '');
+      SocketManager.emit('get-team-channels');
+    });
+    return unsub;
+  }, []);
+
+  const handleCreateChannel = (channelData: any) => {
+    if (!SocketManager.isConnected()) {
+      FlashMessage.warning('Socket not connected');
+      return;
+    }
+    ChatService.createChannel(channelData);
+  };
 
   const {
     filteredChats,
@@ -97,6 +126,18 @@ export default function ChatThreadsScreen({ navigation }: any) {
           </Text>
         </View>
         <View className="flex-row items-center">
+          {mainTab === 'channels' && (
+            <TouchableOpacity
+              onPress={() => setShowCreateChannel(true)}
+              className="flex-row items-center h-8 px-3 mr-2 rounded-full"
+              style={{ backgroundColor: colors.primary.main }}
+            >
+              <Icon name="add" size={16} color="#fff" />
+              <Text className="text-xs font-bold ml-1" style={{ color: '#fff' }}>
+                New Channel
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             className="w-8 h-8 items-center justify-center"
@@ -258,6 +299,12 @@ export default function ChatThreadsScreen({ navigation }: any) {
             )}
           </View>
         }
+      />
+
+      <CreateChannelModal
+        visible={showCreateChannel}
+        onClose={() => setShowCreateChannel(false)}
+        onCreate={handleCreateChannel}
       />
     </View>
   );

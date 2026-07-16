@@ -27,13 +27,26 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
     return buildInitialJobState(config, dealCenterData);
   });
 
-  // React to async-fetched initialJobState (e.g., from outcome GET on mount)
-  const initialJobStateSetRef = useRef(false);
+  // React to async-fetched initialJobState (e.g., from the outcome GET on mount).
+  //
+  // Web parity (JobBuilderContext.applyDraftState): the saved draft is applied when
+  // it becomes available AND re-applied if it changes (the outcome GET and the
+  // dealCenterData-driven re-hydration can settle across several renders) — right up
+  // until the rep actually edits a field, at which point THEIR state takes over and
+  // the incoming draft must never clobber it. The previous one-shot guard latched on
+  // the FIRST truthy value: if that first value was hydrated before dealCenterData
+  // was ready, the corrected re-hydration never got applied (locked/dc fields stayed
+  // blank); and if the GET resolved slower than a keystroke, the late draft wiped the
+  // rep's edit. We track "has the user edited yet" separately and re-apply the latest
+  // draft reference until they do.
+  const userEditedRef = useRef(false);
+  const lastAppliedInitialRef = useRef<JobState | undefined>(undefined);
   useEffect(() => {
-    if (initialJobState && !initialJobStateSetRef.current) {
-      initialJobStateSetRef.current = true;
-      setJobState(initialJobState);
-    }
+    if (!initialJobState) return;
+    if (userEditedRef.current) return;
+    if (lastAppliedInitialRef.current === initialJobState) return;
+    lastAppliedInitialRef.current = initialJobState;
+    setJobState(initialJobState);
   }, [initialJobState]);
 
   const lockedTabIdsByVertical = useMemo(() => {
@@ -68,6 +81,9 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
 
   const updateTabState = useCallback(
     (verticalId: string, tabId: string, tabStateOrUpdater: any) => {
+      // A field edit is a real user edit → freeze out any late-arriving draft from
+      // the outcome GET so it can't overwrite what the rep just typed.
+      userEditedRef.current = true;
       // Resolve a functional updater INSIDE the setter, against React's latest
       // `prev`, so multiple edits in one tick chain instead of clobbering (web
       // parity). Accepts a concrete object too (backward compatible).
@@ -91,6 +107,8 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
   // writer so the summary tab can persist appointment + document state.
   const updateRootState = useCallback(
     (key: string, value: any) => {
+      // Setting appointment / agreement / order-sheet is a real user edit too.
+      userEditedRef.current = true;
       updateJobState((prev) => ({ ...prev, [key]: value }));
     },
     [updateJobState]

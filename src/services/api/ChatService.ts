@@ -447,6 +447,63 @@ class ChatService {
     });
   }
 
+  /**
+   * Create a new team channel.
+   * Web parity: `use-team-channels.js` `createChannel` emits the `create-team-channel`
+   * socket event with the channel payload built in the create-channel dialog. The
+   * backend responds by broadcasting `team-channel-created`, which the threads screen
+   * listens for to refresh the channel list.
+   */
+  createChannel(channelData: any): void {
+    console.log('[ChatService] create-team-channel:', channelData);
+    SocketManager.emit('create-team-channel', channelData);
+  }
+
+  /**
+   * Send previously-uploaded appointment/inspection/gallery photos as a chat message.
+   * Web parity: `ChatModule.js` `handleSendAppointmentPhotos` posts a JSON body with
+   * `type: 'appointment_photo'` and a `files[]` array of S3 descriptors (already stored
+   * on the lead's `salesPhotos`) — NOT a multipart upload. The server dereferences the
+   * S3 keys, so no file bytes are re-sent.
+   */
+  async sendAppointmentPhotos(
+    chatId: string,
+    photos: {
+      _id?: string;
+      bucketName: string;
+      s3url: string;
+      category?: string;
+      subcategory?: string;
+      fileName: string;
+      fileType?: string;
+    }[],
+    senderId?: string,
+    replyTo?: string,
+  ): Promise<void> {
+    const files = photos.map((p) => ({
+      _id: p._id,
+      bucketName: p.bucketName,
+      filePath: p.s3url,
+      category: p.category || '',
+      subcategory: p.subcategory || '',
+      fileName: p.fileName,
+      fileType: p.fileType || 'image/jpeg',
+    }));
+
+    const payload: any = {
+      chatId,
+      message: ' ',
+      senderId,
+      type: 'appointment_photo',
+      files,
+    };
+    if (replyTo) payload.replyTo = replyTo;
+
+    await api.post<any>(`/chat/v1/${chatId}/messages`, payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   emitChannelTyping(channelId: string, isTyping: boolean): void {
     if (!SocketManager.isConnected()) return;
     const now = Date.now();

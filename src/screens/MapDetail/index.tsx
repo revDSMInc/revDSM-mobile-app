@@ -121,6 +121,8 @@ export default function MapDetailScreen() {
 
   const [isListView, setIsListView] = useState(false);
   const [updatedJob, setUpdatedJob] = useState<any>(null);
+  // Satellite / street map-view toggle (web parity: `isSatelliteView`).
+  const [isSatelliteView, setIsSatelliteView] = useState(false);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -435,6 +437,8 @@ export default function MapDetailScreen() {
           isHeatMapFilter={filters.isHeatMap}
           searchedJobNumber={filters.jobNumber}
           showProduct={filters.showProduct}
+          isSatelliteView={isSatelliteView}
+          showRoute={filters.showRoute}
           updatedJob={updatedJob}
           onToggleFilter={(type) => {
             setFilters((prev) => {
@@ -516,6 +520,46 @@ export default function MapDetailScreen() {
             setShowReferralModal(true);
           }}
         />
+
+        {/* Satellite / Street map-view toggle (web parity: ToggleMapView). */}
+        {!isListView && (
+          <TouchableOpacity
+            onPress={() => {
+              setIsSatelliteView((prev) => {
+                const next = !prev;
+                const userId = user?._id || user?.id;
+                if (userId) {
+                  logEvent('toggle', {
+                    user_id: userId,
+                    created_by: userId,
+                    module_type: 'map_view_filter',
+                    meta: {
+                      toggle: 'satellite_view',
+                      enabled: next,
+                      action: next ? 'satellite_view_enabled' : 'satellite_view_disabled',
+                    },
+                  });
+                }
+                return next;
+              });
+            }}
+            activeOpacity={0.8}
+            accessibilityLabel={isSatelliteView ? 'Switch to street view' : 'Switch to satellite view'}
+            className="absolute top-5 right-5 w-12 h-12 rounded-full items-center justify-center shadow-xl"
+            style={{
+              zIndex: 20,
+              backgroundColor: isSatelliteView ? '#4CBB17' : 'rgba(255,255,255,0.95)',
+              borderWidth: 2,
+              borderColor: '#4CBB17',
+            }}
+          >
+            <Icon
+              name={isSatelliteView ? 'satellite-variant' : 'map'}
+              size={24}
+              color={isSatelliteView ? 'white' : '#4CBB17'}
+            />
+          </TouchableOpacity>
+        )}
 
         {isListView && (
           <SafeAreaView edges={['bottom']} style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#121212' : '#F4F6F8', zIndex: 10000 }]}>

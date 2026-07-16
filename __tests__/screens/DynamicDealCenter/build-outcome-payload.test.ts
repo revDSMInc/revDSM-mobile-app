@@ -14,7 +14,9 @@ describe('buildCalculatorOutcomePayload — web parity', () => {
   const jobBuilder = { status: 'submitted' };
 
   test('sale payload carries LFCalculator, selectedAppointmentId, balance method, down method as paymentMethod', () => {
-    const calc = { appointmentId: 'appt-1', _id: 'calc-1', totals: { retail: 5000 } };
+    // A FULL backend calculator doc (createdBy + appointmentId + title) — only these
+    // pass the outcome's required-field validation, so only these are forwarded.
+    const calc = { appointmentId: 'appt-1', _id: 'calc-1', createdBy: 'user-1', title: 'G+LF', totals: { retail: 5000 } };
     const p = buildCalculatorOutcomePayload({
       rd: {
         resultType: 'sale',
@@ -34,7 +36,7 @@ describe('buildCalculatorOutcomePayload — web parity', () => {
       fallbackAppointmentId: 'lead-1',
     });
     expect(p.result).toBe('Sale');
-    expect(p.LFCalculator).toBe(calc); // web always sends the calculator snapshot
+    expect(p.LFCalculator).toBe(calc); // full backend doc is forwarded verbatim
     expect(p.selectedAppointmentId).toBe('appt-1');
     expect(p.paymentMethod).toBe('check'); // down-payment method → `paymentMethod`
     expect(p.balancePaymentMethod).toBe('wf4103');
@@ -54,10 +56,23 @@ describe('buildCalculatorOutcomePayload — web parity', () => {
     expect(p.lastPriceQuoted).toBe(7500);
   });
 
-  test('LFCalculator falls back to {} and appointment id to fallback (web backend-validation parity)', () => {
+  test('LFCalculator is OMITTED when absent (empty {} 500s the backend) and appt id falls back', () => {
     const p = buildCalculatorOutcomePayload({ rd: { resultType: 'sale' }, calcId: 'c', jobBuilder, fallbackAppointmentId: 'lead-9' });
-    expect(p.LFCalculator).toEqual({});
+    // Sending an empty/partial LFCalculator triggers the backend's required-field
+    // validators (createdBy/appointmentId/title) → 500. It must be omitted entirely.
+    expect(p.LFCalculator).toBeUndefined();
+    expect('LFCalculator' in p).toBe(false);
     expect(p.selectedAppointmentId).toBe('lead-9');
+  });
+
+  test('a PARTIAL LFCalculator (local CalcTab: title but no createdBy) is omitted', () => {
+    const p = buildCalculatorOutcomePayload({
+      rd: { resultType: 'sale', LFCalculator: { title: 'G+LF', totals: { retail: 5000 } } },
+      calcId: 'c',
+      jobBuilder,
+      fallbackAppointmentId: 'lead-9',
+    });
+    expect(p.LFCalculator).toBeUndefined();
   });
 
   test('appointment id prefers the calculator snapshot appointmentId', () => {

@@ -114,6 +114,12 @@ interface LeadMapProps {
   searchedJobNumber?: string;
   onFavoriteToggle?: (jobId: string, isFavorite: boolean) => void;
   showProduct?: boolean;
+  // Satellite / street map-view toggle (web parity: `isSatelliteView`). When true
+  // the Mapbox style switches to satellite-streets (hybrid — imagery + labels).
+  isSatelliteView?: boolean;
+  // Route/directions toggle (web parity: `showRoute`). When true a driving route
+  // is drawn from the user's location to the current lead / searched center.
+  showRoute?: boolean;
   // When the parent makes an optimistic patch to a job (e.g. after referral submit)
   // it passes the updated job here so the open job card reflects instantly.
   updatedJob?: any;
@@ -135,6 +141,8 @@ export const LeadMap = ({
   searchedJobNumber,
   onFavoriteToggle,
   showProduct = true,
+  isSatelliteView = false,
+  showRoute: showRouteProp = false,
   updatedJob,
 }: LeadMapProps) => {
 
@@ -198,6 +206,11 @@ export const LeadMap = ({
 
   const [userLocation, setUserLocation] = useState<any>(null);
   const [showRoute, setShowRoute] = useState(false);
+  // Keep the internal route state in sync with the parent-controlled prop so the
+  // route toggle (MapDetail / filters) drives the existing route infrastructure.
+  useEffect(() => {
+    setShowRoute(showRouteProp);
+  }, [showRouteProp]);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
   const [showGallery, setShowGallery] = useState(false);
@@ -750,7 +763,13 @@ export const LeadMap = ({
       <MapView
         ref={mapViewRef}
         style={StyleSheet.absoluteFillObject}
-        styleURL={isDark ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street}
+        styleURL={
+          isSatelliteView
+            ? Mapbox.StyleURL.SatelliteStreet
+            : isDark
+              ? Mapbox.StyleURL.Dark
+              : Mapbox.StyleURL.Street
+        }
         scaleBarEnabled={false}
         logoEnabled={true}
         compassEnabled={false}

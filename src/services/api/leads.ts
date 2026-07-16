@@ -180,6 +180,12 @@ export const LeadService = {
     api.get(`/appointments/${date}`),
   getAppointments: (params?: any): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.appointments, { params }),
+  // Standalone appointment management (web parity: `src/api/appointments.js`).
+  // update → PUT /appointments/{id}, delete → DELETE /appointments/{id}.
+  updateAppointment: (id: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.put(`/appointments/${id}`, payload),
+  deleteAppointment: (id: string): Promise<AxiosResponse<any>> =>
+    api.delete(`/appointments/${id}`),
   getCalculators: (appointmentId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.calculators(appointmentId)),
   getCalculator: (id: string): Promise<AxiosResponse<any>> =>

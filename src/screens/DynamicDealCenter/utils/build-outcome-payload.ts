@@ -61,6 +61,19 @@ export function buildCalculatorOutcomePayload(args: {
     ? rd.lastPriceQuoted ?? rd.contractPrice
     : rd.lastPriceQuoted ?? rd.contractPrice;
 
+  // Web parity (JobBuilderContext.buildSavePayload): ONLY include `LFCalculator`
+  // when it is a FULL backend calculator doc. The backend's `LFCalculator` is a
+  // Mongoose subdocument whose `createdBy`/`appointmentId`/`title` are all required
+  // — sending an empty `{}` (or a partial local tab that lacks them) triggers those
+  // required-field validators and 500s the whole PUT ("Validation failed:
+  // LFCalculator.createdBy is required, ..."). Web always has the real doc from
+  // `GET /appointments/{id}/lfcalculators`, so its snapshot passes; mobile's in-memory
+  // `CalcTab` does NOT carry `createdBy`/`appointmentId`, so it must be omitted and the
+  // backend stores null (which the reopen / summary / edit paths all tolerate).
+  const lf = rd.LFCalculator;
+  const hasLFCalculator =
+    lf && typeof lf === 'object' && lf.createdBy && lf.appointmentId && lf.title;
+
   return {
     selectedCalculatorId: calcId,
     oneLeg: rd.oneLeg,
@@ -74,8 +87,8 @@ export function buildCalculatorOutcomePayload(args: {
     paymentMethod: rd.downPaymentMethod,
     balancePaymentMethod: rd.balancePaymentMethod,
     balance: rd.balance,
-    // Web parity — the associated calculator snapshot + appointment id.
-    LFCalculator: rd.LFCalculator || {},
+    // Web parity — the associated calculator snapshot (only when present).
+    ...(hasLFCalculator && { LFCalculator: rd.LFCalculator }),
     selectedAppointmentId: rd.selectedAppointmentId || rd.LFCalculator?.appointmentId || fallbackAppointmentId,
     // Mobile-only extras (harmless additional keys; rehydrate on reopen).
     versatile: rd.versatile,

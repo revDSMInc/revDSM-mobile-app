@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Switch, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { useAnimatedStyle, LinearTransition, FadeOut } from 'react-native-reanimated';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { CalculatorSchema } from '../types/calculator';
 import { resolveSchemaStyle } from '../utils/icon-color';
@@ -292,10 +295,36 @@ function DropAddPlanModal({ visible, price, plans, categories, added, onAdd, onC
  * is disabled until a plan is selected and the down payment does not exceed the
  * drop price (web parity). Records the drop only on Secure/Decline.
  */
-function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
+/**
+ * Right-swipe "Delete" action for a Monthly-Options plan row (mirrors the regular
+ * rollout's drop modal, `CalculatorSummary`). Extracted to a component so the
+ * `useAnimatedStyle` hook lives in a real component, not a render callback.
+ */
+function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void }) {
+  const styleAnimation = useAnimatedStyle(() => ({
+    transform: [{ translateX: drag.value + 80 }],
+  }));
+  return (
+    <View style={{ width: 80, marginLeft: 8, marginBottom: 12 }}>
+      <Animated.View style={styleAnimation}>
+        <TouchableOpacity
+          onPress={onDelete}
+          style={{ backgroundColor: '#FF5630', height: '100%', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>Delete</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
+function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
   visible: boolean;
   dropPrice: number;
   method: string;
+  /** When reopening an already-recorded drop (Display), its saved values seed the
+   * modal so the previously-chosen plan / down payment are shown, not a blank form. */
+  existingDrop?: any | null;
   isLowesLead: boolean;
   plans: Record<string, DealPlan>;
   dropAddCategories: PayCategory[];
@@ -313,16 +342,19 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
   const [showDown, setShowDown] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
 
-  // Reset for each newly-entered drop price (the modal stays mounted).
+  // Seed the modal each time it opens: from the saved drop when re-displaying an
+  // existing one, otherwise from the calculator's current payment method. Without
+  // this an already-secured drop reopened empty (dropped its plan + down payment).
   useEffect(() => {
-    if (visible) {
-      setSelectedPlan(method);
-      setAddedPlans(isFinancing(plans, method) ? [method] : []);
-      setDownText('');
-      setShowDown(false);
-    }
+    if (!visible) return;
+    const savedMethod = existingDrop?.paymentMethod || method;
+    const savedDown = Number(existingDrop?.downPayment) || 0;
+    setSelectedPlan(savedMethod);
+    setAddedPlans(isFinancing(plans, savedMethod) ? [savedMethod] : []);
+    setDownText(savedDown > 0 ? String(savedDown) : '');
+    setShowDown(savedDown > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, method]);
+  }, [visible, method, existingDrop]);
 
   const down = parseFloat(downText) || 0;
   const balance = Math.max(0, dropPrice - down);
@@ -397,35 +429,41 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
 
               <View style={{ height: 1, backgroundColor: '#F1F5F9', width: '100%', marginBottom: 20 }} />
 
-              {/* Monthly Options — financing plans, each showing its monthly on the balance */}
+              {/* Monthly Options — financing plans, each showing its monthly on the balance.
+                  Swipe a plan LEFT to delete it (matches the regular rollout's drop modal). */}
               <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 }}>Monthly Options</Text>
-              {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
-                const plan = plans[key] || ({} as DealPlan);
-                const sel = selectedPlan === key;
-                const monthly = calcMonthly(plans, balance, key);
-                return (
-                  <View key={key} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <TouchableOpacity style={{ flex: 1, marginRight: 8 }} onPress={() => setSelectedPlan(key)}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
-                        {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
-                      </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                        <Text style={{ fontSize: 20, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }}>${Math.round(monthly).toLocaleString()}</Text>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginLeft: 2 }}>/mo</Text>
-                      </View>
-                    </TouchableOpacity>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                      <TouchableOpacity onPress={() => setSelectedPlan(key)} style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
-                        {sel && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => removePlan(key)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Ionicons name="close-circle" size={20} color="#FF5630" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })}
+              <GestureHandlerRootView>
+                {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
+                  const plan = plans[key] || ({} as DealPlan);
+                  const sel = selectedPlan === key;
+                  const monthly = calcMonthly(plans, balance, key);
+                  return (
+                    <Animated.View key={key} layout={LinearTransition} exiting={FadeOut}>
+                      <Swipeable
+                        renderRightActions={(_prog, drag) => <SwipeDeleteAction drag={drag} onDelete={() => removePlan(key)} />}
+                        rightThreshold={40}
+                        onSwipeableWillOpen={() => removePlan(key)}
+                      >
+                        <TouchableOpacity onPress={() => setSelectedPlan(key)} activeOpacity={0.9} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
+                              {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                              <Text style={{ fontSize: 20, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }}>${Math.round(monthly).toLocaleString()}</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginLeft: 2 }}>/mo</Text>
+                            </View>
+                          </View>
+                          <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                            {sel && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    </Animated.View>
+                  );
+                })}
+              </GestureHandlerRootView>
               <TouchableOpacity onPress={() => setShowPicker(true)} style={{ height: 52, borderWidth: 2, borderStyle: 'dashed', borderColor: '#31D076', borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', marginBottom: 20 }}>
                 <Text style={{ fontSize: 14, fontWeight: '900', color: '#31D076' }}>+ Add Plan</Text>
               </TouchableOpacity>
@@ -524,6 +562,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // Pending drop price waiting on the Secure/Decline modal (web `DropPriceModal`).
   const [pendingDrop, setPendingDrop] = useState(0);
   const [showDropModal, setShowDropModal] = useState(false);
+  // The index of the already-recorded drop being re-displayed (-1 = a brand-new
+  // drop). Re-securing/declining an existing drop updates it in place instead of
+  // appending a duplicate, and its saved values seed the modal.
+  const [pendingDropIndex, setPendingDropIndex] = useState(-1);
   // Sale/Demo chooser (web `showResultModal`) — opened from Result Lead or after
   // securing a drop; picking an outcome opens the full Result Lead outcome modal.
   const [showChooser, setShowChooser] = useState(false);
@@ -708,22 +750,46 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
     setPendingDrop(v);
+    setPendingDropIndex(-1); // brand-new drop
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
   };
 
+  // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
+  // new one). Web parity (`handleDisplayDropAction` + `handleAddDrop`'s
+  // `existingDeclinedIndex` dedup): an explicit Display index wins; otherwise a
+  // brand-new drop still updates an existing DECLINED entry at the SAME price
+  // instead of appending a duplicate. Only a genuinely-new price appends. This
+  // closes the "new drop created when it should edit that one" bug — re-securing or
+  // re-negotiating a price you already dropped edits that entry.
+  const resolveDropTargetIndex = () =>
+    pendingDropIndex >= 0
+      ? pendingDropIndex
+      : drops.findIndex(
+          (d) => d.status === 'declined' && Number(d.price ?? d.dropedPrice) === pendingDrop,
+        );
+
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
   // open the Result Lead outcome modal carrying the drop price.
   const secureDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
-    const cleared = drops.map((d) => (d.status === 'accepted' ? { ...d, status: 'declined' } : d));
     // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
     // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
     const pricemarkup = markupLabel(pendingDrop, calculator.totals);
-    onDropChange(calculator.id, [...cleared, { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data }]);
+    const targetIndex = resolveDropTargetIndex();
+    const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data };
+    // Edit in place (preserving any existing `_id`, web `...item`) when targeting an
+    // existing drop; demote every OTHER accepted drop (single-accepted rule).
+    const next = drops.map((d, idx) => {
+      if (idx === targetIndex) return { ...d, ...accepted };
+      return d.status === 'accepted' ? { ...d, status: 'declined' } : d;
+    });
+    if (targetIndex < 0) next.push(accepted); // genuinely-new price → append
+    onDropChange(calculator.id, next);
     setShowDropModal(false);
     setShowDropInput(false);
+    setPendingDropIndex(-1);
     // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
     setChooserPrice(pendingDrop);
     setShowChooser(true);
@@ -733,9 +799,17 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // confirmation; the drop then lists as Declined and Result Lead stays available).
   const declineDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
     const pricemarkup = markupLabel(pendingDrop, calculator.totals);
-    onDropChange(calculator.id, [...drops, { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', pricemarkup, ...data }]);
+    const targetIndex = resolveDropTargetIndex();
+    const declined = { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', pricemarkup, ...data };
+    // Edit the existing entry in place (preserving `_id`) or append a new declined
+    // one; declining never demotes other drops (only Secure enforces single-accepted).
+    const next = targetIndex >= 0
+      ? drops.map((d, idx) => (idx === targetIndex ? { ...d, ...declined } : d))
+      : [...drops, declined];
+    onDropChange(calculator.id, next);
     setShowDropModal(false);
     setShowDropInput(false);
+    setPendingDropIndex(-1);
     FlashMessage.warning('Price declined', `${fmt(pendingDrop)} was recorded as a declined price.`);
   };
 
@@ -1031,8 +1105,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     <TouchableOpacity
                       onPress={() => {
-                        // Display action — in old UI opens the drop modal for re-negotiation
+                        // Display action — in old UI opens the drop modal for re-negotiation,
+                        // seeded with this drop's saved plan + down payment (index i).
                         setPendingDrop(dp);
+                        setPendingDropIndex(i);
                         setShowDropModal(true);
                       }}
                       style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : '#E2E8F0' }}
@@ -1111,12 +1187,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         visible={showDropModal}
         dropPrice={pendingDrop}
         method={method}
+        existingDrop={pendingDropIndex >= 0 ? drops[pendingDropIndex] : null}
         isLowesLead={isLowesLead}
         plans={plans}
         dropAddCategories={pricing.dropAddCategories}
         onSecure={secureDrop}
         onDecline={declineDrop}
-        onClose={() => setShowDropModal(false)}
+        onClose={() => { setShowDropModal(false); setPendingDropIndex(-1); }}
       />
 
       <ResultJobChooser

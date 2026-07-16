@@ -25,6 +25,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import RNFlashMessage from 'react-native-flash-message';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
+import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
+import { DynamicInspectionView } from '../../components/lead-center/DynamicInspectionView';
 
 interface InspectionFormModalProps {
   visible: boolean;
@@ -32,6 +34,8 @@ interface InspectionFormModalProps {
   onSubmit: (data: any) => void;
   lead: any;
   loading?: boolean;
+  /** Refreshes the parent lead data so newly captured photos resolve (dynamic flow only). */
+  refetch?: () => void | Promise<void>;
 }
 
 const SECTIONS = [
@@ -69,11 +73,19 @@ export const InspectionFormModal = ({
   onSubmit,
   lead,
   loading,
+  refetch,
 }: InspectionFormModalProps) => {
   const { colors } = useTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const flashRef = React.useRef<RNFlashMessage>(null);
+
+  // Schema-driven ("dynamic") inspection photos — mirrors the web
+  // `useGetSalesRepInspectionSchemas`. When the company has configured a schema
+  // we render the dynamic per-product photo-capture flow; otherwise we fall back
+  // to the legacy hardcoded SECTIONS report form below (nothing regresses).
+  const { configuredProducts, productsLoading } = useInspectionSchema({ enabled: visible });
+  const isDynamic = configuredProducts.length > 0;
 
   useEffect(() => {
     if (visible && user) {
@@ -458,6 +470,39 @@ export const InspectionFormModal = ({
     );
   };
 
+  // ── Dynamic (schema-driven) flow ──────────────────────────────────────────
+  // Full-screen photo-capture experience when the company has configured an
+  // inspection photo schema. Falls through to the legacy report form otherwise.
+  if (isDynamic || (productsLoading && visible)) {
+    return (
+      <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+        <View style={{ flex: 1, backgroundColor: colors.primary.main }}>
+          <View style={{ paddingTop: insets.top, flex: 1, backgroundColor: colors.primary.main }}>
+            {productsLoading && !isDynamic ? (
+              <View style={{ flex: 1, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+                <ActivityIndicator size="large" color={colors.primary.main} />
+                <Text style={{ color: '#637381', fontSize: 13 }}>Loading inspection layouts…</Text>
+              </View>
+            ) : (
+              <DynamicInspectionView
+                lead={lead}
+                products={configuredProducts}
+                onClose={onClose}
+                refetch={refetch}
+              />
+            )}
+          </View>
+          <RNFlashMessage
+            ref={flashRef}
+            position="top"
+            statusBarHeight={insets.top > 0 ? insets.top : (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined)}
+          />
+        </View>
+      </Modal>
+    );
+  }
+
+  // ── Legacy fallback: hardcoded SECTIONS report form ───────────────────────
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={styles.backdrop}>

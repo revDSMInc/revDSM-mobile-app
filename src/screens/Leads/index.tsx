@@ -426,6 +426,20 @@ export default function LeadsPage() {
             <Feather name="calendar" size={24} color={'#FFFFFF'} />
           </TouchableOpacity>
           <TouchableOpacity
+            onPress={() => navigation.navigate('Appointments')}
+            style={{
+              backgroundColor: '#22C55E',
+              borderRadius: 8,
+              height: 36,
+              width: 36,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 12,
+            }}
+          >
+            <Feather name="clock" size={22} color={'#FFFFFF'} />
+          </TouchableOpacity>
+          <TouchableOpacity
             onPress={() => setZoneCanvasserVisible(true)}
             style={{
               backgroundColor: '#C684FF',

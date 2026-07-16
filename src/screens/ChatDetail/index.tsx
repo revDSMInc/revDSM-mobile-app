@@ -128,6 +128,9 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
 import { useChatLogic } from '../../hooks/useChatLogic';
 import { ChatHeader } from '../../widgets/components/chat/ChatHeader';
 import { logEvent } from '../../services/api/LoggerService';
+import AppointmentPhotosModal, {
+  AppointmentPhotoSelection,
+} from '../../widgets/modals/chat/AppointmentPhotosModal';
 
 export default function ChatDetailScreen() {
   const insets = useSafeAreaInsets();
@@ -247,6 +250,78 @@ export default function ChatDetailScreen() {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
+  const [showAppointmentPhotos, setShowAppointmentPhotos] = useState(false);
+
+  // Send previously-captured appointment/inspection/gallery photos as a chat message.
+  // Web parity: ChatModule `handleSendAppointmentPhotos` — optimistic render + a JSON
+  // POST (`type: 'appointment_photo'`) via ChatService, no file bytes re-uploaded.
+  const handleSendAppointmentPhotos = useCallback(
+    async (selected: AppointmentPhotoSelection[]) => {
+      if (!chatId || !selected.length) return;
+      const replyToId = replyingTo?._id;
+      const tempId = `temp_${Date.now()}_appt`;
+
+      const optimistic = {
+        _id: tempId,
+        text: '',
+        createdAt: new Date(),
+        user: { _id: String(currentUserId), name: user?.firstName || 'Me' },
+        image: selected[0]?.secureUrl || undefined,
+        files: selected.map((p) => ({
+          _id: p._id,
+          url: p.secureUrl,
+          name: p.fileName,
+          filePath: p.s3url,
+          bucketName: p.bucketName,
+          type: 'image',
+          mimeType: p.fileType,
+          category: p.category,
+          subcategory: p.subcategory,
+        })),
+        replyTo: replyToId,
+        replyToDetails: replyingTo,
+        pending: true,
+        sent: false,
+        received: false,
+      };
+
+      setMessages((prev: any[]) => GiftedChat.append(prev, [optimistic as any]));
+      setReplyingTo(null);
+
+      if (user?._id) {
+        logEvent('send', {
+          user_id: user._id,
+          created_by: user._id,
+          module_type: isChannel ? 'team_channel' : 'chat',
+          meta: {
+            leadId,
+            type: isChannel ? 'team_channel' : 'chat',
+            isEdit: false,
+            isReply: !!replyToId,
+            messageType: 'appointment_photo',
+            fileName: selected.map((p) => p.fileName).join(', '),
+            fileSize: selected.length,
+            message: ' ',
+            action: `sent ${selected.length} appointment photo(s)`,
+          },
+        });
+      }
+
+      try {
+        await ChatService.sendAppointmentPhotos(
+          chatId,
+          selected,
+          user?.id || user?._id,
+          replyToId,
+        );
+      } catch (err) {
+        console.warn('[AppointmentPhotos] send failed:', err);
+        setMessages((prev: any[]) => prev.filter((m) => m._id !== tempId));
+        Alert.alert('Send Failed', 'Failed to send appointment photos. Please try again.');
+      }
+    },
+    [chatId, currentUserId, user, isChannel, leadId, replyingTo, setMessages, setReplyingTo],
+  );
   const flatListRef = useRef<any>(null);
   const pendingScrollTargetIdRef = useRef<string | null>(null);
 
@@ -468,6 +543,11 @@ export default function ChatDetailScreen() {
           }}
         />
         <View className="flex-row items-center gap-3 ml-2">
+          {!isChannel && !!leadId && (
+            <TouchableOpacity onPress={() => setShowAppointmentPhotos(true)}>
+              <Icon name="albums-outline" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={handleAttach}>
             <Icon name="images-outline" size={22} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -1033,6 +1113,13 @@ export default function ChatDetailScreen() {
         visible={historyModalVisible}
         onClose={() => setHistoryModalVisible(false)}
         history={historyData}
+      />
+
+      <AppointmentPhotosModal
+        visible={showAppointmentPhotos}
+        onClose={() => setShowAppointmentPhotos(false)}
+        leadId={leadId}
+        onSend={handleSendAppointmentPhotos}
       />
     </SafeAreaView>
   );

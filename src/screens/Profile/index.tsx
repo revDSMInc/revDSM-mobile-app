@@ -534,6 +534,33 @@ export default function ProfilePage() {
     }
   };
 
+  // Web parity: trusted-devices-dialog.js "Revoke All" (confirm → revokeAllTrustedDevices → refresh)
+  const handleRevokeAllDevices = () => {
+    Alert.alert(
+      'Revoke All Devices?',
+      "This will revoke trust from all devices. You'll need to verify 2FA on your next login from any device.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Revoke All',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              await SettingsService.revokeAllTrustedDevices();
+              setTrustedDevices([]);
+              Alert.alert('Success', 'All devices revoked successfully');
+            } catch (err) {
+              Alert.alert('Error', 'Failed to revoke devices');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleCopySecret = () => {
     Clipboard.setString(authSecret);
     Alert.alert('Copied', 'Secret key copied to clipboard');
@@ -1270,9 +1297,21 @@ export default function ProfilePage() {
                     </View>
                     <Text className="text-xl font-black text-slate-900 tracking-tighter">Trusted Devices</Text>
                   </View>
-                  <TouchableOpacity onPress={() => setTrustedDevicesModalVisible(false)} className="p-2">
-                    <Icon name="close" size={24} color="#64748b" />
-                  </TouchableOpacity>
+                  <View className="flex-row items-center">
+                    {trustedDevices.length > 0 && (
+                      <TouchableOpacity
+                        onPress={handleRevokeAllDevices}
+                        disabled={loading}
+                        className="flex-row items-center mr-2 px-3 py-1.5 rounded-xl border border-red-200 bg-red-50"
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={14} color="#DC2626" />
+                        <Text className="ml-1.5 text-[11px] font-black text-red-600">Revoke All</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={() => setTrustedDevicesModalVisible(false)} className="p-2">
+                      <Icon name="close" size={24} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 <View className="bg-indigo-50 p-4 rounded-2xl flex-row items-center mb-6 border border-indigo-100">

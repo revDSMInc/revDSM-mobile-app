@@ -26,6 +26,7 @@ import { isTabComplete } from '../../utils/dynamic-job-builder/engine/tab-valida
 import {
   serializeDynamicJobStateForStorage,
   deserializeDynamicJobStateFromStorage,
+  hydrateJobStateForPersistence,
 } from '../../utils/dynamic-job-builder/engine/dynamic-job-state-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -220,13 +221,40 @@ function DynamicJobBuilderInner({
     // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
     // via `initialJobStateProp`, so the calculator-outcome GET is skipped entirely.
     enabled: Boolean(leadId && calcId) && !isEdit,
-    staleTime: 30_000,
+    // Web parity (JobBuilderContext.loadCalculatorDraft): the saved outcome is
+    // fetched FRESH on every job-builder open — web calls the endpoint imperatively
+    // each session, never from a cache. Here it MUST NOT be cached: after the rep
+    // types a value the debounced PUT updates the server, but the React Query cache
+    // for this (leadId, calcId) is not invalidated. A quick reopen within the old
+    // 30s staleTime would then serve the STALE pre-edit result (often empty on the
+    // first-ever open) → the reopened job builder showed nothing. `staleTime: 0` +
+    // `refetchOnMount: 'always'` force a refetch on reopen, and `gcTime: 0` drops
+    // the cache on close so the remount starts from a clean loading state (undefined
+    // initialJobState) — the one-time apply guard in the session then waits for the
+    // fresh value instead of latching onto a stale one.
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
   });
+
+  // Web parity (JobBuilderContext.applyDraftState): the outcome GET returns the
+  // DESERIALIZED saved state; before feeding it to the session we RE-HYDRATE it
+  // against dealCenterData. LOCKED, dcField-driven fields (e.g. gutter Extras:
+  // Wedges / Straps) are NOT stored meaningfully — they resolve from the calculator
+  // — so deserialize alone leaves them blank on reopen. Re-hydrating re-resolves
+  // them to their current calculator values while preserving every non-locked entry.
+  const hydratedInitialJobState = useMemo(() => {
+    if (isEdit) return initialJobStateProp;
+    const ds = outcomeData?.initialJobState;
+    if (!ds || typeof ds !== 'object') return undefined;
+    if (!initialConfig) return ds;
+    return hydrateJobStateForPersistence(ds, initialConfig, dealCenterData || {});
+  }, [isEdit, initialJobStateProp, outcomeData?.initialJobState, initialConfig, dealCenterData]);
 
   const session = useDynamicJobBuilderSession({
     initialConfig,
     dealCenterData,
-    initialJobState: isEdit ? initialJobStateProp : outcomeData?.initialJobState,
+    initialJobState: hydratedInitialJobState,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
@@ -797,7 +825,16 @@ function DynamicJobBuilderInner({
       // Web parity: the outcome uses `paymentMethod` for the down payment method
       // (not `downPaymentMethod` as in the result modal's state). Map them here so
       // the spread of `...rd` doesn't send the wrong key name.
-      const { downPaymentMethod: _dpm, ...rdWithoutDpm } = rd;
+      // Also strip `LFCalculator`: mobile attaches the in-memory `CalcTab` for the
+      // local rollout/drop activity summary, but that tab lacks the backend
+      // subdocument's required `createdBy`/`appointmentId` — spreading it into these
+      // saves 500s the backend ("Validation failed: LFCalculator.createdBy is
+      // required, ..."). Re-add only a full backend doc; otherwise omit (stored null).
+      const { downPaymentMethod: _dpm, LFCalculator: _rawLF, ...rdWithoutDpm } = rd;
+      const validLFCalculator =
+        _rawLF && typeof _rawLF === 'object' && _rawLF.createdBy && _rawLF.appointmentId && _rawLF.title
+          ? _rawLF
+          : undefined;
       const payload = {
         leadData: {
           ...rdWithoutDpm,
@@ -813,6 +850,7 @@ function DynamicJobBuilderInner({
           timeWindow: jobState?.scheduleTime?.timeWindow,
           originalContractPrice: rd.contractPrice ?? rd.originalContractPrice,
           lastPriceQuoted: rd.contractPrice ?? rd.lastPriceQuoted,
+          ...(validLFCalculator && { LFCalculator: validLFCalculator }),
         },
         jobState: dynamicJobState,
         agreements: agreementsPayload,
@@ -843,6 +881,7 @@ function DynamicJobBuilderInner({
             selectedCalculatorId: calcId || rd.calculatorId || null,
             selectedAppointmentId: rd.selectedAppointmentId || leadId,
             jobBuilder: jobBuilderWrapper,
+            ...(validLFCalculator && { LFCalculator: validLFCalculator }),
           };
           if (agreementsPayload.length > 0) outcomePayload.agreements = agreementsPayload;
           if (orderSheetsPayload.length > 0) outcomePayload.orderSheets = orderSheetsPayload;
