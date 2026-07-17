@@ -193,6 +193,32 @@ function AllocationCardGrid({ columns, children }: { columns: number; children: 
   );
 }
 
+/**
+ * Lays a stack's child fields into an equal-column grid — mobile's equivalent of
+ * web `getFieldGridSx(columns, mobileColumns)` at the `xs` breakpoint. Children
+ * flow in document order into the columns, so an extras stack authored as
+ * [extra, color, extra, color, …] with `mobileColumns: 2` pairs each Extra with
+ * its Color on one row (web parity). Cells align to the top so a tall colour
+ * picker doesn't stretch its short locked-field neighbour.
+ */
+function StackFieldGrid({ columns, children }: { columns: number; children: React.ReactNode }) {
+  const cells = React.Children.toArray(children);
+  const cols = Math.max(1, Math.round(columns));
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', marginHorizontal: -ALLOCATION_GRID_GAP / 2 }}>
+      {cells.map((cell, i) => (
+        <View
+          // eslint-disable-next-line react/no-array-index-key
+          key={i}
+          style={{ width: `${100 / cols}%`, paddingHorizontal: ALLOCATION_GRID_GAP / 2 }}
+        >
+          {cell}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function renderAllocationCard(field: any, ctx: any = {}) {
   const {
     dealCenterData = {},
@@ -565,15 +591,33 @@ function renderField(
           />
         );
       }
+      // Web parity (`case 'colorSelection'` unlocked): render the compact
+      // `CompactColorPicker` — a "Color (Required)" caption over a single "＋ Color"
+      // box that opens the colour sheet — NOT the full inline swatch grid. The
+      // "(Required)" suffix (warning amber) shows only while required + empty.
+      const colorRequired = isFieldRequired(field, state, depCtx);
+      const colorValue = resolveSwatchValue();
+      const showColorLabel = field.showLabel !== false || (colorRequired && !colorValue);
       return (
-        <SwatchPicker
-          key={field.id}
-          label={field.label}
-          value={resolveSwatchValue()}
-          onChange={onChange}
-          colors={resolveSwatchColors()}
-          accentColor={verticalColor}
-        />
+        <View key={field.id}>
+          {showColorLabel && (
+            <Text className="text-[11px] font-black text-slate-400 mb-2">
+              {field.showLabel !== false ? field.label || 'Color' : ''}
+              {colorRequired && !colorValue && (
+                <Text style={{ color: '#FFAB00' }}>
+                  {field.showLabel !== false ? ' ' : ''}(Required)
+                </Text>
+              )}
+            </Text>
+          )}
+          <SwatchPicker
+            compact
+            value={colorValue}
+            onChange={onChange}
+            colors={resolveSwatchColors()}
+            accentColor={verticalColor}
+          />
+        </View>
       );
     }
 
@@ -874,11 +918,21 @@ function renderField(
       const effectiveBorderColor =
         (showWarning && warning?.color ? warning.color : getEffectiveBorderColor(field)) || undefined;
 
+      // Web parity (`getFieldGridSx` at the `xs` breakpoint): a stack lays its
+      // children into a `mobileColumns`-wide grid, falling back to a single
+      // stacked column when the schema doesn't configure one — so nothing changes
+      // for stacks that aren't grid-configured. This is what pairs each gutter
+      // Extra with its Color on one row (extras stack → mobileColumns: 2).
+      const stackCols = resolveMobileGridColumns(field.mobileColumns);
+      const stackContent = stackCols && stackCols > 1
+        ? <StackFieldGrid columns={stackCols}>{renderedChildren}</StackFieldGrid>
+        : renderedChildren;
+
       if (!showContainer) {
         return (
           <View key={field.id} className={showStackLabel ? 'mb-4' : ''}>
             {labelNode}
-            {renderedChildren}
+            {stackContent}
           </View>
         );
       }
@@ -897,7 +951,7 @@ function renderField(
         >
           {labelNode}
           {warningNode}
-          {renderedChildren}
+          {stackContent}
         </View>
       );
     }

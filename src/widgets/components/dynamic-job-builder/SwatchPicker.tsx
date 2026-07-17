@@ -19,6 +19,12 @@ interface SwatchPickerProps {
   colors?: SwatchColor[];
   showMoreColors?: boolean;
   accentColor?: string;
+  /**
+   * Web `CompactColorPicker` mode: render a single "＋ Color" box (or the selected
+   * colour + pen icon) that opens the "Select Color" sheet, instead of the inline
+   * 4-up preview grid. Used by `colorSelection` fields (gutter Extras).
+   */
+  compact?: boolean;
 }
 
 /**
@@ -78,6 +84,17 @@ function useColorSecureImages(colors: SwatchColor[]) {
   return urlByName;
 }
 
+// Web `CompactColorPicker.isLightColor` — relative-luminance test so text/icon
+// contrast flips to black over a light swatch.
+function isLightHex(hex?: string): boolean {
+  const m = /^#([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+  if (!m) return false;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
+}
+
 // Matches the normal Job Builder swatch grid (GutterSection): 4-up w-[23%] h-14
 // border-4 swatches, #22C55E selected ring + check, "More Colors" → full modal,
 // the selected color's product image, and the #22C55E "✓ value" chip.
@@ -88,6 +105,7 @@ export function SwatchPicker({
   colors,
   showMoreColors = true,
   accentColor = '#22C55E',
+  compact = false,
 }: SwatchPickerProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const palette: SwatchColor[] = colors && colors.length ? colors : GUTTER_COLORS;
@@ -127,6 +145,64 @@ export function SwatchPicker({
       </TouchableOpacity>
     );
   };
+
+  // Full "Select Color" bottom sheet — shared by the grid and compact modes.
+  const colorModal = (
+    <Modal visible={modalOpen} transparent animationType="slide" onRequestClose={() => setModalOpen(false)}>
+      <View className="flex-1 bg-black/40 justify-end">
+        <View className="bg-white rounded-t-3xl p-6 max-h-[75%]">
+          <View className="flex-row items-center justify-between mb-4">
+            <Text className="text-[16px] font-black text-slate-900">Select Color</Text>
+            <TouchableOpacity onPress={() => setModalOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Icon name="close" size={22} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View className="flex-row flex-wrap justify-between">
+              {palette.map((c) => renderSwatch(c, 'modal'))}
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // Web `CompactColorPicker`: a single bordered box — "＋ Color" when empty, or the
+  // selected colour filled with a pen icon + name — that opens the sheet on press.
+  if (compact) {
+    // Web `CompactColorPicker.isLightColor`: pick black text/icon over a light
+    // selected swatch (e.g. white/cream) so the label stays legible.
+    const onSelectedColor = isLightHex(selectedHex) ? '#000' : '#fff';
+    return (
+      <View className="mb-5">
+        {label && (
+          <Text className="text-[11px] font-black text-slate-400 mb-2">{label}</Text>
+        )}
+        <TouchableOpacity
+          onPress={() => setModalOpen(true)}
+          className="flex-row items-center justify-center rounded-lg border-2 px-3"
+          style={{
+            minHeight: 44,
+            borderColor: '#E2E8F0',
+            backgroundColor: value && selectedHex ? selectedHex : 'transparent',
+          }}
+        >
+          {value ? (
+            <>
+              <Icon name="pencil" size={14} color={onSelectedColor} />
+              <Text className="text-[12px] font-black ml-1.5" style={{ color: onSelectedColor }} numberOfLines={1}>{value}</Text>
+            </>
+          ) : (
+            <>
+              <Icon name="plus" size={16} color="#64748B" />
+              <Text className="text-[12px] font-black text-slate-500 ml-1.5">Color</Text>
+            </>
+          )}
+        </TouchableOpacity>
+        {colorModal}
+      </View>
+    );
+  }
 
   return (
     <View className="mb-5">
@@ -176,23 +252,7 @@ export function SwatchPicker({
       )}
 
       {/* Full "Select Color" modal listing every color (web ColorPicker dialog). */}
-      <Modal visible={modalOpen} transparent animationType="slide" onRequestClose={() => setModalOpen(false)}>
-        <View className="flex-1 bg-black/40 justify-end">
-          <View className="bg-white rounded-t-3xl p-6 max-h-[75%]">
-            <View className="flex-row items-center justify-between mb-4">
-              <Text className="text-[16px] font-black text-slate-900">Select Color</Text>
-              <TouchableOpacity onPress={() => setModalOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Icon name="close" size={22} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View className="flex-row flex-wrap justify-between">
-                {palette.map((c) => renderSwatch(c, 'modal'))}
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      {colorModal}
     </View>
   );
 }
