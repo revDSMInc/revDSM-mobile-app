@@ -542,6 +542,68 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
   );
 }
 
+/**
+ * "Price Declined" modal — port of web `deal-center/components/DeclinePriceModal.js`
+ * (and the regular rollout's copy at `CalculatorSummary` ~L1740). Web opens this
+ * the moment the drop modal closes on a decline ("keeps blur continuous, no gap
+ * between modals"), offering **Result Lead** — which results the lead as a DEMO at
+ * the most recent drop price — or **Exit**.
+ */
+function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
+  visible: boolean; declinedPrice: number; onResultLead: () => void; onClose: () => void;
+}) {
+  const { isDark } = useTheme();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        <BlurView
+          style={StyleSheet.absoluteFill}
+          blurType={isDark ? 'dark' : 'light'}
+          blurAmount={10}
+          reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+          pointerEvents="none"
+        />
+        {/* The card needs its own elevation/shadow: on a `light` blur the backdrop
+            goes near-white, so an unshadowed white card melts into it and the two
+            read as one surface. The regular rollout's copy uses `shadow-2xl` for
+            exactly this reason. */}
+        <Pressable
+          style={{
+            backgroundColor: '#fff',
+            borderRadius: 16,
+            padding: 24,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.18,
+            shadowRadius: 24,
+            elevation: 12,
+          }}
+        >
+          <View style={{ alignItems: 'center' }}>
+            <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#FDECEA', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Ionicons name="close" size={28} color="#F44336" />
+            </View>
+          </View>
+          <Text style={{ fontSize: 18, fontWeight: '800', color: '#1C252E', textAlign: 'center', marginBottom: 12 }}>
+            Price Declined
+          </Text>
+          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>
+            {`$${Math.round(declinedPrice || 0).toLocaleString()} was not accepted. What would you like to do?`}
+          </Text>
+          <View style={{ gap: 12 }}>
+            <TouchableOpacity onPress={onResultLead} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#FF9800', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>Result Lead</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onClose} style={{ borderRadius: 8, paddingVertical: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#637381' }}>Exit</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
@@ -578,6 +640,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // securing a drop; picking an outcome opens the full Result Lead outcome modal.
   const [showChooser, setShowChooser] = useState(false);
   const [chooserPrice, setChooserPrice] = useState(0);
+  // Web `ViewAllCalculators.declineModal` — null when hidden, else the declined price.
+  const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
   // Down payment carried into the Result Lead modal — seeded from the drop being
   // resulted (secured/viewed) or the accepted drop, so a down payment entered in
   // the drop price flow prefills the outcome modal (web parity).
@@ -815,7 +879,21 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
-    FlashMessage.warning('Price declined', `${fmt(pendingDrop)} was recorded as a declined price.`);
+    // Web `handleDropDecline`: "Open DeclinePriceModal immediately — keeps blur
+    // continuous, no gap between modals". Replaces the mobile-only toast; neither
+    // web nor the regular rollout shows one, they show this modal.
+    setDeclinedPrice(pendingDrop);
+  };
+
+  // Web `handleDeclineResultLead`: close the modal and result the lead as a DEMO at
+  // the MOST RECENT drop price (falling back to the rollout end price when there are
+  // no drops) — it does NOT go through the Sale/Demo chooser.
+  const declineResultLead = () => {
+    setDeclinedPrice(null);
+    const lastDrop = drops.length
+      ? Number(drops[drops.length - 1]?.price ?? drops[drops.length - 1]?.dropedPrice) || 0
+      : Number(calculator.price) || 0;
+    onResult(calculator.id, 'demo', lastDrop, activeMethod, activeDownPayment);
   };
 
   // Shared payment-method block (heading follows it, matching the regular rollout:
@@ -853,7 +931,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: calculator.isRolloutConfirmed ? '#16A34A' : '#DFE3E8', borderRadius: 24, paddingBottom: 16 }}>
         {/* 1. Heading — calculator name + confirmed/required badge (old UI parity) */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
-          <Text style={{ fontSize: 12, fontWeight: '600', color: '#212B36', flex: 1 }}>{calculator.title}</Text>
+          {/* Web `QuoteResultCard.js:153-165` renders the calculator title at
+              fontWeight 800 — mobile had it at 600, so it read as normal text. */}
+          <Text style={{ fontSize: 14, fontWeight: '900', color: '#212B36', flex: 1 }}>{calculator.title}</Text>
           {calculator.isRolloutConfirmed ? (
             <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="lock-closed" size={10} color="#fff" />
@@ -1144,6 +1224,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   value={formatAmountInput(dropText)}
                   onChangeText={(t) => setDropText(stripAmount(t))}
                   onSubmitEditing={openDrop}
+                  // iOS's numeric pad has NO return key, so `onSubmitEditing` never
+                  // fires there and focusing out dropped the typed price on the
+                  // floor; Android's numeric IME has a submit action, hence the
+                  // platform split. The regular rollout (`CalculatorSummary`) already
+                  // runs the same commit from both handlers. `openDrop` no-ops on an
+                  // empty/zero value, so a blur with nothing typed does nothing.
+                  onBlur={Platform.OS === 'ios' ? openDrop : undefined}
                   placeholder="Enter price..."
                   placeholderTextColor="#919EAB"
                   keyboardType="numeric"
@@ -1215,6 +1302,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, activeMethod, chooserDown); }}
         onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, activeMethod, chooserDown); }}
         onClose={() => setShowChooser(false)}
+      />
+
+      <DeclinedPriceModal
+        visible={declinedPrice !== null}
+        declinedPrice={declinedPrice || 0}
+        onResultLead={declineResultLead}
+        onClose={() => setDeclinedPrice(null)}
       />
     </>
   );
