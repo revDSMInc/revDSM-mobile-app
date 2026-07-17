@@ -15,6 +15,7 @@ import {
   computeProgramGrandTotal,
   getMsrpDiscountTotal,
   getDefaultSelectableDiscountValue,
+  getSelectableDiscountKey,
   type DiscountConfig,
 } from '../../../src/screens/DynamicDealCenter/utils/dynamic-discount';
 import { calcMonthly } from '../../../src/screens/DynamicDealCenter/hooks/useDealPricing';
@@ -186,6 +187,73 @@ describe('computeRolloutResult — data-driven from discount config (web parity)
   });
   test('getDefaultSelectableDiscountValue picks the default option', () => {
     expect(getDefaultSelectableDiscountValue(config.discounts!)).toBe(25);
+  });
+});
+
+// Regression: the rep's selected pre-order % used to be hardcoded under the key
+// `pre_order`. A config keying its selectable discount anything else matched no
+// discount, so getDiscountPercent silently fell back to the config's DEFAULT
+// option and MSRP froze on every tile while the selector's highlight still moved.
+describe('computeRolloutResult — selected discount % is keyed by the resolved discount', () => {
+  const withKey = (key: string): DiscountConfig => ({
+    discounts: [
+      {
+        key,
+        type: 'options',
+        allowRepDefault: true,
+        includeInMsrp: true,
+        options: [{ value: 15, isDefault: true }, { value: 20 }, { value: 25 }],
+      },
+      { key: 'seniors', type: 'fixed', value: 10, includeInMsrp: true, title: 'Sr + Vet' },
+    ],
+    programs: [{ key: 'in_home', title: 'In-Home Pre-Order', isHighlighted: true, linkedDiscountKeys: ['seniors', key] }],
+  });
+
+  const msrpAt = (key: string, pct: number) =>
+    computeRolloutResult({ endPrice: 20000, discountConfig: withKey(key), discountPct: pct, seniorVetPct: 10 }).msrp;
+
+  test('getSelectableDiscountKey resolves the options discount whatever its key', () => {
+    expect(getSelectableDiscountKey(withKey('pre_order').discounts!)).toBe('pre_order');
+    expect(getSelectableDiscountKey(withKey('preOrder').discounts!)).toBe('preOrder');
+    // No selectable discount at all → the pre_order default keeps prior behaviour.
+    expect(getSelectableDiscountKey([{ key: 'seniors', type: 'fixed', value: 10 }])).toBe('pre_order');
+    expect(getSelectableDiscountKey([])).toBe('pre_order');
+  });
+
+  test.each(['pre_order', 'preOrder', 'pre_order_discount', 'inHomePreOrder'])(
+    'MSRP tracks the selected %% when the discount is keyed %p',
+    (key) => {
+      // 20000 / (1 - (pct + 10)/100)
+      expect(Math.round(msrpAt(key, 15))).toBe(26667);
+      expect(Math.round(msrpAt(key, 20))).toBe(28571);
+      expect(Math.round(msrpAt(key, 25))).toBe(30769);
+    }
+  );
+
+  test('the program grand total tracks the selection too, not just MSRP', () => {
+    const at = (pct: number) =>
+      computeRolloutResult({ endPrice: 20000, discountConfig: withKey('preOrder'), discountPct: pct, seniorVetPct: 10 })
+        .programs.find((p) => p.key === 'in_home')!;
+    // Grand total = MSRP − (seniors + pre-order) = end price, by construction.
+    expect(Math.round(at(15).grandTotal)).toBe(20000);
+    expect(Math.round(at(25).grandTotal)).toBe(20000);
+    // ...and the pre-order line itself reflects the pressed tile.
+    expect(at(25).lines.find((l) => l.key === 'preOrder')!.percent).toBe(25);
+    expect(at(15).lines.find((l) => l.key === 'preOrder')!.percent).toBe(15);
+  });
+
+  test('a discount excluded from MSRP still does not move it (config semantics preserved)', () => {
+    const cfg: DiscountConfig = {
+      discounts: [
+        { key: 'preOrder', type: 'options', includeInMsrp: false, options: [{ value: 15, isDefault: true }, { value: 25 }] },
+        { key: 'seniors', type: 'fixed', value: 10, includeInMsrp: true },
+      ],
+      programs: [],
+    };
+    const at = (pct: number) =>
+      computeRolloutResult({ endPrice: 20000, discountConfig: cfg, discountPct: pct, seniorVetPct: 10 }).msrp;
+    expect(at(15)).toBeCloseTo(20000 / 0.9, 4);
+    expect(at(25)).toBeCloseTo(20000 / 0.9, 4);
   });
 });
 

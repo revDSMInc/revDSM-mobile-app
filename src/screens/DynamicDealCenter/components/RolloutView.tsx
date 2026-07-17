@@ -9,6 +9,8 @@ import Animated, { useAnimatedStyle, LinearTransition, FadeOut } from 'react-nat
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { CalculatorSchema } from '../types/calculator';
 import { resolveSchemaStyle } from '../utils/icon-color';
+import { formatAmountInput, stripAmount } from '../utils/format-amount';
+import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { SettingsService } from '../../../services/api/SettingsService';
@@ -368,11 +370,12 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
           <BlurView
             style={StyleSheet.absoluteFill}
             blurType={isDark ? 'dark' : 'light'}
-            blurAmount={5}
+            blurAmount={MODAL_BLUR_AMOUNT}
             reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
             pointerEvents="none"
           />
-          <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%' }}>
+          <View style={MODAL_SCRIM} pointerEvents="none" />
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%', ...MODAL_CARD_SHADOW }}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Header — green check + UPDATED PRICE + price + method badges */}
               <View style={{ alignItems: 'center', marginBottom: 24 }}>
@@ -509,11 +512,12 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
         <BlurView
           style={StyleSheet.absoluteFill}
           blurType={isDark ? 'dark' : 'light'}
-          blurAmount={10}
+          blurAmount={MODAL_BLUR_AMOUNT}
           reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
           pointerEvents="none"
         />
-        <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16 }}>
+        <View style={MODAL_SCRIM} pointerEvents="none" />
+        <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16, ...MODAL_CARD_SHADOW }}>
           <View style={{ alignItems: 'center' }}>
             <View style={{ padding: 16, marginBottom: 24, backgroundColor: '#FFF0D9', borderRadius: 12 }}>
               <Ionicons name="document-text" size={28} color="#FF9800" />
@@ -1147,8 +1151,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
                 <TextInput
                   style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
-                  value={dropText}
-                  onChangeText={(t) => setDropText(t.replace(/[^0-9.]/g, ''))}
+                  // State stays the raw digits (openDrop parseFloats it); only the
+                  // display is comma-grouped.
+                  value={formatAmountInput(dropText)}
+                  onChangeText={(t) => setDropText(stripAmount(t))}
                   onSubmitEditing={openDrop}
                   placeholder="Enter price..."
                   placeholderTextColor="#919EAB"

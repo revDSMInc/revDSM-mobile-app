@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { BlurView } from '@react-native-community/blur';
+import { MODAL_BLUR_AMOUNT, MODAL_SCRIM } from './modal-chrome';
 import { useTheme } from '../../../theme/ThemeProvider';
 import type { CalculatorEntry, CalculatorSchema } from '../types/calculator';
 import { buildCategoryMeta, styleForKey } from '../utils/icon-color';
@@ -310,10 +311,14 @@ export function ResultJobModal({
             <BlurView
               style={StyleSheet.absoluteFill}
               blurType={isDark ? 'dark' : 'light'}
-              blurAmount={5}
+              blurAmount={MODAL_BLUR_AMOUNT}
               reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
             />
+            <View style={MODAL_SCRIM} pointerEvents="none" />
           </TouchableOpacity>
+          {/* No MODAL_CARD_SHADOW here: `overflow: 'hidden'` (needed to clip the
+              green header to the radius) sets clipsToBounds on iOS, which would
+              clip the shadow away. The scrim above carries the separation. */}
           <View style={{ backgroundColor: '#fff', borderRadius: 16, maxHeight: '85%', overflow: 'hidden' }}>
             {/* Header */}
             <View style={{ paddingHorizontal: 20, paddingVertical: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#4CBB17' }}>

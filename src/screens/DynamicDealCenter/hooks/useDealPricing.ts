@@ -8,7 +8,7 @@ import {
   getOutcomeDownPaymentMethods,
   getDefaultPaymentMethod,
 } from '../../../utils/calculator/lowes-payment-util';
-import type { DiscountConfig } from '../utils/dynamic-discount';
+import { getSelectableOptionsDiscount, type DiscountConfig } from '../utils/dynamic-discount';
 
 /**
  * Backend-driven pricing for the Dynamic Deal Center — payment plans + discount
@@ -210,7 +210,11 @@ function normalizeDiscount(raw: any): DiscountShape {
   if (!config || config.isActive === false || !Array.isArray(config.discounts) || !config.discounts.length) {
     return DISCOUNT_FALLBACK;
   }
-  const preOrder = config.discounts.find((d: any) => d.key === 'pre_order');
+  // Resolve the rep-selectable discount the SAME way the MSRP math does
+  // (`getSelectableDiscountKey`) rather than hardcoding `pre_order` — otherwise a
+  // config keyed differently renders the static fallback tiles while MSRP is
+  // computed from the config, and the two silently disagree.
+  const preOrder = getSelectableOptionsDiscount(config.discounts);
   const seniors = config.discounts.find((d: any) => d.key === 'seniors');
   const options: any[] = Array.isArray(preOrder?.options) ? preOrder.options : [];
   const values = options.map((o) => Number(o.value)).filter((n) => n > 0);

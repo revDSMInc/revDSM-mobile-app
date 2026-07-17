@@ -60,6 +60,22 @@ export function getSelectableOptionsDiscount(discounts: Discount[] = []): Discou
   );
 }
 
+/**
+ * The key the rep's selected percentage must be stored under for
+ * `getDiscountPercent` to see it — i.e. the key of the discount the selector's
+ * options actually came from (`getSelectableOptionsDiscount`), NOT the literal
+ * `pre_order`.
+ *
+ * Callers used to hardcode `{ pre_order: pct }`. When a company's config keys its
+ * selectable discount anything else, that matched no discount, `getDiscountPercent`
+ * silently fell back to the config's DEFAULT option, and MSRP froze while the
+ * selector's highlight still moved. Falls back to `pre_order` so a config with no
+ * selectable discount behaves as before.
+ */
+export function getSelectableDiscountKey(discounts: Discount[] = []): string {
+  return getSelectableOptionsDiscount(discounts)?.key || PRE_ORDER_DISCOUNT_KEY;
+}
+
 export function getDefaultOptionValue(discount?: Discount | null): number {
   if (!discount?.options?.length) return 0;
   const def = discount.options.find((o) => o.isDefault) || discount.options[0];
