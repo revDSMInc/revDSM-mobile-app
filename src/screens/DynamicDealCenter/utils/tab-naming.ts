@@ -246,11 +246,13 @@ export interface TabNameInput {
 
 /**
  * Computes the display title for every calculator: id → title.
- * Manual renames win; the FIRST calculator (the one auto-created on entering the
- * deal center) is named after the lead (`firstTabName`) — its name never changes
- * to the derived product name; empty (no entries) calculators fall back to their
- * 1-based position; otherwise the schema-derived base name + collision suffix is
- * used.
+ * Manual renames win; otherwise the schema-derived base name + collision suffix
+ * is used AS SOON AS any field is filled — including on the first calculator
+ * (web parity: `getSchemaUpdatedCalculatorTitles` derives from entries first and
+ * only falls back to the stored title). Empty (no entries) calculators fall back
+ * to their 1-based position, except the FIRST calculator (the one auto-created on
+ * entering the deal center), which falls back to the lead name (`firstTabName`) —
+ * mirroring web, where that calculator is stored with the lead's title.
  */
 export function computeDerivedTitles(
   tabs: TabNameInput[],
@@ -265,15 +267,11 @@ export function computeDerivedTitles(
       result[t.id] = t.manualTitle;
       return;
     }
-    // The first tab always carries the lead name (web parity — the lead's own
-    // calculator), independent of what products are entered into it.
-    if (i === 0 && firstTabName) {
-      result[t.id] = firstTabName;
-      return;
-    }
     const base = getLiveSchemaBaseName(t.entries, schemas);
     if (!base) {
-      result[t.id] = String(i + 1);
+      // Nothing entered yet: the first calculator shows the lead name (web
+      // stores it with that title), the rest fall back to their position.
+      result[t.id] = i === 0 && firstTabName ? firstTabName : String(i + 1);
       return;
     }
     withBase.push({ id: t.id, base, price: t.price || 0 });
