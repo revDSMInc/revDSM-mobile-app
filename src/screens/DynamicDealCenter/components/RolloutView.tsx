@@ -617,18 +617,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     ];
   }, [liveTotals, method, plans, pricingConfig]);
 
-  const markup = useMemo(() => {
-    const price = parseFloat(endPrice) || 0;
-    if (price <= 0) return null;
-    for (const tier of [...tiers].reverse()) {
-      if (tier.value > 0 && price >= tier.value) {
-        const pct = ((price - tier.value) / tier.value * 100).toFixed(0);
-        return `${tier.label} + ${pct}%`;
-      }
-    }
-    return 'Below COST';
-  }, [endPrice, tiers]);
-
   const categoryChips = useMemo(() => {
     // Count of entered line items per category — the pill shows "Gutters (10)".
     // Only categories with an entered value (entries hold the full seeded field
@@ -955,10 +943,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               />
             </View>
           )}
-          {priceErr ? (
+          {/* Only the validation error renders under the end price. Web shows NO
+              caption here — the green "RETAIL + X%" markup line was mobile-only. */}
+          {!!priceErr && (
             <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 8, marginLeft: 4 }}>{priceErr}</Text>
-          ) : (
-            markup && <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A', marginTop: 8, marginLeft: 4 }}>{markup}</Text>
           )}
         </View>
 
