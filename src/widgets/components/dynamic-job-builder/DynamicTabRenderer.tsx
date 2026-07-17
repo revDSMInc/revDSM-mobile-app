@@ -37,14 +37,12 @@ import {
 
 // Web parity: optionList/select render in a wrapping grid whose columns come from
 // `field.columns` (`getOptionGridSize` → a 12-col span; 12/span = columns per row).
-// legacyStackedDefault → unset columns fall back to 1 (stacked), matching web.
-// Capped at 2 columns for phone widths — even when the backend authors 3/4 columns
-// (fine on desktop) we never render more than two option boxes per row on mobile.
-const OPTION_MAX_COLS = 2;
-const optionColumnsFor = (field: any): number => {
-  const span = getOptionGridSize(field?.columns, { legacyStackedDefault: true });
-  const cols = span ? Math.max(1, Math.round(12 / span)) : 1;
-  return Math.min(cols, OPTION_MAX_COLS);
+// When the schema leaves `columns` unset we return undefined so `OptionList` can
+// auto-size from the option count/length the way web's `option-selector.js`
+// `getGridSize()` does (3 short options → one row of 3).
+const optionColumnsFor = (field: any): number | undefined => {
+  const span = getOptionGridSize(field?.columns);
+  return span ? Math.max(1, Math.round(12 / span)) : undefined;
 };
 import { resolveColorPalette } from '../../../utils/dynamic-job-builder/constants/color-palettes';
 import { resolveColorsForField } from '../../../utils/dynamic-job-builder/engine/product-catalog-utils';

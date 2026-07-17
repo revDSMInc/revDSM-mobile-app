@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface OptionListProps {
   label?: string;
@@ -8,7 +7,7 @@ interface OptionListProps {
   value?: string | string[];
   onChange?: (val: string | string[]) => void;
   color?: string;
-  /** Columns per row (web `getOptionGridSize(field.columns)` → 12/span). Defaults to 1 (stacked). */
+  /** Columns per row, from the schema (web `getOptionGridSize(field.columns)` → 12/span). */
   columns?: number;
   /** Multi-select (web `field.multiSelect`) — value is an array, boxes toggle in/out. */
   isMulti?: boolean;
@@ -16,22 +15,39 @@ interface OptionListProps {
 
 const GAP = 8; // matches gap-2 used by SwatchPicker/RoomPicker
 
+/**
+ * Auto column count when the schema doesn't configure one — ports the option
+ * count / text-length rules from web `option-selector.js` `getGridSize()`
+ * (2 options → xs 6 = 2 cols, 3 → xs 4 = 3 cols, 4 → xs 3 = 4 cols unless an
+ * option is long, else xs 6 = 2 cols). So short 3-option fields like Gutter
+ * Opening Width sit on a single row instead of stacking.
+ */
+function autoColumns(options: string[]): number {
+  const hasLongText = options.some((o) => (o || '').length > 10);
+  if (options.length === 2) return 2;
+  if (options.length === 3) return hasLongText ? 1 : 3;
+  if (options.length === 4) return hasLongText ? 2 : 4;
+  return 2;
+}
+
 // Matches the normal Job Builder selector styling: #22C55E selected, slate idle,
-// rounded-xl border-2, font-black, MCIcon "✓ value" confirmation. When `columns`
-// > 1 the options wrap into a grid (web parity — MUI `<Grid item xs>` wrapping),
-// so soffit/fascia "size" / "board type" render 2-up and rows grow with options.
-// When `isMulti`, value is an array and multiple boxes stay selected (web parity —
-// `option-selector.js` handleSelection: e.g. gutter modify-height locations).
+// rounded-xl border-2, font-black. When `columns` > 1 the options wrap into a
+// grid (web parity — MUI `<Grid item xs>` wrapping), so soffit/fascia "size" /
+// "board type" render 2-up and rows grow with options. When `isMulti`, value is
+// an array and multiple boxes stay selected (web parity — `option-selector.js`
+// handleSelection: e.g. gutter modify-height locations). The selected option is
+// shown by its own highlighted state only — no "✓ value" echo underneath, which
+// read as a second, duplicate selection.
 export function OptionList({
   label,
   options = [],
   value,
   onChange,
   color = '#22C55E',
-  columns = 1,
+  columns,
   isMulti = false,
 }: OptionListProps) {
-  const cols = Math.max(1, Math.round(columns));
+  const cols = columns && columns > 0 ? Math.max(1, Math.round(columns)) : autoColumns(options);
   const selectedValues = isMulti ? (Array.isArray(value) ? value : []) : [];
 
   const isSelected = (opt: string) =>
@@ -50,8 +66,6 @@ export function OptionList({
     onChange?.(value === opt ? '' : opt);
   };
 
-  const summaryText = isMulti ? selectedValues.join(', ') : (value as string);
-
   return (
     <View className="mb-4">
       {label && (
@@ -64,13 +78,19 @@ export function OptionList({
             <View key={opt} style={{ width: `${100 / cols}%`, padding: GAP / 2 }}>
               <TouchableOpacity
                 onPress={() => handlePress(opt)}
-                className="py-3.5 px-5 rounded-xl items-start border-2"
+                className="py-3.5 rounded-xl border-2"
                 style={{
+                  // Stacked options read left-aligned with roomy padding (web's
+                  // `justifyContent: 'flex-start'`); side-by-side ones center in
+                  // their column and drop the padding so labels don't clip.
+                  alignItems: cols > 1 ? 'center' : 'flex-start',
+                  paddingHorizontal: cols > 1 ? 4 : 20,
                   borderColor: selected ? color : '#F1F5F9',
                   backgroundColor: selected ? `${color}12` : '#fff',
                 }}
               >
                 <Text
+                  numberOfLines={1}
                   className="text-[12px] font-black"
                   style={{ color: selected ? color : '#64748B' }}
                 >
@@ -81,12 +101,6 @@ export function OptionList({
           );
         })}
       </View>
-      {!!summaryText && (
-        <View className="flex-row items-center mt-1">
-          <Icon name="check" size={12} color={color} />
-          <Text className="text-[11px] font-black ml-1" style={{ color }}>{summaryText}</Text>
-        </View>
-      )}
     </View>
   );
 }
