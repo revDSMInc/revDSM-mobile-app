@@ -257,6 +257,9 @@ interface DynamicTabRendererProps {
   verticalColor?: string;
   products?: any[];
   schemas?: any[];
+  repDetails?: any;
+  /** Web `useDealEditMode()` — editing an already-resulted deal. */
+  editMode?: boolean;
   // Summary-tab (isSummary) extras — forwarded to VerticalSummaryTab for the
   // appointment / agreement / order-sheet cards. Ignored on product tabs.
   leadId?: string;
@@ -1176,6 +1179,8 @@ export function DynamicTabRenderer({
   verticalColor = '#22c55e',
   products = [],
   schemas = [],
+  repDetails,
+  editMode,
   hideAllocationTrackers = false,
   leadId,
   calculatorResultData,
@@ -1201,6 +1206,9 @@ export function DynamicTabRenderer({
         dealCenterData={dealCenterData}
         applyConditions={applyConditions}
         products={products}
+        schemas={schemas}
+        repDetails={repDetails}
+        editMode={editMode}
         leadId={leadId}
         calculatorResultData={calculatorResultData}
         customerName={customerName}

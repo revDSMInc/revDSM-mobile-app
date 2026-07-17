@@ -14,34 +14,120 @@ import {
 } from './grand-total-utils';
 import { isCombinationSummaryField, isContainerFieldType } from '../constants/field-types';
 import { resolveLocationGridConfig } from './location-grid-utils';
+import { resolveSchemaColor } from '../../../screens/DynamicDealCenter/utils/icon-color';
 
-// Fallback palette colors (mobile has no MUI theme)
-const PRODUCT_PALETTE_COLORS = [
-  '#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed',
-  '#0891b2', '#be185d', '#65a30d',
-];
+// Web's `theme.palette.primary.main` — the fallback `resolveSchemaColorValue` uses.
+const PALETTE_PRIMARY = '#4CBB17';
+
+// Web `PRODUCT_UI_COLORS` (product-catalog-utils.js) — the index fallback must be
+// the SAME list in the SAME order, or tab N falls back to a different colour than web.
+const PRODUCT_PALETTE_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 const SKIPPED_FIELD_TYPES = new Set(['sectionLabel', 'combinationSummary', 'allocation']);
 const LABELED_SELECTION_TYPES = new Set(['toggle', 'optionList', 'dropdown']);
 
 // ─── Color resolution ─────────────────────────────────────────────────────────
 
+function normalizeComparableName(value: any): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+}
+
+/** Web `findProductForVertical` (product-catalog-utils.js). */
+function findProductForVertical(vertical: any, products: any[] = []) {
+  const verticalProductId = String(vertical?.productId || vertical?.id || '');
+  if (!verticalProductId) return null;
+  return (products || []).find((product: any) => String(product?.id) === verticalProductId) || null;
+}
+
+/** Web `findSchemasForVertical` (vertical-summary-utils.js). */
+function findSchemasForVertical(vertical: any, schemas: any[] = []) {
+  const verticalProductId = String(vertical?.productId || vertical?.id || '');
+  const verticalLabel = normalizeComparableName(vertical?.label);
+
+  const matched = (schemas || []).filter((schema: any) => {
+    const schemaId = String(schema?.id || schema?._id || '');
+    const schemaName = normalizeComparableName(schema?.name || schema?.label || schema?.product);
+    return (
+      (verticalProductId && schemaId && verticalProductId === schemaId) ||
+      (verticalLabel &&
+        schemaName &&
+        (verticalLabel === schemaName ||
+          verticalLabel.includes(schemaName) ||
+          schemaName.includes(verticalLabel)))
+    );
+  });
+
+  return matched.length ? matched : schemas || [];
+}
+
+/** Web `extractAllCategories` (calculator-items-format-util.js). */
+function extractAllCategories(schemasOrCategories: any[]): any[] {
+  if (!Array.isArray(schemasOrCategories) || schemasOrCategories.length === 0) return [];
+
+  const first = schemasOrCategories[0];
+  if (first?.calculatorFormSchema || Array.isArray(first?.categories)) {
+    const allCategories: any[] = [];
+    schemasOrCategories.forEach((schema: any) => {
+      const cats = schema.calculatorFormSchema?.categories || schema.categories || [];
+      cats.forEach((cat: any) => allCategories.push({ ...cat, _productName: schema.name || '' }));
+    });
+    return allCategories;
+  }
+  return schemasOrCategories;
+}
+
+/**
+ * Web `findTabCategoryColorFromSchemas`. Matches the TAB (e.g. GUTTERS / LEAFFILTER
+ * / SOFFIT) to its calculator-schema CATEGORY and takes that category's colour.
+ * This is the branch that gives each summary card its own colour — without it every
+ * tab in a vertical falls through to the single `vertical.color` and they all match.
+ */
+function findTabCategoryColorFromSchemas(tab: any, vertical: any, schemas: any[] = []) {
+  const tabCategory = normalizeComparableName(tab?.productCategory || tab?.label);
+  if (!tabCategory || !schemas?.length) return null;
+
+  const categories = extractAllCategories(findSchemasForVertical(vertical, schemas));
+  const match = categories.find(
+    (category: any) => normalizeComparableName(category?.name || category?.label) === tabCategory
+  );
+
+  return match?.color || null;
+}
+
+/**
+ * Resolve the summary card header colour from runtime config only.
+ * Web parity (`resolveTabAccentColor`) — priority:
+ *   tab.summaryColor/tab.color → calculator schema category colour → vertical.color
+ *   → product.color → palette index fallback.
+ * Colours may be a hex OR an MUI token ('info', 'error.main'); `resolveSchemaColor`
+ * resolves both, mirroring web's `resolveSchemaColorValue`. The previous
+ * `startsWith('#')` guards silently DISCARDED token colours and skipped both the
+ * schema-category and product branches entirely.
+ */
 export function resolveTabAccentColor(
   tab: any,
   vertical: any,
-  _theme: any,
+  _theme?: any,
   options: any = {}
 ): string {
-  const { tabIndex = 0 } = options;
+  const { tabIndex = 0, products = [], schemas = [] } = options;
+  const verticalFallback = vertical?.color
+    ? resolveSchemaColor(vertical.color, PALETTE_PRIMARY)
+    : PALETTE_PRIMARY;
 
   const configured = tab?.summaryColor || tab?.color;
-  if (configured && typeof configured === 'string' && configured.startsWith('#')) {
-    return configured;
-  }
+  if (configured) return resolveSchemaColor(configured, verticalFallback);
 
-  if (vertical?.color && typeof vertical.color === 'string' && vertical.color.startsWith('#')) {
-    return vertical.color;
-  }
+  const schemaCategoryColor = findTabCategoryColorFromSchemas(tab, vertical, schemas);
+  if (schemaCategoryColor) return resolveSchemaColor(schemaCategoryColor, verticalFallback);
+
+  if (vertical?.color) return resolveSchemaColor(vertical.color, PALETTE_PRIMARY);
+
+  const product = findProductForVertical(vertical, products);
+  if (product?.color) return resolveSchemaColor(product.color, PALETTE_PRIMARY);
 
   return PRODUCT_PALETTE_COLORS[tabIndex % PRODUCT_PALETTE_COLORS.length];
 }
@@ -103,7 +189,14 @@ function getSectionCombos(section: any, tabState: any) {
 function buildComboDisplayState(combo: any = {}, colorValues: any = {}) {
   const displayState = { ...combo, colorValues: combo.colorValues || colorValues };
   Object.entries(colorValues || {}).forEach(([key, val]) => {
-    if (val !== '' && val !== null && val !== undefined) {
+    if (val === '' || val === null || val === undefined) return;
+    // colorValues only FILLS a field the direct state lacks — it must never
+    // override a present direct value. The deal-center save hydrates colorValues
+    // with every field's value (colorKey defaults to field.id), so it becomes a
+    // stale mirror; overriding from it would clobber a fresh edit to the direct
+    // field value (e.g. Gutter Opening Width "2.5 - 3.4" masked by a stale "> 7").
+    const direct = (combo as any)[key];
+    if (direct === undefined || direct === null || direct === '') {
       (displayState as any)[key] = val;
     }
   });
@@ -446,7 +539,13 @@ export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = 
   return {
     tabId: tab.id,
     tabLabel: tab.label || tab.id,
-    accentColor: resolveTabAccentColor(tab, vertical, null, { tabIndex }),
+    // Web parity: `products` + `schemas` MUST reach the resolver — the schema
+    // category branch is what colours each tab card individually.
+    accentColor: resolveTabAccentColor(tab, vertical, null, {
+      tabIndex,
+      products: ctx?.products,
+      schemas: ctx?.schemas,
+    }),
     combinationSections,
     simpleSections,
     tabFields,

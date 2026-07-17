@@ -42,6 +42,8 @@ interface SummaryFinalizeCardsProps {
   jobState?: any;
   calculatorResultData?: any;
   repDetails?: any;
+  /** Web `useDealEditMode()` — true when editing an already-resulted deal. */
+  editMode?: boolean;
 }
 
 const GREEN = '#22C55E';
@@ -78,7 +80,14 @@ export function SummaryFinalizeCards({
   jobState,
   calculatorResultData,
   repDetails,
+  editMode = false,
 }: SummaryFinalizeCardsProps) {
+  // Web `vertical-summary-tab.js:407-409` (uses `useDealEditMode()`): editing an
+  // already-resulted deal drops the "Required" gates and hides the demo-only
+  // order-sheet card.
+  const agreementRequired = !!isSale && !editMode;
+  const orderSheetRequired = !!isDemo && !editMode;
+  const showOrderSheetCard = !!isSale || (!!isDemo && !editMode);
   const [schedulerVisible, setSchedulerVisible] = useState(false);
   const [isEditingAppt, setIsEditingAppt] = useState(false);
   const [scannerCategory, setScannerCategory] = useState<DocCategory | null>(null);
@@ -266,14 +275,28 @@ export function SummaryFinalizeCards({
     setAgreementDialogVisible(false);
   };
 
-  const renderDocSection = (title: string, iconName: string, accent: string, files: any[], cat: DocCategory, isAgreement: boolean) => {
+  const renderDocSection = (
+    title: string,
+    iconName: string,
+    accent: string,
+    files: any[],
+    cat: DocCategory,
+    isAgreement: boolean,
+    // Web `document-summary-cards.js`: the badge is driven by a `required` FLAG
+    // (agreements → sale, order sheets → demo), not by "is this the agreement
+    // card". Mobile hardcoded `isAgreement`, so agreements were always badged
+    // Required and order sheets never were.
+    required = false,
+  ) => {
     const isEmpty = files.length === 0;
     return (
       <View style={styles.card}>
         <View style={[styles.sectionHeader, { backgroundColor: accent }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text style={styles.sectionHeaderText}>{title}</Text>
-            {isAgreement && (
+            {/* Web parity: Required shows only while there are NO documents —
+                once uploaded the badge is replaced by the edit affordance. */}
+            {required && isEmpty && (
               <View style={{ backgroundColor: 'white', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
                 <Text style={{ color: accent, fontSize: 6, fontWeight: '900' }}>REQUIRED</Text>
               </View>
@@ -281,7 +304,8 @@ export function SummaryFinalizeCards({
           </View>
           {!isEmpty && (
             <TouchableOpacity onPress={() => setScannerCategory(cat)} hitSlop={10}>
-              <Icon name="plus-circle" size={20} color="white" />
+              {/* Web swaps to a pencil once documents exist (mdi:pencil). */}
+              <Icon name="pencil" size={20} color="white" />
             </TouchableOpacity>
           )}
         </View>
@@ -292,32 +316,38 @@ export function SummaryFinalizeCards({
                 <Icon name={iconName} size={32} color="#CBD5E1" />
               </View>
               <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#94a3b8', marginBottom: 24 }}>No documents</Text>
+              {/* Web `document-summary-cards.js` empty state: the agreements card
+                  shows Generate AND Add Document side by side. Generate is merely
+                  DISABLED until an appointment exists (web tooltip: "Schedule the
+                  appointment first to generate the agreement") — Add Document is
+                  always available. Mobile made the two mutually exclusive and
+                  dropped Add Document from agreements entirely, so with no
+                  appointment there was no way to attach one at all. */}
               <View style={{ width: '100%', paddingHorizontal: 48, gap: 12 }}>
-                {isAgreement ? (
-                  isAppointmentSet ? (
+                {isAgreement && (
+                  <>
                     <TouchableOpacity
-                      onPress={() => setAgreementDialogVisible(true)}
-                      style={styles.outlineActionBtn}
+                      onPress={() => isAppointmentSet && setAgreementDialogVisible(true)}
+                      disabled={!isAppointmentSet}
+                      style={[styles.outlineActionBtn, !isAppointmentSet && { opacity: 0.4 }]}
                     >
                       <Icon name="auto-fix" size={18} color="#22C55E" style={{ marginRight: 8 }} />
                       <Text style={{ color: '#059669', fontWeight: '900', fontSize: 10 }}>Generate</Text>
                     </TouchableOpacity>
-                  ) : (
-                    <View style={{ alignItems: 'center', padding: 8 }}>
+                    {!isAppointmentSet && (
                       <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
                         Schedule an appointment to enable agreements
                       </Text>
-                    </View>
-                  )
-                ) : (
-                  <TouchableOpacity
-                    onPress={() => setScannerCategory(cat)}
-                    style={styles.outlineActionBtn}
-                  >
-                    <Icon name="plus" size={18} color="#0F172A" />
-                    <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 10, marginLeft: 8 }}>Add Document</Text>
-                  </TouchableOpacity>
+                    )}
+                  </>
                 )}
+                <TouchableOpacity
+                  onPress={() => setScannerCategory(cat)}
+                  style={styles.outlineActionBtn}
+                >
+                  <Icon name="plus" size={18} color="#0F172A" />
+                  <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 10, marginLeft: 8 }}>Add Document</Text>
+                </TouchableOpacity>
               </View>
             </View>
           ) : (
@@ -422,11 +452,15 @@ export function SummaryFinalizeCards({
           </View>
         ))}
 
-      {/* AGREEMENT (sale only) — styled to match old SummarySection */}
-      {isSale && renderDocSection('Agreements', 'file-certificate-outline', '#ef4444', agreementFiles, 'agreement', true)}
+      {/* Web `vertical-summary-tab.js`:
+            const agreementRequired  = isSale && !editMode;
+            const orderSheetRequired = isDemo && !editMode;
+            const showOrderSheetCard = isSale || (isDemo && !editMode);
+          The order-sheet card was gated on `isSale` alone, so on a DEMO — the very
+          case where web marks it Required — the card never rendered at all. */}
+      {isSale && renderDocSection('Agreements', 'file-certificate-outline', '#ef4444', agreementFiles, 'agreement', true, agreementRequired)}
 
-      {/* ORDER SHEET (sale only — web parity) */}
-      {isSale && renderDocSection('Order Sheets', 'file-document-outline', '#00B8D9', orderSheetFiles, 'orderSheet', false)}
+      {showOrderSheetCard && renderDocSection('Order Sheets', 'file-document-outline', '#00B8D9', orderSheetFiles, 'orderSheet', false, orderSheetRequired)}
 
       {/* MODALS */}
       <AppointmentSchedulerModal

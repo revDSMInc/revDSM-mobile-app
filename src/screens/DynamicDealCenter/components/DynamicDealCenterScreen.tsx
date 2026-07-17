@@ -179,6 +179,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       <DynamicJobBuilderScreen
         navigation={navigation}
         initialConfig={jobBuilderConfig ?? undefined}
+        // System A calculator schemas — the summary tab resolves each card's
+        // header colour from the matching schema CATEGORY's colour (web parity:
+        // `resolveTabAccentColor` → `findTabCategoryColorFromSchemas`). These are
+        // NOT on `initialConfig`, which is the System B job-builder config.
+        calculatorSchemas={verticals}
         dealCenterData={consolidatedDealCenterData}
         calculatorResultData={calculatorResultData}
         leadId={lead?._id || lead?.leadId || lead?.id}

@@ -12,6 +12,11 @@ interface VerticalSummaryTabProps {
   // Finalize extras (appointment / agreement / order-sheet). Provided only when
   // rendered inside the live Job Builder; absent in preview/config contexts.
   products?: any[];
+  /** Calculator form schemas — supply the per-tab category colour (web parity). */
+  schemas?: any[];
+  repDetails?: any;
+  /** Web `useDealEditMode()` — editing an already-resulted deal. */
+  editMode?: boolean;
   leadId?: string;
   calculatorResultData?: any;
   customerName?: string;
@@ -30,10 +35,15 @@ interface VerticalSummaryTabProps {
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
   const valueColor = variant === 'missing' ? '#ef4444' : '#1e293b';
+  // Labels come verbatim from the portal-authored schema (`field.label`), which
+  // can carry stray whitespace — e.g. " LeafFilter Profile" renders indented
+  // while its sibling rows sit flush. Trim for display only; the underlying
+  // field data is untouched.
+  const labelText = label?.trim();
   return (
     <View className="py-1">
-      {showLabel && label && (
-        <Text className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{label}</Text>
+      {showLabel && !!labelText && (
+        <Text className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{labelText}</Text>
       )}
       <Text className="text-sm font-medium" style={{ color: valueColor }}>{text}</Text>
     </View>
@@ -128,6 +138,10 @@ export function VerticalSummaryTab({
   lockedTabIds = [],
   dealCenterData = {},
   applyConditions = true,
+  products,
+  schemas,
+  repDetails,
+  editMode,
   leadId,
   calculatorResultData,
   customerName,
@@ -143,9 +157,20 @@ export function VerticalSummaryTab({
   isDocUploadingRef,
   onUploadDocs,
 }: VerticalSummaryTabProps) {
+  // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
+  // per-tab category colour that gives each summary card its own header colour.
+  // They were previously omitted, so every card fell through to `vertical.color`
+  // — one colour shared by every tab, which is why all headers rendered the same.
   const summarySections = useMemo(
-    () => buildVerticalSummarySections(vertical, verticalState, { lockedTabIds, dealCenterData, applyConditions }),
-    [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions]
+    () =>
+      buildVerticalSummarySections(vertical, verticalState, {
+        lockedTabIds,
+        dealCenterData,
+        applyConditions,
+        products,
+        schemas,
+      }),
+    [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions, products, schemas]
   );
 
   // Only show the finalize cards inside the live builder (a root-state setter is
@@ -239,6 +264,11 @@ export function VerticalSummaryTab({
           setResolvedDocuments={setResolvedDocuments}
           isDocUploadingRef={isDocUploadingRef}
           onUploadDocs={onUploadDocs}
+          // SummaryFinalizeCards declares + destructures repDetails and hands it to
+          // DynamicAgreementDialog, but nothing was passing it — generated
+          // agreements got `repDetails={undefined}`.
+          repDetails={repDetails}
+          editMode={editMode}
           productKey={productKey}
           verticalState={verticalState}
           jobState={rootJobState}

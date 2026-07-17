@@ -34,6 +34,14 @@ import { useTheme } from '../../theme/ThemeProvider';
 interface DynamicJobBuilderScreenProps {
   navigation?: NativeStackNavigationProp<any>;
   initialConfig?: any;
+  /**
+   * System A calculator form schemas (`CalculatorSchema[]`, from
+   * `/calculator-form-schemas/deal-center`). Web threads the same array through as
+   * `schemas`; the summary tab uses each schema CATEGORY's colour for that tab's
+   * card header. Distinct from `initialConfig`, which is the System B
+   * job-builder config (verticals/products) and carries no schemas.
+   */
+  calculatorSchemas?: any[];
   dealCenterData?: any;
   calculatorResultData?: {
     resultType?: 'sale' | 'demo';
@@ -79,6 +87,7 @@ interface DynamicJobBuilderScreenProps {
 function DynamicJobBuilderInner({
   navigation,
   initialConfig,
+  calculatorSchemas,
   dealCenterData,
   calculatorResultData,
   leadId,
@@ -1082,7 +1091,11 @@ function DynamicJobBuilderInner({
               verticalId={selectedVertical?.id}
               verticalColor={selectedVertical?.color || '#22c55e'}
               products={initialConfig?.products || []}
-              schemas={initialConfig?.schemas || []}
+              schemas={calculatorSchemas || initialConfig?.schemas || []}
+              // Web `useDealEditMode()`: drops the Required gates when editing an
+              // already-resulted deal.
+              editMode={isEdit}
+              repDetails={authUser}
               leadId={leadId}
               calculatorResultData={calculatorResultData}
               customerName={dealCenterData?.customerName || dealCenterData?.customer?.name || ''}
