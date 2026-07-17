@@ -19,6 +19,7 @@ import {
   computeProgramGrandTotal,
   computeProgramDiscountLines,
   getDiscountConfig,
+  getSelectableDiscountKey,
   formatProgramTitle,
   type DiscountConfig,
   type ProgramLine,
@@ -159,7 +160,13 @@ export function computeRolloutResult(input: RolloutResultInput): RolloutResult {
 
   if (resolvedConfig) {
     const discounts = resolvedConfig.discounts || [];
-    const selectedValues: Record<string, number> = { pre_order: discountPct };
+    // Key the rep's selection by the discount the selector's options came FROM.
+    // Hardcoding `pre_order` here meant a config keying its selectable discount
+    // anything else ignored the selection entirely: MSRP stuck on the config's
+    // default option no matter which tile was pressed.
+    const selectedValues: Record<string, number> = {
+      [getSelectableDiscountKey(discounts)]: discountPct,
+    };
     const msrp = computeMsrpFromEndPrice(priceWithScreens, discounts, selectedValues);
     const programs: RolloutProgram[] = (resolvedConfig.programs || []).map((p) => ({
       key: p.key,
