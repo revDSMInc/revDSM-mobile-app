@@ -132,8 +132,14 @@ export default function LeadCreateModal({
           setLocation(null);
         }
       } else {
+        // Start with a blank address rather than reverse-geocoding the device's
+        // current GPS position into Full Address — the rep enters the customer's
+        // address via the autocomplete search (which also sets the coordinates),
+        // and can still opt into "use my location" via the pin icon in the field.
         setForm(initialFormState);
-        handleGetCurrentLocation();
+        setLocation(null);
+        setSuggestions([]);
+        setShowSuggestions(false);
       }
     }
   }, [visible]);
@@ -622,11 +628,20 @@ export default function LeadCreateModal({
                         </TouchableOpacity>
                       ) : null
                     ) : (
-                      <Ionicons
-                        name="location-outline"
-                        size={18}
-                        color={colors.primary.main + '80'}
-                      />
+                      // Opt-in current-location fill: tapping the pin reverse-
+                      // geocodes the device GPS into the address (disabled for
+                      // zone leads, whose address is fixed to the picked building).
+                      <TouchableOpacity
+                        disabled={fromZone}
+                        onPress={handleGetCurrentLocation}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <Ionicons
+                          name="location-outline"
+                          size={18}
+                          color={colors.primary.main + '80'}
+                        />
+                      </TouchableOpacity>
                     )}
                   </View>
 

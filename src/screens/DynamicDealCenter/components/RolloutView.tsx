@@ -703,7 +703,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
   };
 
+  // A confirmed rollout is a LOCKED quote: the breakdown behind the chevron is a
+  // receipt, not a form. Anything that would move MSRP / the program totals is
+  // read-only from here on (the end price input already is) — otherwise a rep
+  // could re-price a locked calculator by tapping a Pre-Order Discount tile.
+  const isLocked = !!calculator.isRolloutConfirmed;
+
   const toggleDefaultDiscount = async (next: boolean) => {
+    if (isLocked) return;
     try {
       await SettingsService.updateCalculatorsSetting({ defaultPercentage: next ? discountPct : null });
       await refreshUser?.();
@@ -968,8 +975,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 6 }}>Default</Text>
                     <TouchableOpacity
+                      disabled={isLocked}
                       onPress={() => toggleDefaultDiscount(!isDefaultDiscount)}
-                      style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultDiscount ? '#22C55E' : '#CBD5E1', alignItems: isDefaultDiscount ? 'flex-end' : 'flex-start' }}
+                      style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultDiscount ? '#22C55E' : '#CBD5E1', alignItems: isDefaultDiscount ? 'flex-end' : 'flex-start', opacity: isLocked ? 0.5 : 1 }}
                     >
                       <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff' }} />
                     </TouchableOpacity>
@@ -979,7 +987,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   {pricing.preOrderOptions.map((d) => {
                     const active = discountPct === d;
                     return (
-                      <TouchableOpacity key={d} onPress={() => onDiscountChange(calculator.id, d)} style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}>
+                      <TouchableOpacity
+                        key={d}
+                        disabled={isLocked}
+                        onPress={() => onDiscountChange(calculator.id, d)}
+                        // Locked: the chosen % still reads clearly, the rest fade
+                        // out so the row presents as a record, not a choice.
+                        style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff', opacity: isLocked && !active ? 0.4 : 1 }}
+                      >
                         <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
                       </TouchableOpacity>
                     );
