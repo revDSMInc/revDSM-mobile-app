@@ -94,8 +94,11 @@ export function resolveAccordionAllocationStatus(accordionField: any, ctx: any =
   // Only show "perfect" when every evaluated child is perfectly allocated.
   if (badge?.type === 'success') {
     const allPerfect = allocationChildren.every((child: any, index: number) => {
+      // Children that aren't visible / active / status-enabled are SKIPPED (true),
+      // never counted as "not perfect" — web parity. Returning false here made one
+      // inactive allocation child suppress the whole "Perfectly allocated" badge.
       if (!isChildVisible(child)) return true;
-      if (!isAllocationCardActive(child, tabState, tab)) return false;
+      if (!isAllocationCardActive(child, tabState, tab)) return true;
       if (!normalizeAllocationStatusMessages(child.statusMessages).enabled) return true;
 
       const resolved = resolveAllocationMetrics(child, {

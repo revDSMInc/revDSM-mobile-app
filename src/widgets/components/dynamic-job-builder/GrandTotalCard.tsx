@@ -150,6 +150,9 @@ function TabGrandTotalCard({
   );
 }
 
+/** Gutter between grand-total columns (web `gap: { xs: 0.75 }` = 6px). */
+const COL_GAP = 8;
+
 /** A single combo row — a #N chip, an optional section sub-label, then the columns. */
 function ComboSummaryRow({
   combo,
@@ -172,13 +175,23 @@ function ComboSummaryRow({
       {sectionLabel ? (
         <Text className="text-[10px] font-bold text-slate-500 mb-2">{sectionLabel}</Text>
       ) : null}
-      <View className="flex-row flex-wrap gap-3">
+      {/*
+        Web parity (`ComboSummaryRow`): the columns sit in a FIXED-width grid —
+        `xs: 'repeat(2, minmax(0, 1fr))'` at phone width — so every combination's
+        columns line up with each other. Mobile previously used content-sized
+        flex items, so a wider value in one combo (e.g. "2.5 - 3.4" vs `6"`)
+        shifted that row's later columns out of line with the row above it.
+      */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -COL_GAP / 2 }}>
         {columns.map((field, colIndex) => {
           const { text, variant } = formatComboFieldSummaryValue(field, combo, {
             emptyMessage: field.emptyMessage,
           });
           return (
-            <View key={field.id || colIndex} className="min-w-[80px]">
+            <View
+              key={field.id || colIndex}
+              style={{ width: '50%', paddingHorizontal: COL_GAP / 2, marginBottom: COL_GAP }}
+            >
               <Text className="text-[8px] font-bold text-slate-400 mb-0.5">{field.label || field.key}</Text>
               <Text
                 className="text-[10px] font-black"

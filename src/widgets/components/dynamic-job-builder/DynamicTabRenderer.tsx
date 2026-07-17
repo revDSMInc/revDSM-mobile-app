@@ -33,6 +33,9 @@ import {
   getWarningConfig,
   getOptionGridSize,
   getEffectiveBorderColor,
+  resolveMobileGridColumns,
+  getAllocationGridFineColumns,
+  getAllocationGridItemSpan,
 } from '../../../utils/dynamic-job-builder/engine/field-layout-utils';
 
 // Web parity: optionList/select render in a wrapping grid whose columns come from
@@ -132,6 +135,64 @@ function filterFields(fields: any[], tabState: any, tab: any, section: any, stat
 // resolveAllocationMetrics (dealCenterData + contributors + computed). Instead of
 // hiding cards with 0 budget (isAllocationExcluded), cards with optionBindings
 // that don't match show as inactive (greyed out) — matching web behaviour.
+// An allocation-tracker accordion shows its cards inline (no accordion wrapper)
+// when it has this many or fewer visible cards; only more than this collapses
+// them behind the accordion header. Web ref: field-registry.js.
+const ALLOCATION_INLINE_MAX = 4;
+
+// Allocation cards sit two-up per row. The schema's "Mobile Layout" setting
+// (`mobileColumns`) overrides this when the portal configures one.
+const ALLOCATION_GRID_COLS = 2;
+
+const ALLOCATION_GRID_GAP = 8;
+
+/**
+ * A child renders as an allocation card when its NORMALIZED type is 'allocation'
+ * — `isAllocationField` only checks `field.type`, but `renderField` routes on
+ * `widget || inputType || type`, so a card authored as `widget: 'allocation'`
+ * renders as one while failing the strict check.
+ */
+const isAllocationChild = (f: any) =>
+  isAllocationField(f) || (f?.widget || f?.inputType || f?.type) === 'allocation';
+
+/**
+ * Lays allocation cards out two-up, with the LAST ROW STRETCHED to fill the
+ * width when it holds fewer cards than the column count:
+ *   4 → [c c] [c c]     3 → [c c] [ c——— ]
+ *   2 → [c c]           1 → [ c——— ]
+ * The span math is web's (`getAllocationGridFineColumns` / `…ItemSpan`): it
+ * scales the grid to an LCM of the column count and the last row's item count,
+ * then spans each card across its share. Cards in a row are equal height — the
+ * row stretches the cells to the tallest, and each card is rendered with
+ * `fillHeight` so it fills its cell.
+ */
+function AllocationCardGrid({ columns, children }: { columns: number; children: React.ReactNode }) {
+  const cells = React.Children.toArray(children);
+  const cols = Math.max(1, Math.round(columns));
+  const count = cells.length;
+  const fineColumns = getAllocationGridFineColumns(count, cols);
+
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -ALLOCATION_GRID_GAP / 2 }}>
+      {cells.map((cell, i) => {
+        const span = getAllocationGridItemSpan(i, count, cols);
+        return (
+          <View
+            // eslint-disable-next-line react/no-array-index-key
+            key={i}
+            style={{
+              width: `${(span / fineColumns) * 100}%`,
+              paddingHorizontal: ALLOCATION_GRID_GAP / 2,
+            }}
+          >
+            {cell}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function renderAllocationCard(field: any, ctx: any = {}) {
   const {
     dealCenterData = {},
@@ -169,6 +230,11 @@ function renderAllocationCard(field: any, ctx: any = {}) {
       used={Number(resolved?.allocated) || 0}
       unit={unit}
       inactive={inactive}
+      // Set by the `accordion` container for its allocation children: drop the
+      // card's own outer margin (the container spaces them) and stretch to the
+      // grid cell so a row of cards shares one height.
+      compact={!!ctx.compactAllocation}
+      fillHeight={!!ctx.allocationFillHeight}
     />
   );
 }
@@ -269,24 +335,26 @@ function renderField(
   };
 
   if (readOnly || field.locked) {
+    // Web parity: EVERY LockedField call site in field-registry.js resolves its
+    // display value with `resolveLockedValue(field, dealCenterData)` — the field's
+    // `dcField`/`dcFields` deal-center reference, falling back to `defaultValue`
+    // then '—'. Reading the raw `value` (the combination's OWN state) meant a
+    // locked field only showed a value in the combination that happened to carry
+    // one in state — e.g. LeafFilter Profile rendered blank on Combination #2
+    // while #1 showed "Versa Max". resolveLockedValue is combination-independent.
+    const lockedValue = resolveLockedValue(field, dealCenterData);
     if (field.colorKey && (field.palette || field.colors)) {
       return (
         <LockedFieldWithColor
           key={field.id}
           label={field.label}
-          value={value ?? field.defaultValue ?? '—'}
+          value={lockedValue}
           colorValue={value}
           colors={resolveSwatchColors()}
         />
       );
     }
-    return (
-      <LockedField
-        key={field.id}
-        label={field.label}
-        value={value ?? field.defaultValue ?? '—'}
-      />
-    );
+    return <LockedField key={field.id} label={field.label} value={lockedValue} />;
   }
 
   const normalizedType = field.widget || field.inputType || field.type;
@@ -670,14 +738,26 @@ function renderField(
         return isFieldVisibleWithConditions(child, parentState, childDepCtx, applyConditions);
       };
 
-      const renderedChildren = childFields
-        .filter(isChildRenderable)
+      // An allocation tracker (every VISIBLE child is an allocation card) lays its
+      // cards out in a grid instead of a stack, so they need compact + fill-height.
+      // Judging this on the visible children — not every authored child — means a
+      // card hidden by a condition can't force the whole tracker into the dropdown.
+      const visibleChildFields = childFields.filter(isChildRenderable);
+      const isAllocationTracker =
+        visibleChildFields.length > 0 && visibleChildFields.every(isAllocationChild);
+      const allocationChildCtx =
+        isAllocationTracker && normalizedType === 'accordion'
+          ? { compactAllocation: true, allocationFillHeight: true }
+          : null;
+
+      const renderedChildren = visibleChildFields
         .map((child: any) => {
           const childVal = parentState?.[child.id];
           const childOnChange = (v: any) => writeChild(child.id, v);
           return renderField(child, childVal, childOnChange, {
             ...(ctx || {}),
             sectionFields: childFields,
+            ...(allocationChildCtx || {}),
           });
         })
         .filter(Boolean);
@@ -739,6 +819,29 @@ function renderField(
         });
         const badge = status ? { type: status.type, message: status.label } : null;
 
+        // Allocation cards render two-up in a grid (equal heights) rather than
+        // one per row. Non-allocation accordions keep their plain stack.
+        const contents = isAllocationTracker ? (
+          <AllocationCardGrid columns={resolveMobileGridColumns(field.mobileColumns) ?? ALLOCATION_GRID_COLS}>
+            {renderedChildren}
+          </AllocationCardGrid>
+        ) : (
+          renderedChildren
+        );
+
+        // Web parity (field-registry `case 'accordion'`): an allocation tracker
+        // shows its cards INLINE — no accordion chrome — when it has
+        // ALLOCATION_INLINE_MAX (4) or fewer visible cards, so the rep sees them
+        // at a glance. Only MORE than that collapses behind the header.
+        if (isAllocationTracker && renderedChildren.length <= ALLOCATION_INLINE_MAX) {
+          return (
+            <View key={field.id} className="px-3 mb-3">
+              {contents}
+              {warningBanner}
+            </View>
+          );
+        }
+
         return (
           <AccordionSection
             key={field.id}
@@ -747,7 +850,7 @@ function renderField(
             defaultExpanded={field.defaultExpanded !== false}
             badge={badge}
           >
-            {renderedChildren}
+            {contents}
             {warningBanner}
           </AccordionSection>
         );
@@ -1390,16 +1493,41 @@ export function DynamicTabRenderer({
               dealCenterData, tab, tabState, section: ctx.section, sectionState: ctx.sectionState,
               sectionFields: childFields, combos: ctx.combos,
             };
-            const renderedChildren = childFields
-              .filter((child: any) => !applyConditions || isFieldVisibleWithConditions(child, parentState, childDepCtx, applyConditions))
-              .map((child: any) => renderField(child, parentState?.[child.id], (v: any) => ctx.onFieldChange(child.id, v), { readOnly, verticalColor, dealCenterData, applyConditions, state: parentState, onFieldChange: ctx.onFieldChange, tab, tabState, section: ctx.section, sectionState: ctx.sectionState, combos: ctx.combos, sectionFields: childFields }))
+            const visibleChildFields = childFields.filter(
+              (child: any) => !applyConditions || isFieldVisibleWithConditions(child, parentState, childDepCtx, applyConditions),
+            );
+            // Web parity (field-registry `case 'accordion'`): a tracker whose visible
+            // children are ALL allocation cards shows them inline — no accordion
+            // chrome — at ALLOCATION_INLINE_MAX (4) or fewer cards. Only more than
+            // that collapses behind the header.
+            const isTracker =
+              visibleChildFields.length > 0 && visibleChildFields.every(isAllocationChild);
+            const renderedChildren = visibleChildFields
+              .map((child: any) => renderField(child, parentState?.[child.id], (v: any) => ctx.onFieldChange(child.id, v), { readOnly, verticalColor, dealCenterData, applyConditions, state: parentState, onFieldChange: ctx.onFieldChange, tab, tabState, section: ctx.section, sectionState: ctx.sectionState, combos: ctx.combos, sectionFields: childFields, ...(isTracker ? { compactAllocation: true, allocationFillHeight: true } : {}) }))
               .filter(Boolean);
             const status = resolveAccordionAllocationStatus(field, { ...ctx, tab, tabState, value: parentState, sectionState: ctx.sectionState ?? parentState, sectionFields: childFields, applyConditions });
             const badge = status ? { type: status.type, message: status.label } : null;
             if (!renderedChildren.length) return null;
+
+            const contents = isTracker ? (
+              <AllocationCardGrid columns={resolveMobileGridColumns(field.mobileColumns) ?? ALLOCATION_GRID_COLS}>
+                {renderedChildren}
+              </AllocationCardGrid>
+            ) : (
+              renderedChildren
+            );
+
+            if (isTracker && renderedChildren.length <= ALLOCATION_INLINE_MAX) {
+              return (
+                <View key={field.id} className="px-1 py-1">
+                  {contents}
+                </View>
+              );
+            }
+
             return (
               <AccordionSection key={field.id} label={field.label} icon={field.icon || 'chart-box-outline'} defaultExpanded={field.defaultExpanded !== false} badge={badge}>
-                {renderedChildren}
+                {contents}
               </AccordionSection>
             );
           })}
