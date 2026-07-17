@@ -5,7 +5,7 @@ import {
   normalizeAllocationStatusMessages,
 } from './allocation-config-utils';
 import { resolveAllocationMetrics } from './allocation-value-resolver';
-import { isAllocationExcluded, isFieldVisibleWithConditions } from './dependency-engine';
+import { isFieldVisibleWithConditions } from './dependency-engine';
 
 // Ported to full web parity (was a diverging, unused reimplementation).
 // Web ref: src/components/dynamic-job-builder/engine/accordion-allocation-utils.js
@@ -43,10 +43,16 @@ export function resolveAccordionAllocationStatus(accordionField: any, ctx: any =
   const depCtx = { dealCenterData, sectionFields, tab, tabState, section };
   const state = value || sectionState || tabState || {};
 
-  const isChildVisible = (child: any) => {
-    if (isAllocationExcluded(child, dealCenterData)) return false;
-    return isFieldVisibleWithConditions(child, state, depCtx, applyConditions);
-  };
+  // Web parity — this is EXACTLY web's isChildVisible. It must NOT also gate on
+  // `isAllocationExcluded`: that helper resolves Avail through the LEGACY
+  // `field.dcField` path (`resolveAllocationAvail`), not the `metrics`/valueSource
+  // path the cards themselves use (`resolveAllocationMetrics`). For a schema that
+  // defines its Avail via metrics and carries no dcField, the legacy resolver
+  // returns 0, so every child looked "excluded", evaluatedCount stayed 0, and this
+  // function returned null — the header chip could never appear even with every
+  // card reading "Perfectly allocated!".
+  const isChildVisible = (child: any) =>
+    isFieldVisibleWithConditions(child, state, depCtx, applyConditions);
 
   let badge: any = null;
   let evaluatedCount = 0;
