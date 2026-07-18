@@ -693,7 +693,7 @@ function renderField(
       return (
         <RoomPicker
           key={field.id}
-          label={field.label}
+          label={visibleLabel}
           value={value || []}
           onChange={onChange}
           roomSet={field.roomSet}

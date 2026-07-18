@@ -541,16 +541,26 @@ function DynamicJobBuilderInner({
     return null;
   }, [availableTabs, selectedTabId]);
 
+  // True only while the Summary tab is selected as a FALLBACK (no product tab was
+  // available yet). Cleared the moment a product tab exists so we can correct back
+  // to step 1 — the job builder must open on the first tab, not the summary.
+  const autoSummaryRef = useRef(false);
   useEffect(() => {
-    if (!selectedTabId) {
-      if (nonSummaryTabs.length > 0) {
+    if (nonSummaryTabs.length > 0) {
+      // Product tabs are available: open on the first one. Also correct a Summary
+      // selection that was only a fallback picked before the tabs resolved (the
+      // locks/dealCenterData settle a tick after mount) — otherwise the screen
+      // stays stuck on the Summary even though step 1 is now navigable.
+      if (!selectedTabId || (autoSummaryRef.current && summaryTab && selectedTabId === summaryTab.id)) {
+        autoSummaryRef.current = false;
         setSelectedTabId(nonSummaryTabs[0].id);
-      } else if (summaryTab) {
-        // All product tabs are locked — fall back to the summary tab so the
-        // screen isn't blank. This can happen when dealCenterData has no
-        // calculator entries yet (e.g. no dcField keys are satisfied).
-        setSelectedTabId(summaryTab.id);
       }
+    } else if (!selectedTabId && summaryTab) {
+      // Every product tab is locked — fall back to the summary tab so the screen
+      // isn't blank (e.g. dealCenterData has no calculator entries yet). Flag it so
+      // the branch above can promote to step 1 once a product tab appears.
+      autoSummaryRef.current = true;
+      setSelectedTabId(summaryTab.id);
     }
   }, [nonSummaryTabs, summaryTab, selectedTabId]);
 

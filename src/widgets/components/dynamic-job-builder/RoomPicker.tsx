@@ -26,9 +26,13 @@ export function RoomPicker({ label, value = [], onChange, roomSet = 'rooms', col
 
   return (
     <View className="mb-4">
-      <Text className="text-[13px] font-bold text-gray-500 mb-2">
-        {label || 'Room(s) / Location'}
-      </Text>
+      {/* Web parity (`roomPicker` → OptionSelector `label={showLabel === false ? '' :
+          field.label}`): render the label only when provided. A field that sets
+          `showLabel:false` (e.g. Wet Space "Location", already titled by its section
+          header) passes no label and must NOT print a duplicate one. */}
+      {!!label && (
+        <Text className="text-[13px] font-bold text-gray-500 mb-2">{label}</Text>
+      )}
       <View className="flex-row flex-wrap gap-2">
         {rooms.map((r) => {
           const selected = value.includes(r);
