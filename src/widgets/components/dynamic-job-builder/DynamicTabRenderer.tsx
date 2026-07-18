@@ -94,8 +94,13 @@ const SELECTED_ACCENT = '#22C55E';
  * false` guards it so fields that don't pass a required flag (e.g. plain
  * `swatch`) are never affected.
  */
-function resolveEffectiveColorBehavior(field: any, state: any, depCtx: any, required?: boolean) {
+function resolveEffectiveColorBehavior(field: any, state: any, depCtx: any, required?: boolean, unlockAll?: boolean) {
+  // Edit mode (web `unlockAll`) makes every field editable, so a colour is never
+  // locked-by-not-required when reopening a deal to edit — the rep must be able to
+  // change the colour of an already-configured Extra (this was the "colours locked
+  // in the Extras section after reschedule" bug).
   const lockWhenNotRequired =
+    !unlockAll &&
     field.type === 'colorSelection' && field.lockWhenNotRequired === true && required === false;
 
   if (!isDefaultColorActive(field, state, depCtx)) {
@@ -322,6 +327,8 @@ function renderField(
     combos?: any[];
     sectionFields?: any[];
     products?: any[];
+    /** Edit mode (web `unlockAll`) — bypasses the colorSelection lock-when-not-required. */
+    editMode?: boolean;
   }
 ) {
   const {
@@ -329,6 +336,7 @@ function renderField(
     dealCenterData = {},
     applyConditions = true,
     state = {},
+    editMode = false,
   } = ctx || {};
   // Selected controls are always green (normal-JB parity), not the vertical color.
   const verticalColor = SELECTED_ACCENT;
@@ -383,14 +391,20 @@ function renderField(
         />
       );
     }
-    // A locked COLOUR field keeps the rep's picked colour in state (`value` =
-    // item[field.id]); it is NOT a deal-center value, so resolveLockedValue can
-    // only ever return '—'. Prefer the saved colour so a submitted Extra's colour
-    // shows on reopen instead of a dash. Non-colour locked fields are unchanged.
-    const lockedFieldType = field.widget || field.inputType || field.type;
-    const isLockedColorField =
-      lockedFieldType === 'colorSelection' || lockedFieldType === 'swatch' || lockedFieldType === 'color';
-    const lockedDisplay = isLockedColorField && value ? value : lockedValue;
+    // resolveLockedValue reads ONLY the calculator snapshot (dealCenterData) via the
+    // field's dcField/dcFields — combination-independent, which is why it's used here
+    // (a per-combination `value` read once blanked Profile on Combination #2). But some
+    // locked fields' saved entries are NOT in that snapshot on reopen: picked colours,
+    // and calculator Extras (LeafFilter C-S-R / Corners / Sawzall Hanger / … and gutter
+    // Extras) the rebuilt dealCenterData no longer carries — those surfaced blank ('—'
+    // or empty). Their saved value DOES survive in state (the `value` arg). So prefer
+    // the deal-center value when it resolves; ONLY when it is empty fall back to the
+    // saved state value. This keeps the Profile fix intact (Profile still resolves via
+    // dealCenterData) while restoring submitted Extras/colours that would show blank.
+    const dcResolved = lockedValue !== undefined && lockedValue !== '—' && lockedValue !== '';
+    const stateFallback =
+      (typeof value === 'string' || typeof value === 'number') && value !== '' ? value : undefined;
+    const lockedDisplay = dcResolved ? lockedValue : stateFallback ?? lockedValue;
     return <LockedField key={field.id} label={field.label} value={lockedDisplay} />;
   }
 
@@ -594,7 +608,8 @@ function renderField(
         field,
         state,
         depCtx,
-        isFieldRequired(field, state, depCtx)
+        isFieldRequired(field, state, depCtx),
+        editMode
       );
       if (effectiveLocked) {
         // The rep's picked colour lives in state (`value` = item[field.id]) and
@@ -994,6 +1009,7 @@ function CombinationSectionBlock({
   dealCenterData,
   applyConditions,
   hideAllocations,
+  editMode,
 }: {
   section: any;
   combos: any[];
@@ -1008,6 +1024,7 @@ function CombinationSectionBlock({
   dealCenterData?: any;
   applyConditions?: boolean;
   hideAllocations?: boolean;
+  editMode?: boolean;
 }) {
   const applyDep = applyConditions !== false;
   const allFields = section.fields || [];
@@ -1078,6 +1095,7 @@ function CombinationSectionBlock({
           sectionState,
           combos,
           sectionFields: allFields,
+          editMode,
         });
       })}
 
@@ -1117,6 +1135,7 @@ function CombinationSectionBlock({
                 sectionState: combo,
                 combos,
                 sectionFields: allFields,
+                editMode,
               });
             })}
 
@@ -1147,6 +1166,7 @@ function SimpleSectionBlock({
   dealCenterData,
   applyConditions,
   hideAllocations,
+  editMode,
 }: {
   section: any;
   sectionState: any;
@@ -1158,6 +1178,7 @@ function SimpleSectionBlock({
   dealCenterData?: any;
   applyConditions?: boolean;
   hideAllocations?: boolean;
+  editMode?: boolean;
 }) {
   const applyDep = applyConditions !== false;
 
@@ -1205,6 +1226,7 @@ function SimpleSectionBlock({
             sectionState,
             combos: [],
             sectionFields: allFields,
+            editMode,
           });
         })}
       </SectionCard>
@@ -1232,6 +1254,7 @@ function SimpleSectionBlock({
           sectionState,
           combos: [],
           sectionFields: allFields,
+          editMode,
         });
       })}
     </SectionCard>
@@ -1584,7 +1607,7 @@ export function DynamicTabRenderer({
             const isTracker =
               visibleChildFields.length > 0 && visibleChildFields.every(isAllocationChild);
             const renderedChildren = visibleChildFields
-              .map((child: any) => renderField(child, parentState?.[child.id], (v: any) => ctx.onFieldChange(child.id, v), { readOnly, verticalColor, dealCenterData, applyConditions, state: parentState, onFieldChange: ctx.onFieldChange, tab, tabState, section: ctx.section, sectionState: ctx.sectionState, combos: ctx.combos, sectionFields: childFields, ...(isTracker ? { compactAllocation: true, allocationFillHeight: true } : {}) }))
+              .map((child: any) => renderField(child, parentState?.[child.id], (v: any) => ctx.onFieldChange(child.id, v), { readOnly, verticalColor, dealCenterData, applyConditions, state: parentState, onFieldChange: ctx.onFieldChange, tab, tabState, section: ctx.section, sectionState: ctx.sectionState, combos: ctx.combos, sectionFields: childFields, editMode, ...(isTracker ? { compactAllocation: true, allocationFillHeight: true } : {}) }))
               .filter(Boolean);
             const status = resolveAccordionAllocationStatus(field, { ...ctx, tab, tabState, value: parentState, sectionState: ctx.sectionState ?? parentState, sectionFields: childFields, applyConditions });
             const badge = status ? { type: status.type, message: status.label } : null;
@@ -1649,6 +1672,7 @@ export function DynamicTabRenderer({
                 sectionState: tabState,
                 combos: [],
                 sectionFields: tabFields,
+                editMode,
               });
             })}
           </SectionCard>
@@ -1673,6 +1697,7 @@ export function DynamicTabRenderer({
               dealCenterData={dealCenterData}
               applyConditions={applyConditions}
               hideAllocations
+              editMode={editMode}
             />
           );
         }
@@ -1698,6 +1723,7 @@ export function DynamicTabRenderer({
               dealCenterData={dealCenterData}
               applyConditions={applyConditions}
               hideAllocations
+              editMode={editMode}
             />
             {isLastCombinationSection && showTabGrandTotal && (
               <GrandTotalCard
