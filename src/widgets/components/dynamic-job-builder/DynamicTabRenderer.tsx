@@ -388,6 +388,12 @@ function renderField(
 
   const normalizedType = field.widget || field.inputType || field.type;
 
+  // Web parity (field-registry.js): interactive fields hide their own label when
+  // `showLabel === false` (e.g. a `sectionLabel` already titles the group above the
+  // control — Roofing → Shingles "Shingle Type"). Mobile ignored this, so the
+  // option/toggle/swatch printed a SECOND, duplicate label under the section title.
+  const visibleLabel = field.showLabel === false ? undefined : field.label;
+
   switch (normalizedType) {
     case 'text':
     case 'input':
@@ -395,7 +401,7 @@ function renderField(
         return (
           <SwatchPicker
             key={field.id}
-            label={field.label}
+            label={visibleLabel}
             value={resolveSwatchValue()}
             onChange={onChange}
             colors={resolveSwatchColors()}
@@ -410,7 +416,7 @@ function renderField(
           <DynamicOptionField
             key={field.id}
             field={field}
-            label={field.label}
+            label={visibleLabel}
             options={visOpts}
             value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
             onChange={onChange}
@@ -522,7 +528,7 @@ function renderField(
       return (
         <ToggleGroup
           key={field.id}
-          label={field.label}
+          label={visibleLabel}
           options={visOpts}
           value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
           onChange={onChange}
@@ -539,7 +545,7 @@ function renderField(
         <DynamicOptionField
           key={field.id}
           field={field}
-          label={field.label}
+          label={visibleLabel}
           options={visOpts}
           value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
           onChange={onChange}
@@ -558,7 +564,7 @@ function renderField(
         <DynamicOptionField
           key={field.id}
           field={field}
-          label={field.label}
+          label={visibleLabel}
           options={opts}
           value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
           onChange={onChange}
@@ -626,7 +632,7 @@ function renderField(
       return (
         <SwatchPicker
           key={field.id}
-          label={field.label}
+          label={visibleLabel}
           value={resolveSwatchValue()}
           onChange={onChange}
           colors={resolveSwatchColors()}

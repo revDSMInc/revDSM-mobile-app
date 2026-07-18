@@ -277,6 +277,30 @@ function DynamicJobBuilderInner({
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
 
+  // Web parity (dynamic-job-builder.js `verticalHasUnlockedSteps`): a vertical is
+  // "configured" for this deal when it has at least one non-summary tab that isn't
+  // locked (its dealCenter-driven visibility passes). A vertical whose every step is
+  // locked — only the auto Summary remains — is treated as locked so, in a
+  // multi-product deal, only the configured Job Builder(s) can be opened. Edit mode
+  // (`portalUnrestrictedEdit`) unlocks everything, matching web's `unlockAll`.
+  const verticalHasUnlockedSteps = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    verticalList.forEach((v: any) => {
+      if (portalUnrestrictedEdit) {
+        map[v.id] = true;
+        return;
+      }
+      const locked = new Set(lockedTabIdsByVertical[v.id] || []);
+      map[v.id] = (v.tabs || []).some((t: any) => !t.isSummary && !locked.has(t.id));
+    });
+    return map;
+  }, [verticalList, lockedTabIdsByVertical, portalUnrestrictedEdit]);
+
+  const lockedVerticalIds = useMemo(
+    () => verticalList.filter((v: any) => !verticalHasUnlockedSteps[v.id]).map((v: any) => v.id),
+    [verticalList, verticalHasUnlockedSteps]
+  );
+
   // Embedded (wizard step 1): stream the edited job state up so the wizard can
   // price the delta (Job Price step), diff it (Review step), and submit it. The
   // callback is held in a ref so an inline parent handler doesn't re-fire the
@@ -461,6 +485,18 @@ function DynamicJobBuilderInner({
     () => verticalList.find((v: any) => v.id === selectedVerticalId) || verticalList[0],
     [verticalList, selectedVerticalId]
   );
+
+  // Web parity (dynamic-job-builder.js:225-245): if the initially-selected vertical
+  // is fully locked (not configured for this deal), hand off to the first vertical
+  // that HAS unlocked steps so the rep doesn't land on an un-openable product.
+  useEffect(() => {
+    if (verticalList.length <= 1) return;
+    if (verticalHasUnlockedSteps[selectedVerticalId]) return;
+    const target = verticalList.find((v: any) => verticalHasUnlockedSteps[v.id]);
+    if (!target || target.id === selectedVerticalId) return;
+    setSelectedVerticalId(target.id);
+    setSelectedTabId('');
+  }, [verticalList, selectedVerticalId, verticalHasUnlockedSteps]);
 
   const currentVerticalLockedTabIds = useMemo(() => {
     // Web `portalUnrestrictedEdit`: every tab is unlocked so the user can freely
@@ -1053,7 +1089,7 @@ function DynamicJobBuilderInner({
               selectedVerticalId={selectedVerticalId}
               onVerticalChange={handleVerticalSelect}
               jobState={jobState}
-              lockedTabIds={currentVerticalLockedTabIds}
+              lockedVerticalIds={lockedVerticalIds}
             />
           )}
 

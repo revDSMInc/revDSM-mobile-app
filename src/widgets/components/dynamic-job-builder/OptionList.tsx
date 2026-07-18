@@ -47,7 +47,15 @@ export function OptionList({
   columns,
   isMulti = false,
 }: OptionListProps) {
-  const cols = columns && columns > 0 ? Math.max(1, Math.round(columns)) : autoColumns(options);
+  const requestedCols = columns && columns > 0 ? Math.max(1, Math.round(columns)) : autoColumns(options);
+  // Long option labels (e.g. Roofing → Shingles "Premium Architectural (30-year)")
+  // clip on a narrow phone when the schema requests 3–4 columns. Web fits them by
+  // shrinking the font to fit desktop-wide cells; on mobile we instead cap the
+  // columns so the label has room — very long ⇒ stacked full-width, long ⇒ 2-up —
+  // then let the text wrap (below) so nothing is cut off. Short options are unaffected.
+  const longestOption = options.reduce((max, o) => Math.max(max, (o || '').length), 0);
+  const columnCap = longestOption > 18 ? 1 : longestOption > 10 ? 2 : requestedCols;
+  const cols = Math.min(requestedCols, columnCap);
   const selectedValues = isMulti ? (Array.isArray(value) ? value : []) : [];
 
   const isSelected = (opt: string) =>
@@ -90,9 +98,12 @@ export function OptionList({
                 }}
               >
                 <Text
-                  numberOfLines={1}
+                  numberOfLines={2}
                   className="text-[12px] font-black"
-                  style={{ color: selected ? color : '#64748B' }}
+                  style={{
+                    color: selected ? color : '#64748B',
+                    textAlign: cols > 1 ? 'center' : 'left',
+                  }}
                 >
                   {opt}
                 </Text>
