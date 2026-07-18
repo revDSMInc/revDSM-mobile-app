@@ -154,6 +154,10 @@ export function resolveColorsForField(field: any, tab: any, products: any[] = []
     return field.customColors.map((c: any) => ({
       name: c.name || c.hex,
       hex: c.hex,
+      // Preserve the second hex of a two-colour COMBINATION swatch (e.g. Wire
+      // Color White/Black) so the SwatchPicker can render the 135° split (web
+      // `color-value-utils.js` `isDualColor`). Dropping it rendered a solid swatch.
+      ...(c.hex2 ? { hex2: c.hex2 } : {}),
       imageUrl: c.imageUrl || '',
       bucketName: c.bucketName || '',
       filePath: c.filePath || '',

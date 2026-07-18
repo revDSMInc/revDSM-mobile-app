@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import Svg, { Rect, Polygon } from 'react-native-svg';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GUTTER_COLORS } from '../../../utils/dynamic-job-builder/constants/color-palettes';
 import { LeadService } from '../../../services/api/leads';
@@ -7,9 +8,41 @@ import { LeadService } from '../../../services/api/leads';
 interface SwatchColor {
   name: string;
   hex: string;
+  /**
+   * Optional SECOND hex marking a two-colour COMBINATION swatch (e.g. Lighting
+   * "Wire Color" White/Black). Web (`color-value-utils.js` `isDualColor`) flags the
+   * combination by the presence of `hex2` — NOT a `'both'` sentinel.
+   */
+  hex2?: string;
   imageUrl?: string;
   bucketName?: string;
   filePath?: string;
+}
+
+// A palette entry with a second hex is a two-colour COMBINATION swatch, rendered as a
+// 135° half/half split — `hex` top-left, `hex2` bottom-right — exactly like web
+// (`getColorSwatchSx`: `linear-gradient(135deg, hex 50%, hex2 50%)`). RN can't put a
+// gradient in `backgroundColor`, so the swatch rendered blank; we draw the split with
+// SVG using the entry's own two colours (data-driven, not hardcoded white/black).
+function isDualColor(c?: SwatchColor): boolean {
+  return Boolean(c && c.hex2);
+}
+
+// Fills its parent (an already-clipped rounded swatch) with the web diagonal split:
+// `topLeft` base + `bottomRight` triangle {TR, BR, BL}, matching the 135° gradient.
+function DiagonalSplit({ topLeft, bottomRight }: { topLeft: string; bottomRight: string }) {
+  return (
+    <Svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      style={StyleSheet.absoluteFill}
+    >
+      <Rect x="0" y="0" width="100" height="100" fill={topLeft || '#FFFFFF'} />
+      <Polygon points="100,0 100,100 0,100" fill={bottomRight} />
+    </Svg>
+  );
 }
 
 interface SwatchPickerProps {
@@ -118,6 +151,7 @@ export function SwatchPicker({
 
   const renderSwatch = (c: SwatchColor, size: 'grid' | 'modal') => {
     const selected = value === c.name;
+    const both = isDualColor(c);
     const isLight = c.name?.toLowerCase() === 'white';
     return (
       <TouchableOpacity
@@ -132,12 +166,18 @@ export function SwatchPicker({
         <View
           className={size === 'grid' ? 'w-full h-full rounded-xl items-center justify-center' : 'w-full h-14 rounded-xl items-center justify-center'}
           style={{
-            backgroundColor: c.hex,
+            // Combination swatch paints via the SVG split below (its first hex is the
+            // base here); a normal colour paints its hex directly. `overflow: 'hidden'`
+            // clips the split to the rounded corners.
+            backgroundColor: both ? (c.hex || '#FFFFFF') : c.hex,
             borderWidth: 4,
             borderColor: selected ? accentColor : '#E2E8F0',
+            overflow: 'hidden',
           }}
         >
-          {selected && <Icon name="check" size={22} color={isLight ? accentColor : '#fff'} />}
+          {both && <DiagonalSplit topLeft={c.hex || '#FFFFFF'} bottomRight={c.hex2 as string} />}
+          {/* Green check on the combo swatch stays legible over both halves. */}
+          {selected && <Icon name="check" size={22} color={both || isLight ? accentColor : '#fff'} />}
         </View>
         {size === 'modal' && (
           <Text className="text-[9px] font-bold text-slate-500 mt-1 text-center" numberOfLines={1}>{c.name}</Text>
@@ -228,12 +268,16 @@ export function SwatchPicker({
             className="flex-row items-center rounded-full py-2 px-4"
             style={{ backgroundColor: accentColor }}
           >
-            {selectedHex && (
+            {isDualColor(selectedColor) ? (
+              <View className="w-4 h-4 rounded-full border border-white/20 mr-2" style={{ overflow: 'hidden' }}>
+                <DiagonalSplit topLeft={selectedColor?.hex || '#FFFFFF'} bottomRight={selectedColor?.hex2 as string} />
+              </View>
+            ) : selectedHex ? (
               <View
                 className="w-4 h-4 rounded-full border border-white/20 mr-2"
                 style={{ backgroundColor: selectedHex }}
               />
-            )}
+            ) : null}
             <Icon name="check" size={12} color="#fff" />
             <Text className="text-white text-[10px] font-black ml-1">{value}</Text>
           </View>

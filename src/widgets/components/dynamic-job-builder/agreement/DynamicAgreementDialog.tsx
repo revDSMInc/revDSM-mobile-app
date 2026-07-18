@@ -74,7 +74,16 @@ function formatInstallDate(raw: any): string {
   }
 }
 
-const money = (v: any) => (v || v === 0 ? `$${v}` : '$0.00');
+// Format a price for the agreement with a thousands separator (web parity: the
+// result-lead-modal formats contract price / down payment / balance with
+// `.toLocaleString()` before they reach the agreement, e.g. "6,000"). Mobile keeps
+// them as raw numbers, so add the commas here — "$6000" → "$6,000". Strips any
+// pre-existing `$`/commas so an already-formatted string doesn't double up.
+const money = (v: any) => {
+  if (v === '' || v === null || v === undefined) return '$0.00';
+  const num = Number(String(v).replace(/[$,\s]/g, ''));
+  return Number.isFinite(num) ? `$${num.toLocaleString('en-US')}` : `$${v}`;
+};
 
 /**
  * RN port of web `dynamic-agreement-dialog.js`. Fetches the agreement config +

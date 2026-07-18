@@ -132,6 +132,22 @@ export function buildDealCenterData({
   // 1. Start with the lead's own data (lowest priority)
   const data: Record<string, any> = { ...(lead || {}) };
 
+  // 1b. Resolve a display customer name for downstream consumers — the job-builder
+  //     appointment "Job Booked!" modal reads `dealCenterData.customerName`
+  //     (DynamicJobBuilderScreen). Web passes the lead's flat `customerData.name`;
+  //     the mobile lead instead stores the name under customerDetails.firstName/
+  //     lastName (or `title`), so `customerName` is otherwise absent and the modal
+  //     renders blank while the header/summary (which resolve it themselves) show it.
+  //     Mirror that same resolution here so every consumer has one. Only sets when a
+  //     name can be resolved and the lead didn't already carry an explicit one.
+  if (!data.customerName) {
+    const cd = (lead as any)?.customerDetails || {};
+    const resolvedName = cd.firstName
+      ? `${cd.firstName} ${cd.lastName || ''}`.trim()
+      : (lead as any)?.name || (lead as any)?.title || '';
+    if (resolvedName) data.customerName = resolvedName;
+  }
+
   // 2. Ingest every active calculator entry under all its known key aliases
   Object.values(entries).forEach((entry: any) => {
     if (!entry?.fieldId) return;

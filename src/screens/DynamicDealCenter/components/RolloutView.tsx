@@ -813,8 +813,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Mirrors the regular rollout's drop checks: below the floored cost → exceeds
     // the rollout end price → the selected plan's own minimum (minPrice-driven,
     // web parity — a plan's minPrice, e.g. 7,500, is the single source of truth).
-    const cost = effectiveCostOf(calculator);
-    if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price cannot be less than cost (${fmt(cost)})`); return; }
+    // Web `handleOpenDropPrice` floors the drop at the calc's COST tier priced at its
+    // OWN payment method (fee-inflated) — i.e. the displayed COST tile ($1,117) — NOT
+    // the fee-free cost the end-price check uses. Reuse the COST tile value so the
+    // threshold and message match web (`getCalculationResult(calc, '50', method)`).
+    const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
+    if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price must be at least the cost price (${fmt(cost)}).`); return; }
     if (priceNum > 0 && v > priceNum) { FlashMessage.error('Invalid drop price', `Drop price cannot exceed rollout end price (${fmt(priceNum)})`); return; }
     // Wells Fargo "high" $7,500 hardcoded floor (web `handleAddDrop`) — enforced
     // even if the backend plan omits minPrice.
@@ -832,18 +836,19 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   };
 
   // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
-  // new one). Web parity (`handleDisplayDropAction` + `handleAddDrop`'s
-  // `existingDeclinedIndex` dedup): an explicit Display index wins; otherwise a
-  // brand-new drop still updates an existing DECLINED entry at the SAME price
-  // instead of appending a duplicate. Only a genuinely-new price appends. This
-  // closes the "new drop created when it should edit that one" bug — re-securing or
-  // re-negotiating a price you already dropped edits that entry.
+  // new one). Web parity (`handleDisplayDropAction` + `handleSecurePrice`'s
+  // same-price dedup): an explicit Display index wins; otherwise a brand-new drop at a
+  // price that ALREADY EXISTS updates that entry instead of appending a duplicate.
+  // Match by price REGARDLESS OF STATUS (not just declined): securing the same price
+  // "again and again" via + Nth Drop previously appended a fresh entry each time (the
+  // existing same-price entry was accepted, so a declined-only match missed it),
+  // stacking duplicate $400/$6,000 rows that then flooded the admin drops table. A
+  // drop price is a single negotiated number — two entries at the identical price are
+  // never meaningful — so only a genuinely-NEW price appends.
   const resolveDropTargetIndex = () =>
     pendingDropIndex >= 0
       ? pendingDropIndex
-      : drops.findIndex(
-          (d) => d.status === 'declined' && Number(d.price ?? d.dropedPrice) === pendingDrop,
-        );
+      : drops.findIndex((d) => Number(d.price ?? d.dropedPrice) === pendingDrop);
 
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
@@ -1178,7 +1183,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               <View key={i} style={{ marginBottom: 24 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#16A34A', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
+                    {/* Web parity (QuoteResultCard): the "Nth Dropped Price" label is
+                        green ONLY for the secured drop; locked/declined drops use the
+                        muted secondary gray (web `isSecured ? '#2e7d32' : text.secondary`).
+                        Was hardcoded green for every row. */}
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : '#64748B', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
                     {secured && (
                       <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>✓ SECURED</Text>
