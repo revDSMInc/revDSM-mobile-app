@@ -1,6 +1,10 @@
 pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
 plugins { id("com.facebook.react.settings") }
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+// Invoke the RN CLI directly via `node` instead of the default `npx @react-native-community/cli`.
+// npx triggers npm's background update-notifier, which can hit `spawn EPERM` on Windows; that
+// unhandled rejection makes the process exit 1 on Node 22+ even though valid config JSON is produced,
+// which aborts autolinking (native modules like @rnmapbox/maps & vision-camera silently fail to link).
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand(["node", "node_modules/react-native/cli.js", "config"]) }
 rootProject.name = 'revDSM_Sales'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')

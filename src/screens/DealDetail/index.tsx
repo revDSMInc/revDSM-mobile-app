@@ -123,10 +123,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
   );
 
-  const customerName =
-    `${lead?.customerDetails?.firstName || ''} ${lead?.customerDetails?.lastName || ''}`.trim() ||
-    'Customer';
-
   const scheduleData = lead?.jobBuilder?.scheduleTime || lead?.jobBuilderData?.scheduleTime;
   const scheduleDate = scheduleData?.date || lead?.leadDate;
   const timeWindow = scheduleData?.timeWindow || '';
@@ -260,14 +256,10 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
       >
         <Ionicons name="arrow-back" size={16} color="#637381" />
       </TouchableOpacity>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }} numberOfLines={1}>
-          {customerName}
-        </Text>
-        <Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8', marginTop: 1 }}>
-          {lead?.leadId ? `#${lead.leadId}` : 'Deal'}
-        </Text>
-      </View>
+      {/* Customer name/lead id intentionally omitted (web parity — this screen
+          shows no customer title). The spacer keeps the back button left-aligned
+          and the edit pencil right-aligned. */}
+      <View style={{ flex: 1 }} />
       {!isCancelled && (
         <TouchableOpacity
           onPress={onEdit}
@@ -328,11 +320,6 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
         <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, marginBottom: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A' }}>Contract Details</Text>
-            {isResulted && !isCancelled && (
-              <TouchableOpacity onPress={onEdit}>
-                <Icon name="pencil-outline" size={20} color="#22C55E" />
-              </TouchableOpacity>
-            )}
           </View>
 
           {isSale && (

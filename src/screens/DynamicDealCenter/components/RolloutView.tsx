@@ -407,8 +407,8 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
                       <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A', marginRight: 4 }}>$</Text>
                       <TextInput
                         style={{ flex: 1, fontSize: 16, fontWeight: '900', color: '#0F172A', padding: 0 }}
-                        value={downText}
-                        onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                        value={formatAmountInput(downText)}
+                        onChangeText={(t) => setDownText(stripAmount(t))}
                         placeholder="0" placeholderTextColor="#94A3B8" keyboardType="numeric"
                       />
                     </View>
@@ -1119,8 +1119,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginRight: 4, lineHeight: 14 }}>$</Text>
                       <TextInput
                         style={{ flex: 1, fontSize: 11, fontWeight: '900', color: '#1C252E', padding: 0, margin: 0, height: '100%', lineHeight: 14, textAlignVertical: 'center' }}
-                        value={downText}
-                        onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                        value={formatAmountInput(downText)}
+                        onChangeText={(t) => setDownText(stripAmount(t))}
                         onEndEditing={commitDownPayment}
                         onBlur={commitDownPayment}
                         placeholder="Down Payment"
@@ -1155,13 +1155,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 </View>
               </View>
             </View>
-          </View>
-        )}
-
-        {/* Unconfirmed prompt (stays inside card) */}
-        {!calculator.isRolloutConfirmed && (
-          <View style={{ alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14 }}>
-            <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>Enter price, then confirm below to lock</Text>
           </View>
         )}
       </View>

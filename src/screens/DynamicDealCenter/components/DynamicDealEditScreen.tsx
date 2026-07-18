@@ -10,6 +10,18 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  getDay,
+  addDays,
+  subMonths,
+  addMonths,
+  isSameDay,
+  startOfToday,
+} from 'date-fns';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQuery } from '@tanstack/react-query';
@@ -31,7 +43,6 @@ import {
   type Tiers,
 } from '../utils/dynamic-deal-pricing';
 import { computeDynamicBuildChanges } from '../utils/dynamic-deal-diff';
-import { AppointmentSchedulerModal } from '../../../widgets/modals/job-builder/AppointmentSchedulerModal';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 
@@ -41,7 +52,8 @@ import { FlashMessage } from '../../../config/message';
  * Reached from Deal Detail → Edit (web: ContractDetails pencil → isDynamicDeal
  * branch). Steps mirror `STEP_LABELS`:
  *
- *   0 Install Date  — reschedule the install appointment (AppointmentSchedulerModal)
+ *   0 Install Date  — reschedule the install appointment via an inline calendar +
+ *                     propose-a-time card (web parity), or skip to keep the current
  *   1 Job Build     — embed the DYNAMIC job builder in edit mode (unlockAll, no
  *                     allocation trackers), streaming edited state up
  *   2 Job Price     — reconfirm rollout tiers + contract price + payment methods
@@ -53,6 +65,12 @@ import { FlashMessage } from '../../../config/message';
 const STEP_LABELS = ['Install Date', 'Job Build', 'Job Price', 'Review & Submit'];
 
 const fmtMoney = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString()}`;
+
+// Install time windows for the inline "propose a time" step (web parity).
+const INSTALL_WINDOWS = [
+  { period: 'AM', value: '8:00 AM - 12:00 PM' },
+  { period: 'PM', value: '12:00 PM - 4:00 PM' },
+];
 
 interface DynamicDealEditScreenProps {
   navigation?: NativeStackNavigationProp<any>;
@@ -84,11 +102,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [step, setStep] = useState(0);
   const [editedJobState, setEditedJobState] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [scheduleTimeWindow, setScheduleTimeWindow] = useState('');
+  // Inline install-date rescheduler (web parity): the Step-0 calendar and the
+  // "propose a time" card both live in the step itself, not a modal. `dateStep`
+  // toggles between them; picking a calendar date proposes a time for it.
+  const [dateStep, setDateStep] = useState<'calendar' | 'time'>('calendar');
+  const [proposedDate, setProposedDate] = useState<Date | null>(null);
+  const [proposedSlotIdx, setProposedSlotIdx] = useState(0);
 
   const [contractPrice, setContractPrice] = useState(0);
   const [downPayment, setDownPayment] = useState(0);
@@ -230,6 +253,21 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const balance = Math.max(0, (Number(contractPrice) || 0) - (Number(downPayment) || 0));
   const newMarkup = getMarkupInfo(contractPrice, tierResult.next, undefined);
 
+  // Current install date parsed for the inline calendar highlight, and formatted
+  // for display (fixes the raw-ISO string that was shown, e.g. 2026-07-17T20:00:00
+  // -04:00 → 7/17/2026 · <window>). Mirrors AppointmentSchedulerModal's parsing.
+  const parsedScheduleDate = useMemo(() => {
+    if (!scheduleDate || scheduleDate === 'TBD') return null;
+    const d = new Date(scheduleDate);
+    return isNaN(d.getTime()) ? null : d;
+  }, [scheduleDate]);
+  const currentInstallLabel = useMemo(() => {
+    if (!scheduleDate) return 'Not Scheduled';
+    if (scheduleDate === 'TBD') return `TBD${scheduleTimeWindow ? ` · ${scheduleTimeWindow}` : ''}`;
+    const dateStr = parsedScheduleDate ? format(parsedScheduleDate, 'M/d/yyyy') : scheduleDate;
+    return `${dateStr}${scheduleTimeWindow ? ` · ${scheduleTimeWindow}` : ''}`;
+  }, [scheduleDate, scheduleTimeWindow, parsedScheduleDate]);
+
   // ── change detection + diff ─────────────────────────────────────────────────
   const buildChangeGroups = useMemo(
     () => (editedJobState ? computeDynamicBuildChanges(initialState, editedJobState, jobBuilderConfig) : []),
@@ -260,11 +298,38 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey;
 
   // ── handlers ────────────────────────────────────────────────────────────────
-  const handleScheduleConfirm = useCallback((data: any) => {
-    setScheduleDate(data?.date || null);
-    setScheduleTimeWindow(data?.timeWindow || '');
-    setSchedulerOpen(false);
+  // Tap a calendar date → propose the first time window for it (web parity).
+  const handleInlineDateSelect = useCallback((day: Date) => {
+    setProposedDate(day);
+    setProposedSlotIdx(0);
+    setDateStep('time');
+  }, []);
+
+  // "No" on the proposed time → next window, or roll to the next non-Sunday day.
+  const handleProposeNextSlot = useCallback(() => {
+    if (proposedSlotIdx < INSTALL_WINDOWS.length - 1) {
+      setProposedSlotIdx(proposedSlotIdx + 1);
+    } else {
+      let next = addDays(proposedDate || new Date(), 1);
+      while (getDay(next) === 0) next = addDays(next, 1);
+      setProposedDate(next);
+      setProposedSlotIdx(0);
+    }
+  }, [proposedSlotIdx, proposedDate]);
+
+  // "Yes" → commit the proposed schedule and advance to the Job Build step.
+  const handleAcceptProposedTime = useCallback(() => {
+    if (!proposedDate) return;
+    setScheduleDate(format(proposedDate, 'M/d/yyyy'));
+    setScheduleTimeWindow(INSTALL_WINDOWS[proposedSlotIdx].value);
+    setDateStep('calendar');
+    setProposedDate(null);
     setStep(1);
+  }, [proposedDate, proposedSlotIdx]);
+
+  const handleBackToCalendar = useCallback(() => {
+    setDateStep('calendar');
+    setProposedDate(null);
   }, []);
 
   const handleAutoAdjust = useCallback(() => {
@@ -511,38 +576,51 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         {/* STEP 0 — Install Date */}
         {step === 0 && (
           <ScrollView contentContainerStyle={{ padding: 16 }}>
-            <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, marginBottom: 12 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginBottom: 4 }}>Current Install Date</Text>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A' }}>
-                {scheduleDate ? `${scheduleDate}${scheduleTimeWindow ? ` · ${scheduleTimeWindow}` : ''}` : 'Not Scheduled'}
+            {/* Compact "Current" pill (web parity): label left, value inline right. */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 12 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#94A3B8' }}>Current</Text>
+              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A', flexShrink: 1, textAlign: 'right', marginLeft: 12 }}>
+                {currentInstallLabel}
               </Text>
             </View>
 
-            <TouchableOpacity
-              onPress={() => setSchedulerOpen(true)}
-              style={{ backgroundColor: '#0EA5E9', borderRadius: 12, paddingVertical: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 10 }}
-            >
-              <Icon name="calendar-edit" size={18} color="#fff" />
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Reschedule Install Date</Text>
-            </TouchableOpacity>
+            {dateStep === 'calendar' ? (
+              <>
+                {/* Inline calendar (web parity: the edit step opens directly on
+                    the calendar). Tapping a date proposes a time for it below. */}
+                <InstallDateCalendar selectedDate={parsedScheduleDate} onSelect={handleInlineDateSelect} />
 
-            <TouchableOpacity
-              onPress={() => setStep(1)}
-              style={{ borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}
-            >
-              <Text style={{ color: '#334155', fontWeight: '800', fontSize: 14 }}>No Change — Continue</Text>
-            </TouchableOpacity>
+                {/* Hint above two side-by-side actions (web parity). */}
+                <Text style={{ fontSize: 11, color: '#94A3B8', textAlign: 'center', marginTop: 4, marginBottom: 14, lineHeight: 16 }}>
+                  Sundays unavailable · Pick a date to propose a time, or Skip to keep the current one.
+                </Text>
 
-            <TouchableOpacity
-              onPress={() => setShowCancelConfirm(true)}
-              style={{ borderWidth: 1, borderColor: '#FCA5A5', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
-            >
-              <Text style={{ color: '#DC2626', fontWeight: '800', fontSize: 14 }}>Cancel Job</Text>
-            </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <TouchableOpacity
+                    onPress={() => setStep(1)}
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#334155', fontWeight: '800', fontSize: 14 }}>No Change — Skip</Text>
+                  </TouchableOpacity>
 
-            <Text style={{ fontSize: 11, color: '#94A3B8', textAlign: 'center', marginTop: 14, lineHeight: 16 }}>
-              Sundays unavailable · Pick a date to propose a time, or Continue to keep the current one.
-            </Text>
+                  <TouchableOpacity
+                    onPress={() => setShowCancelConfirm(true)}
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#FDBA74', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#EA580C', fontWeight: '800', fontSize: 14 }}>Cancel Job</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              /* Propose-a-time card shown after a calendar date is tapped. */
+              <ProposedTimeCard
+                date={proposedDate}
+                slot={INSTALL_WINDOWS[proposedSlotIdx]}
+                onNo={handleProposeNextSlot}
+                onYes={handleAcceptProposedTime}
+                onBack={handleBackToCalendar}
+              />
+            )}
           </ScrollView>
         )}
 
@@ -738,17 +816,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         </View>
       )}
 
-      {/* Install Date scheduler (web step-0 calendar + AM/PM proposal) */}
-      <AppointmentSchedulerModal
-        visible={schedulerOpen}
-        onClose={() => setSchedulerOpen(false)}
-        onConfirm={handleScheduleConfirm}
-        customerName={customerName}
-        isEdit
-        initialDate={scheduleDate || undefined}
-        initialTimeWindow={scheduleTimeWindow || undefined}
-      />
-
       {/* Cancel Job confirmation */}
       <Modal visible={showCancelConfirm} transparent animationType="fade" onRequestClose={() => setShowCancelConfirm(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -773,6 +840,139 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 }
 
 // ── subcomponents ────────────────────────────────────────────────────────────
+
+/**
+ * Inline install-date calendar for edit Step 0 (web parity). Same date-fns logic
+ * as AppointmentSchedulerModal's `renderCalendar`: Sundays and past dates are
+ * disabled, the current install date is highlighted, today gets a dot. Tapping a
+ * selectable date calls `onSelect`, which opens the scheduler on its time step.
+ */
+function InstallDateCalendar({
+  selectedDate,
+  onSelect,
+}: {
+  selectedDate: Date | null;
+  onSelect: (day: Date) => void;
+}) {
+  const [currentMonth, setCurrentMonth] = useState<Date>(() => selectedDate || new Date());
+  const daysInMonth = eachDayOfInterval({ start: startOfMonth(currentMonth), end: endOfMonth(currentMonth) });
+  const startDay = getDay(startOfMonth(currentMonth));
+  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+  return (
+    <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, marginBottom: 12 }}>
+      {/* Web layout: month + caret on the left, nav chevrons grouped on the right. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+          <Text style={{ fontSize: 16, fontWeight: '900', color: '#334155' }}>{format(currentMonth, 'MMMM yyyy')}</Text>
+          <Icon name="chevron-down" size={20} color="#94A3B8" />
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <TouchableOpacity onPress={() => setCurrentMonth(subMonths(currentMonth, 1))} style={{ padding: 4 }}>
+            <Icon name="chevron-left" size={24} color="#94A3B8" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setCurrentMonth(addMonths(currentMonth, 1))} style={{ padding: 4 }}>
+            <Icon name="chevron-right" size={24} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+        {dayLabels.map((d, i) => (
+          <Text key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>
+            {d}
+          </Text>
+        ))}
+      </View>
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {Array.from({ length: startDay }).map((_, i) => (
+          <View key={`blank-${i}`} style={{ width: '14.28%', height: 44 }} />
+        ))}
+        {daysInMonth.map((day, i) => {
+          const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
+          const isToday = isSameDay(day, new Date());
+          const isDisabled = day < startOfToday() || getDay(day) === 0;
+          return (
+            <TouchableOpacity
+              key={i}
+              disabled={isDisabled}
+              onPress={() => onSelect(day)}
+              style={{ width: '14.28%', height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <View
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: isSelected ? '#22C55E' : 'transparent',
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '900', color: isSelected ? '#fff' : isDisabled ? '#E2E8F0' : '#475569' }}>
+                  {format(day, 'd')}
+                </Text>
+              </View>
+              {isToday && !isSelected && (
+                <View style={{ position: 'absolute', bottom: 4, width: 4, height: 4, borderRadius: 2, backgroundColor: '#22C55E' }} />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * "Propose a time" card shown after a calendar date is tapped (web parity):
+ * full date, an AM/PM window pill, Yes/No, and a "Back to calendar" link. "No"
+ * cycles to the next window/day; "Yes" commits the schedule.
+ */
+function ProposedTimeCard({
+  date,
+  slot,
+  onNo,
+  onYes,
+  onBack,
+}: {
+  date: Date | null;
+  slot: { period: string; value: string };
+  onNo: () => void;
+  onYes: () => void;
+  onBack: () => void;
+}) {
+  if (!date) return null;
+  return (
+    <View style={{ backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', padding: 24, alignItems: 'center' }}>
+      <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 8 }}>Proposed Install Date</Text>
+      <Text style={{ fontSize: 20, fontWeight: '900', color: '#1E293B', marginBottom: 14, textAlign: 'center' }}>
+        {format(date, 'EEEE, MMMM d, yyyy')}
+      </Text>
+
+      <View style={{ backgroundColor: '#DCFCE7', borderRadius: 999, paddingHorizontal: 18, paddingVertical: 8, marginBottom: 20 }}>
+        <Text style={{ fontSize: 15, fontWeight: '900', color: '#15803D' }}>{`${slot.period} · ${slot.value}`}</Text>
+      </View>
+
+      <Text style={{ fontSize: 15, fontWeight: '700', color: '#475569', marginBottom: 20 }}>Does this time work?</Text>
+
+      <View style={{ flexDirection: 'row', gap: 12, width: '100%', marginBottom: 16 }}>
+        <TouchableOpacity onPress={onNo} style={{ flex: 1, height: 52, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
+          <Text style={{ color: '#475569', fontWeight: '900', fontSize: 14 }}>No</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onYes} style={{ flex: 1, height: 52, borderRadius: 12, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>Yes</Text>
+        </TouchableOpacity>
+      </View>
+
+      <TouchableOpacity onPress={onBack} style={{ paddingVertical: 4 }}>
+        <Text style={{ fontSize: 13, fontWeight: '800', color: '#94A3B8' }}>← Back to calendar</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function StepDots({ step }: { step: number }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>

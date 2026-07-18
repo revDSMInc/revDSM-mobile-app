@@ -156,9 +156,12 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
           placeholderTextColor="#919EAB"
           keyboardType="numeric"
         />
-        {/* Right side shows only the price (name + price) — the sqft/ft unit is
-            intentionally omitted to match the regular calculator form, where the
-            per-row `unit` is never surfaced (it lives in the field label instead). */}
+        {/* Expected measurement unit (ft, sq ft, ea, lin ft, …) shown as a grey
+            suffix right after the entered value so reps know what the field expects. */}
+        {!!field.unit && (
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#919EAB', marginLeft: 6 }}>{field.unit}</Text>
+        )}
+        {/* Right side shows the green retail price. */}
         {!!field.price && (
           <View style={{ flexDirection: 'row', alignItems: 'center', borderLeftWidth: 1, borderLeftColor: '#919EAB33', paddingLeft: 12, marginLeft: 8 }}>
             <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>${field.price.retail}</Text>
