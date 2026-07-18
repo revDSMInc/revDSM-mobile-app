@@ -3,13 +3,12 @@ import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../hooks/useAuth';
+import { useSecureLogo } from '../../hooks/useSecureLogo';
 import { useTheme } from '../../theme/ThemeProvider';
 import { AccountPopover } from '../components/AccountPopover';
 import { ChatThreadsManager } from './ChatThreadsManager';
 import { useNavigation } from '@react-navigation/native';
-import { LeadService } from '../../services/api/leads';
 import Logo from '../../assets/svgs/light-logo';
-import { ENV } from '../../config/env';
 import { GlobalModal } from '../common/modal/GlobalModal';
 
 import { createContext, useContext } from 'react';
@@ -54,8 +53,13 @@ export function Header({
   const ctx = useContext(HeaderContext);
   const [popoverVisible, setPopoverVisible] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState(false);
+
+  // Multi-tenant dynamic branding (web parity — `account-popover.js` renders the
+  // company logo via `useSecureLogo`): the header brand button shows the tenant's
+  // company logo (`user.companyLogo`, falling back to `user.profilePicture`),
+  // presigned per session. Falls back to the rep's initials when neither resolves.
+  const secureLogo = useSecureLogo();
 
   const activeOnNavigate = parentOnNavigate || ctx?.onNavigate;
   const activeOnFilterPress = parentOnFilterPress || ctx?.onFilterPress;
@@ -68,46 +72,11 @@ export function Header({
 
   const initials = `${user?.firstName?.[0] || 'U'}${user?.lastName?.[0] || ''}`;
 
-
+  // Reset the image-error flag whenever a new logo URL resolves so a transient
+  // failure doesn't permanently pin the avatar to initials.
   useEffect(() => {
-    const pic = user?.profilePicture;
-    if (!pic) {
-      setResolvedAvatarUrl(null);
-      return;
-    }
-
     setAvatarError(false);
-
-    if (typeof pic === 'string' && pic.startsWith('http')) {
-      setResolvedAvatarUrl(pic);
-      return;
-    }
-
-    let filePath = '';
-    let bucketName = ENV.S3_BUCKET;
-
-    if (typeof pic === 'string') {
-      filePath = pic;
-    } else if (typeof pic === 'object' && pic?.filePath) {
-      filePath = pic.filePath;
-      bucketName = pic.bucketName || bucketName;
-    }
-
-
-    if (!filePath) {
-      setResolvedAvatarUrl(null);
-      return;
-    }
-
-    LeadService.getSecureUrls([{ bucketName, filePath }])
-      .then((res: any) => {
-        const secureData = res.data?.data || res.data || [];
-        if (secureData[0]?.secureUrl) {
-          setResolvedAvatarUrl(secureData[0].secureUrl);
-        }
-      })
-      .catch((err: any) => console.warn('Header avatar resolve failed', err));
-  }, [user?.profilePicture?.filePath, user?.profilePicture]);
+  }, [secureLogo]);
 
   return (
     <View
@@ -154,9 +123,9 @@ export function Header({
               { backgroundColor: colors.surface, borderColor: colors.primary.main },
             ]}
           >
-            {resolvedAvatarUrl && !avatarError ? (
+            {secureLogo && !avatarError ? (
               <Image
-                source={{ uri: resolvedAvatarUrl }}
+                source={{ uri: secureLogo }}
                 style={{ width: 28, height: 28, borderRadius: 14 }}
                 resizeMode="cover"
                 onError={() => setAvatarError(true)}
