@@ -329,6 +329,15 @@ function renderField(
     products?: any[];
     /** Edit mode (web `unlockAll`) — bypasses the colorSelection lock-when-not-required. */
     editMode?: boolean;
+    /**
+     * Label of the field's containing section / stack / accordion, when that
+     * container already prints it as a heading. An interactive child whose own
+     * label is identical (e.g. a Flooring "Existing Flooring Type" optionList
+     * inside an "Existing Flooring Type" group) suppresses its own label so the
+     * title isn't shown twice — the schema-driven `showLabel: false` case
+     * generalised to catch containers that repeat their single field's name.
+     */
+    parentLabel?: string;
   }
 ) {
   const {
@@ -414,7 +423,13 @@ function renderField(
   // `showLabel === false` (e.g. a `sectionLabel` already titles the group above the
   // control — Roofing → Shingles "Shingle Type"). Mobile ignored this, so the
   // option/toggle/swatch printed a SECOND, duplicate label under the section title.
-  const visibleLabel = field.showLabel === false ? undefined : field.label;
+  // Also hide it when the field's label exactly repeats its container's heading
+  // (`parentLabel`) — e.g. Flooring → Removal, an "Existing Flooring Type"
+  // optionList sitting inside an "Existing Flooring Type" group showed the title
+  // twice even when the schema didn't set `showLabel: false`.
+  const repeatsParentLabel =
+    !!ctx?.parentLabel && !!field.label && field.label === ctx.parentLabel;
+  const visibleLabel = field.showLabel === false || repeatsParentLabel ? undefined : field.label;
 
   switch (normalizedType) {
     case 'text':
@@ -831,6 +846,10 @@ function renderField(
           ? { compactAllocation: true, allocationFillHeight: true }
           : null;
 
+      // Heading this container prints for itself — a child whose label repeats it
+      // suppresses its own duplicate label (see `parentLabel` in renderField).
+      const containerLabel =
+        field.label && field.showLabel !== false ? field.label : undefined;
       const renderedChildren = visibleChildFields
         .map((child: any) => {
           const childVal = parentState?.[child.id];
@@ -838,6 +857,7 @@ function renderField(
           return renderField(child, childVal, childOnChange, {
             ...(ctx || {}),
             sectionFields: childFields,
+            parentLabel: containerLabel,
             ...(allocationChildCtx || {}),
           });
         })
@@ -1095,6 +1115,7 @@ function CombinationSectionBlock({
           sectionState,
           combos,
           sectionFields: allFields,
+          parentLabel: section.label,
           editMode,
         });
       })}
@@ -1135,6 +1156,7 @@ function CombinationSectionBlock({
                 sectionState: combo,
                 combos,
                 sectionFields: allFields,
+                parentLabel: section.label,
                 editMode,
               });
             })}
@@ -1226,6 +1248,7 @@ function SimpleSectionBlock({
             sectionState,
             combos: [],
             sectionFields: allFields,
+            parentLabel: section.label,
             editMode,
           });
         })}
@@ -1254,6 +1277,7 @@ function SimpleSectionBlock({
           sectionState,
           combos: [],
           sectionFields: allFields,
+          parentLabel: section.label,
           editMode,
         });
       })}
