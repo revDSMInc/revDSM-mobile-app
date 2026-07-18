@@ -1,5 +1,5 @@
 import React, { useMemo, Fragment } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import {
   getTabSections,
   getCombinationSectionRowFields,
@@ -1604,9 +1604,14 @@ export function DynamicTabRenderer({
 
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ padding: 12 }}
+        // Bottom padding + iOS keyboard-inset auto-adjust so a focused input (e.g.
+        // Roofing → Flashing measurements) scrolls clear of the keyboard instead of
+        // being hidden behind it. Android relies on the manifest `adjustResize`.
+        contentContainerStyle={{ padding: 12, paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
       >
       {!hasAllocationOnly && hasTabFields && (() => {
         const nonAllocFields = filterFields(

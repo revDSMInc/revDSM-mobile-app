@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text, ScrollView, Platform } from 'react-native';
 import { buildVerticalSummarySections } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SummaryFinalizeCards } from './agreement/SummaryFinalizeCards';
 
@@ -179,7 +179,17 @@ export function VerticalSummaryTab({
   const productKey = vertical?.productId || vertical?.id;
 
   return (
-    <ScrollView style={{ flex: 1 }} className="p-4" showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={{ flex: 1 }}
+      className="p-4"
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingBottom: 160 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      // Keep a focused input (appointment / agreement fields) above the keyboard —
+      // the screen no longer wraps this in a padding KeyboardAvoidingView.
+      automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+    >
       <View className="mb-4">
         <Text className="text-xl font-extrabold text-slate-850">Job Builder Summary</Text>
         <Text className="text-xs text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>

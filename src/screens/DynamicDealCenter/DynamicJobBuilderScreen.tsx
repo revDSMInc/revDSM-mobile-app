@@ -5,8 +5,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -1115,11 +1113,13 @@ function DynamicJobBuilderInner({
 
         {/* The renderer owns its own scroll now (fixed footage tracker + inner
             ScrollView, like the normal JB sections); the summary tab scrolls itself.
-            So there is no outer ScrollView here — that keeps the tracker pinned. */}
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1, backgroundColor: '#F8FAFC' }}
-        >
+            So there is no outer ScrollView here — that keeps the tracker pinned.
+            Keyboard avoidance is handled by each inner ScrollView via
+            `automaticallyAdjustKeyboardInsets` (iOS) + Android `adjustResize`, so
+            the focused input scrolls above the keyboard. A padding-based
+            KeyboardAvoidingView here would instead just shrink the ScrollView above
+            the keyboard, leaving a low field below the fold and hidden (this ticket). */}
+        <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
           {currentTab ? (
             <DynamicTabRenderer
               key={currentTab.id}
@@ -1163,7 +1163,7 @@ function DynamicJobBuilderInner({
               </Text>
             </View>
           )}
-        </KeyboardAvoidingView>
+        </View>
 
         <View
           style={{
