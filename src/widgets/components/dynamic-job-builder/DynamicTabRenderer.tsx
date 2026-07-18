@@ -383,7 +383,15 @@ function renderField(
         />
       );
     }
-    return <LockedField key={field.id} label={field.label} value={lockedValue} />;
+    // A locked COLOUR field keeps the rep's picked colour in state (`value` =
+    // item[field.id]); it is NOT a deal-center value, so resolveLockedValue can
+    // only ever return '—'. Prefer the saved colour so a submitted Extra's colour
+    // shows on reopen instead of a dash. Non-colour locked fields are unchanged.
+    const lockedFieldType = field.widget || field.inputType || field.type;
+    const isLockedColorField =
+      lockedFieldType === 'colorSelection' || lockedFieldType === 'swatch' || lockedFieldType === 'color';
+    const lockedDisplay = isLockedColorField && value ? value : lockedValue;
+    return <LockedField key={field.id} label={field.label} value={lockedDisplay} />;
   }
 
   const normalizedType = field.widget || field.inputType || field.type;
@@ -589,11 +597,16 @@ function renderField(
         isFieldRequired(field, state, depCtx)
       );
       if (effectiveLocked) {
+        // The rep's picked colour lives in state (`value` = item[field.id]) and
+        // survives the save round-trip; it is NOT a deal-center value, so
+        // resolveLockedValue returns '—'. Prefer the saved colour so a submitted
+        // Extra's colour shows on reopen (previously showed '—').
+        const lockedColor = value || resolveLockedValue(field, dealCenterData) || effectiveDefault || '—';
         return (
           <LockedField
             key={field.id}
             label={field.showLabel === false ? undefined : field.label || 'Color'}
-            value={resolveLockedValue(field, dealCenterData) || effectiveDefault || '—'}
+            value={lockedColor}
           />
         );
       }
