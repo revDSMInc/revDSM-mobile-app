@@ -314,6 +314,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onViewAll={() => setFlowStep('rollout')}
           appointmentId={appointmentId || undefined}
           isLowesLead={lead?.lowesLead === true}
+          plans={pricing.plans}
+          defaultMethod={pricing.defaultMethod}
         />
       )}
 

@@ -16,6 +16,8 @@ import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-uti
 import { JobTrackerButton } from './JobTrackerButton';
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
+import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface CalculatorTabLite {
   id: string;
@@ -47,6 +49,15 @@ interface CalculatorViewProps {
   drops?: any[];
   /** Company pricing config — the locked receipt adds the per-tier static fee (web parity). */
   pricingConfig?: PricingConfig | null;
+  /**
+   * Resolved payment plans (web `paymentPlans`) — the locked receipt grosses each
+   * COST/PAR/RETAIL tier up by the selected plan's bank fee, exactly like the live
+   * rollout tiles and web `calculateResultUtil`. Without this the locked tiles
+   * showed the pre-fee sum (e.g. COST $972 vs web's fee-inflated $1,117).
+   */
+  plans?: Record<string, DealPlan>;
+  /** Lead-aware default payment method (web `getDefaultPaymentMethod`) — fallback when the calc/user have none. */
+  defaultMethod?: string;
   /** Resolved appointment id — enables the "Add This Job to Job Tracker" button. */
   appointmentId?: string;
   /** Lowe's lead flag — drives the job-tracker modal's payment-method grouping. */
@@ -371,7 +382,7 @@ function JobSummary({ entries, catMeta, sectionLabelMap }: { entries: Record<str
  * center `LockedCalculatorView` (`CalculatorForm.tsx`). Rendered instead of the
  * editable category list once a tab's rollout price is confirmed (`readOnly`).
  */
-function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals }: {
+function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals, plans, method }: {
   name: string;
   entries: Record<string, CalculatorEntry>;
   catMeta: Record<string, { label: string; style: CatStyle }>;
@@ -379,6 +390,8 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
   drops: any[];
   pricingConfig?: PricingConfig | null;
   verticals: CalculatorSchema[];
+  plans?: Record<string, DealPlan>;
+  method?: string;
 }) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -412,16 +425,20 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
 
   // $200 job-minimum floor per tile (only once there's a real retail total).
   const floorTier = (v: number) => (liveTotals.retail > 0 && v < 200 ? 200 : v);
-  // Web `calculateResultUtil` adds the per-tier static company fee (e.g. a par-only
-  // fee) on top of the stored pure `totals` before the floor — the same fee applied
-  // in the rollout tiles. (Bank-fee gross-up for `check` is 0; a financing method
-  // would gross up in the rollout step, not this locked receipt.)
-  const withFee = (v: number, key: 'cost' | 'par' | 'retail') =>
-    applyFeesToTier(v, key, pricingConfig, { hasLineItems: v > 0 });
+  // Reproduce web `calculateResultUtil` EXACTLY, per tier — matching the live rollout
+  // tiles so the values don't change on lock:
+  //   pure tier sum  →  applyFeesToTier (static company fee, e.g. a par-only fee)
+  //   →  withPlanFee (bank-fee gross-up for the confirmed plan)  →  $200 floor.
+  // The plan gross-up was previously missing here, so a financing-plan calc showed the
+  // pre-fee sum (COST $972) instead of web's fee-inflated tile (COST $1,117).
+  const tierValue = (v: number, key: 'cost' | 'par' | 'retail') => {
+    const withFee = applyFeesToTier(v, key, pricingConfig, { hasLineItems: v > 0 });
+    return floorTier(withPlanFee(plans || {}, withFee, method));
+  };
   const tiers = [
-    { label: 'COST', value: floorTier(withFee(liveTotals.cost, 'cost')), isRetail: false },
-    { label: 'PAR', value: floorTier(withFee(liveTotals.par, 'par')), isRetail: false },
-    { label: 'RETAIL', value: floorTier(withFee(liveTotals.retail, 'retail')), isRetail: true },
+    { label: 'COST', value: tierValue(liveTotals.cost, 'cost'), isRetail: false },
+    { label: 'PAR', value: tierValue(liveTotals.par, 'par'), isRetail: false },
+    { label: 'RETAIL', value: tierValue(liveTotals.retail, 'retail'), isRetail: true },
   ];
 
   const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
@@ -536,9 +553,14 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
 export function CalculatorView({
   verticals, entries, onEntryChange, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
-  price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig,
+  price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig, plans, defaultMethod,
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  const { user } = useAuth();
+  // Payment method the locked receipt prices against — resolved exactly like the
+  // live rollout view (`RolloutView.resolveMethod`): the calc's own saved method,
+  // else the user default, else the lead-aware default. Drives the tier bank-fee.
+  const lockedMethod = activeTab?.paymentMethod || user?.defaultPaymentMethod || defaultMethod || 'check';
   // sectionId → label so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)".
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
@@ -665,6 +687,8 @@ export function CalculatorView({
             drops={drops}
             pricingConfig={pricingConfig}
             verticals={verticals}
+            plans={plans}
+            method={lockedMethod}
           />
         ) : (
           <>
