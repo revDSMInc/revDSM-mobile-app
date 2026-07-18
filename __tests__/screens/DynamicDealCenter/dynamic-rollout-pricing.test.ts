@@ -18,7 +18,41 @@ import {
   getSelectableDiscountKey,
   type DiscountConfig,
 } from '../../../src/screens/DynamicDealCenter/utils/dynamic-discount';
-import { calcMonthly } from '../../../src/screens/DynamicDealCenter/hooks/useDealPricing';
+import { calcMonthly, buildCategories } from '../../../src/screens/DynamicDealCenter/hooks/useDealPricing';
+
+describe('buildCategories — payment-plan picker grouping', () => {
+  const plan = (key: string, type: string, provider: string, minPrice = 0): any => ({
+    key, type, provider, minPrice, label: key, fee: 0, pf: 0, duration: 0, apr: 0,
+  });
+
+  test('splits a provider into its own "(Jobs over $7,500)" group for high-min plans', () => {
+    const cats = buildCategories([
+      plan('check', 'cash', 'Check'),
+      plan('wf4103', 'financing', 'Wells Fargo', 0),
+      plan('wf4115', 'financing', 'Wells Fargo', 0),
+      plan('wf3672', 'financing', 'Wells Fargo', 7500),
+      plan('wf3667', 'financing', 'Wells Fargo', 7500),
+    ]);
+    const titles = cats.map((c) => c.title);
+    expect(titles).toContain('Wells Fargo');
+    expect(titles).toContain('Wells Fargo (Jobs over $7,500)');
+    const high = cats.find((c) => c.title === 'Wells Fargo (Jobs over $7,500)')!;
+    expect(high.plans).toEqual(['wf3672', 'wf3667']);
+    const base = cats.find((c) => c.title === 'Wells Fargo')!;
+    expect(base.plans).toEqual(['wf4103', 'wf4115']);
+  });
+
+  test('keeps a single-tier provider (e.g. GreenSky with varied sub-$7,500 mins) in one group', () => {
+    const cats = buildCategories([
+      plan('gs1', 'financing', 'GreenSky', 299),
+      plan('gs2', 'financing', 'GreenSky', 2500),
+    ]);
+    const gs = cats.filter((c) => c.title.startsWith('GreenSky'));
+    expect(gs).toHaveLength(1);
+    expect(gs[0].title).toBe('GreenSky');
+    expect(gs[0].plans).toEqual(['gs1', 'gs2']);
+  });
+});
 
 describe('floorTier / effectiveCostOf ($200 job minimum)', () => {
   test('floors a priced tier to 200, leaves empty jobs at 0', () => {

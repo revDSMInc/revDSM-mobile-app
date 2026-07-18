@@ -29,6 +29,13 @@ interface AppointmentSchedulerModalProps {
   initialDate?: string;
   initialTimeWindow?: string;
   /**
+   * View the modal opens on. Defaults to `'date'` (the calendar). Pass `'time'`
+   * to jump straight to the time-proposal step for `initialDate` — used by the
+   * deal-edit Step-0 inline calendar, which already picked the date, so the modal
+   * shouldn't show a second calendar.
+   */
+  initialView?: 'date' | 'time';
+  /**
    * When true, rescheduling an EXISTING appointment with real changes requires a
    * customer signature (contract amendment) before the change is committed.
    * Web parity: `appointment-scheduler.js` `requireScheduleAmendment`.
@@ -52,6 +59,7 @@ export const AppointmentSchedulerModal = ({
   isEdit = false,
   initialDate,
   initialTimeWindow,
+  initialView,
   requireScheduleAmendment = false,
   leadId,
   lead,
@@ -104,17 +112,26 @@ export const AppointmentSchedulerModal = ({
           setCurrentMonth(parsed);
         }
         setIsTBD(false);
+        // Jump straight to the time-proposal step when the caller already picked
+        // the date (deal-edit inline calendar). Default stays the calendar view.
+        if (initialView === 'time' && !isNaN(parsed.getTime())) {
+          setTimeSlotIdx(0);
+          setView('time');
+        }
       } else if (initialDate === 'TBD') {
         setIsTBD(true);
         setView('tbd');
       }
 
-      if (initialTimeWindow) {
+      // Seed the current window when re-opening on an existing appointment, but
+      // NOT when jumping to a fresh time proposal (initialView='time' starts at
+      // the first slot, matching handleDateSelect / web).
+      if (initialTimeWindow && initialView !== 'time') {
         const idx = windows.findIndex(w => w.value === initialTimeWindow);
         if (idx !== -1) setTimeSlotIdx(idx);
       }
     }
-  }, [visible, initialDate, initialTimeWindow]);
+  }, [visible, initialDate, initialTimeWindow, initialView]);
 
   const handleDateSelect = (date: Date) => {
     if (getDay(date) === 0) return; // Disable Sunday

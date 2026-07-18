@@ -132,30 +132,41 @@ export default function LeadCreateModal({
           setLocation(null);
         }
       } else {
-        // Start with a blank address rather than reverse-geocoding the device's
-        // current GPS position into Full Address — the rep enters the customer's
-        // address via the autocomplete search (which also sets the coordinates),
-        // and can still opt into "use my location" via the pin icon in the field.
+        // Default to the rep's current location: reverse-geocode the device GPS
+        // into Full Address on open. The rep can overtype to search a different
+        // address via the Places autocomplete (which also updates the coordinates),
+        // or re-fetch their location via the pin icon. The auto-fetch is SILENT —
+        // if permission is denied/unavailable it just leaves the field blank for
+        // manual entry instead of alerting on every open.
         setForm(initialFormState);
         setLocation(null);
         setSuggestions([]);
         setShowSuggestions(false);
+        handleGetCurrentLocation(true);
       }
     }
   }, [visible]);
 
-  const handleGetCurrentLocation = async () => {
+  // `silent` (used by the auto-fetch on open) suppresses the permission-denied
+  // alerts so a rep without location access just gets a blank field to type into,
+  // instead of an alert every time the form opens. Manual taps on the pin pass
+  // silent=false and keep the full "enable in Settings" prompts.
+  const handleGetCurrentLocation = async (silent = false) => {
     if (Platform.OS === 'android') {
       const hasLocation = await PermissionsAndroid.check(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       );
       let granted = hasLocation ? PermissionsAndroid.RESULTS.GRANTED : null;
       if (!hasLocation) {
+        // Don't trigger the OS permission dialog on the silent auto-fetch — only
+        // use already-granted access; the rep can tap the pin to grant it.
+        if (silent) return;
         granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         );
       }
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        if (silent) return;
         Alert.alert(
           'Permission Denied',
           'Location access is required to auto-fill the address. Please enable it in your device settings.',
@@ -169,6 +180,7 @@ export default function LeadCreateModal({
     } else if (Platform.OS === 'ios') {
       const auth = await Geolocation.requestAuthorization('whenInUse');
       if (auth !== 'granted') {
+        if (silent) return;
         Alert.alert(
           'Location Access Denied',
           'We need your location to auto-fill the address. Please enable location services in your iPhone settings.',
@@ -202,7 +214,7 @@ export default function LeadCreateModal({
       (error) => {
         console.warn('Location error', error);
         setIsLocating(false);
-        if (error.code === 1) {
+        if (error.code === 1 && !silent) {
           // PERMISSION_DENIED
           Alert.alert(
             'Location Permission Required',
@@ -633,7 +645,7 @@ export default function LeadCreateModal({
                       // zone leads, whose address is fixed to the picked building).
                       <TouchableOpacity
                         disabled={fromZone}
-                        onPress={handleGetCurrentLocation}
+                        onPress={() => handleGetCurrentLocation(false)}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       >
                         <Ionicons

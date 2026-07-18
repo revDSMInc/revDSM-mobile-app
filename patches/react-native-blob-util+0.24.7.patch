@@ -1,0 +1,71 @@
+diff --git a/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/ReactNativeBlobUtilReq.java b/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/ReactNativeBlobUtilReq.java
+index f5b2bb9..8522bfb 100644
+--- a/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/ReactNativeBlobUtilReq.java
++++ b/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/ReactNativeBlobUtilReq.java
+@@ -786,9 +786,9 @@ public class ReactNativeBlobUtilReq extends BroadcastReceiver implements Runnabl
+                     // It uses customized response body which is able to report download progress
+                     // and write response data to destination path.
+                     responseBody.bytes();
+-                } catch (Exception ignored) {
+-//                    ignored.printStackTrace();
+-                }
++                    } catch (Exception ignored) {
++                    android.util.Log.e("ReactNativeBlobUtil", "Drain loop exception during FileStorage", ignored);
++                    }
+ 
+                 ReactNativeBlobUtilFileResp ReactNativeBlobUtilFileResp;
+ 
+diff --git a/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/Response/ReactNativeBlobUtilFileResp.java b/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/Response/ReactNativeBlobUtilFileResp.java
+index 8291b84..bf78587 100644
+--- a/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/Response/ReactNativeBlobUtilFileResp.java
++++ b/node_modules/react-native-blob-util/android/src/main/java/com/ReactNativeBlobUtil/Response/ReactNativeBlobUtilFileResp.java
+@@ -34,10 +34,12 @@ public class ReactNativeBlobUtilFileResp extends ResponseBody {
+     ReactApplicationContext rctContext;
+     FileOutputStream ofStream;
+     boolean isEndMarkerReceived;
++    java.io.InputStream mInputStream;
+ 
+     public ReactNativeBlobUtilFileResp(ResponseBody body) {
+         super();
+         this.originalBody = body;
++        this.mInputStream = body.byteStream();
+     }
+ 
+     public ReactNativeBlobUtilFileResp(ReactApplicationContext ctx, String taskId, ResponseBody body, String path, boolean overwrite) throws IOException {
+@@ -45,6 +47,7 @@ public class ReactNativeBlobUtilFileResp extends ResponseBody {
+         this.rctContext = ctx;
+         this.mTaskId = taskId;
+         this.originalBody = body;
++        this.mInputStream = body.byteStream();
+         assert path != null;
+         this.mPath = path;
+         this.isEndMarkerReceived = false;
+@@ -89,8 +92,11 @@ public class ReactNativeBlobUtilFileResp extends ResponseBody {
+     }
+ 
+     public boolean isDownloadComplete() {
+-        return (bytesDownloaded == contentLength()) // Case of non-chunked downloads
++        boolean completed = isEndMarkerReceived
++                || (bytesDownloaded == contentLength()) // Case of non-chunked downloads
+                 || (contentLength() == -1 && isEndMarkerReceived); // Case of chunked downloads
++        android.util.Log.d("ReactNativeBlobUtil", "isDownloadComplete: completed=" + completed + ", isEndMarkerReceived=" + isEndMarkerReceived + ", bytesDownloaded=" + bytesDownloaded + ", contentLength=" + contentLength());
++        return completed;
+     }
+ 
+     @Override
+@@ -104,12 +110,12 @@ public class ReactNativeBlobUtilFileResp extends ResponseBody {
+         public long read(@NonNull Buffer sink, long byteCount) throws IOException {
+             try {
+                 byte[] bytes = new byte[(int) byteCount];
+-                long read = originalBody.byteStream().read(bytes, 0, (int) byteCount);
++                long read = mInputStream.read(bytes, 0, (int) byteCount);
+                 bytesDownloaded += read > 0 ? read : 0;
+                 if (read > 0) {
+                     ofStream.write(bytes, 0, (int) read);
+-                } else if (contentLength() == -1 && read == -1) {
+-                    // End marker has been received for chunked download
++                    sink.write(bytes, 0, (int) read);
++                } else if (read == -1) {
+                     isEndMarkerReceived = true;
+                 }
+                 ReactNativeBlobUtilProgressConfig reportConfig = ReactNativeBlobUtilReq.getReportProgress(mTaskId);

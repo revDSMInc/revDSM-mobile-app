@@ -9,6 +9,7 @@ import {
   getDefaultPaymentMethod,
 } from '../../../utils/calculator/lowes-payment-util';
 import { getSelectableOptionsDiscount, type DiscountConfig } from '../utils/dynamic-discount';
+import { WF_HIGH_MIN_PRICE } from '../../../utils/calculator/payment-method-validation';
 
 /**
  * Backend-driven pricing for the Dynamic Deal Center — payment plans + discount
@@ -138,8 +139,18 @@ function isLowesPlan(p: DealPlan): boolean {
   return key.startsWith('lowes') || prov.includes('lowe');
 }
 
-/** Build the rollout picker groups from dynamic plans: basics flat, financing per provider. */
-function buildCategories(plans: DealPlan[]): PayCategory[] {
+/**
+ * Build the rollout picker groups from dynamic plans: basics flat, financing per
+ * provider. Within a provider, plans whose minimum is the high-value threshold
+ * (`WF_HIGH_MIN_PRICE`, $7,500) are split into their OWN "{provider} (Jobs over
+ * $7,500)" group — web parity with the static `getRolloutPaymentCategories`
+ * "Wells Fargo High (>$7,500)" split. Grouping purely by provider lumped the
+ * high-value Wells Fargo plans (3672/3667/…) under the same header as the regular
+ * WF plans, so the "(Jobs over $7,500)" heading was missing on mobile. The split
+ * is threshold-driven (only WF has $7,500 plans today), so providers like GreenSky
+ * — whose plans carry various sub-$7,500 minimums — stay in a single group.
+ */
+export function buildCategories(plans: DealPlan[]): PayCategory[] {
   const basics = plans.filter((p) => p.type === 'cash' || p.type === 'card');
   const cats: PayCategory[] = [];
   if (basics.length) cats.push({ title: '', bg: '#F8FAFC', text: '#0F172A', plans: basics.map((p) => p.key) });
@@ -156,7 +167,17 @@ function buildCategories(plans: DealPlan[]): PayCategory[] {
       groups[g].push(p);
     });
   order.forEach((g) => {
-    cats.push({ title: g, bg: groupColor(g, groups[g][0]?.providerColor), text: '#1C252E', plans: groups[g].map((p) => p.key) });
+    const color = groupColor(g, groups[g][0]?.providerColor);
+    const base = groups[g].filter((p) => (p.minPrice || 0) < WF_HIGH_MIN_PRICE);
+    const high = groups[g].filter((p) => (p.minPrice || 0) >= WF_HIGH_MIN_PRICE);
+    // Only split into two headers when the provider genuinely has both tiers;
+    // a single-tier provider keeps one group titled with just its name.
+    if (base.length && high.length) {
+      cats.push({ title: g, bg: color, text: '#1C252E', plans: base.map((p) => p.key) });
+      cats.push({ title: `${g} (Jobs over $${WF_HIGH_MIN_PRICE.toLocaleString()})`, bg: color, text: '#1C252E', plans: high.map((p) => p.key) });
+    } else {
+      cats.push({ title: g, bg: color, text: '#1C252E', plans: groups[g].map((p) => p.key) });
+    }
   });
   return cats;
 }
