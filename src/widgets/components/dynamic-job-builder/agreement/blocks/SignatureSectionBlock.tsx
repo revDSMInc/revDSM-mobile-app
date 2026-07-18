@@ -10,6 +10,20 @@ const SIGNATURE_TEXT_STYLE = {
   color: '#2c3e50',
 };
 
+// Web renders each signature column as a table cell with `verticalAlign: 'bottom'`,
+// so the Print Name / Signature / Date underlines and their captions line up along a
+// common baseline even though the cells hold different-height content (the Print Name
+// cell also carries a top label, the Signature cell a taller sign box). RN flex cells
+// default to top-alignment, which dropped the labelled Print Name column below the
+// others. `justifyContent: 'flex-end'` bottom-anchors each cell to match web — every
+// cell ends in its caption (same font) with the underline a fixed 5px above it, so the
+// lines align regardless of the box heights.
+const signatureCell = {
+  padding: 8,
+  alignItems: 'center' as const,
+  justifyContent: 'flex-end' as const,
+};
+
 interface SignatureRowProps {
   label: string;
   printedName?: string;
@@ -32,7 +46,7 @@ function SignatureRow({
   return (
     <View style={{ flexDirection: 'row' }}>
       {/* Print Name cell */}
-      <View style={{ flex: 2, padding: 8, alignItems: 'center' }}>
+      <View style={[signatureCell, { flex: 2 }]}>
         <Text style={{ fontWeight: 'bold', fontSize: 10, marginBottom: 8, color: '#000' }}>
           {label}
         </Text>
@@ -54,7 +68,7 @@ function SignatureRow({
       </View>
 
       {/* Signature cell */}
-      <View style={{ flex: 2, padding: 8, alignItems: 'center' }}>
+      <View style={[signatureCell, { flex: 2 }]}>
         {showCanvas ? (
           signatureUri ? (
             <View
@@ -109,7 +123,7 @@ function SignatureRow({
       </View>
 
       {/* Date cell */}
-      <View style={{ flex: 1, padding: 8, alignItems: 'center' }}>
+      <View style={[signatureCell, { flex: 1 }]}>
         <View
           style={{
             borderBottomWidth: 1,
@@ -180,18 +194,18 @@ export default function SignatureSectionBlock({
 
       {showCoBuyer && (
         <View style={{ marginBottom: 15, flexDirection: 'row' }}>
-          <View style={{ flex: 2, padding: 8, alignItems: 'center' }}>
+          <View style={[signatureCell, { flex: 2 }]}>
             <Text style={{ fontWeight: 'bold', fontSize: 10, marginBottom: 8, color: '#000' }}>
               Co-Buyer
             </Text>
             <View style={{ borderBottomWidth: 1, borderColor: '#000', height: 30, width: '100%' }} />
             <Text style={{ fontSize: 8, color: '#666' }}>Print Name</Text>
           </View>
-          <View style={{ flex: 2, padding: 8, alignItems: 'center' }}>
+          <View style={[signatureCell, { flex: 2 }]}>
             <View style={{ borderBottomWidth: 1, borderColor: '#000', height: 40, width: '100%' }} />
             <Text style={{ fontSize: 8, color: '#666' }}>Signature</Text>
           </View>
-          <View style={{ flex: 1, padding: 8, alignItems: 'center' }}>
+          <View style={[signatureCell, { flex: 1 }]}>
             <View style={{ borderBottomWidth: 1, borderColor: '#000', height: 30, width: '100%' }} />
             <Text style={{ fontSize: 8, color: '#666' }}>Date</Text>
           </View>

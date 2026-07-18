@@ -150,81 +150,16 @@ function DynamicJobBuilderInner({
             ? deserializeDynamicJobStateFromStorage(savedState, initialConfig)
             : undefined;
 
-        // Resolve documents independently so a doc error doesn't wipe jobState
-        const docs = outcome?.leadOutcomeDocuments;
-        let resolvedDocuments: { agreements: any[]; orderSheets: any[] } = { agreements: [], orderSheets: [] };
-        try {
-          if (docs) {
-            const all = [
-              ...((docs.agreements || []) as any[]).map((d) => ({ ...d, _group: 'agreement' })),
-              ...((docs.orderSheets || []) as any[]).map((d) => ({ ...d, _group: 'orderSheet' })),
-            ];
-            const paths = all
-              .map((d) => ({ filePath: d.filePath, bucketName: d.bucketName }))
-              .filter((p) => p.filePath && p.bucketName);
-            if (all.length) {
-              let urls: any[] = [];
-              if (paths.length) {
-                try {
-                  const urlRes = await LeadService.getSecureUrls(paths);
-                  urls = (urlRes.data?.data || urlRes.data || []) as any[];
-                } catch (e) {
-                  console.warn('[DynamicJobBuilder] secure URL resolution failed:', e);
-                }
-              }
-              const mapped = all.map((d) => {
-                const u = urls.find((x) => x.filePath === d.filePath);
-                const type = d.documentType || d._group;
-                return {
-                  uri: u?.secureUrl || u?.url || d.filePath,
-                  name: d.name || (type === 'agreement' ? 'Agreement' : 'Order Sheet'),
-                  serverId: d._id,
-                  filePath: d.filePath,
-                  bucketName: d.bucketName,
-                  contentType: d.fileData?.contentType,
-                  isNew: false,
-                  documentType: type,
-                };
-              });
-              resolvedDocuments = {
-                agreements: mapped.filter((m) => m.documentType === 'agreement'),
-                orderSheets: mapped.filter((m) => m.documentType === 'orderSheet'),
-              };
-            }
-          }
-        } catch (e) {
-          console.warn('[DynamicJobBuilder] doc resolution failed:', e);
-        }
-
-        // If the calculator-scoped outcome didn't echo the S3 doc rows, fall back to
-        // the lead-scoped download endpoint (web dynamic-reopen parity) so uploaded
-        // agreements/order-sheets still display. Returns base64 per doc.
-        if (!resolvedDocuments.agreements.length && !resolvedDocuments.orderSheets.length) {
-          try {
-            const dl = await LeadService.downloadOutcomeDocuments(leadId!);
-            const dd = dl.data?.data || dl.data || {};
-            const mapDl = (arr: any[], type: 'agreement' | 'orderSheet') =>
-              (arr || []).map((d: any) => ({
-                uri: d.base64Data
-                  ? `data:${d.fileData?.contentType || 'application/pdf'};base64,${d.base64Data}`
-                  : d.filePath,
-                name: d.name || (type === 'agreement' ? 'Agreement' : 'Order Sheet'),
-                serverId: d._id,
-                contentType: d.fileData?.contentType || 'application/pdf',
-                isNew: false,
-                documentType: type,
-              }));
-            const a = mapDl(dd.agreements, 'agreement');
-            const o = mapDl(dd.orderSheets, 'orderSheet');
-            if (a.length || o.length) resolvedDocuments = { agreements: a, orderSheets: o };
-          } catch (e) {
-            console.warn('[DynamicJobBuilder] downloadOutcomeDocuments fallback failed:', e);
-          }
-        }
-
-        return { initialJobState: jobState, resolvedDocuments };
+        // Return the draft state IMMEDIATELY, handing the raw document rows to a
+        // SEPARATE query (below) for secure-URL / download resolution. Previously
+        // this queryFn awaited those slow doc calls — including a lead-scoped
+        // `downloadOutcomeDocuments` that 404s when there are no saved docs — before
+        // returning, so `initialJobState` (the draft) couldn't reach the session
+        // until the whole doc chain settled. That is the "reopen shows empty, then
+        // fills in a moment later" the rep sees. Draft hydration must not wait on docs.
+        return { initialJobState: jobState, rawDocs: outcome?.leadOutcomeDocuments || null };
       } catch {
-        return { initialJobState: undefined, resolvedDocuments: { agreements: [], orderSheets: [] } };
+        return { initialJobState: undefined, rawDocs: null };
       }
     },
     // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
@@ -241,6 +176,80 @@ function DynamicJobBuilderInner({
     // the cache on close so the remount starts from a clean loading state (undefined
     // initialJobState) — the one-time apply guard in the session then waits for the
     // fresh value instead of latching onto a stale one.
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  // Documents resolve in a SEPARATE, non-blocking query — this is the slow work
+  // (secure-URL batch + the `downloadOutcomeDocuments` fallback that 404s when no
+  // docs exist) that used to gate draft hydration. It runs only after the outcome
+  // GET has landed (so `outcomeData.rawDocs` is available) and never delays the
+  // draft. A doc failure leaves the previously-set documents untouched.
+  const rawDocs = outcomeData?.rawDocs;
+  const { data: resolvedDocumentsData } = useQuery({
+    queryKey: ['leadOutcomeDocs', leadId, calcId],
+    queryFn: async () => {
+      let resolvedDocuments: { agreements: any[]; orderSheets: any[] } = { agreements: [], orderSheets: [] };
+      try {
+        if (rawDocs) {
+          const all = [
+            ...((rawDocs.agreements || []) as any[]).map((d) => ({ ...d, _group: 'agreement' })),
+            ...((rawDocs.orderSheets || []) as any[]).map((d) => ({ ...d, _group: 'orderSheet' })),
+          ];
+          const paths = all
+            .map((d) => ({ filePath: d.filePath, bucketName: d.bucketName }))
+            .filter((p) => p.filePath && p.bucketName);
+          if (all.length) {
+            let urls: any[] = [];
+            if (paths.length) {
+              try {
+                const urlRes = await LeadService.getSecureUrls(paths);
+                urls = (urlRes.data?.data || urlRes.data || []) as any[];
+              } catch (e) {
+                console.warn('[DynamicJobBuilder] secure URL resolution failed:', e);
+              }
+            }
+            const mapped = all.map((d) => {
+              const u = urls.find((x) => x.filePath === d.filePath);
+              const type = d.documentType || d._group;
+              return {
+                uri: u?.secureUrl || u?.url || d.filePath,
+                name: d.name || (type === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: d._id,
+                filePath: d.filePath,
+                bucketName: d.bucketName,
+                contentType: d.fileData?.contentType,
+                isNew: false,
+                documentType: type,
+              };
+            });
+            resolvedDocuments = {
+              agreements: mapped.filter((m) => m.documentType === 'agreement'),
+              orderSheets: mapped.filter((m) => m.documentType === 'orderSheet'),
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('[DynamicJobBuilder] doc resolution failed:', e);
+      }
+
+      // NOTE: web (JobBuilderContext.loadCalculatorDraft) does NOT fetch documents
+      // at reopen — the draft load is a single outcome GET. `downloadOutcomeDocuments`
+      // is a SUBMIT-only call on web (TabbedCalculator onClose 'complete', to pre-fetch
+      // base64 for re-upload), never a reopen call. Mobile previously fell back to it
+      // here whenever the outcome echoed no S3 doc rows, which 404s for every lead with
+      // no saved docs and added a failing round-trip on each reopen — the delayed-draft
+      // symptom the rep saw. Removed for web parity: with no echoed docs this query now
+      // resolves instantly with no network call. Previously-uploaded docs still display
+      // from the outcome's echoed `leadOutcomeDocuments` (resolved above); they are also
+      // re-fetched at submit exactly like web.
+
+      return resolvedDocuments;
+    },
+    // Only after the outcome GET has landed (rawDocs available), and never in edit
+    // mode (docs come from the parent there).
+    enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
@@ -298,10 +307,10 @@ function DynamicJobBuilderInner({
   // outcome + secure URLs resolve — so a reopened job shows its agreement/order
   // sheet. commitUploaded appends freshly-uploaded ones on top of these.
   useEffect(() => {
-    if (outcomeData?.resolvedDocuments) {
-      setResolvedDocuments(outcomeData.resolvedDocuments);
+    if (resolvedDocumentsData) {
+      setResolvedDocuments(resolvedDocumentsData);
     }
-  }, [outcomeData?.resolvedDocuments]);
+  }, [resolvedDocumentsData]);
 
   // Sale vs demo drives which cards render and the completion gate (web parity:
   // isSale = result.toLowerCase() === 'sale'; demo = any non-sale).
