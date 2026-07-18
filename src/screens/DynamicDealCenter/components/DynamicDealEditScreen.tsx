@@ -175,7 +175,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const dealCenterData = useMemo(
     () =>
       buildDealCenterData({
-        entries: {},
+        // Feed the saved calculator's per-field entries (the LFCalculator `entries`
+        // array of { fieldId, inputValue }) — same as the ORIGINAL build
+        // (DynamicDealCenterScreen). Passing `{}` here left dealCenterData without
+        // any calculator field values, so every calculator-driven LOCKED field
+        // (LeafFilter/Gutter Extras: C-S-R, Corners, footage, …) resolved blank via
+        // resolveLockedValue on reopen. `buildDealCenterData` reads this with
+        // Object.values, so an array is accepted.
+        entries: (calculatorData as any)?.entries || {},
         resultData: calculatorData || {},
         schemas: configuredSchemas,
         lead: lead || {},
@@ -252,6 +259,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     'Customer';
   const balance = Math.max(0, (Number(contractPrice) || 0) - (Number(downPayment) || 0));
   const newMarkup = getMarkupInfo(contractPrice, tierResult.next, undefined);
+  // Markup badge for the PREVIOUS build's contract price vs its tiers (web parity —
+  // the previous card shows a "RETAIL +X%" badge next to its contract price too).
+  const previousMarkup = getMarkupInfo(parsePrice(lead?.originalContractPrice), tierResult.previous, undefined);
 
   // Current install date parsed for the inline calendar highlight, and formatted
   // for display (fixes the raw-ISO string that was shown, e.g. 2026-07-17T20:00:00
@@ -653,7 +663,17 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 8 }}>PREVIOUS JOB BUILD</Text>
               <TierRow tiers={tierResult.previous} />
               <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 8 }}>Contract Price</Text>
-              <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>{fmtMoney(parsePrice(lead?.originalContractPrice))}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>{fmtMoney(parsePrice(lead?.originalContractPrice))}</Text>
+                <View style={{ backgroundColor: '#E0F2FE', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                  <Text style={{ color: '#0284C7', fontWeight: '800', fontSize: 11 }}>
+                    {previousMarkup.text}
+                    {previousMarkup.markupPct !== null && previousMarkup.markupPct !== 0
+                      ? ` ${previousMarkup.markupPct > 0 ? '+' : ''}${previousMarkup.markupPct}%`
+                      : ''}
+                  </Text>
+                </View>
+              </View>
             </View>
 
             <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: '#22C55E', borderRadius: 14, padding: 16, marginBottom: 12 }}>
@@ -693,6 +713,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 </View>
               </View>
 
+              {/* Down Payment + its method, side by side (web parity). */}
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Payment</Text>
@@ -702,32 +723,38 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                       value={String(downPayment)}
                       onChangeText={(t) => setDownPayment(parseFloat(t.replace(/[^0-9.]/g, '')) || 0)}
                       keyboardType="numeric"
-                      style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 10 }}
+                      style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 12 }}
                     />
                   </View>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Balance</Text>
-                  <View style={{ borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 11, backgroundColor: '#F1F5F9' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{fmtMoney(balance)}</Text>
-                  </View>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Pmt Method</Text>
+                  <MethodPicker
+                    options={paymentOptions}
+                    selected={downPaymentMethodKey}
+                    onSelect={(k) => setDownPaymentMethod(k)}
+                    allowNone
+                  />
                 </View>
               </View>
 
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 6 }}>Down Payment Method</Text>
-              <MethodPicker
-                options={paymentOptions}
-                selected={downPaymentMethodKey}
-                onSelect={(k) => setDownPaymentMethod(k)}
-                allowNone
-              />
-
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginTop: 12, marginBottom: 6 }}>Balance Method</Text>
-              <MethodPicker
-                options={paymentOptions}
-                selected={balanceMethodKey}
-                onSelect={(k) => setBalanceMethod(k)}
-              />
+              {/* Balance + its method, side by side (web parity). */}
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Balance</Text>
+                  <View style={{ borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 13, backgroundColor: '#F1F5F9' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{fmtMoney(balance)}</Text>
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Balance Method</Text>
+                  <MethodPicker
+                    options={paymentOptions}
+                    selected={balanceMethodKey}
+                    onSelect={(k) => setBalanceMethod(k)}
+                  />
+                </View>
+              </View>
             </View>
           </ScrollView>
         )}
@@ -1035,6 +1062,9 @@ function TierRow({ tiers, highlight }: { tiers: Tiers; highlight?: boolean }) {
   );
 }
 
+// Payment-method selector rendered as a DROPDOWN (web parity), not a horizontally
+// scrollable pill list — the plan labels are long, so a dropdown lets the rep see
+// and pick every option. Tapping the field opens a modal list of the options.
 function MethodPicker({
   options,
   selected,
@@ -1046,29 +1076,79 @@ function MethodPicker({
   onSelect: (key: string) => void;
   allowNone?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const items = allowNone ? [{ key: '', label: 'Select' }, ...options] : options;
+  const selectedLabel = items.find((o) => o.key === selected)?.label || 'Select';
+  const hasSelection = !!selected;
+
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-      {items.map((o) => {
-        const active = selected === o.key;
-        return (
-          <TouchableOpacity
-            key={o.key || 'none'}
-            onPress={() => onSelect(o.key)}
-            style={{
-              paddingHorizontal: 14,
-              paddingVertical: 8,
-              borderRadius: 999,
-              borderWidth: 1.5,
-              borderColor: active ? '#22C55E' : '#CBD5E1',
-              backgroundColor: active ? '#DCFCE7' : '#fff',
-            }}
-          >
-            <Text style={{ fontSize: 12, fontWeight: '700', color: active ? '#15803D' : '#64748B' }}>{o.label}</Text>
+    <>
+      <TouchableOpacity
+        onPress={() => setOpen(true)}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          borderWidth: 1.5,
+          borderColor: '#CBD5E1',
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 12,
+          backgroundColor: '#fff',
+        }}
+      >
+        <Text
+          numberOfLines={1}
+          style={{ flex: 1, fontSize: 13, fontWeight: '700', color: hasSelection ? '#0F172A' : '#94A3B8', marginRight: 8 }}
+        >
+          {selectedLabel}
+        </Text>
+        <Icon name="chevron-down" size={20} color="#94A3B8" />
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setOpen(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', paddingHorizontal: 24 }}
+        >
+          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: '#fff', borderRadius: 16, maxHeight: '70%', overflow: 'hidden' }}>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>Select Payment Method</Text>
+            </View>
+            <ScrollView>
+              {items.map((o) => {
+                const active = selected === o.key;
+                return (
+                  <TouchableOpacity
+                    key={o.key || 'none'}
+                    onPress={() => {
+                      onSelect(o.key);
+                      setOpen(false);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingHorizontal: 16,
+                      paddingVertical: 14,
+                      borderBottomWidth: 1,
+                      borderBottomColor: '#F8FAFC',
+                      backgroundColor: active ? '#F0FDF4' : '#fff',
+                    }}
+                  >
+                    <Text style={{ flex: 1, fontSize: 13, fontWeight: active ? '800' : '600', color: active ? '#15803D' : '#334155', marginRight: 8 }}>
+                      {o.label}
+                    </Text>
+                    {active && <Icon name="check" size={18} color="#22C55E" />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
 }
 
