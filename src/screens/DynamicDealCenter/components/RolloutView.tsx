@@ -1176,8 +1176,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           {/* Drops list with old-UI View/Unselect/Display */}
           {drops.map((d, i) => {
             const ordinal = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][i] || `${i + 1}th`;
+            // Web parity (`ViewAllCalculators.js:472-473` hydration): secured and
+            // declined are INDEPENDENT positive tests — `status === 'accepted'` and
+            // `status === 'declined'`. Mobile derived secured as `!declined`, which is
+            // strictly weaker: a drop with a missing/unknown status rendered SECURED
+            // while the demotion (`=== 'accepted'`, line ~866) and the tab lock icon
+            // both ignored it, so it could never be cleared.
             const declined = d.status === 'declined';
-            const secured = !declined;
+            const secured = d.status === 'accepted';
             const dp = d.price ?? d.dropedPrice ?? 0;
             return (
               <View key={i} style={{ marginBottom: 24 }}>
