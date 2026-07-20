@@ -250,14 +250,14 @@ export interface TabNameInput {
  * is used AS SOON AS any field is filled — including on the first calculator
  * (web parity: `getSchemaUpdatedCalculatorTitles` derives from entries first and
  * only falls back to the stored title). Empty (no entries) calculators fall back
- * to their 1-based position, except the FIRST calculator (the one auto-created on
- * entering the deal center), which falls back to the lead name (`firstTabName`) —
- * mirroring web, where that calculator is stored with the lead's title.
+ * to their 1-based position — which renders as a BLANK tab — for EVERY calculator
+ * including the first, exactly as web (`getUpdatedCalculatorTitles` has no first-tab
+ * lead-name special case; a freshly-created calculator shows no name until values
+ * are entered).
  */
 export function computeDerivedTitles(
   tabs: TabNameInput[],
   schemas: CalculatorSchema[],
-  firstTabName?: string,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   const withBase: Array<{ id: string; base: string; price: number }> = [];
@@ -269,9 +269,12 @@ export function computeDerivedTitles(
     }
     const base = getLiveSchemaBaseName(t.entries, schemas);
     if (!base) {
-      // Nothing entered yet: the first calculator shows the lead name (web
-      // stores it with that title), the rest fall back to their position.
-      result[t.id] = i === 0 && firstTabName ? firstTabName : String(i + 1);
+      // Nothing entered yet → fall back to the 1-based position. A purely numeric
+      // title renders as a BLANK tab (the `/^\d+$/` check in CalculatorView and web
+      // `TabLabel`), so a freshly-created calculator shows NO name until values are
+      // entered — exactly as web. Web's `getUpdatedCalculatorTitles` has no first-tab
+      // lead-name special case; it just falls back to the stored (numeric) title.
+      result[t.id] = String(i + 1);
       return;
     }
     withBase.push({ id: t.id, base, price: t.price || 0 });

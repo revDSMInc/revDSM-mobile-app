@@ -37,6 +37,7 @@ import {
   WF_HIGH_MIN_PRICE,
 } from '../utils/dynamic-rollout-pricing';
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
+import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
@@ -93,6 +94,8 @@ interface RolloutViewProps {
   pricing: DealPricing;
   /** Lowe's leads get the Lowe's-only plan groups + `lowes_ach` default. */
   isLowesLead?: boolean;
+  /** Lead id — threaded into the rollout/drop activity logs (web parity). */
+  leadId?: string;
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
   onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
@@ -604,13 +607,14 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
   pricing: DealPricing;
   verticals: CalculatorSchema[];
   pricingConfig?: PricingConfig | null;
+  leadId?: string;
   onPriceChange: (id: string, price: number) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
@@ -867,6 +871,26 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     });
     if (targetIndex < 0) next.push(accepted); // genuinely-new price → append
     onDropChange(calculator.id, next);
+    // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
+    const uidS = user?._id || user?.id;
+    if (uidS) {
+      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
+      logRolloutChange({
+        userId: uidS,
+        leadId,
+        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId },
+        tiers: calculator.totals,
+        percentageOfRollout: pricemarkup,
+        change: {
+          fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
+          oldValue: lastDrop, newValue: pendingDrop,
+          isSecured: true, isDeclined: false, dropNumber, dropPrice: pendingDrop,
+          paymentPlanKey: data.paymentMethod,
+          action: 'drop price secured',
+        },
+      }).catch(() => {});
+    }
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -888,6 +912,26 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       ? drops.map((d, idx) => (idx === targetIndex ? { ...d, ...declined } : d))
       : [...drops, declined];
     onDropChange(calculator.id, next);
+    // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
+    const uidD = user?._id || user?.id;
+    if (uidD) {
+      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
+      logRolloutChange({
+        userId: uidD,
+        leadId,
+        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId },
+        tiers: calculator.totals,
+        percentageOfRollout: pricemarkup,
+        change: {
+          fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
+          oldValue: lastDrop, newValue: pendingDrop,
+          isSecured: false, isDeclined: true, dropNumber, dropPrice: pendingDrop,
+          paymentPlanKey: data.paymentMethod,
+          action: 'drop price declined',
+        },
+      }).catch(() => {});
+    }
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1342,7 +1386,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -1485,6 +1529,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               initialPrice={effectivePrice(selectedCalc)}
               categoryMeta={categoryMeta}
               isLowesLead={isLowesLead}
+              leadId={leadId}
               pricing={pricing}
               verticals={verticals || []}
               pricingConfig={pricingConfig}
@@ -1540,6 +1585,26 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 }
               }
               const confirmed = pending.map((c) => ({ id: c.id, price: effectivePrice(c) }));
+              // Web parity (ViewAllCalculators.js:1559): one `rollout confirmed`
+              // rollout log per calculator being confirmed.
+              const uidC = user?._id || user?.id;
+              if (uidC) {
+                pending.forEach((c) => {
+                  const p = effectivePrice(c);
+                  logRolloutChange({
+                    userId: uidC,
+                    leadId,
+                    calculator: { id: c.id, title: c.title, appointmentId: (c as any).appointmentId },
+                    tiers: c.totals,
+                    percentageOfRollout: markupLabel(p, c.totals),
+                    change: {
+                      fieldName: 'rolloutConfirmed', fieldLabel: 'Rollout Confirmed',
+                      fieldValue: p, fieldCategory: 'rollout', oldValue: '', newValue: p,
+                      action: 'rollout confirmed',
+                    },
+                  }).catch(() => {});
+                });
+              }
               onConfirmRollouts?.(confirmed);
             }} disabled={!allHavePrices} style={{ minWidth: 200, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: allHavePrices ? '#4CBB17' : 'rgba(145,158,171,0.12)' }}>
               <Text style={{ fontSize: 14, fontWeight: '700', textAlign: 'center', color: allHavePrices ? '#fff' : 'rgba(145,158,171,0.4)' }}>Confirm Rollouts</Text>

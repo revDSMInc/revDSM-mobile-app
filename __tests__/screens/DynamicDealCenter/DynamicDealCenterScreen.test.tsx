@@ -44,6 +44,12 @@ jest.mock('../../../src/screens/DynamicDealCenter/hooks/useDealPricing', () => (
   useDealPricing: jest.fn().mockReturnValue({ plans: {}, categories: [], dropAddCategories: [], preOrderOptions: [15, 20, 25], defaultMethod: 'check', defaultPreOrder: 20, seniorVetPct: 5, outcomeDownPaymentMethods: [] }),
 }));
 
+// The screen calls useAuth (for activity-log user id); mock it so the test needs
+// no Redux <Provider>.
+jest.mock('../../../src/hooks/useAuth', () => ({
+  useAuth: () => ({ user: { _id: 'test-user' } }),
+}));
+
 jest.mock('../../../src/screens/DynamicDealCenter/components/CalculatorView', () => ({
   CalculatorView: () => null,
 }));

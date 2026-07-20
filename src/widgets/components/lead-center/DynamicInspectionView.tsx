@@ -351,10 +351,10 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+    <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
       {/* Header: close + product name + counts. Top inset padding keeps the green
           header clear of the notch / status bar (safe area). */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: insets.top + 12, paddingBottom: 12, backgroundColor: GREEN }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: insets.top + 12, paddingBottom: 12, backgroundColor: '#0D1F1A', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.12)' }}>
         <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Icon name="close" size={24} color="#fff" />
         </TouchableOpacity>
@@ -368,7 +368,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
       {/* Product pill row (only when >1 product) */}
       {showProductRow && (
-        <View style={{ borderBottomWidth: 1, borderColor: '#EEF2F6' }}>
+        <View style={{ borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 10, gap: 8 }}>
             {products.map((p) => {
               const isActive = p.id === selectedProductId;
@@ -384,12 +384,12 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                     height: 38,
                     borderRadius: 19,
                     borderWidth: 1,
-                    borderColor: isActive ? GREEN : '#E2E8F0',
+                    borderColor: isActive ? GREEN : 'rgba(255,255,255,0.12)',
                     backgroundColor: isActive ? GREEN : 'transparent',
                   }}
                 >
-                  <Icon name={iconifyToMdi(p.icon)} size={16} color={isActive ? '#fff' : '#637381'} />
-                  <Text style={{ fontWeight: '700', fontSize: 13, color: isActive ? '#fff' : '#637381' }}>
+                  <Icon name={iconifyToMdi(p.icon)} size={16} color={isActive ? '#fff' : 'rgba(255,255,255,0.7)'} />
+                  <Text style={{ fontWeight: '700', fontSize: 13, color: isActive ? '#fff' : 'rgba(255,255,255,0.7)' }}>
                     {p.name}
                   </Text>
                 </TouchableOpacity>
@@ -447,11 +447,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               <Icon name="chevron-left" size={18} color={GREEN} />
               <Text style={{ color: GREEN, fontWeight: '700' }}>Back</Text>
             </TouchableOpacity>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#EEF2F6', marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, backgroundColor: '#16302A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', marginBottom: 16 }}>
               <Image source={{ uri: pendingPhoto.uri }} style={{ width: 52, height: 52, borderRadius: 8 }} />
               <View style={{ flex: 1 }}>
-                <Text style={{ color: '#94A3B8', fontWeight: '700', letterSpacing: 1, fontSize: 10, marginBottom: 2 }}>TAGGING AS EXTRA</Text>
-                <Text style={{ color: '#1C252E', fontWeight: '700', fontSize: 14 }}>Which category is this extra of?</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '700', letterSpacing: 1, fontSize: 10, marginBottom: 2 }}>TAGGING AS EXTRA</Text>
+                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>Which category is this extra of?</Text>
               </View>
             </View>
             <View style={{ gap: 8 }}>
@@ -459,11 +459,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                 <TouchableOpacity
                   key={cat.id}
                   onPress={() => handlePickExtraCategory(cat)}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderRadius: 10, borderWidth: 1, borderColor: '#EEF2F6', backgroundColor: '#F8FAFC' }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#16302A' }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <Icon name={iconifyToMdi(cat.icon)} size={20} color="#637381" />
-                    <Text style={{ color: '#1C252E', fontWeight: '600', fontSize: 14 }}>{cat.label}</Text>
+                    <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: 14 }}>{cat.label}</Text>
                   </View>
                   <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(76,187,23,0.12)', borderWidth: 1, borderColor: 'rgba(76,187,23,0.35)' }}>
                     <Text style={{ color: GREEN, fontWeight: '700', fontSize: 11 }}>+ EXTRA</Text>
@@ -480,7 +480,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
             onTagAsExtra={handleTagAsExtraClick}
           />
         ) : (
-          <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 24 }}>No inspection categories configured.</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginTop: 24 }}>No inspection categories configured.</Text>
         )}
       </ScrollView>
 
@@ -508,14 +508,14 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       {/* Replace confirmation for single-photo slots */}
       <Modal visible={!!replaceConfirm} transparent animationType="fade" onRequestClose={() => setReplaceConfirm(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 16, padding: 20 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#1C252E', marginBottom: 8 }}>Replace existing photo?</Text>
-            <Text style={{ color: '#637381', fontSize: 13, lineHeight: 19, marginBottom: 20 }}>
+          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#0D1F1A', borderRadius: 16, padding: 20 }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 8 }}>Replace existing photo?</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, lineHeight: 19, marginBottom: 20 }}>
               <Text style={{ fontWeight: '700' }}>{replaceConfirm?.slot?.name}</Text> only allows a single photo. Uploading this photo will replace the existing one. Continue?
             </Text>
             <View style={{ flexDirection: 'row', gap: 12 }}>
-              <TouchableOpacity onPress={() => setReplaceConfirm(null)} style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#637381', fontWeight: '700' }}>Cancel</Text>
+              <TouchableOpacity onPress={() => setReplaceConfirm(null)} style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={confirmReplace} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Replace</Text>

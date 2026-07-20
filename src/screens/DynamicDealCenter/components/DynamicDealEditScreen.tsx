@@ -689,6 +689,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             scheduleTimeOverride={
               scheduleDate ? { date: scheduleDate, timeWindow: scheduleTimeWindow } : null
             }
+            // Web parity: the amendment view must show the agreements/order sheets
+            // saved on the original deal. The builder's own outcome GET is skipped in
+            // edit mode, so hand it the raw docs from the outcome we already fetched.
+            rawDocsOverride={savedOutcome?.leadOutcomeDocuments || null}
             onStateChange={setEditedJobState}
             onEditComplete={() => setStep(2)}
             onEditBack={() => setStep(0)}

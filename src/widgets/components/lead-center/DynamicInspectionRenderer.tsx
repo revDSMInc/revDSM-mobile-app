@@ -93,8 +93,8 @@ function SlotButton({
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 1.5,
-          borderColor: isMoveSource ? AMBER : filled ? GREEN : '#E2E8F0',
-          backgroundColor: isMoveSource ? 'rgba(245,158,11,0.12)' : filled ? GREEN : '#F1F5F9',
+          borderColor: isMoveSource ? AMBER : filled ? GREEN : 'rgba(255,255,255,0.12)',
+          backgroundColor: isMoveSource ? 'rgba(245,158,11,0.12)' : filled ? GREEN : '#16302A',
         }}
       >
         {busy ? (
@@ -132,7 +132,7 @@ function SlotButton({
         <TouchableOpacity
           onPress={() => capture.removeExtra(category, slot)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#fff', borderRadius: 10 }}
+          style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#0D1F1A', borderRadius: 10 }}
         >
           <Icon name="close-circle" size={18} color="#94A3B8" />
         </TouchableOpacity>
@@ -211,7 +211,7 @@ function CompassLayout({
   return (
     <View>
       {category.topLabel && (
-        <Text style={{ textAlign: 'center', fontWeight: '700', color: '#94A3B8', marginBottom: 8 }}>
+        <Text style={{ textAlign: 'center', fontWeight: '700', color: 'rgba(255,255,255,0.7)', marginBottom: 8 }}>
           ↑ {category.topLabel}
         </Text>
       )}
@@ -231,7 +231,7 @@ function CompassLayout({
               ) : (
                 <View key={`empty-${rIdx}-${cIdx}`} style={{ flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center' }}>
                   {category.centerLabel && rIdx === Math.floor(rows / 2) && cIdx === Math.floor(cols / 2) ? (
-                    <Text style={{ color: '#CBD5E1', fontWeight: '700', letterSpacing: 1 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.12)', fontWeight: '700', letterSpacing: 1 }}>
                       {category.centerLabel}
                     </Text>
                   ) : null}
@@ -242,7 +242,7 @@ function CompassLayout({
         ))}
       </View>
       {category.bottomLabel && (
-        <Text style={{ textAlign: 'center', fontWeight: '700', color: '#94A3B8', marginTop: 8 }}>
+        <Text style={{ textAlign: 'center', fontWeight: '700', color: 'rgba(255,255,255,0.7)', marginTop: 8 }}>
           ↓ {category.bottomLabel}
         </Text>
       )}
@@ -280,7 +280,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }:
                 <Text
                   style={{
                     fontWeight: '700',
-                    color: '#94A3B8',
+                    color: 'rgba(255,255,255,0.7)',
                     textTransform: 'uppercase',
                     letterSpacing: 0.5,
                     marginBottom: 6,
@@ -306,7 +306,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }:
       )}
 
       {definedSlots.length === 0 && extras.length === 0 && !allowsExtras(category) && (
-        <Text style={{ color: '#94A3B8', fontSize: 12 }}>No photo slots configured.</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>No photo slots configured.</Text>
       )}
 
       {allowsExtras(category) && (
@@ -366,7 +366,7 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
         const prevResolved = lIdx === 0 || resolvedValues[lIdx - 1];
         return (
           <View key={level.key} style={{ marginBottom: 12, opacity: prevResolved ? 1 : 0.4 }} pointerEvents={prevResolved ? 'auto' : 'none'}>
-            <Text style={{ fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
+            <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
               {level.label}
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
@@ -381,7 +381,7 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
                       paddingVertical: 6,
                       borderRadius: 16,
                       borderWidth: 1,
-                      borderColor: selected ? GREEN : '#E2E8F0',
+                      borderColor: selected ? GREEN : 'rgba(255,255,255,0.12)',
                       backgroundColor: selected ? GREEN : 'transparent',
                     }}
                   >
@@ -398,7 +398,7 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
 
       {allResolved && contextSlotObjects.length > 0 && (
         <View style={{ marginTop: 4 }}>
-          <Text style={{ fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
+          <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
             Photos — {path}
           </Text>
           <PillGrid category={category} slots={contextSlotObjects} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />
@@ -406,8 +406,8 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
       )}
 
       {!allResolved && (
-        <View style={{ padding: 16, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#E2E8F0', alignItems: 'center' }}>
-          <Text style={{ color: '#94A3B8', fontSize: 12 }}>Complete the selections above to tag photos.</Text>
+        <View style={{ padding: 16, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center' }}>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>Complete the selections above to tag photos.</Text>
         </View>
       )}
 
@@ -459,12 +459,12 @@ export function CategoryTabStrip({
 }) {
   const list = Array.isArray(categories) ? categories : [];
   return (
-    <View style={{ borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#EEF2F6' }}>
+    <View style={{ borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {list.map((cat, i) => {
           const { filled, total } = countCategory(cat, capture);
           const isActive = i === active;
-          const color = isActive ? GREEN : '#94A3B8';
+          const color = isActive ? GREEN : 'rgba(255,255,255,0.7)';
           return (
             <TouchableOpacity
               key={cat.id}

@@ -309,7 +309,7 @@ export function DynamicManagePhotosView({
         {showLabel && (
           <Text
             numberOfLines={1}
-            style={{ fontWeight: '700', fontSize: 12, color: '#1C252E', marginBottom: 6, paddingHorizontal: 2 }}
+            style={{ fontWeight: '700', fontSize: 12, color: '#FFFFFF', marginBottom: 6, paddingHorizontal: 2 }}
           >
             {card.label}
           </Text>
@@ -318,9 +318,9 @@ export function DynamicManagePhotosView({
           style={{
             borderRadius: 8,
             borderWidth: isSelected ? 2 : 1.5,
-            borderColor: isSelected ? GREEN : '#E2E8F0',
+            borderColor: isSelected ? GREEN : 'rgba(255,255,255,0.12)',
             overflow: 'hidden',
-            backgroundColor: '#F8FAFC',
+            backgroundColor: '#16302A',
           }}
         >
           <TouchableOpacity
@@ -445,9 +445,9 @@ export function DynamicManagePhotosView({
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+    <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
       {/* Header — close + title with the live photo count */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, backgroundColor: GREEN }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#0D1F1A', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.12)' }}>
         {/* X exits select mode first, then closes (web parity) */}
         <TouchableOpacity
           onPress={selectMode ? exitSelectMode : onClose}
@@ -466,7 +466,7 @@ export function DynamicManagePhotosView({
               paddingHorizontal: 12,
               height: 30,
               borderRadius: 15,
-              backgroundColor: '#fff',
+              backgroundColor: '#0D1F1A',
               alignItems: 'center',
               justifyContent: 'center',
               opacity: selectedMap.size === 0 ? 0.5 : 1,
@@ -488,7 +488,7 @@ export function DynamicManagePhotosView({
 
       {/* Product pills (only when the company configured more than one) */}
       {products.length > 1 && (
-        <View style={{ borderBottomWidth: 1, borderColor: '#EEF2F6' }}>
+        <View style={{ borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 10, gap: 8 }}>
             {products.map((p) => {
               const isActive = p.id === selectedProduct?.id;
@@ -507,12 +507,12 @@ export function DynamicManagePhotosView({
                     height: 38,
                     borderRadius: 19,
                     borderWidth: 1,
-                    borderColor: isActive ? GREEN : '#E2E8F0',
+                    borderColor: isActive ? GREEN : 'rgba(255,255,255,0.12)',
                     backgroundColor: isActive ? GREEN : 'transparent',
                   }}
                 >
-                  <Icon name={iconifyToMdi(p.icon)} size={16} color={isActive ? '#fff' : '#637381'} />
-                  <Text style={{ fontWeight: '700', fontSize: 13, color: isActive ? '#fff' : '#637381' }}>
+                  <Icon name={iconifyToMdi(p.icon)} size={16} color={isActive ? '#fff' : 'rgba(255,255,255,0.7)'} />
+                  <Text style={{ fontWeight: '700', fontSize: 13, color: isActive ? '#fff' : 'rgba(255,255,255,0.7)' }}>
                     {p.name}
                   </Text>
                 </TouchableOpacity>
@@ -559,7 +559,7 @@ export function DynamicManagePhotosView({
               <Text style={{ color: GREEN, fontWeight: '700', fontSize: 15, textAlign: 'center' }}>
                 No photos in this section yet.
               </Text>
-              <Text style={{ color: '#919EAB', fontSize: 13, textAlign: 'center', marginTop: 8 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginTop: 8 }}>
                 Use the tabs above to browse other sections.
               </Text>
             </View>
@@ -569,7 +569,7 @@ export function DynamicManagePhotosView({
                 <View key={cat.id} style={{ marginBottom: 12 }}>
                   {/* Breadcrumb header, shown only when the tab has >1 leaf */}
                   {multiLeaf && (
-                    <Text style={{ fontWeight: '700', fontSize: 13, color: '#1C252E', marginBottom: 8 }}>
+                    <Text style={{ fontWeight: '700', fontSize: 13, color: '#FFFFFF', marginBottom: 8 }}>
                       {((cat as any).path || [cat.label]).join(' / ')}
                     </Text>
                   )}
@@ -585,8 +585,8 @@ export function DynamicManagePhotosView({
                     <Text style={{ color: '#F59E0B', fontWeight: '900', fontSize: 11, letterSpacing: 1 }}>
                       + EXTRAS
                     </Text>
-                    <View style={{ flex: 1, height: 1, backgroundColor: '#EEF2F6' }} />
-                    <Text style={{ color: '#919EAB', fontSize: 11, fontWeight: '700' }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '700' }}>
                       {extraCards.length} photo{extraCards.length === 1 ? '' : 's'}
                     </Text>
                   </View>
@@ -607,8 +607,8 @@ export function DynamicManagePhotosView({
                     <Text style={{ color: '#F59E0B', fontWeight: '900', fontSize: 11, letterSpacing: 1 }}>
                       + ANNOTATED
                     </Text>
-                    <View style={{ flex: 1, height: 1, backgroundColor: '#EEF2F6' }} />
-                    <Text style={{ color: '#919EAB', fontSize: 11, fontWeight: '700' }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '700' }}>
                       {annotated.length} photo{annotated.length === 1 ? '' : 's'}
                     </Text>
                   </View>
@@ -662,7 +662,7 @@ export function DynamicManagePhotosView({
       {/* Delete confirmation — web never deletes straight from the card */}
       <Modal visible={!!pendingDelete} transparent animationType="fade" onRequestClose={() => setPendingDelete(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#fff', borderRadius: 20, padding: 20 }}>
+          <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#0D1F1A', borderRadius: 20, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', alignItems: 'center', justifyContent: 'center' }}>
                 <Icon name="trash-can-outline" size={24} color={RED} />
@@ -675,19 +675,19 @@ export function DynamicManagePhotosView({
                 />
               )}
             </View>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#1C252E', marginBottom: 6 }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>
               Delete this photo?
             </Text>
-            <Text style={{ fontSize: 13, color: '#637381', marginBottom: 20 }}>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
               This photo will be permanently deleted. This action cannot be undone.
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 disabled={deleting}
                 onPress={() => setPendingDelete(null)}
-                style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}
+                style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}
               >
-                <Text style={{ fontWeight: '700', color: '#637381' }}>Cancel</Text>
+                <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 disabled={deleting}

@@ -31,6 +31,8 @@ interface CalculatorViewProps {
   verticals: CalculatorSchema[];
   entries: Record<string, CalculatorEntry>;
   onEntryChange: (fieldId: string, entry: CalculatorEntry) => void;
+  /** Clear one category's fields in a single pass (fires one `section cleared` log). */
+  onClearSection?: (categoryId: string, categoryLabel: string) => void;
   totals: CalculatorTotals;
   readOnly?: boolean;
   tabs?: CalculatorTabLite[];
@@ -188,10 +190,11 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
  * (rounded white card, icon-circle header, chevron toggle) with schema-driven
  * `FieldRow` inputs stacked inside.
  */
-function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, onToggle, allFields, formState }: {
+function CategoryCard({ category, entries, onEntryChange, onClearSection, readOnly, expanded, onToggle, allFields, formState }: {
   category: CalculatorCategory;
   entries: Record<string, CalculatorEntry>;
   onEntryChange: (fieldId: string, entry: CalculatorEntry) => void;
+  onClearSection?: (categoryId: string, categoryLabel: string) => void;
   readOnly?: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -221,10 +224,16 @@ function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, on
   }, [category, onEntryChange, entries]);
 
   // Clear all fields in this category (mirrors web's category "Clear" button).
+  // Prefer the hook's single-pass clear (one `section cleared` activity event, web
+  // parity); fall back to the per-field loop only if no handler is wired.
   const clearCategory = useCallback(() => {
+    if (onClearSection) {
+      onClearSection(category.id, category.label);
+      return;
+    }
     directFields.forEach((f) => handleFieldChange(f, directSectionId(category.id), 0));
     (category.sections || []).forEach((s) => s.fields.forEach((f) => handleFieldChange(f, s.id, 0)));
-  }, [directFields, category.sections, category.id, handleFieldChange]);
+  }, [onClearSection, category.id, category.label, directFields, category.sections, handleFieldChange]);
 
   const renderField = (field: CalculatorField, sectionId: string) => {
     const highlightColor = resolveConditionalFieldHighlight(field, formState, allFields);
@@ -551,7 +560,7 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
 }
 
 export function CalculatorView({
-  verticals, entries, onEntryChange, readOnly = false,
+  verticals, entries, onEntryChange, onClearSection, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
   price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig, plans, defaultMethod,
 }: CalculatorViewProps) {
@@ -699,6 +708,7 @@ export function CalculatorView({
                   category={cat}
                   entries={entries}
                   onEntryChange={onEntryChange}
+                  onClearSection={onClearSection}
                   readOnly={readOnly}
                   expanded={expanded[cat.id] !== false}
                   onToggle={() => setExpanded((p) => ({ ...p, [cat.id]: p[cat.id] === false }))}

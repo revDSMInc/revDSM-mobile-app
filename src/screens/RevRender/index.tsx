@@ -513,42 +513,45 @@ export default function RevRenderScreen() {
       }
     }
 
-    // Catch-all for photos not matched into any static view group — notably the
-    // DYNAMIC inspection photos, whose category is product-scoped ("{product} —
-    // {label}") and so never lands in a static IMAGE_CATEGORIES bucket, leaving
-    // them invisible here. Web parity (before.js "Additional Photos"): never drop
-    // a captured photo — surface every unaccounted one, labeled by its slot
-    // (subcategory). Runs AFTER the roofline merge so nothing already shown repeats.
+    // Photos not matched into any static view group — notably the DYNAMIC inspection
+    // photos, whose category is product-scoped ("{product} — {label}") and so never
+    // lands in a static IMAGE_CATEGORIES bucket. Web parity (before.js step 2):
+    // surface every unaccounted photo UNDER ITS OWN CATEGORY SECTION (not one flat
+    // "Additional Photos" dump), labeled by its slot (subcategory), so the RevRender
+    // picker groups them the same way the capture/manage views do. Runs AFTER the
+    // roofline merge so nothing already shown repeats.
     const accountedUris = new Set<string>();
     renderGroups.forEach((g) =>
       g.discoveredViews.forEach((v: any) => v?.uri && accountedUris.add(v.uri))
     );
-    const additionalViews: any[] = [];
-    const seenAdditional = new Set<string>();
-    Object.values(sectionImages || {}).forEach((imgs: any) => {
+    const seenExtra = new Set<string>();
+    Object.entries(sectionImages || {}).forEach(([catKey, imgs]) => {
+      const views: any[] = [];
       (Array.isArray(imgs) ? imgs : []).forEach((p: any) => {
         if (!p) return;
         if (p.subcategory?.toLowerCase().includes('(annotated)')) return;
         const uri = p.uri || p.s3url;
-        if (!uri || accountedUris.has(uri) || seenAdditional.has(uri)) return;
-        seenAdditional.add(uri);
-        const label = p.subcategory?.replace(/-/g, ' ') || 'Photo';
-        additionalViews.push({
+        if (!uri || accountedUris.has(uri) || seenExtra.has(uri)) return;
+        seenExtra.add(uri);
+        const label = p.subcategory?.replace(/-/g, ' ') || catKey;
+        views.push({
           ...p,
-          viewId: `additional-${p.subcategory || p.id || p._id || uri}`,
+          viewId: `dyn-${catKey}-${p.subcategory || p.id || p._id || uri}`,
           viewLabel: label,
           label,
         });
       });
+      if (views.length > 0) {
+        // The category key is the scoped category ("{product} — {label}") for dynamic
+        // inspection photos — a descriptive, per-product section header.
+        renderGroups.push({
+          sectionLabel: catKey,
+          categoryId: `dyn-${catKey}`,
+          views: [],
+          discoveredViews: views,
+        } as any);
+      }
     });
-    if (additionalViews.length > 0) {
-      renderGroups.push({
-        sectionLabel: 'Additional Photos',
-        categoryId: 'additional',
-        views: [],
-        discoveredViews: additionalViews,
-      } as any);
-    }
 
     const discoveredGroups = renderGroups.filter((g) => g.discoveredViews.length > 0);
 

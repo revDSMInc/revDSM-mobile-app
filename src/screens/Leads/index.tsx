@@ -19,7 +19,6 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getScheduledDateTime } from '../../utils/location-util';
 import {
   executeStartAppointmentFlow,
-  logLeadCardSelect,
   persistActiveLeadId,
 } from '../../utils/lead-activity-log';
 import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
@@ -314,7 +313,10 @@ export default function LeadsPage() {
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
     setNavigatingLeadId(item._id!);
-    await logLeadCardSelect(user, item);
+    // NOTE: no `lead_card` / `view_lead_details` log here. Web fires that event only
+    // from the MAP job-card click (`useJobCard.handleCardClick`), NOT when a lead is
+    // opened from the leads list — so firing it on list-open was a mobile-only event
+    // that showed up on lead entry. Removed for web parity.
 
     try {
       const { lead: targetLead } = await executeStartAppointmentFlow({

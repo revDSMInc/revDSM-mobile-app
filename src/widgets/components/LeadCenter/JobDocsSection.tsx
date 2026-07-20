@@ -1674,7 +1674,7 @@ export const JobDocsSection = ({
           schema (web `DynamicManagePhotosDialog`), else the static slot grid. */}
       {showManageModal && isDynamicInspection && (
         <Modal visible animationType="slide" onRequestClose={() => setShowManageModal(false)}>
-          <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: colors.primary.main }}>
+          <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: '#0D1F1A' }}>
             <DynamicManagePhotosView
               lead={lead}
               products={configuredProducts}

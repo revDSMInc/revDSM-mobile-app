@@ -82,6 +82,13 @@ interface DynamicJobBuilderScreenProps {
   // picked afterwards would never reach the Summary tab's Scheduled Appointment
   // card. The wizard passes the live value here and it is synced into root state.
   scheduleTimeOverride?: { date?: string | null; timeWindow?: string } | null;
+  /**
+   * Edit mode only: the parent (DynamicDealEditScreen) already fetched the saved
+   * outcome, so it hands the raw `leadOutcomeDocuments` here. The builder's own
+   * outcome GET is skipped in edit mode, so without this the agreement/order-sheet
+   * docs never resolve and the Contract Amendment summary shows no existing docs.
+   */
+  rawDocsOverride?: { agreements?: any[]; orderSheets?: any[] } | null;
   onStateChange?: (jobState: any) => void;
   onEditComplete?: (jobState: any) => void;
   onEditBack?: () => void;
@@ -103,6 +110,7 @@ function DynamicJobBuilderInner({
   appointmentId,
   embedded = false,
   scheduleTimeOverride,
+  rawDocsOverride,
   onStateChange,
   onEditComplete,
   onEditBack,
@@ -190,7 +198,10 @@ function DynamicJobBuilderInner({
   // docs exist) that used to gate draft hydration. It runs only after the outcome
   // GET has landed (so `outcomeData.rawDocs` is available) and never delays the
   // draft. A doc failure leaves the previously-set documents untouched.
-  const rawDocs = outcomeData?.rawDocs;
+  // In edit mode the outcome GET is skipped, so fall back to the parent-supplied
+  // raw docs (leadOutcomeDocuments) — this is what lets the amendment view show the
+  // agreements/order sheets that were saved on the original deal.
+  const rawDocs = outcomeData?.rawDocs || (isEdit ? rawDocsOverride : null);
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
     queryFn: async () => {
@@ -251,9 +262,9 @@ function DynamicJobBuilderInner({
 
       return resolvedDocuments;
     },
-    // Only after the outcome GET has landed (rawDocs available), and never in edit
-    // mode (docs come from the parent there).
-    enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
+    // Runs once rawDocs are available: after the outcome GET lands (new flow), OR
+    // in edit mode as soon as the parent hands down `rawDocsOverride`.
+    enabled: Boolean(leadId && calcId) && (isOutcomeFetched || (isEdit && !!rawDocsOverride)),
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
@@ -820,8 +831,19 @@ function DynamicJobBuilderInner({
       // without its companion rollout_and_drop_summary event.
       try {
         const rdForSummary = (calculatorResultData || {}) as any;
-        const selectedCalc = rdForSummary.LFCalculator && Object.keys(rdForSummary.LFCalculator).length
+        const rawCalc = rdForSummary.LFCalculator && Object.keys(rdForSummary.LFCalculator).length
           ? rdForSummary.LFCalculator
+          : null;
+        // The summary reads `selectedCalculator._id` / `.appointmentId`, but the
+        // in-memory CalcTab carries `id` (no `_id`). Without this map the summary log
+        // ships `calculatorId: undefined`, so the portal can't group it under the
+        // right calculator. Normalize to the backend shape.
+        const selectedCalc = rawCalc
+          ? {
+              ...rawCalc,
+              _id: rawCalc._id || rawCalc.id,
+              appointmentId: rawCalc.appointmentId || appointmentId || rdForSummary.selectedAppointmentId,
+            }
           : null;
         const uid = authUser?._id || authUser?.id;
         if (uid && leadId && selectedCalc) {
@@ -891,24 +913,15 @@ function DynamicJobBuilderInner({
       // completed job. The submitted state is persisted below by the /job-builder
       // POST and the lead-scoped outcome mirror, which a reopen also reads.
 
-      // Documents are NOT sent with the /job-builder POST.
-      //
-      // This used to read every outcome document back via downloadOutcomeDocuments
-      // and re-send it as top-level base64, on the assumption that JobBuilderDocument
-      // (what LeadCenter's Contract Details reads, via lead.jobBuilderDocuments) would
-      // otherwise be empty. It isn't: the backend already files the lead's outcome
-      // documents into JobBuilderDocument itself, so the explicit array produced a
-      // SECOND row for the same PDF — one agreement generated, two 66 KB "Agreement"
-      // entries listed on the lead dashboard.
-      //
-      // The agreement is uploaded eagerly to the outcome by handleUploadDocs the
-      // moment it is signed, so by the time we get here it is already persisted and
-      // nothing needs re-sending. Dropping the round-trip also removes a full
-      // base64 download+upload of every document from the completion path.
-      //
-      // NOTE: this also removes the client-side non-Sale re-filing (web
-      // TabbedCalculator.js:831-836, which moved an agreement-typed doc under
-      // orderSheets for a Demo). Verify a Demo files its order sheet correctly.
+      // Documents are NOT sent with the /job-builder POST. handleUploadDocs already
+      // uploaded the agreement/order-sheet to the outcome eagerly when it was signed,
+      // and the backend files those outcome documents into JobBuilderDocument itself
+      // (what the resulted contract reads via `lead.jobBuilderDocuments`). Re-sending
+      // them here as an explicit top-level `agreements`/`orderSheets` array produced a
+      // SECOND JobBuilderDocument row for the same PDF — the "two agreements submitted"
+      // bug. The amendment (edit) view, which was the real gap, is fixed separately by
+      // hydrating `resolvedDocuments` from the parent's outcome (`rawDocsOverride`),
+      // not by re-uploading here.
 
       // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
       // `jobState` (web TabbedCalculator payload). The previous

@@ -15,6 +15,8 @@ import { DynamicDealEditScreen } from './DynamicDealEditScreen';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { buildSectionLabelMap } from '../utils/item-format';
 import { LeadService } from '../../../services/api/leads';
+import { useAuth } from '../../../hooks/useAuth';
+import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -33,6 +35,10 @@ interface DynamicDealCenterScreenProps {
 }
 
 export default function DynamicDealCenterScreen({ navigation, route }: DynamicDealCenterScreenProps) {
+  // useAuth sits ABOVE the edit-mode branch so it runs unconditionally (its result
+  // is simply unused in the edit branch) — the activity-log user id, without adding
+  // another hook after the early return.
+  const { user } = useAuth();
   // Edit flow is a distinct screen (its own hooks/loading). Branch BEFORE any hook
   // below runs — `mode` is stable for a navigated screen instance, so this keeps
   // hook order consistent across renders.
@@ -75,6 +81,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     isSaving,
     lastUpdated,
     handleEntryChange,
+    handleClearSection,
     handleAddTab,
     handleDuplicateTab,
     handleDeleteTab,
@@ -126,8 +133,22 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         leadResulted: 'active',
       }).catch((e: any) => console.warn('[DynamicDealCenter] timeline progress failed:', e?.message || e));
     }
+    // Web parity (result-lead-modal.js:1748): "Build Job" clicked → transition into
+    // the job builder. Fires ONLY here (the LeadCenter build_job_initiated calls are
+    // for the legacy JobBuilder navigation, not this dynamic step).
+    const uId = user?._id || user?.id;
+    if (uId && leadIdForProgress) {
+      logBuildJobInitiated({
+        userId: uId,
+        leadId: leadIdForProgress,
+        result: data?.resultType || data?.result || undefined,
+        calculatorId: currentCalculatorId || undefined,
+        appointmentId: calc?.appointmentId || appointmentId || undefined,
+        calculatorType: 'dynamic',
+      }).catch(() => {});
+    }
     setFlowStep('jobBuilder');
-  }, [currentCalculatorId, tabs, lead]);
+  }, [currentCalculatorId, tabs, lead, user, appointmentId]);
 
   const handleJobBuilderBack = useCallback(() => {
     setFlowStep('calculator');
@@ -205,6 +226,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           pricingConfig={pricingConfig}
           pricing={pricing}
           isLowesLead={lead?.lowesLead === true}
+          leadId={lead?._id || lead?.leadId || lead?.id}
           onBack={() => setFlowStep('calculator')}
           onConfirmRollouts={handleConfirmRollouts}
           onResultJob={handleResultJob}
@@ -217,6 +239,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         />
         <ResultJobModal
           visible={resultModal.visible}
+          lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
@@ -299,6 +322,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           pricingConfig={pricingConfig}
           entries={activeTab?.entries || {}}
           onEntryChange={handleEntryChange}
+          onClearSection={handleClearSection}
           totals={activeTab?.totals || { cost: 0, par: 0, retail: 0 }}
           readOnly={activeTab?.isRolloutConfirmed || false}
           price={activeTab?.price || 0}
@@ -311,7 +335,12 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDuplicateTab={handleDuplicateTab}
           onDeleteTab={handleDeleteTab}
           onReorderTabs={handleReorderTabs}
-          onViewAll={() => setFlowStep('rollout')}
+          onViewAll={() => {
+            // Web parity (TabbedCalculator.js:667): view-all/rollout entry event.
+            const uId = user?._id || user?.id;
+            if (uId) logViewAllCalculators(uId).catch(() => {});
+            setFlowStep('rollout');
+          }}
           appointmentId={appointmentId || undefined}
           isLowesLead={lead?.lowesLead === true}
           plans={pricing.plans}
@@ -321,6 +350,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
         <ResultJobModal
           visible={resultModal.visible}
+          lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}

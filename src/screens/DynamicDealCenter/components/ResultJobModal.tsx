@@ -9,6 +9,7 @@ import { buildCategoryMeta, styleForKey } from '../utils/icon-color';
 import { DealPricing, DealPlan, PayCategory, planBelowMin, belowMinMsg } from '../hooks/useDealPricing';
 import { FlashMessage } from '../../../config/message';
 import { unitSuffix, labelWithSection } from '../utils/item-format';
+import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 
 /**
  * The full **Result Lead** outcome modal — a faithful port of the regular deal
@@ -37,6 +38,8 @@ const DEMO_REASONS = [
 
 interface ResultJobModalProps {
   visible?: boolean;
+  /** The lead — needed to fire the `lead_result_field_entry` outcome logs (web parity). */
+  lead?: any;
   calculatorTitle?: string;
   resultType?: 'sale' | 'demo' | null;
   /** prefill for the contract price (the rollout end / latest drop price) */
@@ -206,6 +209,7 @@ function MoneyField({ label, value, onChange, editable = true }: {
 
 export function ResultJobModal({
   visible = false,
+  lead,
   calculatorTitle,
   resultType: initialResultType,
   initialPrice,
@@ -245,6 +249,26 @@ export function ResultJobModal({
   const contractNum = parseFloat(contractPrice) || 0;
   const downNum = parseFloat(downPayment) || 0;
   const balance = Math.max(0, contractNum - downNum);
+
+  // Web parity (result-lead-modal.js): fire the `lead_result_field_entry` outcome
+  // logs for this resulted lead. The regular result modals already do this via
+  // useOutcomeLogging; the DYNAMIC result modal did not, so the resulted-lead logs
+  // never fired in the dynamic flow.
+  useOutcomeLogging({
+    visible,
+    lead,
+    outcomeStatus: resultType,
+    outcomeForm: {
+      oneLeg,
+      result: resultType,
+      downPaymentMethod,
+      balancePaymentMethod,
+      originalContractPrice: contractNum || undefined,
+      lastPriceQuoted: contractNum || undefined,
+      reason: resultType === 'demo' ? demoReason : undefined,
+      reasonExplanation: resultType === 'demo' ? reasonExplanation : undefined,
+    },
+  });
 
   // Entered line items, grouped by category (sorted) so the Job Summary reads the
   // same as the rollout quote card — category pills + per-row schema icons.
