@@ -7,6 +7,8 @@ export { ToggleGroup } from './ToggleGroup';
 export { OptionList } from './OptionList';
 export { SwatchPicker } from './SwatchPicker';
 export { LockedField } from './LockedField';
+export { LockedSingleOption } from './LockedSingleOption';
+export { OptionToggleField } from './OptionToggleField';
 export { LockedFieldWithColor } from './LockedFieldWithColor';
 export { AllocatorBar } from './AllocatorBar';
 export { LocationGrid } from './LocationGrid';

@@ -279,10 +279,53 @@ export function computeCalculatorTiers(
   return sum;
 }
 
+/** Matches the screens field/entry the same way web does — by `name`, with a
+ *  case-insensitive label fallback (`PremiumQuoteCard.js:259-272`). */
+const isScreensField = (f: any) =>
+  Boolean(f) && (f.name === 'number_of_screen' || /number of screen/i.test(f.label || ''));
+
 /** Read the screens count from a calculator's entries map (`number_of_screen`). */
 export function screensCountFromEntries(entries: Record<string, any> = {}): number {
-  const entry = Object.values(entries).find(
-    (e: any) => e && (e.name === 'number_of_screen' || /number of screen/i.test(e.label || '')),
-  );
+  const entry = Object.values(entries).find(isScreensField);
   return Number(entry?.inputValue) || 0;
+}
+
+/**
+ * Per-screen unit price, read LIVE from the schema's `number_of_screen` field —
+ * web parity (`PremiumQuoteCard.js:274`, commit b48ea8d "fix - footage value and
+ * screen price"):
+ *
+ *     const screenUnitPrice = Number(screenField?.price?.retail) || 75;
+ *
+ * The $75 is a LEGACY FALLBACK for calculators created before the field carried a
+ * price — not the price itself. Mobile hardcoded 75 unconditionally, so a company
+ * that priced screens at, say, $47 saw the rollout inflate by $75/screen while web
+ * showed $47. Reading the schema (rather than the entry's `pricingAtTimeOfEntry`)
+ * is deliberate and matches web: the cost always follows the CURRENT schema.
+ *
+ * Resolved through `resolveFieldTierPrice` so a company whose retail tier is
+ * derived (`percentOf` cost/par) rather than stored resolves identically to every
+ * other price on this screen.
+ */
+export function screenUnitPriceFromSchemas(
+  verticals: any[] = [],
+  pricingConfig?: PricingConfig | null,
+): number {
+  let screenField: any;
+  (verticals || []).some((schema) =>
+    (schema?.categories || []).some((cat: any) => {
+      const direct = (cat?.directFields || cat?.fields || []).find(isScreensField);
+      if (direct) {
+        screenField = direct;
+        return true;
+      }
+      return (cat?.sections || []).some((s: any) => {
+        const found = (s?.fields || []).find(isScreensField);
+        if (found) screenField = found;
+        return Boolean(found);
+      });
+    }),
+  );
+
+  return Number(resolveFieldTierPrice(screenField, 'retail', pricingConfig)) || 75;
 }
