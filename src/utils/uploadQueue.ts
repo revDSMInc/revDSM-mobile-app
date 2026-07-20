@@ -267,12 +267,17 @@ class UploadQueueManager {
           }
         }
 
-        // Invalidate React Query cache to refresh the UI immediately for each upload
+        // Refresh React Query and WAIT for the lead to actually come back before
+        // this item is retired from the queue (the caller shifts it as soon as we
+        // return). `invalidateQueries` is fire-and-forget, so the optimistic queue
+        // entry used to disappear while the server photo had not landed yet — the
+        // count visibly dropped 1 → 0 → 1. Awaiting the refetch closes that gap so
+        // the optimistic item hands over to real data with no flicker.
         try {
           queryClient.invalidateQueries({ queryKey: ['leads'] });
-          queryClient.invalidateQueries({ queryKey: ['lead', item.leadId] });
+          await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
         } catch (qcErr) {
-          console.warn('[UploadQueue] Failed to invalidate queries:', qcErr);
+          console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
         }
 
         logEvent('add', {
@@ -285,6 +290,7 @@ class UploadQueueManager {
             subcategory: item.subcategory,
             timestamp: item.timestamp,
             coordinates: coords,
+            size: 0,
             action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',
             image_url: s3url,
             imageData: {

@@ -260,7 +260,9 @@ export function SummaryFinalizeCards({
           meta: {
             leadId,
             fieldName: 'agreement',
-            fieldLabel: 'Agreement',
+            // Web parity (document-summary-cards.js): the UPLOADED path labels the
+            // field 'Agreement Uploaded'; only the GENERATED path uses 'Agreement'.
+            fieldLabel: 'Agreement Uploaded',
             action: 'agreement_uploaded',
           },
         });

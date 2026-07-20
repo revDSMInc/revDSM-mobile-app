@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LeadService } from '../../../services/api/leads';
 import { queryClient } from '../../../services/api/queryClient';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
+import { logEvent } from '../../../services/api/LoggerService';
 import {
   indexSchema,
   getCapturableSlots,
@@ -88,6 +89,7 @@ export interface DynamicInspectionCapture {
   capturedPreviews: Record<string, string>;
   uploadingKeys: Record<string, boolean>;
   deletingKeys: Record<string, boolean>;
+  movingKeys: Record<string, boolean>;
   extrasFor: (category: InspectionCategory) => InspectionSlot[];
   addExtra: (category: InspectionCategory) => void;
   removeExtra: (category: InspectionCategory, extra: InspectionSlot) => void;
@@ -104,6 +106,15 @@ export interface DynamicInspectionCapture {
     key: string;
     photo: CapturedPhoto;
   }) => Promise<void>;
+  movePhoto: (args: {
+    photo: CapturedPhoto;
+    fromCategoryLabel: string;
+    fromSubcategory: string;
+    toCategoryLabel: string;
+    toSubcategory: string;
+    key?: string;
+  }) => Promise<void>;
+  getAnnotatedFor: (label: string) => { subcategory: string; photo: CapturedPhoto }[];
   progress: { total: number; filled: number; percent: number };
 }
 
@@ -131,10 +142,20 @@ export function useDynamicInspectionCapture({
   const [capturedPreviews, setCapturedPreviews] = useState<Record<string, string>>({});
   const [uploadingKeys, setUploadingKeys] = useState<Record<string, boolean>>({});
   const [deletingKeys, setDeletingKeys] = useState<Record<string, boolean>>({});
+  const [movingKeys, setMovingKeys] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
 
   // s3urls we just deleted but that a briefly-stale lead refresh may still return.
   const pendingDeletesRef = useRef<Set<string>>(new Set());
+  // Monotonic cache of every server-confirmed photo we've ever seen (keyed by
+  // subKey, deduped by s3url). The backend is eventually consistent: right after
+  // an upload, some lead refetches come back from a replica that does NOT yet
+  // have the new photo. Rebuilding purely from such a refetch would blank a slot
+  // that was just filled — the "active → inactive → active" flicker. So the
+  // displayed map is the UNION of this cache and the fresh lead; a photo only
+  // leaves the cache on an explicit in-app delete (pendingDeletesRef), never on a
+  // transient empty read. This is also what guarantees no tagged photo is missed.
+  const knownPhotosRef = useRef<Record<string, CapturedPhoto[]>>({});
   // subKey -> uiKey, so when a server photo arrives we can clear the right uploading flag.
   const pendingUploadKeyRef = useRef<Record<string, string>>({});
 
@@ -196,18 +217,39 @@ export function useDynamicInspectionCapture({
 
       if (cancelled) return;
 
-      const map: Record<string, CapturedPhoto[]> = {};
+      const fresh: Record<string, CapturedPhoto[]> = {};
       scoped.forEach((p) => {
         const k = subKey(p.category, p.subcategory);
-        if (!map[k]) map[k] = [];
-        if (p.s3url && map[k].some((x) => x.s3url === p.s3url)) return;
-        map[k].push({
+        if (!fresh[k]) fresh[k] = [];
+        if (p.s3url && fresh[k].some((x) => x.s3url === p.s3url)) return;
+        fresh[k].push({
           ...p,
           secureUrl: p.secureUrl || secureMap[`${p.bucketName}:${p.s3url}`] || null,
         });
       });
 
-      setPhotosBySubcat(map);
+      // Merge fresh photos into the monotonic cache: a transient refetch that is
+      // missing a photo must NOT drop it, but a fresh copy DOES refresh a stale
+      // one (e.g. a newly-resolved secureUrl). Explicitly-deleted s3urls are
+      // pruned so real deletions still take effect.
+      const merged: Record<string, CapturedPhoto[]> = {};
+      const allKeys = new Set([...Object.keys(knownPhotosRef.current), ...Object.keys(fresh)]);
+      allKeys.forEach((k) => {
+        const list: CapturedPhoto[] = [];
+        const push = (p: CapturedPhoto) => {
+          if (p.s3url && pending.has(p.s3url)) return; // just deleted
+          const idx = p.s3url ? list.findIndex((e) => e.s3url && e.s3url === p.s3url) : -1;
+          if (idx >= 0) list[idx] = p; // fresh copy wins (secureUrl refresh)
+          else list.push(p);
+        };
+        (knownPhotosRef.current[k] || []).forEach(push);
+        (fresh[k] || []).forEach(push);
+        if (list.length) merged[k] = list;
+      });
+
+      const map = merged;
+      knownPhotosRef.current = merged;
+      setPhotosBySubcat(merged);
       setLoading(false);
 
       // Clear optimistic previews / uploading flags for slots now backed by a
@@ -415,13 +457,52 @@ export function useDynamicInspectionCapture({
       if (key) setDeletingKeys((prev) => ({ ...prev, [key]: true }));
       try {
         await LeadService.deleteImage(leadId, { s3urls: [url], category: 'salesPhotos' });
+
+        // Activity log — web parity with `logPhotoDelete`. The stored photo
+        // carries its own fully-scoped category/subcategory, so read them off the
+        // photo (falling back to the passed args). `(annotated)` copies log under
+        // the annotated module, exactly as upload does.
+        const logCategory = photo.category || categoryLabel;
+        const logSub = photo.subcategory || subcategory;
+        const isAnnotated = String(logSub || '').toLowerCase().includes('(annotated)');
+        if (userId) {
+          logEvent('delete', {
+            user_id: userId,
+            created_by: userId,
+            module_type: isAnnotated ? 'annotated_photos' : 'inspection_photo',
+            meta: {
+              leadId,
+              category: logCategory,
+              subcategory: logSub,
+              timestamp: photo.timestampTaken || new Date().toISOString(),
+              coordinates: photo.coordinates || null,
+              size: (photo as any).size || 0,
+              action: 'deleted_image',
+              imageData: {
+                s3url: photo.s3url,
+                bucketName: photo.bucketName,
+                category: photo.category,
+                subcategory: photo.subcategory,
+                timestampTaken: photo.timestampTaken,
+                coordinates: photo.coordinates || null,
+              },
+            },
+          });
+        }
+
         // Remove from the grid only after the server confirms; mark pending so a
         // briefly-stale refresh can't flash it back in.
         pendingDeletesRef.current.add(url);
-        setPhotosBySubcat((prev) => {
-          const k = subKey(scopeCat(categoryLabel), subcategory);
-          return { ...prev, [k]: (prev[k] || []).filter((p) => p.s3url !== url) };
-        });
+        const dk = subKey(scopeCat(categoryLabel), subcategory);
+        // Prune the monotonic cache too, else the union would resurrect it.
+        knownPhotosRef.current = {
+          ...knownPhotosRef.current,
+          [dk]: (knownPhotosRef.current[dk] || []).filter((p) => p.s3url !== url),
+        };
+        setPhotosBySubcat((prev) => ({
+          ...prev,
+          [dk]: (prev[dk] || []).filter((p) => p.s3url !== url),
+        }));
         try {
           queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
           queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -440,7 +521,93 @@ export function useDynamicInspectionCapture({
           });
       }
     },
+    [leadId, scopeCat, refreshLeadData, userId]
+  );
+
+  // Move a stored photo to a different slot (category/subcategory) without
+  // re-shooting it. Reuses the image-position endpoint, which re-tags the
+  // salesPhoto and re-files the S3 object when the subcategory changes. Both
+  // source and target are addressed the same way capture uses everywhere:
+  // product-scoped category label + storageName. Port of web `movePhoto`.
+  //
+  // Deliberately NOT optimistic (web parity): nothing touches photosBySubcat, so
+  // the moved photo re-resolves into its new slot purely from the lead refresh.
+  const movePhoto = useCallback(
+    async ({
+      photo,
+      fromCategoryLabel,
+      fromSubcategory,
+      toCategoryLabel,
+      toSubcategory,
+      key,
+    }: {
+      photo: CapturedPhoto;
+      fromCategoryLabel: string;
+      fromSubcategory: string;
+      toCategoryLabel: string;
+      toSubcategory: string;
+      key?: string;
+    }) => {
+      // The endpoint is id-based, so an _id (not just an s3url) is required.
+      if (!leadId || !photo?._id) return;
+      if (
+        norm(scopeCat(fromCategoryLabel)) === norm(scopeCat(toCategoryLabel)) &&
+        norm(fromSubcategory) === norm(toSubcategory)
+      ) {
+        return; // same slot — nothing to do
+      }
+      if (key) setMovingKeys((prev) => ({ ...prev, [key]: true }));
+      try {
+        await LeadService.updateImagePosition(leadId, {
+          photoId: photo._id,
+          currentPosition: {
+            category: scopeCat(fromCategoryLabel),
+            subcategory: fromSubcategory,
+          },
+          newPosition: {
+            category: scopeCat(toCategoryLabel),
+            subcategory: toSubcategory,
+          },
+        });
+        try {
+          queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
+          queryClient.invalidateQueries({ queryKey: ['leads'] });
+        } catch {
+          /* noop */
+        }
+        await refreshLeadData?.(leadId);
+      } catch {
+        await refreshLeadData?.(leadId); // restore truth
+      } finally {
+        if (key)
+          setMovingKeys((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+      }
+    },
     [leadId, scopeCat, refreshLeadData]
+  );
+
+  // Every stored photo under this category label whose subcategory marks it as
+  // annotated (created by the annotation editor), regardless of slot config.
+  // Returns [{ subcategory, photo }] for the "+ ANNOTATED" section. Port of web
+  // `getAnnotatedFor` — scans every subKey under the product-scoped label.
+  const getAnnotatedFor = useCallback(
+    (label: string): { subcategory: string; photo: CapturedPhoto }[] => {
+      const prefix = `${norm(scopeCat(label))}||`;
+      const out: { subcategory: string; photo: CapturedPhoto }[] = [];
+      Object.entries(photosBySubcat).forEach(([k, arr]) => {
+        if (!k.startsWith(prefix)) return;
+        (arr || []).forEach((photo) => {
+          const sub = photo?.subcategory || '';
+          if (sub.toLowerCase().includes('(annotated)')) out.push({ subcategory: sub, photo });
+        });
+      });
+      return out;
+    },
+    [photosBySubcat, scopeCat]
   );
 
   // Header progress over defined slots + extras (context-selector excluded).
@@ -469,12 +636,15 @@ export function useDynamicInspectionCapture({
     capturedPreviews,
     uploadingKeys,
     deletingKeys,
+    movingKeys,
     extrasFor,
     addExtra,
     removeExtra,
     tagAsExtraInCategory,
     captureToSlot,
     deletePhoto,
+    movePhoto,
+    getAnnotatedFor,
     progress,
   };
 }

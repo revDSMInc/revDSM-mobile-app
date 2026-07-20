@@ -26,6 +26,7 @@ import {
 import type { DynamicInspectionCapture } from './useDynamicInspectionCapture';
 
 const GREEN = '#4CBB17';
+const AMBER = '#F59E0B';
 
 /** Iconify string (e.g. "mdi:home-outline") → MaterialCommunityIcons name. */
 export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): string => {
@@ -45,6 +46,12 @@ interface CommonBodyProps {
   capture: DynamicInspectionCapture;
   onSlotClick: SlotClick;
   onTagAsExtra?: (category: InspectionCategory) => void;
+  /**
+   * Move-photo flow only: the ui-key of the slot the photo is being moved FROM.
+   * That slot renders as an amber "FROM" tile so the rep can see the origin while
+   * picking a destination (web `move-photo-dialog` parity).
+   */
+  moveFromKey?: string;
 }
 
 // ─── One slot as a wide tap-to-tag pill ───────────────────────────────────────
@@ -54,24 +61,29 @@ function SlotButton({
   category,
   capture,
   onSlotClick,
+  moveFromKey,
 }: {
   slot: InspectionSlot;
   category: InspectionCategory;
   capture: DynamicInspectionCapture;
   onSlotClick: SlotClick;
+  moveFromKey?: string;
 }) {
   const key = slot.isExtra ? (slot.key as string) : uiKey(category.id, slot.id);
   const photos = capture.getPhotos(category.label, slot.storageName);
   const uploading = !!capture.uploadingKeys[key];
   const deleting = !!capture.deletingKeys[key];
-  const busy = uploading || deleting;
+  const moving = !!capture.movingKeys?.[key];
+  const busy = uploading || deleting || moving;
   const filled = photos.length > 0;
+  // The slot this photo is being moved out of — amber, and not tappable.
+  const isMoveSource = !!moveFromKey && moveFromKey === key;
 
   return (
     <View style={{ flex: 1, minWidth: 0 }}>
       <TouchableOpacity
         activeOpacity={0.7}
-        disabled={busy}
+        disabled={busy || isMoveSource}
         onPress={() => onSlotClick(category, slot, key)}
         style={{
           minHeight: 52,
@@ -81,25 +93,25 @@ function SlotButton({
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 1.5,
-          borderColor: filled ? GREEN : '#E2E8F0',
-          backgroundColor: filled ? GREEN : '#F1F5F9',
+          borderColor: isMoveSource ? AMBER : filled ? GREEN : '#E2E8F0',
+          backgroundColor: isMoveSource ? 'rgba(245,158,11,0.12)' : filled ? GREEN : '#F1F5F9',
         }}
       >
         {busy ? (
           <ActivityIndicator size="small" color={filled ? '#fff' : GREEN} />
         ) : (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-            {filled && <Icon name="check" size={13} color="#fff" />}
+            {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
             <Text
               numberOfLines={2}
               style={{
                 fontWeight: '600',
                 fontSize: 13,
                 textAlign: 'center',
-                color: filled ? '#fff' : '#1C252E',
+                color: isMoveSource ? AMBER : filled ? '#fff' : '#1C252E',
               }}
             >
-              {slot.name}
+              {isMoveSource ? `FROM · ${slot.name}` : slot.name}
             </Text>
             {photos.length > 1 && (
               <View
@@ -136,11 +148,13 @@ function PillGrid({
   slots,
   capture,
   onSlotClick,
+  moveFromKey,
 }: {
   category: InspectionCategory;
   slots: InspectionSlot[];
   capture: DynamicInspectionCapture;
   onSlotClick: SlotClick;
+  moveFromKey?: string;
 }) {
   const rows: InspectionSlot[][] = [];
   for (let i = 0; i < slots.length; i += 2) rows.push(slots.slice(i, i + 2));
@@ -155,6 +169,7 @@ function PillGrid({
               category={category}
               capture={capture}
               onSlotClick={onSlotClick}
+              moveFromKey={moveFromKey}
             />
           ))}
           {row.length === 1 && <View style={{ flex: 1 }} />}
@@ -171,15 +186,17 @@ function CompassLayout({
   slots,
   capture,
   onSlotClick,
+  moveFromKey,
 }: {
   category: InspectionCategory;
   slots: InspectionSlot[];
   capture: DynamicInspectionCapture;
   onSlotClick: SlotClick;
+  moveFromKey?: string;
 }) {
   const haveCoords = slots.every((s) => Number.isInteger(s.row) && Number.isInteger(s.col));
   if (!haveCoords) {
-    return <PillGrid category={category} slots={slots} capture={capture} onSlotClick={onSlotClick} />;
+    return <PillGrid category={category} slots={slots} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />;
   }
 
   const cols = Math.max(...slots.map((s) => s.col as number)) + 1;
@@ -209,6 +226,7 @@ function CompassLayout({
                   category={category}
                   capture={capture}
                   onSlotClick={onSlotClick}
+                  moveFromKey={moveFromKey}
                 />
               ) : (
                 <View key={`empty-${rIdx}-${cIdx}`} style={{ flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center' }}>
@@ -244,7 +262,7 @@ function groupSlots(slots: InspectionSlot[]): [string, InspectionSlot[]][] {
 
 // ─── Leaf body ────────────────────────────────────────────────────────────────
 
-function LeafBody({ category, capture, onSlotClick, onTagAsExtra }: CommonBodyProps & { category: InspectionCategory }) {
+function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }: CommonBodyProps & { category: InspectionCategory }) {
   const definedSlots = getCapturableSlots(category);
   const extras = capture.extrasFor(category);
   const compass = category.type === 'compass-grid';
@@ -254,7 +272,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra }: CommonBodyPr
     <View>
       {definedSlots.length > 0 &&
         (compass ? (
-          <CompassLayout category={category} slots={definedSlots} capture={capture} onSlotClick={onSlotClick} />
+          <CompassLayout category={category} slots={definedSlots} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />
         ) : (
           grouped.map(([groupTitle, groupSlotList]) => (
             <View key={groupTitle || '_'} style={{ marginBottom: groupTitle ? 12 : 0 }}>
@@ -272,7 +290,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra }: CommonBodyPr
                   {groupTitle}
                 </Text>
               )}
-              <PillGrid category={category} slots={groupSlotList} capture={capture} onSlotClick={onSlotClick} />
+              <PillGrid category={category} slots={groupSlotList} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />
             </View>
           ))
         ))}
@@ -283,7 +301,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra }: CommonBodyPr
           <Text style={{ fontWeight: '700', color: GREEN, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, fontSize: 11 }}>
             Extra photos ({extras.length})
           </Text>
-          <PillGrid category={category} slots={extras} capture={capture} onSlotClick={onSlotClick} />
+          <PillGrid category={category} slots={extras} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />
         </View>
       )}
 
@@ -317,7 +335,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra }: CommonBodyPr
 
 // ─── Context selector body ────────────────────────────────────────────────────
 
-function ContextBody({ category, capture, onSlotClick }: CommonBodyProps & { category: InspectionCategory }) {
+function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBodyProps & { category: InspectionCategory }) {
   const levels = Array.isArray(category.contextLevels) ? category.contextLevels : [];
   const contextSlots = Array.isArray(category.contextSlots) ? category.contextSlots : [];
   const [resolved, setResolved] = useState<Record<string, string | null>>({});
@@ -383,7 +401,7 @@ function ContextBody({ category, capture, onSlotClick }: CommonBodyProps & { cat
           <Text style={{ fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
             Photos — {path}
           </Text>
-          <PillGrid category={category} slots={contextSlotObjects} capture={capture} onSlotClick={onSlotClick} />
+          <PillGrid category={category} slots={contextSlotObjects} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />
         </View>
       )}
 
@@ -408,7 +426,7 @@ function ContextBody({ category, capture, onSlotClick }: CommonBodyProps & { cat
 
 // ─── Category body dispatcher (container -> nested tabs) ───────────────────────
 
-export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra }: CommonBodyProps & { category: InspectionCategory }) {
+export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }: CommonBodyProps & { category: InspectionCategory }) {
   if (isContainer(category)) {
     return (
       <NestedCategoryTabs
@@ -416,13 +434,14 @@ export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra }: C
         capture={capture}
         onSlotClick={onSlotClick}
         onTagAsExtra={onTagAsExtra}
+        moveFromKey={moveFromKey}
       />
     );
   }
   if (isContextSelector(category)) {
-    return <ContextBody category={category} capture={capture} onSlotClick={onSlotClick} />;
+    return <ContextBody category={category} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />;
   }
-  return <LeafBody category={category} capture={capture} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} />;
+  return <LeafBody category={category} capture={capture} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} moveFromKey={moveFromKey} />;
 }
 
 // ─── Tab strip (controlled) ───────────────────────────────────────────────────
@@ -477,7 +496,7 @@ export function CategoryTabStrip({
 
 // ─── Nested tabs (for container categories inside a body) ─────────────────────
 
-function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra }: CommonBodyProps & { categories: InspectionCategory[] }) {
+function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra, moveFromKey }: CommonBodyProps & { categories: InspectionCategory[] }) {
   const [active, setActive] = useState(0);
   const list = Array.isArray(categories) ? categories : [];
   if (list.length === 0) return null;
@@ -489,7 +508,7 @@ function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra }: 
       <View style={{ marginBottom: 16 }}>
         <CategoryTabStrip categories={list} capture={capture} active={idx} onChange={setActive} />
       </View>
-      <CategoryBody key={current.id} category={current} capture={capture} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} />
+      <CategoryBody key={current.id} category={current} capture={capture} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} moveFromKey={moveFromKey} />
     </View>
   );
 }

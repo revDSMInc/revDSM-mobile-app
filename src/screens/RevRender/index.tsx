@@ -513,6 +513,43 @@ export default function RevRenderScreen() {
       }
     }
 
+    // Catch-all for photos not matched into any static view group — notably the
+    // DYNAMIC inspection photos, whose category is product-scoped ("{product} —
+    // {label}") and so never lands in a static IMAGE_CATEGORIES bucket, leaving
+    // them invisible here. Web parity (before.js "Additional Photos"): never drop
+    // a captured photo — surface every unaccounted one, labeled by its slot
+    // (subcategory). Runs AFTER the roofline merge so nothing already shown repeats.
+    const accountedUris = new Set<string>();
+    renderGroups.forEach((g) =>
+      g.discoveredViews.forEach((v: any) => v?.uri && accountedUris.add(v.uri))
+    );
+    const additionalViews: any[] = [];
+    const seenAdditional = new Set<string>();
+    Object.values(sectionImages || {}).forEach((imgs: any) => {
+      (Array.isArray(imgs) ? imgs : []).forEach((p: any) => {
+        if (!p) return;
+        if (p.subcategory?.toLowerCase().includes('(annotated)')) return;
+        const uri = p.uri || p.s3url;
+        if (!uri || accountedUris.has(uri) || seenAdditional.has(uri)) return;
+        seenAdditional.add(uri);
+        const label = p.subcategory?.replace(/-/g, ' ') || 'Photo';
+        additionalViews.push({
+          ...p,
+          viewId: `additional-${p.subcategory || p.id || p._id || uri}`,
+          viewLabel: label,
+          label,
+        });
+      });
+    });
+    if (additionalViews.length > 0) {
+      renderGroups.push({
+        sectionLabel: 'Additional Photos',
+        categoryId: 'additional',
+        views: [],
+        discoveredViews: additionalViews,
+      } as any);
+    }
+
     const discoveredGroups = renderGroups.filter((g) => g.discoveredViews.length > 0);
 
     return (
