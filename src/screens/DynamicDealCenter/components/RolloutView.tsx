@@ -32,6 +32,7 @@ import {
   computeRolloutResult,
   computeCalculatorTiers,
   screensCountFromEntries,
+  screenUnitPriceFromSchemas,
   markupLabel,
   WELLS_FARGO_HIGH_KEYS,
   WF_HIGH_MIN_PRICE,
@@ -727,19 +728,28 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const seniorVetPct = pricing.seniorVetPct;
   const isDefaultDiscount = !!user?.defaultPercentage && user.defaultPercentage === discountPct;
   const screensCount = screensCountFromEntries(calculator.entries);
+  // Web parity (`PremiumQuoteCard.js:274`): the per-screen price comes from the
+  // schema's `number_of_screen` field, NOT a constant. This was omitted, so
+  // `computeRolloutResult` silently applied its legacy $75 fallback and the
+  // rollout disagreed with web whenever a company priced screens differently.
+  const screenUnitPrice = useMemo(
+    () => screenUnitPriceFromSchemas(verticals, pricingConfig),
+    [verticals, pricingConfig],
+  );
   const downPay = calculator.downPayment || 0;
   const rolloutResult = useMemo(
     () =>
       computeRolloutResult({
         endPrice: priceNum > 0 ? priceNum : tiers[2].value,
         screensCount,
+        screenUnitPrice,
         discountConfig: pricing.discountConfig,
         discountPct,
         seniorVetPct,
         downPayment: downPay,
         plan: plans[method],
       }),
-    [priceNum, tiers, screensCount, pricing.discountConfig, discountPct, seniorVetPct, downPay, plans, method],
+    [priceNum, tiers, screensCount, screenUnitPrice, pricing.discountConfig, discountPct, seniorVetPct, downPay, plans, method],
   );
   const priceWithScreens = rolloutResult.priceWithScreens;
   const msrp = rolloutResult.msrp;
@@ -1170,7 +1180,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           {/* Installers Check bar */}
           <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E' }}>Check to installers (screens)</Text>
-            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(screensCount * 75)}</Text>
+            {/* Reuse the computed screensCost rather than re-deriving it — a second
+                copy of the math is exactly how this drifted from the schema price. */}
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(rolloutResult.screensCost)}</Text>
           </View>
 
           {/* Drops list with old-UI View/Unselect/Display */}

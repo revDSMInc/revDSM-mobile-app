@@ -9,6 +9,7 @@ import {
   monthlyForPlan,
   computeRolloutResult,
   screensCountFromEntries,
+  screenUnitPriceFromSchemas,
 } from '../../../src/screens/DynamicDealCenter/utils/dynamic-rollout-pricing';
 import {
   computeMsrpFromEndPrice,
@@ -299,5 +300,90 @@ describe('screensCountFromEntries', () => {
     };
     expect(screensCountFromEntries(entries)).toBe(6);
     expect(screensCountFromEntries({})).toBe(0);
+  });
+
+  test('falls back to a case-insensitive label match, like web', () => {
+    expect(screensCountFromEntries({ f1: { label: 'Number of Screens', inputValue: 5 } })).toBe(5);
+  });
+});
+
+/**
+ * Web parity: `PremiumQuoteCard.js:274` — `Number(screenField?.price?.retail) || 75`.
+ * The 75 is a legacy fallback, not the price. Mobile hardcoded it, so the rollout
+ * inflated by $75/screen regardless of what the company had configured.
+ */
+describe('screenUnitPriceFromSchemas', () => {
+  const schemaWith = (field: any, placement: 'direct' | 'section' = 'direct') => [
+    {
+      categories: [
+        {
+          id: 'c1',
+          ...(placement === 'direct'
+            ? { directFields: [{ id: 'x', name: 'gutter', price: { retail: 12 } }, field] }
+            : { sections: [{ fields: [{ id: 'x', name: 'gutter', price: { retail: 12 } }, field] }] }),
+        },
+      ],
+    },
+  ];
+
+  test('reads the retail price off the number_of_screen field', () => {
+    expect(
+      screenUnitPriceFromSchemas(schemaWith({ id: 's', name: 'number_of_screen', price: { retail: 47 } }))
+    ).toBe(47);
+  });
+
+  test('finds the field inside a section too', () => {
+    expect(
+      screenUnitPriceFromSchemas(
+        schemaWith({ id: 's', name: 'number_of_screen', price: { retail: 47 } }, 'section')
+      )
+    ).toBe(47);
+  });
+
+  test('matches by label when the name differs', () => {
+    expect(
+      screenUnitPriceFromSchemas(schemaWith({ id: 's', name: 'screens_qty', label: 'Number of Screens', price: { retail: 60 } }))
+    ).toBe(60);
+  });
+
+  test('falls back to the legacy $75 when the field is missing or unpriced', () => {
+    expect(screenUnitPriceFromSchemas([])).toBe(75);
+    expect(screenUnitPriceFromSchemas(undefined as any)).toBe(75);
+    expect(screenUnitPriceFromSchemas(schemaWith({ id: 's', name: 'number_of_screen' }))).toBe(75);
+    expect(
+      screenUnitPriceFromSchemas(schemaWith({ id: 's', name: 'number_of_screen', price: { retail: 0 } }))
+    ).toBe(75);
+  });
+
+  test('resolves a DERIVED retail tier through the pricing config', () => {
+    // retail not stored; company derives it as 200% of cost → 25 * 2 = 50.
+    const schemas = schemaWith({ id: 's', name: 'number_of_screen', price: { cost: 25, retail: '' } });
+    const pricingConfig: any = { derivationRules: [{ tierKey: 'retail', ofTierKey: 'cost', percentOf: 200 }] };
+    expect(screenUnitPriceFromSchemas(schemas, pricingConfig)).toBe(50);
+  });
+
+  test('reproduces the reported bug: $3,000 end price + 5 screens @ $47', () => {
+    const schemas = schemaWith({ id: 's', name: 'number_of_screen', price: { retail: 47 } });
+    const r = computeRolloutResult({
+      endPrice: 3000,
+      screensCount: 5,
+      screenUnitPrice: screenUnitPriceFromSchemas(schemas),
+      discountPct: 15,
+      seniorVetPct: 10,
+    });
+
+    expect(r.screensCost).toBe(235);
+    expect(r.priceWithScreens).toBe(3235); // web showed $3,235; mobile showed $3,375
+  });
+
+  test('an unpriced schema still reproduces the legacy $75 behaviour', () => {
+    const r = computeRolloutResult({
+      endPrice: 3000,
+      screensCount: 5,
+      screenUnitPrice: screenUnitPriceFromSchemas([]),
+      discountPct: 15,
+      seniorVetPct: 10,
+    });
+    expect(r.priceWithScreens).toBe(3375);
   });
 });
