@@ -686,6 +686,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             }}
             leadId={leadId}
             appointmentId={calculatorResultData?.appointmentId || savedOutcome?.selectedAppointmentId}
+            scheduleTimeOverride={
+              scheduleDate ? { date: scheduleDate, timeWindow: scheduleTimeWindow } : null
+            }
             onStateChange={setEditedJobState}
             onEditComplete={() => setStep(2)}
             onEditBack={() => setStep(0)}

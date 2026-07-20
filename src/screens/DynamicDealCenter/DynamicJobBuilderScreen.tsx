@@ -77,6 +77,11 @@ interface DynamicJobBuilderScreenProps {
   // button becomes "Next · Price" (`onEditComplete`), and Back from the first tab
   // calls `onEditBack` (→ the wizard's Install Date step).
   embedded?: boolean;
+  // The wizard's Install Date step owns the reschedule. This screen stays MOUNTED
+  // across steps (it is only hidden), so `initialJobState` is read once and a date
+  // picked afterwards would never reach the Summary tab's Scheduled Appointment
+  // card. The wizard passes the live value here and it is synced into root state.
+  scheduleTimeOverride?: { date?: string | null; timeWindow?: string } | null;
   onStateChange?: (jobState: any) => void;
   onEditComplete?: (jobState: any) => void;
   onEditBack?: () => void;
@@ -97,6 +102,7 @@ function DynamicJobBuilderInner({
   hideAllocationTrackers: hideAllocationTrackersProp,
   appointmentId,
   embedded = false,
+  scheduleTimeOverride,
   onStateChange,
   onEditComplete,
   onEditBack,
@@ -485,6 +491,25 @@ function DynamicJobBuilderInner({
       clearRootState('scheduleTime');
     }
   }, [isDemo, jobState?.scheduleTime, clearRootState]);
+
+  // Reschedules made in the wizard's Install Date step (this screen is mounted the
+  // whole time) must reach root state so the Summary tab's Scheduled Appointment
+  // card shows the newly picked date instead of the one saved on the deal. Demo
+  // deals carry no install appointment, so leave the clear-effect above alone.
+  const overrideDate = scheduleTimeOverride?.date;
+  const overrideWindow = scheduleTimeOverride?.timeWindow;
+  useEffect(() => {
+    if (isDemo || !overrideDate) return;
+    const current = jobState?.scheduleTime;
+    if (current?.date === overrideDate && (current?.timeWindow || '') === (overrideWindow || '')) {
+      return;
+    }
+    updateRootState('scheduleTime', {
+      ...(current || {}),
+      date: overrideDate,
+      timeWindow: overrideWindow || '',
+    });
+  }, [isDemo, overrideDate, overrideWindow, jobState?.scheduleTime, updateRootState]);
 
   const selectedVertical = useMemo(
     () => verticalList.find((v: any) => v.id === selectedVerticalId) || verticalList[0],
