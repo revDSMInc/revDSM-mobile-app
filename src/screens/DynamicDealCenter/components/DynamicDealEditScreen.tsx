@@ -121,12 +121,29 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const seededRef = useRef(false);
 
-  // ── load the authoritative saved outcome (web: getJobBuilder(leadId)) ───────
+  // The calculator whose outcome this edit session belongs to. DealDetail passes
+  // it on the pencil tap; fall back to the lead's own reference.
+  const editCalculatorId =
+    calculatorResultData?.calculatorId ||
+    lead?.selectedCalculatorId ||
+    lead?.calculatorId ||
+    lead?.jobBuilder?.calculatorId ||
+    lead?.outcome?.selectedCalculatorId ||
+    lead?.leadData?.selectedCalculatorId ||
+    null;
+
+  // ── load the authoritative saved outcome ───────────────────────────────────
+  // Web parity: a resulted deal is scoped to ONE calculator, so read
+  // `GET lead/v1/{leadId}/outcome/{calculatorId}` when we know which calculator
+  // is being edited. Only fall back to the lead-wide
+  // `GET lead/v1/{leadId}/outcome` for legacy deals that carry no calculator id.
   const { data: savedOutcome, isFetched: outcomeFetched } = useQuery({
-    queryKey: ['dealEditOutcome', leadId],
+    queryKey: ['dealEditOutcome', leadId, editCalculatorId],
     queryFn: async () => {
       try {
-        const res = await LeadService.getJobBuilder(leadId!);
+        const res = editCalculatorId
+          ? await LeadService.getLeadOutcomeByCalculator(leadId!, editCalculatorId)
+          : await LeadService.getJobBuilder(leadId!);
         const body = res.data;
         return body?.data?.outcome ?? body?.outcome ?? body?.data ?? body ?? null;
       } catch {
@@ -194,7 +211,26 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     if (!jobBuilderConfig || !savedDynamicJobState) return null;
     try {
       const deserialized = deserializeDynamicJobStateFromStorage(savedDynamicJobState, jobBuilderConfig);
-      return hydrateJobStateForPersistence(deserialized, jobBuilderConfig, dealCenterData);
+      // `preserveExisting = true` — REQUIRED here, and this is exactly what the flag
+      // exists for (see hydrateFieldValue in dynamic-job-state-storage.ts). Without
+      // it, every LOCKED (calculator-driven) field is re-resolved from
+      // `dealCenterData` and the saved value is overwritten by whatever
+      // resolveLockedValue returns — which is the field's blank `defaultValue`
+      // whenever the dcField can't be resolved.
+      //
+      // It usually CAN'T be resolved on this path: dealCenterData is built from
+      // `calculatorData.entries`, sourced from `savedOutcome.LFCalculator`, but
+      // mobile deliberately never sends LFCalculator (buildCalculatorOutcomePayload
+      // omits it — the in-memory CalcTab lacks the backend subdoc's required
+      // createdBy/appointmentId), so the outcome comes back with
+      // `lfCalculator: null`. dealCenterData is therefore empty and every locked
+      // field resolves blank. That is why the Gutters "Extras" section — which is
+      // almost entirely locked fields — reopened empty in the My Deals reschedule
+      // flow, while combo-group sections (ordinary unlocked fields) survived.
+      //
+      // In edit mode the saved value is the authoritative one regardless: the rep is
+      // reopening their own entered data, not re-deriving it from the calculator.
+      return hydrateJobStateForPersistence(deserialized, jobBuilderConfig, dealCenterData, true);
     } catch (err) {
       console.warn('[DynamicDealEdit] deserialize failed:', err);
       return null;
@@ -646,7 +682,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             calculatorResultData={{
               ...(calculatorResultData || {}),
               resultType: String(lead?.result || 'Sale').toLowerCase() as any,
-              calculatorId: calculatorResultData?.calculatorId || savedOutcome?.selectedCalculatorId || null,
+              calculatorId: editCalculatorId || savedOutcome?.selectedCalculatorId || null,
             }}
             leadId={leadId}
             appointmentId={calculatorResultData?.appointmentId || savedOutcome?.selectedAppointmentId}

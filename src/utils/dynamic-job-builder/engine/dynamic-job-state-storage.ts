@@ -107,7 +107,16 @@ function hydrateFieldValue(
     // dealCenterData snapshot, which would silently revert the change on save.
     if (preserveExisting && existingValue !== undefined) return existingValue;
     const locked = resolveLockedValue(field, dealCenterData);
-    if (locked !== undefined && locked !== '—') return locked;
+    // A locked resolve that yields NOTHING must never destroy a saved value.
+    // resolveLockedValue falls back to `field.defaultValue ?? '—'` when the dcField
+    // can't be resolved, so an unresolvable ref returns the blank default — which
+    // used to pass this guard and overwrite real data. Only '—' was excluded, not
+    // '' or null. Fall through to `existingValue` instead.
+    // NOTE: 0 is intentionally still treated as a real resolved value; a locked
+    // quantity legitimately resolving to zero should apply.
+    const lockedIsBlank = locked === undefined || locked === null || locked === '' || locked === '—';
+    if (!lockedIsBlank) return locked;
+    if (existingValue !== undefined) return existingValue;
   }
 
   if (existingValue !== undefined) return existingValue;
