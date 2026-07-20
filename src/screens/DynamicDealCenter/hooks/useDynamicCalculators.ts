@@ -4,6 +4,7 @@ import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
+import { normalizeSingleAcceptedDrop } from '../utils/drop-prices';
 import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename } from '../../../utils/activity-log/calculator-log';
 
@@ -96,7 +97,20 @@ function tabSignature(tab: CalcTab): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, e]) => `${id}:${e?.inputValue ?? ''}`)
     .join('|');
-  const dropSig = (tab.dropPrice || []).map((d: any) => d?.price ?? '').join(',');
+  // Every PERSISTED field of a drop must be in the signature, not just its price.
+  // With price alone, securing/unselecting an EXISTING drop changed no prices, so a
+  // status-only edit that landed while a save was in flight looked identical to the
+  // snapshot: `flushSave` cleared `dirty` (line ~354) and computed `hasNewerEdits`
+  // false (line ~362), so no follow-up was scheduled and the demotion was NEVER PUT.
+  // The server kept the older accepted drop alongside the new one — two SECURED rows
+  // on reopen. Adding a genuinely-new drop changed `dropSig` and so always converged,
+  // which is exactly why the bug looked intermittent.
+  const dropSig = (tab.dropPrice || [])
+    .map(
+      (d: any) =>
+        `${d?.price ?? ''}:${d?.status ?? ''}:${d?.downPayment ?? ''}:${d?.balance ?? ''}:${d?.paymentMethod ?? ''}`
+    )
+    .join(',');
   return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}`;
 }
 
@@ -283,7 +297,9 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       price: tab.price,
       pricemarkup: tab.pricemarkup,
       paymentMethod: tab.paymentMethod,
-      dropPrice: tab.dropPrice || [],
+      // Web parity (`ViewAllCalculators.js:1116-1123`): normalize to at most one
+    // accepted drop at SAVE time, so no path can ever persist two SECURED rows.
+    dropPrice: normalizeSingleAcceptedDrop(tab.dropPrice),
       downPayment: tab.downPayment,
       discountPercentage: tab.discountPercentage,
       schemaSnapshotId: snapshotId(),
@@ -414,7 +430,9 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               isRolloutConfirmed: c.isRolloutConfirmed,
               price: c.price,
               paymentMethod: c.paymentMethod || undefined,
-              dropPrice: Array.isArray(c.dropPrice) ? c.dropPrice : [],
+              // Repair records already corrupted by the pre-fix save race, which
+              // otherwise render two SECURED rows on every reopen forever.
+              dropPrice: normalizeSingleAcceptedDrop(c.dropPrice),
               downPayment: c.downPayment || 0,
               discountPercentage: Number(c.discountPercentage) || undefined,
               persisted: true,

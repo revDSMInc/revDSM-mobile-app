@@ -532,7 +532,8 @@ export const ConsentFormModal = ({
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => Linking.openURL('https://leafhome.trusthub.com/privacypolicy')}>
                   <Text className="text-xs" style={{ color: colors.primary.main }}>
-                    Privacy Policy | LeafFilter
+                    {/* Web parity (REVDSM-1051): name the signed-in company, not LeafFilter. */}
+                    {`Privacy Policy${user?.companyName ? ` | ${user.companyName}` : ''}`}
                   </Text>
                 </TouchableOpacity>
               </View>

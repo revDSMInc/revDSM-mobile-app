@@ -1,13 +1,15 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { DynamicAgreementGenerator } from './DynamicAgreementGenerator';
-import { useGetAgreementConfig } from '../../../../screens/DynamicDealCenter/hooks/useAgreementConfig';
+import RNFS from 'react-native-fs';
+import { AgreementSignatureModal } from '../../../modals/job-builder/AgreementSignatureModal';
+import { LeadService } from '../../../../services/api/leads';
 import { useGetDescriptionSchema } from '../../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
 import { evaluateDescriptionSchema } from '../../../../utils/dynamic-job-builder/agreement/description-schema-evaluator';
 import { generateGutterRooflineDescriptions } from '../../../../utils/dynamic-job-builder/agreement/gutter-roofline-description-generator';
 import { generateRoofingDescriptions } from '../../../../utils/dynamic-job-builder/agreement/roofing-description-generator';
+import { logEvent } from '../../../../services/api/LoggerService';
 import { useAuth } from '../../../../hooks/useAuth';
 import { useLeadQuery } from '../../../../hooks/useLeadQuery';
 
@@ -86,10 +88,20 @@ const money = (v: any) => {
 };
 
 /**
- * RN port of web `dynamic-agreement-dialog.js`. Fetches the agreement config +
- * per-product description schema, resolves customer/payment/job details, computes
- * the jobScope (prop → schema evaluator → legacy generators), and hosts
- * DynamicAgreementGenerator in a fullscreen modal.
+ * Agreement generation for the dynamic Job Builder.
+ *
+ * The PDF is rendered SERVER-SIDE — identical to the normal Job Builder
+ * (`SummarySection.handleGenerateAgreement`): this dialog assembles the same
+ * `{ customer, job, payment, jobScope, contractorName }` payload, POSTs it to
+ * `pdf-reports/v1/agreement/{leadId}/preview`, and hands the returned
+ * `previewBase64` + `signatureFields` + `pdfDimensions` to AgreementSignatureModal.
+ * Signing POSTs to `pdf-reports/v1/agreement/{leadId}/sign`, which returns the
+ * flattened signed PDF; that PDF is emitted through `onAgreementGenerated` as a
+ * `data:application/pdf;base64,...` file so the caller uploads it verbatim (no
+ * client-side JPEG→PDF wrapping).
+ *
+ * Replaces the previous on-device `react-native-view-shot` capture
+ * (DynamicAgreementGenerator), which produced a JPEG wrapped in a hand-built PDF.
  */
 export function DynamicAgreementDialog({
   visible,
@@ -105,7 +117,6 @@ export function DynamicAgreementDialog({
   calculatorResultData = {},
   jobScope: jobScopeProp,
 }: DynamicAgreementDialogProps) {
-  const { agreementConfig, agreementConfigLoading, agreementConfigError } = useGetAgreementConfig(visible);
   const { schema: descriptionSchema, schemaLoading: descSchemaLoading } = useGetDescriptionSchema(
     visible ? productKey : undefined
   );
@@ -114,7 +125,14 @@ export function DynamicAgreementDialog({
   // (customer details + human-readable leadId + assigned-rep office) — the mobile
   // analog of web's AuthContext + useLead() context. Only fetch while visible.
   const { user } = useAuth();
-  const { data: leadData } = useLeadQuery(visible ? leadId || '' : '');
+  const { data: leadData, isLoading: leadLoading } = useLeadQuery(visible ? leadId || '' : '');
+
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [agreementData, setAgreementData] = useState<any>(null);
+  // Guards the one-shot preview request per open (effects can re-run as the lead
+  // query settles; a second POST would mint a second agreement record).
+  const requestedRef = useRef(false);
 
   // Prefer the explicit repDetails prop; fall back to the lead's assigned rep.
   const resolvedRepDetails = useMemo(
@@ -215,7 +233,122 @@ export function DynamicAgreementDialog({
     return [];
   }, [jobScopeProp, productKey, verticalState, descriptionSchema, jobState]);
 
-  const isLoading = agreementConfigLoading || descSchemaLoading;
+  // Payload shape is byte-for-byte the normal JB's (SummarySection.tsx:1246-1270)
+  // so the server template renders identically for dynamic and legacy jobs.
+  const buildPayload = useCallback(
+    () => ({
+      customer: {
+        name: resolvedCustomerDetails.name,
+        address: resolvedCustomerDetails.address || 'N/A',
+        phone: resolvedCustomerDetails.phone || 'N/A',
+        email: resolvedCustomerDetails.email || 'N/A',
+      },
+      job: {
+        jobNumber: jobDetails.jobNumber,
+        jobDisplay: jobDetails.jobDisplay,
+      },
+      payment: {
+        price: paymentDetails.price,
+        downPayment: paymentDetails.downPayment,
+        downPaymentMethod: paymentDetails.downPaymentMethod,
+        balance: paymentDetails.balance,
+        balanceMethod: paymentDetails.balanceMethod,
+        installDate: paymentDetails.installDate,
+        installWindow: paymentDetails.installWindow,
+      },
+      jobScope:
+        computedJobScope.length > 0
+          ? computedJobScope
+          : ['Project completion per summary details'],
+      contractorName,
+    }),
+    [resolvedCustomerDetails, jobDetails, paymentDetails, computedJobScope, contractorName]
+  );
+
+  const generatePreview = useCallback(async () => {
+    if (!leadId) {
+      setError('Missing lead — cannot generate an agreement.');
+      return;
+    }
+    setIsGenerating(true);
+    setError(null);
+    try {
+      const payload = buildPayload();
+      const response = await LeadService.previewAgreement(leadId, payload);
+      const data = response.data?.data || response.data;
+
+      if (!data?.agreementId || !data?.previewBase64) {
+        throw new Error('Missing agreement data from response');
+      }
+
+      setAgreementData({ ...data, payload });
+      // Audit log (parity with the previous local generator + the normal JB's
+      // logAgreementGenerated): the agreement document now exists server-side.
+      if (user?._id) {
+        logEvent('add', {
+          user_id: user._id,
+          created_by: user._id,
+          module_type: 'agreement',
+          meta: {
+            leadId,
+            fieldName: 'agreement',
+            fieldLabel: 'Agreement',
+            action: 'agreement_generated',
+          },
+        });
+      }
+    } catch (e) {
+      console.warn('[DynamicAgreementDialog] preview failed', e);
+      setError('Failed to generate agreement. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [leadId, buildPayload, user]);
+
+  // Fire the preview once per open, after the lead + description schema have
+  // settled (both feed the payload — requesting earlier would send a "Valued
+  // Customer" placeholder and an empty job scope).
+  useEffect(() => {
+    if (!visible) {
+      requestedRef.current = false;
+      setAgreementData(null);
+      setError(null);
+      setIsGenerating(false);
+      return;
+    }
+    if (requestedRef.current) return;
+    if (leadLoading || descSchemaLoading) return;
+    requestedRef.current = true;
+    generatePreview();
+  }, [visible, leadLoading, descSchemaLoading, generatePreview]);
+
+  const handleRetry = () => {
+    requestedRef.current = true;
+    generatePreview();
+  };
+
+  // The signed PDF comes back from `.../sign` as a file on disk. Read it to base64
+  // and emit the upload-payload shape the caller expects. Because it is already a
+  // real PDF, SummaryFinalizeCards.uploadNewFiles passes it through untouched
+  // (`alreadyPdf`) instead of wrapping a JPEG.
+  const handleSigned = async (signedPdfPath: string) => {
+    try {
+      const base64 = await RNFS.readFile(signedPdfPath.replace('file://', ''), 'base64');
+      onAgreementGenerated({
+        name: `Agreement_${jobDetails.jobDisplay || 'NA'}_${Date.now()}.pdf`,
+        file: `data:application/pdf;base64,${base64}`,
+        uri: `file://${signedPdfPath.replace('file://', '')}`,
+        contentType: 'application/pdf',
+        documentType: 'agreement' as const,
+        type: 'agreement' as const,
+        isNew: true,
+        isSystemGenerated: true,
+      });
+    } catch (e) {
+      console.warn('[DynamicAgreementDialog] reading signed PDF failed', e);
+      setError('The agreement was signed but could not be saved. Please try again.');
+    }
+  };
 
   const renderHeader = () => (
     <View style={styles.header}>
@@ -226,31 +359,42 @@ export function DynamicAgreementDialog({
     </View>
   );
 
+  // While the server renders the PDF this dialog shows the loading/error shell;
+  // once `agreementData` arrives the signature modal takes over the screen.
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F5F5F5' }} edges={['top', 'bottom']}>
         {renderHeader()}
 
-        {isLoading && !agreementConfig ? (
-          <View style={styles.center}>
-            <ActivityIndicator />
-            <Text style={styles.muted}>Loading agreement configuration...</Text>
-          </View>
-        ) : agreementConfigError || !agreementConfig ? (
-          <View style={styles.center}>
-            <Text style={styles.errorText}>Failed to load agreement configuration. Please try again.</Text>
-          </View>
-        ) : (
-          <DynamicAgreementGenerator
-            agreementConfig={agreementConfig}
-            customerDetails={resolvedCustomerDetails}
-            jobDetails={jobDetails}
-            paymentDetails={paymentDetails}
-            jobScope={computedJobScope}
-            contractorName={contractorName}
-            onSave={onAgreementGenerated}
-            leadId={leadId}
-            user={user}
+        <View style={styles.center}>
+          {error ? (
+            <>
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity onPress={handleRetry} style={styles.retryBtn}>
+                <Text style={styles.retryBtnText}>Try Again</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator />
+              <Text style={styles.muted}>
+                {isGenerating ? 'Generating agreement...' : 'Preparing agreement...'}
+              </Text>
+            </>
+          )}
+        </View>
+
+        {!!agreementData && (
+          <AgreementSignatureModal
+            visible
+            onClose={onClose}
+            leadId={leadId || ''}
+            agreementId={agreementData.agreementId}
+            previewBase64={agreementData.previewBase64}
+            payload={agreementData.payload}
+            signatureFields={agreementData.signatureFields}
+            pdfDimensions={agreementData.pdfDimensions}
+            onSuccess={handleSigned}
           />
         )}
       </SafeAreaView>
@@ -281,4 +425,11 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
   muted: { color: '#94A3B8', fontSize: 13 },
   errorText: { color: '#EF4444', fontSize: 13, textAlign: 'center' },
+  retryBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#059669',
+  },
+  retryBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
 });
