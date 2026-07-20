@@ -1437,7 +1437,6 @@ export default function LeadCenterPage() {
           onSubmit={handleInspectionSubmit}
           lead={lead}
           loading={isInspectionGenerating}
-          refetch={refetch}
         />
       )}
 

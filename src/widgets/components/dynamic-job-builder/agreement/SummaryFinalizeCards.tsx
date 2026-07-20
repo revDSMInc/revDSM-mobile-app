@@ -251,7 +251,7 @@ export function SummaryFinalizeCards({
     if (displayDocs) {
       commitUploaded(cat, displayDocs);
       // Audit log: a scanned/presigned agreement was uploaded (web parity — the
-      // generated path is logged in DynamicAgreementGenerator as agreement_generated).
+      // generated path is logged in DynamicAgreementDialog as agreement_generated).
       if (cat === 'agreement' && user?._id) {
         logEvent('add', {
           user_id: user._id,
@@ -260,7 +260,9 @@ export function SummaryFinalizeCards({
           meta: {
             leadId,
             fieldName: 'agreement',
-            fieldLabel: 'Agreement',
+            // Web parity (document-summary-cards.js): the UPLOADED path labels the
+            // field 'Agreement Uploaded'; only the GENERATED path uses 'Agreement'.
+            fieldLabel: 'Agreement Uploaded',
             action: 'agreement_uploaded',
           },
         });

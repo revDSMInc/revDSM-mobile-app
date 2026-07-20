@@ -25,11 +25,11 @@ import {
   Alert,
   Platform,
   PermissionsAndroid,
-  ActivityIndicator,
   Modal,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../../hooks/useAuth';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
 import { logEvent } from '../../../services/api/LoggerService';
@@ -101,6 +101,7 @@ async function ensureAndroidCameraPermission(): Promise<boolean> {
 
 export function DynamicInspectionView({ lead, products, onClose, refetch }: DynamicInspectionViewProps) {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
@@ -157,6 +158,28 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const [replaceConfirm, setReplaceConfirm] = useState<ReplaceConfirm | null>(null);
   const [showExtraPicker, setShowExtraPicker] = useState(false);
   const captureTargetRef = useRef<{ categoryLabel: string; subcategory: string; key: string } | null>(null);
+  const autoOpenedRef = useRef(false);
+  // The inspection UI (header / banner / slots) stays HIDDEN until the first photo
+  // is captured — web's `flowStarted`. Until then the rep sees ONLY the camera, so
+  // opening this flow lands straight on the camera, not on the tagging screen.
+  const [flowStarted, setFlowStarted] = useState(false);
+  // True while the native camera is on screen. The RN view underneath must stay
+  // BLACK the whole time it's up — otherwise the camera's dismiss animation (on
+  // cancel) reveals the tagging UI for a few frames before our callback fires,
+  // which is the "I see the inspection view when I close the camera" flash. With
+  // this, closing the camera goes straight to a black backdrop → Job Docs.
+  const [cameraActive, setCameraActive] = useState(false);
+
+  // Photo-first (web parity): launch the camera immediately on open so the rep
+  // shoots first and tags after. The view content is gated on `flowStarted`, so
+  // nothing but the camera is visible until that first shot lands.
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    const t = setTimeout(() => openCapture(), 60);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onCapturedAsset = (asset: PendingPhoto) => {
     const target = captureTargetRef.current;
@@ -165,41 +188,67 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       capture.captureToSlot({ ...target, asset });
     } else {
       setPendingPhoto(asset);
+      // First shot taken → reveal the tagging UI (web `setFlowStarted(true)`).
+      setFlowStarted(true);
     }
+  };
+
+  // Closing the camera ends the WHOLE flow and returns to Job Docs — web parity
+  // (`cancelCapture → handleClose`), for the first shot AND mid-loop. Blank the
+  // tagging UI FIRST (setFlowStarted(false) → black backdrop) so it never flashes
+  // while the modal dismisses: the inspection view visually closes, then the
+  // camera/modal tears down.
+  const closeFlow = () => {
+    captureTargetRef.current = null;
+    setCameraActive(false);
+    setFlowStarted(false);
+    onClose();
   };
 
   const launchWithSource = (source: 'camera' | 'gallery') => {
     const cb = (res: any) => {
-      if (res?.didCancel) return;
+      // Camera returned — it's no longer on screen. Keep the backdrop black on the
+      // cancel paths (closeFlow does that anyway); only a real capture reveals UI.
+      if (res?.didCancel) {
+        closeFlow();
+        return;
+      }
       if (res?.errorCode) {
+        setCameraActive(false);
         Alert.alert('Error', res.errorMessage || 'Could not open camera/gallery');
+        closeFlow();
         return;
       }
       const a = res?.assets?.[0];
       if (a?.uri) {
+        setCameraActive(false);
         onCapturedAsset({ uri: a.uri, type: a.type, fileName: a.fileName });
+      } else {
+        closeFlow();
       }
     };
     if (source === 'camera') {
       ensureAndroidCameraPermission().then((ok) => {
         if (!ok) {
           Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+          closeFlow();
           return;
         }
+        setCameraActive(true);
         launchCamera({ ...IMAGE_PICKER_OPTS, saveToPhotos: true }, cb);
       });
     } else {
+      setCameraActive(true);
       launchImageLibrary({ ...IMAGE_PICKER_OPTS, selectionLimit: 1 }, cb);
     }
   };
 
+  // Photo-first, matching web: capture goes STRAIGHT to the camera (web's mobile
+  // `openCaptureUI` → `setCameraOpen(true)`), not a Camera/Gallery chooser. The
+  // native camera's own "Use Photo" confirm is the review step.
   const openCapture = (target?: { categoryLabel: string; subcategory: string; key: string }) => {
     captureTargetRef.current = target || null;
-    Alert.alert('Add Photo', 'Choose a source', [
-      { text: 'Camera', onPress: () => launchWithSource('camera') },
-      { text: 'Gallery', onPress: () => launchWithSource('gallery') },
-      { text: 'Cancel', style: 'cancel', onPress: () => { captureTargetRef.current = null; } },
-    ]);
+    launchWithSource('camera');
   };
 
   const clearPending = () => setPendingPhoto(null);
@@ -220,6 +269,11 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
           asset: pendingPhoto,
         });
         clearPending();
+        // Continuous capture (web parity): the moment a photo is tagged, its
+        // upload is already running in the background via the queue, so reopen
+        // the camera instantly for the next shot instead of making the rep tap
+        // the banner again. The just-tagged slot fills optimistically and holds.
+        setTimeout(() => openCapture(), 120);
       } else {
         setReplaceConfirm({ category, slot, key, asset: pendingPhoto });
       }
@@ -282,14 +336,25 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     setShowExtraPicker(false);
     capture.tagAsExtraInCategory({ category: pickerItem.category, asset: pendingPhoto });
     clearPending();
+    // Continuous capture — reopen the camera after tagging as extra too.
+    setTimeout(() => openCapture(), 120);
   };
 
   const showProductRow = products.length > 1;
 
+  // Render only a plain black backdrop while the camera is up (or before the first
+  // shot). The native camera sits on top, so the rep lands straight on the camera
+  // and — critically — closing it reveals only black, never the tagging UI, so a
+  // cancel goes straight back to Job Docs with no inspection-view flash.
+  if (!flowStarted || cameraActive) {
+    return <View style={{ flex: 1, backgroundColor: '#000' }} />;
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
-      {/* Header: close + product name + counts */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, backgroundColor: GREEN }}>
+      {/* Header: close + product name + counts. Top inset padding keeps the green
+          header clear of the notch / status bar (safe area). */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: insets.top + 12, paddingBottom: 12, backgroundColor: GREEN }}>
         <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Icon name="close" size={24} color="#fff" />
         </TouchableOpacity>
@@ -375,7 +440,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       )}
 
       {/* Slots / extra picker */}
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 48 }} keyboardShouldPersistTaps="handled">
         {showExtraPicker && pendingPhoto ? (
           <View>
             <TouchableOpacity onPress={() => setShowExtraPicker(false)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 16 }}>

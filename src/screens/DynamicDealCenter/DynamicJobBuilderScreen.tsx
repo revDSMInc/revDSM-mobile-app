@@ -79,6 +79,11 @@ interface DynamicJobBuilderScreenProps {
   // button becomes "Next · Price" (`onEditComplete`), and Back from the first tab
   // calls `onEditBack` (→ the wizard's Install Date step).
   embedded?: boolean;
+  // The wizard's Install Date step owns the reschedule. This screen stays MOUNTED
+  // across steps (it is only hidden), so `initialJobState` is read once and a date
+  // picked afterwards would never reach the Summary tab's Scheduled Appointment
+  // card. The wizard passes the live value here and it is synced into root state.
+  scheduleTimeOverride?: { date?: string | null; timeWindow?: string } | null;
   onStateChange?: (jobState: any) => void;
   onEditComplete?: (jobState: any) => void;
   onEditBack?: () => void;
@@ -99,6 +104,7 @@ function DynamicJobBuilderInner({
   hideAllocationTrackers: hideAllocationTrackersProp,
   appointmentId,
   embedded = false,
+  scheduleTimeOverride,
   onStateChange,
   onEditComplete,
   onEditBack,
@@ -385,9 +391,16 @@ function DynamicJobBuilderInner({
   const saveInFlightRef = useRef(false);
   const needsFollowUpRef = useRef(false);
   const autoSaveDirtyRef = useRef(false);
+  // Set for the duration of handleComplete. Completing must NOT write the
+  // calculator-scoped outcome (`PUT /outcome/{calcId}`) — that endpoint belongs to
+  // the agreement/doc-save path only. Without this flag the debounced autosave (and
+  // the unmount flush that fires when onJobComplete resets navigation) would issue a
+  // second PUT to it moments after Complete Job, duplicating the outcome row.
+  const isCompletingRef = useRef(false);
 
   const performAutoSave = useCallback(async () => {
     if (!leadId || !initialFetchDoneRef.current || embedded) return;
+    if (isCompletingRef.current) return;
     // Skip while a document upload is in flight — that upload PUTs the outcome
     // itself; auto-saving here would race it and can clobber the new files.
     if (isDocUploadingRef.current) return;
@@ -480,6 +493,25 @@ function DynamicJobBuilderInner({
       clearRootState('scheduleTime');
     }
   }, [isDemo, jobState?.scheduleTime, clearRootState]);
+
+  // Reschedules made in the wizard's Install Date step (this screen is mounted the
+  // whole time) must reach root state so the Summary tab's Scheduled Appointment
+  // card shows the newly picked date instead of the one saved on the deal. Demo
+  // deals carry no install appointment, so leave the clear-effect above alone.
+  const overrideDate = scheduleTimeOverride?.date;
+  const overrideWindow = scheduleTimeOverride?.timeWindow;
+  useEffect(() => {
+    if (isDemo || !overrideDate) return;
+    const current = jobState?.scheduleTime;
+    if (current?.date === overrideDate && (current?.timeWindow || '') === (overrideWindow || '')) {
+      return;
+    }
+    updateRootState('scheduleTime', {
+      ...(current || {}),
+      date: overrideDate,
+      timeWindow: overrideWindow || '',
+    });
+  }, [isDemo, overrideDate, overrideWindow, jobState?.scheduleTime, updateRootState]);
 
   const selectedVertical = useMemo(
     () => verticalList.find((v: any) => v.id === selectedVerticalId) || verticalList[0],
@@ -803,6 +835,7 @@ function DynamicJobBuilderInner({
   const handleComplete = useCallback(async () => {
     if (!canComplete) return;
     try {
+      isCompletingRef.current = true;
       setIsSaving(true);
 
       activityLog.logSubmit(jobState);
@@ -877,69 +910,31 @@ function DynamicJobBuilderInner({
         return;
       }
 
-      // Finalize the calculator outcome in the SAME web shape as the autosave, but
-      // status:'submitted' (web parity: TabbedCalculator writes the outcome on
-      // complete). This is what a reopen (GET /outcome/{calcId}) rehydrates from, so
-      // a submitted deal shows its already-set data. Best-effort — a failure here
-      // must not block the /job-builder finalize below.
-      // Web parity (ResultLeadModal.handleUpdateJobBuilder): include the outcome
-      // fields (oneLeg, result, reason, explain, contract price, etc.) so they
-      // persist in the calculator-scoped outcome for rehydration on reopen.
-      if (leadId && calcId) {
-        try {
-          const rd = (calculatorResultData || {}) as any;
-          await LeadService.updateLeadOutcomeByCalculator(
-            leadId,
-            calcId,
-            buildCalculatorOutcomePayload({
-              rd,
-              calcId,
-              fallbackAppointmentId: appointmentId || leadId,
-              jobBuilder: jobBuilderWrapper,
-            }),
-          );
-        } catch (e) {
-          console.warn('[DynamicJobBuilder] outcome finalize failed:', e);
-        }
-      }
+      // NOTE: the calculator-scoped outcome (`PUT /outcome/{calcId}`) is deliberately
+      // NOT written here. That endpoint is owned by the agreement/doc-save path; the
+      // debounced autosave has already persisted the identical `dynamicJobState` to
+      // it, and finalizing through it again produced a duplicate outcome row per
+      // completed job. The submitted state is persisted below by the /job-builder
+      // POST and the lead-scoped outcome mirror, which a reopen also reads.
 
-      // Re-send the agreements/order-sheets (uploaded eagerly to the outcome) as
-      // top-level base64 in the /job-builder POST so it populates the
-      // JobBuilderDocument collection — that is what LeadCenter's contract details
-      // reads (lead.jobBuilderDocuments → resolvedDocuments). Without this, a
-      // dynamic-resulted lead shows NO agreement there (the outcome/LeadOutcomeDocument
-      // store the summary reads from is separate). Mirrors the normal JB complete.
-      let agreementsPayload: any[] = [];
-      let orderSheetsPayload: any[] = [];
-      if (leadId) {
-        try {
-          const dl = await LeadService.downloadOutcomeDocuments(leadId);
-          const dd = dl.data?.data || dl.data || {};
-          const toDocPayload = (arr: any[], type: 'agreement' | 'orderSheet') =>
-            (arr || [])
-              .filter((d: any) => d?.base64Data)
-              .map((d: any) => {
-                const ct = d.fileData?.contentType || 'application/pdf';
-                const file = String(d.base64Data).startsWith('data:')
-                  ? d.base64Data
-                  : `data:${ct};base64,${d.base64Data}`;
-                return { name: d.name || '', file, type };
-              });
-          agreementsPayload = toDocPayload(dd.agreements, 'agreement');
-          orderSheetsPayload = toDocPayload(dd.orderSheets, 'orderSheet');
-          // Web parity (TabbedCalculator.js:831-836): for a non-Sale result, an
-          // uploaded agreement-typed doc is filed under orderSheets, not agreements.
-          if (!isSale && agreementsPayload.length) {
-            orderSheetsPayload = [
-              ...orderSheetsPayload,
-              ...agreementsPayload.map((d) => ({ ...d, type: 'orderSheet' as const })),
-            ];
-            agreementsPayload = [];
-          }
-        } catch (e) {
-          console.warn('[DynamicJobBuilder] prefetch outcome docs failed:', e);
-        }
-      }
+      // Documents are NOT sent with the /job-builder POST.
+      //
+      // This used to read every outcome document back via downloadOutcomeDocuments
+      // and re-send it as top-level base64, on the assumption that JobBuilderDocument
+      // (what LeadCenter's Contract Details reads, via lead.jobBuilderDocuments) would
+      // otherwise be empty. It isn't: the backend already files the lead's outcome
+      // documents into JobBuilderDocument itself, so the explicit array produced a
+      // SECOND row for the same PDF — one agreement generated, two 66 KB "Agreement"
+      // entries listed on the lead dashboard.
+      //
+      // The agreement is uploaded eagerly to the outcome by handleUploadDocs the
+      // moment it is signed, so by the time we get here it is already persisted and
+      // nothing needs re-sending. Dropping the round-trip also removes a full
+      // base64 download+upload of every document from the completion path.
+      //
+      // NOTE: this also removes the client-side non-Sale re-filing (web
+      // TabbedCalculator.js:831-836, which moved an agreement-typed doc under
+      // orderSheets for a Demo). Verify a Demo files its order sheet correctly.
 
       // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
       // `jobState` (web TabbedCalculator payload). The previous
@@ -978,8 +973,6 @@ function DynamicJobBuilderInner({
           ...(validLFCalculator && { LFCalculator: validLFCalculator }),
         },
         jobState: dynamicJobState,
-        agreements: agreementsPayload,
-        orderSheets: orderSheetsPayload,
         isDynamic: true,
         configId,
         configSnapshotId: configId || 'dynamic',
@@ -1008,8 +1001,14 @@ function DynamicJobBuilderInner({
             jobBuilder: jobBuilderWrapper,
             ...(validLFCalculator && { LFCalculator: validLFCalculator }),
           };
-          if (agreementsPayload.length > 0) outcomePayload.agreements = agreementsPayload;
-          if (orderSheetsPayload.length > 0) outcomePayload.orderSheets = orderSheetsPayload;
+          // Documents are deliberately NOT attached here. `agreementsPayload` /
+          // `orderSheetsPayload` were just READ BACK from this very endpoint via
+          // downloadOutcomeDocuments — they already exist as LeadOutcomeDocument
+          // rows, uploaded eagerly by handleUploadDocs when the agreement was
+          // signed. Re-sending them inserts a SECOND row for the same file, which
+          // is why the lead dashboard listed each agreement twice. They still go to
+          // the /job-builder POST above, which populates the separate
+          // JobBuilderDocument collection. This mirror carries FIELDS only.
           await LeadService.updateLeadOutcome(leadId, outcomePayload);
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
@@ -1021,6 +1020,10 @@ function DynamicJobBuilderInner({
       }
     } catch (error) {
       console.error('[DynamicJobBuilder] Completion failed:', error);
+      // Completion aborted — re-enable autosave so further edits are still persisted
+      // and a retry behaves normally. On success the flag stays set: the screen is
+      // navigating away and must not fire a trailing calculator-scoped PUT.
+      isCompletingRef.current = false;
       Alert.alert('Error', 'Failed to complete the job. Please check your connection.');
     } finally {
       setIsSaving(false);
