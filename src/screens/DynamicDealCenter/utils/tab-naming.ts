@@ -215,7 +215,34 @@ function collectTabKeys(
       });
     });
   });
-  return parts;
+  return suppressCoveredMiscKeys(parts);
+}
+
+/**
+ * A "* Misc" key only labels STANDALONE add-ons. When the calculator already
+ * carries the main product those add-ons belong to, the Misc key is redundant and
+ * is dropped — "Versa", not "Versa+LF Misc".
+ *
+ * Each entry is `misc key → the main keys that make it redundant`.
+ *
+ * Deliberately mirrors web `tab-naming.utils.js` (commit 9d22d62, "ticket-999"),
+ * which suppresses ONLY `LF Misc`, under `Versa` or `VMax` (either alone is
+ * enough — `SpecGuard` does NOT suppress it). `GuardMisc` and `Light Misc` are
+ * intentionally absent: web still emits `Guard+GuardMisc` and `Light+Light Misc`,
+ * and adding them here would make mobile disagree with web. They are listed as
+ * commented-out rows so the omission reads as a decision, not an oversight.
+ */
+const MISC_KEY_PARENTS: Record<string, string[]> = {
+  'LF Misc': ['Versa', 'VMax'],
+  // 'GuardMisc': ['Guard', 'SpecGuard'],   // web does not suppress this (yet)
+  // 'Light Misc': ['Light'],               // web does not suppress this (yet)
+};
+
+function suppressCoveredMiscKeys(parts: string[]): string[] {
+  return parts.filter((key) => {
+    const parents = MISC_KEY_PARENTS[key];
+    return !parents || !parents.some((parent) => parts.includes(parent));
+  });
 }
 
 /**

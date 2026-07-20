@@ -1074,6 +1074,12 @@ function CombinationSectionBlock({
   // Visibility is resolved per-combo below so combo-sibling visibleWhen rules work.
   const baseRowFields = getCombinationSectionRowFields(section).filter((f: any) => f.type !== 'accordion');
   const canAddCombo = canAddMoreCombinations(section);
+  // Portal-controlled: whether the "Combination #N" chip is shown on Sales
+  // (web `dynamic-tab-renderer.js:233`). Sections that hold a single logical
+  // configuration — Downspout & Accessories, Measurements — switch it off in the
+  // admin portal, where numbering the lone card reads as noise. Defaults to
+  // shown, so schemas without the flag are unaffected.
+  const showCombinationLabel = (section as any)?.showCombinationLabel !== false;
   // Web parity (dynamic-tab-renderer.js): each combination shows its own footage
   // total, read from the combo's locationGrid field, under that combo's fields.
   const gridField = getFlattenedCombinationSectionRowFields(section).find((f: any) => f.type === 'locationGrid');
@@ -1147,11 +1153,16 @@ function CombinationSectionBlock({
         return (
           <SectionCard key={combo._combinationNumber ?? comboIndex} borderColor={borderThemeColor}>
             <View className="flex-row items-center justify-between mb-3">
-              <View className="px-3 py-1 rounded-lg" style={{ backgroundColor: `${borderThemeColor}1A` }}>
-                <Text className="text-[10px] font-black" style={{ color: borderThemeColor }}>
-                  Combination #{combinationNumber}
-                </Text>
-              </View>
+              {showCombinationLabel ? (
+                <View className="px-3 py-1 rounded-lg" style={{ backgroundColor: `${borderThemeColor}1A` }}>
+                  <Text className="text-[10px] font-black" style={{ color: borderThemeColor }}>
+                    Combination #{combinationNumber}
+                  </Text>
+                </View>
+              ) : (
+                // Spacer keeps Remove right-aligned when the chip is hidden (web parity).
+                <View />
+              )}
               {combos.length > 1 && !readOnly && (
                 <TouchableOpacity onPress={() => handleRemoveCombo(comboIndex)}>
                   <Text className="text-xs text-red-500 font-black">Remove</Text>

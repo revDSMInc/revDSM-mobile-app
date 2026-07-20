@@ -263,11 +263,24 @@ function isDisplayableFieldSummary(field: any, formatted: any) {
 // ─── Field value formatting ───────────────────────────────────────────────────
 
 function formatFieldSummaryValue(field: any, state: any = {}, options: any = {}) {
-  const { dealCenterData } = options;
+  const { dealCenterData, editMode } = options;
   const colorValues = state?.colorValues || {};
   const resolvedState = { ...state };
 
-  if (isFieldLocked(field) && dealCenterData && Object.keys(dealCenterData).length) {
+  // Web parity (`vertical-summary-utils.js:247-255`): in deal-EDIT mode a "locked"
+  // field is editable, so the rep's live value must win. Fall back to the
+  // deal-center value only when they left it blank. Without this guard the summary
+  // silently reverted every edited locked field to the calculator's value — the
+  // rep's change was saved but never shown back to them.
+  const liveValue = state?.[field.id];
+  const hasLiveValue = liveValue !== undefined && liveValue !== null && liveValue !== '';
+
+  if (
+    isFieldLocked(field) &&
+    dealCenterData &&
+    Object.keys(dealCenterData).length &&
+    !(editMode && hasLiveValue)
+  ) {
     const lockedValue = resolveLockedValue(field, dealCenterData);
     if (lockedValue !== undefined && lockedValue !== null && lockedValue !== '' && lockedValue !== '—') {
       resolvedState[field.id] = lockedValue;
@@ -316,7 +329,7 @@ function buildSingleFieldDetailRow(field: any, state: any, ctx: any): any {
     return locationRows.length ? { locationRows } : null;
   }
 
-  const formatted = formatFieldSummaryValue(field, state, { dealCenterData: ctx.dealCenterData });
+  const formatted = formatFieldSummaryValue(field, state, { dealCenterData: ctx.dealCenterData, editMode: ctx.editMode });
   if (!isDisplayableFieldSummary(field, formatted)) return null;
 
   return { label: field.label || field.key || '', text: formatted.text, variant: formatted.variant };
@@ -367,7 +380,7 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
       return;
     }
 
-    const formatted = formatFieldSummaryValue(field, displayState, { dealCenterData: ctx.dealCenterData });
+    const formatted = formatFieldSummaryValue(field, displayState, { dealCenterData: ctx.dealCenterData, editMode: ctx.editMode });
     if (!isDisplayableFieldSummary(field, formatted)) return;
 
     if (inCombination && !isContainerFieldType(field.type)) {
