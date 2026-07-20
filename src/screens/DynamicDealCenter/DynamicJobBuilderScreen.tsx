@@ -11,6 +11,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQuery } from '@tanstack/react-query';
 import { useDynamicJobBuilderSession } from './useDynamicJobBuilderSession';
 import { DynamicTabRenderer } from '../../widgets/components/dynamic-job-builder/DynamicTabRenderer';
+import { EmptyStepGate } from '../../widgets/components/dynamic-job-builder/EmptyStepGate';
+import { stateHasContent, collectLockedFieldIds } from '../../utils/dynamic-job-builder/engine/empty-step-gate';
 import { ProgressTracker } from '../../widgets/components/dynamic-job-builder/ProgressTracker';
 import { VerticalTabBar } from '../../widgets/components/dynamic-job-builder/VerticalTabBar';
 import { FlashMessage } from '../../config/message';
@@ -674,6 +676,30 @@ function DynamicJobBuilderInner({
     return isCurrentTabComplete;
   }, [portalUnrestrictedEdit, currentTabIndex, nonSummaryTabs.length, canComplete, isCurrentTabComplete]);
 
+  // ─── Empty-step gate (My Deals / deal-edit only) — web dynamic-job-builder.js ──
+  // In deal-edit, a step with no REP-entered data is surfaced with a soft
+  // "Add details / Skip" prompt rather than dropping straight into a blank form.
+  // Calculator-seeded (locked) values don't count as content — see `stateHasContent`.
+  const lockedFieldIds = useMemo(() => collectLockedFieldIds(initialConfig), [initialConfig]);
+  // Steps the rep chose to fill ("Add details") — so the gate doesn't reappear on
+  // the same step after they open it. Per-session, cleared on unmount (web parity).
+  const [gateDismissed, setGateDismissed] = useState<Set<string>>(() => new Set());
+  const showEmptyGate = useMemo(() => {
+    if (!isEdit || !currentTab || currentTab.isSummary) return false;
+    if (currentVerticalLockedTabIds.includes(currentTab.id)) return false;
+    if (gateDismissed.has(currentTab.id)) return false;
+    const tabState = jobState?.[selectedVertical?.id]?.[currentTab.id] || {};
+    return !stateHasContent(tabState, lockedFieldIds);
+  }, [isEdit, currentTab, currentVerticalLockedTabIds, gateDismissed, jobState, selectedVertical, lockedFieldIds]);
+  const dismissGate = useCallback(() => {
+    if (!currentTab) return;
+    setGateDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(currentTab.id);
+      return next;
+    });
+  }, [currentTab]);
+
   const handleVerticalSelect = useCallback((verticalId: string) => {
     setSelectedVerticalId(verticalId);
     setSelectedTabId('');
@@ -1130,7 +1156,15 @@ function DynamicJobBuilderInner({
             KeyboardAvoidingView here would instead just shrink the ScrollView above
             the keyboard, leaving a low field below the fold and hidden (this ticket). */}
         <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-          {currentTab ? (
+          {currentTab && showEmptyGate ? (
+            // Deal-edit: this step has no rep-entered data. Prompt to add or skip
+            // instead of showing a blank form (web dynamic-job-builder.js:749).
+            <EmptyStepGate
+              stepLabel={currentTab.label || 'this step'}
+              onAddDetails={dismissGate}
+              onSkip={handleNext}
+            />
+          ) : currentTab ? (
             <DynamicTabRenderer
               key={currentTab.id}
               tab={currentTab}

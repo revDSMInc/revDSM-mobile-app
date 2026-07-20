@@ -13,6 +13,7 @@ import {
   shouldIncludeSectionInTabSummary,
 } from './grand-total-utils';
 import { isCombinationSummaryField, isContainerFieldType } from '../constants/field-types';
+import { getFieldGridColumns } from './field-layout-utils';
 import { resolveLocationGridConfig } from './location-grid-utils';
 import { resolveSchemaColor } from '../../../screens/DynamicDealCenter/utils/icon-color';
 
@@ -335,7 +336,94 @@ function buildSingleFieldDetailRow(field: any, state: any, ctx: any): any {
   return { label: field.label || field.key || '', text: formatted.text, variant: formatted.variant };
 }
 
+/**
+ * Merge a bordered stack's paired children into ONE row — web parity
+ * (`vertical-summary-utils.js` `buildStackRowSummary`, commit 5a54070). For an
+ * "Extras" group `[Ground Spout = 4, Color = Black]` this returns
+ * `{ label: 'Ground Spout', text: '4 · Black' }`: the label comes from the first
+ * non-color child (the color field's own "Color" label is skipped) and the
+ * formatted values are joined with " · ". Was rendering as two separate rows.
+ */
+function buildStackRowSummary(children: any[] = [], state: any, ctx: any): any {
+  const values: string[] = [];
+  let rowLabel = '';
+
+  children.forEach((child: any) => {
+    if (!child?.id || !isSummaryFieldVisible(child, state, ctx)) return;
+
+    const formatted = formatFieldSummaryValue(child, state, {
+      dealCenterData: ctx.dealCenterData,
+      editMode: ctx.editMode,
+    });
+    if (!isDisplayableFieldSummary(child, formatted)) return;
+
+    if (
+      !rowLabel &&
+      child.label &&
+      child.type !== 'swatch' &&
+      child.type !== 'colorSelection' &&
+      child.type !== 'customColor'
+    ) {
+      rowLabel = child.label;
+    }
+
+    values.push(formatted.text);
+  });
+
+  if (!values.length) return null;
+
+  if (!rowLabel) {
+    const labeledChild = children.find((child: any) => child?.label);
+    rowLabel = labeledChild?.label || '';
+  }
+
+  return { label: rowLabel, text: values.join(' · '), variant: 'value' };
+}
+
+/**
+ * A bordered, multi-column stack groups its children into rows of `columns`
+ * (each group merged by `buildStackRowSummary`). A single-column / non-bordered
+ * stack keeps one row per child — the original behaviour.
+ */
+function processStackFieldSummary(stackField: any, state: any, ctx: any): any {
+  const result = { parts: [], extras: [], detailRows: [], locationRows: [] };
+  const children = (stackField.fields || []).filter((child: any) =>
+    isSummaryFieldVisible(child, state, ctx)
+  );
+  if (!children.length) return result;
+
+  const columns = getFieldGridColumns(stackField);
+  const groupSize = stackField.bordered && columns >= 2 ? columns : 1;
+
+  for (let index = 0; index < children.length; index += groupSize) {
+    const group = children.slice(index, index + groupSize);
+
+    if (groupSize > 1) {
+      const row = buildStackRowSummary(group, state, ctx);
+      if (row) (result.detailRows as any[]).push(row);
+      continue;
+    }
+
+    const child = group[0];
+    if (isContainerFieldType(child.type)) {
+      mergeSummaryContent(result, processContainerFieldSummary(child, state, ctx));
+      continue;
+    }
+
+    const row = buildSingleFieldDetailRow(child, state, ctx);
+    if (!row) continue;
+    if (row.locationRows) (result.locationRows as any[]).push(...row.locationRows);
+    else (result.detailRows as any[]).push(row);
+  }
+
+  return result;
+}
+
 function processContainerFieldSummary(field: any, state: any, ctx: any): any {
+  if (field?.type === 'stack') {
+    return processStackFieldSummary(field, state, ctx);
+  }
+  // accordion (and any other container): one row per child, no grouping.
   const result = { parts: [], extras: [], detailRows: [], locationRows: [] };
   (field.fields || []).forEach((child: any) => {
     if (!isSummaryFieldVisible(child, state, ctx)) return;
