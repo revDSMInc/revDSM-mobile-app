@@ -197,8 +197,24 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
       lead,
       mode: 'edit',
       calculatorResultData: {
-        calculatorId: lead?.selectedCalculatorId || lead?.jobBuilder?.calculatorId || null,
-        appointmentId: lead?.selectedAppointmentId || lead?.jobBuilder?.appointmentId || null,
+        // The outcome doc exposes the calculator under several shapes depending on
+        // where the lead came from (list row vs. `GET .../outcome` body) — check
+        // them all so the edit screen can read the calculator-scoped outcome
+        // (`GET lead/v1/{leadId}/outcome/{calculatorId}`) rather than the lead-wide one.
+        calculatorId:
+          lead?.selectedCalculatorId ||
+          lead?.calculatorId ||
+          lead?.jobBuilder?.calculatorId ||
+          lead?.outcome?.selectedCalculatorId ||
+          lead?.leadData?.selectedCalculatorId ||
+          lead?.LFCalculator?._id ||
+          null,
+        appointmentId:
+          lead?.selectedAppointmentId ||
+          lead?.jobBuilder?.appointmentId ||
+          lead?.outcome?.selectedAppointmentId ||
+          lead?.leadData?.selectedAppointmentId ||
+          null,
       },
     });
   }, [navigation, lead, leadId, isDynamicDeal]);
