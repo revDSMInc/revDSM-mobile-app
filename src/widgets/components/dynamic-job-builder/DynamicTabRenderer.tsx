@@ -58,6 +58,7 @@ import { TextField } from './TextField';
 import { TextareaField } from './TextareaField';
 import { ToggleGroup } from './ToggleGroup';
 import { DynamicOptionField } from './DynamicOptionField';
+import { OptionToggleField } from './OptionToggleField';
 import { SwatchPicker } from './SwatchPicker';
 import { LockedField } from './LockedField';
 import { LockedFieldWithColor } from './LockedFieldWithColor';
@@ -562,34 +563,52 @@ function renderField(
     case 'toggle': {
       const baseOpts = field.options || field.choices || field.items || [];
       const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+      const toggleValue = field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '');
       return (
-        <ToggleGroup
+        <OptionToggleField
           key={field.id}
           label={visibleLabel}
           options={visOpts}
-          value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
+          value={toggleValue}
           onChange={onChange}
-          color={verticalColor}
           isMulti={!!field.multiSelect}
-        />
+        >
+          <ToggleGroup
+            label={visibleLabel}
+            options={visOpts}
+            value={toggleValue}
+            onChange={onChange}
+            color={verticalColor}
+            isMulti={!!field.multiSelect}
+          />
+        </OptionToggleField>
       );
     }
 
     case 'optionList': {
       const baseOpts = field.options || field.choices || field.items || [];
       const visOpts = filterVisibleToggleOptions({ ...field, options: baseOpts }, dealCenterData, state, applyConditions);
+      const listValue = field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '');
       return (
-        <DynamicOptionField
+        <OptionToggleField
           key={field.id}
-          field={field}
           label={visibleLabel}
           options={visOpts}
-          value={field.multiSelect ? (Array.isArray(value) ? value : []) : (value || '')}
+          value={listValue}
           onChange={onChange}
-          color={verticalColor}
-          columns={optionColumnsFor(field)}
           isMulti={!!field.multiSelect}
-        />
+        >
+          <DynamicOptionField
+            field={field}
+            label={visibleLabel}
+            options={visOpts}
+            value={listValue}
+            onChange={onChange}
+            color={verticalColor}
+            columns={optionColumnsFor(field)}
+            isMulti={!!field.multiSelect}
+          />
+        </OptionToggleField>
       );
     }
 
