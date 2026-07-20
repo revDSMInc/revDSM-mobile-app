@@ -1201,7 +1201,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       </TouchableOpacity>
                     )}
                     {secured && (
-                      <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.filter((_, idx) => idx !== i))}>
+                      // Unselect DECLINES the secured drop (keeps it in the list, marked
+                      // declined) — it does NOT remove it. Mirrors the regular rollout's
+                      // handleUnselectDrop ({ secured:false, declined:true }); here the
+                      // dynamic drop model uses status='declined'. Was filtering the drop
+                      // out entirely, losing the record.
+                      <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2)))}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
                       </TouchableOpacity>
                     )}
