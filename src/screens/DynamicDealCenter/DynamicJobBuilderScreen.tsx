@@ -1002,6 +1002,26 @@ function DynamicJobBuilderInner({
         }
       }
 
+      // Web parity: mark the lead's timeline milestones complete now that the job is
+      // built. The web static flow does this in two steps — result-lead-modal.js:3189
+      // sets `leadResulted: "completed"` and job-builder-modal.js:2980 sets
+      // `jobBuild: "complete"`. The dynamic deal-center flow only ever set
+      // `leadResulted: "active"` on the Sale/Demo pick and never flipped it to
+      // completed, so the PORTAL timeline kept showing the lead result "in progress".
+      // Flip both (plus salesProcess) here so the portal renders the milestone as
+      // Complete — the same statuses the mobile regular flow writes (useDealOutcome.ts).
+      if (leadId) {
+        try {
+          await LeadService.updateLeadTimelineProgress(leadId, {
+            salesProcess: 'completed',
+            leadResulted: 'completed',
+            jobBuild: 'complete',
+          });
+        } catch (e) {
+          console.warn('[DynamicJobBuilder] timeline progress complete failed:', e);
+        }
+      }
+
       if (onJobComplete) {
         onJobComplete(initialConfig, jobState);
       }

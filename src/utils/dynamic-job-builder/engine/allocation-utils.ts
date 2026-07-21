@@ -186,12 +186,34 @@ export function isFieldLocked(field: any) {
   return Boolean(field?.locked) || field?.type === 'locked';
 }
 
-export function resolveLockedValue(field: any, dealCenterData: any = {}) {
+/** A dcField that resolves to zero counts as "nothing entered" — web parity
+ * (allocation-utils.js:226), so a zero-resolving locked field falls back to its
+ * (conditional) default instead of persisting a 0 the portal would otherwise read. */
+function isZeroQuantity(value: any): boolean {
+  if (typeof value === 'number') return value === 0;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return true;
+    const numeric = Number(trimmed);
+    return !Number.isNaN(numeric) && numeric === 0;
+  }
+  return false;
+}
+
+export function resolveLockedValue(field: any, dealCenterData: any = {}, options: any = {}) {
   const dcFields = field.dcFields?.length
     ? field.dcFields
     : field.dcField
       ? [field.dcField]
       : [];
+
+  // The default is only a fallback for when nothing resolves from the deal center.
+  // Callers that evaluate the field's conditions (e.g. a field whose
+  // `dependencies.defaultWhen` is not met) pass the already-resolved default via
+  // `options.fallbackDefault` — '' for a not-included product — so an inactive
+  // default is never leaked here. Web parity: allocation-utils.js:237.
+  const fallbackDefault =
+    options.fallbackDefault !== undefined ? options.fallbackDefault : field.defaultValue;
 
   if (dcFields.length > 1) {
     const aggregate = field.dcAggregate || 'sum';
@@ -200,14 +222,14 @@ export function resolveLockedValue(field: any, dealCenterData: any = {}) {
     if (dcFields.some((ref: string) => getDealCenterDataValue(dealCenterData, ref) !== undefined)) {
       return result;
     }
-    return field.defaultValue ?? '—';
+    return fallbackDefault ?? '—';
   }
 
   if (field.dcField) {
     const resolved = getDealCenterDataValue(dealCenterData, field.dcField);
-    if (resolved !== undefined) return resolved;
+    if (resolved !== undefined && !isZeroQuantity(resolved)) return resolved;
   }
-  return field.defaultValue ?? '—';
+  return fallbackDefault ?? '—';
 }
 
 export {

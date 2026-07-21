@@ -227,6 +227,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           pricing={pricing}
           isLowesLead={lead?.lowesLead === true}
           leadId={lead?._id || lead?.leadId || lead?.id}
+          appointmentId={appointmentId || undefined}
           onBack={() => setFlowStep('calculator')}
           onConfirmRollouts={handleConfirmRollouts}
           onResultJob={handleResultJob}

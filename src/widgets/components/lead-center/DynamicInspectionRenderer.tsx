@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
   getChildren,
@@ -37,6 +37,88 @@ export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): s
 };
 
 const slugify = (v: unknown) => String(v ?? '').trim().replace(/\s+/g, '_').toLowerCase();
+
+// ─── Product selector (dropdown) ──────────────────────────────────────────────
+// Web parity (dynamic-inspection-photos-dialog.js:432-467 / dynamic-manage-photos-
+// dialog.js:327-359): products (verticals) are chosen from a DROPDOWN — a bordered
+// green button showing the selected product + a chevron, opening a menu of options —
+// NOT a horizontal pill row.
+export interface InspectionProduct {
+  id: string;
+  name: string;
+  icon?: string | null;
+}
+
+export function ProductDropdown({
+  products,
+  selectedProductId,
+  onSelect,
+}: {
+  products: InspectionProduct[];
+  selectedProductId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = products.find((p) => p.id === selectedProductId) || products[0];
+
+  return (
+    <View style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
+      <TouchableOpacity
+        onPress={() => setOpen(true)}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          alignSelf: 'flex-start',
+          gap: 8,
+          paddingHorizontal: 16,
+          height: 40,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: 'rgba(76,187,23,0.4)',
+        }}
+      >
+        {selected?.icon ? <Icon name={iconifyToMdi(selected.icon)} size={18} color={GREEN} /> : null}
+        <Text style={{ color: GREEN, fontWeight: '700', fontSize: 14 }}>
+          {selected?.name || 'Select product'}
+        </Text>
+        <Icon name="chevron-down" size={18} color={GREEN} />
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <View style={{ backgroundColor: '#0D1F1A', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(76,187,23,0.2)', overflow: 'hidden' }}>
+            {products.map((p, idx) => {
+              const isActive = p.id === (selected?.id);
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => { onSelect(p.id); setOpen(false); }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    paddingHorizontal: 16,
+                    paddingVertical: 14,
+                    borderTopWidth: idx === 0 ? 0 : 1,
+                    borderColor: 'rgba(255,255,255,0.08)',
+                    backgroundColor: isActive ? 'rgba(76,187,23,0.12)' : 'transparent',
+                  }}
+                >
+                  {p.icon ? <Icon name={iconifyToMdi(p.icon)} size={18} color={isActive ? GREEN : 'rgba(255,255,255,0.85)'} /> : null}
+                  <Text style={{ color: isActive ? GREEN : 'rgba(255,255,255,0.9)', fontWeight: isActive ? '800' : '600', fontSize: 15 }}>
+                    {p.name}
+                  </Text>
+                  {isActive && <Icon name="check" size={18} color={GREEN} style={{ marginLeft: 'auto' }} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+}
 
 interface SlotClick {
   (category: InspectionCategory, slot: InspectionSlot, key: string): void;
@@ -94,7 +176,14 @@ function SlotButton({
           justifyContent: 'center',
           borderWidth: 1.5,
           borderColor: isMoveSource ? AMBER : filled ? GREEN : 'rgba(255,255,255,0.12)',
-          backgroundColor: isMoveSource ? 'rgba(245,158,11,0.12)' : filled ? GREEN : '#16302A',
+          // Web parity (dynamic-schema-renderer.js:60-81): unfilled pill is a
+          // translucent teal, NOT the near-opaque `#16302A` that (with the dark text
+          // below) rendered the tag label invisible.
+          backgroundColor: isMoveSource
+            ? 'rgba(245,158,11,0.12)'
+            : filled
+              ? 'rgba(76,187,23,0.8)'
+              : 'rgba(0,120,103,0.1)',
         }}
       >
         {busy ? (
@@ -108,7 +197,9 @@ function SlotButton({
                 fontWeight: '600',
                 fontSize: 13,
                 textAlign: 'center',
-                color: isMoveSource ? AMBER : filled ? '#fff' : '#1C252E',
+                // Web renders both filled and unfilled slot labels white
+                // (unfilled `color: 'white'`), never dark ink on the dark screen.
+                color: isMoveSource ? AMBER : '#fff',
               }}
             >
               {isMoveSource ? `FROM · ${slot.name}` : slot.name}
@@ -385,7 +476,7 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
                       backgroundColor: selected ? GREEN : 'transparent',
                     }}
                   >
-                    <Text style={{ fontWeight: selected ? '700' : '500', color: selected ? '#fff' : '#1C252E', fontSize: 12 }}>
+                    <Text style={{ fontWeight: selected ? '700' : '500', color: selected ? '#fff' : 'rgba(255,255,255,0.85)', fontSize: 12 }}>
                       {opt}
                     </Text>
                   </TouchableOpacity>

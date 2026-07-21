@@ -12,6 +12,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, Modal } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   getTopTabs,
   indexSchema,
@@ -50,6 +51,7 @@ export function DynamicMovePhotoModal({
   onClose,
   onDelete,
 }: DynamicMovePhotoModalProps) {
+  const insets = useSafeAreaInsets();
   const topTabs = useMemo(() => getTopTabs(categories), [categories]);
 
   const fromKey = useMemo(() => {
@@ -105,8 +107,11 @@ export function DynamicMovePhotoModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: '#fff' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, backgroundColor: GREEN }}>
+      {/* Web parity (move-photo-dialog.js:88-97): the move screen uses the ambient
+          dark theme (`background.paper` = #0D1F1A), not a white sheet. The reused
+          slot grid pills are tuned for this dark background. */}
+      <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: insets.top + 12, paddingBottom: 12, backgroundColor: GREEN }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Icon name="close" size={24} color="#fff" />
           </TouchableOpacity>
@@ -123,9 +128,9 @@ export function DynamicMovePhotoModal({
           <Text style={{ color: GREEN, fontWeight: '900', fontSize: 10, letterSpacing: 1, marginBottom: 2 }}>
             RE-TAGGING
           </Text>
-          <Text style={{ color: '#1C252E', fontSize: 13 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13 }}>
             Moving photo from{' '}
-            <Text style={{ fontWeight: '800' }}>{moveState?.fromSlot?.name}</Text>. Pick a new slot.
+            <Text style={{ fontWeight: '800', color: '#fff' }}>{moveState?.fromSlot?.name}</Text>. Pick a new slot.
           </Text>
         </View>
 
