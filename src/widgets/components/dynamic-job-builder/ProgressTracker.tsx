@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -14,11 +14,15 @@ interface ProgressTrackerProps {
   steps?: ProgressTrackerStep[];
   activeStepId?: string;
   onStepPress?: (index: number) => void;
+  // Web parity: web's stepper is DISPLAY-ONLY — tapping a step never navigates; the
+  // footer Next (gated on `canProceed`) is the only way forward. When true the steps
+  // are non-interactive, so the rep advances only via the bottom Next button.
+  disableNavigation?: boolean;
 }
 
-// The stepper always starts at step 1 and scrolls horizontally when the steps don't
-// fit (no auto-scroll to the active step — web parity: the browser stepper stays at
-// the start). Steps and connectors use FIXED widths so the gap between them is small
+// The stepper scrolls horizontally when the steps don't fit and AUTO-SCROLLS to keep
+// the active step centred (so jumping to the Summary reveals the last step instead of
+// staying pinned at step 1). Steps and connectors use FIXED widths so the gap is small
 // and consistent (the previous `flex: 1` connectors stretched into long lines). Fixed
 // dp keeps the layout identical on Android and iOS.
 const CIRCLE = 40;
@@ -26,14 +30,34 @@ const STEP_WIDTH = 54; // just wider than the circle so labels have room, gaps s
 const CONNECTOR_WIDTH = 12; // short connector line between two steps
 // Connector aligns with the circle centre (CIRCLE / 2), minus half the line height.
 const CONNECTOR_TOP = CIRCLE / 2 - 1;
+const PADDING_LEFT = 8; // must match contentContainerStyle.paddingHorizontal
+// Left edge of step `i`: paddingLeft + i steps + i connectors before it.
+const stepOffset = (i: number) => PADDING_LEFT + i * (STEP_WIDTH + CONNECTOR_WIDTH);
 
-export function ProgressTracker({ steps = [], activeStepId, onStepPress }: ProgressTrackerProps) {
+export function ProgressTracker({ steps = [], activeStepId, onStepPress, disableNavigation }: ProgressTrackerProps) {
+  const scrollRef = useRef<ScrollView>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+
+  // Auto-scroll the strip so the ACTIVE step is centred (or as close as the content
+  // allows — scrollTo clamps). Fires whenever the active step changes, e.g. after
+  // "Skip to Summary" jumps to the last step: the strip follows to reveal it instead
+  // of staying pinned at step 1. `scrollTo` clamps out-of-range x, so the first/last
+  // steps settle flush at each end.
+  const activeIndex = steps.findIndex((s) => s.id === activeStepId || s.active);
+  useEffect(() => {
+    if (activeIndex < 0 || viewportWidth <= 0) return;
+    const target = stepOffset(activeIndex) + STEP_WIDTH / 2 - viewportWidth / 2;
+    scrollRef.current?.scrollTo({ x: Math.max(0, target), animated: true });
+  }, [activeIndex, viewportWidth]);
+
   return (
     <ScrollView
+      ref={scrollRef}
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingTop: 4, paddingBottom: 8, paddingHorizontal: 8 }}
+      contentContainerStyle={{ paddingTop: 2, paddingBottom: 2, paddingHorizontal: PADDING_LEFT }}
       keyboardShouldPersistTaps="handled"
+      onLayout={(e) => setViewportWidth(e.nativeEvent.layout.width)}
     >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
         {steps.map((step, index) => {
@@ -64,6 +88,7 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress }: Progr
                 : '#94a3b8';
 
           const handlePress = () => {
+            if (disableNavigation) return;
             if (step.locked) return;
             if (isActive) return;
             onStepPress?.(index);
@@ -83,6 +108,7 @@ export function ProgressTracker({ steps = [], activeStepId, onStepPress }: Progr
               )}
               <Pressable
                 onPress={handlePress}
+                disabled={disableNavigation}
                 className="items-center"
                 style={{ width: STEP_WIDTH, flexShrink: 0 }}
               >

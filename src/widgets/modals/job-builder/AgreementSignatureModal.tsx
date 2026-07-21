@@ -30,6 +30,46 @@ import Animated, {
 // viewBoxes, and the SVG written for upload must all share one coordinate space.
 const PAD_HEIGHT = 300;
 
+// The sign request uses `responseType: 'blob'`, so when the server rejects it the
+// error body arrives as a Blob (application/json) — the axios interceptor rejects
+// with `error.response.data` (that Blob). Logging it prints an opaque
+// `{_data:{…,name:'sign.json'}}` with no message. These helpers READ the Blob so the
+// real server reason is surfaced to the rep (and the console) instead.
+const readBlobAsText = (blob: any): Promise<string> =>
+  new Promise((resolve) => {
+    try {
+      if (!blob || (typeof blob.size !== 'number' && !blob._data)) return resolve('');
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsText(blob as Blob);
+    } catch {
+      resolve('');
+    }
+  });
+
+// Pull the most useful human message out of a signing error, which may be a Blob
+// (application/json body), the parsed `error.response.data`, or a plain Error.
+const extractServerMessage = async (err: any): Promise<string> => {
+  const isBlobLike = (v: any) => v && (v._data || typeof v.size === 'number');
+  const candidate = isBlobLike(err)
+    ? err
+    : isBlobLike(err?.data)
+      ? err.data
+      : err?.response?.data;
+  const text = await readBlobAsText(candidate);
+  if (text) {
+    try {
+      const parsed = JSON.parse(text);
+      return parsed?.message || parsed?.error || text.slice(0, 300);
+    } catch {
+      return text.slice(0, 300);
+    }
+  }
+  if (typeof err?.message === 'string' && err.message) return err.message;
+  return '';
+};
+
 interface AgreementSignatureModalProps {
   visible: boolean;
   onClose: () => void;
@@ -285,6 +325,14 @@ export const AgreementSignatureModal = ({
         throw new Error('Received empty blob from server');
       }
 
+      // The real success returns a PDF. A JSON body here means the server reported an
+      // error with a 2xx status — read it and surface the message instead of writing
+      // the JSON out as a bogus ".pdf".
+      if (typeof blob.type === 'string' && blob.type.includes('json')) {
+        const msg = await extractServerMessage(blob);
+        throw new Error(msg || 'The server could not sign this agreement.');
+      }
+
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
@@ -311,8 +359,11 @@ export const AgreementSignatureModal = ({
         setLoading(false);
       };
     } catch (error) {
-      console.error('Signing failed:', error);
-      FlashMessage.error('Error', 'Failed to sign agreement');
+      // Surface the ACTUAL server reason (read out of the error Blob) so a signing
+      // failure is diagnosable instead of a blanket "Failed to sign agreement".
+      const serverMsg = await extractServerMessage(error);
+      console.error('Signing failed:', serverMsg || error);
+      FlashMessage.error('Error', serverMsg || 'Failed to sign agreement');
       setLoading(false);
     }
   };

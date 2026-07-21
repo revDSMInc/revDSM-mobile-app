@@ -5,12 +5,15 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQuery } from '@tanstack/react-query';
 import { useDynamicJobBuilderSession } from './useDynamicJobBuilderSession';
 import { DynamicTabRenderer } from '../../widgets/components/dynamic-job-builder/DynamicTabRenderer';
+import { EmptyStepGate } from '../../widgets/components/dynamic-job-builder/EmptyStepGate';
+import { stateHasContent, collectLockedFieldIds } from '../../utils/dynamic-job-builder/engine/empty-step-gate';
 import { ProgressTracker } from '../../widgets/components/dynamic-job-builder/ProgressTracker';
 import { VerticalTabBar } from '../../widgets/components/dynamic-job-builder/VerticalTabBar';
 import { FlashMessage } from '../../config/message';
@@ -21,6 +24,7 @@ import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedR
 import { useAuth } from '../../hooks/useAuth';
 import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
 import { isTabComplete } from '../../utils/dynamic-job-builder/engine/tab-validation';
+import { buildInitialJobState } from '../../utils/dynamic-job-builder/engine/preview-compute';
 import {
   serializeDynamicJobStateForStorage,
   deserializeDynamicJobStateFromStorage,
@@ -110,7 +114,9 @@ function DynamicJobBuilderInner({
   appointmentId,
   embedded = false,
   scheduleTimeOverride,
-  rawDocsOverride,
+  // `rawDocsOverride` (savedOutcome.jobBuilderDocuments) is intentionally NOT consumed:
+  // it is not pruned when a rep deletes a document, so it would resurrect removed
+  // agreements. Edit-mode docs come from `downloadOutcomeDocuments` (web parity).
   onStateChange,
   onEditComplete,
   onEditBack,
@@ -198,10 +204,15 @@ function DynamicJobBuilderInner({
   // docs exist) that used to gate draft hydration. It runs only after the outcome
   // GET has landed (so `outcomeData.rawDocs` is available) and never delays the
   // draft. A doc failure leaves the previously-set documents untouched.
-  // In edit mode the outcome GET is skipped, so fall back to the parent-supplied
-  // raw docs (leadOutcomeDocuments) — this is what lets the amendment view show the
-  // agreements/order sheets that were saved on the original deal.
-  const rawDocs = outcomeData?.rawDocs || (isEdit ? rawDocsOverride : null);
+  // Non-edit (create/reopen) path only: resolve the calculator outcome's echoed
+  // `leadOutcomeDocuments` (S3 refs → secure URLs). Edit mode does NOT use this — it
+  // reads documents lead-scoped via `downloadOutcomeDocuments` below (web parity, see
+  // that query). Feeding the parent's `rawDocsOverride` (savedOutcome.jobBuilderDocuments)
+  // here showed agreements the rep had already DELETED: that field is not pruned on
+  // delete, whereas `downloadOutcomeDocuments` reflects deletions — which is exactly
+  // why the mobile summary listed a removed agreement that the web (which reads
+  // `downloadOutcomeDocuments`) correctly hid.
+  const rawDocs = outcomeData?.rawDocs;
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
     queryFn: async () => {
@@ -262,9 +273,65 @@ function DynamicJobBuilderInner({
 
       return resolvedDocuments;
     },
-    // Runs once rawDocs are available: after the outcome GET lands (new flow), OR
-    // in edit mode as soon as the parent hands down `rawDocsOverride`.
-    enabled: Boolean(leadId && calcId) && (isOutcomeFetched || (isEdit && !!rawDocsOverride)),
+    // Only after the outcome GET has landed (rawDocs available), and NEVER in edit
+    // mode — edit fetches docs lead-scoped via `editDocsData` below (web parity).
+    enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  // EDIT-mode documents — the previously-submitted agreement / order-sheet PDFs.
+  //
+  // Web parity (`dynamic-deal-edit-modal.js` lines 415, 483-524): the edit modal reads
+  // documents with `downloadOutcomeDocuments(leadId)` — the LEAD-scoped endpoint that
+  // returns each doc with its base64 body — and builds `{ agreements, orderSheets }`
+  // display rows from it. This is the source of truth that REFLECTS DELETIONS: when a
+  // rep removes an agreement, it disappears here (and on web), unlike the outcome's
+  // `jobBuilderDocuments` mirror which is not pruned. Reading that mirror is what made
+  // the mobile summary keep showing a deleted agreement. `leadId` is always present,
+  // so this does not depend on a (possibly null) `calcId`.
+  const { data: editDocsData } = useQuery({
+    queryKey: ['editOutcomeDocs', leadId],
+    queryFn: async () => {
+      const empty = { agreements: [] as any[], orderSheets: [] as any[] };
+      try {
+        const res = await LeadService.downloadOutcomeDocuments(leadId!);
+        const body: any = res?.data;
+        const docs = body?.data ?? body ?? {};
+        // Mirror web `toFile`: prefer the base64 body as a data-URI, else any URL.
+        const toDisplay = (arr: any, group: 'agreement' | 'orderSheet') =>
+          (Array.isArray(arr) ? arr : [])
+            .map((d: any) => {
+              const ct = d?.fileData?.contentType || 'application/pdf';
+              const raw = d?.base64Data;
+              const dataUri = raw
+                ? String(raw).startsWith('data:')
+                  ? raw
+                  : `data:${ct};base64,${raw}`
+                : undefined;
+              const url = dataUri || d?.secureUrl || d?.url || undefined;
+              if (!url) return null;
+              return {
+                uri: url,
+                name: d?.name || (group === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: d?._id,
+                contentType: ct,
+                isNew: false,
+                documentType: group,
+              };
+            })
+            .filter(Boolean);
+        return {
+          agreements: toDisplay(docs.agreements, 'agreement'),
+          orderSheets: toDisplay(docs.orderSheets, 'orderSheet'),
+        };
+      } catch (e) {
+        console.warn('[DynamicJobBuilder] edit-mode doc download failed:', e);
+        return empty;
+      }
+    },
+    enabled: Boolean(leadId) && isEdit,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
@@ -350,6 +417,15 @@ function DynamicJobBuilderInner({
       setResolvedDocuments(resolvedDocumentsData);
     }
   }, [resolvedDocumentsData]);
+
+  // Edit mode: mirror the lead-scoped `downloadOutcomeDocuments` result into the
+  // display state (web parity). Keyed separately from the non-edit path so exactly
+  // one populates per mode, and this one reflects deletions.
+  useEffect(() => {
+    if (editDocsData) {
+      setResolvedDocuments(editDocsData);
+    }
+  }, [editDocsData]);
 
   // Sale vs demo drives which cards render and the completion gate (web parity:
   // isSale = result.toLowerCase() === 'sale'; demo = any non-sale).
@@ -717,6 +793,72 @@ function DynamicJobBuilderInner({
     return isCurrentTabComplete;
   }, [portalUnrestrictedEdit, currentTabIndex, nonSummaryTabs.length, canComplete, isCurrentTabComplete]);
 
+  // ─── Empty-step gate (My Deals / deal-edit only) — web dynamic-job-builder.js ──
+  // In deal-edit, a step with no REP-entered data is surfaced with a soft
+  // "Add details / Skip" prompt rather than dropping straight into a blank form.
+  // Calculator-seeded (locked) values don't count as content — see `stateHasContent`.
+  const lockedFieldIds = useMemo(() => collectLockedFieldIds(initialConfig), [initialConfig]);
+  // Steps the rep chose to fill ("Add details") — so the gate doesn't reappear on
+  // the same step after they open it. Per-session, cleared on unmount (web parity).
+  const [gateDismissed, setGateDismissed] = useState<Set<string>>(() => new Set());
+  const showEmptyGate = useMemo(() => {
+    if (!isEdit || !currentTab || currentTab.isSummary) return false;
+    if (currentVerticalLockedTabIds.includes(currentTab.id)) return false;
+    if (gateDismissed.has(currentTab.id)) return false;
+    const tabState = jobState?.[selectedVertical?.id]?.[currentTab.id] || {};
+    return !stateHasContent(tabState, lockedFieldIds);
+  }, [isEdit, currentTab, currentVerticalLockedTabIds, gateDismissed, jobState, selectedVertical, lockedFieldIds]);
+  const dismissGate = useCallback(() => {
+    if (!currentTab) return;
+    setGateDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(currentTab.id);
+      return next;
+    });
+  }, [currentTab]);
+
+  // ─── Clear-step (reset current tab) — web `dynamic-job-builder.js` handleClearTab ──
+  // A red reset button in the footer wipes every selection/measurement on the ACTIVE
+  // tab back to its fresh initial state (deal-center-seeded locked fields kept, so
+  // combinations/sections re-hydrate as blank editable rows), behind a confirm dialog.
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const showClearButton =
+    isEdit &&
+    !!currentTab &&
+    !currentTab.isSummary &&
+    !currentVerticalLockedTabIds.includes(currentTab.id) &&
+    !showEmptyGate;
+  const handleClearTab = useCallback(() => {
+    if (!selectedVertical?.id || !currentTab?.id) {
+      setClearConfirmOpen(false);
+      return;
+    }
+    const fresh = buildInitialJobState(initialConfig, dealCenterData);
+    const freshTabState =
+      fresh?.[selectedVertical.id]?.[currentTab.id] || { colorValues: {}, sectionFields: {} };
+    updateTabState(selectedVertical.id, currentTab.id, freshTabState);
+    // Keep the empty-step gate suppressed so the rep lands on the blank editable form
+    // right after clearing (not the "No details yet" prompt).
+    setGateDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(currentTab.id);
+      return next;
+    });
+    setClearConfirmOpen(false);
+  }, [selectedVertical, currentTab, initialConfig, dealCenterData, updateTabState]);
+
+  // ─── Skip-all (jump straight to the Summary step) ─────────────────────────────
+  // A footer icon that jumps from any build step directly to the final Summary tab,
+  // bypassing the intermediate steps. Only in deal-edit (movement is unrestricted
+  // there — `portalUnrestrictedEdit`), and only when a Summary tab exists and isn't
+  // already the active step. Jumps by setting the tab directly (not `handleGoToTab`)
+  // so no completion gate blocks it.
+  const showSkipAll =
+    isEdit && !!summaryTab && !!currentTab && currentTab.id !== summaryTab.id;
+  const handleSkipAll = useCallback(() => {
+    if (summaryTab?.id) setSelectedTabId(summaryTab.id);
+  }, [summaryTab]);
+
   const handleVerticalSelect = useCallback((verticalId: string) => {
     setSelectedVerticalId(verticalId);
     setSelectedTabId('');
@@ -965,6 +1107,12 @@ function DynamicJobBuilderInner({
         configSnapshotId: configId || 'dynamic',
       };
 
+      // Full Complete-Job payload (POST /lead/v1/{leadId}/job-builder).
+      console.log(
+        `[COMPLETE JOB PAYLOAD] POST /lead/v1/${leadId}/job-builder\n` +
+          JSON.stringify(payload, null, 2)
+      );
+
       if (leadId) {
         await LeadService.submitJobBuilder(leadId, payload);
       }
@@ -996,6 +1144,10 @@ function DynamicJobBuilderInner({
           // is why the lead dashboard listed each agreement twice. They still go to
           // the /job-builder POST above, which populates the separate
           // JobBuilderDocument collection. This mirror carries FIELDS only.
+          console.log(
+            `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
+              JSON.stringify(outcomePayload, null, 2)
+          );
           await LeadService.updateLeadOutcome(leadId, outcomePayload);
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
@@ -1056,7 +1208,7 @@ function DynamicJobBuilderInner({
           dealCenterData
         );
         const rd = (calculatorResultData || {}) as any;
-        await LeadService.updateLeadOutcome(leadId, {
+        const docSubmitPayload = {
           result: 'Sale',
           status: 'Sale',
           selectedCalculatorId: calcId || rd.calculatorId || null,
@@ -1068,7 +1220,14 @@ function DynamicJobBuilderInner({
             status: 'draft',
           },
           [rootKey]: payloads,
-        });
+        };
+        // Full document-submit payload (PUT /lead/v1/{leadId}/outcome). Includes the
+        // base64 PDF under [rootKey][i].file, so this log line is large.
+        console.log(
+          `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome\n` +
+            JSON.stringify(docSubmitPayload, null, 2)
+        );
+        await LeadService.updateLeadOutcome(leadId, docSubmitPayload);
         return true;
       } catch (e) {
         console.warn('[DynamicJobBuilder] doc upload failed:', e);
@@ -1093,7 +1252,10 @@ function DynamicJobBuilderInner({
           style={{
             paddingHorizontal: 24,
             paddingTop: 8,
-            paddingBottom: 24,
+            // Trimmed from 24 → 8: the stepper carried a tall empty white band below
+            // the Gutters/LeafFilter/… pills before the content card. 8 keeps the
+            // pills clear of the divider without the extra padding.
+            paddingBottom: 8,
             borderBottomWidth: 1,
             borderBottomColor: '#E2E8F0',
             backgroundColor: '#fff',
@@ -1154,6 +1316,9 @@ function DynamicJobBuilderInner({
             ]}
             activeStepId={currentTab?.id || ''}
             onStepPress={handleGoToTab}
+            // Deal-edit: the stepper is display-only (web parity) — the rep advances
+            // only via the bottom Next button, not by tapping Gutters/LeafFilter/etc.
+            disableNavigation={isEdit}
           />
         </View>
 
@@ -1166,7 +1331,15 @@ function DynamicJobBuilderInner({
             KeyboardAvoidingView here would instead just shrink the ScrollView above
             the keyboard, leaving a low field below the fold and hidden (this ticket). */}
         <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-          {currentTab ? (
+          {currentTab && showEmptyGate ? (
+            // Deal-edit: this step has no rep-entered data. Prompt to add or skip
+            // instead of showing a blank form (web dynamic-job-builder.js:749).
+            <EmptyStepGate
+              stepLabel={currentTab.label || 'this step'}
+              onAddDetails={dismissGate}
+              onSkip={handleNext}
+            />
+          ) : currentTab ? (
             <DynamicTabRenderer
               key={currentTab.id}
               tab={currentTab}
@@ -1234,6 +1407,7 @@ function DynamicJobBuilderInner({
               justifyContent: 'space-between',
             }}
           >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {!isFirstStep ? (
               <TouchableOpacity
                 onPress={handleBack}
@@ -1274,7 +1448,45 @@ function DynamicJobBuilderInner({
             ) : (
               <View style={{ width: 80 }} />
             )}
+            {showClearButton && (
+              <TouchableOpacity
+                onPress={() => setClearConfirmOpen(true)}
+                accessibilityLabel="Clear this step"
+                style={{
+                  width: 40,
+                  height: 36,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  backgroundColor: '#FEF2F2',
+                  borderColor: '#FECACA',
+                }}
+              >
+                <Icon name="restart" size={18} color="#EF4444" />
+              </TouchableOpacity>
+            )}
+            </View>
 
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {showSkipAll && (
+              <TouchableOpacity
+                onPress={handleSkipAll}
+                accessibilityLabel="Skip to summary"
+                style={{
+                  width: 40,
+                  height: 36,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  backgroundColor: '#EFF6FF',
+                  borderColor: '#BFDBFE',
+                }}
+              >
+                <Icon name="skip-forward" size={18} color="#2563EB" />
+              </TouchableOpacity>
+            )}
             {embedded ? (
               // Wizard: advance to the Job Price step once the build is finalized,
               // otherwise page through the build tabs. No submit happens here.
@@ -1364,9 +1576,47 @@ function DynamicJobBuilderInner({
                 </Text>
               </TouchableOpacity>
             )}
+            </View>
           </View>
         </View>
       </View>
+
+      {/* Clear-step confirmation (web `dynamic-job-builder.js` Dialog). */}
+      <Modal
+        visible={clearConfirmOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClearConfirmOpen(false)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setClearConfirmOpen(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 360 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Icon name="alert" size={22} color="#F59E0B" />
+              <Text style={{ fontSize: 17, fontWeight: '900', color: '#0F172A' }}>Clear this step?</Text>
+            </View>
+            <Text style={{ fontSize: 13, color: '#64748B', lineHeight: 19, marginBottom: 20 }}>
+              This removes all selections and measurements on{' '}
+              <Text style={{ fontWeight: '800', color: '#0F172A' }}>{currentTab?.label || 'this step'}</Text>. This can’t be undone.
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
+              <TouchableOpacity onPress={() => setClearConfirmOpen(false)} style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+                <Text style={{ fontWeight: '800', fontSize: 13, color: '#334155' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleClearTab}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 }}
+              >
+                <Icon name="restart" size={16} color="#fff" />
+                <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Clear step</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

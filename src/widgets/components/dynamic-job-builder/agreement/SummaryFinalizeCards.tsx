@@ -56,6 +56,10 @@ const isPdf = (f: any) =>
   (f?.contentType || f?.mimeType || '').includes('pdf') ||
   String(f?.name || f?.uri || f?.url || '').toLowerCase().endsWith('.pdf');
 const fileSrc = (f: any) => f?.secureUrl || f?.displayUrl || f?.url || f?.uri || f?.thumbnailUrl || f?.file;
+// Stable identity for reconciling a document across the scanner round-trip: a server
+// doc keeps its serverId; a freshly-scanned/uploaded one falls back to url/uri/name.
+const docIdentity = (d: any): string =>
+  String(d?.serverId ?? d?.id ?? d?.url ?? d?.uri ?? d?.name ?? '');
 
 /**
  * Appointment + Agreement + Order-sheet cards for the dynamic Job Builder summary
@@ -246,6 +250,17 @@ export function SummaryFinalizeCards({
   };
 
   const handleScannerSave = async (cat: DocCategory, images: any[]) => {
+    const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
+    // Reflect REMOVALS immediately. The scanner already fired the DELETE for any doc
+    // the rep crossed out, but the display state wasn't pruned — so a delete-only
+    // Update left the removed page on screen until a reopen refetched it. Keep only
+    // the resolved docs still present in the returned set (matched by identity).
+    const surviving = new Set((images || []).map(docIdentity).filter(Boolean));
+    setResolvedDocuments?.((prev) => {
+      const base = prev || { agreements: [], orderSheets: [] };
+      return { ...base, [key]: (base[key] || []).filter((d: any) => surviving.has(docIdentity(d))) };
+    });
+
     const newFiles = (images || []).filter((f) => f?.isNew !== false);
     const displayDocs = await uploadNewFiles(cat, newFiles);
     if (displayDocs) {
@@ -272,6 +287,44 @@ export function SummaryFinalizeCards({
   };
 
   const handleAgreementGenerated = async (file: any) => {
+    // A GENERATED agreement is signed AND persisted server-side by the sign endpoint
+    // (`pdf-reports/v1/agreement/{leadId}/sign`) — exactly like the normal Job Builder,
+    // whose `onSuccess` merely refetches the outcome. The old behaviour re-uploaded it
+    // via `handleUploadDocs`, which (a) filed a SECOND LeadOutcomeDocument row for the
+    // same PDF (the "document shows 2 times on reopen" bug) and (b) held the whole PDF
+    // as base64 in state + the PUT body, crashing the app on submit. So a
+    // system-generated agreement is NOT re-uploaded — the sign endpoint already stored
+    // it; we just surface the single stored copy.
+    if (file?.isSystemGenerated) {
+      // Surface the just-signed agreement locally with a LIGHTWEIGHT `file://`
+      // reference (NOT its base64 body). This is intentionally architecture-agnostic:
+      // it does not depend on how documents are (re)loaded (edit mode resolves the
+      // parent's `rawDocsOverride` → secure URLs; create mode reads the calculator
+      // outcome). No query is invalidated, so the in-progress job state is never
+      // re-applied and there is no race that could drop the doc. On the next reopen
+      // the authoritative server copy (the one the sign endpoint just stored) loads
+      // through the normal doc-resolution path.
+      setResolvedDocuments?.((prev) => {
+        const base = prev || { agreements: [], orderSheets: [] };
+        return {
+          ...base,
+          agreements: [
+            ...(base.agreements || []),
+            {
+              name: file.name,
+              uri: file.uri,
+              contentType: 'application/pdf',
+              documentType: 'agreement' as const,
+              isNew: false,
+            },
+          ],
+        };
+      });
+      setAgreementDialogVisible(false);
+      return;
+    }
+    // Scanned / manually-added agreements have no server-side sign step, so they still
+    // need an explicit upload to become a stored document.
     const displayDocs = await uploadNewFiles('agreement', [file]);
     if (displayDocs) commitUploaded('agreement', displayDocs);
     setAgreementDialogVisible(false);

@@ -82,9 +82,29 @@ export interface DealPricing {
 
 // ── Payment-plan normalization (ports web `normalizePlan`/`normalizeResponse`) ──
 
+/**
+ * Lowe's plans arrive from the API with auto-generated keys (e.g. "ACHBankFee4",
+ * "6Mat799APRBankFee4"), but the whole Lowe's flow (ACH default, `isLowesPlan`
+ * filtering, `plans[key]` lookups, min-price gating) is keyed on the CANONICAL keys
+ * `lowes_ach` / `lowes_cc` / `lowes_<months>m`. Without this mapping the plans keep
+ * their raw API keys, `isLowesPlan` (which tests the `lowes` prefix) never matches,
+ * and a Lowe's lead's picker comes back EMPTY. Verbatim port of web
+ * `src/api/payment-plans.js:canonicalLowesKey`. Returns null for non-Lowe's plans.
+ */
+function canonicalLowesKey(plan: any, providerName?: string): string | null {
+  if (!/lowe/i.test(providerName || '')) return null;
+  const label = String(plan.label || plan.name || '').toLowerCase();
+  const type = plan.type || 'cash';
+  if (type === 'cash' || /\bach\b/.test(label)) return 'lowes_ach';
+  if (/\bcc\b|credit\s*card/.test(label)) return 'lowes_cc';
+  const months = label.match(/(\d+)\s*m\b/); // "36m at 7.99% apr…" → lowes_36m
+  if (months) return `lowes_${months[1]}m`;
+  return null;
+}
+
 function normalizePlan(plan: any, providerName?: string, providerColor?: string): DealPlan {
   return {
-    key: plan.key || plan.id || plan.code,
+    key: canonicalLowesKey(plan, providerName) || plan.key || plan.id || plan.code,
     label: plan.label || plan.name || '',
     type: (plan.type as DealPlan['type']) || 'cash',
     fee: Number(plan.fee) || 0,
@@ -290,6 +310,37 @@ export function useDealPricing(lead: any): DealPricing {
         plans[p.key] = p;
       });
       const relevant = dyn.filter((p) => (isLowesLead ? isLowesPlan(p) : !isLowesPlan(p)));
+
+      // A Lowe's lead whose dynamic provider-plans response carried NO Lowe's plans
+      // (the company hasn't published Lowe's provider plans, or they arrived without
+      // a recognizable Lowe's provider/key) would otherwise leave the picker EMPTY.
+      // Fall back to the shared static Lowe's plans (lowes_ach / lowes_cc / financing)
+      // so the dropdown is always populated with Lowe's-ONLY methods — the whole flow
+      // is keyed on those canonical keys anyway. Non-Lowe's leads keep the dynamic set.
+      if (isLowesLead && relevant.length === 0) {
+        const lowesCategories = staticCategories(true);
+        const mergedPlans: Record<string, DealPlan> = { ...plans };
+        lowesCategories.forEach((c) =>
+          c.plans.forEach((k) => {
+            const sp = (STATIC_PLANS as Record<string, DealPlan>)[k];
+            if (sp) mergedPlans[k] = sp;
+          })
+        );
+        return {
+          plans: mergedPlans,
+          categories: lowesCategories,
+          dropAddCategories: staticDropAddCategories(true),
+          outcomeDownPaymentMethods: getOutcomeDownPaymentMethods(true),
+          defaultMethod: getDefaultPaymentMethod(true),
+          preOrderOptions: discount.preOrderOptions,
+          defaultPreOrder: discount.defaultPreOrder,
+          seniorVetPct: discount.seniorVetPct,
+          discountConfig: discount.discountConfig,
+          isDynamic: true,
+          isLoading: plansLoading || discountLoading,
+        };
+      }
+
       const categories = buildCategories(relevant);
       const basics = relevant.filter((p) => p.type === 'cash' || p.type === 'card');
       const preferred = isLowesLead

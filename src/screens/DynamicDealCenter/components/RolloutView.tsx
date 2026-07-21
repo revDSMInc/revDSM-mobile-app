@@ -32,6 +32,7 @@ import {
   computeRolloutResult,
   computeCalculatorTiers,
   screensCountFromEntries,
+  screenUnitPriceFromSchemas,
   markupLabel,
   WELLS_FARGO_HIGH_KEYS,
   WF_HIGH_MIN_PRICE,
@@ -175,28 +176,48 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
                 {cat.plans.map((key) => {
                   const plan = plans[key];
                   if (!plan) return null;
-                  const belowMin = planBelowMin(plans, key, price);
+                  const min = plan.minPrice || 0;
+                  // Rollout context (web `PaymentPlanSelect`): a min-price plan is
+                  // LOCKED until an end price at or above the minimum is entered, so
+                  // price 0 (not entered yet) counts as below-min — the plan greys out
+                  // with a red "Requires $X+ — enter end price first" hint. Mobile's
+                  // shared `planBelowMin` only flags an ENTERED price below the min
+                  // (price > 0), which is why the note was missing before any end price.
+                  const belowMin = min > 0 && (price <= 0 || price < min);
                   const isSel = key === selected;
                   return (
                     <TouchableOpacity
                       key={key}
-                      onPress={() => {
-                        if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
-                        onSelect(key);
-                      }}
+                      // DISABLED until the entered end price meets this plan's minimum
+                      // (web parity). With no end price the Lowe's financing plans stay
+                      // locked and non-selectable; only the basics (ACH/CC, no minimum)
+                      // are pickable. The row un-locks the moment a qualifying price is
+                      // typed into "Rollout End Price".
+                      disabled={belowMin}
+                      onPress={() => onSelect(key)}
                       style={{
                         padding: 14, borderRadius: 12, borderWidth: 1.5, marginBottom: 8,
-                        borderColor: isSel ? '#4CBB17' : '#E2E8F0',
+                        // Disabled (below-min) rows read as GREY/muted so they're clearly
+                        // distinct from the white, selectable active options.
+                        borderColor: isSel ? '#4CBB17' : belowMin ? '#E2E8F0' : '#E2E8F0',
                         backgroundColor: isSel ? '#4CBB170D' : belowMin ? '#F1F5F9' : '#fff',
                         opacity: belowMin ? 0.6 : 1,
                       }}
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : '#1C252E' }}>{plan.label}</Text>
+                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : belowMin ? '#94A3B8' : '#1C252E' }}>{plan.label}</Text>
                         {isSel && <Ionicons name="checkmark-circle" size={20} color="#4CBB17" />}
                       </View>
-                      {plan.minPrice && belowMin ? (
-                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 4 }}>Requires ${plan.minPrice.toLocaleString()}+</Text>
+                      {/* Web parity: red min-price hint (with "enter end price first"
+                          before any price, "(current: $X)" once one is entered), or the
+                          plan's own grey minPriceNote when it's not below the minimum. */}
+                      {belowMin ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 4 }}>
+                          Requires ${min.toLocaleString()}+
+                          {price > 0 ? ` (current: $${Number(price).toLocaleString()})` : ' — enter end price first'}
+                        </Text>
+                      ) : plan.minPriceNote && plan.minPriceNote !== '0' ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 4 }}>{plan.minPriceNote}</Text>
                       ) : null}
                     </TouchableOpacity>
                   );
@@ -736,19 +757,28 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const seniorVetPct = pricing.seniorVetPct;
   const isDefaultDiscount = !!user?.defaultPercentage && user.defaultPercentage === discountPct;
   const screensCount = screensCountFromEntries(calculator.entries);
+  // Web parity (`PremiumQuoteCard.js:274`): the per-screen price comes from the
+  // schema's `number_of_screen` field, NOT a constant. This was omitted, so
+  // `computeRolloutResult` silently applied its legacy $75 fallback and the
+  // rollout disagreed with web whenever a company priced screens differently.
+  const screenUnitPrice = useMemo(
+    () => screenUnitPriceFromSchemas(verticals, pricingConfig),
+    [verticals, pricingConfig],
+  );
   const downPay = calculator.downPayment || 0;
   const rolloutResult = useMemo(
     () =>
       computeRolloutResult({
         endPrice: priceNum > 0 ? priceNum : tiers[2].value,
         screensCount,
+        screenUnitPrice,
         discountConfig: pricing.discountConfig,
         discountPct,
         seniorVetPct,
         downPayment: downPay,
         plan: plans[method],
       }),
-    [priceNum, tiers, screensCount, pricing.discountConfig, discountPct, seniorVetPct, downPay, plans, method],
+    [priceNum, tiers, screensCount, screenUnitPrice, pricing.discountConfig, discountPct, seniorVetPct, downPay, plans, method],
   );
   const priceWithScreens = rolloutResult.priceWithScreens;
   const msrp = rolloutResult.msrp;
@@ -957,6 +987,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     onResult(calculator.id, 'demo', lastDrop, activeMethod, activeDownPayment);
   };
 
+  // The resolved `method` can be a key that ISN'T offered for this lead/company —
+  // e.g. a saved user default of `check` on a company whose dynamic plans have no
+  // `check`, or a Lowe's-only key on a standard lead. Showing that stale label on a
+  // selector whose dropdown doesn't list it is confusing, so when the method isn't
+  // one of the AVAILABLE options we prompt "Select payment method" instead.
+  const methodCategory = pricing.categories.find((c) => c.plans.includes(method));
+  const methodAvailable = !!plans[method] && !!methodCategory;
+
   // Shared payment-method block (heading follows it, matching the regular rollout:
   // name → payment method → items → cost/par/retail → end price → actions).
   const paymentMethodBlock = (
@@ -978,8 +1016,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         style={{ minHeight: 56, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
         <View style={{ flex: 1, paddingRight: 16 }}>
-          <Text style={{ fontSize: 8, fontWeight: '900', color: '#637381', letterSpacing: 1.5, marginBottom: 2, textTransform: 'uppercase' }}>{pricing.categories.find((c) => c.plans.includes(method))?.title || 'BASIC'}</Text>
-          <Text style={{ fontSize: 14, fontWeight: '900', color: '#212B36' }}>{planLabelOf(plans, method)}</Text>
+          <Text style={{ fontSize: 8, fontWeight: '900', color: '#637381', letterSpacing: 1.5, marginBottom: 2, textTransform: 'uppercase' }}>{methodAvailable ? (methodCategory?.title || 'BASIC') : 'PAYMENT METHOD'}</Text>
+          <Text style={{ fontSize: 10, fontWeight: '900', color: methodAvailable ? '#212B36' : '#919EAB' }}>{methodAvailable ? planLabelOf(plans, method) : 'Select payment method'}</Text>
         </View>
         <Ionicons name="chevron-down" size={16} color="#637381" />
       </TouchableOpacity>
@@ -1219,7 +1257,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           {/* Installers Check bar */}
           <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E' }}>Check to installers (screens)</Text>
-            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(screensCount * 75)}</Text>
+            {/* Reuse the computed screensCost rather than re-deriving it — a second
+                copy of the math is exactly how this drifted from the schema price. */}
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(rolloutResult.screensCost)}</Text>
           </View>
 
           {/* Drops list with old-UI View/Unselect/Display */}
