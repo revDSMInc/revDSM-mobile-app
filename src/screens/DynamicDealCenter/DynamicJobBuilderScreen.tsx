@@ -114,7 +114,9 @@ function DynamicJobBuilderInner({
   appointmentId,
   embedded = false,
   scheduleTimeOverride,
-  rawDocsOverride,
+  // `rawDocsOverride` (savedOutcome.jobBuilderDocuments) is intentionally NOT consumed:
+  // it is not pruned when a rep deletes a document, so it would resurrect removed
+  // agreements. Edit-mode docs come from `downloadOutcomeDocuments` (web parity).
   onStateChange,
   onEditComplete,
   onEditBack,
@@ -202,10 +204,15 @@ function DynamicJobBuilderInner({
   // docs exist) that used to gate draft hydration. It runs only after the outcome
   // GET has landed (so `outcomeData.rawDocs` is available) and never delays the
   // draft. A doc failure leaves the previously-set documents untouched.
-  // In edit mode the outcome GET is skipped, so fall back to the parent-supplied
-  // raw docs (leadOutcomeDocuments) — this is what lets the amendment view show the
-  // agreements/order sheets that were saved on the original deal.
-  const rawDocs = outcomeData?.rawDocs || (isEdit ? rawDocsOverride : null);
+  // Non-edit (create/reopen) path only: resolve the calculator outcome's echoed
+  // `leadOutcomeDocuments` (S3 refs → secure URLs). Edit mode does NOT use this — it
+  // reads documents lead-scoped via `downloadOutcomeDocuments` below (web parity, see
+  // that query). Feeding the parent's `rawDocsOverride` (savedOutcome.jobBuilderDocuments)
+  // here showed agreements the rep had already DELETED: that field is not pruned on
+  // delete, whereas `downloadOutcomeDocuments` reflects deletions — which is exactly
+  // why the mobile summary listed a removed agreement that the web (which reads
+  // `downloadOutcomeDocuments`) correctly hid.
+  const rawDocs = outcomeData?.rawDocs;
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
     queryFn: async () => {
@@ -266,15 +273,65 @@ function DynamicJobBuilderInner({
 
       return resolvedDocuments;
     },
-    // Runs once rawDocs are available: after the outcome GET lands (new flow), OR
-    // in edit mode as soon as the parent hands down `rawDocsOverride`. In edit mode
-    // the docs come from `rawDocsOverride` (not the calculator-scoped outcome), so
-    // do NOT gate that path on `calcId` — a resulted deal may carry no calculator id,
-    // which would otherwise disable this query and leave the summary showing
-    // "No documents" even though agreements exist on the deal.
-    enabled:
-      (Boolean(leadId && calcId) && isOutcomeFetched) ||
-      Boolean(leadId && isEdit && rawDocsOverride),
+    // Only after the outcome GET has landed (rawDocs available), and NEVER in edit
+    // mode — edit fetches docs lead-scoped via `editDocsData` below (web parity).
+    enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  // EDIT-mode documents — the previously-submitted agreement / order-sheet PDFs.
+  //
+  // Web parity (`dynamic-deal-edit-modal.js` lines 415, 483-524): the edit modal reads
+  // documents with `downloadOutcomeDocuments(leadId)` — the LEAD-scoped endpoint that
+  // returns each doc with its base64 body — and builds `{ agreements, orderSheets }`
+  // display rows from it. This is the source of truth that REFLECTS DELETIONS: when a
+  // rep removes an agreement, it disappears here (and on web), unlike the outcome's
+  // `jobBuilderDocuments` mirror which is not pruned. Reading that mirror is what made
+  // the mobile summary keep showing a deleted agreement. `leadId` is always present,
+  // so this does not depend on a (possibly null) `calcId`.
+  const { data: editDocsData } = useQuery({
+    queryKey: ['editOutcomeDocs', leadId],
+    queryFn: async () => {
+      const empty = { agreements: [] as any[], orderSheets: [] as any[] };
+      try {
+        const res = await LeadService.downloadOutcomeDocuments(leadId!);
+        const body: any = res?.data;
+        const docs = body?.data ?? body ?? {};
+        // Mirror web `toFile`: prefer the base64 body as a data-URI, else any URL.
+        const toDisplay = (arr: any, group: 'agreement' | 'orderSheet') =>
+          (Array.isArray(arr) ? arr : [])
+            .map((d: any) => {
+              const ct = d?.fileData?.contentType || 'application/pdf';
+              const raw = d?.base64Data;
+              const dataUri = raw
+                ? String(raw).startsWith('data:')
+                  ? raw
+                  : `data:${ct};base64,${raw}`
+                : undefined;
+              const url = dataUri || d?.secureUrl || d?.url || undefined;
+              if (!url) return null;
+              return {
+                uri: url,
+                name: d?.name || (group === 'agreement' ? 'Agreement' : 'Order Sheet'),
+                serverId: d?._id,
+                contentType: ct,
+                isNew: false,
+                documentType: group,
+              };
+            })
+            .filter(Boolean);
+        return {
+          agreements: toDisplay(docs.agreements, 'agreement'),
+          orderSheets: toDisplay(docs.orderSheets, 'orderSheet'),
+        };
+      } catch (e) {
+        console.warn('[DynamicJobBuilder] edit-mode doc download failed:', e);
+        return empty;
+      }
+    },
+    enabled: Boolean(leadId) && isEdit,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
@@ -360,6 +417,15 @@ function DynamicJobBuilderInner({
       setResolvedDocuments(resolvedDocumentsData);
     }
   }, [resolvedDocumentsData]);
+
+  // Edit mode: mirror the lead-scoped `downloadOutcomeDocuments` result into the
+  // display state (web parity). Keyed separately from the non-edit path so exactly
+  // one populates per mode, and this one reflects deletions.
+  useEffect(() => {
+    if (editDocsData) {
+      setResolvedDocuments(editDocsData);
+    }
+  }, [editDocsData]);
 
   // Sale vs demo drives which cards render and the completion gate (web parity:
   // isSale = result.toLowerCase() === 'sale'; demo = any non-sale).

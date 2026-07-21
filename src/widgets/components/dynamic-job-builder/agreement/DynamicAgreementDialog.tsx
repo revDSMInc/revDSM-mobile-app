@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import RNFS from 'react-native-fs';
 import { AgreementSignatureModal } from '../../../modals/job-builder/AgreementSignatureModal';
 import { LeadService } from '../../../../services/api/leads';
 import { useGetDescriptionSchema } from '../../../../screens/DynamicDealCenter/hooks/useDescriptionSchema';
@@ -327,27 +326,26 @@ export function DynamicAgreementDialog({
     generatePreview();
   };
 
-  // The signed PDF comes back from `.../sign` as a file on disk. Read it to base64
-  // and emit the upload-payload shape the caller expects. Because it is already a
-  // real PDF, SummaryFinalizeCards.uploadNewFiles passes it through untouched
-  // (`alreadyPdf`) instead of wrapping a JPEG.
-  const handleSigned = async (signedPdfPath: string) => {
-    try {
-      const base64 = await RNFS.readFile(signedPdfPath.replace('file://', ''), 'base64');
-      onAgreementGenerated({
-        name: `Agreement_${jobDetails.jobDisplay || 'NA'}_${Date.now()}.pdf`,
-        file: `data:application/pdf;base64,${base64}`,
-        uri: `file://${signedPdfPath.replace('file://', '')}`,
-        contentType: 'application/pdf',
-        documentType: 'agreement' as const,
-        type: 'agreement' as const,
-        isNew: true,
-        isSystemGenerated: true,
-      });
-    } catch (e) {
-      console.warn('[DynamicAgreementDialog] reading signed PDF failed', e);
-      setError('The agreement was signed but could not be saved. Please try again.');
-    }
+  // The signed PDF comes back from `.../sign` as a file on disk. The sign endpoint
+  // has ALREADY persisted it as a LeadOutcomeDocument server-side (identical to the
+  // normal Job Builder, whose onSuccess merely refetches the outcome). So we emit
+  // ONLY a lightweight reference — the on-disk `file://` path — and NOT the PDF's
+  // base64 body. Reading the whole (multi-MB) PDF into base64 here, holding it in
+  // React state, and re-uploading it (the old behaviour) both (a) filed a SECOND
+  // outcome-document row for the same agreement and (b) spiked the JS heap enough to
+  // crash the app on submit. `isSystemGenerated` tells the caller this doc is already
+  // stored and must not be re-uploaded.
+  const handleSigned = (signedPdfPath: string) => {
+    const cleanPath = signedPdfPath.replace('file://', '');
+    onAgreementGenerated({
+      name: `Agreement_${jobDetails.jobDisplay || 'NA'}_${Date.now()}.pdf`,
+      uri: `file://${cleanPath}`,
+      contentType: 'application/pdf',
+      documentType: 'agreement' as const,
+      type: 'agreement' as const,
+      isNew: true,
+      isSystemGenerated: true,
+    });
   };
 
   const renderHeader = () => (
