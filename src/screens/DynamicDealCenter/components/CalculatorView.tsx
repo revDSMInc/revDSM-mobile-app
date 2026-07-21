@@ -169,15 +169,29 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
           placeholderTextColor="#919EAB"
           keyboardType="numeric"
         />
-        {/* Expected measurement unit (ft, sq ft, ea, lin ft, …) shown as a grey
-            suffix right after the entered value so reps know what the field expects. */}
-        {!!field.unit && (
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#919EAB', marginLeft: 6 }}>{field.unit}</Text>
-        )}
-        {/* Right side shows the green retail price. */}
-        {!!field.price && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', borderLeftWidth: 1, borderLeftColor: '#919EAB33', paddingLeft: 12, marginLeft: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>${field.price.retail}</Text>
+        {/* Right block: green retail PRICE first, then a divider + the measurement
+            unit (price | unit). The divider + unit render ONLY when the field has a
+            unit — a unit-less field shows just the price with no trailing slash. */}
+        {(!!field.price || !!field.unit) && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
+            {!!field.price && (
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>${field.price.retail}</Text>
+            )}
+            {!!field.unit && (
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: '#919EAB',
+                  marginLeft: field.price ? 8 : 0,
+                  paddingLeft: field.price ? 12 : 0,
+                  borderLeftWidth: field.price ? 1 : 0,
+                  borderLeftColor: '#919EAB33',
+                }}
+              >
+                {field.unit}
+              </Text>
+            )}
           </View>
         )}
       </View>
