@@ -16,6 +16,7 @@ import { isCombinationSummaryField, isContainerFieldType } from '../constants/fi
 import { getFieldGridColumns } from './field-layout-utils';
 import { resolveLocationGridConfig } from './location-grid-utils';
 import { resolveSchemaColor } from '../../../screens/DynamicDealCenter/utils/icon-color';
+import { stateHasContent, collectLockedFieldIds } from './empty-step-gate';
 
 // Web's `theme.palette.primary.main` — the fallback `resolveSchemaColorValue` uses.
 const PALETTE_PRIMARY = '#4CBB17';
@@ -614,7 +615,29 @@ export function buildTabSummaryEntries(tab: any, tabState: any, ctx: any = {}) {
 }
 
 export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = {}) {
-  const { dealCenterData = {}, applyConditions = true, vertical, tabIndex = 0 } = ctx;
+  const { dealCenterData = {}, applyConditions = true, vertical, tabIndex = 0, editMode = false, lockedFieldIds = null } = ctx;
+
+  // Deal-EDIT parity with the "No details yet" step gate (`stateHasContent`): a tab
+  // whose only state is deal-center-seeded (locked) values holds NO rep input, so it
+  // must summarize as empty. Otherwise the summary lists auto-defined calculator
+  // values (e.g. Gutters "Ground Spout", LeafFilter combinations) the rep never
+  // entered — the very inconsistency where the step shows "No details yet" but the
+  // summary shows data. Only user-entered values reach the summary.
+  if (editMode && lockedFieldIds && !stateHasContent(tabState, lockedFieldIds)) {
+    return {
+      tabId: tab.id,
+      tabLabel: tab.label || tab.id,
+      accentColor: resolveTabAccentColor(tab, vertical, null, {
+        tabIndex,
+        products: ctx?.products,
+        schemas: ctx?.schemas,
+      }),
+      combinationSections: [],
+      simpleSections: [],
+      tabFields: [],
+      isEmpty: true,
+    };
+  }
 
   const sections = getTabSections(tab);
   const combinationSections = buildAllCombinationSectionSummaries(tab, tabState, ctx);
@@ -655,13 +678,17 @@ export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = 
 }
 
 export function buildVerticalSummarySections(vertical: any, verticalState: any = {}, ctx: any = {}) {
-  const { lockedTabIds = [] } = ctx;
+  const { lockedTabIds = [], editMode = false } = ctx;
   const locked = new Set(lockedTabIds || []);
   const tabs = vertical?.tabs || [];
+
+  // In deal-edit, precompute the locked (deal-center-seeded) field ids so each tab's
+  // summary can drop to empty when the rep entered nothing (see buildTabSummarySection).
+  const lockedFieldIds = editMode && vertical ? collectLockedFieldIds({ verticals: [vertical] }) : null;
 
   return tabs
     .filter((tab: any) => !tab.isSummary && !locked.has(tab.id))
     .map((tab: any, tabIndex: number) =>
-      buildTabSummarySection(tab, verticalState[tab.id] || {}, { ...ctx, vertical, tabIndex })
+      buildTabSummarySection(tab, verticalState[tab.id] || {}, { ...ctx, vertical, tabIndex, lockedFieldIds })
     );
 }

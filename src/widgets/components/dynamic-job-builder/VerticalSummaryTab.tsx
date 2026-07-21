@@ -193,8 +193,13 @@ export function VerticalSummaryTab({
         applyConditions,
         products,
         schemas,
+        // Deal-edit: drives the "no rep content → empty summary" gate AND lets
+        // formatFieldSummaryValue prefer the rep's live value over the deal-center
+        // one for editable locked fields (web parity). Was never threaded, so the
+        // summary always fell back to the calculator value.
+        editMode,
       }),
-    [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions, products, schemas]
+    [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions, products, schemas, editMode]
   );
 
   // Only show the finalize cards inside the live builder (a root-state setter is

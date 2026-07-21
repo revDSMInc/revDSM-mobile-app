@@ -95,7 +95,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     isConfigured: hasJobBuilderConfig,
     isLoading: isConfigLoading,
   } = useDynamicCalculatorSchemas();
-  const { configuredSchemas, isLoading: isSchemasLoading } = useCalculatorSchema();
+  const { configuredSchemas, isLoading: isSchemasLoading, pricingConfig } = useCalculatorSchema();
   const pricing = useDealPricing(lead);
 
   // ── step + edit state ──────────────────────────────────────────────────────
@@ -240,6 +240,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const effectiveJobState = editedJobState || initialState;
 
   // ── payment options (web useGetPaymentPlans → paymentOptions) ───────────────
+  // Full catalog — used for key coercion + the Balance Method picker (financing
+  // plans allowed on the balance, web parity: PaymentPlanSelect).
   const paymentOptions = useMemo(() => {
     const plans = pricing?.plans || {};
     const arr = Object.values(plans)
@@ -251,6 +253,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           { key: 'check', label: 'Check (0% Fee)' },
           { key: 'mcVisaDscvr', label: 'MC/VISA/DSCVR (3.00% Fee)' },
           { key: 'amex', label: 'AMEX (5.00% Fee)' },
+        ];
+  }, [pricing]);
+
+  // Down Pmt Method: cash/card ONLY (Check / MC-VISA-DSCVR / AMEX) — never the
+  // financing plans. Web parity (`downPaymentOptions`: p.type === 'cash' || 'card').
+  // `pricing.outcomeDownPaymentMethods` is already that Lowe's-aware basics subset.
+  const downPaymentOptions = useMemo(() => {
+    const basics = (pricing?.outcomeDownPaymentMethods || [])
+      .filter((o: any) => o && o.value)
+      .map((o: any) => ({ key: o.value as string, label: (o.label || o.value) as string }));
+    return basics.length
+      ? basics
+      : [
+          { key: 'check', label: 'Check (Bank Fee: 0%)' },
+          { key: 'mcVisaDscvr', label: 'MC/VISA/DSCVR (Bank Fee: 3%)' },
+          { key: 'amex', label: 'AMEX (Bank Fee: 5%)' },
         ];
   }, [pricing]);
 
@@ -285,9 +303,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         paymentMethod: resolveTierPaymentMethod(balanceMethodKey),
         isLowesLead: lead?.lowesLead === true,
         originalContractPrice: lead?.originalContractPrice,
-        pricingConfig: null,
+        pricingConfig,
       }),
-    [calculatorData, dealCenterData, jobBuilderConfig, initialState, effectiveJobState, configuredSchemas, balanceMethodKey, lead]
+    [calculatorData, dealCenterData, jobBuilderConfig, initialState, effectiveJobState, configuredSchemas, balanceMethodKey, lead, pricingConfig]
   );
 
   const customerName =
@@ -381,7 +399,21 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const handleAutoAdjust = useCallback(() => {
     const { previous, next } = tierResult;
     const original = parsePrice(lead?.originalContractPrice) || contractPrice;
-    if (previous.retail > 0 && next.retail > 0) {
+    // Preserve the markup the PREVIOUS card shows (e.g. "COST +75%"), not the raw
+    // retail ratio. The badge measures the premium over the nearest LOWER tier, and
+    // the tiers do NOT scale uniformly when the build changes (cost/par/retail each
+    // move by a different factor), so scaling the price by the retail ratio left the
+    // New badge reading a different % (COST +169%). Scale by the SAME tier the badge
+    // is based on so the New card reproduces the previous markup: with pct = original
+    // premium over previous[baseKey], newContract = next[baseKey] × (original /
+    // previous[baseKey]) lands the New price at the identical premium over next[baseKey].
+    const info = getMarkupInfo(original, previous);
+    const baseKey = info.baseKey;
+    const prevBase = baseKey ? previous[baseKey] : 0;
+    const nextBase = baseKey ? next[baseKey] : 0;
+    if (baseKey && prevBase > 0 && nextBase > 0) {
+      setContractPrice(Math.round(nextBase * (original / prevBase)));
+    } else if (previous.retail > 0 && next.retail > 0) {
       setContractPrice(Math.round(next.retail * (original / previous.retail)));
     } else if (next.par > 0) {
       setContractPrice(Math.round(next.par * 1.1));
@@ -438,6 +470,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         scheduleTime,
       };
 
+      // LFCalculator is a backend subdoc with REQUIRED `createdBy`/`appointmentId`/
+      // `title`. Web always sends a COMPLETE one (it persists a real LFCalculator);
+      // mobile deliberately never persists LFCalculator (see repo guide §5), so
+      // `calculatorData` here is usually empty/partial. Sending that partial subdoc
+      // is exactly what tripped the 500 — "JobBuilderDraft validation failed:
+      // LFCalculator.createdBy/appointmentId/title required". Only attach it when it
+      // is a complete subdoc; otherwise omit it (the top-level `originalContractPrice`
+      // / `selectedCalculatorId` already carry what the addendum needs).
+      const lfCalculatorComplete = Boolean(
+        calculatorData &&
+          typeof calculatorData === 'object' &&
+          (calculatorData as any).createdBy &&
+          (calculatorData as any).appointmentId &&
+          (calculatorData as any).title
+      );
+
       const payload: any = {
         result: lead?.result || 'Sale',
         lastPriceQuoted: lead?.lastPriceQuoted || '',
@@ -457,10 +505,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           lead?.jobBuilder?.appointmentId ||
           null,
         jobBuilder,
-        LFCalculator: calculatorData,
         // Snapshot the build diff for the customer consent page (web parity).
         buildChangeSummary: buildChangeGroups,
       };
+      if (lfCalculatorComplete) payload.LFCalculator = calculatorData;
 
       // Attach any NEW captures the rep added while editing that already carry
       // inline data (data:/base64). Existing S3 docs are skipped (not re-uploaded).
@@ -691,8 +739,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             }
             // Web parity: the amendment view must show the agreements/order sheets
             // saved on the original deal. The builder's own outcome GET is skipped in
-            // edit mode, so hand it the raw docs from the outcome we already fetched.
-            rawDocsOverride={savedOutcome?.leadOutcomeDocuments || null}
+            // edit mode, so hand it the raw docs from the deal we already fetched.
+            // A RESULTED deal carries its docs under `lead.jobBuilderDocuments`
+            // (the same source DealDetail renders, and what web's `dealEditMode`
+            // prefers in `refreshDocumentsFromServer` — `jobBuilderDocuments` over
+            // `leadOutcomeDocuments`). The calculator-scoped outcome often echoes NO
+            // `leadOutcomeDocuments`, so reading only that showed "No documents" on
+            // the summary even when agreements existed. Prefer jobBuilderDocuments,
+            // falling back to either outcome-echoed shape.
+            rawDocsOverride={
+              lead?.jobBuilderDocuments ||
+              savedOutcome?.jobBuilderDocuments ||
+              savedOutcome?.leadOutcomeDocuments ||
+              null
+            }
             onStateChange={setEditedJobState}
             onEditComplete={() => setStep(2)}
             onEditBack={() => setStep(0)}
@@ -773,7 +833,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Pmt Method</Text>
                   <MethodPicker
-                    options={paymentOptions}
+                    options={downPaymentOptions}
                     selected={downPaymentMethodKey}
                     onSelect={(k) => setDownPaymentMethod(k)}
                     allowNone
@@ -795,6 +855,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     options={paymentOptions}
                     selected={balanceMethodKey}
                     onSelect={(k) => setBalanceMethod(k)}
+                    // Grouped picker (Basic / GreenSky / Wells Fargo / …) with proper
+                    // plan labels — same categorised list the rollout / job-builder
+                    // payment picker uses, instead of a flat unlabelled dropdown.
+                    categories={pricing?.categories}
                   />
                 </View>
               </View>
@@ -1108,21 +1172,62 @@ function TierRow({ tiers, highlight }: { tiers: Tiers; highlight?: boolean }) {
 // Payment-method selector rendered as a DROPDOWN (web parity), not a horizontally
 // scrollable pill list — the plan labels are long, so a dropdown lets the rep see
 // and pick every option. Tapping the field opens a modal list of the options.
+// When `categories` is supplied (Balance Method), the list is GROUPED under coloured
+// category headers — Basic Options / GreenSky Plans / Wells Fargo Plans / … — exactly
+// like the rollout / job-builder payment picker, instead of a flat unlabelled list.
 function MethodPicker({
   options,
   selected,
   onSelect,
   allowNone,
+  categories,
 }: {
   options: { key: string; label: string }[];
   selected: string;
   onSelect: (key: string) => void;
   allowNone?: boolean;
+  categories?: { title: string; bg: string; text: string; plans: string[] }[];
 }) {
   const [open, setOpen] = useState(false);
+  const labelByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    options.forEach((o) => {
+      m[o.key] = o.label;
+    });
+    return m;
+  }, [options]);
   const items = allowNone ? [{ key: '', label: 'Select' }, ...options] : options;
-  const selectedLabel = items.find((o) => o.key === selected)?.label || 'Select';
+  const selectedLabel = labelByKey[selected] || (selected ? selected : 'Select');
   const hasSelection = !!selected;
+  const useGroups = Array.isArray(categories) && categories.length > 0;
+
+  const renderOption = (key: string, label: string) => {
+    const active = selected === key;
+    return (
+      <TouchableOpacity
+        key={key || 'none'}
+        onPress={() => {
+          onSelect(key);
+          setOpen(false);
+        }}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          borderBottomWidth: 1,
+          borderBottomColor: '#F8FAFC',
+          backgroundColor: active ? '#F0FDF4' : '#fff',
+        }}
+      >
+        <Text style={{ flex: 1, fontSize: 13, fontWeight: active ? '800' : '600', color: active ? '#15803D' : '#334155', marginRight: 8 }}>
+          {label}
+        </Text>
+        {active && <Icon name="check" size={18} color="#22C55E" />}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <>
@@ -1160,33 +1265,25 @@ function MethodPicker({
               <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>Select Payment Method</Text>
             </View>
             <ScrollView>
-              {items.map((o) => {
-                const active = selected === o.key;
-                return (
-                  <TouchableOpacity
-                    key={o.key || 'none'}
-                    onPress={() => {
-                      onSelect(o.key);
-                      setOpen(false);
-                    }}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      borderBottomWidth: 1,
-                      borderBottomColor: '#F8FAFC',
-                      backgroundColor: active ? '#F0FDF4' : '#fff',
-                    }}
-                  >
-                    <Text style={{ flex: 1, fontSize: 13, fontWeight: active ? '800' : '600', color: active ? '#15803D' : '#334155', marginRight: 8 }}>
-                      {o.label}
-                    </Text>
-                    {active && <Icon name="check" size={18} color="#22C55E" />}
-                  </TouchableOpacity>
-                );
-              })}
+              {useGroups ? (
+                <>
+                  {allowNone && renderOption('', 'Select')}
+                  {categories!.map((cat, ci) => (
+                    <View key={cat.title || `cat-${ci}`}>
+                      {cat.title ? (
+                        <View style={{ backgroundColor: cat.bg, paddingHorizontal: 16, paddingVertical: 8 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '900', color: cat.text, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            {cat.title}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {cat.plans.map((planKey) => renderOption(planKey, labelByKey[planKey] || planKey))}
+                    </View>
+                  ))}
+                </>
+              ) : (
+                items.map((o) => renderOption(o.key, o.label))
+              )}
             </ScrollView>
           </TouchableOpacity>
         </TouchableOpacity>

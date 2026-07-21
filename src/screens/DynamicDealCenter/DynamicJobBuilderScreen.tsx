@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -23,6 +24,7 @@ import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedR
 import { useAuth } from '../../hooks/useAuth';
 import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
 import { isTabComplete } from '../../utils/dynamic-job-builder/engine/tab-validation';
+import { buildInitialJobState } from '../../utils/dynamic-job-builder/engine/preview-compute';
 import {
   serializeDynamicJobStateForStorage,
   deserializeDynamicJobStateFromStorage,
@@ -265,8 +267,14 @@ function DynamicJobBuilderInner({
       return resolvedDocuments;
     },
     // Runs once rawDocs are available: after the outcome GET lands (new flow), OR
-    // in edit mode as soon as the parent hands down `rawDocsOverride`.
-    enabled: Boolean(leadId && calcId) && (isOutcomeFetched || (isEdit && !!rawDocsOverride)),
+    // in edit mode as soon as the parent hands down `rawDocsOverride`. In edit mode
+    // the docs come from `rawDocsOverride` (not the calculator-scoped outcome), so
+    // do NOT gate that path on `calcId` — a resulted deal may carry no calculator id,
+    // which would otherwise disable this query and leave the summary showing
+    // "No documents" even though agreements exist on the deal.
+    enabled:
+      (Boolean(leadId && calcId) && isOutcomeFetched) ||
+      Boolean(leadId && isEdit && rawDocsOverride),
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
@@ -743,6 +751,48 @@ function DynamicJobBuilderInner({
     });
   }, [currentTab]);
 
+  // ─── Clear-step (reset current tab) — web `dynamic-job-builder.js` handleClearTab ──
+  // A red reset button in the footer wipes every selection/measurement on the ACTIVE
+  // tab back to its fresh initial state (deal-center-seeded locked fields kept, so
+  // combinations/sections re-hydrate as blank editable rows), behind a confirm dialog.
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const showClearButton =
+    isEdit &&
+    !!currentTab &&
+    !currentTab.isSummary &&
+    !currentVerticalLockedTabIds.includes(currentTab.id) &&
+    !showEmptyGate;
+  const handleClearTab = useCallback(() => {
+    if (!selectedVertical?.id || !currentTab?.id) {
+      setClearConfirmOpen(false);
+      return;
+    }
+    const fresh = buildInitialJobState(initialConfig, dealCenterData);
+    const freshTabState =
+      fresh?.[selectedVertical.id]?.[currentTab.id] || { colorValues: {}, sectionFields: {} };
+    updateTabState(selectedVertical.id, currentTab.id, freshTabState);
+    // Keep the empty-step gate suppressed so the rep lands on the blank editable form
+    // right after clearing (not the "No details yet" prompt).
+    setGateDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(currentTab.id);
+      return next;
+    });
+    setClearConfirmOpen(false);
+  }, [selectedVertical, currentTab, initialConfig, dealCenterData, updateTabState]);
+
+  // ─── Skip-all (jump straight to the Summary step) ─────────────────────────────
+  // A footer icon that jumps from any build step directly to the final Summary tab,
+  // bypassing the intermediate steps. Only in deal-edit (movement is unrestricted
+  // there — `portalUnrestrictedEdit`), and only when a Summary tab exists and isn't
+  // already the active step. Jumps by setting the tab directly (not `handleGoToTab`)
+  // so no completion gate blocks it.
+  const showSkipAll =
+    isEdit && !!summaryTab && !!currentTab && currentTab.id !== summaryTab.id;
+  const handleSkipAll = useCallback(() => {
+    if (summaryTab?.id) setSelectedTabId(summaryTab.id);
+  }, [summaryTab]);
+
   const handleVerticalSelect = useCallback((verticalId: string) => {
     setSelectedVerticalId(verticalId);
     setSelectedTabId('');
@@ -991,6 +1041,12 @@ function DynamicJobBuilderInner({
         configSnapshotId: configId || 'dynamic',
       };
 
+      // Full Complete-Job payload (POST /lead/v1/{leadId}/job-builder).
+      console.log(
+        `[COMPLETE JOB PAYLOAD] POST /lead/v1/${leadId}/job-builder\n` +
+          JSON.stringify(payload, null, 2)
+      );
+
       if (leadId) {
         await LeadService.submitJobBuilder(leadId, payload);
       }
@@ -1022,6 +1078,10 @@ function DynamicJobBuilderInner({
           // is why the lead dashboard listed each agreement twice. They still go to
           // the /job-builder POST above, which populates the separate
           // JobBuilderDocument collection. This mirror carries FIELDS only.
+          console.log(
+            `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
+              JSON.stringify(outcomePayload, null, 2)
+          );
           await LeadService.updateLeadOutcome(leadId, outcomePayload);
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
@@ -1062,7 +1122,7 @@ function DynamicJobBuilderInner({
           dealCenterData
         );
         const rd = (calculatorResultData || {}) as any;
-        await LeadService.updateLeadOutcome(leadId, {
+        const docSubmitPayload = {
           result: 'Sale',
           status: 'Sale',
           selectedCalculatorId: calcId || rd.calculatorId || null,
@@ -1074,7 +1134,14 @@ function DynamicJobBuilderInner({
             status: 'draft',
           },
           [rootKey]: payloads,
-        });
+        };
+        // Full document-submit payload (PUT /lead/v1/{leadId}/outcome). Includes the
+        // base64 PDF under [rootKey][i].file, so this log line is large.
+        console.log(
+          `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome\n` +
+            JSON.stringify(docSubmitPayload, null, 2)
+        );
+        await LeadService.updateLeadOutcome(leadId, docSubmitPayload);
         return true;
       } catch (e) {
         console.warn('[DynamicJobBuilder] doc upload failed:', e);
@@ -1099,7 +1166,10 @@ function DynamicJobBuilderInner({
           style={{
             paddingHorizontal: 24,
             paddingTop: 8,
-            paddingBottom: 24,
+            // Trimmed from 24 → 8: the stepper carried a tall empty white band below
+            // the Gutters/LeafFilter/… pills before the content card. 8 keeps the
+            // pills clear of the divider without the extra padding.
+            paddingBottom: 8,
             borderBottomWidth: 1,
             borderBottomColor: '#E2E8F0',
             backgroundColor: '#fff',
@@ -1160,6 +1230,9 @@ function DynamicJobBuilderInner({
             ]}
             activeStepId={currentTab?.id || ''}
             onStepPress={handleGoToTab}
+            // Deal-edit: the stepper is display-only (web parity) — the rep advances
+            // only via the bottom Next button, not by tapping Gutters/LeafFilter/etc.
+            disableNavigation={isEdit}
           />
         </View>
 
@@ -1248,6 +1321,7 @@ function DynamicJobBuilderInner({
               justifyContent: 'space-between',
             }}
           >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {!isFirstStep ? (
               <TouchableOpacity
                 onPress={handleBack}
@@ -1288,7 +1362,45 @@ function DynamicJobBuilderInner({
             ) : (
               <View style={{ width: 80 }} />
             )}
+            {showClearButton && (
+              <TouchableOpacity
+                onPress={() => setClearConfirmOpen(true)}
+                accessibilityLabel="Clear this step"
+                style={{
+                  width: 40,
+                  height: 36,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  backgroundColor: '#FEF2F2',
+                  borderColor: '#FECACA',
+                }}
+              >
+                <Icon name="restart" size={18} color="#EF4444" />
+              </TouchableOpacity>
+            )}
+            </View>
 
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {showSkipAll && (
+              <TouchableOpacity
+                onPress={handleSkipAll}
+                accessibilityLabel="Skip to summary"
+                style={{
+                  width: 40,
+                  height: 36,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  backgroundColor: '#EFF6FF',
+                  borderColor: '#BFDBFE',
+                }}
+              >
+                <Icon name="skip-forward" size={18} color="#2563EB" />
+              </TouchableOpacity>
+            )}
             {embedded ? (
               // Wizard: advance to the Job Price step once the build is finalized,
               // otherwise page through the build tabs. No submit happens here.
@@ -1378,9 +1490,47 @@ function DynamicJobBuilderInner({
                 </Text>
               </TouchableOpacity>
             )}
+            </View>
           </View>
         </View>
       </View>
+
+      {/* Clear-step confirmation (web `dynamic-job-builder.js` Dialog). */}
+      <Modal
+        visible={clearConfirmOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClearConfirmOpen(false)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setClearConfirmOpen(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 360 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Icon name="alert" size={22} color="#F59E0B" />
+              <Text style={{ fontSize: 17, fontWeight: '900', color: '#0F172A' }}>Clear this step?</Text>
+            </View>
+            <Text style={{ fontSize: 13, color: '#64748B', lineHeight: 19, marginBottom: 20 }}>
+              This removes all selections and measurements on{' '}
+              <Text style={{ fontWeight: '800', color: '#0F172A' }}>{currentTab?.label || 'this step'}</Text>. This can’t be undone.
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
+              <TouchableOpacity onPress={() => setClearConfirmOpen(false)} style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+                <Text style={{ fontWeight: '800', fontSize: 13, color: '#334155' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleClearTab}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EF4444', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 }}
+              >
+                <Icon name="restart" size={16} color="#fff" />
+                <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Clear step</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
