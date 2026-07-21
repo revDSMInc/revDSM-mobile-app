@@ -368,15 +368,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     () => (editedJobState ? computeDynamicBuildChanges(initialState, editedJobState, jobBuilderConfig) : []),
     [editedJobState, initialState, jobBuilderConfig]
   );
+  // A build change is detected ONLY via the field-level diff (`computeDynamicBuildChanges`
+  // → `buildChangeGroups`). The previous raw `JSON.stringify(edited) !== initial` signal
+  // produced false positives — the builder mutates the hydrated state on mount
+  // (auto-fields, defaults, editable locked fields), so it differed even when the rep
+  // changed nothing, showing a phantom "Job Build: Previous → Updated build" row.
   const buildChanged = buildChangeGroups.some((g) => g.changes.length > 0);
-  const rawBuildChanged = useMemo(() => {
-    if (!editedJobState || !initialState) return false;
-    try {
-      return JSON.stringify(editedJobState) !== JSON.stringify(initialState);
-    } catch {
-      return false;
-    }
-  }, [editedJobState, initialState]);
 
   const scheduleChanged =
     !!scheduleDate &&
@@ -385,7 +382,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const priceChanged = parsePrice(lead?.originalContractPrice) !== Number(contractPrice);
   const hasAnyChange =
     buildChanged ||
-    rawBuildChanged ||
     scheduleChanged ||
     priceChanged ||
     parsePrice(lead?.downPayment) !== Number(downPayment) ||
@@ -922,9 +918,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     ))}
                   </View>
                 ))}
-                {buildChangeGroups.length === 0 && rawBuildChanged && (
-                  <ReviewRow label="Job Build" from="Previous build" to="Updated build" />
-                )}
                 {scheduleChanged && (
                   <ReviewRow
                     label="Install Date"
