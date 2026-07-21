@@ -1,5 +1,10 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard, InputAccessoryView } from 'react-native';
+
+// iOS-only "Done" bar id for the multiline TBD-reason input. A multiline TextInput
+// has no return-key dismiss on iOS, so without an accessory bar the keyboard can't
+// be closed. Android ignores inputAccessoryViewID and dismisses via its own controls.
+const TBD_REASON_ACCESSORY_ID = 'tbdReasonDoneBar';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
@@ -513,8 +518,33 @@ export const AppointmentSchedulerModal = ({
                     placeholder={"Please explain why the installation date cannot be determined at this time...\nExamples: \u2022 Waiting for material delivery \u2022 Customer needs to confirm schedule \u2022 Weather-dependent installation \u2022 Pending"}
                     placeholderTextColor="#94a3b8"
                     style={{ flex: 1, textAlignVertical: 'top', fontSize: 14, fontWeight: '700', color: '#0f172a' }}
+                    // iOS: a multiline field has no return-key dismiss, so link a
+                    // "Done" accessory bar (below) to close the keyboard. No-op on Android.
+                    inputAccessoryViewID={Platform.OS === 'ios' ? TBD_REASON_ACCESSORY_ID : undefined}
                   />
                 </View>
+
+                {/* iOS-only "Done" bar above the keyboard to dismiss it (the multiline
+                    TBD-reason field can't be dismissed with the return key on iOS). */}
+                {Platform.OS === 'ios' && (
+                  <InputAccessoryView nativeID={TBD_REASON_ACCESSORY_ID}>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        justifyContent: 'flex-end',
+                        backgroundColor: '#F1F5F9',
+                        borderTopWidth: 1,
+                        borderTopColor: '#E2E8F0',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                      }}
+                    >
+                      <TouchableOpacity onPress={() => Keyboard.dismiss()} style={{ paddingHorizontal: 16, paddingVertical: 6 }}>
+                        <Text style={{ color: '#2563EB', fontWeight: '800', fontSize: 16 }}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </InputAccessoryView>
+                )}
 
                 <View style={{ flexDirection: 'row', gap: 12 }}>
                   <TouchableOpacity
