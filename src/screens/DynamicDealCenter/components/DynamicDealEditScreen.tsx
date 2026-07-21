@@ -490,7 +490,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         result: lead?.result || 'Sale',
         lastPriceQuoted: lead?.lastPriceQuoted || '',
         originalContractPrice: String(contractPrice),
-        downPayment: String(downPayment),
+        // Normalize to a number-string (web parity): an empty field still saves "0"
+        // so it doesn't read as a phantom down-payment change on the customer's addendum.
+        downPayment: String(Number(downPayment) || 0),
         paymentMethod: downPaymentMethodKey || lead?.paymentMethod || '',
         balancePaymentMethod: balanceMethodKey || lead?.balancePaymentMethod || '',
         balance: String(balance),

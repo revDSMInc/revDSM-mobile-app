@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { format, isValid } from 'date-fns';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LeadService } from '../../services/api/leads';
 import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
@@ -71,6 +72,8 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
   const [selectedDraft, setSelectedDraft] = useState<any>(null);
   const [draftSummary, setDraftSummary] = useState<any>(null);
   const [draftSummaryLoading, setDraftSummaryLoading] = useState(false);
+  // Which addendum row is resolving its signed PDF (shows a "Preparing PDF…" spinner).
+  const [pdfLoadingDraftId, setPdfLoadingDraftId] = useState<string | null>(null);
 
   const loadDeal = useCallback(async () => {
     if (!leadId) {
@@ -100,9 +103,16 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     }
   }, [leadId]);
 
-  useEffect(() => {
-    loadDeal();
-  }, [loadDeal]);
+  // Reload whenever the screen (re)gains focus — e.g. returning from the addendum
+  // edit wizard after submitting — so the pending-addendum banner + fresh contract
+  // details appear WITHOUT a manual pull-to-refresh. Also covers the initial mount
+  // focus. `loadDeal` doesn't flip the full-screen `loading` flag, so a refocus
+  // refresh updates silently instead of flashing the spinner.
+  useFocusEffect(
+    useCallback(() => {
+      loadDeal();
+    }, [loadDeal])
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -219,11 +229,37 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     });
   }, [navigation, lead, leadId, isDynamicDeal]);
 
-  const handleDraftClick = useCallback(async (draft: any) => {
+  const handleDraftClick = useCallback(async (draft: any, index: number) => {
     const id = draft?._id || draft?.id;
+    if (!id) return;
+    const status = String(draft?.status || '').toLowerCase();
+    const approved = status === 'accepted' || status === 'signed' || status === 'approved';
+
+    // Web parity (`deal-details-view.js` handleDraftClick): an APPROVED addendum
+    // opens straight to its SIGNED PDF — the document carrying the customer signature
+    // AND the updated contract details. The API builds it on demand at approval, so
+    // one open at a time (a second build = duplicate Puppeteer run / S3 upload).
+    if (approved) {
+      if (pdfLoadingDraftId) return;
+      setPdfLoadingDraftId(id);
+      try {
+        const res = await LeadService.getDraftAmendmentPdf(id);
+        const body = res?.data;
+        const url = body?.data?.url || body?.url || null;
+        if (!url) throw new Error('No PDF returned');
+        setPdf({ visible: true, uri: url, title: `Addendum #${index + 1}` });
+      } catch (err) {
+        console.warn('[DealDetail] addendum PDF failed:', err);
+        FlashMessage.error('Error', 'Failed to open the signed addendum PDF. Please try again.');
+      } finally {
+        setPdfLoadingDraftId(null);
+      }
+      return;
+    }
+
+    // Pending / declined: no signed PDF yet — show the proposed-change comparison.
     setSelectedDraft(draft);
     setDraftSummary(null);
-    if (!id) return;
     setDraftSummaryLoading(true);
     try {
       const res = await LeadService.getDraftSummary(id);
@@ -235,7 +271,7 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
     } finally {
       setDraftSummaryLoading(false);
     }
-  }, []);
+  }, [pdfLoadingDraftId]);
 
   const closeDraft = useCallback(() => {
     setSelectedDraft(null);
@@ -390,12 +426,16 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
               const stColor = st === 'pending' ? '#A16207' : st === 'declined' ? '#B91C1C' : st === 'signed' || st === 'accepted' ? '#15803D' : '#64748B';
               const stBg = st === 'pending' ? '#FEF9C3' : st === 'declined' ? '#FEE2E2' : st === 'signed' || st === 'accepted' ? '#DCFCE7' : '#F1F5F9';
               const created = d?.createdAt && isValid(new Date(d.createdAt)) ? format(new Date(d.createdAt), 'MM/dd/yyyy') : '';
+              const isApproved = st === 'signed' || st === 'accepted' || st === 'approved';
+              const draftId = d?._id || d?.id;
+              const isPreparing = pdfLoadingDraftId === draftId;
               return (
                 <TouchableOpacity
                   key={d?._id || idx}
-                  onPress={() => handleDraftClick(d)}
+                  onPress={() => handleDraftClick(d, idx)}
+                  disabled={!!pdfLoadingDraftId}
                   activeOpacity={0.7}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#F1F5F9' }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#F1F5F9', opacity: pdfLoadingDraftId && !isPreparing ? 0.5 : 1 }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                     <View style={{ backgroundColor: stBg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
@@ -404,7 +444,16 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
                     <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Addendum #{idx + 1}</Text>
                     {created ? <Text style={{ fontSize: 11, color: '#94A3B8' }}>{created}</Text> : null}
                   </View>
-                  <Icon name="chevron-right" size={20} color="#94A3B8" />
+                  {/* Approved addendum → signed-PDF affordance; a spinner while the PDF
+                      is being built on first open (web "Preparing PDF…"). */}
+                  {isPreparing ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator size="small" color="#94A3B8" />
+                      <Text style={{ fontSize: 11, color: '#94A3B8' }}>Preparing PDF…</Text>
+                    </View>
+                  ) : (
+                    <Icon name={isApproved ? 'file-pdf-box' : 'chevron-right'} size={20} color={isApproved ? '#EF4444' : '#94A3B8'} />
+                  )}
                 </TouchableOpacity>
               );
             })}
