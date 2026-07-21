@@ -115,6 +115,43 @@ function tierFor(details: any, markupKey: string, { schemas, paymentMethod, pric
   return Math.round(Number(price) || 0);
 }
 
+/**
+ * DIAGNOSTIC: the per-field RETAIL contributions for a `details` map, biggest first.
+ * Mirrors the exact lookup `tierFor` uses (`details[field.name] ?? details[field.id]`
+ * × retail price) so the log shows precisely which field(s) sum to the retail tier —
+ * used to trace a garbage tier back to the stray quantity that produced it.
+ */
+function schemaRetailBreakdown(
+  details: any,
+  schemas: any[],
+  pricingConfig?: PricingConfig | null
+): Array<{ field: string; qty: number; unit: number; subtotal: number }> {
+  const rows: Array<{ field: string; qty: number; unit: number; subtotal: number }> = [];
+  (schemas || []).forEach((schema: any) => {
+    (schema?.categories || []).forEach((cat: any) => {
+      const all = [
+        ...(cat.directFields || cat.fields || []),
+        ...((cat.sections || []) as any[]).flatMap((s: any) => s.fields || []),
+      ];
+      all.forEach((field: any) => {
+        const qty = Number(details?.[field.name] ?? details?.[field.id] ?? 0);
+        if (qty > 0) {
+          const unit = resolveFieldTierPrice(field, 'retail', pricingConfig);
+          if (unit > 0) {
+            rows.push({
+              field: field.label || field.name || field.id,
+              qty,
+              unit,
+              subtotal: Math.round(qty * unit),
+            });
+          }
+        }
+      });
+    });
+  });
+  return rows.sort((a, b) => b.subtotal - a.subtotal).slice(0, 20);
+}
+
 function tiersFromDetails(details: any, opts: TierOpts): Tiers {
   return {
     cost: tierFor(details, '50', opts),
@@ -578,22 +615,13 @@ export function computeEditedTiers({
       retail: schemaNext.retail - schemaPrev.retail,
     };
     if (DEAL_PRICING_DEBUG) {
-      // Surfaces WHY a delta is 0 despite a build change: compares the quantities
-      // the original vs edited build overlays into `details` (only the keys that
-      // differ) against the schemaPrev/schemaNext tiers. If `changedQty` is empty
-      // the build→calculator mapping (dcField / allocation / name) didn't resolve
-      // the edited fields; if it's non-empty but the tiers are equal the matched
-      // schema fields carry no price.
-      const diffKeys: Record<string, { prev: any; next: any }> = {};
-      const keys = new Set([...Object.keys(prevDetails || {}), ...Object.keys(nextDetails || {})]);
-      keys.forEach((k) => {
-        if (k === '__fieldOptions') return;
-        const a = (prevDetails as any)?.[k];
-        const b = (nextDetails as any)?.[k];
-        if (Number(a) !== Number(b)) diffKeys[k] = { prev: a, next: b };
-      });
+      // Per-field retail breakdown of the PREVIOUS build — the biggest contributors
+      // to schemaPrev.retail. A garbage tier (e.g. $268k on a $500 job) shows up here
+      // as one field with an absurd `qty` (a stray large value the schema priced) or
+      // as far more line items than the rep actually entered.
+      const breakdown = schemaRetailBreakdown(stripped(prevDetails), schemas, opts.pricingConfig);
       // eslint-disable-next-line no-console
-      console.warn('[dealEditPricing]', JSON.stringify({ stored: rawStored, schemaPrev, schemaNext, delta, changedQty: diffKeys }));
+      console.warn('[dealEditPricing]', JSON.stringify({ stored: rawStored, schemaPrev, schemaNext, delta, topRetailFields: breakdown }));
     }
     // Real stored totals win; otherwise the schema-priced ORIGINAL build (which
     // carries COST/PAR/RETAIL), and only then the bare contract-price fallback.
