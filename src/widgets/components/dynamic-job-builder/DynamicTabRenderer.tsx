@@ -484,9 +484,23 @@ function renderField(
       // treats 0/'0' as missing for number fields.
       const showRequired =
         isFieldRequired(field, state, depCtx) && isRequiredFieldValueMissing(field, value);
+      // Ticket "Job builder > Gutter > Downspout combination > Remove the required
+      // message": suppress the amber "INCOMPLETE — Value Required" banner ONLY for the
+      // Downspout combination (its section is labelled "Downspout & Accessories"),
+      // while KEEPING it for every other required number field — e.g. the Measurements
+      // combination. Commenting the banner out unconditionally (the earlier attempt)
+      // stripped it from those other validations too. This is a deliberate mobile-only
+      // divergence: the schema marks these fields required, so the shared render path
+      // shows the banner everywhere unless scoped here. The ` *` on the label is left
+      // as-is (still driven by showRequired), matching the ticket's "message"-only scope.
+      const sectionLabel = String(
+        ctx?.section?.label ?? ctx?.section?.name ?? ctx?.section?.title ?? ''
+      );
+      const inDownspoutCombination = /downspout/i.test(sectionLabel);
+      const showRequiredWarning = showRequired && !inDownspoutCombination;
       return (
         <View key={field.id}>
-          {/* {showRequired && <IncompleteWarning message="INCOMPLETE — Value Required" />} */}
+          {showRequiredWarning && <IncompleteWarning message="INCOMPLETE — Value Required" />}
           <InputField
             label={field.label ? `${field.label}${showRequired ? ' *' : ''}` : undefined}
             placeholder={field.placeholder}
