@@ -169,28 +169,18 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
           placeholderTextColor="#919EAB"
           keyboardType="numeric"
         />
-        {/* Right block: green retail PRICE first, then a divider + the measurement
-            unit (price | unit). The divider + unit render ONLY when the field has a
-            unit — a unit-less field shows just the price with no trailing slash. */}
+        {/* Right block: green retail PRICE with the measurement unit joined by a
+            slash — "$650/unit" (web `dynamic-field.js` parity). A unit-less field
+            shows just the price ("$650"); a price-less field shows the bare unit. */}
         {(!!field.price || !!field.unit) && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
-            {!!field.price && (
-              <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>${field.price.retail}</Text>
-            )}
-            {!!field.unit && (
-              <Text
-                style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: '#919EAB',
-                  marginLeft: field.price ? 8 : 0,
-                  paddingLeft: field.price ? 12 : 0,
-                  borderLeftWidth: field.price ? 1 : 0,
-                  borderLeftColor: '#919EAB33',
-                }}
-              >
-                {field.unit}
+            {!!field.price ? (
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>
+                ${field.price.retail}
+                {!!field.unit && <Text style={{ color: '#919EAB' }}>/{field.unit}</Text>}
               </Text>
+            ) : (
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#919EAB' }}>{field.unit}</Text>
             )}
           </View>
         )}
