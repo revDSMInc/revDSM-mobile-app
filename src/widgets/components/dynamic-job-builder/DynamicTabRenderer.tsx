@@ -381,7 +381,11 @@ function renderField(
     return field.palette ? resolveColorPalette(field.palette) : field.colors || undefined;
   };
 
-  if (readOnly || field.locked) {
+  // Web parity (`field-registry.js`): a locked field is read-only ONLY when NOT in
+  // edit mode. In the My Deals deal-EDIT flow (`editMode`/`unlockAll`) EVERY field is
+  // editable — the rep can override any calculator-locked value — so a locked field
+  // must fall through to its editable widget instead of rendering a read-only box.
+  if (readOnly || (field.locked && !editMode)) {
     // Web parity: EVERY LockedField call site in field-registry.js resolves its
     // display value with `resolveLockedValue(field, dealCenterData)` — the field's
     // `dcField`/`dcFields` deal-center reference, falling back to `defaultValue`
@@ -659,7 +663,9 @@ function renderField(
         isFieldRequired(field, state, depCtx),
         editMode
       );
-      if (effectiveLocked) {
+      // Web parity: render the read-only colour ONLY outside the edit flow — in edit
+      // mode every colour is editable (`effectiveLocked && !editMode`).
+      if (effectiveLocked && !editMode) {
         // The rep's picked colour lives in state (`value` = item[field.id]) and
         // survives the save round-trip; it is NOT a deal-center value, so
         // resolveLockedValue returns '—'. Prefer the saved colour so a submitted
@@ -773,6 +779,21 @@ function renderField(
       return renderAllocationCard(field, ctx || {});
 
     case 'locked':
+      // Edit flow (web `case 'locked'` + editMode): render an editable input so the
+      // rep can override the calculator-locked value; read-only otherwise.
+      if (editMode) {
+        return (
+          <View key={field.id} className="mb-4">
+            <TextField
+              label={field.label}
+              placeholder={field.placeholder}
+              value={value != null ? String(value) : ''}
+              onChange={onChange}
+              editable={!readOnly}
+            />
+          </View>
+        );
+      }
       return (
         <LockedField
           key={field.id}
@@ -789,7 +810,10 @@ function renderField(
         ? (v: any) => ctx.onFieldChange!(field.colorKey, v)
         : onChange;
 
-      if (field.locked || field.type === 'lockedWithColor') {
+      // Web parity (`lockedWithColor` → `{ ...field, locked: !editMode }`): locked
+      // only outside the edit flow; in edit mode it falls through to the editable
+      // input + swatch picker below so the rep can change the value AND the color.
+      if ((field.locked || field.type === 'lockedWithColor') && !editMode) {
         if (field.colorKey && (field.palette || field.colors)) {
           return (
             <LockedFieldWithColor

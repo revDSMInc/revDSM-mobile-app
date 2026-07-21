@@ -267,6 +267,11 @@ export const LeadService = {
     api.get(LeadEndpoints.jobBuilderDraft.list(leadId)),
   getDraftSummary: (draftId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.jobBuilderDraft.summary(draftId)),
+  // Signed addendum PDF (customer signature + the updated contract details). The
+  // API builds it on demand once the customer APPROVES, so it 409s for a pending
+  // draft. Web parity: `getDraftAmendmentPdf` → returns the secure URL to render.
+  getDraftAmendmentPdf: (draftId: string): Promise<AxiosResponse<any>> =>
+    api.get(`/lead/v1/job-builder-draft/${draftId}/amendment-pdf`),
   // "Cancel Job" from the wizard's Install Date step. Marks the lead cancelled via
   // the job-builder endpoint (web `cancelLead`), NOT a delete/archive.
   cancelLead: (leadId: string, leadData: any = {}): Promise<AxiosResponse<any>> =>

@@ -154,6 +154,30 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     staleTime: 30_000,
   });
 
+  // ── load the REAL saved calculator (accurate COST/PAR/RETAIL) ───────────────
+  // Web reads the deal's stored `LFCalculator` (with its `entries`/`totals`) and
+  // prices the Previous/New tiers from it — those are the accurate figures shown
+  // when the lead was created. Mobile's outcome comes back with `lfCalculator: null`
+  // (it never persists the subdoc), so without this the tiers fall back to pricing
+  // the build through the schema against a lead-polluted `dealCenterData`, which
+  // produces the garbage values (e.g. $134k retail on a $200 job). The calculator
+  // itself IS saved on the backend at `GET /lfcalculators/{id}` — fetch it so the
+  // stored path (`computeStoredTiers`) yields the SAME accurate tiers as the web.
+  const { data: fetchedCalculator } = useQuery({
+    queryKey: ['dealEditCalculator', editCalculatorId],
+    queryFn: async () => {
+      try {
+        const res = await LeadService.getCalculator(editCalculatorId!);
+        const body = res.data;
+        return body?.data?.calculator ?? body?.data ?? body?.calculator ?? body ?? null;
+      } catch {
+        return null;
+      }
+    },
+    enabled: Boolean(editCalculatorId),
+    staleTime: 30_000,
+  });
+
   // Seed schedule/price/method state from the lead once, on first load.
   useEffect(() => {
     if (seededRef.current) return;
@@ -163,8 +187,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleTimeWindow(sched.timeWindow || '');
     setContractPrice(parsePrice(lead?.originalContractPrice));
     setDownPayment(parsePrice(lead?.downPayment));
-    setDownPaymentMethod(lead?.paymentMethod || '');
-    setBalanceMethod(lead?.balancePaymentMethod || '');
+    // Payment methods start UNSELECTED ("Select payment method") — the rep explicitly
+    // chooses. The submit payload falls back to the lead's saved method when left
+    // blank, so nothing is lost by not pre-seeding them here.
+    setDownPaymentMethod('');
+    setBalanceMethod('');
     setCustomerPhone(lead?.customerDetails?.phone || lead?.customerDetails?.phoneNumber || '');
   }, [lead]);
 
@@ -180,13 +207,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const calculatorData = useMemo(
     () =>
+      // Prefer the freshly-fetched calculator (real entries/totals) so the tiers are
+      // accurate; fall back to whatever the outcome/lead carried (usually empty).
+      (fetchedCalculator && Object.keys(fetchedCalculator).length ? fetchedCalculator : null) ||
       savedOutcome?.LFCalculator ||
       savedOutcome?.lfCalculator ||
       lead?.LFCalculator ||
       lead?.lfCalculator ||
       lead?.calculatorData ||
       {},
-    [savedOutcome, lead]
+    [fetchedCalculator, savedOutcome, lead]
   );
 
   const dealCenterData = useMemo(
@@ -287,7 +317,8 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [paymentOptions]
   );
 
-  const balanceMethodKey = coerceToPlanKey(balanceMethod, 'check');
+  // Both default to '' (unselected → "Select payment method") until the rep picks.
+  const balanceMethodKey = balanceMethod ? coerceToPlanKey(balanceMethod, '') : '';
   const downPaymentMethodKey = downPaymentMethod ? coerceToPlanKey(downPaymentMethod, '') : '';
 
   // ── tiers (web computeEditedTiers) ──────────────────────────────────────────
@@ -337,15 +368,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     () => (editedJobState ? computeDynamicBuildChanges(initialState, editedJobState, jobBuilderConfig) : []),
     [editedJobState, initialState, jobBuilderConfig]
   );
+  // A build change is detected ONLY via the field-level diff (`computeDynamicBuildChanges`
+  // → `buildChangeGroups`). The previous raw `JSON.stringify(edited) !== initial` signal
+  // produced false positives — the builder mutates the hydrated state on mount
+  // (auto-fields, defaults, editable locked fields), so it differed even when the rep
+  // changed nothing, showing a phantom "Job Build: Previous → Updated build" row.
   const buildChanged = buildChangeGroups.some((g) => g.changes.length > 0);
-  const rawBuildChanged = useMemo(() => {
-    if (!editedJobState || !initialState) return false;
-    try {
-      return JSON.stringify(editedJobState) !== JSON.stringify(initialState);
-    } catch {
-      return false;
-    }
-  }, [editedJobState, initialState]);
 
   const scheduleChanged =
     !!scheduleDate &&
@@ -354,12 +382,13 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const priceChanged = parsePrice(lead?.originalContractPrice) !== Number(contractPrice);
   const hasAnyChange =
     buildChanged ||
-    rawBuildChanged ||
     scheduleChanged ||
     priceChanged ||
     parsePrice(lead?.downPayment) !== Number(downPayment) ||
-    coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey ||
-    coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey;
+    // Only count a method as changed once the rep has actually PICKED one — a blank
+    // "Select payment method" (the default) must not read as a change.
+    (!!downPaymentMethodKey && coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey) ||
+    (!!balanceMethodKey && coerceToPlanKey(lead?.balancePaymentMethod, '') !== balanceMethodKey);
 
   // ── handlers ────────────────────────────────────────────────────────────────
   // Tap a calendar date → propose the first time window for it (web parity).
@@ -490,7 +519,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         result: lead?.result || 'Sale',
         lastPriceQuoted: lead?.lastPriceQuoted || '',
         originalContractPrice: String(contractPrice),
-        downPayment: String(downPayment),
+        // Normalize to a number-string (web parity): an empty field still saves "0"
+        // so it doesn't read as a phantom down-payment change on the customer's addendum.
+        downPayment: String(Number(downPayment) || 0),
         paymentMethod: downPaymentMethodKey || lead?.paymentMethod || '',
         balancePaymentMethod: balanceMethodKey || lead?.balancePaymentMethod || '',
         balance: String(balance),
@@ -771,7 +802,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <View style={{ backgroundColor: '#E0F2FE', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
                   <Text style={{ color: '#0284C7', fontWeight: '800', fontSize: 11 }}>
                     {previousMarkup.text}
-                    {previousMarkup.markupPct !== null && previousMarkup.markupPct !== 0
+                    {previousMarkup.markupPct !== null
                       ? ` ${previousMarkup.markupPct > 0 ? '+' : ''}${previousMarkup.markupPct}%`
                       : ''}
                   </Text>
@@ -809,7 +840,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <View style={{ backgroundColor: '#E0F2FE', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
                   <Text style={{ color: '#0284C7', fontWeight: '800', fontSize: 11 }}>
                     {newMarkup.text}
-                    {newMarkup.markupPct !== null && newMarkup.markupPct !== 0
+                    {newMarkup.markupPct !== null
                       ? ` ${newMarkup.markupPct > 0 ? '+' : ''}${newMarkup.markupPct}%`
                       : ''}
                   </Text>
@@ -887,9 +918,6 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                     ))}
                   </View>
                 ))}
-                {buildChangeGroups.length === 0 && rawBuildChanged && (
-                  <ReviewRow label="Job Build" from="Previous build" to="Updated build" />
-                )}
                 {scheduleChanged && (
                   <ReviewRow
                     label="Install Date"
@@ -1196,8 +1224,8 @@ function MethodPicker({
     });
     return m;
   }, [options]);
-  const items = allowNone ? [{ key: '', label: 'Select' }, ...options] : options;
-  const selectedLabel = labelByKey[selected] || (selected ? selected : 'Select');
+  const items = allowNone ? [{ key: '', label: 'Select payment method' }, ...options] : options;
+  const selectedLabel = labelByKey[selected] || (selected ? selected : 'Select payment method');
   const hasSelection = !!selected;
   const useGroups = Array.isArray(categories) && categories.length > 0;
 
@@ -1267,7 +1295,7 @@ function MethodPicker({
             <ScrollView>
               {useGroups ? (
                 <>
-                  {allowNone && renderOption('', 'Select')}
+                  {allowNone && renderOption('', 'Select payment method')}
                   {categories!.map((cat, ci) => (
                     <View key={cat.title || `cat-${ci}`}>
                       {cat.title ? (
