@@ -223,6 +223,9 @@ export const slotCapacity = (category?: InspectionCategory | null, slot?: Inspec
   if (category?.type === 'flat-list' && category?.cardinality === 'multiple') {
     return Math.max(Number(category.maxPhotos) || 1, 1);
   }
+  if (category?.type === 'chip-selector' && category?.cardinality === 'multiple') {
+    return Math.max(Number(category.maxPhotos) || 1, 1);
+  }
   return perSlot;
 };
 
@@ -334,18 +337,31 @@ export interface CaptureCountApi {
   extrasFor?: (category: InspectionCategory) => InspectionSlot[];
 }
 
-/** { filled, total } photo-slot counts for a category (recursive for containers). */
+/**
+ * { filled, total } photo-slot counts for a category (recursive for containers),
+ * used for tab badges. `scope` carries the chip selections of any chip-selector
+ * ancestors. Web parity (dynamic-schema-utils.js:293).
+ */
 export function countCategory(
   category: InspectionCategory,
-  capture: CaptureCountApi
+  capture: CaptureCountApi,
+  scope: string[] = []
 ): { filled: number; total: number } {
-  if (isContainer(category)) {
-    return getChildren(category).reduce(
-      (acc, child) => {
-        const r = countCategory(child, capture);
-        return { filled: acc.filled + r.filled, total: acc.total + r.total };
-      },
-      { filled: 0, total: 0 }
+  const add = (a: { filled: number; total: number }, b: { filled: number; total: number }) => ({
+    filled: a.filled + b.filled,
+    total: a.total + b.total,
+  });
+  const ZERO = { filled: 0, total: 0 };
+
+  // Chip-selector selector: count every chip's branch (all chips, scoped).
+  if (isChipContainer(category)) {
+    const kids = getChildren(category);
+    if (usesPerChipContent(category)) {
+      return kids.reduce((acc, child) => add(acc, countCategory(child, capture, [...scope, child.label])), ZERO);
+    }
+    return getChipOptions(category).reduce(
+      (acc, opt) => add(acc, kids.reduce((a, child) => add(a, countCategory(child, capture, [...scope, opt])), ZERO)),
+      ZERO
     );
   }
 
@@ -358,13 +374,23 @@ export function countCategory(
     };
   }
 
-  const slots = getCapturableSlots(category);
+  // This category's OWN slots …
+  const decorated = scope.length ? { ...category, _scope: scope } : category;
+  const slots = getCapturableSlots(decorated);
   const extras = capture.extrasFor ? capture.extrasFor(category) : [];
   let filled = 0;
   [...slots, ...extras].forEach((s) => {
     if (capture.getPhotos(category.label, s.storageName).length > 0) filled += 1;
   });
-  return { filled, total: slots.length + extras.length };
+  let result = { filled, total: slots.length + extras.length };
+
+  // … plus any sub-categories (tab-bar children or a leaf's extra sub-sections).
+  if (getChildren(category).length > 0 && !isChipSelector(category)) {
+    getChildren(category).forEach((child) => {
+      result = add(result, countCategory(child, capture, scope));
+    });
+  }
+  return result;
 }
 
 /** Leaf (or self) category that receives an extra photo when tagging as extra. */

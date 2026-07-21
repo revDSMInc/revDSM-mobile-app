@@ -22,13 +22,10 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
-  Alert,
-  Platform,
-  PermissionsAndroid,
   Modal,
+  Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../../hooks/useAuth';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
@@ -37,11 +34,13 @@ import {
   getTopTabs,
   slotCapacity,
   getExtraPickerCategories,
+  nextExtraLabel,
   type InspectionProduct,
   type InspectionCategory,
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
 import { CategoryTabStrip, CategoryBody, ProductDropdown, iconifyToMdi } from './DynamicInspectionRenderer';
+import { CustomCameraModal } from '../../modals/CustomCameraModal';
 import {
   useDynamicInspectionCapture,
   type CapturedPhoto,
@@ -62,6 +61,8 @@ interface PreviewState {
   categoryLabel?: string;
   subcategory?: string;
   key?: string;
+  /** True when previewing the just-shot PENDING photo (offers Discard&Retake / Keep&Tag). */
+  pending?: boolean;
 }
 
 interface ReplaceConfirm {
@@ -71,32 +72,22 @@ interface ReplaceConfirm {
   asset: PendingPhoto;
 }
 
+// A single-capacity slot already holds a photo and the rep is tagging a new one.
+// Port of the static `renderConflictScreen` (TagPhotoModal.tsx:129) — offers
+// Move existing / Keep both / Discard & Replace instead of a bare "Replace?" prompt.
+interface ConflictState {
+  category: InspectionCategory;
+  slot: InspectionSlot;
+  key: string;
+  asset: PendingPhoto;
+  existing: CapturedPhoto;
+}
+
 interface DynamicInspectionViewProps {
   lead: any;
   products: InspectionProduct[];
   onClose: () => void;
   refetch?: () => void | Promise<void>;
-}
-
-const IMAGE_PICKER_OPTS = {
-  mediaType: 'photo' as const,
-  quality: 0.5 as const,
-  maxWidth: 1600,
-  maxHeight: 1600,
-};
-
-async function ensureAndroidCameraPermission(): Promise<boolean> {
-  if (Platform.OS !== 'android') return true;
-  const has = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
-  if (has) return true;
-  const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA, {
-    title: 'Camera Permission',
-    message: 'App needs access to your camera to take inspection photos.',
-    buttonNeutral: 'Ask Me Later',
-    buttonNegative: 'Cancel',
-    buttonPositive: 'OK',
-  });
-  return granted === PermissionsAndroid.RESULTS.GRANTED;
 }
 
 export function DynamicInspectionView({ lead, products, onClose, refetch }: DynamicInspectionViewProps) {
@@ -116,7 +107,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     () => products.find((p) => p.id === selectedProductId) || null,
     [products, selectedProductId]
   );
-  const activeCategories = selectedProduct?.categories || [];
+  const activeCategories = useMemo(() => selectedProduct?.categories || [], [selectedProduct]);
   const topTabs = useMemo(() => getTopTabs(activeCategories), [activeCategories]);
   const activeCategory = topTabs[Math.min(activeTab, Math.max(topTabs.length - 1, 0))] || null;
   const extraPickerCategories = useMemo(() => getExtraPickerCategories(topTabs), [topTabs]);
@@ -156,6 +147,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const [pendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [replaceConfirm, setReplaceConfirm] = useState<ReplaceConfirm | null>(null);
+  const [conflict, setConflict] = useState<ConflictState | null>(null);
   // Web parity (dynamic-inspection-photos-dialog.js:763-870 "Discard this photo?"):
   // deleting a stored photo from the full-screen preview must confirm first.
   const [deleteConfirm, setDeleteConfirm] = useState<PreviewState | null>(null);
@@ -172,6 +164,10 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   // which is the "I see the inspection view when I close the camera" flash. With
   // this, closing the camera goes straight to a black backdrop → Job Docs.
   const [cameraActive, setCameraActive] = useState(false);
+  // Branded in-app camera (flash / self-timer / zoom pills / ultra-wide / retake),
+  // the SAME `CustomCameraModal` the static TagPhotoModal uses — replaces the plain
+  // native `launchCamera` so the dynamic flow has full capture-feature parity.
+  const [customCameraVisible, setCustomCameraVisible] = useState(false);
 
   // Photo-first (web parity): launch the camera immediately on open so the rep
   // shoots first and tags after. The view content is gated on `flowStarted`, so
@@ -208,50 +204,28 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     onClose();
   };
 
-  const launchWithSource = (source: 'camera' | 'gallery') => {
-    const cb = (res: any) => {
-      // Camera returned — it's no longer on screen. Keep the backdrop black on the
-      // cancel paths (closeFlow does that anyway); only a real capture reveals UI.
-      if (res?.didCancel) {
-        closeFlow();
-        return;
-      }
-      if (res?.errorCode) {
-        setCameraActive(false);
-        Alert.alert('Error', res.errorMessage || 'Could not open camera/gallery');
-        closeFlow();
-        return;
-      }
-      const a = res?.assets?.[0];
-      if (a?.uri) {
-        setCameraActive(false);
-        onCapturedAsset({ uri: a.uri, type: a.type, fileName: a.fileName });
-      } else {
-        closeFlow();
-      }
-    };
-    if (source === 'camera') {
-      ensureAndroidCameraPermission().then((ok) => {
-        if (!ok) {
-          Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
-          closeFlow();
-          return;
-        }
-        setCameraActive(true);
-        launchCamera({ ...IMAGE_PICKER_OPTS, saveToPhotos: true }, cb);
-      });
-    } else {
-      setCameraActive(true);
-      launchImageLibrary({ ...IMAGE_PICKER_OPTS, selectionLimit: 1 }, cb);
-    }
-  };
 
   // Photo-first, matching web: capture goes STRAIGHT to the camera (web's mobile
-  // `openCaptureUI` → `setCameraOpen(true)`), not a Camera/Gallery chooser. The
-  // native camera's own "Use Photo" confirm is the review step.
+  // `openCaptureUI` → `setCameraOpen(true)`). We open the branded `CustomCameraModal`
+  // (flash/timer/zoom/retake) instead of the native picker — `cameraActive` blanks
+  // the tagging UI to a black backdrop behind it so nothing flashes.
   const openCapture = (target?: { categoryLabel: string; subcategory: string; key: string }) => {
     captureTargetRef.current = target || null;
-    launchWithSource('camera');
+    setCameraActive(true);
+    setCustomCameraVisible(true);
+  };
+
+  // Branded camera confirmed a shot ("Use Photo") → tag it just like a native capture.
+  const handleCameraCapture = (asset: { uri: string; fileName?: string; type?: string }) => {
+    setCustomCameraVisible(false);
+    setCameraActive(false);
+    onCapturedAsset({ uri: asset.uri, type: asset.type, fileName: asset.fileName });
+  };
+
+  // Branded camera closed (X) → end the whole flow, back to Job Docs (web parity).
+  const handleCameraClose = () => {
+    setCustomCameraVisible(false);
+    closeFlow();
   };
 
   const clearPending = () => setPendingPhoto(null);
@@ -278,7 +252,14 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         // the banner again. The just-tagged slot fills optimistically and holds.
         setTimeout(() => openCapture(), 120);
       } else {
-        setReplaceConfirm({ category, slot, key, asset: pendingPhoto });
+        // Slot occupied → rich conflict screen (Move / Keep both / Discard), the
+        // static TagPhotoModal behaviour, instead of a bare Replace prompt.
+        const occupant = capture.getPhotos(category.label, slot.storageName).find((p) => p.s3url) || photos[0];
+        if (occupant) {
+          setConflict({ category, slot, key, asset: pendingPhoto, existing: occupant });
+        } else {
+          setReplaceConfirm({ category, slot, key, asset: pendingPhoto });
+        }
       }
       return;
     }
@@ -312,6 +293,68 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     }
     capture.captureToSlot({ categoryLabel: category.label, subcategory: slot.storageName, key, asset });
     clearPending();
+  };
+
+  // ── Slot-conflict resolution (static TagPhotoModal parity) ──────────────────
+  // Existing photo stays in its slot; the incoming one becomes an Extra.
+  const handleConflictKeepBoth = () => {
+    if (!conflict) return;
+    const { category, asset } = conflict;
+    setConflict(null);
+    capture.tagAsExtraInCategory({ category, asset });
+    clearPending();
+    setTimeout(() => openCapture(), 120);
+  };
+
+  // The incoming photo takes the slot; the existing one is re-homed to an Extra of
+  // the same category (so nothing is lost) — the "move it somewhere else" intent.
+  const handleConflictMove = async () => {
+    if (!conflict) return;
+    const { category, slot, key, asset, existing } = conflict;
+    setConflict(null);
+    const extraName = nextExtraLabel(capture.extrasFor(category));
+    await capture.movePhoto({
+      photo: existing,
+      fromCategoryLabel: category.label,
+      fromSubcategory: slot.storageName as string,
+      toCategoryLabel: category.label,
+      toSubcategory: extraName,
+      key,
+    });
+    capture.captureToSlot({ categoryLabel: category.label, subcategory: slot.storageName as string, key, asset });
+    clearPending();
+    setTimeout(() => openCapture(), 120);
+  };
+
+  // Permanently delete the existing photo, then the incoming takes the slot.
+  const handleConflictDiscard = () => {
+    if (!conflict) return;
+    const snapshot = conflict;
+    Alert.alert(
+      'Discard Existing Photo',
+      'Are you sure you want to permanently delete the existing photo?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard & Replace',
+          style: 'destructive',
+          onPress: async () => {
+            const { category, slot, key, asset } = snapshot;
+            setConflict(null);
+            const existingList = capture
+              .getPhotos(category.label, slot.storageName as string)
+              .filter((p) => p.s3url);
+            for (const p of existingList) {
+              // eslint-disable-next-line no-await-in-loop
+              await capture.deletePhoto({ categoryLabel: category.label, subcategory: slot.storageName as string, key, photo: p });
+            }
+            capture.captureToSlot({ categoryLabel: category.label, subcategory: slot.storageName as string, key, asset });
+            clearPending();
+            setTimeout(() => openCapture(), 120);
+          },
+        },
+      ]
+    );
   };
 
   // Ask before deleting — matches web's "Discard this photo?" confirm and the
@@ -359,7 +402,15 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   // and — critically — closing it reveals only black, never the tagging UI, so a
   // cancel goes straight back to Job Docs with no inspection-view flash.
   if (!flowStarted || cameraActive) {
-    return <View style={{ flex: 1, backgroundColor: '#000' }} />;
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        <CustomCameraModal
+          visible={customCameraVisible}
+          onClose={handleCameraClose}
+          onCapture={handleCameraCapture}
+        />
+      </View>
+    );
   }
 
   return (
@@ -413,7 +464,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               {/* Web parity (dynamic-inspection-photos-dialog.js:499-505): a
                   "TAP TO EXPAND" affordance opens the full-screen preview. */}
               <TouchableOpacity
-                onPress={() => setPreviewState({ uri: pendingPhoto.uri, deletable: false } as PreviewState)}
+                onPress={() => setPreviewState({ uri: pendingPhoto.uri, deletable: false, pending: true } as PreviewState)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 style={{ position: 'absolute', right: 12, bottom: 8 }}
               >
@@ -501,6 +552,28 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               <Text style={{ color: '#fff', fontWeight: '700' }}>Delete photo</Text>
             </TouchableOpacity>
           )}
+          {/* Pending (just-shot, un-tagged) photo → Discard & Retake / Keep & Tag,
+              static TagPhotoModal preview parity. */}
+          {previewState?.pending && (
+            <View style={{ position: 'absolute', bottom: insets.bottom + 24, left: 16, right: 16, flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setPreviewState(null);
+                  setPendingPhoto(null);
+                  setTimeout(() => openCapture(), 120);
+                }}
+                style={{ flex: 1, height: 52, borderRadius: 14, borderWidth: 2, borderColor: 'rgba(239,68,68,0.5)', backgroundColor: 'rgba(239,68,68,0.1)', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#EF4444', fontWeight: '900', fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' }}>Discard & Retake</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setPreviewState(null)}
+                style={{ flex: 1, height: 52, borderRadius: 14, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' }}>Keep & Tag</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </Modal>
 
@@ -521,6 +594,75 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Slot-conflict screen — static TagPhotoModal parity (renderConflictScreen).
+          Side-by-side INCOMING vs EXISTING + Move / Keep both / Discard. */}
+      <Modal visible={!!conflict} animationType="slide" onRequestClose={() => setConflict(null)}>
+        <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top || 16, paddingBottom: insets.bottom }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+            <TouchableOpacity onPress={() => setConflict(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Icon name="close" size={24} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+            <TouchableOpacity onPress={() => setConflict(null)} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+              <Icon name="chevron-left" size={20} color={GREEN} />
+              <Text style={{ color: GREEN, fontWeight: '900', fontSize: 12, marginLeft: 2 }}>Pick different slot</Text>
+            </TouchableOpacity>
+
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '900', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 }}>Slot Occupied</Text>
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 20, marginBottom: 4 }}>{conflict?.slot?.name} already has a photo</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginBottom: 20 }}>Choose what to do with the existing photo.</Text>
+
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
+              <View style={{ flex: 1, borderRadius: 16, overflow: 'hidden', aspectRatio: 4 / 3, backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                {!!conflict?.asset?.uri && <Image source={{ uri: conflict.asset.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />}
+                <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: GREEN, paddingVertical: 6, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontWeight: '900', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>Incoming (takes slot)</Text>
+                </View>
+              </View>
+              <View style={{ flex: 1, borderRadius: 16, overflow: 'hidden', aspectRatio: 4 / 3, backgroundColor: 'rgba(0,0,0,0.4)', borderWidth: 2, borderColor: '#F59E0B' }}>
+                {!!conflict?.existing?.secureUrl && <Image source={{ uri: conflict.existing.secureUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />}
+                <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#F59E0B', paddingVertical: 6, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontWeight: '900', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>Existing (needs a home)</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={{ gap: 12 }}>
+              <TouchableOpacity onPress={handleConflictMove} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, backgroundColor: 'rgba(76,187,23,0.1)', borderWidth: 1, borderColor: 'rgba(76,187,23,0.2)' }}>
+                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(76,187,23,0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <Icon name="arrow-all" size={20} color={GREEN} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Move it somewhere else</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Existing photo becomes an Extra · incoming takes this slot</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={handleConflictKeepBoth} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.2)' }}>
+                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(59,130,246,0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <Icon name="content-copy" size={18} color="#3B82F6" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Keep both</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Existing photo stays here · incoming photo becomes an Extra</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={handleConflictDiscard} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)' }}>
+                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(239,68,68,0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <Icon name="delete-outline" size={20} color="#EF4444" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#EF4444', fontWeight: '700', fontSize: 14 }}>Discard it</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Permanently delete the existing photo</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       </Modal>
 

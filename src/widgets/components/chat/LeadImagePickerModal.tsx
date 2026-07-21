@@ -47,6 +47,13 @@ const findCategoryConfig = (cat?: string): any => {
   );
 };
 const isManagePhotosCategory = (cat?: string) => !!findCategoryConfig(cat);
+// Dynamic inspection photos are stored under a product-scoped category like
+// "Windows — Front" (see useDynamicInspectionCapture.scopeCat). They are NOT in
+// IMAGE_CATEGORIES, so the old `isManagePhotosCategory`-only filter dropped them
+// from chat. Admit any category carrying the " — " product-scope marker too.
+const isDynamicInspectionCategory = (cat?: string) => !!cat && cat.includes(' — ');
+const isSelectablePhotoCategory = (cat?: string) =>
+  isManagePhotosCategory(cat) || isDynamicInspectionCategory(cat);
 const resolveCategoryName = (cat?: string) => findCategoryConfig(cat)?.name || cat || 'Other';
 const stripAnnotated = (s: string) => s.replace(/\(annotated\)/gi, '').replace(/\s+/g, ' ').trim();
 const resolveSubLabel = (cat?: string, sub?: string): string => {
@@ -146,7 +153,7 @@ export const LeadImagePickerModal = ({
   const leadPhotos = useMemo(() => {
     const photos =
       (initialSalesPhotos && initialSalesPhotos.length ? initialSalesPhotos : lead?.salesPhotos) || [];
-    return photos.filter((p: any) => p?.s3url && isManagePhotosCategory(p.category));
+    return photos.filter((p: any) => p?.s3url && isSelectablePhotoCategory(p.category));
   }, [initialSalesPhotos, lead?.salesPhotos]);
 
   const { data: secureMap, isLoading: urlsLoading } = useSecureUrls(leadPhotos);
