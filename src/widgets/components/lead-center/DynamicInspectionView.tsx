@@ -41,7 +41,7 @@ import {
   type InspectionCategory,
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
-import { CategoryTabStrip, CategoryBody, iconifyToMdi } from './DynamicInspectionRenderer';
+import { CategoryTabStrip, CategoryBody, ProductDropdown, iconifyToMdi } from './DynamicInspectionRenderer';
 import {
   useDynamicInspectionCapture,
   type CapturedPhoto,
@@ -156,6 +156,9 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const [pendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [replaceConfirm, setReplaceConfirm] = useState<ReplaceConfirm | null>(null);
+  // Web parity (dynamic-inspection-photos-dialog.js:763-870 "Discard this photo?"):
+  // deleting a stored photo from the full-screen preview must confirm first.
+  const [deleteConfirm, setDeleteConfirm] = useState<PreviewState | null>(null);
   const [showExtraPicker, setShowExtraPicker] = useState(false);
   const captureTargetRef = useRef<{ categoryLabel: string; subcategory: string; key: string } | null>(null);
   const autoOpenedRef = useRef(false);
@@ -311,16 +314,25 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     clearPending();
   };
 
-  const deleteFromPreview = () => {
+  // Ask before deleting — matches web's "Discard this photo?" confirm and the
+  // manage-view delete modal (which already confirms).
+  const requestDeleteFromPreview = () => {
     if (previewState?.deletable && previewState?.photo) {
-      capture.deletePhoto({
-        categoryLabel: previewState.categoryLabel as string,
-        subcategory: previewState.subcategory as string,
-        key: previewState.key as string,
-        photo: previewState.photo,
-      });
+      setDeleteConfirm(previewState);
     }
     setPreviewState(null);
+  };
+
+  const confirmDeleteFromPreview = () => {
+    if (deleteConfirm?.deletable && deleteConfirm?.photo) {
+      capture.deletePhoto({
+        categoryLabel: deleteConfirm.categoryLabel as string,
+        subcategory: deleteConfirm.subcategory as string,
+        key: deleteConfirm.key as string,
+        photo: deleteConfirm.photo,
+      });
+    }
+    setDeleteConfirm(null);
   };
 
   const handleTagAsExtraClick = (category: InspectionCategory) => {
@@ -366,37 +378,13 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         </Text>
       </View>
 
-      {/* Product pill row (only when >1 product) */}
+      {/* Product dropdown (only when >1 product) — web parity */}
       {showProductRow && (
-        <View style={{ borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 10, gap: 8 }}>
-            {products.map((p) => {
-              const isActive = p.id === selectedProductId;
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => setSelectedProductId(p.id as string)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                    paddingHorizontal: 14,
-                    height: 38,
-                    borderRadius: 19,
-                    borderWidth: 1,
-                    borderColor: isActive ? GREEN : 'rgba(255,255,255,0.12)',
-                    backgroundColor: isActive ? GREEN : 'transparent',
-                  }}
-                >
-                  <Icon name={iconifyToMdi(p.icon)} size={16} color={isActive ? '#fff' : 'rgba(255,255,255,0.7)'} />
-                  <Text style={{ fontWeight: '700', fontSize: 13, color: isActive ? '#fff' : 'rgba(255,255,255,0.7)' }}>
-                    {p.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+        <ProductDropdown
+          products={products as any}
+          selectedProductId={selectedProductId}
+          onSelect={(id) => setSelectedProductId(id)}
+        />
       )}
 
       {/* Category tab strip */}
@@ -422,6 +410,17 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               <Text style={{ position: 'absolute', left: 12, bottom: 8, color: '#fff', fontWeight: '600', fontSize: 12 }}>
                 Tag this photo below
               </Text>
+              {/* Web parity (dynamic-inspection-photos-dialog.js:499-505): a
+                  "TAP TO EXPAND" affordance opens the full-screen preview. */}
+              <TouchableOpacity
+                onPress={() => setPreviewState({ uri: pendingPhoto.uri, deletable: false } as PreviewState)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ position: 'absolute', right: 12, bottom: 8 }}
+              >
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 11, letterSpacing: 0.5 }}>
+                  TAP TO EXPAND
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setPendingPhoto(null)}
                 style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, padding: 6 }}
@@ -487,7 +486,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       {/* Full-screen preview */}
       <Modal visible={!!previewState?.uri} transparent animationType="fade" onRequestClose={() => setPreviewState(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' }}>
-          <TouchableOpacity onPress={() => setPreviewState(null)} style={{ position: 'absolute', top: 40, right: 16, zIndex: 2 }}>
+          <TouchableOpacity onPress={() => setPreviewState(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 2 }}>
             <Icon name="close" size={28} color="#fff" />
           </TouchableOpacity>
           {previewState?.uri ? (
@@ -495,7 +494,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
           ) : null}
           {previewState?.deletable && (
             <TouchableOpacity
-              onPress={deleteFromPreview}
+              onPress={requestDeleteFromPreview}
               style={{ position: 'absolute', bottom: 40, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EF4444', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10 }}
             >
               <Icon name="trash-can-outline" size={18} color="#fff" />
@@ -519,6 +518,35 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               </TouchableOpacity>
               <TouchableOpacity onPress={confirmReplace} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Replace</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete confirmation — web parity (dynamic-inspection-photos-dialog.js
+          "Discard this photo?"): never delete straight from the preview. */}
+      <Modal visible={!!deleteConfirm} transparent animationType="fade" onRequestClose={() => setDeleteConfirm(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#0D1F1A', borderRadius: 20, padding: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="trash-can-outline" size={24} color="#EF4444" />
+              </View>
+              {!!deleteConfirm?.uri && (
+                <Image source={{ uri: deleteConfirm.uri }} style={{ width: 48, height: 48, borderRadius: 8 }} resizeMode="cover" />
+              )}
+            </View>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>Delete this photo?</Text>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
+              This photo will be permanently deleted. This action cannot be undone.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity onPress={() => setDeleteConfirm(null)} style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={confirmDeleteFromPreview} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '700', color: '#fff' }}>Delete</Text>
               </TouchableOpacity>
             </View>
           </View>

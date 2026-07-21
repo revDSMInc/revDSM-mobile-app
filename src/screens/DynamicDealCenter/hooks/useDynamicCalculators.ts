@@ -319,6 +319,21 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   schemasRef.current = schemas;
   const snapshotId = () => schemasRef.current?.[0]?.id || 'static';
 
+  // Resolve a field's category id to its human name (web parity: DealCenterContext
+  // logs `fieldCategory: category.name`, not the raw id). The portal groups
+  // calculator field logs by this value into section headers ("Soffit", "LeafFilter",
+  // …); shipping the raw id made those logs group under an unrecognizable header, so
+  // they appeared missing/cut on the timeline.
+  const categoryNameOf = useCallback((categoryId?: string): string => {
+    if (!categoryId) return '';
+    for (const s of schemasRef.current || []) {
+      for (const c of s.categories || []) {
+        if (c.id === categoryId) return c.name || c.label || categoryId;
+      }
+    }
+    return categoryId;
+  }, []);
+
   // Latest payload builder in a ref so the unmount flush (a [] effect) always
   // uses current leadId/enteredBy/schema instead of the mount-time closure.
   const buildPayload = useCallback(
@@ -588,7 +603,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               calculatorTitle: active.title,
               fieldLabel: e?.label,
               fieldValue: e?.inputValue,
-              fieldCategory: e?.categoryId,
+              fieldCategory: categoryNameOf(e?.categoryId),
               oldValue: oldEntry?.inputValue ?? '',
               newValue: e?.inputValue,
               leadId: leadId || undefined,
@@ -598,7 +613,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
         return retitled;
       });
     },
-    [activeTabId, retitle, markDirty, enteredBy, leadId]
+    [activeTabId, retitle, markDirty, enteredBy, leadId, categoryNameOf]
   );
 
   const handleAddTab = useCallback(async () => {
@@ -873,12 +888,12 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
             calculatorTitle: clearedTab.title,
             fieldName: categoryLabel,
             fieldLabel: categoryLabel,
-            fieldCategory: categoryId,
+            fieldCategory: categoryNameOf(categoryId) || categoryLabel,
           }).catch(() => {});
         }
       }
     },
-    [activeTabId, retitle, markDirty, enteredBy, appointmentId]
+    [activeTabId, retitle, markDirty, enteredBy, appointmentId, categoryNameOf]
   );
 
   const handleConfirmRollouts = useCallback(
@@ -916,6 +931,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     lastUpdated,
     handleEntryChange,
     handleClearSection,
+
+
+
+
     handleAddTab,
     handleDuplicateTab,
     handleDeleteTab,

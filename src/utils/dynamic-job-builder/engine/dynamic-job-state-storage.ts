@@ -7,6 +7,7 @@ import {
   getTabSections,
 } from './combination-utils';
 import { isFieldLocked, resolveLockedValue } from './allocation-utils';
+import { resolveConditionalDefault } from './dependency-engine';
 import { buildTabKey } from './product-catalog-utils';
 import { isContainerFieldType } from '../constants/field-types';
 
@@ -106,7 +107,15 @@ function hydrateFieldValue(
     // their explicit entry instead of re-resolving it from the (often stale)
     // dealCenterData snapshot, which would silently revert the change on save.
     if (preserveExisting && existingValue !== undefined) return existingValue;
-    const locked = resolveLockedValue(field, dealCenterData);
+    // Pass the conditional default so a not-included product (a locked field whose
+    // `dependencies.defaultWhen` inclusion condition is NOT met) resolves to '' instead
+    // of its raw non-zero `field.defaultValue`. Without this, the blank/not-built
+    // product persisted a phantom quantity that the portal rendered as an included
+    // product (e.g. LeafFilter showing though it was never built). Web parity:
+    // dynamic-job-state-storage.js:99-114.
+    const locked = resolveLockedValue(field, dealCenterData, {
+      fallbackDefault: resolveConditionalDefault(field, existing, { dealCenterData }),
+    });
     // A locked resolve that yields NOTHING must never destroy a saved value.
     // resolveLockedValue falls back to `field.defaultValue ?? '—'` when the dcField
     // can't be resolved, so an unresolvable ref returns the blank default — which

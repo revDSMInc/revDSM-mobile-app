@@ -97,6 +97,10 @@ interface RolloutViewProps {
   isLowesLead?: boolean;
   /** Lead id — threaded into the rollout/drop activity logs (web parity). */
   leadId?: string;
+  /** Appointment id — the CalcTab does NOT carry it, so the rollout/drop logs must
+   *  receive it here or they ship `appointmentId: undefined` and the portal can't
+   *  group them into the "Rollout & Drops" module (web keys on `calculator.appointmentId`). */
+  appointmentId?: string;
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
   onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
@@ -628,7 +632,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -636,6 +640,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   verticals: CalculatorSchema[];
   pricingConfig?: PricingConfig | null;
   leadId?: string;
+  appointmentId?: string;
   onPriceChange: (id: string, price: number) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
@@ -909,7 +914,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       logRolloutChange({
         userId: uidS,
         leadId,
-        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId },
+        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
         tiers: calculator.totals,
         percentageOfRollout: pricemarkup,
         change: {
@@ -950,7 +955,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       logRolloutChange({
         userId: uidD,
         leadId,
-        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId },
+        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
         tiers: calculator.totals,
         percentageOfRollout: pricemarkup,
         change: {
@@ -1426,7 +1431,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -1570,6 +1575,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               categoryMeta={categoryMeta}
               isLowesLead={isLowesLead}
               leadId={leadId}
+              appointmentId={appointmentId}
               pricing={pricing}
               verticals={verticals || []}
               pricingConfig={pricingConfig}
@@ -1634,7 +1640,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                   logRolloutChange({
                     userId: uidC,
                     leadId,
-                    calculator: { id: c.id, title: c.title, appointmentId: (c as any).appointmentId },
+                    calculator: { id: c.id, title: c.title, appointmentId: (c as any).appointmentId || appointmentId },
                     tiers: c.totals,
                     percentageOfRollout: markupLabel(p, c.totals),
                     change: {

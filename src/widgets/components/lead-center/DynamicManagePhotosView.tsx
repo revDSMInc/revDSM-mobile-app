@@ -39,7 +39,8 @@ import {
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
 import { useNavigation } from '@react-navigation/native';
-import { CategoryTabStrip, iconifyToMdi } from './DynamicInspectionRenderer';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CategoryTabStrip, ProductDropdown } from './DynamicInspectionRenderer';
 import { useDynamicInspectionCapture, type CapturedPhoto } from './useDynamicInspectionCapture';
 import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 
@@ -85,6 +86,7 @@ export function DynamicManagePhotosView({
 }: DynamicManagePhotosViewProps) {
   const { width } = useWindowDimensions();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const [selectedProductId, setSelectedProductId] = useState<string | null>(
     products.length ? (products[0].id as string) : null,
@@ -486,40 +488,16 @@ export function DynamicManagePhotosView({
         )}
       </View>
 
-      {/* Product pills (only when the company configured more than one) */}
+      {/* Product dropdown (only when the company configured more than one) — web parity */}
       {products.length > 1 && (
-        <View style={{ borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 10, gap: 8 }}>
-            {products.map((p) => {
-              const isActive = p.id === selectedProduct?.id;
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => {
-                    setSelectedProductId(p.id as string);
-                    setActiveTab(0);
-                  }}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                    paddingHorizontal: 14,
-                    height: 38,
-                    borderRadius: 19,
-                    borderWidth: 1,
-                    borderColor: isActive ? GREEN : 'rgba(255,255,255,0.12)',
-                    backgroundColor: isActive ? GREEN : 'transparent',
-                  }}
-                >
-                  <Icon name={iconifyToMdi(p.icon)} size={16} color={isActive ? '#fff' : 'rgba(255,255,255,0.7)'} />
-                  <Text style={{ fontWeight: '700', fontSize: 13, color: isActive ? '#fff' : 'rgba(255,255,255,0.7)' }}>
-                    {p.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+        <ProductDropdown
+          products={products as any}
+          selectedProductId={selectedProduct?.id ?? null}
+          onSelect={(id) => {
+            setSelectedProductId(id);
+            setActiveTab(0);
+          }}
+        />
       )}
 
       {topTabs.length > 0 && (
@@ -645,7 +623,10 @@ export function DynamicManagePhotosView({
       {/* Full-screen preview */}
       <Modal visible={!!preview} transparent animationType="fade" onRequestClose={() => setPreview(null)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16 }}>
+          {/* Inset the close row below the status bar — the preview Modal is
+              transparent with no SafeAreaView, so a fixed padding overlapped the
+              status bar on notched devices (esp. reopening a just-annotated photo). */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 16, paddingTop: insets.top + 12 }}>
             <Text numberOfLines={1} style={{ flex: 1, color: '#fff', fontWeight: '700', fontSize: 14 }}>
               {preview?.label}
             </Text>
