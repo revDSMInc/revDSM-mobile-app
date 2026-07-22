@@ -28,8 +28,10 @@ import {
   calculateDistance,
   isSelfGeneratedLead,
   getScheduledDateTime,
-  canCheckIn,
   isResumeAppointment,
+  isBeforeTimeWindow,
+  isGpsBypassActive,
+  isEarlyStartBypassActive,
   GEOFENCE_RADIUS_MILES,
 } from '../../utils/location-util';
 
@@ -167,9 +169,15 @@ function getLeadState(
     };
   }
 
-  // ── Tomorrow view — ALL cards forced UPCOMING (web parity shortcut) ───────
-  // Matches: isTomorrowIssuedView shortcut in job-card.js lines 553-564
-  if (isTomorrow) {
+  // ── Manager-applied bypass overrides (web parity: job-card-utils.js) ─────
+  // gpsBypass  → replaces the physical geofence check
+  // earlyStart → replaces the time-window gate
+  const gpsBypassActive = isGpsBypassActive(lead);
+  const earlyStartBypassActive = isEarlyStartBypassActive(lead);
+
+  // ── Tomorrow-issued view — locked to Preview UNLESS BOTH bypasses active ──
+  // Web parity: getJobStatus() isTomorrowIssuedView override
+  if (isTomorrow && !(gpsBypassActive && earlyStartBypassActive)) {
     return {
       status: 'UPCOMING',
       color: CARD_COLOR.UPCOMING,
@@ -181,7 +189,7 @@ function getLeadState(
   }
 
   // ── Geo check ────────────────────────────────────────────────────────────
-  const isInRange =
+  const rawInRange =
     userLocation && lead.location?.coordinates
       ? calculateDistance(
         userLocation.latitude,
@@ -190,9 +198,10 @@ function getLeadState(
         lead.location.coordinates[0]  // lng is index 0
       ) <= GEOFENCE_RADIUS_MILES
       : false;
+  // GPS bypass replaces the physical geofence check
+  const isInRange = rawInRange || gpsBypassActive;
 
   const isSelfGen = isSelfGeneratedLead(lead);
-  const canCheckInLead = canCheckIn(lead);
   const isResumeLead = isResumeAppointment(lead);
 
   // Helper: get review/resume counts for button text
@@ -200,37 +209,11 @@ function getLeadState(
     actionCounts[action] || 0;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BRANCH A: Self-Generated Leads (location-only, no time windows)
-  // Web parity: job-card.js lines 569-644
+  // BRANCH A: Self-Generated Leads — location only (no time windows)
+  // Web parity: job-card-utils.js getSelfGenJobStatus()
   // ─────────────────────────────────────────────────────────────────────────
   if (isSelfGen) {
-    // State 1: ACTIVE — At location + Never checked in
-    if (canCheckInLead && isInRange) {
-      return {
-        status: 'ACTIVE',
-        color: CARD_COLOR.ACTIVE,
-        action: 'Start Appointment',
-        label: 'ACTIVE NOW',
-        disabled: false,
-        shouldPulse: true,
-      };
-    }
-
-    // State 3: REVIEW (OFF-SITE) — NOT at location AND NOT checked in
-    // Web parity: lines 583-598 — this must be checked BEFORE resume
-    if (!isInRange && !canCheckInLead) {
-      const reviewCount = getCount('lead_review');
-      return {
-        status: 'OFFSITE',
-        color: CARD_COLOR.OFFSITE,
-        action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
-        label: 'OFF-SITE',
-        disabled: false,
-        shouldPulse: false,
-      };
-    }
-
-    // State 2: PROGRESS — At location + Has checked in (workflowState "resume")
+    // Resume: checked in before + on-site (or GPS bypass)
     if (isResumeLead && isInRange) {
       const resumeCount = getCount('lead_resume');
       return {
@@ -243,20 +226,32 @@ function getLeadState(
       };
     }
 
-    // State 4: UPCOMING fallback — NOT at location (any other case)
-    // Web parity: lines 623-633
-    if (!isInRange) {
+    // Start: never checked in + on-site (or GPS bypass)
+    if (!isResumeLead && isInRange) {
       return {
-        status: 'UPCOMING',
-        color: CARD_COLOR.UPCOMING,
-        action: 'Preview Appointment',
-        label: 'UPCOMING',
-        disabled: true,
+        status: 'ACTIVE',
+        color: CARD_COLOR.ACTIVE,
+        action: 'Start Appointment',
+        label: 'ACTIVE NOW',
+        disabled: false,
+        shouldPulse: true,
+      };
+    }
+
+    // Review: checked in before but now off-site
+    if (isResumeLead && !isInRange) {
+      const reviewCount = getCount('lead_review');
+      return {
+        status: 'OFFSITE',
+        color: CARD_COLOR.OFFSITE,
+        action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
+        label: 'OFF-SITE',
+        disabled: false,
         shouldPulse: false,
       };
     }
 
-    // Fallback (at location, canCheckIn already returned above)
+    // Preview: never checked in + off-site (default — NEVER Review)
     return {
       status: 'UPCOMING',
       color: CARD_COLOR.UPCOMING,
@@ -268,61 +263,30 @@ function getLeadState(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BRANCH B: LF (Issued) Leads — time + location based
-  // Web parity: job-card.js lines 647-756
+  // BRANCH B: Regular (Issued/LF) Leads — time + location
+  // Web parity: job-card-utils.js getRegularJobStatus()
   // ─────────────────────────────────────────────────────────────────────────
-
   const scheduledDateTime = getScheduledDateTime(lead);
-  const now = new Date();
-  const nowTime = now.getTime();
+  const beforeTimeWindow = isBeforeTimeWindow(scheduledDateTime);
+  // Early-start bypass replaces the time-window gate (only meaningful on-site)
+  const earlyStartActive =
+    ((lead as any)?.earlyStart === true || earlyStartBypassActive) && isInRange;
 
-  // Time window boundaries
-  const fifteenMinBefore = scheduledDateTime
-    ? scheduledDateTime.getTime() - 15 * 60 * 1000
-    : null;
-  const oneHourAfter = scheduledDateTime
-    ? scheduledDateTime.getTime() + 60 * 60 * 1000
-    : null;
+  // Has checked in before → Resume/Review.
+  // Time window does NOT apply — once checked in, only GPS decides Resume vs Review.
+  if (isResumeLead) {
+    if (isInRange) {
+      const resumeCount = getCount('lead_resume');
+      return {
+        status: 'PROGRESS',
+        color: CARD_COLOR.PROGRESS,
+        action: resumeCount >= 1 ? `Resume Appointment (${resumeCount})` : 'Resume Appointment',
+        label: 'IN PROGRESS',
+        disabled: false,
+        shouldPulse: false,
+      };
+    }
 
-  const isBeforeTimeWindow = fifteenMinBefore !== null ? nowTime < fifteenMinBefore : false;
-  const isWithinTimeWindow =
-    fifteenMinBefore !== null && oneHourAfter !== null
-      ? nowTime >= fifteenMinBefore && nowTime <= oneHourAfter
-      : false;
-  const timeHasPassed =
-    fifteenMinBefore !== null ? !isBeforeTimeWindow && !isWithinTimeWindow : false;
-
-  // ── Priority 1: UPCOMING — Too early (before 15-min window) ─────────────
-  // Web parity: lines 653-665
-  if (isBeforeTimeWindow) {
-    return {
-      status: 'UPCOMING',
-      color: CARD_COLOR.UPCOMING,
-      action: 'Preview Appointment',
-      label: 'UPCOMING',
-      disabled: true,
-      shouldPulse: false,
-    };
-  }
-
-  // ── Priority 2: REVIEW — Time expired AND already checked in ─────────────
-  // Web parity: lines 667-683
-  // Location doesn't matter once time has fully passed and rep already worked it
-  if (timeHasPassed && isResumeLead) {
-    const reviewCount = getCount('lead_review');
-    return {
-      status: 'OFFSITE',
-      color: CARD_COLOR.OFFSITE,
-      action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
-      label: isInRange ? 'ON-SITE' : 'OFF-SITE',
-      disabled: false,
-      shouldPulse: false,
-    };
-  }
-
-  // ── Priority 3: REVIEW — Off-site (during or after window, not checked in) ─
-  // Web parity: lines 685-700
-  if (!isInRange) {
     const reviewCount = getCount('lead_review');
     return {
       status: 'OFFSITE',
@@ -334,24 +298,23 @@ function getLeadState(
     };
   }
 
-  // ── Priority 4: PROGRESS — On-site + Resume + Within time window ─────────
-  // Web parity: lines 702-720
-  if (isResumeLead && isInRange && isWithinTimeWindow) {
-    const resumeCount = getCount('lead_resume');
+  // ── Never checked in → time window + GPS gate ────────────────────────────
+
+  // Preview: before the time window and no early-start bypass
+  if (beforeTimeWindow && !earlyStartActive) {
     return {
-      status: 'PROGRESS',
-      color: CARD_COLOR.PROGRESS,
-      action: resumeCount >= 1 ? `Resume Appointment (${resumeCount})` : 'Resume Appointment',
-      label: 'IN PROGRESS',
-      disabled: false,
+      status: 'UPCOMING',
+      color: CARD_COLOR.UPCOMING,
+      action: 'Preview Appointment',
+      label: 'UPCOMING',
+      disabled: true,
       shouldPulse: false,
     };
   }
 
-  // ── Priority 5: ACTIVE — On-site + Within window + (Never checked in OR preview state) ──
-  // Web parity: lines 722-733
-  // workflowState "preview" = checked in once but NOT yet set to "resume" — still show Start
-  if ((!canCheckInLead || lead.workflowState === 'preview') && isWithinTimeWindow && isInRange) {
+  // Start: on-site (or GPS bypass) + not too early (or early-start bypass).
+  // No upper time bound — rep can start even hours late if GPS confirms presence.
+  if (isInRange && (!beforeTimeWindow || earlyStartActive)) {
     return {
       status: 'ACTIVE',
       color: CARD_COLOR.ACTIVE,
@@ -362,28 +325,13 @@ function getLeadState(
     };
   }
 
-  // ── Priority 6: ACTIVE — On-site, time expired, but rep showed up ────────
-  // Web parity: lines 735-746 — allow check-in even if time window closed
-  if (!canCheckInLead && isInRange && !isWithinTimeWindow && !isBeforeTimeWindow) {
-    return {
-      status: 'ACTIVE',
-      color: CARD_COLOR.ACTIVE,
-      action: 'Start Appointment',
-      label: 'ON-SITE',
-      disabled: false,
-      shouldPulse: true,
-    };
-  }
-
-  // ── Fallback: Expired + Off-site ─────────────────────────────────────────
-  // Web parity: lines 748-756
-  const reviewCount = getCount('lead_review');
+  // Preview: never checked in — off-site OR time expired (NEVER Review)
   return {
-    status: 'OFFSITE',
-    color: CARD_COLOR.OFFSITE,
-    action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
-    label: 'OFF-SITE',
-    disabled: false,
+    status: 'UPCOMING',
+    color: CARD_COLOR.UPCOMING,
+    action: 'Preview Appointment',
+    label: 'UPCOMING',
+    disabled: true,
     shouldPulse: false,
   };
 }
