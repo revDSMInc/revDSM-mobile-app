@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,16 +7,122 @@ import {
   ScrollView,
   ActivityIndicator,
   BackHandler,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MIcon from 'react-native-vector-icons/MaterialIcons';
 import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS, IMAGE_CATEGORIES } from '../../constants/lead-center';
 import { RootStackParamList } from '../../navigation';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { PhotoPeekPressable } from '../../widgets/common/PhotoPeekPressable';
+import { useInspectionSchema } from '../../hooks/useInspectionSchema';
+import {
+  getTopTabs,
+  indexSchema,
+  getCapturableSlots,
+  isContextSelector,
+  norm,
+  type InspectionCategory,
+} from '../../widgets/components/lead-center/dynamic-inspection-schema-utils';
+import { iconifyToMdi } from '../../widgets/components/lead-center/DynamicInspectionRenderer';
+
+// ─── Dynamic (schema-driven) product picker helpers — port of web before.js ─────
+// Photos captured via the dynamic inspection flow are stored under a PRODUCT-SCOPED
+// category `"<productName> — <categoryLabel>"` (em dash). RevRender groups them by
+// product + schema tab, exactly like the web "before" picker.
+const GREEN = '#4CBB17';
+const scopeCategory = (productKey: string, label: string) =>
+  productKey ? `${productKey} — ${label}` : label;
+const isAnnotatedRR = (p: any) =>
+  String(p?.subcategory || '').toLowerCase().includes('(annotated)');
+
+/** Cards for the active product+tab: photos whose scoped category matches a leaf of
+ *  the tab, labelled by their slot's display name (web buildPickerCardsForCategory). */
+function buildSchemaPickerCards(
+  photos: any[],
+  productKey: string,
+  activeCategory: InspectionCategory | null
+): any[] {
+  if (!activeCategory) return [];
+  const { leafCategories } = indexSchema([activeCategory]);
+  const expectedCats = new Set(
+    leafCategories.map((c) => norm(scopeCategory(productKey, c.label as string)))
+  );
+  const slotLabelByKey = new Map<string, string>();
+  leafCategories.forEach((cat) => {
+    getCapturableSlots(cat).forEach((slot) => {
+      slotLabelByKey.set(`${norm(cat.label)}||${norm(slot.storageName)}`, slot.name as string);
+    });
+  });
+  const cards: any[] = [];
+  (photos || []).forEach((img: any, idx: number) => {
+    const url = img?.secureUrl || img?.uri || img?.s3url;
+    if (!url) return;
+    if (isAnnotatedRR(img)) return;
+    if (!expectedCats.has(norm(img.category))) return; // product + tab filter
+    const scopedCat = String(img.category || '');
+    const baseCategory = scopedCat.includes(' — ')
+      ? scopedCat.split(' — ').slice(1).join(' — ').trim()
+      : scopedCat;
+    const displayLabel =
+      slotLabelByKey.get(`${norm(baseCategory)}||${norm(img.subcategory)}`) ||
+      img.subcategory ||
+      'Photo';
+    cards.push({
+      ...img,
+      uri: url,
+      label: displayLabel,
+      viewId: `dynamic-${idx}-${norm(img.subcategory)}`,
+      viewLabel: displayLabel,
+    });
+  });
+  return cards;
+}
+
+/** {filled,total} for a tab: total = capturable slots under its leaves, filled = slots
+ *  with a matching product-scoped photo (web countPhotosForTab). */
+function countPhotosForTab(
+  tab: InspectionCategory,
+  photos: any[],
+  productKey: string
+): { filled: number; total: number } {
+  const { leafCategories } = indexSchema([tab]);
+  let total = 0;
+  let filled = 0;
+  leafCategories.forEach((cat) => {
+    const scoped = scopeCategory(productKey, cat.label as string);
+    const underLabel = (photos || []).filter(
+      (p) => !isAnnotatedRR(p) && norm(p.category) === norm(scoped)
+    );
+    if (isContextSelector(cat)) {
+      const slotTotal = Array.isArray((cat as any).contextSlots)
+        ? (cat as any).contextSlots.length
+        : 0;
+      total += slotTotal;
+      filled += slotTotal > 0 ? Math.min(underLabel.length, slotTotal) : underLabel.length;
+      return;
+    }
+    const slots = getCapturableSlots(cat);
+    const definedStorage = new Set(slots.map((s) => norm(s.storageName)));
+    slots.forEach((slot) => {
+      total += 1;
+      if (underLabel.some((p) => norm(p.subcategory) === norm(slot.storageName))) filled += 1;
+    });
+    // Extras: captured subcategories that aren't one of the defined slots count too.
+    const extras = new Set<string>();
+    underLabel.forEach((p) => {
+      const s = norm(p.subcategory);
+      if (s && !definedStorage.has(s)) extras.add(s);
+    });
+    total += extras.size;
+    filled += extras.size;
+  });
+  return { filled, total };
+}
 
 type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
 
@@ -160,6 +266,77 @@ export default function RevRenderScreen() {
   const [config, setConfig] = useState<any>(INITIAL_CONFIG);
 
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
+
+  // ── Dynamic (schema-driven) product picker ─────────────────────────────────
+  // When the company uses the dynamic inspection flow, photos are product-scoped
+  // ("<product> — <label>"). Show a product dropdown + schema tabs (web before.js),
+  // falling back to the legacy REV_RENDER_VIEW_GROUPS grid otherwise.
+  const { configuredProducts } = useInspectionSchema({ enabled: true });
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [dynTab, setDynTab] = useState(0);
+  const [prodMenuOpen, setProdMenuOpen] = useState(false);
+  // Anchor the product menu directly under the trigger button: measure it in the
+  // window on open and position the menu absolutely at its bottom-left.
+  const prodBtnRef = React.useRef<View>(null);
+  const [prodMenuAnchor, setProdMenuAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
+  const openProdMenu = () => {
+    const node = prodBtnRef.current as any;
+    if (node?.measureInWindow) {
+      node.measureInWindow((x: number, y: number, width: number, height: number) => {
+        setProdMenuAnchor({ x, y: y + height + 6, width });
+        setProdMenuOpen(true);
+      });
+    } else {
+      setProdMenuOpen(true);
+    }
+  };
+
+  // Flatten the grouped sectionImages back into a raw photo array (category = the map
+  // key when a photo doesn't carry its own), so we can match by product-scoped category.
+  const rawPhotos = useMemo(() => {
+    const out: any[] = [];
+    Object.entries(sectionImages || {}).forEach(([cat, imgs]) => {
+      (imgs || []).forEach((img: any) => out.push({ ...img, category: img.category || cat }));
+    });
+    return out;
+  }, [sectionImages]);
+
+  const hasProductScopedPhotos = useMemo(
+    () => rawPhotos.some((p) => String(p.category || '').includes(' — ')),
+    [rawPhotos]
+  );
+  const useSchemaPicker = configuredProducts.length > 0 && hasProductScopedPhotos;
+
+  useEffect(() => {
+    if (!selectedProductId && configuredProducts.length > 0) {
+      setSelectedProductId(configuredProducts[0].id as string);
+    }
+  }, [configuredProducts, selectedProductId]);
+  // Reset the active tab when the product changes.
+  useEffect(() => setDynTab(0), [selectedProductId]);
+
+  const selectedProduct = useMemo(
+    () => configuredProducts.find((p) => p.id === selectedProductId) || configuredProducts[0] || null,
+    [configuredProducts, selectedProductId]
+  );
+  const productKey = selectedProduct?.name || (selectedProduct?.id as string) || '';
+  const dynTopTabs = useMemo(
+    () => getTopTabs(selectedProduct?.categories || []),
+    [selectedProduct]
+  );
+  const dynActiveCategory =
+    dynTopTabs[Math.min(dynTab, Math.max(dynTopTabs.length - 1, 0))] || null;
+  const dynTabCounts = useMemo(
+    () => dynTopTabs.map((t) => countPhotosForTab(t, rawPhotos, productKey)),
+    [dynTopTabs, rawPhotos, productKey]
+  );
+  const schemaPickerCards = useMemo(
+    () =>
+      useSchemaPicker && dynActiveCategory
+        ? buildSchemaPickerCards(rawPhotos, productKey, dynActiveCategory)
+        : [],
+    [useSchemaPicker, dynActiveCategory, rawPhotos, productKey]
+  );
 
   // ── Analytics ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -371,7 +548,179 @@ export default function RevRenderScreen() {
     </View>
   );
 
+  // Dynamic (schema-driven) picker: product dropdown + schema tabs + per-tab grid.
+  const renderSchemaPicker = () => {
+    const activeIdx = Math.min(dynTab, Math.max(dynTopTabs.length - 1, 0));
+    const openPhoto = (photo: any) => {
+      const userId = user?._id || user?.id;
+      if (userId) {
+        logEvent('select', {
+          user_id: userId,
+          module_type: 'rev_render',
+          created_by: userId,
+          meta: {
+            leadId: lead?._id || lead?.id || lead?.leadId || null,
+            jobId: lead?._id || lead?.id || lead?.leadId || null,
+            viewId: photo.viewId,
+            viewLabel: photo.viewLabel,
+            hasImage: !!photo.uri,
+            screen: 'before',
+          },
+        });
+      }
+      setConfig(INITIAL_CONFIG);
+      setSelectedPhoto(photo);
+      setStatus('config');
+    };
+
+    return (
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <View className="px-4 py-4">
+          <View className="flex-row items-center mb-6">
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              className="mr-4 w-10 h-10 rounded-full bg-white items-center justify-center shadow-sm border border-gray-100"
+            >
+              <Icon name="arrow-left" size={24} color="#637381" />
+            </TouchableOpacity>
+            <View>
+              <Text className="text-xl font-bold" style={{ color: colors.text }}>revRender</Text>
+              <Text className="text-sm font-bold" style={{ color: '#919EAB' }}>
+                Select a photo to render (from Job Docs)
+              </Text>
+            </View>
+          </View>
+
+          <View
+            className="rounded-3xl border shadow-sm mb-10 overflow-hidden"
+            style={{ backgroundColor: isDark ? '#1E1E1E' : '#fff', borderColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
+          >
+            {/* Product selector — a dropdown when multiple products, else just the name */}
+            <View style={{ paddingVertical: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: isDark ? '#2A2A2A' : '#F4F6F8' }}>
+              {configuredProducts.length > 1 ? (
+                <View ref={prodBtnRef} collapsable={false}>
+                  <TouchableOpacity
+                    onPress={openProdMenu}
+                    activeOpacity={0.7}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, height: 44, borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(76,187,23,0.5)' }}
+                  >
+                    {selectedProduct?.icon ? <Icon name={iconifyToMdi(selectedProduct.icon)} size={18} color={GREEN} /> : null}
+                    <Text style={{ color: GREEN, fontWeight: '800', fontSize: 15 }}>{selectedProduct?.name || 'Select product'}</Text>
+                    <MIcon name="arrow-drop-down" size={22} color={GREEN} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {selectedProduct?.icon ? <Icon name={iconifyToMdi(selectedProduct.icon)} size={18} color={GREEN} /> : null}
+                  <Text style={{ color: GREEN, fontWeight: '800', fontSize: 15 }}>{selectedProduct?.name}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Schema tab strip with filled/total counts */}
+            {dynTopTabs.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ borderBottomWidth: 1, borderBottomColor: isDark ? '#2A2A2A' : '#F4F6F8' }}
+                contentContainerStyle={{ paddingHorizontal: 8 }}
+              >
+                {dynTopTabs.map((tab, i) => {
+                  const active = i === activeIdx;
+                  const c = dynTabCounts[i] || { filled: 0, total: 0 };
+                  return (
+                    <TouchableOpacity
+                      key={(tab.id as string) || i}
+                      onPress={() => setDynTab(i)}
+                      style={{ paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: active ? GREEN : 'transparent' }}
+                    >
+                      {tab.icon ? <Icon name={iconifyToMdi(tab.icon)} size={18} color={active ? GREEN : '#919EAB'} /> : null}
+                      <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase', color: active ? GREEN : '#919EAB', marginTop: 2 }}>
+                        {tab.label as string}
+                      </Text>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: active ? GREEN : '#C4CDD5' }}>{c.filled}/{c.total}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            {/* Grid of matching photos, or the empty state */}
+            {schemaPickerCards.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 16 }}>
+                <Icon name="image-off-outline" size={40} color="#C4CDD5" />
+                <Text style={{ color: '#919EAB', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
+                  {dynActiveCategory?.label
+                    ? `No photos tagged under ${dynActiveCategory.label} for ${selectedProduct?.name || 'this product'}.`
+                    : 'No photos for this product yet.'}
+                </Text>
+              </View>
+            ) : (
+              <View className="flex-row flex-wrap justify-between" style={{ padding: 16 }}>
+                {schemaPickerCards.map((photo: any, index: number) => (
+                  <PhotoPeekPressable
+                    key={photo.viewId || index}
+                    uri={photo.uri}
+                    label={photo.label}
+                    onPress={() => openPhoto(photo)}
+                    style={{ width: '48%', borderRadius: 16, overflow: 'hidden', marginBottom: 24, borderWidth: 1, backgroundColor: isDark ? '#2A2A2A' : '#fff', borderColor: isDark ? '#3A3A3A' : '#F4F6F8' }}
+                  >
+                    <View className="px-3 py-2.5 border-b" style={{ borderBottomColor: isDark ? '#3A3A3A' : '#F4F6F8' }}>
+                      <Text className="text-xs font-bold" style={{ color: colors.text }} numberOfLines={1}>{photo.label}</Text>
+                    </View>
+                    <HouseImage uri={photo.uri} height={130} />
+                  </PhotoPeekPressable>
+                ))}
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Product dropdown menu */}
+        <Modal visible={prodMenuOpen} transparent animationType="fade" onRequestClose={() => setProdMenuOpen(false)}>
+          <TouchableOpacity activeOpacity={1} onPress={() => setProdMenuOpen(false)} style={{ flex: 1 }}>
+            {/* Anchored menu — sits directly below the trigger button (measured). */}
+            <View
+              style={{
+                position: 'absolute',
+                top: prodMenuAnchor?.y ?? 120,
+                left: prodMenuAnchor?.x ?? 24,
+                width: prodMenuAnchor?.width ?? 260,
+                backgroundColor: isDark ? '#1E1E1E' : '#fff',
+                borderRadius: 12,
+                overflow: 'hidden',
+                borderWidth: 1,
+                borderColor: isDark ? '#2A2A2A' : '#E2E8F0',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 6 },
+                shadowOpacity: 0.18,
+                shadowRadius: 14,
+                elevation: 10,
+              }}
+            >
+              {configuredProducts.map((p, idx) => {
+                const active = p.id === selectedProduct?.id;
+                return (
+                  <TouchableOpacity
+                    key={p.id as string}
+                    onPress={() => { setSelectedProductId(p.id as string); setProdMenuOpen(false); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: isDark ? '#2A2A2A' : '#F4F6F8', backgroundColor: active ? 'rgba(76,187,23,0.08)' : 'transparent' }}
+                  >
+                    {p.icon ? <Icon name={iconifyToMdi(p.icon)} size={18} color={active ? GREEN : '#637381'} /> : null}
+                    <Text style={{ color: active ? GREEN : colors.text, fontWeight: active ? '800' : '600', fontSize: 15 }} numberOfLines={1}>{p.name}</Text>
+                    {active && <MIcon name="check" size={18} color={GREEN} style={{ marginLeft: 'auto' }} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      </ScrollView>
+    );
+  };
+
   const renderGrid = () => {
+    if (useSchemaPicker) return renderSchemaPicker();
     const isMatchingView = (p: any, viewId: string, categoryId: string) => {
       if (p.subcategory === viewId) return true;
       const category = IMAGE_CATEGORIES.find(

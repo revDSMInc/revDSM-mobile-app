@@ -42,6 +42,13 @@ export const ToolsSection = ({
             category: r?.category || null,
             subcategory: r?.subcategory || null,
             viewLabel: r?.viewLabel || null,
+            // Color/component selections chosen when the render was created, so the
+            // before/after modal can show which colors were applied. Different
+            // backend shapes are all carried through; the modal picks whichever exists.
+            selections: r?.selections || null,
+            textureImageUrls: r?.textureImageUrls || r?.textureImages || null,
+            components: r?.components || null,
+            summary: r?.summary || null,
           }))
           .filter((p) => p.originalUrl && p.generatedUrl)
           .map((p) => [p.generatedUrl, p])

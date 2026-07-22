@@ -54,6 +54,12 @@ interface PhotoCard {
   label: string;
   /** Storage name used for delete/move lookups. */
   storageName: string;
+  /**
+   * The schema slot this photo occupies. Carried so the move modal can rebuild the
+   * exact `uiKey(cat.id, slot.id)` and highlight the FROM tile — without the slot's
+   * real `id`, `fromKey` resolves to `"<cat>::undefined"` and never matches.
+   */
+  slot: InspectionSlot;
   key: string;
   photo: CapturedPhoto;
 }
@@ -173,6 +179,7 @@ export function DynamicManagePhotosView({
                 cat,
                 label: slot.name as string,
                 storageName: slot.storageName as string,
+                slot,
                 key: `${base}-${photo.s3url || photo._id || i}`,
                 photo,
               });
@@ -194,6 +201,7 @@ export function DynamicManagePhotosView({
               cat,
               label: slot.name as string,
               storageName: slot.storageName as string,
+              slot,
               key: `${slot.key || slot.id}-${photo.s3url || photo._id || i}`,
               photo,
             })),
@@ -211,6 +219,9 @@ export function DynamicManagePhotosView({
           cat,
           label: subcategory.replace(/\(Annotated\)/i, '').trim() || subcategory,
           storageName: subcategory,
+          // Annotated copies aren't movable (no `canMove`), so a minimal slot is enough
+          // to satisfy the card shape — the real slot id is never needed here.
+          slot: { name: subcategory, storageName: subcategory } as InspectionSlot,
           key: `annotated-${cat.id}-${photo.s3url || photo._id || i}`,
           photo,
         })),
@@ -384,7 +395,9 @@ export function DynamicManagePhotosView({
                     setMoveState({
                       photo: card.photo,
                       fromCategory: card.cat,
-                      fromSlot: { name: card.label, storageName: card.storageName } as InspectionSlot,
+                      // Pass the REAL slot (with its id/isExtra/key) so the move modal can
+                      // rebuild uiKey(cat.id, slot.id) and highlight this as the FROM tile.
+                      fromSlot: card.slot,
                       key: card.key,
                     })
                   }
@@ -460,9 +473,21 @@ export function DynamicManagePhotosView({
         >
           <Icon name={selectMode ? 'arrow-left' : 'close'} size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontWeight: '700', fontSize: 15 }}>
-          {selectMode ? 'Select photos' : `Manage Photos (${managePhotosCount})`}
-        </Text>
+        {/* Multiple products → a product dropdown in the header; otherwise the title
+            (select mode always shows its own title, not the dropdown). */}
+        {!selectMode && products.length > 1 ? (
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <ProductDropdown
+              products={products as any}
+              selectedProductId={selectedProduct?.id ?? null}
+              onSelect={(id) => { setSelectedProductId(id); setActiveTab(0); }}
+            />
+          </View>
+        ) : (
+          <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontWeight: '700', fontSize: 15 }}>
+            {selectMode ? 'Select photos' : `Manage Photos (${managePhotosCount})`}
+          </Text>
+        )}
         {selectMode ? (
           <TouchableOpacity
             disabled={selectedMap.size === 0}
@@ -490,18 +515,6 @@ export function DynamicManagePhotosView({
           </TouchableOpacity>
         )}
       </View>
-
-      {/* Product dropdown (only when the company configured more than one) — web parity */}
-      {products.length > 1 && (
-        <ProductDropdown
-          products={products as any}
-          selectedProductId={selectedProduct?.id ?? null}
-          onSelect={(id) => {
-            setSelectedProductId(id);
-            setActiveTab(0);
-          }}
-        />
-      )}
 
       {topTabs.length > 0 && (
         <CategoryTabStrip
@@ -648,8 +661,8 @@ export function DynamicManagePhotosView({
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#0D1F1A', borderRadius: 20, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="trash-can-outline" size={24} color={RED} />
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="delete-outline" size={24} color={RED} />
               </View>
               {!!pendingDelete?.photo?.secureUrl && (
                 <Image
@@ -660,10 +673,10 @@ export function DynamicManagePhotosView({
               )}
             </View>
             <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>
-              Delete this photo?
+              Discard this photo?
             </Text>
             <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
-              This photo will be permanently deleted. This action cannot be undone.
+              This photo will be permanently deleted. You'll need to retake it to capture this shot.
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
@@ -676,12 +689,15 @@ export function DynamicManagePhotosView({
               <TouchableOpacity
                 disabled={deleting}
                 onPress={confirmDelete}
-                style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', opacity: deleting ? 0.6 : 1 }}
+                style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: RED, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', opacity: deleting ? 0.6 : 1 }}
               >
                 {deleting ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={{ fontWeight: '700', color: '#fff' }}>Delete</Text>
+                  <>
+                    <Icon name="delete-outline" size={16} color="#fff" />
+                    <Text style={{ fontWeight: '700', color: '#fff' }}>Discard</Text>
+                  </>
                 )}
               </TouchableOpacity>
             </View>

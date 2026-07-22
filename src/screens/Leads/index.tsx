@@ -425,7 +425,7 @@ export default function LeadsPage() {
               marginHorizontal: 12,
             }}
           >
-            <Feather name="calendar" size={24} color={'#FFFFFF'} />
+            <Feather name="edit-3" size={24} color={'#FFFFFF'} />
           </TouchableOpacity>
           {/* <TouchableOpacity
             onPress={() => navigation.navigate('Appointments')}

@@ -20,6 +20,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, SharedValue, LinearTransition, SlideOutLeft, FadeOut } from 'react-native-reanimated';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
+import { FlashMessage } from '../../../config/message';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { calculateMonthlyPayment } from '../../../utils/calculator/calculation-utils';
 import {
@@ -202,25 +203,25 @@ export const CalculatorSummary = ({
     const currentPrice = rolloutEndPrice;
     const isConfirmedWithPrice = !!activeCalc.isRolloutConfirmed && currentPrice > 0;
 
+    // Web parity: these are non-blocking warning toasts (enqueueSnackbar), not a
+    // native Alert dialog — so the rep isn't interrupted by an OK-to-dismiss popup.
     if (WELLS_FARGO_HIGH_KEYS.includes(method) && currentPrice > 0 && currentPrice < WF_HIGH_MIN_PRICE) {
-      Alert.alert(
-        'Payment plan',
-        `Payment plan changed — this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`
+      FlashMessage.warning(
+        `Payment plan changed - this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`
       );
     } else if (isConfirmedWithPrice && method !== oldMethod) {
-      Alert.alert(
-        'Payment plan',
-        `Payment method updated — the rollout price $${currentPrice.toLocaleString()} is already confirmed.`
+      FlashMessage.warning(
+        `Payment method updated - the rollout price $${currentPrice.toLocaleString()} is already confirmed.`
       );
     }
 
     if (isPlanBelowMinPrice(method, currentPrice)) {
-      Alert.alert('Payment plan', getBelowMinMessage(method, currentPrice));
+      FlashMessage.warning(getBelowMinMessage(method, currentPrice));
       return;
     }
     const methodValidation = validatePriceForPaymentMethod(currentPrice, method);
     if (currentPrice > 0 && !methodValidation.isValid) {
-      Alert.alert('Payment plan', methodValidation.message);
+      FlashMessage.warning(methodValidation.message);
       return;
     }
 

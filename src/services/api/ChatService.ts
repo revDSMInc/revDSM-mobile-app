@@ -384,8 +384,14 @@ class ChatService {
       type: file.type || 'application/octet-stream',
     } as any);
 
-    // Do NOT set Content-Type — let the networking layer append the multipart boundary.
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    // Set the multipart Content-Type explicitly (matching the working job-image
+    // upload path `LeadService.updateBeforeImages`). Omitting it works on iOS but on
+    // Android axios falls back to a non-multipart content type, so the server can't
+    // parse the upload and every attachment fails with "Failed to send attachment".
+    // React Native's networking still appends the boundary to this header.
+    await api.post<any>(`/chat/v1/${chatId}/messages`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
   }
 
   // Send MULTIPLE local files in ONE message (multipart) — so a batch of gallery
@@ -435,7 +441,11 @@ class ChatService {
       } as any);
     }
 
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    // Explicit multipart Content-Type — required for Android (see sendFileMessage);
+    // without it axios sends a non-multipart type and the upload fails on Android.
+    await api.post<any>(`/chat/v1/${chatId}/messages`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
   }
 
 

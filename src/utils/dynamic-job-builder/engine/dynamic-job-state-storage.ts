@@ -107,25 +107,22 @@ function hydrateFieldValue(
     // their explicit entry instead of re-resolving it from the (often stale)
     // dealCenterData snapshot, which would silently revert the change on save.
     if (preserveExisting && existingValue !== undefined) return existingValue;
-    // Pass the conditional default so a not-included product (a locked field whose
-    // `dependencies.defaultWhen` inclusion condition is NOT met) resolves to '' instead
-    // of its raw non-zero `field.defaultValue`. Without this, the blank/not-built
-    // product persisted a phantom quantity that the portal rendered as an included
-    // product (e.g. LeafFilter showing though it was never built). Web parity:
-    // dynamic-job-state-storage.js:99-114.
+    // Pass the conditional default so a NOT-included product (a locked field whose
+    // `dependencies.defaultWhen` inclusion condition is not met) resolves to '' — and
+    // RETURN that '' so the field is emptied. Emptying is what makes an unbuilt
+    // product's combo match the prune's default (`buildComboGroupDefaultItem` seeds a
+    // locked optionList/toggle empty too), so the combo is dropped from storage.
+    // Treating '' as "blank" and falling through to the existing value instead kept the
+    // phantom value (e.g. LeafFilter Profile "Versa") and made the portal render an
+    // un-built product (LeafFilter Combination #1-4 though never built).
+    // Only a genuinely-unresolvable ref ('—') or undefined falls through — and that is
+    // handled below by `if (existingValue !== undefined) return existingValue`, so a
+    // real saved value is still never destroyed. Web parity: dynamic-job-state-
+    // storage.js hydrateFieldValue (`if (locked !== undefined && locked !== '—')`).
     const locked = resolveLockedValue(field, dealCenterData, {
       fallbackDefault: resolveConditionalDefault(field, existing, { dealCenterData }),
     });
-    // A locked resolve that yields NOTHING must never destroy a saved value.
-    // resolveLockedValue falls back to `field.defaultValue ?? '—'` when the dcField
-    // can't be resolved, so an unresolvable ref returns the blank default — which
-    // used to pass this guard and overwrite real data. Only '—' was excluded, not
-    // '' or null. Fall through to `existingValue` instead.
-    // NOTE: 0 is intentionally still treated as a real resolved value; a locked
-    // quantity legitimately resolving to zero should apply.
-    const lockedIsBlank = locked === undefined || locked === null || locked === '' || locked === '—';
-    if (!lockedIsBlank) return locked;
-    if (existingValue !== undefined) return existingValue;
+    if (locked !== undefined && locked !== '—') return locked;
   }
 
   if (existingValue !== undefined) return existingValue;

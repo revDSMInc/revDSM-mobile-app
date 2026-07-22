@@ -41,6 +41,10 @@ interface DynamicMovePhotoModalProps {
   capture: any;
   onClose: () => void;
   onDelete?: () => void;
+  /** Fired after the rep picks a destination slot and the move is dispatched (NOT on
+   *  a plain close/cancel). The inspection-capture flow uses this to reopen the camera
+   *  for continuous capture once the re-home is done. */
+  onMoved?: () => void;
 }
 
 export function DynamicMovePhotoModal({
@@ -50,6 +54,7 @@ export function DynamicMovePhotoModal({
   capture,
   onClose,
   onDelete,
+  onMoved,
 }: DynamicMovePhotoModalProps) {
   const insets = useSafeAreaInsets();
   const topTabs = useMemo(() => getTopTabs(categories), [categories]);
@@ -101,6 +106,9 @@ export function DynamicMovePhotoModal({
       toSubcategory: slot.storageName as string,
       key: moveState.key,
     });
+    // Re-home done → let the host reopen the camera for the next shot (continuous
+    // capture). The move itself is optimistic + queued, so this never blocks on upload.
+    onMoved?.();
   };
 
   const previewUri = moveState?.photo?.secureUrl || undefined;
@@ -111,7 +119,7 @@ export function DynamicMovePhotoModal({
           dark theme (`background.paper` = #0D1F1A), not a white sheet. The reused
           slot grid pills are tuned for this dark background. */}
       <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: insets.top + 12, paddingBottom: 12, backgroundColor: GREEN }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: insets.top + 12, paddingBottom: 12, backgroundColor: '#0D1F1A' }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Icon name="close" size={24} color="#fff" />
           </TouchableOpacity>
@@ -134,13 +142,21 @@ export function DynamicMovePhotoModal({
           </Text>
         </View>
 
-        {/* The photo being moved, on a black backdrop */}
+        {/* The photo being moved, on a black backdrop. Web parity
+            (move-photo-dialog.js:132-146): the "Tag this photo below" caption is a
+            white label pinned to the BOTTOM-LEFT of the photo box, not a centered
+            gray line underneath it. */}
         <View style={{ backgroundColor: '#000', height: 170, alignItems: 'center', justifyContent: 'center' }}>
           {previewUri ? (
             <Image source={{ uri: previewUri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
           ) : (
             <Icon name="image-outline" size={32} color="#637381" />
           )}
+          <Text
+            style={{ position: 'absolute', left: 12, bottom: 8, color: '#fff', fontSize: 12, fontWeight: '600' }}
+          >
+            Tag this photo below
+          </Text>
           {!!onDelete && (
             <TouchableOpacity
               onPress={onDelete}
@@ -150,9 +166,6 @@ export function DynamicMovePhotoModal({
             </TouchableOpacity>
           )}
         </View>
-        <Text style={{ textAlign: 'center', color: '#919EAB', fontSize: 11, paddingVertical: 8 }}>
-          Tag this photo below
-        </Text>
 
         {topTabs.length > 0 && (
           <CategoryTabStrip

@@ -9,12 +9,17 @@ import {
   StyleSheet,
   Modal,
   Pressable,
+  Linking,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import type { Lead } from '../../config/types/lead';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Ionicon from 'react-native-vector-icons/Ionicons';
+import Feather from 'react-native-vector-icons/Feather';
+import { getRawPhoneNumber } from '../../utils/phone-util';
 import {
   useArchiveLeadMutation,
   useDeleteLeadMutation,
@@ -354,9 +359,11 @@ export const LeadCard = React.memo(
     userLocation,
   }: Props) {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [showPhoneOptions, setShowPhoneOptions] = useState(false);
   const archiveMutation = useArchiveLeadMutation();
   const deleteMutation = useDeleteLeadMutation();
   const resetMutation = useResetLeadMutation();
@@ -437,6 +444,53 @@ export const LeadCard = React.memo(
         'hh:mm a'
       )} when you arrive on-site.`;
     FlashMessage.success(msg);
+  };
+
+  // ── Contact customer (Call / Text / Copy) ───────────────────────────────
+  // Gated purely by TIME, regardless of GPS: reps can only reach the customer
+  // starting 15 minutes before the appointment start — so a running-late rep can
+  // give a heads-up, but nobody can contact the customer hours ahead of the appt.
+  const contactWindowStart = useMemo(() => {
+    const t = getScheduledDateTime(lead);
+    return t ? t.getTime() - 15 * 60 * 1000 : null;
+  }, [lead]);
+  const canContactNow = contactWindowStart != null && Date.now() >= contactWindowStart;
+
+  const handlePhonePress = () => {
+    if (contactWindowStart == null) {
+      FlashMessage.info(
+        'Not available yet',
+        'You can contact the customer starting 15 minutes before the appointment.'
+      );
+      return;
+    }
+    if (Date.now() < contactWindowStart) {
+      FlashMessage.info(
+        'Not available yet',
+        `You can contact the customer starting ${format(new Date(contactWindowStart), 'hh:mm a')} — 15 minutes before the appointment.`
+      );
+      return;
+    }
+    setShowPhoneOptions(true);
+  };
+
+  const handleCall = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) Linking.openURL(`tel:${getRawPhoneNumber(phone)}`);
+    setShowPhoneOptions(false);
+  };
+  const handleTextMessage = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) Linking.openURL(`sms:${getRawPhoneNumber(phone)}`);
+    setShowPhoneOptions(false);
+  };
+  const handleCopyPhone = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) {
+      Clipboard.setString(phone);
+      FlashMessage.success('Copied', 'Phone number copied to clipboard');
+    }
+    setShowPhoneOptions(false);
   };
 
   // ── Card press handler — UPCOMING shows info snackbar, others navigate ───
@@ -560,19 +614,21 @@ export const LeadCard = React.memo(
           </View>
         </View>
 
-        {/* ── Lead Code & Pitchbook ────────────────────────────────────── */}
+        {/* ── Lead Code & Contact Customer ─────────────────────────────── */}
         <View className="flex-row justify-between items-center mb-4">
           <Text className="text-base font-semibold" style={{ color: colors.textSecondary }}>
             Lead Code:{' '}
             <Text style={{ color: colors.primary.main }}>{lead.leadCode || 'N/A'}</Text>
           </Text>
+          {/* Phone button — reachable only 15 min before the appt (time-gated,
+              regardless of GPS). Muted until the window opens; tapping early
+              explains when it becomes available. */}
           <TouchableOpacity
-            onPress={onPitchbookPress || onPress}
-            disabled={leadState.disabled}
+            onPress={handlePhonePress}
             className="w-9 h-9 rounded-full items-center justify-center bg-green-600"
-            style={{ opacity: leadState.disabled ? 0.5 : 1 }}
+            style={{ opacity: canContactNow ? 1 : 0.5 }}
           >
-            <MaterialIcon name="book-open-blank-variant" size={18} color="white" />
+            <Feather name="phone" size={17} color="white" />
           </TouchableOpacity>
         </View>
 
@@ -810,6 +866,45 @@ export const LeadCard = React.memo(
         address={lead.fullAddress || ''}
         onClose={() => setShowMapModal(false)}
       />
+
+      {/* Contact-customer action sheet (Call / Text / Copy) */}
+      <Modal
+        visible={showPhoneOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPhoneOptions(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+          onPress={() => setShowPhoneOptions(false)}
+        >
+          <Pressable
+            style={{
+              backgroundColor: colors.card,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              padding: 24,
+              paddingBottom: insets.bottom + 16,
+            }}
+          >
+            <View style={{ width: 40, height: 4, backgroundColor: colors.textSecondary, borderRadius: 2, alignSelf: 'center', marginBottom: 20, opacity: 0.3 }} />
+            <TouchableOpacity onPress={handleCall} className="flex-row items-center py-4">
+              <Feather name="phone-call" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Call</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity onPress={handleTextMessage} className="flex-row items-center py-4">
+              <Feather name="message-square" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Text Message</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity onPress={handleCopyPhone} className="flex-row items-center py-4">
+              <Feather name="copy" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Copy Number</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </TouchableOpacity>
   );
 },

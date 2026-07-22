@@ -124,13 +124,20 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       LFCalculator: calc || {},
       selectedAppointmentId: calc?.appointmentId,
     });
-    // Web parity (ResultJobModal Sale/Demo pick): advance the lead's sales-pipeline
-    // stage. Previously never called on mobile, so a resulted lead never moved.
+    // Web parity (result-lead-modal.js:3192 "Build Job" click): tapping Build Job
+    // COMPLETES the lead-result milestone and moves the job build to active —
+    // `{ leadResulted: 'completed', jobBuild: 'active' }` (salesProcess already done).
+    // This previously sent `leadResulted: 'active'`, which is the value the WEB sends
+    // at the earlier Sale/Demo PICK, not at Build Job — so the portal's Forever Record
+    // showed "Lead Resulted — in progress / Pending / Result: N/A" and never flipped to
+    // Complete (the milestone's Complete gate is `status === 'completed'`). The job
+    // builder's finalize (DynamicJobBuilderScreen) still sets jobBuild:'complete' after.
     const leadIdForProgress = lead?._id || lead?.leadId || lead?.id;
     if (leadIdForProgress) {
       LeadService.updateLeadTimelineProgress(leadIdForProgress, {
         salesProcess: 'completed',
-        leadResulted: 'active',
+        leadResulted: 'completed',
+        jobBuild: 'active',
       }).catch((e: any) => console.warn('[DynamicDealCenter] timeline progress failed:', e?.message || e));
     }
     // Web parity (result-lead-modal.js:1748): "Build Job" clicked → transition into
