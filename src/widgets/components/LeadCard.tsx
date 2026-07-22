@@ -454,9 +454,14 @@ export const LeadCard = React.memo(
     const t = getScheduledDateTime(lead);
     return t ? t.getTime() - 15 * 60 * 1000 : null;
   }, [lead]);
-  const canContactNow = contactWindowStart != null && Date.now() >= contactWindowStart;
+  const isSelfGen = useMemo(() => isSelfGeneratedLead(lead), [lead]);
+  const canContactNow = isSelfGen || (contactWindowStart != null && Date.now() >= contactWindowStart);
 
   const handlePhonePress = () => {
+    if (isSelfGen) {
+      setShowPhoneOptions(true);
+      return;
+    }
     if (contactWindowStart == null) {
       FlashMessage.info(
         'Not available yet',
