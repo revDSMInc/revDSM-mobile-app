@@ -41,17 +41,21 @@ const unwrapOutcome = (body: any) =>
   body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
 
 /**
- * Read the LEAD-scoped outcome's document rows (web `getJobBuilder`). The
- * CALCULATOR-scoped outcome (`/outcome/{calcId}`) does not reliably echo
- * `leadOutcomeDocuments` — a submitted/just-written deal comes back with none —
- * so this is the dependable source for "which documents does this lead have".
+ * Read the outcome's document rows for THIS CALCULATOR
+ * (`GET /lead/v1/{leadId}/outcome/{calculatorId}`).
+ *
+ * The dynamic flow is calculator-scoped end to end — the backend was changed for it,
+ * so this is the endpoint to read. The LEAD-scoped `GET /lead/v1/{leadId}/outcome`
+ * (web's `getJobBuilder`, which `DocumentUploadDialog.syncFromServer` uses) is
+ * DELIBERATELY NOT called here; see the disabled fallback at the bottom of this file.
  */
-export async function fetchLeadOutcomeDocumentRows(
-  leadId?: string
+export async function fetchOutcomeDocumentRows(
+  leadId?: string,
+  calculatorId?: string
 ): Promise<OutcomeDocRows | null> {
-  if (!leadId) return null;
+  if (!leadId || !calculatorId) return null;
   try {
-    const res = await LeadService.getLeadOutcome(leadId);
+    const res = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorId);
     const outcome = unwrapOutcome(res?.data);
     const docs = outcome?.leadOutcomeDocuments;
     if (!docs) return null;
@@ -60,7 +64,7 @@ export async function fetchLeadOutcomeDocumentRows(
       orderSheets: docs.orderSheets || [],
     };
   } catch (e) {
-    console.warn('[outcome-documents] lead-scoped document read failed:', e);
+    console.warn('[outcome-documents] calculator-scoped document read failed:', e);
     return null;
   }
 }
@@ -118,16 +122,42 @@ export async function resolveOutcomeDocRows(
 }
 
 /**
- * Documents currently on the server for this lead, resolved for display. Prefers
- * the rows the calculator-scoped outcome echoed (when it has any) and falls back
- * to the lead-scoped read.
+ * Documents currently stored for this calculator, resolved for display. Uses the
+ * rows the outcome GET already echoed when it has any, else re-reads the same
+ * calculator-scoped endpoint.
  */
 export async function loadResolvedOutcomeDocuments(
   leadId?: string,
-  echoedRows?: OutcomeDocRows | null
+  calculatorId?: string
 ): Promise<OutcomeDocRows> {
-  const rows = isEmptyRows(echoedRows)
-    ? await fetchLeadOutcomeDocumentRows(leadId)
-    : echoedRows;
-  return resolveOutcomeDocRows(rows);
+  // Always READ, never reuse the rows the draft's outcome GET happened to echo. That
+  // echo is captured once per open, so after a document upload it is already stale —
+  // refetching this query then "resolved" the pre-upload list and the new document
+  // disappeared again. It is the same endpoint either way; only freshness differs.
+  return resolveOutcomeDocRows(await fetchOutcomeDocumentRows(leadId, calculatorId));
 }
+
+// DISABLED — the LEAD-scoped outcome read (`GET /lead/v1/{leadId}/outcome`).
+//
+// This is what web calls (`api/leads.js#getJobBuilder`, used by
+// `DocumentUploadDialog.syncFromServer`), and it returns every document on the lead
+// regardless of calculator. The dynamic flow has its own calculator-scoped backend
+// contract, so mobile must read `/outcome/{calculatorId}` instead — kept here only to
+// document the alternative. Do not re-enable without confirming the backend intends
+// the dynamic flow to read lead-scoped documents.
+//
+// export async function fetchLeadOutcomeDocumentRows(
+//   leadId?: string
+// ): Promise<OutcomeDocRows | null> {
+//   if (!leadId) return null;
+//   try {
+//     const res = await LeadService.getLeadOutcome(leadId);
+//     const outcome = unwrapOutcome(res?.data);
+//     const docs = outcome?.leadOutcomeDocuments;
+//     if (!docs) return null;
+//     return { agreements: docs.agreements || [], orderSheets: docs.orderSheets || [] };
+//   } catch (e) {
+//     console.warn('[outcome-documents] lead-scoped document read failed:', e);
+//     return null;
+//   }
+// }
