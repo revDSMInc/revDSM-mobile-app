@@ -1234,6 +1234,19 @@ function DynamicJobBuilderInner({
     [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData]
   );
 
+  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
+  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
+  // that row is what keeps a generated agreement from being stored twice.
+  const handleRefreshDocs = useCallback(
+    async (cat: 'agreement' | 'orderSheet') => {
+      if (!leadId) return null;
+      const rows = await fetchLeadOutcomeDocumentRows(leadId);
+      const resolved = await resolveOutcomeDocRows(rows);
+      return resolved[cat === 'agreement' ? 'agreements' : 'orderSheets'] || [];
+    },
+    [leadId]
+  );
+
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
   const isFirstStep = currentTabIndex <= 0;
   // Embedded (wizard) finalize point: the summary tab when present, else the last
@@ -1371,6 +1384,7 @@ function DynamicJobBuilderInner({
               setResolvedDocuments={setResolvedDocuments}
               isDocUploadingRef={isDocUploadingRef}
               onUploadDocs={handleUploadDocs}
+              onRefreshDocs={handleRefreshDocs}
             />
           ) : (
             <View style={{ alignItems: 'center', paddingTop: 60 }}>

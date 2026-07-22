@@ -309,6 +309,8 @@ interface DynamicTabRendererProps {
   isDocUploadingRef?: React.MutableRefObject<boolean>;
   /** Resolves to the category's server documents (signed URLs), or null on failure. */
   onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
+  /** Re-reads the lead's stored documents for a category (no upload). */
+  onRefreshDocs?: (cat: 'agreement' | 'orderSheet') => Promise<any[] | null>;
 }
 
 function renderField(
@@ -1385,6 +1387,7 @@ export function DynamicTabRenderer({
   setResolvedDocuments,
   isDocUploadingRef,
   onUploadDocs,
+  onRefreshDocs,
 }: DynamicTabRendererProps) {
   if (tab.isSummary) {
     return (
@@ -1412,6 +1415,7 @@ export function DynamicTabRenderer({
         setResolvedDocuments={setResolvedDocuments}
         isDocUploadingRef={isDocUploadingRef}
         onUploadDocs={onUploadDocs}
+        onRefreshDocs={onRefreshDocs}
       />
     );
   }

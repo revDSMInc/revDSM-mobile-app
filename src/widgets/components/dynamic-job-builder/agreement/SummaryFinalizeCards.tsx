@@ -37,6 +37,8 @@ interface SummaryFinalizeCardsProps {
   // Persists the base64 doc payloads via the screen (which holds config +
   // dealCenterData to serialize field state and writes the web-shaped outcome).
   onUploadDocs?: (cat: DocCategory, payloads: any[]) => Promise<any[] | null>;
+  /** Re-reads the lead's stored documents for a category (no upload). */
+  onRefreshDocs?: (cat: DocCategory) => Promise<any[] | null>;
   productKey?: string;
   verticalState?: any;
   jobState?: any;
@@ -93,6 +95,7 @@ export function SummaryFinalizeCards({
   setResolvedDocuments,
   isDocUploadingRef,
   onUploadDocs,
+  onRefreshDocs,
   productKey,
   verticalState,
   jobState,
@@ -339,22 +342,43 @@ export function SummaryFinalizeCards({
   };
 
   const handleAgreementGenerated = async (file: any) => {
-    // EVERY agreement — generated/signed as well as scanned — must be UPLOADED to become
-    // a stored document.
+    // A GENERATED agreement is rendered AND FILED by the server.
     //
-    // The sign endpoint (`pdf-reports/v1/agreement/{leadId}/sign`) only RENDERS and
-    // returns the flattened signed PDF; it does NOT file a LeadOutcomeDocument. An
-    // earlier version assumed it did and skipped the upload for `isSystemGenerated`
-    // docs — so a mobile-signed agreement lived only in local state: it vanished on
-    // reopen and never appeared on web, while web-created agreements (which ARE
-    // uploaded) showed fine on mobile. Proven by exactly that asymmetry.
+    // Mobile generates through `pdf-reports/v1/agreement/{leadId}/preview` + `/sign`
+    // (web can't share this path — it rasterises the agreement in the browser with
+    // html2canvas and has no sign call at all, see `dynamic-agreement-generator.js`).
+    // That sign endpoint stores its OWN LeadOutcomeDocument, named server-side from
+    // the real job number. Uploading the returned PDF on top of it filed a SECOND row
+    // for the same agreement — the two differently-named cards ("Agreement_STN-…" from
+    // the server, "Agreement_SPN/A_…" from `handleSigned`'s own template).
     //
-    // `uploadNewFiles` reads the on-disk `file://` PDF to base64 TRANSIENTLY (never into
-    // React state — that was the OOM crash) and PUTs it via `handleUploadDocs` →
-    // `/lead/v1/{leadId}/outcome` with a top-level `agreements` array, which is exactly
-    // what web's finalize does and what already works for scanned docs. `commitUploaded`
-    // then records the server's own rows on the job state, so the list shown is always
-    // the authoritative one (a duplicate could not survive that replace).
+    // So for a system-generated agreement: re-read the lead's documents and adopt the
+    // server's row. It is filed asynchronously, so allow a couple of retries — and if
+    // nothing new ever appears (a backend that does NOT file it), fall through to the
+    // upload rather than silently losing the agreement.
+    if (file?.isSystemGenerated && onRefreshDocs) {
+      const knownIds = new Set(agreementFiles.map(docIdentity).filter(Boolean));
+      const hasNewRow = (docs: any[] | null) =>
+        (docs || []).some((d) => !knownIds.has(docIdentity(d)));
+      if (isDocUploadingRef) isDocUploadingRef.current = true;
+      try {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (attempt > 0) await new Promise<void>((r) => { setTimeout(r, 1000); });
+          const serverDocs = await onRefreshDocs('agreement');
+          if (hasNewRow(serverDocs)) {
+            commitUploaded('agreement', serverDocs!);
+            setAgreementDialogVisible(false);
+            return;
+          }
+        }
+      } finally {
+        if (isDocUploadingRef) isDocUploadingRef.current = false;
+      }
+    }
+    // Scanned / manually added agreements (and the fallback above) have no server-side
+    // filing step, so they need an explicit upload. `uploadNewFiles` reads the on-disk
+    // `file://` PDF to base64 TRANSIENTLY (never into React state — that was the OOM
+    // crash) and PUTs it via `handleUploadDocs` → `/lead/v1/{leadId}/outcome`.
     const displayDocs = await uploadNewFiles('agreement', [file]);
     if (displayDocs) commitUploaded('agreement', displayDocs);
     setAgreementDialogVisible(false);

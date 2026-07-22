@@ -170,6 +170,62 @@ test('removing a document prunes the job-state copy immediately', async () => {
   expect(onUpdateRootState).toHaveBeenCalledWith('agreements', []);
 });
 
+// --- generated (server-signed) agreements -----------------------------------
+// `pdf-reports/v1/agreement/{leadId}/sign` files its OWN LeadOutcomeDocument, named
+// server-side. Uploading the PDF it returns stored the same agreement a second time
+// — the rep saw two cards with different names ("Agreement_STN-…" from the server,
+// "Agreement_SPN/A_…" from `handleSigned`'s template).
+const signedFile = {
+  name: 'Agreement_SPN/A_1784719269208.pdf',
+  uri: 'file:///tmp/agreement_signed.pdf',
+  contentType: 'application/pdf',
+  documentType: 'agreement',
+  isNew: true,
+  isSystemGenerated: true,
+};
+const serverSignedDoc = { ...serverDoc, id: 'doc9', serverId: 'doc9', name: 'Agreement_STN-4471_1784719269208.pdf' };
+
+// The dialog is mocked out, so drive its callback directly.
+let agreementDialogProps: any = null;
+jest.mock('../../../src/widgets/components/dynamic-job-builder/agreement/DynamicAgreementDialog', () => ({
+  DynamicAgreementDialog: (props: any) => {
+    agreementDialogProps = props;
+    return null;
+  },
+}));
+
+test('a server-signed agreement adopts the server row instead of uploading a second copy', async () => {
+  const onRefreshDocs = jest.fn().mockResolvedValue([serverSignedDoc]);
+  const { onUpdateRootState, onUploadDocs } = render({ onRefreshDocs });
+
+  await act(async () => {
+    await agreementDialogProps.onAgreementGenerated(signedFile);
+  });
+
+  expect(onUploadDocs).not.toHaveBeenCalled();
+  expect(onUpdateRootState).toHaveBeenLastCalledWith('agreements', [{ files: [serverSignedDoc] }]);
+});
+
+test('a server-signed agreement still uploads when the server filed nothing', async () => {
+  jest.useFakeTimers();
+  // Same list as before signing → the backend did not file it; do not lose the PDF.
+  const onRefreshDocs = jest.fn().mockResolvedValue([]);
+  const { onUploadDocs } = render({ onRefreshDocs });
+
+  const done = act(async () => {
+    const p = agreementDialogProps.onAgreementGenerated(signedFile);
+    await jest.runAllTimersAsync();
+    await p;
+  });
+  await done;
+
+  expect(onRefreshDocs).toHaveBeenCalledTimes(3); // retried — the row is filed async
+  expect(onUploadDocs).toHaveBeenCalledWith('agreement', [
+    expect.objectContaining({ documentType: 'agreement', isNew: true }),
+  ]);
+  jest.useRealTimers();
+});
+
 test('a failed upload leaves the job state untouched', async () => {
   const onUploadDocs = jest.fn().mockResolvedValue(null);
   const { tree, onUpdateRootState } = render({ onUploadDocs });

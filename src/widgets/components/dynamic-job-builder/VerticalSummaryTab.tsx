@@ -32,6 +32,8 @@ interface VerticalSummaryTabProps {
   isDocUploadingRef?: React.MutableRefObject<boolean>;
   /** Resolves to the category's server documents (signed URLs), or null on failure. */
   onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
+  /** Re-reads the lead's stored documents for a category (no upload). */
+  onRefreshDocs?: (cat: 'agreement' | 'orderSheet') => Promise<any[] | null>;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
@@ -181,6 +183,7 @@ export function VerticalSummaryTab({
   setResolvedDocuments,
   isDocUploadingRef,
   onUploadDocs,
+  onRefreshDocs,
 }: VerticalSummaryTabProps) {
   // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
   // per-tab category colour that gives each summary card its own header colour.
@@ -304,6 +307,7 @@ export function VerticalSummaryTab({
           setResolvedDocuments={setResolvedDocuments}
           isDocUploadingRef={isDocUploadingRef}
           onUploadDocs={onUploadDocs}
+          onRefreshDocs={onRefreshDocs}
           // SummaryFinalizeCards declares + destructures repDetails and hands it to
           // DynamicAgreementDialog, but nothing was passing it — generated
           // agreements got `repDetails={undefined}`.
