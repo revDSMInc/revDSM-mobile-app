@@ -355,6 +355,11 @@ function DynamicJobBuilderInner({
     initialConfig,
     dealCenterData,
     initialJobState: hydratedInitialJobState,
+    // Web parity (`stateResetKey`): the RAW saved draft is the restore token, so a
+    // freshly-loaded draft always applies (even if something wrote to job state while
+    // the outcome GET was still in flight). Edit mode keeps its existing behaviour —
+    // its state arrives as a prop, not from this query.
+    draftToken: isEdit ? undefined : outcomeData?.initialJobState,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
@@ -1099,7 +1104,15 @@ function DynamicJobBuilderInner({
           timeWindow: jobState?.scheduleTime?.timeWindow,
           originalContractPrice: rd.contractPrice ?? rd.originalContractPrice,
           lastPriceQuoted: rd.contractPrice ?? rd.lastPriceQuoted,
-          ...(validLFCalculator && { LFCalculator: validLFCalculator }),
+          // `POST /lead/v1/{leadId}/job-builder` reads the calculator from the
+          // LOWERCASE `lfCalculator` key (LeadHandler.submitJobBuilder). The uppercase
+          // `LFCalculator` the frontend historically sent is SILENTLY IGNORED, so the
+          // calculator never landed on the submitted job. Send lowercase (what the
+          // handler reads) and keep uppercase for any consumer still reading it.
+          ...(validLFCalculator && {
+            lfCalculator: validLFCalculator,
+            LFCalculator: validLFCalculator,
+          }),
         },
         jobState: dynamicJobState,
         isDynamic: true,
