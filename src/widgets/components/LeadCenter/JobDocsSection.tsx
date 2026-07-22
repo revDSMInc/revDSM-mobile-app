@@ -780,11 +780,18 @@ export const JobDocsSection = ({
     setIsDownloading(true);
     setDownloadProgress(0);
 
+    // Iterate EVERY sectionImages bucket, not just the static IMAGE_CATEGORIES ones.
+    // Dynamic-inspection photos live under product-scoped category keys (e.g.
+    // "Windows — Front", built by useLeadCenterData), so the old IMAGE_CATEGORIES-only
+    // loop downloaded 0 images for a dynamic-inspection lead. Dedupe by uri so a photo
+    // that appears under multiple keys isn't saved twice.
     const imagesToDownload: SectionImage[] = [];
-    IMAGE_CATEGORIES.forEach((cat) => {
-      const imgs = sectionImages[cat.name] || [];
-      imgs.forEach((img) => {
-        if (img.uri) {
+    const seenDownloadUris = new Set<string>();
+    Object.values(sectionImages || {}).forEach((imgs) => {
+      (Array.isArray(imgs) ? imgs : []).forEach((img) => {
+        const uri = img?.uri || (img as any)?.s3url;
+        if (uri && !seenDownloadUris.has(uri)) {
+          seenDownloadUris.add(uri);
           imagesToDownload.push(img);
         }
       });

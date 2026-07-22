@@ -147,6 +147,11 @@ export function useDynamicInspectionCapture({
 
   // s3urls we just deleted but that a briefly-stale lead refresh may still return.
   const pendingDeletesRef = useRef<Set<string>>(new Set());
+  // s3url -> destination subKey for a just-moved photo. Until a refetch reports the
+  // photo at its NEW position, an eventually-consistent replica may still return it
+  // at the OLD position; this guard drops those stale copies so the photo doesn't
+  // flash back into the original slot (it stays optimistically in the new one).
+  const pendingMovesRef = useRef<Map<string, string>>(new Map());
   // Monotonic cache of every server-confirmed photo we've ever seen (keyed by
   // subKey, deduped by s3url). The backend is eventually consistent: right after
   // an upload, some lead refetches come back from a replica that does NOT yet
@@ -220,6 +225,14 @@ export function useDynamicInspectionCapture({
       const fresh: Record<string, CapturedPhoto[]> = {};
       scoped.forEach((p) => {
         const k = subKey(p.category, p.subcategory);
+        // A just-moved photo: if this (possibly stale) refetch still reports it at
+        // the OLD slot, drop it so it doesn't flash back; once it appears at the new
+        // slot the guard clears and normal handling resumes.
+        if (p.s3url && pendingMovesRef.current.has(p.s3url)) {
+          const target = pendingMovesRef.current.get(p.s3url);
+          if (k === target) pendingMovesRef.current.delete(p.s3url);
+          else return;
+        }
         if (!fresh[k]) fresh[k] = [];
         if (p.s3url && fresh[k].some((x) => x.s3url === p.s3url)) return;
         fresh[k].push({
@@ -548,8 +561,13 @@ export function useDynamicInspectionCapture({
       toSubcategory: string;
       key?: string;
     }) => {
-      // The endpoint is id-based, so an _id (not just an s3url) is required.
-      if (!leadId || !photo?._id) return;
+      // The endpoint is id-based. The salesPhoto identifier is inconsistent across
+      // the API — some payloads expose `_id`, some `id` (the regular/static move in
+      // JobDocsSection uses `.id`). Guarding on `_id` ALONE made the move silently
+      // no-op whenever the photo only carried `id`, so the photo appeared to "not
+      // move". Accept either.
+      const photoId = photo?._id || (photo as any)?.id;
+      if (!leadId || !photoId) return;
       if (
         norm(scopeCat(fromCategoryLabel)) === norm(scopeCat(toCategoryLabel)) &&
         norm(fromSubcategory) === norm(toSubcategory)
@@ -557,9 +575,32 @@ export function useDynamicInspectionCapture({
         return; // same slot — nothing to do
       }
       if (key) setMovingKeys((prev) => ({ ...prev, [key]: true }));
+
+      // Optimistically relocate the photo so the rep sees it in the destination slot
+      // immediately (web relies on a fast refetch; on mobile the refetch can lag, so
+      // without this the photo looked like it "didn't move"). The refetch below
+      // reconciles to server truth; `pendingMovesRef` stops a stale replica read from
+      // flashing it back to the old slot in the meantime.
+      const fromK = subKey(scopeCat(fromCategoryLabel), fromSubcategory);
+      const toK = subKey(scopeCat(toCategoryLabel), toSubcategory);
+      const movedPhoto = { ...photo, category: scopeCat(toCategoryLabel), subcategory: toSubcategory };
+      const relocate = (m: Record<string, CapturedPhoto[]>): Record<string, CapturedPhoto[]> => {
+        const next = { ...m };
+        const stripped = (next[fromK] || []).filter((p) => p.s3url !== photo.s3url);
+        if (stripped.length) next[fromK] = stripped;
+        else delete next[fromK];
+        const dest = (next[toK] || []).filter((p) => p.s3url !== photo.s3url);
+        dest.push(movedPhoto);
+        next[toK] = dest;
+        return next;
+      };
+      if (photo.s3url) pendingMovesRef.current.set(photo.s3url, toK);
+      knownPhotosRef.current = relocate(knownPhotosRef.current);
+      setPhotosBySubcat((prev) => relocate(prev));
+
       try {
         await LeadService.updateImagePosition(leadId, {
-          photoId: photo._id,
+          photoId,
           currentPosition: {
             category: scopeCat(fromCategoryLabel),
             subcategory: fromSubcategory,
@@ -577,6 +618,9 @@ export function useDynamicInspectionCapture({
         }
         await refreshLeadData?.(leadId);
       } catch {
+        // Move failed — drop the optimistic guard so the refetch can restore the
+        // photo to its real (original) slot instead of stranding it in the target.
+        if (photo.s3url) pendingMovesRef.current.delete(photo.s3url);
         await refreshLeadData?.(leadId); // restore truth
       } finally {
         if (key)

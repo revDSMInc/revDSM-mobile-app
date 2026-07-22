@@ -101,15 +101,20 @@ class UploadQueueManager {
 
     console.log(`[UploadQueue] Processing started. Queue length: ${this.queue.length}`);
 
-    while (this.queue.length > 0) {
-      const isOnline = await this.checkOnline();
-      if (!isOnline) {
-        console.log('[UploadQueue] Device is offline. Pausing queue processing.');
-        // Schedule next check in 5 seconds
-        setTimeout(() => this.processQueue(), 5000);
-        break;
-      }
+    // Connectivity is checked ONCE here, not before every item. The old code ran a
+    // `fetch('https://www.google.com')` HEAD round-trip (up to 3s) BEFORE every
+    // single upload, so a burst of N photos paid N extra round-trips and felt slow.
+    // Now: one pre-flight check, then all queued items upload back-to-back; any
+    // connectivity loss mid-burst is caught by the per-item catch below (which
+    // re-checks and pauses without burning a retry).
+    if (!(await this.checkOnline())) {
+      console.log('[UploadQueue] Device is offline. Pausing queue processing.');
+      this.isProcessing = false;
+      setTimeout(() => this.processQueue(), 5000);
+      return;
+    }
 
+    while (this.queue.length > 0) {
       const activeItem = this.queue[0];
       try {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);

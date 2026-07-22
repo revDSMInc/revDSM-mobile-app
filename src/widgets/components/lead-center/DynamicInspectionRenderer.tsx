@@ -15,11 +15,16 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
   getChildren,
   getCapturableSlots,
-  isContainer,
   isContextSelector,
+  isChipContainer,
+  isTabContainer,
+  getChipOptions,
+  getChipLabel,
+  usesPerChipContent,
   allowsExtras,
   countCategory,
   uiKey,
+  SCOPE_SEP,
   type InspectionCategory,
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
@@ -134,6 +139,11 @@ interface CommonBodyProps {
    * picking a destination (web `move-photo-dialog` parity).
    */
   moveFromKey?: string;
+  /**
+   * Chip selections of any chip-selector ancestors — prefixed into each leaf's
+   * storage name so each chip owns its own photos (web `_scope`/SCOPE_SEP parity).
+   */
+  scope?: string[];
 }
 
 // ─── One slot as a wide tap-to-tag pill ───────────────────────────────────────
@@ -353,8 +363,11 @@ function groupSlots(slots: InspectionSlot[]): [string, InspectionSlot[]][] {
 
 // ─── Leaf body ────────────────────────────────────────────────────────────────
 
-function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }: CommonBodyProps & { category: InspectionCategory }) {
-  const definedSlots = getCapturableSlots(category);
+function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey, scope = [] }: CommonBodyProps & { category: InspectionCategory }) {
+  // Under a chip-selector the leaf's slots are scoped by the chosen chip(s) so each
+  // chip owns its own photos; getCapturableSlots reads `_scope`. Web parity (:238).
+  const scopedCategory = scope.length ? { ...category, _scope: scope } : category;
+  const definedSlots = getCapturableSlots(scopedCategory);
   const extras = capture.extrasFor(category);
   const compass = category.type === 'compass-grid';
   const grouped = groupSlots(definedSlots);
@@ -426,7 +439,7 @@ function LeafBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }:
 
 // ─── Context selector body ────────────────────────────────────────────────────
 
-function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBodyProps & { category: InspectionCategory }) {
+function ContextBody({ category, capture, onSlotClick, moveFromKey, scope = [] }: CommonBodyProps & { category: InspectionCategory }) {
   const levels = Array.isArray(category.contextLevels) ? category.contextLevels : [];
   const contextSlots = Array.isArray(category.contextSlots) ? category.contextSlots : [];
   const [resolved, setResolved] = useState<Record<string, string | null>>({});
@@ -443,11 +456,15 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
   const resolvedValues = levels.map((l) => resolved[l.key] || null);
   const allResolved = levels.length > 0 && resolvedValues.every(Boolean);
   const path = resolvedValues.filter(Boolean).join(' › ');
+  // A chip-selector ancestor scopes these context slots so they don't collide with
+  // the same context path under a different chip (web parity, ContextBody:482).
+  const scopePrefix = scope.length ? `${scope.join(SCOPE_SEP)}${SCOPE_SEP}` : '';
+  const scopeIdPrefix = scope.length ? `${scope.join('||')}::` : '';
   const contextSlotObjects: InspectionSlot[] = allResolved
     ? contextSlots.map((slotName) => ({
-        id: `ctx::${slugify(path)}::${slugify(slotName)}`,
+        id: `${scopeIdPrefix}ctx::${slugify(path)}::${slugify(slotName)}`,
         name: slotName,
-        storageName: `${path} — ${slotName}`,
+        storageName: `${scopePrefix}${path} — ${slotName}`,
       }))
     : [];
 
@@ -517,12 +534,14 @@ function ContextBody({ category, capture, onSlotClick, moveFromKey }: CommonBody
 
 // ─── Category body dispatcher (container -> nested tabs) ───────────────────────
 
-export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey }: CommonBodyProps & { category: InspectionCategory }) {
-  if (isContainer(category)) {
+export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, moveFromKey, scope = [] }: CommonBodyProps & { category: InspectionCategory }) {
+  // Chip-selector with children → a chip row → scoped data (web parity).
+  if (isChipContainer(category)) {
     return (
-      <NestedCategoryTabs
-        categories={getChildren(category)}
+      <ChipSelectorBody
+        category={category}
         capture={capture}
+        scope={scope}
         onSlotClick={onSlotClick}
         onTagAsExtra={onTagAsExtra}
         moveFromKey={moveFromKey}
@@ -530,9 +549,185 @@ export function CategoryBody({ category, capture, onSlotClick, onTagAsExtra, mov
     );
   }
   if (isContextSelector(category)) {
-    return <ContextBody category={category} capture={capture} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />;
+    return <ContextBody category={category} capture={capture} scope={scope} onSlotClick={onSlotClick} moveFromKey={moveFromKey} />;
   }
-  return <LeafBody category={category} capture={capture} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} moveFromKey={moveFromKey} />;
+  // Tab-style container (tab-bar / dynamic-sub-tabs) → nested tab strip.
+  if (isTabContainer(category) && getChildren(category).length > 0) {
+    return (
+      <NestedCategoryTabs
+        categories={getChildren(category)}
+        capture={capture}
+        scope={scope}
+        onSlotClick={onSlotClick}
+        onTagAsExtra={onTagAsExtra}
+        moveFromKey={moveFromKey}
+      />
+    );
+  }
+  // Leaf, or a leaf that also owns sub-categories (own slots + stacked children).
+  return (
+    <CompositeBody
+      category={category}
+      capture={capture}
+      scope={scope}
+      onSlotClick={onSlotClick}
+      onTagAsExtra={onTagAsExtra}
+      moveFromKey={moveFromKey}
+    />
+  );
+}
+
+// ─── Chip-selector body (chip row → selection card → the chip's data) ─────────
+
+function ChipSelectorBody({ category, capture, scope = [], onSlotClick, moveFromKey, onTagAsExtra }: CommonBodyProps & { category: InspectionCategory }) {
+  const perChip = usesPerChipContent(category);
+  const kids = getChildren(category);
+  const header = getChipLabel(category);
+
+  const chips = perChip
+    ? kids.map((child) => ({ key: child.id, label: child.label, contentCategories: [child] }))
+    : getChipOptions(category).map((opt) => ({ key: opt, label: opt, contentCategories: kids }));
+
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const activeChip = chips.find((c) => c.key === selectedKey) || null;
+  const chipScope = activeChip ? [...scope, activeChip.label] : scope;
+  // When a picked chip leads into ANOTHER chip level, let the deeper level own the
+  // summary card (one card with the full path, not one per level).
+  const activeIsChip = activeChip ? activeChip.contentCategories.some((c) => isChipContainer(c)) : false;
+
+  const countChip = (chip: { label: string; contentCategories: InspectionCategory[] }) =>
+    chip.contentCategories.reduce(
+      (acc, c) => {
+        const r = countCategory(c, capture, [...scope, chip.label]);
+        return { filled: acc.filled + r.filled, total: acc.total + r.total };
+      },
+      { filled: 0, total: 0 }
+    );
+
+  const selCount = activeChip ? countChip(activeChip) : { filled: 0, total: 0 };
+
+  return (
+    <View>
+      {!!header && (
+        <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
+          {header}
+        </Text>
+      )}
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: activeChip ? 12 : 0 }}>
+        {chips.map((chip) => {
+          const isSel = activeChip?.key === chip.key;
+          const { filled, total } = countChip(chip);
+          const done = total > 0 && filled >= total;
+          return (
+            <TouchableOpacity
+              key={chip.key}
+              onPress={() => setSelectedKey(isSel ? null : chip.key)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: isSel ? GREEN : done ? 'rgba(76,187,23,0.5)' : 'rgba(255,255,255,0.2)',
+                backgroundColor: isSel ? GREEN : 'transparent',
+              }}
+            >
+              {done && !isSel && <Icon name="check-circle" size={14} color={GREEN} />}
+              <Text style={{ fontWeight: isSel ? '700' : '500', color: isSel ? '#fff' : '#fff', fontSize: 12 }}>
+                {chip.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {!activeChip && (
+        <View style={{ padding: 16, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center' }}>
+          <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
+            Select a {String(header || 'option').toLowerCase()} to continue.
+          </Text>
+        </View>
+      )}
+
+      {activeChip && (
+        <View>
+          {!activeIsChip && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, marginBottom: 12, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(76,187,23,0.4)', backgroundColor: 'rgba(76,187,23,0.06)' }}>
+              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="check" size={18} color="#fff" />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text numberOfLines={1} style={{ fontWeight: '700', fontSize: 14, color: '#fff' }}>
+                  {[...scope, activeChip.label].join(SCOPE_SEP)}
+                </Text>
+                <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                  {selCount.filled}/{selCount.total} tagged
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {activeChip.contentCategories.map((child) => (
+            <View key={child.id} style={{ marginBottom: 12 }}>
+              <CategoryBody
+                category={child}
+                capture={capture}
+                scope={chipScope}
+                onSlotClick={onSlotClick}
+                moveFromKey={moveFromKey}
+                onTagAsExtra={onTagAsExtra}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Composite body (own slots + stacked sub-categories) ──────────────────────
+
+function CompositeBody({ category, capture, scope = [], onSlotClick, moveFromKey, onTagAsExtra }: CommonBodyProps & { category: InspectionCategory }) {
+  const kids = getChildren(category);
+  const scopedCategory = scope.length ? { ...category, _scope: scope } : category;
+  const ownSlots = getCapturableSlots(scopedCategory);
+
+  const leaf = (
+    <LeafBody category={category} capture={capture} scope={scope} onSlotClick={onSlotClick} moveFromKey={moveFromKey} onTagAsExtra={onTagAsExtra} />
+  );
+
+  // Pure leaf (no sub-categories) — render directly (handles the empty state too).
+  if (kids.length === 0) return leaf;
+
+  return (
+    <View>
+      {ownSlots.length > 0 && (
+        <View style={{ marginBottom: 16 }}>
+          {!!category.label && (
+            <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, fontSize: 11 }}>
+              {category.label}
+            </Text>
+          )}
+          {leaf}
+        </View>
+      )}
+      {kids.map((child) => (
+        <View key={child.id} style={{ marginBottom: 12 }}>
+          <CategoryBody
+            category={child}
+            capture={capture}
+            scope={scope}
+            onSlotClick={onSlotClick}
+            moveFromKey={moveFromKey}
+            onTagAsExtra={onTagAsExtra}
+          />
+        </View>
+      ))}
+    </View>
+  );
 }
 
 // ─── Tab strip (controlled) ───────────────────────────────────────────────────
@@ -542,18 +737,20 @@ export function CategoryTabStrip({
   capture,
   active,
   onChange,
+  scope = [],
 }: {
   categories: InspectionCategory[];
   capture: DynamicInspectionCapture;
   active: number;
   onChange: (i: number) => void;
+  scope?: string[];
 }) {
   const list = Array.isArray(categories) ? categories : [];
   return (
     <View style={{ borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {list.map((cat, i) => {
-          const { filled, total } = countCategory(cat, capture);
+          const { filled, total } = countCategory(cat, capture, scope);
           const isActive = i === active;
           const color = isActive ? GREEN : 'rgba(255,255,255,0.7)';
           return (
@@ -587,7 +784,7 @@ export function CategoryTabStrip({
 
 // ─── Nested tabs (for container categories inside a body) ─────────────────────
 
-function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra, moveFromKey }: CommonBodyProps & { categories: InspectionCategory[] }) {
+function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra, moveFromKey, scope = [] }: CommonBodyProps & { categories: InspectionCategory[] }) {
   const [active, setActive] = useState(0);
   const list = Array.isArray(categories) ? categories : [];
   if (list.length === 0) return null;
@@ -597,9 +794,9 @@ function NestedCategoryTabs({ categories, capture, onSlotClick, onTagAsExtra, mo
   return (
     <View>
       <View style={{ marginBottom: 16 }}>
-        <CategoryTabStrip categories={list} capture={capture} active={idx} onChange={setActive} />
+        <CategoryTabStrip categories={list} capture={capture} active={idx} onChange={setActive} scope={scope} />
       </View>
-      <CategoryBody key={current.id} category={current} capture={capture} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} moveFromKey={moveFromKey} />
+      <CategoryBody key={current.id} category={current} capture={capture} scope={scope} onSlotClick={onSlotClick} onTagAsExtra={onTagAsExtra} moveFromKey={moveFromKey} />
     </View>
   );
 }
