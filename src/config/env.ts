@@ -1,22 +1,23 @@
-// Centralised config — update API_URL to match your environment
-const API_URL = 'https://dev-api.revdsm.com/';
+// Centralised config — update API_URL to match your environment.
+// This must be the *API* host. `app.<env>.revdsm.com` is the web front-end: it is
+// static nginx, so every request answers 405/HTML and login fails as "Incorrect
+// email or password" (the axios rejection carries an HTML body with no `message`).
+//
+//   np / staging : https://api.np.revdsm.com/   (also reachable as dev-api.revdsm.com)
+//   production   : https://api.revdsm.com/
+const API_URL = 'https://api.np.revdsm.com/';
 
-const getS3Bucket = (url: string): string => {
-  if (url.includes('dev-api') || url.includes('staging-api')) {
-    return 'np-revdsm-staging';
-  }
-  // Production bucket name
-  return 'mhalt-revdsm';
-};
+/** Only the bare production host is production; every other host is np/staging. */
+const isProductionApi = (url: string): boolean =>
+  /^https?:\/\/api\.revdsm\.com\/?$/i.test(url.trim());
 
-const getMapboxToken = (url: string): string => {
-  if (url.includes('api.revdsm.com')) {
-    // Production token
-    return 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcmFrNmtxeDA2cDcyeHF3aGx5eWt6Mm4ifQ.N4J6zGby06pAoAEuQGIYRQ';
-  }
-  // Development/Staging token
-  return 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcmFrNmVoZzA0MjYyeXNpMXBsa3Q0djMifQ.KZZG3r-btQQvb9MC3To7qA';
-};
+const getS3Bucket = (url: string): string =>
+  isProductionApi(url) ? 'mhalt-revdsm' : 'np-revdsm-staging';
+
+const getMapboxToken = (url: string): string =>
+  isProductionApi(url)
+    ? 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcmFrNmtxeDA2cDcyeHF3aGx5eWt6Mm4ifQ.N4J6zGby06pAoAEuQGIYRQ'
+    : 'pk.eyJ1IjoicmV2ZHNtaW5jIiwiYSI6ImNtcmFrNmVoZzA0MjYyeXNpMXBsa3Q0djMifQ.KZZG3r-btQQvb9MC3To7qA';
 
 const S3_BUCKET = getS3Bucket(API_URL);
 const S3_BASE_URL = `https://${S3_BUCKET}.s3.amazonaws.com/`;

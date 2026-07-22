@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicon from 'react-native-vector-icons/Ionicons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import { format } from 'date-fns';
@@ -10,6 +10,10 @@ interface Props {
   job: InstallerJob;
   /** Tomorrow's jobs are preview-only. */
   isTomorrow?: boolean;
+  /** Starting the job — the card waits on the API before the detail screen opens. */
+  loading?: boolean;
+  /** Another card is starting; this one stays tappable-looking but inert. */
+  disabled?: boolean;
   onPress: () => void;
 }
 
@@ -19,35 +23,51 @@ interface Props {
  * Follows LeadCard's visual contract — `rounded-2xl border-2` with a `color + '10'`
  * tinted wash and a full-width `h-12 rounded-xl` action button.
  */
-export function InstallerJobCard({ job, isTomorrow = false, onPress }: Props) {
+export function InstallerJobCard({
+  job,
+  isTomorrow = false,
+  loading = false,
+  disabled = false,
+  onPress,
+}: Props) {
   const { colors, isDark } = useTheme();
 
   const resulted = !!job.resulted;
+  const inert = loading || disabled;
   const accent = resulted
     ? '#94a3b8'
     : isTomorrow
     ? '#2196f3'
     : colors.primary.main;
 
-  const actionLabel = resulted
+  const actionLabel = loading
+    ? 'Starting Job…'
+    : resulted
     ? 'Review Appointment'
     : isTomorrow
     ? 'Preview Appointment'
     : 'Resume Appointment';
 
-  const name = [job.customerDetails?.firstName, job.customerDetails?.lastName]
-    .filter(Boolean)
-    .join(' ');
+  const name =
+    job.customerName ||
+    [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
+
+  // The API sends "N/A" for leads without a human-facing number; fall back to the job number.
+  const displayId = job.leadDisplayId || job.jobNumber || job.leadId;
+
+  const date = job.leadDate ? new Date(job.leadDate) : null;
+  const dateLabel = date && !isNaN(date.getTime()) ? format(date, 'MM/dd/yyyy') : 'N/A';
 
   return (
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={onPress}
+      disabled={inert}
       className="mb-4 rounded-2xl overflow-hidden border-2"
       style={{
         backgroundColor: resulted ? (isDark ? colors.surface : '#F4F6F8') : accent + '10',
         borderColor: accent,
-        opacity: resulted ? 0.85 : 1,
+        opacity: disabled && !loading ? 0.6 : resulted ? 0.85 : 1,
       }}
     >
       <View className="p-4">
@@ -69,7 +89,7 @@ export function InstallerJobCard({ job, isTomorrow = false, onPress }: Props) {
         {/* Customer + date */}
         <View className="mb-4">
           <Text className="text-base mb-1" style={{ color: colors.textSecondary }}>
-            Lead ID: {job.leadId || 'N/A'}
+            Lead ID: {displayId || 'N/A'}
           </Text>
           <View className="flex-row justify-between items-center">
             <View className="flex-row items-center flex-1">
@@ -81,7 +101,7 @@ export function InstallerJobCard({ job, isTomorrow = false, onPress }: Props) {
             <View className="flex-row items-center">
               <Ionicon name="calendar-clear" size={14} color="#637381" />
               <Text className="ml-1.5 text-base font-semibold" style={{ color: colors.textSecondary }}>
-                {job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy') : 'N/A'}
+                {dateLabel}
               </Text>
             </View>
           </View>
@@ -102,10 +122,15 @@ export function InstallerJobCard({ job, isTomorrow = false, onPress }: Props) {
         {/* Action */}
         <TouchableOpacity
           onPress={onPress}
+          disabled={inert}
           className="h-12 rounded-xl items-center justify-center flex-row"
           style={{ backgroundColor: accent }}
         >
-          <Ionicon name="location-sharp" size={20} color="white" />
+          {loading ? (
+            <ActivityIndicator size="small" color="white" />
+          ) : (
+            <Ionicon name="location-sharp" size={20} color="white" />
+          )}
           <Text className="text-white ml-2 text-base font-bold">{actionLabel}</Text>
         </TouchableOpacity>
       </View>

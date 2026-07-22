@@ -12,10 +12,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import MaterialDesignIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
-import { useInstallerJobs } from '../../hooks/useInstallerJobs';
+import { FlashMessage } from '../../config/message';
+import { useInstallerJobs, useUpdateJobStatus } from '../../hooks/useInstallerJobs';
 import { useUserRole } from '../../hooks/useUserRole';
 import { InstallerJobCard } from '../../widgets/components/installer/InstallerJobCard';
-import type { JobPeriod } from '../../services/api/installer';
+import { mergeInstallerJob, type JobPeriod } from '../../services/api/installer';
 import type { InstallerJob } from '../../config/types/installer';
 
 /**
@@ -29,10 +30,44 @@ export default function InstallerDashboard() {
   const { colors, isDark } = useTheme();
   const { installerCompanyName } = useUserRole();
   const [period, setPeriod] = useState<JobPeriod>('today');
-  const { jobs, loading, refreshing, refresh } = useInstallerJobs(period);
+  const [startingId, setStartingId] = useState<string | null>(null);
+  const { jobs, summaryCounts, loading, isError, refreshing, refresh } =
+    useInstallerJobs(period);
+  const updateStatus = useUpdateJobStatus();
 
-  const openJob = (job: InstallerJob) =>
-    navigation.navigate('InstallerJobDetail', { job });
+  // Header count prefers the API's own total (paginated lists can be shorter).
+  const jobCount = summaryCounts?.total ?? jobs.length;
+  // The API stamps the company on each job; the profile field is the fallback.
+  const companyName = installerCompanyName || jobs[0]?.companyName;
+
+  /**
+   * Opens a job. Today's live jobs are *started* first — the API flips them to
+   * `inProgress` and answers with the working payload (contract + the rep's
+   * pre-install photos), which exists nowhere else, so the card holds a spinner
+   * until it lands and the detail screen opens with real data.
+   *
+   * Tomorrow's previews and already-resulted jobs open read-only: no status change.
+   */
+  const openJob = async (job: InstallerJob) => {
+    if (period === 'tomorrow' || job.resulted) {
+      navigation.navigate('InstallerJobDetail', { job });
+      return;
+    }
+    if (startingId) return;
+
+    setStartingId(job._id);
+    try {
+      const started = await updateStatus.mutateAsync({ jobId: job._id, status: 'inProgress' });
+      navigation.navigate('InstallerJobDetail', { job: mergeInstallerJob(job, started) });
+    } catch {
+      FlashMessage.error(
+        "Couldn't start this job",
+        'Check your connection and try again.'
+      );
+    } finally {
+      setStartingId(null);
+    }
+  };
 
   return (
     <SafeAreaView
@@ -45,9 +80,9 @@ export default function InstallerDashboard() {
           <Text className="text-lg font-black" style={{ color: colors.text }}>
             My Installs
           </Text>
-          {!!installerCompanyName && (
+          {!!companyName && (
             <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
-              {installerCompanyName}
+              {companyName}
             </Text>
           )}
         </View>
@@ -56,10 +91,10 @@ export default function InstallerDashboard() {
           style={{ backgroundColor: isDark ? colors.surface : '#4CBB1714' }}
         >
           <Text className="text-base font-bold" style={{ color: colors.primary.main }}>
-            {jobs.length}
+            {jobCount}
           </Text>
           <Text className="text-[10px] font-medium" style={{ color: colors.primary.main }}>
-            {jobs.length === 1 ? 'Job' : 'Jobs'}
+            {jobCount === 1 ? 'Job' : 'Jobs'}
           </Text>
         </View>
       </View>
@@ -90,6 +125,8 @@ export default function InstallerDashboard() {
             <InstallerJobCard
               job={item}
               isTomorrow={period === 'tomorrow'}
+              loading={startingId === item._id}
+              disabled={!!startingId && startingId !== item._id}
               onPress={() => openJob(item)}
             />
           )}
@@ -105,13 +142,15 @@ export default function InstallerDashboard() {
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center pt-[30%]">
               <MaterialDesignIcon
-                name="calendar-blank-outline"
+                name={isError ? 'cloud-off-outline' : 'calendar-blank-outline'}
                 size={64}
                 style={{ opacity: 0.7 }}
                 color={colors.textSecondary}
               />
               <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
-                {period === 'today'
+                {isError
+                  ? "Couldn't load your installs. Pull down to retry."
+                  : period === 'today'
                   ? 'No installs scheduled for today.'
                   : 'No installs scheduled for tomorrow.'}
               </Text>

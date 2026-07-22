@@ -12,6 +12,7 @@ import { useInstallProgress } from '../../hooks/useInstallProgress';
 import { useSubmitInstallerResult, useReportDiscrepancy } from '../../hooks/useInstallerJobs';
 import { InstallTimeline } from '../../widgets/components/installer/InstallTimeline';
 import { JobReferenceCards } from '../../widgets/components/installer/JobReferenceCards';
+import { RepPhotoCard } from '../../widgets/components/installer/RepPhotoCard';
 import { ResultJobModal } from '../../widgets/modals/installer/ResultJobModal';
 import { MaterialPhotoStep } from './steps/MaterialPhotoStep';
 import { PECStep } from './steps/PECStep';
@@ -131,9 +132,9 @@ export default function InstallerJobDetail() {
     );
   }
 
-  const name = [job.customerDetails?.firstName, job.customerDetails?.lastName]
-    .filter(Boolean)
-    .join(' ');
+  const name =
+    job.customerName ||
+    [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
 
   const handleSubmitResult = (reason: string) => {
     submitResult.mutate(
@@ -189,7 +190,7 @@ export default function InstallerJobDetail() {
                 Lead ID:{' '}
               </Text>
               <Text className="font-black" style={{ color: colors.text }}>
-                {job.leadId || 'N/A'}
+                {job.leadDisplayId || job.jobNumber || job.leadId || 'N/A'}
               </Text>
             </Text>
 
@@ -326,6 +327,12 @@ export default function InstallerJobDetail() {
             completedCount={completedCount}
             totalSteps={totalSteps}
             onOpen={setOpenStep}
+          />
+
+          {/* Rep's capture set — the reference for the pre-install ghost pass */}
+          <RepPhotoCard
+            photos={job.preInstallPhotos}
+            onOpenMatch={stepStatus.pre === 'locked' ? undefined : () => setOpenStep('pre')}
           />
 
           {/* Read-only reference */}
