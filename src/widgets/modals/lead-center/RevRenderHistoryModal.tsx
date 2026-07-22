@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -189,6 +189,49 @@ export const RevRenderHistoryModal = ({
   const currentRun = runs[currentIndex];
   const beforeImage = currentRun ? (currentRun.originalUrl || currentRun.s3UrlOriginal) : null;
   const afterImage = currentRun ? (currentRun.generatedUrl || currentRun.s3UrlGenerated) : null;
+
+  // The colors/components the rep selected when generating this render, shown as
+  // swatch chips below the header. Supports every backend shape: an explicit
+  // `summary`/`components` array, or the raw `selections` + `textureImageUrls` maps.
+  const renderColors = useMemo(() => {
+    const run = currentRun;
+    if (!run) return [] as { label: string; colorName: string; colorHex: string }[];
+    const arr = Array.isArray(run.summary)
+      ? run.summary
+      : Array.isArray(run.components)
+        ? run.components
+        : null;
+    const cap = (s?: string) =>
+      typeof s === 'string' && s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+    if (arr && arr.length) {
+      return arr
+        .map((c: any) => ({
+          label: c?.label || c?.id || '',
+          colorName: cap(c?.colorName || c?.textureName || c?.type || ''),
+          colorHex: c?.colorHex || c?.textureUrl || '',
+        }))
+        .filter((c: any) => c.colorName || c.colorHex);
+    }
+    const sel = run.selections;
+    const tex = run.textureImageUrls || {};
+    if (sel && typeof sel === 'object') {
+      const COMPONENTS = [
+        { key: 'soffit', label: 'Soffit' },
+        { key: 'fascia', label: 'Fascia Wrap' },
+        { key: 'gutter', label: 'Gutter' },
+        { key: 'downspout', label: 'Downspout' },
+      ];
+      return COMPONENTS
+        .filter((c) => sel[c.key])
+        .map((c) => ({
+          label: c.label,
+          colorName: cap(typeof sel[c.key] === 'string' ? sel[c.key] : ''),
+          colorHex: tex[c.key] || '',
+        }))
+        .filter((c) => c.colorName || c.colorHex);
+    }
+    return [];
+  }, [currentRun]);
 
   // Track if current slide is fully loaded (prioritizing persistent cache)
   useEffect(() => {
@@ -484,6 +527,26 @@ export const RevRenderHistoryModal = ({
             </TouchableOpacity>
           </View>
 
+          {/* Selected colors — the component colors the rep applied when creating
+              this render, shown as swatch chips (color dot + component + color name). */}
+          {renderColors.length > 0 && (
+            <View style={styles.colorsRow}>
+              {renderColors.map((c: { label: string; colorName: string; colorHex: string }, i: number) => (
+                <View key={`${c.label}-${i}`} style={styles.colorChip}>
+                  <View
+                    style={[
+                      styles.colorSwatch,
+                      { backgroundColor: c.colorHex && c.colorHex.startsWith('#') ? c.colorHex : '#B0B0B0' },
+                    ]}
+                  />
+                  <Text style={styles.colorChipText} numberOfLines={1}>
+                    {c.label ? `${c.label}: ` : ''}{c.colorName || '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
           {/* Comparison Slider — zoom wrapper */}
           <GestureDetector gesture={composedGesture}>
             <Reanimated.View
@@ -698,6 +761,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 4,
     fontWeight: '600',
+  },
+  colorsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 24,
+    marginTop: -28,
+    marginBottom: 20,
+    gap: 8,
+  },
+  colorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 999,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  colorSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  colorChipText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    maxWidth: 180,
   },
   closeBtn: {
     marginLeft: 'auto',

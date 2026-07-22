@@ -1543,7 +1543,21 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         price={priceNum}
         plans={plans}
         categories={pricing.categories}
-        onSelect={(key) => { logPaymentMethodChanged(key); onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false); }}
+        onSelect={(key) => {
+          // Web parity (CalculatorSummary.handlePaymentPlanSelect): warn via a toast
+          // when the method is switched on a rollout whose price is already locked —
+          // the dynamic flow previously changed it silently with no feedback.
+          if (key !== method) {
+            if (WELLS_FARGO_HIGH_KEYS.includes(key) && priceNum > 0 && priceNum < WF_HIGH_MIN_PRICE) {
+              FlashMessage.warning(`Payment plan changed - this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`);
+            } else if (calculator.isRolloutConfirmed && priceNum > 0) {
+              FlashMessage.warning(`Payment method updated - the rollout price $${priceNum.toLocaleString()} is already confirmed.`);
+            }
+          }
+          onPaymentMethodChange(calculator.id, key);
+          setShowPlanPicker(false);
+          logPaymentMethodChanged(key); onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false);
+        }}
         onClose={() => setShowPlanPicker(false)}
       />
 
