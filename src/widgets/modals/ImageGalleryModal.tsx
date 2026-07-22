@@ -9,6 +9,7 @@ import {
   StatusBar,
   Platform,
   ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -21,6 +22,9 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   runOnJS,
+  interpolate,
+  Extrapolation,
+  type SharedValue,
 } from 'react-native-reanimated';
 import Icon from 'react-native-vector-icons/Ionicons';
 
@@ -51,6 +55,9 @@ const ZoomablePage = React.memo(
     active,
     zoomed,
     onZoomChange,
+    dragX,
+    dragY,
+    onRequestClose,
   }: {
     uri: string;
     width: number;
@@ -58,6 +65,11 @@ const ZoomablePage = React.memo(
     active: boolean;
     zoomed: boolean;
     onZoomChange: (z: boolean) => void;
+    // Shared drag offsets (owned by the parent so the backdrop/chrome can fade
+    // off the same value) driven by the iMessage-style drag-down-to-dismiss.
+    dragX: SharedValue<number>;
+    dragY: SharedValue<number>;
+    onRequestClose: () => void;
   }) => {
     const scale = useSharedValue(1);
     const savedScale = useSharedValue(1);
@@ -134,16 +146,44 @@ const ZoomablePage = React.memo(
         savedTy.value = ty.value;
       });
 
-    const composed = Gesture.Simultaneous(pan, pinch, doubleTap);
+    // iMessage-style drag-DOWN-to-dismiss (only when NOT zoomed — while zoomed the
+    // pan above moves the image around instead). Activates on a downward drag and
+    // fails on horizontal movement so the pager keeps handling left/right swipes.
+    // The image follows the finger (and shrinks slightly); releasing past a
+    // threshold (or with enough downward velocity) closes the viewer, otherwise it
+    // springs back. `dragX/dragY` are the PARENT's shared values so the black
+    // backdrop and the header/filmstrip chrome fade off the same drag distance.
+    const dismissPan = Gesture.Pan()
+      .enabled(active && !zoomed)
+      .activeOffsetY(14)
+      .failOffsetX([-28, 28])
+      .onUpdate((e) => {
+        dragY.value = Math.max(0, e.translationY);
+        dragX.value = e.translationX;
+      })
+      .onEnd((e) => {
+        if (dragY.value > 120 || e.velocityY > 900) {
+          runOnJS(onRequestClose)();
+        } else {
+          dragX.value = withTiming(0, { duration: 180 });
+          dragY.value = withTiming(0, { duration: 180 });
+        }
+      });
 
-    const imgStyle = useAnimatedStyle(() => ({
-      opacity: opacity.value,
-      transform: [
-        { translateX: tx.value },
-        { translateY: ty.value },
-        { scale: scale.value },
-      ],
-    }));
+    const composed = Gesture.Simultaneous(pan, pinch, doubleTap, dismissPan);
+
+    const imgStyle = useAnimatedStyle(() => {
+      // Shrink toward the finger as it drags down (matches iMessage's peel-away).
+      const dismissScale = interpolate(dragY.value, [0, 400], [1, 0.82], Extrapolation.CLAMP);
+      return {
+        opacity: opacity.value,
+        transform: [
+          { translateX: tx.value + dragX.value },
+          { translateY: ty.value + dragY.value },
+          { scale: scale.value * dismissScale },
+        ],
+      };
+    });
 
     return (
       <GestureDetector gesture={composed}>
@@ -207,6 +247,18 @@ export const ImageGalleryModal = ({
   // estimate to avoid a blank first frame, then corrected on layout.
   const [mediaH, setMediaH] = useState(Math.max(1, SH - 220));
 
+  // Drag-to-dismiss offsets (shared with each ZoomablePage). The black backdrop
+  // fades out over a long drag; the header + filmstrip chrome fade quickly so only
+  // the image (following the finger) is left, like iMessage.
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dragY.value, [0, SH * 0.5], [1, 0], Extrapolation.CLAMP),
+  }));
+  const chromeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dragY.value, [0, 100], [1, 0], Extrapolation.CLAMP),
+  }));
+
   // A Modal can report insets.top === 0 on Android even though the status bar
   // is physically there — floor with StatusBar.currentHeight so the close
   // button can never land inside the status bar.
@@ -223,6 +275,9 @@ export const ImageGalleryModal = ({
     if (!visible) return;
     setIndex(initialIndex);
     setIsZoomed(false);
+    // Reset any leftover drag from a previous dismiss so it opens fully-shown.
+    dragX.value = 0;
+    dragY.value = 0;
     if (images.length > 1) {
       // Center the active thumbnail once the strip has laid out.
       setTimeout(
@@ -297,18 +352,29 @@ export const ImageGalleryModal = ({
         <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       )}
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={{ flex: 1, backgroundColor: '#000', paddingTop: topInset + 10, paddingBottom: bottomInset + 10 }}>
-          {/* Header — takes real space at the top so the image sits below it */}
-          <View
-            style={{
-              paddingTop: topInset,
-              paddingBottom: 10,
+        <View style={{ flex: 1, paddingTop: topInset + 10, paddingBottom: bottomInset + 10 }}>
+          {/* Black backdrop that fades out as the image is dragged down, revealing
+              the chat behind (the Modal is transparent). Separate from the image so
+              the image stays fully opaque while it follows the finger. */}
+          <Animated.View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, backdropStyle]}
+          />
+          {/* Header — takes real space at the top so the image sits below it.
+              The outer container already pads the safe-area inset, so this adds a
+              fixed margin below it and extra vertical height for breathing room
+              around the close (✕) button and the image-count text. Fades with the
+              drag so only the image remains while dismissing. */}
+          <Animated.View
+            style={[{
+              paddingTop: 20,
+              paddingBottom: 18,
               paddingHorizontal: 8,
-              backgroundColor: '#000',
+              minHeight: 56,
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
-            }}
+            }, chromeStyle]}
           >
             <TouchableOpacity onPress={onClose} className="p-2">
               <Icon name="close" size={26} color="#fff" />
@@ -319,7 +385,7 @@ export const ImageGalleryModal = ({
               </Text>
             )}
             <View style={{ width: 42 }} />
-          </View>
+          </Animated.View>
 
           {/* Middle band — the image fits exactly here, between header & strip */}
           <View
@@ -358,6 +424,9 @@ export const ImageGalleryModal = ({
                   active={i === index}
                   zoomed={isZoomed}
                   onZoomChange={setIsZoomed}
+                  dragX={dragX}
+                  dragY={dragY}
+                  onRequestClose={onClose}
                 />
               )}
             />
@@ -369,13 +438,13 @@ export const ImageGalleryModal = ({
             )}
           </View>
 
-          {/* Bottom: caption + thumbnail filmstrip — respects bottom inset */}
-          <View
-            style={{
+          {/* Bottom: caption + thumbnail filmstrip — respects bottom inset. Fades
+              with the drag so only the image remains while dismissing. */}
+          <Animated.View
+            style={[{
               paddingBottom: Math.max(insets.bottom, 12),
               paddingTop: 10,
-              backgroundColor: '#000',
-            }}
+            }, chromeStyle]}
           >
             {!!images[index]?.label && (
               <Text
@@ -442,7 +511,7 @@ export const ImageGalleryModal = ({
                 }}
               />
             )}
-          </View>
+          </Animated.View>
         </View>
       </GestureHandlerRootView>
     </Modal>
