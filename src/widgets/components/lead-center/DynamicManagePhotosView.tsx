@@ -43,6 +43,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CategoryTabStrip, ProductDropdown } from './DynamicInspectionRenderer';
 import { useDynamicInspectionCapture, type CapturedPhoto } from './useDynamicInspectionCapture';
 import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
+import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
 
 const GREEN = '#4CBB17';
 const RED = '#EF4444';
@@ -325,9 +326,11 @@ export function DynamicManagePhotosView({
             backgroundColor: '#16302A',
           }}
         >
-          <TouchableOpacity
-            activeOpacity={uri ? 0.8 : 1}
+          <PhotoPeekPressable
+            uri={uri}
+            label={card.label}
             disabled={!uri || lockedFromSelect}
+            peekDisabled={selectMode}
             onPress={() => {
               if (!uri) return;
               if (selectableNow) toggleSelect(card);
@@ -369,7 +372,7 @@ export function DynamicManagePhotosView({
                 ) : null}
               </View>
             )}
-          </TouchableOpacity>
+          </PhotoPeekPressable>
 
           {/* Actions are hidden in select mode (web parity) */}
           {!selectMode && (

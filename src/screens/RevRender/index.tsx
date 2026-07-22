@@ -16,6 +16,7 @@ import { REV_RENDER_VIEW_GROUPS, REV_RENDER_COLORS, IMAGE_CATEGORIES } from '../
 import { RootStackParamList } from '../../navigation';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { PhotoPeekPressable } from '../../widgets/common/PhotoPeekPressable';
 
 type RevRenderRouteProp = RouteProp<RootStackParamList, 'RevRender'>;
 
@@ -589,8 +590,10 @@ export default function RevRenderScreen() {
 
                 <View className="flex-row flex-wrap justify-between">
                   {group.discoveredViews.map((photo: any, index: number) => (
-                    <TouchableOpacity
+                    <PhotoPeekPressable
                       key={index}
+                      uri={photo?.uri || photo?.s3url}
+                      label={photo.label}
                       onPress={() => {
                         const userId = user?._id || user?.id;
                         if (userId) {
@@ -612,8 +615,12 @@ export default function RevRenderScreen() {
                         setSelectedPhoto(photo);
                         setStatus('config');
                       }}
-                      className="w-[48%] rounded-2xl overflow-hidden mb-6 shadow-sm border"
                       style={{
+                        width: '48%',
+                        borderRadius: 16,
+                        overflow: 'hidden',
+                        marginBottom: 24,
+                        borderWidth: 1,
                         backgroundColor: isDark ? '#2A2A2A' : '#fff',
                         borderColor: isDark ? '#3A3A3A' : '#F4F6F8',
                       }}
@@ -624,7 +631,7 @@ export default function RevRenderScreen() {
                         </Text>
                       </View>
                       <HouseImage uri={photo?.uri || photo?.s3url} height={130} />
-                    </TouchableOpacity>
+                    </PhotoPeekPressable>
                   ))}
                 </View>
               </View>
@@ -739,7 +746,12 @@ export default function RevRenderScreen() {
               borderColor: isDark ? '#3A3A3A' : '#F4F6F8',
             }}
           >
-            <HouseImage uri={selectedPhoto?.uri || selectedPhoto?.s3url} height={220} />
+            <PhotoPeekPressable
+              uri={selectedPhoto?.uri || selectedPhoto?.s3url}
+              label={selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}
+            >
+              <HouseImage uri={selectedPhoto?.uri || selectedPhoto?.s3url} height={220} />
+            </PhotoPeekPressable>
             <View className="px-4 py-3">
               <Text className="font-bold text-sm" style={{ color: isDark ? '#919EAB' : '#637381' }}>
                 {selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}

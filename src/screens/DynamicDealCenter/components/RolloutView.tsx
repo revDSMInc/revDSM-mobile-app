@@ -11,6 +11,7 @@ import type { CalculatorSchema } from '../types/calculator';
 import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
+import { dedupeDrops } from '../utils/drop-prices';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { SettingsService } from '../../../services/api/SettingsService';
@@ -336,18 +337,23 @@ function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void
   );
 }
 
-function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
+function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
   visible: boolean;
   dropPrice: number;
   method: string;
+  /** The lead / calculator BASE payment method (deal-center pick, e.g. AMEX). Kept
+   * separate from `method` (which is the active/pre-select plan and can become a
+   * secured drop's financing plan) so the lead's method always shows as its own row,
+   * even when Displaying a drop that was secured with a different (financing) plan. */
+  calculatorMethod: string;
   /** When reopening an already-recorded drop (Display), its saved values seed the
    * modal so the previously-chosen plan / down payment are shown, not a blank form. */
   existingDrop?: any | null;
   isLowesLead: boolean;
   plans: Record<string, DealPlan>;
   dropAddCategories: PayCategory[];
-  onSecure: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
-  onDecline: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
+  onSecure: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
+  onDecline: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
   onClose: () => void;
 }) {
   const { isDark } = useTheme();
@@ -355,8 +361,12 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
     ? [{ key: 'lowes_ach', label: 'ACH' }, { key: 'lowes_cc', label: 'CC' }]
     : [{ key: 'check', label: 'CK' }, { key: 'mcVisaDscvr', label: 'CC' }];
 
-  const [selectedPlan, setSelectedPlan] = useState(method);
-  const [addedPlans, setAddedPlans] = useState<string[]>(isFinancing(plans, method) ? [method] : []);
+  const [selectedPlan, setSelectedPlan] = useState(calculatorMethod);
+  const [addedPlans, setAddedPlans] = useState<string[]>(isFinancing(plans, calculatorMethod) ? [calculatorMethod] : []);
+  // The payment method chosen on the lead / rollout card — kept SEPARATELY from
+  // `selectedPlan` so it stays displayed as its own row even after the rep picks a
+  // different plan in the popup (it must not be replaced by the newly-selected one).
+  const [leadMethod, setLeadMethod] = useState(method);
   const [downText, setDownText] = useState('');
   const [showDown, setShowDown] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -366,14 +376,32 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
   // this an already-secured drop reopened empty (dropped its plan + down payment).
   useEffect(() => {
     if (!visible) return;
-    const savedMethod = existingDrop?.paymentMethod || method;
+    // A NEW drop defaults to ONLY the lead's method (`calculatorMethod`, e.g. AMEX) —
+    // it must NOT carry over the plan a PREVIOUS drop was secured with (that came in
+    // via `method`/activeMethod). Displaying an existing drop still seeds from that
+    // drop's own saved method + plans.
+    const savedMethod = existingDrop?.paymentMethod || calculatorMethod;
     const savedDown = Number(existingDrop?.downPayment) || 0;
+    // Restore EVERY plan the rep chose for this drop (Display parity): a secured/
+    // declined drop persists its full `paymentMethods` list, so reopening it shows
+    // all of them in Monthly Options — not just the one selected plan. Falls back
+    // to the single saved method for older records that stored only `paymentMethod`.
+    const savedPlans: string[] = (
+      Array.isArray(existingDrop?.paymentMethods) && existingDrop.paymentMethods.length
+        ? existingDrop.paymentMethods
+        : [savedMethod]
+    ).filter((k: string) => isFinancing(plans, k));
     setSelectedPlan(savedMethod);
-    setAddedPlans(isFinancing(plans, savedMethod) ? [savedMethod] : []);
+    setAddedPlans(savedPlans);
+    // The lead's method is always the calculator's BASE method (`calculatorMethod`),
+    // independent of the plan the rep selects AND of a secured drop's financing plan
+    // (which flows through `method`). So Displaying a financing-secured drop still
+    // shows the lead's basic method (e.g. AMEX) as its own row.
+    setLeadMethod(calculatorMethod);
     setDownText(savedDown > 0 ? String(savedDown) : '');
     setShowDown(savedDown > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, method, existingDrop]);
+  }, [visible, method, calculatorMethod, existingDrop]);
 
   const down = parseFloat(downText) || 0;
   const balance = Math.max(0, dropPrice - down);
@@ -381,6 +409,9 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
   const canSecure = !!selectedPlan && !downExceeds;
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
+  // The rep can add MULTIPLE plans to Monthly Options — adding appends to the
+  // list (deduped) and marks the new one selected; each can still be removed via
+  // swipe. Only the currently-selected plan is what Secure/Decline records.
   const addPlan = (key: string) => {
     setAddedPlans((prev) => (prev.includes(key) ? prev : [...prev, key]));
     setSelectedPlan(key);
@@ -459,6 +490,32 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
               {/* Monthly Options — financing plans, each showing its monthly on the balance.
                   Swipe a plan LEFT to delete it (matches the regular rollout's drop modal). */}
               <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 }}>Monthly Options</Text>
+              {/* Always show the LEAD-selected payment method as its own row.
+                  Financing plans render as their own rows below; a BASIC method
+                  (check / MC-VISA-DSCVR / AMEX / ACH etc.) has no financing row, so
+                  surface it here. Driven by `leadMethod` (not `selectedPlan`) so it
+                  stays visible even after the rep selects a different plan in the
+                  popup — the lead's method must not be replaced by the new pick. It
+                  is still selectable, and shows SELECTED only when it's the active plan. */}
+              {leadMethod && !isFinancing(plans, leadMethod) && (
+                <TouchableOpacity
+                  onPress={() => setSelectedPlan(leadMethod)}
+                  activeOpacity={0.9}
+                  style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: selectedPlan === leadMethod ? '#31D076' : '#F1F5F9', backgroundColor: selectedPlan === leadMethod ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <View style={{ flex: 1, marginRight: 8, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '900', color: selectedPlan === leadMethod ? '#0F172A' : '#94A3B8', marginRight: 6 }}>{planLabelOf(plans, leadMethod)}</Text>
+                    {selectedPlan === leadMethod && (
+                      <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: selectedPlan === leadMethod ? '#31D076' : '#E2E8F0', backgroundColor: selectedPlan === leadMethod ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                    {selectedPlan === leadMethod && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
+                  </View>
+                </TouchableOpacity>
+              )}
               <GestureHandlerRootView>
                 {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
                   const plan = plans[key] || ({} as DealPlan);
@@ -497,10 +554,10 @@ function DropOutcomeModal({ visible, dropPrice, method, existingDrop, isLowesLea
 
               {/* Actions — Decline / Secure This Price */}
               <View style={{ flexDirection: 'row', gap: 12 }}>
-                <TouchableOpacity onPress={() => onDecline({ paymentMethod: selectedPlan, downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity onPress={() => onDecline({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Decline</Text>
                 </TouchableOpacity>
-                <TouchableOpacity disabled={!canSecure} onPress={() => onSecure({ paymentMethod: selectedPlan, downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity disabled={!canSecure} onPress={() => onSecure({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '900', color: canSecure ? '#fff' : '#94A3B8' }}>Secure This Price</Text>
                 </TouchableOpacity>
               </View>
@@ -875,24 +932,20 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   };
 
   // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
-  // new one). Web parity (`handleDisplayDropAction` + `handleSecurePrice`'s
-  // same-price dedup): an explicit Display index wins; otherwise a brand-new drop at a
-  // price that ALREADY EXISTS updates that entry instead of appending a duplicate.
-  // Match by price REGARDLESS OF STATUS (not just declined): securing the same price
-  // "again and again" via + Nth Drop previously appended a fresh entry each time (the
-  // existing same-price entry was accepted, so a declined-only match missed it),
-  // stacking duplicate $400/$6,000 rows that then flooded the admin drops table. A
-  // drop price is a single negotiated number — two entries at the identical price are
-  // never meaningful — so only a genuinely-NEW price appends.
-  const resolveDropTargetIndex = () =>
-    pendingDropIndex >= 0
-      ? pendingDropIndex
-      : drops.findIndex((d) => Number(d.price ?? d.dropedPrice) === pendingDrop);
+  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a
+  // fresh drop via "+ Nth Drop" (pendingDropIndex < 0) always APPENDS a new entry
+  // — "1st Dropped Price", "2nd Dropped Price", … — even at the same price, so the
+  // rep sees every round they ran. Re-negotiating an existing row via its Display
+  // button (pendingDropIndex >= 0) edits THAT row in place. (The old same-price
+  // dedup collapsed distinct rounds into one row; the multiple-payment-methods
+  // duplication it guarded against is now handled by storing all plans on a single
+  // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
+  const resolveDropTargetIndex = () => pendingDropIndex;
 
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
   // open the Result Lead outcome modal carrying the drop price.
-  const secureDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
+  const secureDrop = (data: { paymentMethod: string; paymentMethods?: string[]; downPayment: number; balance: number }) => {
     // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
     // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
     const pricemarkup = markupLabel(pendingDrop, calculator.totals);
@@ -905,7 +958,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       return d.status === 'accepted' ? { ...d, status: 'declined' } : d;
     });
     if (targetIndex < 0) next.push(accepted); // genuinely-new price → append
-    onDropChange(calculator.id, next);
+    onDropChange(calculator.id, dedupeDrops(next));
     // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
     const uidS = user?._id || user?.id;
     if (uidS) {
@@ -937,7 +990,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
 
   // Decline the pending drop → record it declined (web shows a "Price Declined"
   // confirmation; the drop then lists as Declined and Result Lead stays available).
-  const declineDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
+  const declineDrop = (data: { paymentMethod: string; paymentMethods?: string[]; downPayment: number; balance: number }) => {
     const pricemarkup = markupLabel(pendingDrop, calculator.totals);
     const targetIndex = resolveDropTargetIndex();
     const declined = { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', pricemarkup, ...data };
@@ -946,7 +999,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const next = targetIndex >= 0
       ? drops.map((d, idx) => (idx === targetIndex ? { ...d, ...declined } : d))
       : [...drops, declined];
-    onDropChange(calculator.id, next);
+    onDropChange(calculator.id, dedupeDrops(next));
     // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
     const uidD = user?._id || user?.id;
     if (uidD) {
@@ -1402,7 +1455,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       <DropOutcomeModal
         visible={showDropModal}
         dropPrice={pendingDrop}
-        method={method}
+        // Pre-select the ACTIVE payment method when opening a fresh drop: the plan
+        // from the currently-accepted drop if one exists, else the calculator's
+        // method. So the popup opens with the method the rep is already on (shown in
+        // the rollout card / used on the last secured drop) highlighted — they can
+        // still switch it, and Secure/Decline saves whatever is selected.
+        method={activeMethod}
+        // Base lead/calculator method (e.g. AMEX) — always shown as its own row,
+        // even when Displaying a drop secured with a different financing plan.
+        calculatorMethod={method}
         existingDrop={pendingDropIndex >= 0 ? drops[pendingDropIndex] : null}
         isLowesLead={isLowesLead}
         plans={plans}

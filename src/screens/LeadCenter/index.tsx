@@ -961,7 +961,7 @@ export default function LeadCenterPage() {
           <View className="px-4">
             <View className="flex-row gap-[10%] mb-4">
               <View className="flex-col gap-4">
-                <Text className="text-base" style={{ color: colors.primary.main }}>
+                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadId}
@@ -1014,7 +1014,7 @@ export default function LeadCenterPage() {
               </View>
 
               <View className="flex-col gap-4">
-                <Text className="text-base" style={{ color: colors.primary.main }}>
+                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
