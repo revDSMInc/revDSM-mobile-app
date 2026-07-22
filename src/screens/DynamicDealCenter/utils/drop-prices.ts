@@ -33,6 +33,42 @@
  * Returns the SAME array reference when it is already valid, so this is safe to
  * call on every save and every hydrate without churning identity/re-renders.
  */
+/**
+ * Remove EXACT-duplicate drop rows, keeping the first occurrence.
+ *
+ * A drop is a distinct negotiation round — two rows that agree on price, status,
+ * down payment, balance and payment plan(s) are the SAME round recorded twice,
+ * never two meaningful rounds. Such duplicates crept in from a save/outcome race
+ * (the calculator's `dropPrice` was persisted by both the debounced calculator
+ * save AND the result-outcome payload, so a round could land twice) and surfaced
+ * as "I added 2 drops but see 4" and a phantom extra row auto-appearing on reopen.
+ *
+ * This is intentionally NARROW: it collapses only byte-for-byte-equal rows, so two
+ * genuinely different rounds (different price, status, plan, or down payment) are
+ * both kept and still list as "1st / 2nd Dropped Price". Applied on WRITE so a
+ * duplicate is never persisted, and on READ so already-corrupted records self-heal
+ * on open. Returns the SAME reference when nothing is dropped (no render churn).
+ */
+export function dedupeDrops<T extends Record<string, any>>(drops: T[] | null | undefined): T[] {
+  if (!Array.isArray(drops)) return [];
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const d of drops) {
+    const sig = [
+      Math.round(Number(d?.price ?? d?.dropedPrice ?? 0)),
+      d?.status ?? '',
+      Math.round(Number(d?.downPayment ?? 0)),
+      Math.round(Number(d?.balance ?? 0)),
+      d?.paymentMethod ?? '',
+      Array.isArray(d?.paymentMethods) ? d.paymentMethods.join('|') : '',
+    ].join('::');
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(d);
+  }
+  return out.length === drops.length ? drops : out;
+}
+
 export function normalizeSingleAcceptedDrop<T extends { status?: string }>(drops: T[] | null | undefined): T[] {
   if (!Array.isArray(drops)) return [];
 

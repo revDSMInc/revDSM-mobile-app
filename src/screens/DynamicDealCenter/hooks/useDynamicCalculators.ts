@@ -4,7 +4,7 @@ import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
-import { normalizeSingleAcceptedDrop } from '../utils/drop-prices';
+import { normalizeSingleAcceptedDrop, dedupeDrops } from '../utils/drop-prices';
 import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 
@@ -108,7 +108,7 @@ function tabSignature(tab: CalcTab): string {
   const dropSig = (tab.dropPrice || [])
     .map(
       (d: any) =>
-        `${d?.price ?? ''}:${d?.status ?? ''}:${d?.downPayment ?? ''}:${d?.balance ?? ''}:${d?.paymentMethod ?? ''}`
+        `${d?.price ?? ''}:${d?.status ?? ''}:${d?.downPayment ?? ''}:${d?.balance ?? ''}:${d?.paymentMethod ?? ''}:${Array.isArray(d?.paymentMethods) ? d.paymentMethods.join('|') : ''}`
     )
     .join(',');
   return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}`;
@@ -347,7 +347,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       paymentMethod: tab.paymentMethod,
       // Web parity (`ViewAllCalculators.js:1116-1123`): normalize to at most one
     // accepted drop at SAVE time, so no path can ever persist two SECURED rows.
-    dropPrice: normalizeSingleAcceptedDrop(tab.dropPrice),
+    dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(tab.dropPrice)),
       downPayment: tab.downPayment,
       discountPercentage: tab.discountPercentage,
       schemaSnapshotId: snapshotId(),
@@ -493,7 +493,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               paymentMethod: c.paymentMethod || undefined,
               // Repair records already corrupted by the pre-fix save race, which
               // otherwise render two SECURED rows on every reopen forever.
-              dropPrice: normalizeSingleAcceptedDrop(c.dropPrice),
+              dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(c.dropPrice)),
               downPayment: c.downPayment || 0,
               discountPercentage: Number(c.discountPercentage) || undefined,
               persisted: true,
