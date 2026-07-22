@@ -135,7 +135,12 @@ class UploadQueueManager {
         }
 
         const retryCount = (activeItem.retryCount || 0) + 1;
-        console.error(`[UploadQueue] Upload failed for item: ${activeItem.id} (attempt ${retryCount}):`, error);
+        // A transient failure that will be retried is NOT a hard error — logging it
+        // via console.error made React Native's LogBox pop a full-screen red
+        // "Console Error" overlay on every attempt, alarming the rep even though the
+        // photo uploads fine on the next retry. Use console.warn so it stays a quiet
+        // diagnostic; the permanent give-up below is what actually matters.
+        console.warn(`[UploadQueue] Upload failed for item: ${activeItem.id} (attempt ${retryCount}):`, error);
 
         if (retryCount >= 5) {
           // Permanent failure after 5 attempts while online (e.g. invalid file, server rejection) — drop this item
