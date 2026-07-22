@@ -50,7 +50,7 @@ function mount(useToken: boolean) {
     renderer!.update(
       React.createElement(Harness, {
         initialJobState: draft,
-        draftToken: useToken ? draft : undefined,
+        draftToken: useToken ? 'lead1:calc1' : undefined,
       }),
     );
   });
@@ -83,7 +83,7 @@ test('the same draft is not re-applied, so rep edits are never clobbered', () =>
   let renderer: TestRenderer.ReactTestRenderer;
   act(() => {
     renderer = TestRenderer.create(
-      React.createElement(Harness, { initialJobState: draft, draftToken: draft }),
+      React.createElement(Harness, { initialJobState: draft, draftToken: 'lead1:calc1' }),
     );
   });
   // Rep edits AFTER the draft applied.
@@ -92,7 +92,7 @@ test('the same draft is not re-applied, so rep edits are never clobbered', () =>
   });
   // A re-render with the SAME draft token must not restore over the edit.
   act(() => {
-    renderer!.update(React.createElement(Harness, { initialJobState: draft, draftToken: draft }));
+    renderer!.update(React.createElement(Harness, { initialJobState: draft, draftToken: 'lead1:calc1' }));
   });
   expect((api!.jobState as any)?.v_gutters?.t_gutters?.edited).toBe(true);
   act(() => renderer!.unmount());

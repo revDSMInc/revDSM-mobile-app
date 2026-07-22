@@ -30,7 +30,8 @@ interface VerticalSummaryTabProps {
   resolvedDocuments?: { agreements: any[]; orderSheets: any[] };
   setResolvedDocuments?: React.Dispatch<React.SetStateAction<{ agreements: any[]; orderSheets: any[] }>>;
   isDocUploadingRef?: React.MutableRefObject<boolean>;
-  onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<boolean>;
+  /** Resolves to the category's server documents (signed URLs), or null on failure. */
+  onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
