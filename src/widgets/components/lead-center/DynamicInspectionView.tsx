@@ -147,9 +147,17 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [replaceConfirm, setReplaceConfirm] = useState<ReplaceConfirm | null>(null);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
+  // "Discard new photo" inside the conflict screen confirms first ("Discard this
+  // photo?"). Rendered as an in-modal overlay (not a nested Modal) to avoid the
+  // iOS modal-over-modal bug, matching the static preview-discard pattern.
+  const [conflictDiscardConfirm, setConflictDiscardConfirm] = useState(false);
   // Web parity (dynamic-inspection-photos-dialog.js:763-870 "Discard this photo?"):
   // deleting a stored photo from the full-screen preview must confirm first.
   const [deleteConfirm, setDeleteConfirm] = useState<PreviewState | null>(null);
+  // Discarding the just-shot PENDING (un-tagged) photo also confirms first — static
+  // TagPhotoModal parity (`showDiscardConfirm`). Same "Discard this photo?" sheet as
+  // delete, but it throws away the un-tagged capture and reopens the camera.
+  const [discardPending, setDiscardPending] = useState(false);
   const [showExtraPicker, setShowExtraPicker] = useState(false);
   // Conflict "Move it somewhere else" → the displaced (existing) photo enters
   // pick-a-new-slot mode, reusing the move-photo grid (static TagPhotoModal parity).
@@ -338,13 +346,25 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
     setTimeout(flushPendingMove, 450);
   };
 
-  // Discard: throw away the just-captured (incoming) photo and reopen the camera.
-  // The existing photo in the slot is left untouched (user-specified behaviour).
+  // Discard: confirm first ("Discard this photo?"), then throw away the incoming
+  // photo and reopen the camera. The existing photo in the slot is left untouched.
   const handleConflictDiscard = () => {
     if (!conflict) return;
+    setConflictDiscardConfirm(true);
+  };
+
+  const confirmConflictDiscard = () => {
+    setConflictDiscardConfirm(false);
     setConflict(null);
     clearPending();
     setTimeout(() => openCapture(), 120);
+  };
+
+  // Close the conflict screen without discarding (X / "Pick different slot" / back),
+  // also dismissing any open discard-confirm overlay so it can't linger on reopen.
+  const closeConflict = () => {
+    setConflictDiscardConfirm(false);
+    setConflict(null);
   };
 
   // Ask before deleting — matches web's "Discard this photo?" confirm and the
@@ -366,6 +386,14 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
       });
     }
     setDeleteConfirm(null);
+  };
+
+  // Confirmed discard of the pending photo → throw it away and reopen the camera
+  // (continuous capture), matching the static "Discard & Retake" flow.
+  const confirmDiscardPending = () => {
+    setDiscardPending(false);
+    setPendingPhoto(null);
+    setTimeout(() => openCapture(), 120);
   };
 
   const handleTagAsExtraClick = (category: InspectionCategory) => {
@@ -465,7 +493,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => setPendingPhoto(null)}
+                onPress={() => setDiscardPending(true)}
                 style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, padding: 6 }}
               >
                 <Icon name="trash-can-outline" size={20} color="#fff" />
@@ -550,9 +578,10 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
             <View style={{ position: 'absolute', bottom: insets.bottom + 24, left: 16, right: 16, flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity
                 onPress={() => {
+                  // Close the preview, then confirm before throwing the shot away
+                  // (static "Discard this photo?" parity).
                   setPreviewState(null);
-                  setPendingPhoto(null);
-                  setTimeout(() => openCapture(), 120);
+                  setDiscardPending(true);
                 }}
                 style={{ flex: 1, height: 52, borderRadius: 14, borderWidth: 2, borderColor: 'rgba(239,68,68,0.5)', backgroundColor: 'rgba(239,68,68,0.1)', alignItems: 'center', justifyContent: 'center' }}
               >
@@ -591,15 +620,15 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
       {/* Slot-conflict screen — static TagPhotoModal parity (renderConflictScreen).
           Side-by-side INCOMING vs EXISTING + Move / Keep both / Discard. */}
-      <Modal visible={!!conflict} animationType="slide" onRequestClose={() => setConflict(null)} onDismiss={flushPendingMove}>
+      <Modal visible={!!conflict} animationType="slide" onRequestClose={closeConflict} onDismiss={flushPendingMove}>
         <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top || 16, paddingBottom: insets.bottom }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
-            <TouchableOpacity onPress={() => setConflict(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={closeConflict} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Icon name="close" size={24} color="rgba(255,255,255,0.7)" />
             </TouchableOpacity>
           </View>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-            <TouchableOpacity onPress={() => setConflict(null)} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+            <TouchableOpacity onPress={closeConflict} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
               <Icon name="chevron-left" size={20} color={GREEN} />
               <Text style={{ color: GREEN, fontWeight: '900', fontSize: 12, marginLeft: 2 }}>Pick different slot</Text>
             </TouchableOpacity>
@@ -655,6 +684,37 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
               </TouchableOpacity>
             </View>
           </ScrollView>
+
+          {/* "Discard this photo?" confirm — in-modal overlay (not a nested Modal, to
+              avoid the iOS modal-over-modal black screen) shown when the rep taps
+              "Discard new photo". */}
+          {conflictDiscardConfirm && (
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+              <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#0D1F1A', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                  <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon name="delete-outline" size={24} color="#EF4444" />
+                  </View>
+                  {!!conflict?.asset?.uri && (
+                    <Image source={{ uri: conflict.asset.uri }} style={{ width: 48, height: 48, borderRadius: 8 }} resizeMode="cover" />
+                  )}
+                </View>
+                <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>Discard this photo?</Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
+                  This photo will be permanently deleted. You'll need to retake it to capture this shot.
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity onPress={() => setConflictDiscardConfirm(false)} style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={confirmConflictDiscard} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: '#EF4444', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <Icon name="delete-outline" size={16} color="#fff" />
+                    <Text style={{ fontWeight: '700', color: '#fff' }}>Discard</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       </Modal>
 
@@ -680,6 +740,37 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                 <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={confirmDeleteFromPreview} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: '#EF4444', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Icon name="delete-outline" size={16} color="#fff" />
+                <Text style={{ fontWeight: '700', color: '#fff' }}>Discard</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Discard-pending confirmation — static TagPhotoModal parity (`showDiscardConfirm`):
+          the just-shot, un-tagged photo is only thrown away after this "Discard this
+          photo?" confirm (from the banner trash or preview "Discard & Retake"). */}
+      <Modal visible={discardPending} transparent animationType="fade" onRequestClose={() => setDiscardPending(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#0D1F1A', borderRadius: 20, padding: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="delete-outline" size={24} color="#EF4444" />
+              </View>
+              {!!pendingPhoto?.uri && (
+                <Image source={{ uri: pendingPhoto.uri }} style={{ width: 48, height: 48, borderRadius: 8 }} resizeMode="cover" />
+              )}
+            </View>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>Discard this photo?</Text>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
+              This photo will be permanently deleted. You'll need to retake it to capture this shot.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity onPress={() => setDiscardPending(false)} style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={confirmDiscardPending} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: '#EF4444', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <Icon name="delete-outline" size={16} color="#fff" />
                 <Text style={{ fontWeight: '700', color: '#fff' }}>Discard</Text>
               </TouchableOpacity>
