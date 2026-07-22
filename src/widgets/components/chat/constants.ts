@@ -11,8 +11,15 @@ export const STATUS_CONFIG: any = {
   completed: { label: 'Completed', color: '#10b981', textColor: '#fff' },
   cancelled: { label: 'Cancelled', color: '#ef4444', textColor: '#fff' },
   onHold: { label: 'On Hold', color: '#f59e0b', textColor: '#fff' },
-  selfGenerated: { label: 'Self Generated', color: '#000000', textColor: '#fff' },
-  lfLead: { label: 'LF Lead', color: '#000000', textColor: '#fff' },
-  lf: { label: 'LF Lead', color: '#000000', textColor: '#fff' },
-  notHit: { label: 'Not Hit', color: '#000000', textColor: '#fff' },
+  selfGenerated: { label: 'Self Generated', color: '#919EAB', textColor: '#fff' },
+  lfLead: { label: 'Issued Lead', color: '#4CBB17', textColor: '#fff' },
+  lf: { label: 'Issued Lead', color: '#4CBB17', textColor: '#fff' },
+  issued: { label: 'Issued Lead', color: '#4CBB17', textColor: '#fff' },
+  confirmedIssued: { label: 'Issued Lead', color: '#4CBB17', textColor: '#fff' },
+  notHit: { label: 'Not Hit', color: '#919EAB', textColor: '#fff' },
 };
+
+export const LEAD_TYPE_BADGE = {
+  issued: { label: 'Issued Lead', color: '#4CBB17', textColor: '#FFFFFF' },
+  selfGenerated: { label: 'Self Generated', color: '#919EAB', textColor: '#FFFFFF' },
+} as const;
