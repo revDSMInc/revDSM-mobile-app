@@ -4,6 +4,9 @@ import {
   getScheduledDateTime,
   isSelfGeneratedLead,
   isResumeAppointment,
+  isBeforeTimeWindow,
+  isGpsBypassActive,
+  isEarlyStartBypassActive,
   GEOFENCE_RADIUS_MILES,
 } from './location-util';
 import { logEvent } from '../services/api/LoggerService';
@@ -60,35 +63,37 @@ export function isLeadInGeofence(lead: any, userLocation: UserLocation): boolean
   );
 }
 
-/** Leads list / job card — mirrors Leads/index handleActionPress + useJobCard resume/review rules */
+/** Leads list / job card — mirrors web getJobStatus + useJobCard.handleImageButtonClick dispatch */
 export function planStartAppointment(lead: any, userLocation: UserLocation): AppointmentLogPlan {
-  const isInRange = isLeadInGeofence(lead, userLocation);
+  const rawInRange = isLeadInGeofence(lead, userLocation);
+  // GPS bypass replaces the physical geofence check (web parity)
+  const isInRange = rawInRange || isGpsBypassActive(lead);
+
   const isSelfGen = isSelfGeneratedLead(lead);
   const isResumeLead = isResumeAppointment(lead);
 
   const scheduledTime = getScheduledDateTime(lead);
-  const nowTime = Date.now();
-  const fifteenMinBefore = scheduledTime ? scheduledTime.getTime() - 15 * 60 * 1000 : null;
-  const oneHourAfter = scheduledTime ? scheduledTime.getTime() + 60 * 60 * 1000 : null;
-  const isBeforeWindow = fifteenMinBefore !== null ? nowTime < fifteenMinBefore : false;
-  const isWithinWindow =
-    fifteenMinBefore !== null && oneHourAfter !== null
-      ? nowTime >= fifteenMinBefore && nowTime <= oneHourAfter
-      : false;
+  const beforeWindow = isBeforeTimeWindow(scheduledTime);
+  // Early-start bypass replaces the time-window gate (only meaningful on-site)
+  const earlyStartActive =
+    (lead?.earlyStart === true || isEarlyStartBypassActive(lead)) && isInRange;
 
   let logModule: LeadLogModule = '';
   if (isResumeLead) {
-    const shouldResume = isSelfGen ? isInRange : isInRange && isWithinWindow;
-    logModule = shouldResume ? 'lead_resume' : 'lead_review';
+    // Checked in before → GPS alone decides Resume vs Review (time window ignored)
+    logModule = isInRange ? 'lead_resume' : 'lead_review';
+  } else if (isSelfGen) {
+    // Self-gen never checked in → on-site starts; off-site is Preview (no action)
+    if (isInRange) logModule = 'lead_check_in';
   } else {
-    const shouldCheckIn = isSelfGen
-      ? isInRange && !isBeforeWindow
-      : isInRange && (isWithinWindow || (!isBeforeWindow && !isWithinWindow));
-    if (shouldCheckIn) logModule = 'lead_check_in';
+    // Regular never checked in → on-site + not-too-early starts; else Preview (no action)
+    if (isInRange && (!beforeWindow || earlyStartActive)) logModule = 'lead_check_in';
   }
 
   const isResulted = !['lfLead', 'selfGenerated', 'scheduled'].includes(lead?.status || '');
-  const shouldCallWork = !isResulted && !isBeforeWindow;
+  // Only the actionable states (check-in / resume / review) hit the work endpoint;
+  // a Preview button is disabled and never reaches here.
+  const shouldCallWork = !isResulted && logModule !== '';
 
   return {
     logModule,
@@ -138,6 +143,23 @@ export async function logLeadActionClick(
 ) {
   const userId = user?._id || user?.id;
   if (!userId || !logModule) return;
+
+  // Web parity (useJobCard.handleImageButtonClick): attach the ACTIVE bypass +
+  // its reason to the check-in / resume log so the Forever Record shows which
+  // manager override was in effect when the rep arrived. Review carries no
+  // bypass meta (matching web — a review is off-site, no override was used).
+  const bypassMeta: Record<string, unknown> = {};
+  if (logModule === 'lead_check_in' || logModule === 'lead_resume') {
+    if (isGpsBypassActive(lead)) {
+      bypassMeta.usedGpsBypass = true;
+      bypassMeta.gpsBypassReason = lead?.bypass?.gpsBypassReason || null;
+    }
+    if (isEarlyStartBypassActive(lead)) {
+      bypassMeta.usedEarlyStartBypass = true;
+      bypassMeta.earlyStartBypassReason = lead?.bypass?.earlyStartReason || null;
+    }
+  }
+
   await logEvent('click', {
     user_id: userId,
     module_type: logModule,
@@ -147,6 +169,7 @@ export async function logLeadActionClick(
       leadId: lead._id || lead.id,
       hasExistingImages: (lead.salesPhotos || []).length > 0,
       isSelfGenerated: isSelfGeneratedLead(lead),
+      ...bypassMeta,
       ...extraMeta,
     },
   });
