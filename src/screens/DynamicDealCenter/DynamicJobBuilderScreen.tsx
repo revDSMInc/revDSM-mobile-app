@@ -20,6 +20,12 @@ import { FlashMessage } from '../../config/message';
 import { LeadService } from '../../services/api/leads';
 import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
 import { buildCalculatorOutcomePayload } from './utils/build-outcome-payload';
+import {
+  loadResolvedOutcomeDocuments,
+  fetchOutcomeDocumentRows,
+  resolveOutcomeDocRows,
+} from './utils/outcome-documents';
+import { buildDocumentPayloads } from './utils/document-payloads';
 import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedReason } from './utils/finalize-gate';
 import { useAuth } from '../../hooks/useAuth';
 import { logRolloutAndDropSummary } from '../../utils/activity-log/rollout-summary';
@@ -168,16 +174,14 @@ function DynamicJobBuilderInner({
             ? deserializeDynamicJobStateFromStorage(savedState, initialConfig)
             : undefined;
 
-        // Return the draft state IMMEDIATELY, handing the raw document rows to a
-        // SEPARATE query (below) for secure-URL / download resolution. Previously
-        // this queryFn awaited those slow doc calls — including a lead-scoped
-        // `downloadOutcomeDocuments` that 404s when there are no saved docs — before
-        // returning, so `initialJobState` (the draft) couldn't reach the session
-        // until the whole doc chain settled. That is the "reopen shows empty, then
-        // fills in a moment later" the rep sees. Draft hydration must not wait on docs.
-        return { initialJobState: jobState, rawDocs: outcome?.leadOutcomeDocuments || null };
+        // Return the draft state IMMEDIATELY. Documents are resolved by a SEPARATE
+        // query (below) which re-reads this same endpoint — this one must not await
+        // the signed-URL round-trip, or `initialJobState` (the draft) can't reach the
+        // session until the whole doc chain settles. That is the "reopen shows empty,
+        // then fills in a moment later" the rep sees.
+        return { initialJobState: jobState };
       } catch {
-        return { initialJobState: undefined, rawDocs: null };
+        return { initialJobState: undefined };
       }
     },
     // Edit mode supplies the (already-deserialized) state from the PortalJobBuilder
@@ -199,82 +203,21 @@ function DynamicJobBuilderInner({
     refetchOnMount: 'always',
   });
 
-  // Documents resolve in a SEPARATE, non-blocking query — this is the slow work
-  // (secure-URL batch + the `downloadOutcomeDocuments` fallback that 404s when no
-  // docs exist) that used to gate draft hydration. It runs only after the outcome
-  // GET has landed (so `outcomeData.rawDocs` is available) and never delays the
-  // draft. A doc failure leaves the previously-set documents untouched.
-  // Non-edit (create/reopen) path only: resolve the calculator outcome's echoed
-  // `leadOutcomeDocuments` (S3 refs → secure URLs). Edit mode does NOT use this — it
-  // reads documents lead-scoped via `downloadOutcomeDocuments` below (web parity, see
-  // that query). Feeding the parent's `rawDocsOverride` (savedOutcome.jobBuilderDocuments)
-  // here showed agreements the rep had already DELETED: that field is not pruned on
-  // delete, whereas `downloadOutcomeDocuments` reflects deletions — which is exactly
-  // why the mobile summary listed a removed agreement that the web (which reads
-  // `downloadOutcomeDocuments`) correctly hid.
-  const rawDocs = outcomeData?.rawDocs;
+  // Documents resolve in a SEPARATE, non-blocking query — resolving S3 refs to signed
+  // URLs is the slow work that used to gate draft hydration, so it never delays the
+  // draft and a doc failure leaves the previously-set documents untouched.
+  //
+  // Non-edit (create/reopen) path only: reads `leadOutcomeDocuments` from the
+  // CALCULATOR-scoped outcome. Edit mode does NOT use this — it reads documents
+  // lead-scoped via `downloadOutcomeDocuments` below (web parity, see that query).
+  // Feeding the parent's `rawDocsOverride` (savedOutcome.jobBuilderDocuments) here
+  // showed agreements the rep had already DELETED: that field is not pruned on delete,
+  // whereas the outcome read reflects deletions.
   const { data: resolvedDocumentsData } = useQuery({
     queryKey: ['leadOutcomeDocs', leadId, calcId],
-    queryFn: async () => {
-      let resolvedDocuments: { agreements: any[]; orderSheets: any[] } = { agreements: [], orderSheets: [] };
-      try {
-        if (rawDocs) {
-          const all = [
-            ...((rawDocs.agreements || []) as any[]).map((d) => ({ ...d, _group: 'agreement' })),
-            ...((rawDocs.orderSheets || []) as any[]).map((d) => ({ ...d, _group: 'orderSheet' })),
-          ];
-          const paths = all
-            .map((d) => ({ filePath: d.filePath, bucketName: d.bucketName }))
-            .filter((p) => p.filePath && p.bucketName);
-          if (all.length) {
-            let urls: any[] = [];
-            if (paths.length) {
-              try {
-                const urlRes = await LeadService.getSecureUrls(paths);
-                urls = (urlRes.data?.data || urlRes.data || []) as any[];
-              } catch (e) {
-                console.warn('[DynamicJobBuilder] secure URL resolution failed:', e);
-              }
-            }
-            const mapped = all.map((d) => {
-              const u = urls.find((x) => x.filePath === d.filePath);
-              const type = d.documentType || d._group;
-              return {
-                uri: u?.secureUrl || u?.url || d.filePath,
-                name: d.name || (type === 'agreement' ? 'Agreement' : 'Order Sheet'),
-                serverId: d._id,
-                filePath: d.filePath,
-                bucketName: d.bucketName,
-                contentType: d.fileData?.contentType,
-                isNew: false,
-                documentType: type,
-              };
-            });
-            resolvedDocuments = {
-              agreements: mapped.filter((m) => m.documentType === 'agreement'),
-              orderSheets: mapped.filter((m) => m.documentType === 'orderSheet'),
-            };
-          }
-        }
-      } catch (e) {
-        console.warn('[DynamicJobBuilder] doc resolution failed:', e);
-      }
-
-      // NOTE: web (JobBuilderContext.loadCalculatorDraft) does NOT fetch documents
-      // at reopen — the draft load is a single outcome GET. `downloadOutcomeDocuments`
-      // is a SUBMIT-only call on web (TabbedCalculator onClose 'complete', to pre-fetch
-      // base64 for re-upload), never a reopen call. Mobile previously fell back to it
-      // here whenever the outcome echoed no S3 doc rows, which 404s for every lead with
-      // no saved docs and added a failing round-trip on each reopen — the delayed-draft
-      // symptom the rep saw. Removed for web parity: with no echoed docs this query now
-      // resolves instantly with no network call. Previously-uploaded docs still display
-      // from the outcome's echoed `leadOutcomeDocuments` (resolved above); they are also
-      // re-fetched at submit exactly like web.
-
-      return resolvedDocuments;
-    },
-    // Only after the outcome GET has landed (rawDocs available), and NEVER in edit
-    // mode — edit fetches docs lead-scoped via `editDocsData` below (web parity).
+    queryFn: () => loadResolvedOutcomeDocuments(leadId, calcId),
+    // Runs once the draft's outcome GET has landed, and NEVER in edit mode — edit
+    // fetches docs lead-scoped via `editDocsData` below (web parity).
     enabled: Boolean(leadId && calcId) && !isEdit && isOutcomeFetched,
     staleTime: 0,
     gcTime: 0,
@@ -355,6 +298,16 @@ function DynamicJobBuilderInner({
     initialConfig,
     dealCenterData,
     initialJobState: hydratedInitialJobState,
+    // Web parity (`stateResetKey`): restore the saved draft ONCE per calculator
+    // session, exactly like web's `beginSession` → `loadCalculatorDraft` → one
+    // `setStateRestoreKey` bump. Keyed by (leadId, calcId) rather than the fetched
+    // object so that:
+    //   • the draft ALWAYS applies on first load, even if something wrote to job state
+    //     while the outcome GET was still in flight (the blank-tab bug), and
+    //   • later refetches of this same outcome (e.g. the invalidation after a document
+    //     upload) do NOT restore over the rep's in-progress edits.
+    // Edit mode keeps its existing behaviour — its state arrives as a prop.
+    draftToken: isEdit ? undefined : `${leadId || ''}:${calcId || ''}`,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
@@ -500,8 +453,17 @@ function DynamicJobBuilderInner({
     saveInFlightRef.current = true;
     autoSaveDirtyRef.current = false;
     try {
-      const { agreements: _a, orderSheets: _o, ...stateNoDocs } = (jobState || {}) as any;
-      const dynamicJobState = serializeDynamicJobStateForStorage(stateNoDocs, initialConfig, dealCenterData);
+      // Documents ride ALONG WITH the draft — do NOT strip them.
+      //
+      // Web keeps its agreements / order sheets at `jobState.agreements` /
+      // `.orderSheets` (`dynamic-job-builder.js#handleAgreementDocumentsChange` →
+      // `makeJobBuilderDocsDurableForDraft`), and the storage serializer passes both
+      // keys through verbatim (`ROOT_PASSTHROUGH_KEYS`). That draft copy is what the
+      // summary renders (`existingAgreements={jobState?.agreements}`) — on web AND on
+      // mobile. Stripping them here meant every 2s autosave OVERWROTE the saved draft
+      // with a doc-less copy, so a web-attached agreement disappeared from the deal on
+      // the next open, and a mobile-attached one was never visible to web at all.
+      const dynamicJobState = serializeDynamicJobStateForStorage(jobState || {}, initialConfig, dealCenterData);
       const configId = (initialConfig as any)?.id || null;
       // Web parity (JobBuilderContext.buildSavePayload): persist which sections
       // already had their auto-populated fields logged, so a reopen dedups them
@@ -1003,15 +965,16 @@ function DynamicJobBuilderInner({
       }
 
       // scheduleTime rides inside jobBuilder (web parity); installDate/timeWindow
-      // are also surfaced flat. Agreements/order-sheets are NOT re-sent here — they
-      // were already uploaded to the outcome as base64 PDFs; echoing them back would
-      // trip the backend's "file required" validation. Strip them from jobBuilder.
-      const { agreements: _a, orderSheets: _o, ...jobBuilderNoDocs } = (jobState || {}) as any;
-
+      // are also surfaced flat. The agreement / order-sheet entries stay ON the
+      // state: they are durable server REFERENCES (serverId + filePath, resolved by
+      // handleUploadDocs), not base64 bodies, so nothing is re-uploaded and nothing
+      // trips the backend's "file required" validation — they simply keep the
+      // submitted record pointing at the documents, exactly like web's serialized
+      // `jobState` does (`ROOT_PASSTHROUGH_KEYS`).
       // Serialize once (runtime ids → storage keys) — reused by both the outcome
       // finalize PUT and the /job-builder POST so both persist the identical state.
       const dynamicJobState = serializeDynamicJobStateForStorage(
-        jobBuilderNoDocs,
+        jobState || {},
         initialConfig,
         dealCenterData
       );
@@ -1055,15 +1018,19 @@ function DynamicJobBuilderInner({
       // completed job. The submitted state is persisted below by the /job-builder
       // POST and the lead-scoped outcome mirror, which a reopen also reads.
 
-      // Documents are NOT sent with the /job-builder POST. handleUploadDocs already
-      // uploaded the agreement/order-sheet to the outcome eagerly when it was signed,
-      // and the backend files those outcome documents into JobBuilderDocument itself
-      // (what the resulted contract reads via `lead.jobBuilderDocuments`). Re-sending
-      // them here as an explicit top-level `agreements`/`orderSheets` array produced a
-      // SECOND JobBuilderDocument row for the same PDF — the "two agreements submitted"
-      // bug. The amendment (edit) view, which was the real gap, is fixed separately by
-      // hydrating `resolvedDocuments` from the parent's outcome (`rawDocsOverride`),
-      // not by re-uploading here.
+      // Documents for the /job-builder POST — web parity (TabbedCalculator finalize).
+      // Web converts every file on `jobState.agreements` / `.orderSheets` to a base64
+      // PDF and submits them at the top level alongside the serialized jobState; mobile
+      // now does the same (`buildDocumentPayloads`). Note this is the JobBuilderDocument
+      // collection — the LeadOutcomeDocument rows were already created eagerly by
+      // handleUploadDocs / the sign endpoint, which is why the outcome mirror below
+      // still sends FIELDS ONLY.
+      const documentPayloads = await buildDocumentPayloads({
+        agreements: jobState?.agreements,
+        orderSheets: jobState?.orderSheets,
+        leadId,
+        isSale,
+      });
 
       // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
       // `jobState` (web TabbedCalculator payload). The previous
@@ -1099,18 +1066,43 @@ function DynamicJobBuilderInner({
           timeWindow: jobState?.scheduleTime?.timeWindow,
           originalContractPrice: rd.contractPrice ?? rd.originalContractPrice,
           lastPriceQuoted: rd.contractPrice ?? rd.lastPriceQuoted,
-          ...(validLFCalculator && { LFCalculator: validLFCalculator }),
+          // `POST /lead/v1/{leadId}/job-builder` reads the calculator from the
+          // LOWERCASE `lfCalculator` key (LeadHandler.submitJobBuilder). The uppercase
+          // `LFCalculator` the frontend historically sent is SILENTLY IGNORED, so the
+          // calculator never landed on the submitted job. Send lowercase (what the
+          // handler reads) and keep uppercase for any consumer still reading it.
+          ...(validLFCalculator && {
+            lfCalculator: validLFCalculator,
+            LFCalculator: validLFCalculator,
+          }),
         },
         jobState: dynamicJobState,
         isDynamic: true,
         configId,
         configSnapshotId: configId || 'dynamic',
+        // Web parity (TabbedCalculator `action === 'complete'`): the submit carries the
+        // documents at the TOP LEVEL as base64 PDFs — `{ name: '', file, type }` — next
+        // to the serialized jobState, with BOTH keys always present. Built from
+        // jobState.agreements / .orderSheets, and on a non-Sale result the agreements
+        // are filed as order sheets (web's `data.leadData?.result === 'Sale'` branch).
+        agreements: documentPayloads.agreements,
+        orderSheets: documentPayloads.orderSheets,
       };
 
-      // Full Complete-Job payload (POST /lead/v1/{leadId}/job-builder).
+      // Full Complete-Job payload (POST /lead/v1/{leadId}/job-builder). The document
+      // bodies are elided — stringifying multi-MB base64 for a log line is exactly the
+      // kind of heap spike that used to crash Submit.
       console.log(
         `[COMPLETE JOB PAYLOAD] POST /lead/v1/${leadId}/job-builder\n` +
-          JSON.stringify(payload, null, 2)
+          JSON.stringify(
+            {
+              ...payload,
+              agreements: documentPayloads.agreements.map((d) => ({ ...d, file: `<base64 ${d.file.length} chars>` })),
+              orderSheets: documentPayloads.orderSheets.map((d) => ({ ...d, file: `<base64 ${d.file.length} chars>` })),
+            },
+            null,
+            2
+          )
       );
 
       if (leadId) {
@@ -1145,10 +1137,10 @@ function DynamicJobBuilderInner({
           // the /job-builder POST above, which populates the separate
           // JobBuilderDocument collection. This mirror carries FIELDS only.
           console.log(
-            `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
+            `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome/${calcId}\n` +
               JSON.stringify(outcomePayload, null, 2)
           );
-          await LeadService.updateLeadOutcome(leadId, outcomePayload);
+          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, outcomePayload);
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
         }
@@ -1195,15 +1187,20 @@ function DynamicJobBuilderInner({
   // source, read back via downloadOutcomeDocuments / leadOutcomeDocuments). We also
   // send the SERIALIZED jobBuilder.dynamicJobState + Sale context so the field state
   // and result aren't clobbered. Docs are sale-only, so result/status are 'Sale'
-  // (matches the working normal JB SummarySection payload). Returns true on success.
+  // (matches the working normal JB SummarySection payload). Resolves to the
+  // category's documents as the server now holds them, or null if the save failed.
   const handleUploadDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet', payloads: any[]) => {
-      if (!leadId || !payloads?.length) return false;
+      if (!leadId || !payloads?.length) return null;
       try {
         const rootKey = cat === 'agreement' ? 'agreements' : 'orderSheets';
-        const { agreements: _a, orderSheets: _o, ...stateNoDocs } = (jobState || {}) as any;
+        // The NEW base64 payloads go at the TOP LEVEL of this PUT — that is what
+        // creates the LeadOutcomeDocument rows. The draft copy under
+        // `jobBuilder.dynamicJobState` is serialized from the state as-is, documents
+        // included, so this write never blanks the documents already recorded there
+        // (see performAutoSave for why that matters).
         const dynamicJobState = serializeDynamicJobStateForStorage(
-          stateNoDocs,
+          jobState || {},
           initialConfig,
           dealCenterData
         );
@@ -1221,20 +1218,42 @@ function DynamicJobBuilderInner({
           },
           [rootKey]: payloads,
         };
-        // Full document-submit payload (PUT /lead/v1/{leadId}/outcome). Includes the
+        // Full document-submit payload (PUT /lead/v1/{leadId}/outcome/{calcId}). Includes the
         // base64 PDF under [rootKey][i].file, so this log line is large.
         console.log(
-          `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome\n` +
+          `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome/${calcId}\n` +
             JSON.stringify(docSubmitPayload, null, 2)
         );
-        await LeadService.updateLeadOutcome(leadId, docSubmitPayload);
-        return true;
+        await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, docSubmitPayload);
+
+        // Re-sync from the server (web `DocumentUploadDialog.syncFromServer`): read
+        // the lead's document rows back and resolve them to signed URLs. The caller
+        // stores THESE in `jobState.<rootKey>` so the draft carries durable,
+        // cross-platform references (serverId + filePath) instead of a device-local
+        // `file://` path — which is what lets web render a mobile-attached agreement
+        // and lets a later delete actually reach the server (it needs the serverId).
+        const rows = await fetchOutcomeDocumentRows(leadId, calcId);
+        const resolved = await resolveOutcomeDocRows(rows);
+        return resolved[rootKey] || [];
       } catch (e) {
         console.warn('[DynamicJobBuilder] doc upload failed:', e);
-        return false;
+        return null;
       }
     },
     [leadId, calcId, jobState, initialConfig, dealCenterData, calculatorResultData]
+  );
+
+  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
+  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
+  // that row is what keeps a generated agreement from being stored twice.
+  const handleRefreshDocs = useCallback(
+    async (cat: 'agreement' | 'orderSheet') => {
+      if (!leadId || !calcId) return null;
+      const rows = await fetchOutcomeDocumentRows(leadId, calcId);
+      const resolved = await resolveOutcomeDocRows(rows);
+      return resolved[cat === 'agreement' ? 'agreements' : 'orderSheets'] || [];
+    },
+    [leadId, calcId]
   );
 
   const isLastStep = currentTabIndex === nonSummaryTabs.length;
@@ -1374,6 +1393,7 @@ function DynamicJobBuilderInner({
               setResolvedDocuments={setResolvedDocuments}
               isDocUploadingRef={isDocUploadingRef}
               onUploadDocs={handleUploadDocs}
+              onRefreshDocs={handleRefreshDocs}
             />
           ) : (
             <View style={{ alignItems: 'center', paddingTop: 60 }}>

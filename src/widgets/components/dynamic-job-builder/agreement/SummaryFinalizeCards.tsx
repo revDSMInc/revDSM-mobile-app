@@ -36,7 +36,9 @@ interface SummaryFinalizeCardsProps {
   isDocUploadingRef?: React.MutableRefObject<boolean>;
   // Persists the base64 doc payloads via the screen (which holds config +
   // dealCenterData to serialize field state and writes the web-shaped outcome).
-  onUploadDocs?: (cat: DocCategory, payloads: any[]) => Promise<boolean>;
+  onUploadDocs?: (cat: DocCategory, payloads: any[]) => Promise<any[] | null>;
+  /** Re-reads the lead's stored documents for a category (no upload). */
+  onRefreshDocs?: (cat: DocCategory) => Promise<any[] | null>;
   productKey?: string;
   verticalState?: any;
   jobState?: any;
@@ -56,10 +58,24 @@ const isPdf = (f: any) =>
   (f?.contentType || f?.mimeType || '').includes('pdf') ||
   String(f?.name || f?.uri || f?.url || '').toLowerCase().endsWith('.pdf');
 const fileSrc = (f: any) => f?.secureUrl || f?.displayUrl || f?.url || f?.uri || f?.thumbnailUrl || f?.file;
-// Stable identity for reconciling a document across the scanner round-trip: a server
-// doc keeps its serverId; a freshly-scanned/uploaded one falls back to url/uri/name.
+// Stable identity for reconciling a document across the scanner round-trip AND for
+// de-duplicating the two display sources: a server doc keeps its serverId (or its
+// immutable S3 filePath); a freshly-scanned one falls back to url/uri/name.
 const docIdentity = (d: any): string =>
-  String(d?.serverId ?? d?.id ?? d?.url ?? d?.uri ?? d?.name ?? '');
+  String(d?.serverId ?? d?._id ?? d?.filePath ?? d?.id ?? d?.url ?? d?.uri ?? d?.name ?? '');
+// The same document reaches us from two places once it is on the server: the draft
+// copy on `jobState` (what web reads, and what survives a reopen) and the freshly
+// signed copy from the outcome query. Keep the FIRST occurrence — callers pass the
+// server-resolved list first, so the live signed URL wins over the draft's stale one.
+const dedupeDocs = (files: any[]): any[] => {
+  const seen = new Set<string>();
+  return files.filter((f) => {
+    const key = docIdentity(f);
+    if (!key || seen.has(key)) return !key;
+    seen.add(key);
+    return true;
+  });
+};
 
 /**
  * Appointment + Agreement + Order-sheet cards for the dynamic Job Builder summary
@@ -79,6 +95,7 @@ export function SummaryFinalizeCards({
   setResolvedDocuments,
   isDocUploadingRef,
   onUploadDocs,
+  onRefreshDocs,
   productKey,
   verticalState,
   jobState,
@@ -115,13 +132,16 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // Display = resolved (server / just-uploaded) docs + any flat local drafts.
+  // Display = server-resolved docs first (live signed URLs), then the draft copy
+  // held on `jobState` (web's `existingAgreements={jobState?.agreements}`), deduped
+  // so a document that exists in both — the normal case once it has uploaded — is
+  // listed once.
   const agreementFiles = useMemo(
-    () => [...toFlatFiles(agreements), ...(resolvedDocuments?.agreements || [])],
+    () => dedupeDocs([...(resolvedDocuments?.agreements || []), ...toFlatFiles(agreements)]),
     [agreements, resolvedDocuments]
   );
   const orderSheetFiles = useMemo(
-    () => [...toFlatFiles(orderSheets), ...(resolvedDocuments?.orderSheets || [])],
+    () => dedupeDocs([...(resolvedDocuments?.orderSheets || []), ...toFlatFiles(orderSheets)]),
     [orderSheets, resolvedDocuments]
   );
 
@@ -218,12 +238,18 @@ export function SummaryFinalizeCards({
       // serialize the field state and writes the web-shaped outcome payload
       // (top-level agreements/orderSheets → upserts the LeadOutcomeDocument S3
       // rows; serialized jobBuilder.dynamicJobState so field state isn't lost).
-      const ok = onUploadDocs ? await onUploadDocs(cat, payloads) : false;
-      if (!ok) {
+      // It resolves to the category's SERVER documents (serverId + filePath +
+      // signed URL), or null when the upload itself failed.
+      const serverDocs = onUploadDocs ? await onUploadDocs(cat, payloads) : null;
+      if (!serverDocs) {
         Alert.alert('Upload failed', 'Could not save the document. Please try again.');
         return null;
       }
-      return displayDocs;
+      // Prefer the server copies — they carry the serverId a later delete needs and
+      // a URL that is valid on every device (and on web). Only if the read-back came
+      // back empty do we fall back to the local thumbnails so the rep still sees the
+      // document they just added.
+      return serverDocs.length ? serverDocs : displayDocs;
     } catch (e) {
       console.warn('[SummaryFinalizeCards] upload failed', e);
       Alert.alert('Upload failed', 'Could not save the document. Please try again.');
@@ -233,35 +259,64 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // After a successful upload the doc lives on the server. Clear the local draft so
-  // the debounced auto-save doesn't resend base64 (which would also trip the
-  // backend's "file required" validation), and mirror the uploaded docs into
-  // resolvedDocuments for display — matching the normal JB (clear draft + refetch).
-  const commitUploaded = (cat: DocCategory, displayDocs: any[]) => {
-    onUpdateRootState?.(rootKeyFor(cat), []);
+  // Record the uploaded documents ON THE JOB STATE — web parity, and the fix for
+  // "the PDF is gone when I come back".
+  //
+  // Web holds its documents at `jobState.agreements` / `.orderSheets` in
+  // `[{ files: [...] }]` groups (`dynamic-job-builder.js#handleAgreementDocumentsChange`)
+  // and renders the summary from exactly that (`existingAgreements={jobState?.agreements}`).
+  // The storage serializer passes both keys through, so the draft save persists them
+  // and a reopen — on either platform — restores them. Mobile used to CLEAR the key
+  // here and lean on the calculator-scoped outcome echoing `leadOutcomeDocuments`,
+  // which it does not reliably do: the document had uploaded, but nothing that the
+  // reopened screen (or web) reads knew about it.
+  //
+  // `files` are the server rows (serverId + filePath + signed URL) — durable and
+  // cross-platform, and NOT base64, so the draft payload stays small.
+  const commitUploaded = (cat: DocCategory, files: any[]) => {
+    const key = rootKeyFor(cat);
+    onUpdateRootState?.(key, files.length ? [{ files }] : []);
     setResolvedDocuments?.((prev) => {
-      const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
       const base = prev || { agreements: [], orderSheets: [] };
-      return { ...base, [key]: [...(base[key] || []), ...displayDocs] };
+      // The server read-back is the full list for this category, so replace rather
+      // than append — appending duplicated every previously-listed document.
+      return { ...base, [key]: files };
     });
-    // Refresh the outcome query so the authoritative server doc (with its secure
-    // URL) replaces the local copy — and so a quick re-open isn't served stale cache.
-    if (leadId) queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
+    // Refresh the outcome + document queries so a re-open isn't served stale cache.
+    if (leadId) {
+      queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
+      queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
+      queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
+    }
   };
 
   const handleScannerSave = async (cat: DocCategory, images: any[]) => {
     const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
-    // Reflect REMOVALS immediately. The scanner already fired the DELETE for any doc
-    // the rep crossed out, but the display state wasn't pruned — so a delete-only
-    // Update left the removed page on screen until a reopen refetched it. Keep only
-    // the resolved docs still present in the returned set (matched by identity).
+    // Reflect REMOVALS immediately, in BOTH display sources. The scanner already
+    // fired the DELETE for any doc the rep crossed out, but only the resolved list
+    // was pruned — the copy on the job state was left alone, so a delete-only Update
+    // left the removed page on screen until a reopen. Keep just the documents still
+    // present in the set the scanner returned (matched by identity).
     const surviving = new Set((images || []).map(docIdentity).filter(Boolean));
+    const keep = (d: any) => surviving.has(docIdentity(d));
     setResolvedDocuments?.((prev) => {
       const base = prev || { agreements: [], orderSheets: [] };
-      return { ...base, [key]: (base[key] || []).filter((d: any) => surviving.has(docIdentity(d))) };
+      return { ...base, [key]: (base[key] || []).filter(keep) };
     });
+    const remainingDraft = toFlatFiles(cat === 'agreement' ? agreements : orderSheets).filter(keep);
+    onUpdateRootState?.(key, remainingDraft.length ? [{ files: remainingDraft }] : []);
 
     const newFiles = (images || []).filter((f) => f?.isNew !== false);
+    if (!newFiles.length) {
+      // Delete-only Update: no upload to piggyback the refresh on, so drop the cached
+      // document lists here — the next read reflects the rows the scanner deleted.
+      if (leadId) {
+        queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
+        queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
+      }
+      setScannerCategory(null);
+      return;
+    }
     const displayDocs = await uploadNewFiles(cat, newFiles);
     if (displayDocs) {
       commitUploaded(cat, displayDocs);
@@ -287,44 +342,43 @@ export function SummaryFinalizeCards({
   };
 
   const handleAgreementGenerated = async (file: any) => {
-    // A GENERATED agreement is signed AND persisted server-side by the sign endpoint
-    // (`pdf-reports/v1/agreement/{leadId}/sign`) — exactly like the normal Job Builder,
-    // whose `onSuccess` merely refetches the outcome. The old behaviour re-uploaded it
-    // via `handleUploadDocs`, which (a) filed a SECOND LeadOutcomeDocument row for the
-    // same PDF (the "document shows 2 times on reopen" bug) and (b) held the whole PDF
-    // as base64 in state + the PUT body, crashing the app on submit. So a
-    // system-generated agreement is NOT re-uploaded — the sign endpoint already stored
-    // it; we just surface the single stored copy.
-    if (file?.isSystemGenerated) {
-      // Surface the just-signed agreement locally with a LIGHTWEIGHT `file://`
-      // reference (NOT its base64 body). This is intentionally architecture-agnostic:
-      // it does not depend on how documents are (re)loaded (edit mode resolves the
-      // parent's `rawDocsOverride` → secure URLs; create mode reads the calculator
-      // outcome). No query is invalidated, so the in-progress job state is never
-      // re-applied and there is no race that could drop the doc. On the next reopen
-      // the authoritative server copy (the one the sign endpoint just stored) loads
-      // through the normal doc-resolution path.
-      setResolvedDocuments?.((prev) => {
-        const base = prev || { agreements: [], orderSheets: [] };
-        return {
-          ...base,
-          agreements: [
-            ...(base.agreements || []),
-            {
-              name: file.name,
-              uri: file.uri,
-              contentType: 'application/pdf',
-              documentType: 'agreement' as const,
-              isNew: false,
-            },
-          ],
-        };
-      });
-      setAgreementDialogVisible(false);
-      return;
+    // A GENERATED agreement is rendered AND FILED by the server.
+    //
+    // Mobile generates through `pdf-reports/v1/agreement/{leadId}/preview` + `/sign`
+    // (web can't share this path — it rasterises the agreement in the browser with
+    // html2canvas and has no sign call at all, see `dynamic-agreement-generator.js`).
+    // That sign endpoint stores its OWN LeadOutcomeDocument, named server-side from
+    // the real job number. Uploading the returned PDF on top of it filed a SECOND row
+    // for the same agreement — the two differently-named cards ("Agreement_STN-…" from
+    // the server, "Agreement_SPN/A_…" from `handleSigned`'s own template).
+    //
+    // So for a system-generated agreement: re-read the lead's documents and adopt the
+    // server's row. It is filed asynchronously, so allow a couple of retries — and if
+    // nothing new ever appears (a backend that does NOT file it), fall through to the
+    // upload rather than silently losing the agreement.
+    if (file?.isSystemGenerated && onRefreshDocs) {
+      const knownIds = new Set(agreementFiles.map(docIdentity).filter(Boolean));
+      const hasNewRow = (docs: any[] | null) =>
+        (docs || []).some((d) => !knownIds.has(docIdentity(d)));
+      if (isDocUploadingRef) isDocUploadingRef.current = true;
+      try {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (attempt > 0) await new Promise<void>((r) => { setTimeout(r, 1000); });
+          const serverDocs = await onRefreshDocs('agreement');
+          if (hasNewRow(serverDocs)) {
+            commitUploaded('agreement', serverDocs!);
+            setAgreementDialogVisible(false);
+            return;
+          }
+        }
+      } finally {
+        if (isDocUploadingRef) isDocUploadingRef.current = false;
+      }
     }
-    // Scanned / manually-added agreements have no server-side sign step, so they still
-    // need an explicit upload to become a stored document.
+    // Scanned / manually added agreements (and the fallback above) have no server-side
+    // filing step, so they need an explicit upload. `uploadNewFiles` reads the on-disk
+    // `file://` PDF to base64 TRANSIENTLY (never into React state — that was the OOM
+    // crash) and PUTs it via `handleUploadDocs` → `/lead/v1/{leadId}/outcome`.
     const displayDocs = await uploadNewFiles('agreement', [file]);
     if (displayDocs) commitUploaded('agreement', displayDocs);
     setAgreementDialogVisible(false);
