@@ -352,33 +352,49 @@ export function SummaryFinalizeCards({
     // for the same agreement — the two differently-named cards ("Agreement_STN-…" from
     // the server, "Agreement_SPN/A_…" from `handleSigned`'s own template).
     //
-    // So for a system-generated agreement: re-read the lead's documents and adopt the
-    // server's row. It is filed asynchronously, so allow a couple of retries — and if
-    // nothing new ever appears (a backend that does NOT file it), fall through to the
-    // upload rather than silently losing the agreement.
-    if (file?.isSystemGenerated && onRefreshDocs) {
+    // So a system-generated agreement is NEVER UPLOADED — that is the only way to
+    // guarantee one row. An earlier version tried to confirm the server's row first
+    // and uploaded when it could not see one, but the confirmation reads the
+    // CALCULATOR-scoped outcome, which does not echo `leadOutcomeDocuments`: the check
+    // always came back empty, so it always uploaded and the duplicate returned.
+    //
+    // We still try to adopt the server's row (one cheap read) purely to get its
+    // serverId/filePath, which is what makes the draft copy durable off-device and
+    // lets a later delete reach the server. When that read shows nothing we record the
+    // local `file://` reference instead — the document is stored either way, and
+    // `buildDocumentPayloads` knows not to re-send a system-generated one at submit.
+    if (file?.isSystemGenerated) {
+      const localRef = {
+        name: file.name,
+        uri: file.uri,
+        contentType: 'application/pdf',
+        documentType: 'agreement' as const,
+        isNew: false,
+        // Marks this as already filed by the sign endpoint — never upload, never
+        // re-send. Read by `utils/document-payloads.ts`.
+        isSystemGenerated: true,
+      };
       const knownIds = new Set(agreementFiles.map(docIdentity).filter(Boolean));
-      const hasNewRow = (docs: any[] | null) =>
-        (docs || []).some((d) => !knownIds.has(docIdentity(d)));
-      if (isDocUploadingRef) isDocUploadingRef.current = true;
+      let serverDocs: any[] | null = null;
       try {
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          if (attempt > 0) await new Promise<void>((r) => { setTimeout(r, 1000); });
-          const serverDocs = await onRefreshDocs('agreement');
-          if (hasNewRow(serverDocs)) {
-            commitUploaded('agreement', serverDocs!);
-            setAgreementDialogVisible(false);
-            return;
-          }
-        }
-      } finally {
-        if (isDocUploadingRef) isDocUploadingRef.current = false;
+        serverDocs = onRefreshDocs ? await onRefreshDocs('agreement') : null;
+      } catch (e) {
+        console.warn('[SummaryFinalizeCards] could not re-read stored agreements', e);
       }
+      const adopted = (serverDocs || []).some((d) => !knownIds.has(docIdentity(d)));
+      commitUploaded(
+        'agreement',
+        adopted
+          ? serverDocs!.map((d) => ({ ...d, isSystemGenerated: true }))
+          : [...toFlatFiles(agreements), localRef]
+      );
+      setAgreementDialogVisible(false);
+      return;
     }
-    // Scanned / manually added agreements (and the fallback above) have no server-side
-    // filing step, so they need an explicit upload. `uploadNewFiles` reads the on-disk
-    // `file://` PDF to base64 TRANSIENTLY (never into React state — that was the OOM
-    // crash) and PUTs it via `handleUploadDocs` → `/lead/v1/{leadId}/outcome`.
+    // Scanned / manually added agreements have no server-side filing step, so they
+    // need an explicit upload. `uploadNewFiles` reads the on-disk `file://` PDF to
+    // base64 TRANSIENTLY (never into React state — that was the OOM crash) and PUTs it
+    // via `handleUploadDocs`.
     const displayDocs = await uploadNewFiles('agreement', [file]);
     if (displayDocs) commitUploaded('agreement', displayDocs);
     setAgreementDialogVisible(false);

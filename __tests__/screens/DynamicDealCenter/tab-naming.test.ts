@@ -39,6 +39,7 @@ const lfSchema = schema('LeafFilter', [
 /** Generic micro-mesh guard category → misc key is "GuardMisc". */
 const guardSchema = schema('Gutter Guards', [
   field('gm1', 'micro_mesh_1st_story', '6" Micro Mesh'),
+  field('gs1', 'micro_mesh_special', 'Micro Mesh Special'),
   field('gm2', 'corners_filter', 'Corners (Filter)'),
 ]);
 
@@ -97,12 +98,42 @@ describe('no regression to the rest of the naming', () => {
     expect(getLiveSchemaBaseName(seeded, lfSchema)).toBe('');
   });
 
-  it('does NOT suppress GuardMisc under Guard — web still emits both', () => {
-    // Deliberate web parity, not an oversight. See MISC_KEY_PARENTS.
-    expect(getLiveSchemaBaseName(entries('g1', 'gm1', 'gm2'), guardSchema)).toBe('G+Guard+GuardMisc');
-  });
-
   it('keeps a standalone GuardMisc', () => {
     expect(getLiveSchemaBaseName(entries('gm2'), guardSchema)).toBe('GuardMisc');
+  });
+});
+
+/**
+ * Rep rule: "since there is micro mesh and also extras of gutter guards, per our
+ * rules it should say Guard, not Guard + GuardMisc." Web added this to
+ * `MISC_KEY_SUPPRESSED_BY` (`GuardMisc: ['Guard', 'SpecGuard']`) after the pull that
+ * mobile's earlier LF-Misc-only port was based on.
+ */
+describe('GuardMisc suppression', () => {
+  it('drops "GuardMisc" when a micro-mesh Guard is selected', () => {
+    expect(getLiveSchemaBaseName(entries('g1', 'gm1', 'gm2'), guardSchema)).toBe('G+Guard');
+  });
+
+  it('drops "GuardMisc" when Micro Mesh Special is selected', () => {
+    expect(getLiveSchemaBaseName(entries('gs1', 'gm2'), guardSchema)).toBe('SpecGuard');
+  });
+
+  it('KEEPS "GuardMisc" when no guard product is selected — the add-ons stand alone', () => {
+    expect(getLiveSchemaBaseName(entries('g1', 'gm2'), guardSchema)).toBe('G+GuardMisc');
+  });
+
+  it('suppresses each family independently', () => {
+    // Guard present, Versa absent → GuardMisc goes, LF Misc stays.
+    const mixed = [
+      {
+        id: 'sch1',
+        name: 'Gutter / Roofline',
+        categories: [
+          { id: 'cat_lf', name: 'LeafFilter', directFields: [field('v1', 'versa_1st', 'Versa 1st Story'), field('lm', 'corners', 'Corners (Filter)')] },
+          { id: 'cat_guard', name: 'Gutter Guards', directFields: [field('gm1', 'mm_1st', '6\" Micro Mesh'), field('gm2', 'csr', 'C-S-R')] },
+        ],
+      },
+    ] as any;
+    expect(getLiveSchemaBaseName(entries('lm', 'gm1', 'gm2'), mixed)).toBe('LF Misc+Guard');
   });
 });

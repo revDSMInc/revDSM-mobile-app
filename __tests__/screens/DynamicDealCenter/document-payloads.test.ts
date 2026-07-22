@@ -163,6 +163,46 @@ test('the stored fallback also respects the DEMO → order-sheet rule', async ()
   ]);
 });
 
+// The sign endpoint files its own row, so a generated agreement is never uploaded and
+// must not be re-sent here either — that produced two identical 67 KB "Agreement"
+// cards on the lead. Crucially the stored fallback must ALSO stay out of the way: we
+// already know a copy exists, and re-sending it is what duplicates it.
+test('a system-generated agreement is not re-sent, and does not trigger the stored fallback', async () => {
+  LeadService.downloadOutcomeDocuments.mockResolvedValue({
+    data: {
+      data: {
+        agreements: [{ _id: 'doc1', base64Data: 'STOREDPDF', fileData: { contentType: 'application/pdf' } }],
+        orderSheets: [],
+      },
+    },
+  });
+
+  const out = await buildDocumentPayloads({
+    agreements: [{ files: [{ ...generatedPdf, isSystemGenerated: true }] }],
+    leadId: 'l1',
+    isSale: true,
+  });
+
+  expect(out.agreements).toEqual([]);
+  expect(out.orderSheets).toEqual([]);
+});
+
+test('a scanned agreement alongside a generated one still sends exactly the scanned copy', async () => {
+  LeadService.downloadOutcomeDocuments.mockResolvedValue({ data: { data: {} } });
+
+  const out = await buildDocumentPayloads({
+    agreements: [
+      { files: [{ ...generatedPdf, isSystemGenerated: true }, { name: 'scan.jpg', url: 'data:image/jpeg;base64,JPEGBYTES' }] },
+    ],
+    leadId: 'l1',
+    isSale: true,
+  });
+
+  expect(out.agreements).toEqual([
+    { name: '', file: 'data:application/pdf;base64,PDF(JPEGBYTES)', type: 'agreement' },
+  ]);
+});
+
 test('a populated job state wins over the stored list (no double-send)', async () => {
   LeadService.downloadOutcomeDocuments.mockResolvedValue({
     data: {

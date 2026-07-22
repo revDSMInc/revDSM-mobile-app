@@ -150,8 +150,15 @@ export async function buildDocumentPayloads({
   leadId?: string;
   isSale: boolean;
 }): Promise<DocumentPayloads> {
-  const agreementFiles = toFlatFiles(agreements);
-  const orderSheetFiles = toFlatFiles(orderSheets);
+  // A system-generated agreement was already filed by the sign endpoint
+  // (`pdf-reports/v1/agreement/{leadId}/sign`), so it is deliberately never uploaded
+  // — and it must not be re-sent here either. Including it produced a SECOND stored
+  // copy of the same PDF: two identical 67 KB "Agreement" cards on the lead.
+  const alreadyFiled = (f: any) => f?.isSystemGenerated === true;
+  const allAgreements = toFlatFiles(agreements);
+  const allOrderSheets = toFlatFiles(orderSheets);
+  const agreementFiles = allAgreements.filter((f) => !alreadyFiled(f));
+  const orderSheetFiles = allOrderSheets.filter((f) => !alreadyFiled(f));
   const out: DocumentPayloads = { agreements: [], orderSheets: [] };
 
   // THE STORED DOCUMENTS ARE THE SOURCE OF TRUTH — this is where mobile has to
@@ -166,11 +173,17 @@ export async function buildDocumentPayloads({
   // submit silently shipped `agreements: []` even though the PDF was sitting on the
   // server. So: fetch what is actually stored, and use it whenever the local mirror
   // has nothing for a category.
+  //
+  // The fallback is skipped when the local mirror DID hold documents for a category
+  // and they were all system-generated: we then already know a stored copy exists and
+  // that re-sending it is precisely what duplicates it.
+  const needStoredAgreements = !agreementFiles.length && !allAgreements.length;
+  const needStoredOrderSheets = !orderSheetFiles.length && !allOrderSheets.length;
   const localNeedsServerBytes = [...agreementFiles, ...orderSheetFiles].some(
     (f) => !dataUriOf(f) && !String(f?.uri || '').startsWith('file://') && serverIdOf(f)
   );
   const stored =
-    localNeedsServerBytes || !agreementFiles.length || !orderSheetFiles.length
+    localNeedsServerBytes || needStoredAgreements || needStoredOrderSheets
       ? await fetchStoredDocuments(leadId)
       : { byId: new Map(), agreements: [], orderSheets: [] };
 
@@ -199,18 +212,25 @@ export async function buildDocumentPayloads({
   const agreementType: 'agreement' | 'orderSheet' = isSale ? 'agreement' : 'orderSheet';
   const agreementPayloads = agreementFiles.length
     ? await convert(agreementFiles, agreementType)
-    : fromStored(stored.agreements, agreementType);
+    : needStoredAgreements
+      ? fromStored(stored.agreements, agreementType)
+      : [];
   if (isSale) out.agreements.push(...agreementPayloads);
   else out.orderSheets.push(...agreementPayloads);
 
   out.orderSheets.push(
     ...(orderSheetFiles.length
       ? await convert(orderSheetFiles, 'orderSheet')
-      : fromStored(stored.orderSheets, 'orderSheet'))
+      : needStoredOrderSheets
+        ? fromStored(stored.orderSheets, 'orderSheet')
+        : [])
   );
 
-  if (!agreementFiles.length && out.agreements.length) {
+  if (needStoredAgreements && out.agreements.length) {
     console.log('[document-payloads] job state held no agreement — used the stored document(s)');
+  }
+  if (allAgreements.length && !agreementFiles.length) {
+    console.log('[document-payloads] agreement already filed by the sign endpoint — not re-sent');
   }
   return out;
 }

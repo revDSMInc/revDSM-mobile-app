@@ -203,27 +203,43 @@ test('a server-signed agreement adopts the server row instead of uploading a sec
   });
 
   expect(onUploadDocs).not.toHaveBeenCalled();
-  expect(onUpdateRootState).toHaveBeenLastCalledWith('agreements', [{ files: [serverSignedDoc] }]);
+  expect(onUpdateRootState).toHaveBeenLastCalledWith('agreements', [
+    { files: [{ ...serverSignedDoc, isSystemGenerated: true }] },
+  ]);
 });
 
-test('a server-signed agreement still uploads when the server filed nothing', async () => {
-  jest.useFakeTimers();
-  // Same list as before signing → the backend did not file it; do not lose the PDF.
+// The confirmation read hits the CALCULATOR-scoped outcome, which does not echo
+// document rows — so it comes back empty even though the sign endpoint filed the
+// agreement. Uploading on that empty result is what recreated the duplicate.
+test('a server-signed agreement is NEVER uploaded, even when the read-back shows nothing', async () => {
   const onRefreshDocs = jest.fn().mockResolvedValue([]);
-  const { onUploadDocs } = render({ onRefreshDocs });
+  const { onUpdateRootState, onUploadDocs } = render({ onRefreshDocs });
 
-  const done = act(async () => {
-    const p = agreementDialogProps.onAgreementGenerated(signedFile);
-    await jest.runAllTimersAsync();
-    await p;
+  await act(async () => {
+    await agreementDialogProps.onAgreementGenerated(signedFile);
   });
-  await done;
 
-  expect(onRefreshDocs).toHaveBeenCalledTimes(3); // retried — the row is filed async
-  expect(onUploadDocs).toHaveBeenCalledWith('agreement', [
-    expect.objectContaining({ documentType: 'agreement', isNew: true }),
+  expect(onUploadDocs).not.toHaveBeenCalled();
+  // Recorded locally so it still displays, and flagged so the submit skips it.
+  expect(onUpdateRootState).toHaveBeenLastCalledWith('agreements', [
+    { files: [expect.objectContaining({ uri: signedFile.uri, isSystemGenerated: true })] },
   ]);
-  jest.useRealTimers();
+});
+
+test('a signed agreement is added to the documents already on the job state', async () => {
+  const onRefreshDocs = jest.fn().mockResolvedValue([]);
+  const { onUpdateRootState } = render({
+    onRefreshDocs,
+    agreements: [{ files: [serverDoc] }],
+  });
+
+  await act(async () => {
+    await agreementDialogProps.onAgreementGenerated(signedFile);
+  });
+
+  expect(onUpdateRootState).toHaveBeenLastCalledWith('agreements', [
+    { files: [serverDoc, expect.objectContaining({ isSystemGenerated: true })] },
+  ]);
 });
 
 test('a failed upload leaves the job state untouched', async () => {

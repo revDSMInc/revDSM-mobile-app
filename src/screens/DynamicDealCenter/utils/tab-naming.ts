@@ -219,22 +219,25 @@ function collectTabKeys(
 }
 
 /**
- * A "* Misc" key only labels STANDALONE add-ons. When the calculator already
- * carries the main product those add-ons belong to, the Misc key is redundant and
- * is dropped — "Versa", not "Versa+LF Misc".
+ * A gutter-guard "misc" key only labels STANDALONE add-ons (corners, sawzall,
+ * remove protection, ribbed roof, C-S-R…). When the calculator already carries a
+ * main guard of that family, those add-ons belong to it, so the misc key is
+ * dropped from the tab name: "Versa"/"VMax" not "Versa+LF Misc", and
+ * "Guard"/"SpecGuard" (micro mesh / micro mesh special) not "Guard+GuardMisc".
  *
- * Each entry is `misc key → the main keys that make it redundant`.
+ * Each entry is `misc key → the main keys of the same family that suppress it`.
+ * Families are independent, so a calculator carrying both flavors only loses the
+ * misc key of the flavor whose main product is present.
  *
- * Deliberately mirrors web `tab-naming.utils.js` (commit 9d22d62, "ticket-999"),
- * which suppresses ONLY `LF Misc`, under `Versa` or `VMax` (either alone is
- * enough — `SpecGuard` does NOT suppress it). `GuardMisc` and `Light Misc` are
- * intentionally absent: web still emits `Guard+GuardMisc` and `Light+Light Misc`,
- * and adding them here would make mobile disagree with web. They are listed as
- * commented-out rows so the omission reads as a decision, not an oversight.
+ * Mirrors web `tab-naming.utils.js#MISC_KEY_SUPPRESSED_BY`. `GuardMisc` was
+ * previously commented out here because the web pull at the time suppressed only
+ * `LF Misc`; web has since added it, so mobile follows. `Light Misc` is still
+ * absent on both — web emits `Light+Light Misc` — and is left as a commented row
+ * so the omission reads as a decision, not an oversight.
  */
 const MISC_KEY_PARENTS: Record<string, string[]> = {
   'LF Misc': ['Versa', 'VMax'],
-  // 'GuardMisc': ['Guard', 'SpecGuard'],   // web does not suppress this (yet)
+  GuardMisc: ['Guard', 'SpecGuard'],
   // 'Light Misc': ['Light'],               // web does not suppress this (yet)
 };
 
