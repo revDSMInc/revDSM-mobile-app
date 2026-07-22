@@ -536,8 +536,23 @@ function isEnteredFieldValue(value: any, defaultValue: any): boolean {
   return normalized !== normalizeComparableValue(defaultValue);
 }
 
-/** A combination is meaningful when any of its fields (or colors) was actually entered. */
-function comboHasEnteredData(combo: any, defaults: any = {}): boolean {
+/**
+ * A combination is meaningful (the rep actually BUILT it) only when a NON-LOCKED field
+ * holds a value that differs from BOTH the group default AND the field's own configured
+ * default. Rationale (fixes an un-built product persisting/showing, e.g. LeafFilter):
+ *  - LOCKED fields are auto-resolved from the calculator (dcField-driven), so they are
+ *    never rep input and never mark a combo as built — a product the rep didn't build
+ *    carries only these auto values (profile "Versa", gutter width 6"/7").
+ *  - A value equal to the field's `defaultValue` is a config-seeded default (an
+ *    optionList/toggle whose default the state carries), not user input.
+ * (Stronger than web's `comboHasEnteredData`, which compares only against the group
+ * default and so lets a locked/seeded-default combo survive — a bug on web too.)
+ */
+function comboHasEnteredData(
+  combo: any,
+  defaults: any = {},
+  fieldsById: Map<string, any> = new Map()
+): boolean {
   if (!combo || typeof combo !== 'object') return false;
   const colorValues =
     combo.colorValues && typeof combo.colorValues === 'object' ? combo.colorValues : {};
@@ -545,10 +560,27 @@ function comboHasEnteredData(combo: any, defaults: any = {}): boolean {
 
   return [...keys].some((key) => {
     if (key === 'colorValues' || key === '_combinationNumber') return false;
+    const field = fieldsById.get(key);
+    if (field && isFieldLocked(field)) return false; // auto-resolved, not rep-built
     const value = combo[key] !== undefined ? combo[key] : colorValues[key];
-    return isEnteredFieldValue(value, defaults[key]);
+    if (!isEnteredFieldValue(value, defaults[key])) return false;
+    // Equal to the field's own configured default → a seeded default, not user input.
+    if (
+      field &&
+      field.defaultValue !== undefined &&
+      field.defaultValue !== '' &&
+      normalizeComparableValue(value) === normalizeComparableValue(field.defaultValue)
+    ) {
+      return false;
+    }
+    return true;
   });
 }
+
+const sectionFieldsById = (section: any): Map<string, any> =>
+  new Map(
+    (section ? getFlattenedCombinationSectionRowFields(section) : []).map((f: any) => [f.id, f])
+  );
 
 function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): any {
   if (!tabState || typeof tabState !== 'object') return tabState;
@@ -562,8 +594,9 @@ function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): 
     Object.entries(next.comboGroups).forEach(([sectionId, group]: [string, any]) => {
       const section = sectionById.get(String(sectionId));
       const defaults = section ? buildComboGroupDefaultItem(section, dealCenterData) : {};
+      const fieldsById = sectionFieldsById(section);
       const combinations = (group?.combinations || []).filter((combo: any) =>
-        comboHasEnteredData(combo, defaults)
+        comboHasEnteredData(combo, defaults, fieldsById)
       );
       prunedGroups[sectionId] = { ...group, combinations };
     });
@@ -572,8 +605,9 @@ function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): 
 
   if (next.combinations) {
     const defaults = sections[0] ? buildComboGroupDefaultItem(sections[0], dealCenterData) : {};
+    const fieldsById = sectionFieldsById(sections[0]);
     next.combinations = (next.combinations || []).filter((combo: any) =>
-      comboHasEnteredData(combo, defaults)
+      comboHasEnteredData(combo, defaults, fieldsById)
     );
   }
 

@@ -126,27 +126,45 @@ describe('locked dcField field re-hydrates from dealCenterData on load', () => {
       ],
     };
 
-    it('drops a combo whose only locked field resolves blank (never built)', () => {
-      // Phantom: the state carries a LeafFilter combo with a profile, but the deal
-      // center never built LeafFilter (empty dealCenterData → dcField unresolved).
+    it('drops a combo whose only LOCKED field carries an auto value (never built)', () => {
+      // Phantom: a LeafFilter combo with a locked, calculator-resolved profile — the
+      // rep never manually built LeafFilter, so the auto value must NOT persist.
       const phantom: any = {
         lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_profile: 'Versa' }] } } } },
       };
-      const serialized = serializeDynamicJobStateForStorage(phantom, comboConfig, {});
+      // Even when dealCenterData resolves the locked dcField, a locked-only combo is
+      // auto-populated (not built) → pruned.
+      const serialized = serializeDynamicJobStateForStorage(phantom, comboConfig, { lf_profile: 'Versa' });
       const deserialized = deserializeDynamicJobStateFromStorage(serialized, comboConfig);
-      // The unbuilt combo is pruned → no phantom LeafFilter combination persisted.
       expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(0);
     });
 
-    it('keeps a genuinely-entered combo value (built product)', () => {
-      const built: any = {
+    it('drops a combo whose non-locked field is at its config default (seeded, not entered)', () => {
+      const cfg = JSON.parse(JSON.stringify(comboConfig));
+      cfg.verticals[0].tabs[0].sections[0].fields = [
+        { id: 'f_profile', type: 'optionList', label: 'Profile', defaultValue: 'Versa' },
+      ];
+      const seeded: any = {
         lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_profile: 'Versa' }] } } } },
       };
-      // dealCenterData resolves the dcField → the product IS built → combo survives.
-      const serialized = serializeDynamicJobStateForStorage(built, comboConfig, { lf_profile: 'Versa' });
-      const deserialized = deserializeDynamicJobStateFromStorage(serialized, comboConfig);
+      const serialized = serializeDynamicJobStateForStorage(seeded, cfg, {});
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, cfg);
+      // 'Versa' === field.defaultValue → a seeded default, not user input → pruned.
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(0);
+    });
+
+    it('keeps a combo with a manually-entered (non-locked, non-default) field', () => {
+      const cfg = JSON.parse(JSON.stringify(comboConfig));
+      cfg.verticals[0].tabs[0].sections[0].fields = [
+        { id: 'f_note', type: 'text', label: 'Note', defaultValue: '' },
+      ];
+      const built: any = {
+        lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_note: 'custom' }] } } } },
+      };
+      const serialized = serializeDynamicJobStateForStorage(built, cfg, {});
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, cfg);
       expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(1);
-      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations[0].f_profile).toBe('Versa');
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations[0].f_note).toBe('custom');
     });
   });
 
