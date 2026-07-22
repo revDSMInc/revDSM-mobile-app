@@ -107,25 +107,22 @@ function hydrateFieldValue(
     // their explicit entry instead of re-resolving it from the (often stale)
     // dealCenterData snapshot, which would silently revert the change on save.
     if (preserveExisting && existingValue !== undefined) return existingValue;
-    // Pass the conditional default so a not-included product (a locked field whose
-    // `dependencies.defaultWhen` inclusion condition is NOT met) resolves to '' instead
-    // of its raw non-zero `field.defaultValue`. Without this, the blank/not-built
-    // product persisted a phantom quantity that the portal rendered as an included
-    // product (e.g. LeafFilter showing though it was never built). Web parity:
-    // dynamic-job-state-storage.js:99-114.
+    // Pass the conditional default so a NOT-included product (a locked field whose
+    // `dependencies.defaultWhen` inclusion condition is not met) resolves to '' — and
+    // RETURN that '' so the field is emptied. Emptying is what makes an unbuilt
+    // product's combo match the prune's default (`buildComboGroupDefaultItem` seeds a
+    // locked optionList/toggle empty too), so the combo is dropped from storage.
+    // Treating '' as "blank" and falling through to the existing value instead kept the
+    // phantom value (e.g. LeafFilter Profile "Versa") and made the portal render an
+    // un-built product (LeafFilter Combination #1-4 though never built).
+    // Only a genuinely-unresolvable ref ('—') or undefined falls through — and that is
+    // handled below by `if (existingValue !== undefined) return existingValue`, so a
+    // real saved value is still never destroyed. Web parity: dynamic-job-state-
+    // storage.js hydrateFieldValue (`if (locked !== undefined && locked !== '—')`).
     const locked = resolveLockedValue(field, dealCenterData, {
       fallbackDefault: resolveConditionalDefault(field, existing, { dealCenterData }),
     });
-    // A locked resolve that yields NOTHING must never destroy a saved value.
-    // resolveLockedValue falls back to `field.defaultValue ?? '—'` when the dcField
-    // can't be resolved, so an unresolvable ref returns the blank default — which
-    // used to pass this guard and overwrite real data. Only '—' was excluded, not
-    // '' or null. Fall through to `existingValue` instead.
-    // NOTE: 0 is intentionally still treated as a real resolved value; a locked
-    // quantity legitimately resolving to zero should apply.
-    const lockedIsBlank = locked === undefined || locked === null || locked === '' || locked === '—';
-    if (!lockedIsBlank) return locked;
-    if (existingValue !== undefined) return existingValue;
+    if (locked !== undefined && locked !== '—') return locked;
   }
 
   if (existingValue !== undefined) return existingValue;
@@ -539,8 +536,23 @@ function isEnteredFieldValue(value: any, defaultValue: any): boolean {
   return normalized !== normalizeComparableValue(defaultValue);
 }
 
-/** A combination is meaningful when any of its fields (or colors) was actually entered. */
-function comboHasEnteredData(combo: any, defaults: any = {}): boolean {
+/**
+ * A combination is meaningful (the rep actually BUILT it) only when a NON-LOCKED field
+ * holds a value that differs from BOTH the group default AND the field's own configured
+ * default. Rationale (fixes an un-built product persisting/showing, e.g. LeafFilter):
+ *  - LOCKED fields are auto-resolved from the calculator (dcField-driven), so they are
+ *    never rep input and never mark a combo as built — a product the rep didn't build
+ *    carries only these auto values (profile "Versa", gutter width 6"/7").
+ *  - A value equal to the field's `defaultValue` is a config-seeded default (an
+ *    optionList/toggle whose default the state carries), not user input.
+ * (Stronger than web's `comboHasEnteredData`, which compares only against the group
+ * default and so lets a locked/seeded-default combo survive — a bug on web too.)
+ */
+function comboHasEnteredData(
+  combo: any,
+  defaults: any = {},
+  fieldsById: Map<string, any> = new Map()
+): boolean {
   if (!combo || typeof combo !== 'object') return false;
   const colorValues =
     combo.colorValues && typeof combo.colorValues === 'object' ? combo.colorValues : {};
@@ -548,10 +560,27 @@ function comboHasEnteredData(combo: any, defaults: any = {}): boolean {
 
   return [...keys].some((key) => {
     if (key === 'colorValues' || key === '_combinationNumber') return false;
+    const field = fieldsById.get(key);
+    if (field && isFieldLocked(field)) return false; // auto-resolved, not rep-built
     const value = combo[key] !== undefined ? combo[key] : colorValues[key];
-    return isEnteredFieldValue(value, defaults[key]);
+    if (!isEnteredFieldValue(value, defaults[key])) return false;
+    // Equal to the field's own configured default → a seeded default, not user input.
+    if (
+      field &&
+      field.defaultValue !== undefined &&
+      field.defaultValue !== '' &&
+      normalizeComparableValue(value) === normalizeComparableValue(field.defaultValue)
+    ) {
+      return false;
+    }
+    return true;
   });
 }
+
+const sectionFieldsById = (section: any): Map<string, any> =>
+  new Map(
+    (section ? getFlattenedCombinationSectionRowFields(section) : []).map((f: any) => [f.id, f])
+  );
 
 function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): any {
   if (!tabState || typeof tabState !== 'object') return tabState;
@@ -565,8 +594,9 @@ function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): 
     Object.entries(next.comboGroups).forEach(([sectionId, group]: [string, any]) => {
       const section = sectionById.get(String(sectionId));
       const defaults = section ? buildComboGroupDefaultItem(section, dealCenterData) : {};
+      const fieldsById = sectionFieldsById(section);
       const combinations = (group?.combinations || []).filter((combo: any) =>
-        comboHasEnteredData(combo, defaults)
+        comboHasEnteredData(combo, defaults, fieldsById)
       );
       prunedGroups[sectionId] = { ...group, combinations };
     });
@@ -575,8 +605,9 @@ function pruneTabStateForStorage(tabState: any, tab: any, dealCenterData: any): 
 
   if (next.combinations) {
     const defaults = sections[0] ? buildComboGroupDefaultItem(sections[0], dealCenterData) : {};
+    const fieldsById = sectionFieldsById(sections[0]);
     next.combinations = (next.combinations || []).filter((combo: any) =>
-      comboHasEnteredData(combo, defaults)
+      comboHasEnteredData(combo, defaults, fieldsById)
     );
   }
 

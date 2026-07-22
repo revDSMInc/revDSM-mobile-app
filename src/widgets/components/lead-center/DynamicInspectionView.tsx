@@ -23,7 +23,6 @@ import {
   ScrollView,
   Image,
   Modal,
-  Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -34,13 +33,13 @@ import {
   getTopTabs,
   slotCapacity,
   getExtraPickerCategories,
-  nextExtraLabel,
   type InspectionProduct,
   type InspectionCategory,
   type InspectionSlot,
 } from './dynamic-inspection-schema-utils';
 import { CategoryTabStrip, CategoryBody, ProductDropdown, iconifyToMdi } from './DynamicInspectionRenderer';
 import { CustomCameraModal } from '../../modals/CustomCameraModal';
+import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 import {
   useDynamicInspectionCapture,
   type CapturedPhoto,
@@ -152,7 +151,14 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   // deleting a stored photo from the full-screen preview must confirm first.
   const [deleteConfirm, setDeleteConfirm] = useState<PreviewState | null>(null);
   const [showExtraPicker, setShowExtraPicker] = useState(false);
+  // Conflict "Move it somewhere else" → the displaced (existing) photo enters
+  // pick-a-new-slot mode, reusing the move-photo grid (static TagPhotoModal parity).
+  const [moveExisting, setMoveExisting] = useState<MoveState | null>(null);
   const captureTargetRef = useRef<{ categoryLabel: string; subcategory: string; key: string } | null>(null);
+  // Holds the pending "move existing photo" until the conflict Modal has finished
+  // dismissing — presenting the move Modal while the conflict one is still animating
+  // out shows a black screen on iOS (RN can't have two Modals transition at once).
+  const pendingMoveRef = useRef<MoveState | null>(null);
   const autoOpenedRef = useRef(false);
   // The inspection UI (header / banner / slots) stays HIDDEN until the first photo
   // is captured — web's `flowStarted`. Until then the rep sees ONLY the camera, so
@@ -296,65 +302,49 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   };
 
   // ── Slot-conflict resolution (static TagPhotoModal parity) ──────────────────
-  // Existing photo stays in its slot; the incoming one becomes an Extra.
+  // Keep both: the existing photo stays in its slot; the incoming photo becomes an
+  // Extra — the rep picks which category via the extra picker (static parity:
+  // handleKeepBothOption → setShowExtraPicker(true), keeping the pending photo).
   const handleConflictKeepBoth = () => {
     if (!conflict) return;
-    const { category, asset } = conflict;
     setConflict(null);
-    capture.tagAsExtraInCategory({ category, asset });
-    clearPending();
-    setTimeout(() => openCapture(), 120);
+    setShowExtraPicker(true); // consumes the still-pending photo
   };
 
-  // The incoming photo takes the slot; the existing one is re-homed to an Extra of
-  // the same category (so nothing is lost) — the "move it somewhere else" intent.
-  const handleConflictMove = async () => {
+  // Open the deferred move once the conflict Modal has actually dismissed. Guarded
+  // so the iOS onDismiss and the Android setTimeout fallback never double-fire.
+  const flushPendingMove = () => {
+    if (pendingMoveRef.current) {
+      const next = pendingMoveRef.current;
+      pendingMoveRef.current = null;
+      setMoveExisting(next);
+    }
+  };
+
+  // Move it somewhere else: the incoming photo takes THIS slot immediately, and the
+  // existing photo enters pick-a-new-slot mode (the move-photo grid) so the rep
+  // chooses where it goes — static parity (handleMoveOption → setMovingImage).
+  const handleConflictMove = () => {
     if (!conflict) return;
     const { category, slot, key, asset, existing } = conflict;
+    // Queue the move; it opens only after the conflict Modal finishes dismissing
+    // (via onDismiss on iOS, setTimeout on Android) to avoid the black-screen race.
+    pendingMoveRef.current = { photo: existing, fromCategory: category, fromSlot: slot, key };
     setConflict(null);
-    const extraName = nextExtraLabel(capture.extrasFor(category));
-    await capture.movePhoto({
-      photo: existing,
-      fromCategoryLabel: category.label,
-      fromSubcategory: slot.storageName as string,
-      toCategoryLabel: category.label,
-      toSubcategory: extraName,
-      key,
-    });
+    // Incoming takes the slot (optimistic/queued). movePhoto below relocates ONLY
+    // the existing photo (by id), so the two never collide.
     capture.captureToSlot({ categoryLabel: category.label, subcategory: slot.storageName as string, key, asset });
     clearPending();
-    setTimeout(() => openCapture(), 120);
+    setTimeout(flushPendingMove, 450);
   };
 
-  // Permanently delete the existing photo, then the incoming takes the slot.
+  // Discard: throw away the just-captured (incoming) photo and reopen the camera.
+  // The existing photo in the slot is left untouched (user-specified behaviour).
   const handleConflictDiscard = () => {
     if (!conflict) return;
-    const snapshot = conflict;
-    Alert.alert(
-      'Discard Existing Photo',
-      'Are you sure you want to permanently delete the existing photo?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Discard & Replace',
-          style: 'destructive',
-          onPress: async () => {
-            const { category, slot, key, asset } = snapshot;
-            setConflict(null);
-            const existingList = capture
-              .getPhotos(category.label, slot.storageName as string)
-              .filter((p) => p.s3url);
-            for (const p of existingList) {
-              // eslint-disable-next-line no-await-in-loop
-              await capture.deletePhoto({ categoryLabel: category.label, subcategory: slot.storageName as string, key, photo: p });
-            }
-            capture.captureToSlot({ categoryLabel: category.label, subcategory: slot.storageName as string, key, asset });
-            clearPending();
-            setTimeout(() => openCapture(), 120);
-          },
-        },
-      ]
-    );
+    setConflict(null);
+    clearPending();
+    setTimeout(() => openCapture(), 120);
   };
 
   // Ask before deleting — matches web's "Discard this photo?" confirm and the
@@ -421,22 +411,24 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Icon name="close" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontWeight: '700', fontSize: 15 }}>
-          Inspection Photos
-        </Text>
+        {/* Multiple products → a product dropdown in the header; otherwise the title. */}
+        {showProductRow ? (
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <ProductDropdown
+              products={products as any}
+              selectedProductId={selectedProductId}
+              onSelect={(id) => setSelectedProductId(id)}
+            />
+          </View>
+        ) : (
+          <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontWeight: '700', fontSize: 15 }}>
+            Inspection Photos
+          </Text>
+        )}
         <Text style={{ color: '#fff', fontWeight: '700', fontSize: 11 }}>
-          {capture.progress.filled}/{capture.progress.total} · {capture.totalPhotos}📷
+          {capture.progress.filled}/{capture.progress.total} SLOTS | {capture.totalPhotos} PHOTOS
         </Text>
       </View>
-
-      {/* Product dropdown (only when >1 product) — web parity */}
-      {showProductRow && (
-        <ProductDropdown
-          products={products as any}
-          selectedProductId={selectedProductId}
-          onSelect={(id) => setSelectedProductId(id)}
-        />
-      )}
 
       {/* Category tab strip */}
       {topTabs.length > 0 && !showExtraPicker && (
@@ -599,7 +591,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
       {/* Slot-conflict screen — static TagPhotoModal parity (renderConflictScreen).
           Side-by-side INCOMING vs EXISTING + Move / Keep both / Discard. */}
-      <Modal visible={!!conflict} animationType="slide" onRequestClose={() => setConflict(null)}>
+      <Modal visible={!!conflict} animationType="slide" onRequestClose={() => setConflict(null)} onDismiss={flushPendingMove}>
         <View style={{ flex: 1, backgroundColor: '#0D1F1A', paddingTop: insets.top || 16, paddingBottom: insets.bottom }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
             <TouchableOpacity onPress={() => setConflict(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -614,7 +606,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
 
             <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '900', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 }}>Slot Occupied</Text>
             <Text style={{ color: '#fff', fontWeight: '900', fontSize: 20, marginBottom: 4 }}>{conflict?.slot?.name} already has a photo</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginBottom: 20 }}>Choose what to do with the existing photo.</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginBottom: 20 }}>Choose what to do.</Text>
 
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
               <View style={{ flex: 1, borderRadius: 16, overflow: 'hidden', aspectRatio: 4 / 3, backgroundColor: 'rgba(0,0,0,0.4)' }}>
@@ -638,7 +630,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Move it somewhere else</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Existing photo becomes an Extra · incoming takes this slot</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Pick a new slot for the existing photo · new photo takes this slot</Text>
                 </View>
               </TouchableOpacity>
 
@@ -657,8 +649,8 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
                   <Icon name="delete-outline" size={20} color="#EF4444" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: '#EF4444', fontWeight: '700', fontSize: 14 }}>Discard it</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Permanently delete the existing photo</Text>
+                  <Text style={{ color: '#EF4444', fontWeight: '700', fontSize: 14 }}>Discard new photo</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Throw away the photo you just took · existing photo stays</Text>
                 </View>
               </TouchableOpacity>
             </View>
@@ -672,28 +664,44 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
           <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#0D1F1A', borderRadius: 20, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="trash-can-outline" size={24} color="#EF4444" />
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="delete-outline" size={24} color="#EF4444" />
               </View>
               {!!deleteConfirm?.uri && (
                 <Image source={{ uri: deleteConfirm.uri }} style={{ width: 48, height: 48, borderRadius: 8 }} resizeMode="cover" />
               )}
             </View>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>Delete this photo?</Text>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#FFFFFF', marginBottom: 6 }}>Discard this photo?</Text>
             <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>
-              This photo will be permanently deleted. This action cannot be undone.
+              This photo will be permanently deleted. You'll need to retake it to capture this shot.
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity onPress={() => setDeleteConfirm(null)} style={{ flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.7)' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={confirmDeleteFromPreview} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontWeight: '700', color: '#fff' }}>Delete</Text>
+              <TouchableOpacity onPress={confirmDeleteFromPreview} style={{ flex: 1, height: 44, borderRadius: 10, backgroundColor: '#EF4444', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Icon name="delete-outline" size={16} color="#fff" />
+                <Text style={{ fontWeight: '700', color: '#fff' }}>Discard</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* Conflict "Move it somewhere else" → re-home the displaced (existing) photo:
+          the rep picks a new slot in the reused move-photo grid (static parity). */}
+      <DynamicMovePhotoModal
+        visible={!!moveExisting}
+        moveState={moveExisting}
+        categories={activeCategories}
+        capture={capture}
+        onClose={() => setMoveExisting(null)}
+        // Re-home done → reopen the camera for the next shot (continuous capture,
+        // matching the tag / discard / keep-both paths). Deferred so the move Modal
+        // finishes dismissing before the camera Modal presents (iOS modal-race guard);
+        // the move upload is queued, so nothing is lost while the camera comes back.
+        onMoved={() => setTimeout(() => openCapture(), 350)}
+      />
     </View>
   );
 }

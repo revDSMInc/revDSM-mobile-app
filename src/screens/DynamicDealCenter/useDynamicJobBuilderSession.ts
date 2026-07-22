@@ -8,12 +8,21 @@ import { migrateConfigTabFields } from '../../utils/dynamic-job-builder/engine/c
 interface UseDynamicJobBuilderSessionOptions {
   initialConfig?: JobBuilderConfig;
   initialJobState?: JobState;
+  /**
+   * Web parity (`stateResetKey`, dynamic-job-builder.js:165-173). Identity token for
+   * the LOADED DRAFT — pass the RAW saved state from the server. Whenever it changes
+   * a genuinely new draft arrived, so it is applied unconditionally (web resets its
+   * session on a restore). Re-renders that merely re-derive `initialJobState` (e.g.
+   * `dealCenterData` settling) do NOT change this token, so a rep's edits are never
+   * clobbered. Omit to keep the legacy "apply until first edit" behaviour.
+   */
+  draftToken?: any;
   dealCenterData?: any;
   onJobStateChange?: (state: JobState) => void;
 }
 
 export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSessionOptions = {}) {
-  const { initialConfig, initialJobState, dealCenterData, onJobStateChange } = options;
+  const { initialConfig, initialJobState, draftToken, dealCenterData, onJobStateChange } = options;
 
   const [config, setConfig] = useState<JobBuilderConfig>(() => {
     // No mock/default fallback: the screen only mounts this hook once a real
@@ -41,13 +50,33 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
   // draft reference until they do.
   const userEditedRef = useRef(false);
   const lastAppliedInitialRef = useRef<JobState | undefined>(undefined);
+  const lastDraftTokenRef = useRef<any>(undefined);
   useEffect(() => {
     if (!initialJobState) return;
+
+    // Web parity (dynamic-job-builder.js `stateResetKey` effect): when a NEW draft is
+    // loaded it is applied unconditionally — web only skips when the key is unchanged,
+    // and clears its per-session nav flag on restore. Mobile's old guard latched
+    // `userEditedRef` on the FIRST write of any kind and then refused the draft
+    // FOREVER, so any write landing before the outcome GET resolved permanently blanked
+    // the reopened deal ("prefilled statuses don't show like web"). Keying off the raw
+    // saved state restores web's behaviour without re-clobbering edits: the token only
+    // changes when the server actually returns a different draft.
+    if (draftToken !== undefined) {
+      if (lastDraftTokenRef.current === draftToken) return;
+      lastDraftTokenRef.current = draftToken;
+      lastAppliedInitialRef.current = initialJobState;
+      userEditedRef.current = false; // fresh draft → fresh session (web: userNavigatedRef = false)
+      setJobState(initialJobState);
+      return;
+    }
+
+    // Legacy path (no token supplied): apply until the rep's first real edit.
     if (userEditedRef.current) return;
     if (lastAppliedInitialRef.current === initialJobState) return;
     lastAppliedInitialRef.current = initialJobState;
     setJobState(initialJobState);
-  }, [initialJobState]);
+  }, [initialJobState, draftToken]);
 
   const lockedTabIdsByVertical = useMemo(() => {
     const result: Record<string, string[]> = {};

@@ -85,6 +85,89 @@ describe('locked dcField field re-hydrates from dealCenterData on load', () => {
   // saved value. The fix is upstream: dealCenterData must be built from the
   // RESULTED calculator's entries (which carry the dcField ref, e.g. an entry
   // whose `name` === 'wedges_count'), so the ref resolves and the value survives.
+  // Regression: an UNBUILT product (locked field whose dcField does not resolve —
+  // the product was never built) must be EMPTIED and its combination PRUNED, so the
+  // portal does not render a phantom product (e.g. "LeafFilter → Combination #1-4"
+  // with a default "Versa" profile the rep never entered). A locked optionList/toggle
+  // that resolves to '' must return '' (matching the prune's default), NOT fall
+  // through to its stored phantom value.
+  describe('unbuilt (locked, unresolved) product combos are pruned', () => {
+    const comboConfig = {
+      name: 'lf-test',
+      verticals: [
+        {
+          id: 'lf',
+          label: 'LeafFilter',
+          tabs: [
+            {
+              id: 'lf__t1',
+              label: 'LeafFilter',
+              sections: [
+                {
+                  id: 'sec_combo',
+                  label: 'Combos',
+                  sectionType: 'combination',
+                  defaultItem: {},
+                  fields: [
+                    {
+                      id: 'f_profile',
+                      type: 'optionList',
+                      label: 'LeafFilter Profile',
+                      locked: true,
+                      dcField: 'lf_profile',
+                      defaultValue: '',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    it('drops a combo whose only LOCKED field carries an auto value (never built)', () => {
+      // Phantom: a LeafFilter combo with a locked, calculator-resolved profile — the
+      // rep never manually built LeafFilter, so the auto value must NOT persist.
+      const phantom: any = {
+        lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_profile: 'Versa' }] } } } },
+      };
+      // Even when dealCenterData resolves the locked dcField, a locked-only combo is
+      // auto-populated (not built) → pruned.
+      const serialized = serializeDynamicJobStateForStorage(phantom, comboConfig, { lf_profile: 'Versa' });
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, comboConfig);
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(0);
+    });
+
+    it('drops a combo whose non-locked field is at its config default (seeded, not entered)', () => {
+      const cfg = JSON.parse(JSON.stringify(comboConfig));
+      cfg.verticals[0].tabs[0].sections[0].fields = [
+        { id: 'f_profile', type: 'optionList', label: 'Profile', defaultValue: 'Versa' },
+      ];
+      const seeded: any = {
+        lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_profile: 'Versa' }] } } } },
+      };
+      const serialized = serializeDynamicJobStateForStorage(seeded, cfg, {});
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, cfg);
+      // 'Versa' === field.defaultValue → a seeded default, not user input → pruned.
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(0);
+    });
+
+    it('keeps a combo with a manually-entered (non-locked, non-default) field', () => {
+      const cfg = JSON.parse(JSON.stringify(comboConfig));
+      cfg.verticals[0].tabs[0].sections[0].fields = [
+        { id: 'f_note', type: 'text', label: 'Note', defaultValue: '' },
+      ];
+      const built: any = {
+        lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_note: 'custom' }] } } } },
+      };
+      const serialized = serializeDynamicJobStateForStorage(built, cfg, {});
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, cfg);
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(1);
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations[0].f_note).toBe('custom');
+    });
+  });
+
   it('dealCenterData built from calculator entries resolves the dcField on reopen', () => {
     // Saved job state has the locked field blank (stored blank at save time).
     const saved: any = {
