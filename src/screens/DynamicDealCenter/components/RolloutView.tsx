@@ -337,7 +337,7 @@ function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void
   );
 }
 
-function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
+function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onPlanSelected, onClose }: {
   visible: boolean;
   dropPrice: number;
   method: string;
@@ -354,6 +354,8 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
   dropAddCategories: PayCategory[];
   onSecure: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
   onDecline: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
+  /** Fired when the rep ADDS a financing plan → `drop price plan selected` rollout log. */
+  onPlanSelected?: (planKey: string) => void;
   onClose: () => void;
 }) {
   const { isDark } = useTheme();
@@ -416,6 +418,7 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
     setAddedPlans((prev) => (prev.includes(key) ? prev : [...prev, key]));
     setSelectedPlan(key);
     setShowPicker(false);
+    onPlanSelected?.(key);
   };
   const removePlan = (key: string) => {
     setAddedPlans((prev) => prev.filter((k) => k !== key));
@@ -742,6 +745,80 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const activeMethod = acceptedDrop?.paymentMethod || method;
   const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
 
+  // ── Rollout activity logs the portal timeline renders (web parity) ──────────
+  const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
+
+  // Fire the "end price entered" log once per DISTINCT committed price (web guards on
+  // `Number(price) === Number(calculator.price)`), not on every blur — otherwise
+  // re-blurring the same value spams duplicate portal rows. This is the FIRST rollout
+  // price log the portal shows under CONFIRMED ROLLOUTS.
+  const loggedPriceRef = useRef<number | null>(calculator.price ? Number(calculator.price) : null);
+  const logEndPriceEntered = () => {
+    const uid = user?._id || user?.id;
+    const p = parseFloat(endPrice) || 0;
+    if (!uid || p <= 0 || loggedPriceRef.current === p) return;
+    const prev = loggedPriceRef.current;
+    loggedPriceRef.current = p;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: calculator.totals,
+      percentageOfRollout: markupLabel(p, calculator.totals),
+      change: {
+        fieldName: 'endPrice', fieldLabel: 'End Price', fieldValue: p, fieldCategory: 'rollout',
+        oldValue: prev ?? (calculator.price || ''), newValue: p,
+        action: 'end price entered',
+      },
+    }).catch(() => {});
+  };
+
+  // Web `handlePaymentMethodChange` → `payment method changed` (or, once the rollout
+  // is confirmed, `payment method changed for drop`). Portal reads `newPaymentMethodLabel`.
+  const logPaymentMethodChanged = (newKey: string) => {
+    const uid = user?._id || user?.id;
+    const oldKey = method;
+    if (!uid || newKey === oldKey) return;
+    const isConfirmed = !!(calculator as any).isRolloutConfirmed;
+    const currentPrice = parseFloat(endPrice) || Number(calculator.price) || 0;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: calculator.totals,
+      percentageOfRollout: markupLabel(currentPrice, calculator.totals),
+      change: {
+        fieldName: 'paymentMethod', fieldLabel: 'Payment Method', fieldValue: currentPrice,
+        fieldCategory: isConfirmed ? 'drop' : 'rollout',
+        oldValue: oldKey, newValue: currentPrice,
+        oldPaymentMethod: oldKey, newPaymentMethod: newKey,
+        oldPaymentMethodLabel: planLabelOf(plans, oldKey),
+        newPaymentMethodLabel: planLabelOf(plans, newKey),
+        action: isConfirmed ? 'payment method changed for drop' : 'payment method changed',
+      },
+    }).catch(() => {});
+  };
+
+  // Web `handleSelectPlan` → `drop price plan selected` (portal "Added Payment Plan"
+  // row). Fired when the rep adds a financing plan inside the drop-price modal.
+  const logDropPlanSelected = (planKey: string) => {
+    const uid = user?._id || user?.id;
+    if (!uid || !planKey) return;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: calculator.totals,
+      percentageOfRollout: markupLabel(pendingDrop, calculator.totals),
+      change: {
+        fieldName: 'dropPricePlan', fieldLabel: 'Drop Price Plan', fieldValue: pendingDrop, fieldCategory: 'drop',
+        oldValue: '', newValue: pendingDrop,
+        paymentPlanKey: planKey, paymentPlanLabel: planLabelOf(plans, planKey), dropPrice: pendingDrop,
+        action: 'drop price plan selected',
+      },
+    }).catch(() => {});
+  };
+
   // COST/PAR/RETAIL are recomputed LIVE from the entered quantities × the current
   // schema field prices (web `getCalculationResult` parity) — NOT from the stored
   // `calculator.totals`, which for a blank-tier schema (only retail priced) carried
@@ -978,6 +1055,24 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           action: 'drop price secured',
         },
       }).catch(() => {});
+      // Web `handleSecurePrice` also fires `drop price plan selected on secure`
+      // (portal "Selected Payment Plan" row) when the secured drop uses a financing plan.
+      if (isFinancing(pricing.plans, data.paymentMethod)) {
+        logRolloutChange({
+          userId: uidS,
+          leadId,
+          calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
+          tiers: calculator.totals,
+          percentageOfRollout: pricemarkup,
+          change: {
+            fieldName: 'dropPricePlan', fieldLabel: 'Drop Price Plan', fieldValue: pendingDrop, fieldCategory: 'drop',
+            oldValue: '', newValue: pendingDrop,
+            paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
+            dropPrice: pendingDrop, dropNumber,
+            action: 'drop price plan selected on secure',
+          },
+        }).catch(() => {});
+      }
     }
     setShowDropModal(false);
     setShowDropInput(false);
@@ -1174,7 +1269,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 style={{ flex: 1, fontSize: 16, fontWeight: '900', color: focused ? '#16A34A' : '#212B36', padding: 0, margin: 0, height: '100%', lineHeight: 20, textAlignVertical: 'center' }}
                 value={endPrice}
                 onChangeText={(t) => { const c = t.replace(/[^0-9.]/g, ''); setEndPrice(c); onPriceChange(calculator.id, parseFloat(c) || 0); }}
-                onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+                onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); logEndPriceEntered(); }}
                 placeholder="Enter End Price" placeholderTextColor="#919EAB" keyboardType="numeric"
               />
             </View>
@@ -1448,7 +1543,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         price={priceNum}
         plans={plans}
         categories={pricing.categories}
-        onSelect={(key) => { onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false); }}
+        onSelect={(key) => { logPaymentMethodChanged(key); onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false); }}
         onClose={() => setShowPlanPicker(false)}
       />
 
@@ -1470,6 +1565,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         dropAddCategories={pricing.dropAddCategories}
         onSecure={secureDrop}
         onDecline={declineDrop}
+        onPlanSelected={logDropPlanSelected}
         onClose={() => { setShowDropModal(false); setPendingDropIndex(-1); }}
       />
 

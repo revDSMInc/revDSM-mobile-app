@@ -31,7 +31,8 @@ import {
 import type { DynamicInspectionCapture } from './useDynamicInspectionCapture';
 
 const GREEN = '#4CBB17';
-const AMBER = '#F59E0B';
+// Move-photo "FROM" tile highlight — yellow so the source slot stands out on the dark grid.
+const FROM_YELLOW = '#FACC15';
 
 /** Iconify string (e.g. "mdi:home-outline") → MaterialCommunityIcons name. */
 export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): string => {
@@ -64,35 +65,70 @@ export function ProductDropdown({
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = React.useRef<View>(null);
+  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
   const selected = products.find((p) => p.id === selectedProductId) || products[0];
 
+  // Anchor the menu directly under the trigger button (measure it in the window).
+  const openMenu = () => {
+    const node = btnRef.current as any;
+    if (node?.measureInWindow) {
+      node.measureInWindow((x: number, y: number, width: number, height: number) => {
+        setAnchor({ x, y: y + height + 6, width });
+        setOpen(true);
+      });
+    } else {
+      setOpen(true);
+    }
+  };
+
   return (
-    <View style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
-      <TouchableOpacity
-        onPress={() => setOpen(true)}
-        activeOpacity={0.7}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          alignSelf: 'flex-start',
-          gap: 8,
-          paddingHorizontal: 16,
-          height: 40,
-          borderRadius: 8,
-          borderWidth: 1,
-          borderColor: 'rgba(76,187,23,0.4)',
-        }}
-      >
-        {selected?.icon ? <Icon name={iconifyToMdi(selected.icon)} size={18} color={GREEN} /> : null}
-        <Text style={{ color: GREEN, fontWeight: '700', fontSize: 14 }}>
-          {selected?.name || 'Select product'}
-        </Text>
-        <Icon name="chevron-down" size={18} color={GREEN} />
-      </TouchableOpacity>
+    <>
+      {/* Compact header pill — a green-outlined product button with a MUI dropdown caret. */}
+      <View ref={btnRef} collapsable={false}>
+        <TouchableOpacity
+          onPress={openMenu}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            paddingHorizontal: 14,
+            height: 34,
+            borderRadius: 17,
+            borderWidth: 1,
+            borderColor: 'rgba(76,187,23,0.5)',
+          }}
+        >
+          {selected?.icon ? <Icon name={iconifyToMdi(selected.icon)} size={16} color={GREEN} /> : null}
+          <Text style={{ color: GREEN, fontWeight: '800', fontSize: 14 }} numberOfLines={1}>
+            {selected?.name || 'Select product'}
+          </Text>
+          <Icon name="arrow-drop-down" size={20} color={GREEN} />
+        </TouchableOpacity>
+      </View>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <TouchableOpacity activeOpacity={1} onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 32 }}>
-          <View style={{ backgroundColor: '#0D1F1A', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(76,187,23,0.2)', overflow: 'hidden' }}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setOpen(false)} style={{ flex: 1 }}>
+          {/* Menu sits directly below the button (measured), not centered. */}
+          <View
+            style={{
+              position: 'absolute',
+              top: anchor?.y ?? 100,
+              left: anchor?.x ?? 24,
+              minWidth: anchor?.width ?? 200,
+              backgroundColor: '#0D1F1A',
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: 'rgba(76,187,23,0.25)',
+              overflow: 'hidden',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 6 },
+              shadowOpacity: 0.35,
+              shadowRadius: 14,
+              elevation: 12,
+            }}
+          >
             {products.map((p, idx) => {
               const isActive = p.id === (selected?.id);
               return (
@@ -111,7 +147,7 @@ export function ProductDropdown({
                   }}
                 >
                   {p.icon ? <Icon name={iconifyToMdi(p.icon)} size={18} color={isActive ? GREEN : 'rgba(255,255,255,0.85)'} /> : null}
-                  <Text style={{ color: isActive ? GREEN : 'rgba(255,255,255,0.9)', fontWeight: isActive ? '800' : '600', fontSize: 15 }}>
+                  <Text style={{ color: isActive ? GREEN : 'rgba(255,255,255,0.9)', fontWeight: isActive ? '800' : '600', fontSize: 15 }} numberOfLines={1}>
                     {p.name}
                   </Text>
                   {isActive && <Icon name="check" size={18} color={GREEN} style={{ marginLeft: 'auto' }} />}
@@ -121,7 +157,7 @@ export function ProductDropdown({
           </View>
         </TouchableOpacity>
       </Modal>
-    </View>
+    </>
   );
 }
 
@@ -135,7 +171,7 @@ interface CommonBodyProps {
   onTagAsExtra?: (category: InspectionCategory) => void;
   /**
    * Move-photo flow only: the ui-key of the slot the photo is being moved FROM.
-   * That slot renders as an amber "FROM" tile so the rep can see the origin while
+   * That slot renders as a yellow "FROM" tile so the rep can see the origin while
    * picking a destination (web `move-photo-dialog` parity).
    */
   moveFromKey?: string;
@@ -185,12 +221,12 @@ function SlotButton({
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 1.5,
-          borderColor: isMoveSource ? AMBER : filled ? GREEN : 'rgba(255,255,255,0.12)',
+          borderColor: isMoveSource ? FROM_YELLOW : filled ? GREEN : 'rgba(255,255,255,0.12)',
           // Web parity (dynamic-schema-renderer.js:60-81): unfilled pill is a
           // translucent teal, NOT the near-opaque `#16302A` that (with the dark text
           // below) rendered the tag label invisible.
           backgroundColor: isMoveSource
-            ? 'rgba(245,158,11,0.12)'
+            ? 'rgba(250,204,21,0.18)'
             : filled
               ? 'rgba(76,187,23,0.8)'
               : 'rgba(0,120,103,0.1)',
@@ -209,7 +245,7 @@ function SlotButton({
                 textAlign: 'center',
                 // Web renders both filled and unfilled slot labels white
                 // (unfilled `color: 'white'`), never dark ink on the dark screen.
-                color: isMoveSource ? AMBER : '#fff',
+                color: isMoveSource ? FROM_YELLOW : '#fff',
               }}
             >
               {isMoveSource ? `FROM · ${slot.name}` : slot.name}

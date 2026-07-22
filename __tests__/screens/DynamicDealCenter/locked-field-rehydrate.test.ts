@@ -85,6 +85,71 @@ describe('locked dcField field re-hydrates from dealCenterData on load', () => {
   // saved value. The fix is upstream: dealCenterData must be built from the
   // RESULTED calculator's entries (which carry the dcField ref, e.g. an entry
   // whose `name` === 'wedges_count'), so the ref resolves and the value survives.
+  // Regression: an UNBUILT product (locked field whose dcField does not resolve —
+  // the product was never built) must be EMPTIED and its combination PRUNED, so the
+  // portal does not render a phantom product (e.g. "LeafFilter → Combination #1-4"
+  // with a default "Versa" profile the rep never entered). A locked optionList/toggle
+  // that resolves to '' must return '' (matching the prune's default), NOT fall
+  // through to its stored phantom value.
+  describe('unbuilt (locked, unresolved) product combos are pruned', () => {
+    const comboConfig = {
+      name: 'lf-test',
+      verticals: [
+        {
+          id: 'lf',
+          label: 'LeafFilter',
+          tabs: [
+            {
+              id: 'lf__t1',
+              label: 'LeafFilter',
+              sections: [
+                {
+                  id: 'sec_combo',
+                  label: 'Combos',
+                  sectionType: 'combination',
+                  defaultItem: {},
+                  fields: [
+                    {
+                      id: 'f_profile',
+                      type: 'optionList',
+                      label: 'LeafFilter Profile',
+                      locked: true,
+                      dcField: 'lf_profile',
+                      defaultValue: '',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    it('drops a combo whose only locked field resolves blank (never built)', () => {
+      // Phantom: the state carries a LeafFilter combo with a profile, but the deal
+      // center never built LeafFilter (empty dealCenterData → dcField unresolved).
+      const phantom: any = {
+        lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_profile: 'Versa' }] } } } },
+      };
+      const serialized = serializeDynamicJobStateForStorage(phantom, comboConfig, {});
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, comboConfig);
+      // The unbuilt combo is pruned → no phantom LeafFilter combination persisted.
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(0);
+    });
+
+    it('keeps a genuinely-entered combo value (built product)', () => {
+      const built: any = {
+        lf: { 'lf__t1': { comboGroups: { sec_combo: { combinations: [{ f_profile: 'Versa' }] } } } },
+      };
+      // dealCenterData resolves the dcField → the product IS built → combo survives.
+      const serialized = serializeDynamicJobStateForStorage(built, comboConfig, { lf_profile: 'Versa' });
+      const deserialized = deserializeDynamicJobStateFromStorage(serialized, comboConfig);
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations).toHaveLength(1);
+      expect(deserialized.lf['lf__t1'].comboGroups.sec_combo.combinations[0].f_profile).toBe('Versa');
+    });
+  });
+
   it('dealCenterData built from calculator entries resolves the dcField on reopen', () => {
     // Saved job state has the locked field blank (stored blank at save time).
     const saved: any = {
