@@ -1,0 +1,705 @@
+{
+    "code": 200,
+    "message": "Job status updated successfully",
+    "data": {
+        "_id": "6a619c49a6cbfff681366a1a",
+        "leadId": "6a619a65a6cbfff681364713",
+        "leadDisplayId": "N/A",
+        "jobNumber": "6a619a65a6cbfff681364713",
+        "date": "2026-07-23T09:00:00+05:00",
+        "time": "AM",
+        "arrivalWindow": "8AM – 12NOON ARRIVAL",
+        "status": "inProgress",
+        "workflowState": "resume",
+        "companyName": "Dtest",
+        "address": "FCX5+9C2, Ali Park St, Ali Park Ali Park Lahore Cantt, Lahore, Pakistan",
+        "location": {
+            "type": "Point",
+            "coordinates": [
+                74.40848861007233,
+                31.49830089507425
+            ]
+        },
+        "customerId": "6a619a64a6cbfff681364710",
+        "customerName": "Lead One",
+        "contractDetails": {
+            "originalContractPrice": "400",
+            "downPayment": "",
+            "downPaymentMethod": "",
+            "balance": "400",
+            "balancePaymentMethod": "check"
+        },
+        "preInstallPhotos": {
+            "totalPhotos": 2,
+            "filledSlots": 2,
+            "products": [
+                {
+                    "product": "Flooring",
+                    "schemaResolved": true,
+                    "categories": [
+                        {
+                            "label": "EXT",
+                            "type": "compass-grid",
+                            "path": [
+                                "EXT"
+                            ],
+                            "storageCategory": "Flooring — EXT",
+                            "slots": [
+                                {
+                                    "id": "slot_1783055993635_d255",
+                                    "name": "Back-Left",
+                                    "storageName": "Back-Left",
+                                    "row": 0,
+                                    "col": 0,
+                                    "allowMultiple": true,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": true,
+                                    "photos": [
+                                        {
+                                            "_id": "6a619ac9a6cbfff68136510e",
+                                            "s3url": "images/SelfGen/back-left-3838d466-7ac5-4f49-acd9-29c29db98c5d.jpeg",
+                                            "bucketName": "np-revdsm-staging",
+                                            "timestampTaken": "2026-07-23T04:38:26.702Z",
+                                            "coordinates": {
+                                                "latitude": 31.498327073735666,
+                                                "longitude": 74.40851758243997
+                                            },
+                                            "isAnnotated": false
+                                        }
+                                    ]
+                                },
+                                {
+                                    "id": "slot_1783055993635_1plq",
+                                    "name": "Back",
+                                    "storageName": "Back",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": true,
+                                    "photos": [
+                                        {
+                                            "_id": "6a619af1a6cbfff681365227",
+                                            "s3url": "images/SelfGen/back-892b828c-9c8c-48ef-81f9-364044d4c763.jpeg",
+                                            "bucketName": "np-revdsm-staging",
+                                            "timestampTaken": "2026-07-23T04:39:09.941Z",
+                                            "coordinates": {
+                                                "latitude": 31.498327073735666,
+                                                "longitude": 74.40851758243997
+                                            },
+                                            "isAnnotated": false
+                                        }
+                                    ]
+                                },
+                                {
+                                    "id": "slot_1783055993635_rki6",
+                                    "name": "Back-Right",
+                                    "storageName": "Back-Right",
+                                    "row": 0,
+                                    "col": 2,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783055993635_sl55",
+                                    "name": "Left Side",
+                                    "storageName": "Left Side",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783055993635_buc7",
+                                    "name": "Right Side",
+                                    "storageName": "Right Side",
+                                    "row": 1,
+                                    "col": 2,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783055993635_maa6",
+                                    "name": "Front-Left",
+                                    "storageName": "Front-Left",
+                                    "row": 2,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783055993635_21jm",
+                                    "name": "Front",
+                                    "storageName": "Front",
+                                    "row": 2,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783055993635_pnvi",
+                                    "name": "Front-Right",
+                                    "storageName": "Front-Right",
+                                    "row": 2,
+                                    "col": 2,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "RIDGE",
+                            "type": "compass-grid",
+                            "path": [
+                                "RIDGE"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056043378_85q0",
+                                    "name": "Ridge Line",
+                                    "storageName": "Ridge Line",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056043378_4mr9",
+                                    "name": "Valley 1",
+                                    "storageName": "Valley 1",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056043378_iwp4",
+                                    "name": "Valley 2",
+                                    "storageName": "Valley 2",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056043378_3tgt",
+                                    "name": "Valley 3",
+                                    "storageName": "Valley 3",
+                                    "row": 1,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "FLASH",
+                            "type": "compass-grid",
+                            "path": [
+                                "FLASH"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056370843_0yv2",
+                                    "name": "Chimney",
+                                    "storageName": "Chimney",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056370843_1yut",
+                                    "name": "Skylight",
+                                    "storageName": "Skylight",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056370843_9gip",
+                                    "name": "Pipe Boot",
+                                    "storageName": "Pipe Boot",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056370843_pmdj",
+                                    "name": "Wall Step",
+                                    "storageName": "Wall Step",
+                                    "row": 1,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "SHNGL",
+                            "type": "compass-grid",
+                            "path": [
+                                "SHNGL"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056446747_yfev",
+                                    "name": "Granule Loss",
+                                    "storageName": "Granule Loss",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056456068_iog8",
+                                    "name": "Curling",
+                                    "storageName": "Curling",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056461188_kbfu",
+                                    "name": "Cracking",
+                                    "storageName": "Cracking",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056465753_xg0y",
+                                    "name": "Hail Impact",
+                                    "storageName": "Hail Impact",
+                                    "row": 1,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056472860_cpcz",
+                                    "name": "Wind Lift",
+                                    "storageName": "Wind Lift",
+                                    "row": 2,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056477843_c2zc",
+                                    "name": "Overview",
+                                    "storageName": "Overview",
+                                    "row": 2,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "SOFFIT",
+                            "type": "compass-grid",
+                            "path": [
+                                "SOFFIT"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056518011_bcl2",
+                                    "name": "Fascia Front",
+                                    "storageName": "Fascia Front",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056518011_qy62",
+                                    "name": "Fascia Rear",
+                                    "storageName": "Fascia Rear",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056518011_1xc6",
+                                    "name": "Soffit Vent",
+                                    "storageName": "Soffit Vent",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056518011_9dt8",
+                                    "name": "Rot/Sep",
+                                    "storageName": "Rot/Sep",
+                                    "row": 1,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "DMG",
+                            "type": "compass-grid",
+                            "path": [
+                                "DMG"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056579483_bzpd",
+                                    "name": "Missing",
+                                    "storageName": "Missing",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056590292_e781",
+                                    "name": "Prior Repair",
+                                    "storageName": "Prior Repair",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056598523_2htz",
+                                    "name": "Storm",
+                                    "storageName": "Storm",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056604111_j6m4",
+                                    "name": "Structural",
+                                    "storageName": "Structural",
+                                    "row": 1,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056614636_au0y",
+                                    "name": "Other",
+                                    "storageName": "Other",
+                                    "row": 2,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "DRAIN",
+                            "type": "compass-grid",
+                            "path": [
+                                "DRAIN"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056652090_0sux",
+                                    "name": "Gutters",
+                                    "storageName": "Gutters",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056657436_2l09",
+                                    "name": "Attachment",
+                                    "storageName": "Attachment",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056665244_6jus",
+                                    "name": "Downspout",
+                                    "storageName": "Downspout",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "MEAS",
+                            "type": "compass-grid",
+                            "path": [
+                                "MEAS"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056708923_ajfh",
+                                    "name": "Plane 1",
+                                    "storageName": "Plane 1",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056714875_mhhk",
+                                    "name": "Plane 2",
+                                    "storageName": "Plane 2",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056719706_dq2p",
+                                    "name": "Plane 3",
+                                    "storageName": "Plane 3",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056729888_h06m",
+                                    "name": "Plane 4",
+                                    "storageName": "Plane 4",
+                                    "row": 1,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056737230_jjqd",
+                                    "name": "Plane 5",
+                                    "storageName": "Plane 5",
+                                    "row": 2,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056742930_re9j",
+                                    "name": "Plane 6",
+                                    "storageName": "Plane 6",
+                                    "row": 2,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        },
+                        {
+                            "label": "MISC",
+                            "type": "compass-grid",
+                            "path": [
+                                "MISC"
+                            ],
+                            "storageCategory": null,
+                            "slots": [
+                                {
+                                    "id": "slot_1783056861013_iy3y",
+                                    "name": "Satellite/Solar",
+                                    "storageName": "Satellite/Solar",
+                                    "row": 0,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056876359_4dez",
+                                    "name": "Attic Access",
+                                    "storageName": "Attic Access",
+                                    "row": 0,
+                                    "col": 1,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                },
+                                {
+                                    "id": "slot_1783056886919_6wbd",
+                                    "name": "Safety Notes",
+                                    "storageName": "Safety Notes",
+                                    "row": 1,
+                                    "col": 0,
+                                    "isExtra": false,
+                                    "hasSalesPhoto": false,
+                                    "photos": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "productDetails": {
+            "products": [
+                {
+                    "id": "6a28fa6ed6700f1190253ad2",
+                    "name": "Gutter/Roofline",
+                    "verticalId": "6a28fa6ed6700f1190253ad2",
+                    "subcategories": [
+                        {
+                            "id": "6a28fa6ed6700f1190253ad2__6a34e97e39e195278cd47945",
+                            "label": "Gutters",
+                            "sections": [
+                                {
+                                    "id": "section_1781585651515",
+                                    "label": "section_1781585651515",
+                                    "fields": [],
+                                    "combinations": [
+                                        {
+                                            "index": 1,
+                                            "fields": [
+                                                {
+                                                    "id": "field_1781585688652_fwjf5",
+                                                    "label": "selection_ycsmh",
+                                                    "value": "5\" K-Style"
+                                                },
+                                                {
+                                                    "id": "field_1782714923560_3um7t",
+                                                    "label": "Gutter Partial?",
+                                                    "value": "Yes"
+                                                },
+                                                {
+                                                    "id": "field_1782469684711_jr4od",
+                                                    "label": "color",
+                                                    "value": "White 80"
+                                                },
+                                                {
+                                                    "id": "field_1781585719275_fw2xm",
+                                                    "label": "Measurements",
+                                                    "value": "{\"Left Side\":{\"1st\":5}}"
+                                                },
+                                                {
+                                                    "id": "field_1781677587232_6tdam",
+                                                    "label": "# of Miters (Outside)",
+                                                    "value": "1"
+                                                },
+                                                {
+                                                    "id": "field_1781682369400_1ws9c",
+                                                    "label": "# of Miters (Inside)",
+                                                    "value": "2"
+                                                },
+                                                {
+                                                    "id": "field_1781682470351_5gdoj",
+                                                    "label": "# of End Caps (Rights)",
+                                                    "value": "3"
+                                                },
+                                                {
+                                                    "id": "field_1781682517129_ufcgy",
+                                                    "label": "# of End Caps (Lefts)",
+                                                    "value": "4"
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "id": "section_1781685061809",
+                                    "label": "Extras",
+                                    "fields": [
+                                        {
+                                            "id": "field_1781685314090_f75xt",
+                                            "label": "Wedges",
+                                            "value": "5"
+                                        }
+                                    ],
+                                    "combinations": []
+                                }
+                            ]
+                        },
+                        {
+                            "id": "6a28fa6ed6700f1190253ad2__6a34e97e39e195278cd47946",
+                            "label": "Gutter Guards",
+                            "sections": [
+                                {
+                                    "id": "section_1782386890583",
+                                    "label": "section_1782386890583",
+                                    "fields": [],
+                                    "combinations": [
+                                        {
+                                            "index": 1,
+                                            "fields": [
+                                                {
+                                                    "id": "field_1782386890583_kakwf",
+                                                    "label": "Gutter Profile",
+                                                    "value": "K-Style"
+                                                },
+                                                {
+                                                    "id": "field_1782386890584_xl0xw",
+                                                    "label": "LeafFilter Color",
+                                                    "value": "Wicker 30"
+                                                },
+                                                {
+                                                    "id": "field_1782386890584_ceuls",
+                                                    "label": "Measurements",
+                                                    "value": "{\"Left Side\":{\"1st\":2}}"
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "note": null
+    }
+}

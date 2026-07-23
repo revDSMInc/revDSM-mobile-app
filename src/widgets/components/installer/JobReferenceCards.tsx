@@ -142,8 +142,8 @@ export function JobReferenceCards({ packet, contract, products = [], onViewPacke
                     {p.name}
                   </Text>
                 </View>
-                {p.lines.map((line) => (
-                  <View key={line} className="flex-row items-start mb-1">
+                {p.lines.map((line, lineIdx) => (
+                  <View key={`${p.id}-${lineIdx}`} className="flex-row items-start mb-1">
                     <View
                       className="rounded-full mt-1.5 mr-2"
                       style={{ width: 6, height: 6, backgroundColor: accent }}

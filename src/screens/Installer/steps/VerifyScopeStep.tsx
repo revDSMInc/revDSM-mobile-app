@@ -110,8 +110,8 @@ export function VerifyScopeStep({
             <Text className="text-[15px] font-bold mb-1.5" style={{ color: colors.text }}>
               {product.name}
             </Text>
-            {product.lines.map((line) => (
-              <View key={line} className="flex-row items-start mb-1">
+            {product.lines.map((line, lineIdx) => (
+              <View key={`${product.id}-${lineIdx}`} className="flex-row items-start mb-1">
                 <View
                   className="rounded-full mt-1.5 mr-2"
                   style={{ width: 6, height: 6, backgroundColor: accent }}
