@@ -209,13 +209,8 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   // ─── Permissions ────────────────────────────────────────────────────────────
   const hasAndroidPermission = async () => {
     const version = Number(Platform.Version);
-    if (version >= 33) {
-      const [hasImage, hasVideo] = await Promise.all([
-        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES),
-        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO),
-      ]);
-      return hasImage && hasVideo;
-    }
+    // Android 13+ (API 33+) saves to the gallery via MediaStore with no storage permission.
+    if (version >= 33) return true;
     return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
   };
 
@@ -228,16 +223,10 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     } = getNativeModules();
     if (!ReactNativeBlobUtil || !CameraRoll) return;
 
+    // Only legacy Android (<=32) needs a runtime storage request; hasAndroidPermission()
+    // already returns true on 33+ so this block only runs for older devices.
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
-      const version = Number(Platform.Version);
-      if (version >= 33) {
-        await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
-        ]);
-      } else {
-        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
-      }
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
     }
 
     if (Platform.OS === 'ios') {

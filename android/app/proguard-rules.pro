@@ -10,8 +10,8 @@
 # Add any project specific keep options here:
 
 # Keep custom Haptic Feedback native module and package
--keep class com.revdsm_sales.HapticFeedbackModule { *; }
--keep class com.revdsm_sales.HapticFeedbackPackage { *; }
+-keep class com.revdsm.HapticFeedbackModule { *; }
+-keep class com.revdsm.HapticFeedbackPackage { *; }
 
 # --- PDF / file libraries: keep classes used via JS bridge reflection ---
 

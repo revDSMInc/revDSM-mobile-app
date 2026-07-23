@@ -48,16 +48,11 @@ export function useAppInitialization() {
 
       try {
         if (Platform.OS === 'android') {
-          if (Number(Platform.Version) >= 33) {
-            const hasImages = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES);
-            const hasVideo = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO);
-            if (!hasImages || !hasVideo) {
-              await PermissionsAndroid.requestMultiple([
-                PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-                PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
-              ]);
-            }
-          } else {
+          // Android 13+ (API 33+) uses the system photo picker for selecting media and
+          // MediaStore for saving downloads — neither needs READ_MEDIA_* permissions, and
+          // requesting them violates Google Play's Photo & Video Permissions policy.
+          // Only the legacy (<=32) storage model still needs a runtime request.
+          if (Number(Platform.Version) < 33) {
             const hasWrite = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
             const hasRead = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
             if (!hasWrite || !hasRead) {

@@ -78,9 +78,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.revdsm_sales"
+    namespace "com.revdsm"
     defaultConfig {
-        applicationId "com.revdsm_sales"
+        applicationId "com.revdsm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

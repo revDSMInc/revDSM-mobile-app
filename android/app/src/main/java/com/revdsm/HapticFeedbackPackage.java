@@ -1,4 +1,4 @@
-package com.revdsm_sales;
+package com.revdsm;
 
 import com.facebook.react.ReactPackage;
 import com.facebook.react.bridge.NativeModule;
