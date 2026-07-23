@@ -92,6 +92,8 @@ export default function ChatThreadsScreen({ navigation }: any) {
       })(),
       chatType: 'lead',
       initialParticipants: item.participants || [],
+      previewImage: item.leadDetails?.previewImage,
+      previewImages: item.leadDetails?.previewImages,
     });
   };
 
@@ -132,7 +134,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
           Recent Leads
         </Text>
         <View className="flex-row items-center">
-          {mainTab === 'channels' && (
+          {/* {mainTab === 'channels' && (
             <TouchableOpacity
               onPress={() => setShowCreateChannel(true)}
               className="flex-row items-center h-8 px-3 mr-2 rounded-full"
@@ -143,7 +145,7 @@ export default function ChatThreadsScreen({ navigation }: any) {
                 New Channel
               </Text>
             </TouchableOpacity>
-          )}
+          )} */}
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             className="w-8 h-8 items-center justify-center"

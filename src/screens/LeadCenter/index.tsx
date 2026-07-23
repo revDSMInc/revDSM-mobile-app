@@ -439,6 +439,8 @@ export default function LeadCenterPage() {
       // Hand the loaded photos to the Appointment Photos picker (web parity —
       // web passes selectedJob.salesPhotos straight into the chat composer).
       salesPhotos: lead.salesPhotos || [],
+      previewImage: lead.previewImage,
+      previewImages: lead.previewImages,
     });
   };
 

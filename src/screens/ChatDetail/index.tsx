@@ -123,7 +123,7 @@ export default function ChatDetailScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const route = useRoute<RouteProp<RootStackParamList, 'ChatDetail'>>();
-  const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [], salesPhotos: routeSalesPhotos } = route.params;
+  const { leadId, chatId: initialChatId, customerName, description, chatType = 'lead', initialParticipants = [], salesPhotos: routeSalesPhotos, previewImage: routePreviewImage, previewImages: routePreviewImages } = route.params;
   const isChannel = chatType === 'channel';
 
   // Log chat open
@@ -853,6 +853,7 @@ export default function ChatDetailScreen() {
       <ChatHeader
         customerName={customerName}
         description={description}
+        leadPreview={{ previewImage: routePreviewImage, previewImages: routePreviewImages }}
         isChannel={isChannel}
         isViewOnly={isViewOnly}
         colors={colors}
