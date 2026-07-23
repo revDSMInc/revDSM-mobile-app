@@ -1,4 +1,4 @@
-package com.revdsm_sales
+package com.revdsm
 
 import android.app.Application
 import com.facebook.react.PackageList
