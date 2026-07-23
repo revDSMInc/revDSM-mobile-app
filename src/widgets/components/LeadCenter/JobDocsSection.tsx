@@ -705,13 +705,8 @@ export const JobDocsSection = ({
 
   const hasAndroidPermission = async () => {
     const version = Number(Platform.Version);
-    if (version >= 33) {
-      const [hasImage, hasVideo] = await Promise.all([
-        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES),
-        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO),
-      ]);
-      return hasImage && hasVideo;
-    }
+    // Android 13+ (API 33+) saves to the gallery via MediaStore with no storage permission.
+    if (version >= 33) return true;
     return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
   };
 
@@ -727,28 +722,16 @@ export const JobDocsSection = ({
 
     let permissionRequested = false;
 
+    // Only legacy Android (<=32) reaches here; hasAndroidPermission() returns true on 33+,
+    // which saves to the gallery via MediaStore with no storage permission.
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
       permissionRequested = true;
-      const version = Number(Platform.Version);
-      if (version >= 33) {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
-        ]);
-        if (
-          granted[PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES] !== PermissionsAndroid.RESULTS.GRANTED
-        ) {
-          Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
-          return;
-        }
-      } else {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
-          return;
-        }
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+      );
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
+        return;
       }
     }
 
