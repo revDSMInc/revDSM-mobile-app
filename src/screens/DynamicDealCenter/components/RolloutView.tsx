@@ -426,9 +426,14 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        {/* Non-dismissable backdrop — tapping outside must NOT close the drop without
+            saving; the rep has to choose Secure or Decline (web `DropPriceModal` passes
+            NO `onClose` + `disableEscapeKeyDown`). And animationType="none" (web's
+            `TransitionProps={{ timeout: 0 }}`) so handing off to the chooser / declined
+            modal is instant and never fades out to reveal the un-dimmed background. */}
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }}>
           <BlurView
             style={StyleSheet.absoluteFill}
             blurType={isDark ? 'dark' : 'light'}
@@ -576,7 +581,7 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
               onClose={() => setShowPicker(false)}
             />
           </Pressable>
-        </Pressable>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -594,8 +599,11 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
 }) {
   const { isDark } = useTheme();
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+  // animationType="none" so the drop → chooser hand-off is instant: the dimmed
+  // backdrop is up on the same frame the drop modal disappears, never revealing the
+  // un-dimmed background (web parity — the drop dialog uses timeout:0).
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
         <BlurView
           style={StyleSheet.absoluteFill}
@@ -641,8 +649,9 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   visible: boolean; declinedPrice: number; onResultLead: () => void; onClose: () => void;
 }) {
   const { isDark } = useTheme();
+  // animationType="none" so decline → this modal is instant with no background flash.
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
         <BlurView
           style={StyleSheet.absoluteFill}
