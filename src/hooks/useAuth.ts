@@ -7,6 +7,7 @@ import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { queryClient } from '../services/api/queryClient';
 import { logEvent } from '../services/api/LoggerService';
+import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
 
 
 export const useAuth = () => {
@@ -31,6 +32,10 @@ export const useAuth = () => {
 
       // 4. Wipe memory / Redux state
       dispatch(logoutAction());
+
+      // 5. Drop the installer job bound to the activity log, so the next session
+      //    can't attach this user's job/lead context to its events.
+      clearActiveInstallerJob();
 
       if (userId) {
         logEvent('logout', {

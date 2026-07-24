@@ -4,6 +4,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
+import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type { CapturedPhoto, MaterialStepState } from '../../../config/types/installer';
 
 interface Props {
@@ -33,10 +34,26 @@ export function MaterialPhotoStep({
   onBack,
 }: Props) {
   const { colors } = useTheme();
+  const log = useInstallerActivityLog();
   const [cameraOpen, setCameraOpen] = useState(false);
 
   const isPickup = mode === 'pickup';
   const satisfied = state.photos.length > 0 || state.skipped;
+
+  const handleCapture = (photo: CapturedPhoto) => {
+    onAddPhoto(photo);
+    log.materialPhotoAdded(mode, state.photos.length + 1);
+  };
+
+  const handleRemove = (photoId: string) => {
+    onRemovePhoto(photoId);
+    log.materialPhotoRemoved(mode, Math.max(0, state.photos.length - 1));
+  };
+
+  const handleSkip = () => {
+    log.materialSkipped(mode);
+    onSkip();
+  };
 
   const skipLabel = isPickup
     ? 'Had Material On Truck — Nothing Picked Up'
@@ -69,7 +86,7 @@ export function MaterialPhotoStep({
             }
             count={state.photos.length}
             onCancel={() => setCameraOpen(false)}
-            onCapture={(photo) => onAddPhoto(photo)}
+            onCapture={handleCapture}
           />
         ) : undefined
       }
@@ -112,7 +129,7 @@ export function MaterialPhotoStep({
                 <Text className="text-[10px] font-bold text-white">#{i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => onRemovePhoto(photo.id)}
+                onPress={() => handleRemove(photo.id)}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
@@ -146,7 +163,7 @@ export function MaterialPhotoStep({
             <View className="flex-1 h-px" style={{ backgroundColor: colors.border }} />
           </View>
           <TouchableOpacity
-            onPress={onSkip}
+            onPress={handleSkip}
             className="h-12 rounded-xl items-center justify-center border-2"
             style={{ borderColor: colors.warning.main, backgroundColor: colors.background }}
           >

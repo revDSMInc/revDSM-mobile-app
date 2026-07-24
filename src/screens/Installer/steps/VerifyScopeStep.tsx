@@ -8,6 +8,7 @@ import {
   type JobPhotoRef,
 } from '../../../widgets/modals/installer/DiscrepancyModal';
 import { productColor } from '../../../constants/installer';
+import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import { FlashMessage } from '../../../config/message';
 import type { ScopeStatus, SoldProduct } from '../../../config/types/installer';
 
@@ -40,15 +41,38 @@ export function VerifyScopeStep({
   onBack,
 }: Props) {
   const { colors } = useTheme();
+  const log = useInstallerActivityLog();
   const [sheetFor, setSheetFor] = useState<SoldProduct | null>(null);
 
   const pending = products.filter((p) => scope[p.id]?.state === 'pending').length;
   const resolved = products.filter((p) => scope[p.id]?.state === 'resolved').length;
+  const confirmed = products.filter((p) => scope[p.id]?.state === 'confirmed').length;
   const allSettled =
     products.length > 0 && products.every((p) => scope[p.id] && scope[p.id].state !== 'pending');
 
+  const handleConfirmProduct = (product: SoldProduct) => {
+    log.scopeConfirmed(product);
+    onSetStatus(product.id, { state: 'confirmed' });
+  };
+
+  const handleUndoProduct = (product: SoldProduct) => {
+    log.scopeUndone(product);
+    onSetStatus(product.id, null);
+  };
+
+  const handleOpenDiscrepancy = (product: SoldProduct) => {
+    log.discrepancyOpened(product);
+    setSheetFor(product);
+  };
+
+  const handleResolveProduct = (product: SoldProduct, status: ScopeStatus) => {
+    log.scopeResolved(product, status.issue);
+    onSetStatus(product.id, { ...status, state: 'resolved' });
+  };
+
   const handleComplete = () => {
     if (!allSettled) return;
+    log.scopeCompleted({ productCount: products.length, confirmed, resolved });
     onComplete();
     onBack();
   };
@@ -129,7 +153,7 @@ export function VerifyScopeStep({
             {!st ? (
               <View className="flex-row mt-2" style={{ gap: 8 }}>
                 <TouchableOpacity
-                  onPress={() => onSetStatus(product.id, { state: 'confirmed' })}
+                  onPress={() => handleConfirmProduct(product)}
                   className="flex-1 rounded-lg items-center justify-center py-2.5 flex-row"
                   style={{ backgroundColor: colors.primary.main }}
                 >
@@ -137,7 +161,7 @@ export function VerifyScopeStep({
                   <Text className="text-white text-xs font-bold ml-1">Confirm Correct</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  onPress={() => setSheetFor(product)}
+                  onPress={() => handleOpenDiscrepancy(product)}
                   className="flex-1 rounded-lg items-center justify-center py-2.5 flex-row border-2"
                   style={{ borderColor: colors.warning.main, backgroundColor: colors.background }}
                 >
@@ -159,7 +183,7 @@ export function VerifyScopeStep({
                   Confirmed correct
                 </Text>
                 <TouchableOpacity
-                  onPress={() => onSetStatus(product.id, null)}
+                  onPress={() => handleUndoProduct(product)}
                   className="ml-auto"
                 >
                   <Text
@@ -199,7 +223,7 @@ export function VerifyScopeStep({
                   discrepancy endpoint pushes a real status back.
                 */}
                 <TouchableOpacity
-                  onPress={() => onSetStatus(product.id, { ...st, state: 'resolved' })}
+                  onPress={() => handleResolveProduct(product, st)}
                   className="mt-1.5"
                 >
                   <Text
@@ -249,6 +273,7 @@ export function VerifyScopeStep({
         onClose={() => setSheetFor(null)}
         onSend={({ issue, note, attachments }) => {
           if (!sheetFor) return;
+          log.discrepancyReported(sheetFor, { issue, note, attachments });
           onReportDiscrepancy(sheetFor.id, issue, note, attachments);
           onSetStatus(sheetFor.id, { state: 'pending', issue, note, attachments });
           setSheetFor(null);

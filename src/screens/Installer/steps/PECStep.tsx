@@ -5,6 +5,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
 import { PEC_AREAS } from '../../../constants/installer';
+import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type { CapturedPhoto, PECArea, PECEntry } from '../../../config/types/installer';
 
 interface Props {
@@ -35,6 +36,7 @@ export function PECStep({
   onBack,
 }: Props) {
   const { colors } = useTheme();
+  const log = useInstallerActivityLog();
   const [cameraFor, setCameraFor] = useState<PECArea | null>(null);
 
   const flagged = Object.keys(entries);
@@ -52,14 +54,22 @@ export function PECStep({
   const canConfirm =
     hasConditions === false || (hasConditions === true && allDocumented);
 
-  const toggleArea = (area: PECArea) => {
-    if (entries[area.id]) onSetEntry(area.id, null);
-    else onSetEntry(area.id, { areaId: area.id, note: '', photos: [] });
+  const handleSetHasConditions = (value: boolean) => {
+    log.pecAnswered(value);
+    onSetHasConditions(value);
   };
 
-  const addPhoto = (areaId: string, photo: CapturedPhoto) => {
-    const current = entries[areaId] ?? { areaId, note: '', photos: [] };
-    onSetEntry(areaId, { ...current, photos: [...current.photos, photo] });
+  const toggleArea = (area: PECArea) => {
+    const flagged = !entries[area.id];
+    log.pecAreaToggled(area, flagged);
+    if (flagged) onSetEntry(area.id, { areaId: area.id, note: '', photos: [] });
+    else onSetEntry(area.id, null);
+  };
+
+  const addPhoto = (area: PECArea, photo: CapturedPhoto) => {
+    const current = entries[area.id] ?? { areaId: area.id, note: '', photos: [] };
+    onSetEntry(area.id, { ...current, photos: [...current.photos, photo] });
+    log.pecPhotoAdded(area, current.photos.length + 1);
   };
 
   const setNote = (areaId: string, note: string) => {
@@ -67,7 +77,21 @@ export function PECStep({
     onSetEntry(areaId, { ...current, note });
   };
 
+  /** Notes log on blur, not per keystroke — one entry per area, not one per letter. */
+  const commitNote = (area: PECArea) => {
+    const note = (entries[area.id]?.note ?? '').trim();
+    if (note) log.pecNoteEntered(area, note);
+  };
+
   const handleConfirm = () => {
+    log.pecConfirmed({
+      hasConditions,
+      areaCount: flagged.length,
+      photoCount: totalPhotos,
+      areas: flagged.map(
+        (id) => PEC_AREAS.find((a) => a.id === id)?.label ?? id
+      ),
+    });
     onComplete();
     onBack();
   };
@@ -85,7 +109,7 @@ export function PECStep({
             hint="Photo the pre-existing damage or condition"
             count={entries[cameraFor.id]?.photos.length ?? 0}
             onCancel={() => setCameraFor(null)}
-            onCapture={(photo) => addPhoto(cameraFor.id, photo)}
+            onCapture={(photo) => addPhoto(cameraFor, photo)}
           />
         ) : undefined
       }
@@ -128,7 +152,7 @@ export function PECStep({
       {/* Answer */}
       <View className="flex-row mb-4" style={{ gap: 8 }}>
         <TouchableOpacity
-          onPress={() => onSetHasConditions(false)}
+          onPress={() => handleSetHasConditions(false)}
           className="flex-1 rounded-xl items-center justify-center border-2 py-3"
           style={{
             backgroundColor:
@@ -144,7 +168,7 @@ export function PECStep({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => onSetHasConditions(true)}
+          onPress={() => handleSetHasConditions(true)}
           className="flex-1 rounded-xl items-center justify-center border-2 py-3"
           style={{
             backgroundColor:
@@ -249,6 +273,7 @@ export function PECStep({
                     <TextInput
                       value={entry!.note}
                       onChangeText={(t) => setNote(area.id, t)}
+                      onBlur={() => commitNote(area)}
                       placeholder="Describe the condition — e.g. crack near garage, ~3 ft"
                       placeholderTextColor="#919EAB"
                       className="rounded-lg px-2.5 py-2 text-xs mb-2"

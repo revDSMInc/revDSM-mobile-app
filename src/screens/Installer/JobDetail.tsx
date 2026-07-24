@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Linking, Modal, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -12,6 +12,8 @@ import { getRawPhoneNumber } from '../../utils/phone-util';
 import { FlashMessage } from '../../config/message';
 import { useInstallProgress } from '../../hooks/useInstallProgress';
 import { useSubmitInstallerResult, useReportDiscrepancy } from '../../hooks/useInstallerJobs';
+import { useInstallerActivityLog } from '../../hooks/useInstallerActivityLog';
+import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
 import { InstallTimeline } from '../../widgets/components/installer/InstallTimeline';
 import { JobReferenceCards } from '../../widgets/components/installer/JobReferenceCards';
 import { ResultJobModal } from '../../widgets/modals/installer/ResultJobModal';
@@ -73,10 +75,45 @@ export default function InstallerJobDetail() {
 
   const submitResult = useSubmitInstallerResult();
   const reportDiscrepancy = useReportDiscrepancy(job?._id ?? '');
+  const log = useInstallerActivityLog();
 
   const [openStep, setOpenStep] = useState<InstallStepKey | null>(null);
   const [resultType, setResultType] = useState<InstallerResultType | null>(null);
   const [showPhoneOptions, setShowPhoneOptions] = useState(false);
+
+  // "Job opened" once per screen mount. The job is re-bound to the log context here
+  // too, so a deep link or a back-navigation that skipped the dashboard still gives
+  // the step screens their jobId / leadId.
+  const openLogged = useRef(false);
+  useEffect(() => {
+    if (!job?._id || openLogged.current) return;
+    openLogged.current = true;
+    persistActiveInstallerJob(job);
+    log.jobOpened(job, {
+      readOnly: !!job.resulted,
+      completedSteps: completedCount,
+      totalSteps,
+    });
+  }, [job, completedCount, totalSteps, log]);
+
+  const handleLeave = useCallback(() => {
+    if (job?._id) log.jobClosed(job, completedCount);
+    navigation.goBack();
+  }, [job, completedCount, log, navigation]);
+
+  /** Opening a timeline step. Its status tells the portal whether it was a re-visit. */
+  const handleOpenStep = useCallback(
+    (step: InstallStepKey) => {
+      log.stepOpened(step, stepStatus[step]);
+      setOpenStep(step);
+    },
+    [log, stepStatus]
+  );
+
+  const handleCloseStep = useCallback(() => {
+    if (openStep) log.stepClosed(openStep);
+    setOpenStep(null);
+  }, [openStep, log]);
 
   // Shots captured so far, offered as evidence when reporting a discrepancy.
   const jobPhotos: JobPhotoRef[] = useMemo(() => {
@@ -155,33 +192,50 @@ export default function InstallerJobDetail() {
     [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
 
   const handleSubmitResult = (reason: string) => {
+    const result = resultType!;
     submitResult.mutate(
-      { jobId: job._id, result: resultType!, reason },
+      { jobId: job._id, result, reason },
       {
         onSuccess: () => {
-          FlashMessage.success('Job resulted', `${resultType} — ${reason}`);
+          log.resultSubmitted(result, reason);
+          FlashMessage.success('Job resulted', `${result} — ${reason}`);
           setResultType(null);
           navigation.goBack();
         },
-        onError: () => FlashMessage.error('Could not result job', 'Please try again.'),
+        onError: () => {
+          log.resultFailed(result, reason);
+          FlashMessage.error('Could not result job', 'Please try again.');
+        },
       }
     );
+  };
+
+  const handleOpenResult = (type: InstallerResultType) => {
+    log.resultOpened(type);
+    setResultType(type);
   };
 
   const phone = job.customerDetails?.phone;
 
   const handleCall = () => {
-    if (phone) Linking.openURL(`tel:${getRawPhoneNumber(phone)}`);
+    if (phone) {
+      log.customerContact('call');
+      Linking.openURL(`tel:${getRawPhoneNumber(phone)}`);
+    }
     setShowPhoneOptions(false);
   };
 
   const handleTextMessage = () => {
-    if (phone) Linking.openURL(`sms:${getRawPhoneNumber(phone)}`);
+    if (phone) {
+      log.customerContact('text');
+      Linking.openURL(`sms:${getRawPhoneNumber(phone)}`);
+    }
     setShowPhoneOptions(false);
   };
 
   const handleCopyPhone = () => {
     if (phone) {
+      log.customerContact('copy_number');
       Clipboard.setString(phone);
       FlashMessage.success('Copied', 'Phone number copied to clipboard');
     }
@@ -197,7 +251,7 @@ export default function InstallerJobDetail() {
         {/* Local header */}
         <View className="px-4 pb-3 pt-6 flex-row items-center">
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
+            onPress={handleLeave}
             className="mr-3 p-1 items-center justify-center border border-border rounded-lg"
             style={{ width: 32, height: 32 }}
           >
@@ -363,7 +417,7 @@ export default function InstallerJobDetail() {
             notes={stepNotes}
             completedCount={completedCount}
             totalSteps={totalSteps}
-            onOpen={setOpenStep}
+            onOpen={handleOpenStep}
           />
 
           {/* Read-only reference */}
@@ -371,9 +425,10 @@ export default function InstallerJobDetail() {
             packet={job.packet}
             contract={job.contract}
             products={job.products}
-            onViewPacket={() =>
-              FlashMessage.info('Packet preview', 'Wire to PdfPreviewModal once the URL is served.')
-            }
+            onViewPacket={() => {
+              log.packetViewed(job.packet?.fileName);
+              FlashMessage.info('Packet preview', 'Wire to PdfPreviewModal once the URL is served.');
+            }}
           />
 
           {/* Result actions */}
@@ -381,7 +436,7 @@ export default function InstallerJobDetail() {
             {INSTALLER_RESULT_TYPES.map((t) => (
               <TouchableOpacity
                 key={t}
-                onPress={() => setResultType(t)}
+                onPress={() => handleOpenResult(t)}
                 className="flex-1 h-12 rounded-xl items-center justify-center"
                 style={{ backgroundColor: RESULT_COLORS[t] }}
               >
@@ -391,9 +446,10 @@ export default function InstallerJobDetail() {
           </View>
 
           <TouchableOpacity
-            onPress={() =>
-              FlashMessage.info('Ops chat', 'Wire to the existing chat module when available.')
-            }
+            onPress={() => {
+              log.opsChatOpened();
+              FlashMessage.info('Ops chat', 'Wire to the existing chat module when available.');
+            }}
             className="h-12 rounded-xl items-center justify-center flex-row"
             style={{ backgroundColor: colors.info.main }}
           >
@@ -413,9 +469,9 @@ export default function InstallerJobDetail() {
         onRemovePhoto={(id) => removeMaterialPhoto('pickup', id)}
         onSkip={() => {
           skipMaterial('pickup');
-          setOpenStep(null);
+          handleCloseStep();
         }}
-        onBack={() => setOpenStep(null)}
+        onBack={handleCloseStep}
       />
 
       <MaterialPhotoStep
@@ -426,9 +482,9 @@ export default function InstallerJobDetail() {
         onRemovePhoto={(id) => removeMaterialPhoto('return', id)}
         onSkip={() => {
           skipMaterial('return');
-          setOpenStep(null);
+          handleCloseStep();
         }}
-        onBack={() => setOpenStep(null)}
+        onBack={handleCloseStep}
       />
 
       <PECStep
@@ -437,8 +493,14 @@ export default function InstallerJobDetail() {
         entries={progress.pecEntries}
         onSetHasConditions={setPecHasConditions}
         onSetEntry={setPecEntry}
-        onComplete={() => completeStep('pec')}
-        onBack={() => setOpenStep(null)}
+        onComplete={() => {
+          completeStep('pec');
+          log.stepCompleted('pec', {
+            areaCount: Object.keys(progress.pecEntries).length,
+            hasConditions: progress.pecHasConditions,
+          });
+        }}
+        onBack={handleCloseStep}
       />
 
       <PhotoMatchStep
@@ -449,8 +511,11 @@ export default function InstallerJobDetail() {
         extras={progress.preExtras}
         onMatch={(tagId, photo) => matchPhoto('pre', tagId, photo)}
         onAddExtra={(sid, photo) => addExtraPhoto('pre', sid, photo)}
-        onComplete={() => completeStep('pre')}
-        onBack={() => setOpenStep(null)}
+        onComplete={() => {
+          completeStep('pre');
+          log.stepCompleted('pre', { matched: requiredPhotoTagIds.length });
+        }}
+        onBack={handleCloseStep}
       />
 
       <PhotoMatchStep
@@ -462,8 +527,11 @@ export default function InstallerJobDetail() {
         preMatched={progress.preMatched}
         onMatch={(tagId, photo) => matchPhoto('post', tagId, photo)}
         onAddExtra={(sid, photo) => addExtraPhoto('post', sid, photo)}
-        onComplete={() => completeStep('post')}
-        onBack={() => setOpenStep(null)}
+        onComplete={() => {
+          completeStep('post');
+          log.stepCompleted('post', { matched: requiredPhotoTagIds.length });
+        }}
+        onBack={handleCloseStep}
       />
 
       <VerifyScopeStep
@@ -475,8 +543,11 @@ export default function InstallerJobDetail() {
         onReportDiscrepancy={(productId, issue, note, attachments) =>
           reportDiscrepancy.mutate({ productId, issue, note, attachments })
         }
-        onComplete={() => completeStep('measure')}
-        onBack={() => setOpenStep(null)}
+        onComplete={() => {
+          completeStep('measure');
+          log.stepCompleted('measure', { productCount: productIds.length });
+        }}
+        onBack={handleCloseStep}
       />
 
       <CoCStep
@@ -484,7 +555,7 @@ export default function InstallerJobDetail() {
         pages={progress.cocPages}
         onAddPage={addCocPage}
         onRemovePage={removeCocPage}
-        onBack={() => setOpenStep(null)}
+        onBack={handleCloseStep}
       />
 
       <ResultJobModal

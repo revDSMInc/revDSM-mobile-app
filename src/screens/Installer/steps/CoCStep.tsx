@@ -4,6 +4,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
+import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type { CapturedPhoto } from '../../../config/types/installer';
 
 interface Props {
@@ -22,6 +23,7 @@ interface Props {
  */
 export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Props) {
   const { colors } = useTheme();
+  const log = useInstallerActivityLog();
 
   const startScan = async () => {
     try {
@@ -38,6 +40,10 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
             takenAt: new Date().toISOString(),
           });
         });
+        log.cocPagesScanned(
+          result.scannedImages.length,
+          pages.length + result.scannedImages.length
+        );
       }
     } catch (error) {
       if (error instanceof Error && !error.message.includes('cancel')) {
@@ -48,6 +54,16 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
 
   const hasPages = pages.length > 0;
 
+  const handleRemovePage = (pageId: string) => {
+    onRemovePage(pageId);
+    log.cocPageRemoved(Math.max(0, pages.length - 1));
+  };
+
+  const handleDone = () => {
+    log.cocCompleted(pages.length);
+    onBack();
+  };
+
   return (
     <InstallerSubScreen
       visible={visible}
@@ -57,7 +73,7 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
       footer={
         hasPages ? (
           <TouchableOpacity
-            onPress={onBack}
+            onPress={handleDone}
             className="h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: colors.primary.main }}
           >
@@ -111,7 +127,7 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
                 <Text className="text-white text-[10px] font-bold">Page {i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => onRemovePage(page.id)}
+                onPress={() => handleRemovePage(page.id)}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >

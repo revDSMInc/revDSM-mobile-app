@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { FlashMessage } from '../../config/message';
 import { useInstallerJobs, useUpdateJobStatus } from '../../hooks/useInstallerJobs';
 import { useUserRole } from '../../hooks/useUserRole';
+import { useInstallerActivityLog } from '../../hooks/useInstallerActivityLog';
+import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
 import { InstallerJobCard } from '../../widgets/components/installer/InstallerJobCard';
 import { mergeInstallerJob, type JobPeriod } from '../../services/api/installer';
 import type { InstallerJob } from '../../config/types/installer';
@@ -34,11 +36,32 @@ export default function InstallerDashboard() {
   const { jobs, summaryCounts, loading, isError, refreshing, refresh } =
     useInstallerJobs(period);
   const updateStatus = useUpdateJobStatus();
+  const log = useInstallerActivityLog();
 
   // Header count prefers the API's own total (paginated lists can be shorter).
   const jobCount = summaryCounts?.total ?? jobs.length;
   // The API stamps the company on each job; the profile field is the fallback.
   const companyName = installerCompanyName || jobs[0]?.companyName;
+
+  // One "schedule viewed" per period, once its jobs have actually landed — logging
+  // during the loading pass would report a count of 0 for every open.
+  const viewedPeriods = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    if (loading || viewedPeriods.current[period]) return;
+    viewedPeriods.current[period] = true;
+    log.dashboardViewed({ period, jobCount, companyName });
+  }, [loading, period, jobCount, companyName, log]);
+
+  const handlePeriodChange = (next: JobPeriod) => {
+    if (next === period) return;
+    log.periodChanged(next);
+    setPeriod(next);
+  };
+
+  const handleRefresh = () => {
+    log.jobsRefreshed(period);
+    refresh();
+  };
 
   /**
    * Opens a job. Today's live jobs are *started* first — the API flips them to
@@ -49,7 +72,13 @@ export default function InstallerDashboard() {
    * Tomorrow's previews and already-resulted jobs open read-only: no status change.
    */
   const openJob = async (job: InstallerJob) => {
-    if (period === 'tomorrow' || job.resulted) {
+    const readOnly = period === 'tomorrow' || !!job.resulted;
+    // Bind the job to the log context first so every downstream installer event —
+    // including the start call below — carries its jobId / leadId / customer.
+    persistActiveInstallerJob(job);
+    log.jobCardTapped(job, { period, readOnly });
+
+    if (readOnly) {
       navigation.navigate('InstallerJobDetail', { job });
       return;
     }
@@ -58,8 +87,12 @@ export default function InstallerDashboard() {
     setStartingId(job._id);
     try {
       const started = await updateStatus.mutateAsync({ jobId: job._id, status: 'inProgress' });
-      navigation.navigate('InstallerJobDetail', { job: mergeInstallerJob(job, started) });
-    } catch {
+      const merged = mergeInstallerJob(job, started);
+      persistActiveInstallerJob(merged);
+      log.jobStarted(merged);
+      navigation.navigate('InstallerJobDetail', { job: merged });
+    } catch (err) {
+      log.jobStartFailed(job, err);
       FlashMessage.error(
         "Couldn't start this job",
         'Check your connection and try again.'
@@ -101,11 +134,15 @@ export default function InstallerDashboard() {
 
       {/* Day tabs */}
       <View className="flex-row px-4 mb-3">
-        <SubTab label="Today" active={period === 'today'} onPress={() => setPeriod('today')} />
+        <SubTab
+          label="Today"
+          active={period === 'today'}
+          onPress={() => handlePeriodChange('today')}
+        />
         <SubTab
           label="Tomorrow"
           active={period === 'tomorrow'}
-          onPress={() => setPeriod('tomorrow')}
+          onPress={() => handlePeriodChange('tomorrow')}
         />
       </View>
 
@@ -134,7 +171,7 @@ export default function InstallerDashboard() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={refresh}
+              onRefresh={handleRefresh}
               tintColor={colors.primary.main}
               colors={[colors.primary.main]}
             />

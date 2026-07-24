@@ -14,6 +14,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
 import { HouseGhost, tagTint } from '../../../widgets/components/installer/HouseGhost';
 import { PHOTO_SECTIONS } from '../../../constants/installer';
+import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type {
   CapturedPhoto,
   PhotoPhase,
@@ -71,6 +72,7 @@ export function PhotoMatchStep({
   onBack,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const log = useInstallerActivityLog();
 
   // Data-driven from the rep's real capture set when provided; static mock otherwise.
   const sections = sectionsProp?.length ? sectionsProp : PHOTO_SECTIONS;
@@ -124,7 +126,44 @@ export function PhotoMatchStep({
   const isSelectedMatched = !!matched[selected?.id];
   const selectedRef = selected ? referenceUri(selected) : undefined;
 
+  const handleSelectSection = (s: PhotoSection) => {
+    if (s.id === sectionId) return;
+    log.photoSectionChanged(phase, { id: s.id, name: s.name });
+    setSectionId(s.id);
+  };
+
+  /** A ghost capture landed. `retake` distinguishes a re-shoot from a first match. */
+  const handleGhostCapture = (tag: PhotoTag, photo: CapturedPhoto) => {
+    const retake = !!matched[tag.id];
+    onMatch(tag.id, photo);
+    log.photoMatched(
+      phase,
+      { id: tag.id, label: tag.label },
+      {
+        matched: retake ? matchedTotal : matchedTotal + 1,
+        total: requiredTags.length,
+        retake,
+      }
+    );
+    setCameraTag(null);
+    advance(tag.id);
+  };
+
+  const handleExtraCapture = (photo: CapturedPhoto) => {
+    onAddExtra(sectionId, photo);
+    log.photoExtraAdded(
+      phase,
+      { id: section.id, name: section.name },
+      (extras[sectionId]?.length ?? 0) + 1
+    );
+  };
+
   const handleComplete = () => {
+    log.photoPhaseCompleted(phase, {
+      matched: matchedTotal,
+      total: requiredTags.length,
+      extras: Object.values(extras).reduce((n, list) => n + (list?.length ?? 0), 0),
+    });
     onComplete();
     onBack();
   };
@@ -162,7 +201,7 @@ export function PhotoMatchStep({
             return (
               <TouchableOpacity
                 key={s.id}
-                onPress={() => setSectionId(s.id)}
+                onPress={() => handleSelectSection(s)}
                 className="items-center pt-2 pb-1.5 px-3"
                 style={{
                   minWidth: 76,
@@ -358,12 +397,7 @@ export function PhotoMatchStep({
             right: phase === 'pre' ? 'PRE-INSTALL' : 'POST-INSTALL',
           }}
           onCancel={() => setCameraTag(null)}
-          onCapture={(photo) => {
-            onMatch(cameraTag.id, photo);
-            const id = cameraTag.id;
-            setCameraTag(null);
-            advance(id);
-          }}
+          onCapture={(photo) => handleGhostCapture(cameraTag, photo)}
         />
       )}
 
@@ -374,7 +408,7 @@ export function PhotoMatchStep({
           hint="Free shot — no ghost. Document anything the rep didn't."
           count={extras[sectionId]?.length ?? 0}
           onCancel={() => setExtraCamera(false)}
-          onCapture={(photo) => onAddExtra(sectionId, photo)}
+          onCapture={handleExtraCapture}
         />
       )}
     </Modal>
