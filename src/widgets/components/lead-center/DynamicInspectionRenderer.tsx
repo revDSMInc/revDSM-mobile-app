@@ -34,12 +34,98 @@ const GREEN = '#4CBB17';
 // Move-photo "FROM" tile highlight — yellow so the source slot stands out on the dark grid.
 const FROM_YELLOW = '#FACC15';
 
-/** Iconify string (e.g. "mdi:home-outline") → MaterialCommunityIcons name. */
+// The full MaterialCommunityIcons glyph set, so we can tell a real icon name from
+// one that would render as a "?" tofu box. (Same JSON the vector-icons font uses.)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const MDI_GLYPHS: Record<string, number> = require('react-native-vector-icons/glyphmaps/MaterialCommunityIcons.json');
+const isValidMdi = (name: string): boolean =>
+  !!name && Object.prototype.hasOwnProperty.call(MDI_GLYPHS, name);
+
+// Iconify roots whose exact name differs from the MaterialCommunityIcons name.
+const MDI_ALIASES: Record<string, string> = {
+  house: 'home',
+  search: 'magnify',
+  magnifier: 'magnify',
+  magnifer: 'magnify', // solar's spelling
+  settings: 'cog',
+  gear: 'cog',
+  trash: 'trash-can',
+  edit: 'pencil',
+  photo: 'image',
+  picture: 'image',
+  window: 'window-closed-variant',
+  windows: 'window-closed-variant',
+  floor: 'floor-plan',
+  flooring: 'floor-plan',
+  roof: 'home-roof',
+  roofing: 'home-roof',
+  gutter: 'home-roof',
+  location: 'map-marker',
+  marker: 'map-marker',
+  pin: 'map-marker',
+};
+
+// Keyword → MDI, applied only when a stripped/aliased name is NOT a real glyph, so a
+// product/tab whose Iconify icon has no MDI twin still renders a sensible icon. Order
+// matters: most specific first. Matched against the cleaned name AND the raw string.
+const KEYWORD_MDI: Array<[RegExp, string]> = [
+  [/window/, 'window-closed-variant'],
+  [/door/, 'door'],
+  [/floor/, 'floor-plan'],
+  [/roof|gutter|soffit|fascia/, 'home-roof'],
+  [/remodel|renovat/, 'home-edit-outline'],
+  [/kitchen/, 'silverware-fork-knife'],
+  [/bath|shower/, 'shower'],
+  [/home|house/, 'home'],
+  [/hammer|tool|build|construct|repair|contractor/, 'hammer-wrench'],
+  [/paint/, 'format-paint'],
+  [/location|map|marker|\bpin\b|geo|place|address/, 'map-marker'],
+  [/ruler|measure|tape/, 'ruler'],
+  [/camera|photo|image|picture/, 'image'],
+  [/search|inspect|magnif/, 'magnify'],
+  [/leaf|plant|eco|garden/, 'leaf'],
+  [/solar|panel/, 'solar-panel'],
+  [/electric|bolt|flash|power|light/, 'flash'],
+  [/water|plumb|drop/, 'water'],
+  [/sun|weather|sky/, 'white-balance-sunny'],
+  [/document|file|paper|note|form/, 'file-document-outline'],
+];
+
+/**
+ * Iconify string → a REAL MaterialCommunityIcons name.
+ *
+ * Three problems have to be solved so a schema icon never renders as a "?" tofu box:
+ *  1. Drop the icon-set prefix (`mdi:`, `solar:`, `fluent-color:`…).
+ *  2. Strip size/style suffixes MDI doesn't use — `home-28`, `home-24-filled`,
+ *     `home-2-bold-duotone` all collapse to `home` (MDI's own `-outline` is kept).
+ *  3. The stripped name may STILL not exist in MDI (Fluent/Solar have thousands of
+ *     icons MDI lacks, e.g. `window-24` → `window`, which MDI has no glyph for). So we
+ *     validate against the glyph set: use the name if it's real, else an alias, else a
+ *     keyword match, else the neutral `fallback` — never an unrenderable name.
+ */
 export const iconifyToMdi = (raw?: string | null, fallback = 'image-outline'): string => {
   if (!raw) return fallback;
   const s = String(raw).trim();
-  const stripped = s.includes(':') ? s.split(':').pop() || fallback : s;
-  return stripped || fallback;
+  let name = (s.includes(':') ? s.split(':').pop() || '' : s).trim().toLowerCase();
+
+  const STYLE_SUFFIX =
+    /-(filled|regular|color|colored|duotone|twotone|solid|light|thin|bold|linear|broken|sharp|fill)$/;
+  let prev = '';
+  while (name && name !== prev) {
+    prev = name;
+    name = name.replace(/-\d+$/, '').replace(STYLE_SUFFIX, '');
+  }
+
+  const aliased = MDI_ALIASES[name] || name;
+  if (isValidMdi(aliased)) return aliased;
+
+  // Not a real glyph → keyword-map so we still show something meaningful, not tofu.
+  const haystack = `${name} ${s}`.toLowerCase();
+  for (const [re, mdi] of KEYWORD_MDI) {
+    if (re.test(haystack) && isValidMdi(mdi)) return mdi;
+  }
+
+  return isValidMdi(fallback) ? fallback : 'help-circle-outline';
 };
 
 const slugify = (v: unknown) => String(v ?? '').trim().replace(/\s+/g, '_').toLowerCase();

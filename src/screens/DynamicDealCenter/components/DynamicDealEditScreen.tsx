@@ -118,6 +118,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [downPaymentMethod, setDownPaymentMethod] = useState('');
   const [balanceMethod, setBalanceMethod] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  // Free-text note shown to the customer on the addendum. Persists to the draft and,
+  // on signature, to Lead.note / LeadOutcome.note (backend `note` field). `''` clears it.
+  const [note, setNote] = useState('');
 
   const seededRef = useRef(false);
 
@@ -193,6 +196,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setDownPaymentMethod('');
     setBalanceMethod('');
     setCustomerPhone(lead?.customerDetails?.phone || lead?.customerDetails?.phoneNumber || '');
+    // Pre-fill with the lead's existing note so the rep sees the current value and
+    // edits from it; a matching value then reads as "no change".
+    setNote(lead?.note != null ? String(lead.note) : '');
   }, [lead]);
 
   // ── derive: saved dynamic state, calculator, dealCenterData, initial state ──
@@ -380,10 +386,15 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     (scheduleDate !== (lead?.jobBuilder?.scheduleTime?.date || null) ||
       scheduleTimeWindow !== (lead?.jobBuilder?.scheduleTime?.timeWindow || ''));
   const priceChanged = parsePrice(lead?.originalContractPrice) !== Number(contractPrice);
+  // A note edit is itself an addendum change, so the rep can send a note-only
+  // addendum (baseline is the lead's existing note).
+  const noteChanged = String(lead?.note ?? '') !== note;
+
   const hasAnyChange =
     buildChanged ||
     scheduleChanged ||
     priceChanged ||
+    noteChanged ||
     parsePrice(lead?.downPayment) !== Number(downPayment) ||
     // Only count a method as changed once the rep has actually PICKED one — a blank
     // "Select payment method" (the default) must not read as a change.
@@ -538,6 +549,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         jobBuilder,
         // Snapshot the build diff for the customer consent page (web parity).
         buildChangeSummary: buildChangeGroups,
+        // Free-text note ("" → null). Stored on the draft now, written to
+        // Lead.note / LeadOutcome.note when the customer signs.
+        note,
       };
       if (lfCalculatorComplete) payload.LFCalculator = calculatorData;
 
@@ -601,6 +615,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     calculatorData,
     buildChangeGroups,
     customerPhone,
+    note,
     navigation,
   ]);
 
@@ -933,6 +948,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 )}
               </View>
             )}
+
+            <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, padding: 16, marginBottom: 14 }}>
+              <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 2 }}>Additional Notes</Text>
+              <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8 }}>Shown to the customer on the addendum.</Text>
+              <TextInput
+                value={note}
+                onChangeText={setNote}
+                placeholder="Enter a note"
+                placeholderTextColor="#94A3B8"
+                multiline
+                textAlignVertical="top"
+                style={{ borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#0F172A', minHeight: 72 }}
+              />
+            </View>
 
             <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, padding: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 8 }}>Send Addendum To</Text>
