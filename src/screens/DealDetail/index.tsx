@@ -283,6 +283,8 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
       leadId: lead?._id || leadId,
       chatId: lead?.chatId || '',
       customerName: `${lead?.office || ''} Lead - ${lead?.leadId || 'N/A'}`.trim() || 'Discussion',
+      previewImage: lead?.previewImage,
+      previewImages: lead?.previewImages,
     });
   }, [navigation, lead, leadId]);
 

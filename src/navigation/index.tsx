@@ -53,6 +53,11 @@ export type RootStackParamList = {
     // Full lead photo array, handed straight from an already-loaded lead
     // (LeadCenter) so the Appointment Photos picker doesn't have to refetch.
     salesPhotos?: any[];
+    // Lead preview thumbnail source, handed from the already-loaded lead so the
+    // chat header shows the same street-view image as the Recent-Leads row (web
+    // parity: `quick-chat-dialog.js`).
+    previewImage?: any;
+    previewImages?: any;
   };
   MapDetail: { currentLead?: any };
   Pitchbook: { lead: any };

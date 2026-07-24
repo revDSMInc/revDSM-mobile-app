@@ -1,13 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, Image } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
-import { LEAD_TYPE_BADGE } from './constants';
-import { isSelfGeneratedLead } from '../../../utils/location-util';
-import { resolveS3Url } from '../../../utils/s3-utils';
-import { LeadService } from '../../../services/api/leads';
-import Logo from '../../../assets/svgs/logo';
+import { STATUS_CONFIG } from './constants';
+import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
+import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 // ─── MainTabOption ────────────────────────────────────────────────────────────
 export function MainTabOption({ label, active, onPress }: any) {
@@ -127,98 +125,53 @@ export function groupChatsByLeadDate(chats: any[]) {
     .map(({ label, data }) => ({ title: label, data }));
 }
 
+/** `MM.dd.yy`, or '' for a missing / unparseable date (web uses date-fns `format`). */
+function formatShortDate(value: any): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : format(date, 'MM.dd.yy');
+}
+
 /**
- * Appointment time slot, shown on the right of the row next to the relative
- * stamp. A lead with no slot renders nothing rather than a bare "N/A".
+ * Card heading, ported 1:1 from web `chat-thread-item.js`:
+ *   sale               → office-prefixed job number (falls back to the job / lead number)
+ *   installer assigned → "{jobNumber} {lastName} {date}"
+ *   otherwise          → "Lead {leadDate} {leadTime}"  e.g. "Lead 07.22.26 9am"
+ * (The sale branch drops the office-initial prefix that lives in the job builder;
+ * the chat list only needs the human-readable job/lead number.)
  */
-function formatLeadTimeDisplay(leadDetails: any) {
-  const leadTime = leadDetails?.leadTime || leadDetails?.appointmentTime;
-  if (!leadTime || typeof leadTime !== 'string' || leadTime.trim().toUpperCase() === 'N/A') {
-    return '';
-  }
-  return leadTime.toLowerCase().replace(/\s+/g, '');
-}
-
-function getLeadTypeBadge(leadDetails: any) {
-  // Prefer the lead's own markers — `isSelfGeneratedLead` treats a MISSING
-  // leadTime as self-gen, and the chat socket payload omits leadTime on some
-  // issued leads, which mislabelled them.
+function buildLeadHeading(leadDetails: any, leadId: string): string {
   const status = leadDetails?.status;
-  if (status === 'lfLead' || status === 'lf' || status === 'issued' || status === 'confirmedIssued') {
-    return LEAD_TYPE_BADGE.issued;
+  const installerAssignment = leadDetails?.installerAssignment;
+
+  if (status === 'sale') {
+    return String(installerAssignment?.jobNumber || leadId || 'N/A');
   }
-  if (leadDetails?.leadId) return LEAD_TYPE_BADGE.issued;
-  if (isSelfGeneratedLead(leadDetails)) return LEAD_TYPE_BADGE.selfGenerated;
-  return LEAD_TYPE_BADGE.issued;
+  if (installerAssignment) {
+    const jobNumber = installerAssignment.jobNumber || '';
+    const lastName = leadDetails?.customerDetails?.lastName || '';
+    return `${jobNumber} ${lastName} ${formatShortDate(leadDetails?.leadDate)}`.trim();
+  }
+
+  const rawLeadTime = leadDetails?.leadTime || '';
+  const leadTime =
+    rawLeadTime && String(rawLeadTime).trim().toUpperCase() === 'N/A'
+      ? ''
+      : rawLeadTime
+        ? String(rawLeadTime).toLowerCase().replace(/\s/g, '')
+        : '';
+  return `Lead ${formatShortDate(leadDetails?.leadDate)} ${leadTime}`.trim();
 }
 
-function getLeadThumbnailUrl(leadDetails: any): string | null {
-  const photos = leadDetails?.salesPhotos || leadDetails?.images || [];
-  if (!Array.isArray(photos) || photos.length === 0) return null;
-
-  const front =
-    photos.find(
-      (p: any) =>
-        p.subcategory === 'front-image' ||
-        p.subcategory === 'front_view' ||
-        p.category?.toLowerCase()?.includes('home')
-    ) || photos[0];
-
-  return front?.secureUrl || front?.url || front?.displayUrl || resolveS3Url(front?.s3url) || null;
+/** Status chip label + colours, via web's `STATUS_CONFIG` (unmapped → notResulted). */
+function getStatusProps(status?: string) {
+  const config = STATUS_CONFIG[status || ''] || STATUS_CONFIG.notResulted;
+  return { label: config.label, color: config.color, textColor: config.textColor };
 }
 
 /** Human lead id — issued leads carry `leadId`, self-gens carry `selfGenLeadId`. */
 function getLeadIdDisplay(leadDetails: any) {
   return leadDetails?.leadId || leadDetails?.selfGenLeadId || 'N/A';
-}
-
-// Secure-URL cache for lead preview thumbnails, shared across every row so the
-// list does not re-request the same file on each re-render / scroll.
-const previewUrlCache = new Map<string, string>();
-
-/**
- * Resolve `leadDetails.previewImage` ({ bucketName, filePath }) into a signed
- * URL — this is where the web list gets its thumbnail (`chat-thread-item.js`).
- * The socket payload does NOT include `salesPhotos`, which is why the rows had
- * no images at all.
- */
-function useLeadPreviewUrl(leadDetails: any): string | null {
-  const direct = useMemo(() => getLeadThumbnailUrl(leadDetails), [leadDetails]);
-  const preview = leadDetails?.previewImage;
-  const cacheKey = preview?.filePath ? `${preview.bucketName}/${preview.filePath}` : '';
-
-  const [secureUrl, setSecureUrl] = useState<string | null>(
-    cacheKey ? previewUrlCache.get(cacheKey) || null : null
-  );
-
-  useEffect(() => {
-    if (direct || !cacheKey || !preview?.bucketName || !preview?.filePath) return;
-
-    const cached = previewUrlCache.get(cacheKey);
-    if (cached) {
-      setSecureUrl(cached);
-      return;
-    }
-
-    let cancelled = false;
-    LeadService.getSecureUrls([{ bucketName: preview.bucketName, filePath: preview.filePath }])
-      .then((res) => {
-        const item = res?.data?.data?.[0] || res?.data?.[0];
-        const url = item?.secureUrl || item?.url || null;
-        if (!url) return;
-        previewUrlCache.set(cacheKey, url);
-        if (!cancelled) setSecureUrl(url);
-      })
-      .catch((err) => {
-        console.warn('[ChatThreads] Failed to resolve lead preview image:', err?.message || err);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [direct, cacheKey, preview?.bucketName, preview?.filePath]);
-
-  return direct || secureUrl;
 }
 
 /**
@@ -232,13 +185,6 @@ function formatLastMessageAgo(lastMessageAt?: string | null) {
   return formatDistanceToNow(date, { addSuffix: true }).replace(/^about\s/, '');
 }
 
-function getSenderName(message: any) {
-  const fn = message?.senderDetails?.firstName;
-  const ln = message?.senderDetails?.lastName;
-  if (!fn && !ln) return 'User';
-  return `${fn || ''} ${ln || ''}`.trim();
-}
-
 function LeadThreadThumbnail({ leadDetails }: { leadDetails: any }) {
   const thumbnailUrl = useLeadPreviewUrl(leadDetails);
 
@@ -247,19 +193,20 @@ function LeadThreadThumbnail({ leadDetails }: { leadDetails: any }) {
       <Image
         source={{ uri: thumbnailUrl }}
         className="rounded-lg"
-        style={{ width: 72, height: 72, backgroundColor: '#F4F6F8' }}
+        style={{ width: 56, height: 56, backgroundColor: '#F4F6F8' }}
         resizeMode="cover"
       />
     );
   }
 
-  // No photo on the lead yet → show the app logo instead of a generic house glyph.
+  // No preview image or street-view on the lead yet → home-outline placeholder,
+  // matching web's `mdi:home-outline` in the disabled-text colour.
   return (
     <View
       className="rounded-lg items-center justify-center"
-      style={{ width: 72, height: 72, backgroundColor: '#F4F6F8' }}
+      style={{ width: 56, height: 56, backgroundColor: '#F4F6F8' }}
     >
-      <Logo width={58} height={20} />
+      <MaterialCommunityIcon name="home-outline" size={26} color="#919EAB" />
     </View>
   );
 }
@@ -270,14 +217,18 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
   const { leadDetails, unreadCount, recentMessages, lastMessageAt } = chat;
 
   const lastMsg = recentMessages?.[0];
-  const senderName = lastMsg ? getSenderName(lastMsg) : '';
-  const leadTime = formatLeadTimeDisplay(leadDetails);
-  const typeBadge = getLeadTypeBadge(leadDetails);
   const leadIdDisplay = getLeadIdDisplay(leadDetails);
+  const heading = buildLeadHeading(leadDetails, leadIdDisplay);
+  const status = getStatusProps(leadDetails?.status);
   const timeAgo = useMemo(
     () => formatLastMessageAgo(lastMessageAt || chat?.updatedAt || chat?.createdAt),
     [lastMessageAt, chat?.updatedAt, chat?.createdAt]
   );
+
+  // Web `renderMessagePreview`: sender first name in green, an attachment-only
+  // message falls back to "Sent an attachment" rather than reading "No Messages".
+  const senderName = lastMsg?.senderDetails?.firstName || 'User';
+  const messageContent = lastMsg?.message?.trim() || 'Sent an attachment';
 
   return (
     <TouchableOpacity
@@ -292,56 +243,75 @@ export function LeadChatThreadItem({ chat, onPress }: any) {
     >
       <LeadThreadThumbnail leadDetails={leadDetails} />
 
-      <View className="flex-1 ml-3 mr-2">
-        <View className="flex-row items-center mb-1">
-          {!!timeAgo && (
-            <Text className="text-[11px] mr-2" style={{ color: '#919EAB' }}>
-              {timeAgo}
-            </Text>
-          )}
-          <View
-            className="px-2 py-0.5 rounded-full"
-            style={{ backgroundColor: typeBadge.color }}
+      <View className="flex-1 ml-3">
+        {/* Row 1: Heading + relative time */}
+        <View className="flex-row items-center mb-0.5">
+          <Text
+            className="font-bold flex-1"
+            style={{ color: '#1C252E', fontSize: 15 }}
+            numberOfLines={1}
           >
-            <Text className="text-[10px] font-bold" style={{ color: typeBadge.textColor }}>
-              {typeBadge.label}
-            </Text>
-          </View>
-          {!!leadTime && (
-            <Text className="text-xs font-semibold ml-auto pl-2" style={{ color: '#1C252E' }}>
-              {leadTime}
+            {heading}
+          </Text>
+          {!!timeAgo && (
+            <Text className="text-[11px] ml-2" style={{ color: '#919EAB' }} numberOfLines={1}>
+              {timeAgo}
             </Text>
           )}
         </View>
 
-        <Text className="text-xs mb-1.5" style={{ color: '#637381' }} numberOfLines={1}>
-          Lead ID: {leadIdDisplay}
-        </Text>
-
-        {lastMsg?.message ? (
-          <View className="flex-row items-center pr-1">
-            <Icon name="chatbubble-outline" size={14} color="#919EAB" style={{ marginRight: 4 }} />
-            <Text className="text-xs flex-1" numberOfLines={1}>
-              <Text style={{ color: colors.primary.main, fontWeight: '600' }}>
-                {senderName}:{' '}
-              </Text>
-              <Text style={{ color: '#637381' }}>{lastMsg.message}</Text>
+        {/* Row 2: Lead ID + status chip */}
+        <View className="flex-row items-center mb-1">
+          <Text className="text-xs font-medium" style={{ color: '#919EAB' }}>
+            Lead ID: {leadIdDisplay}
+          </Text>
+          <View className="ml-2 px-1.5 py-0.5 rounded" style={{ backgroundColor: status.color }}>
+            <Text
+              className="text-[10px] font-extrabold"
+              style={{ color: status.textColor, textTransform: 'uppercase' }}
+            >
+              {status.label}
             </Text>
           </View>
-        ) : (
-          <Text className="text-xs italic" style={{ color: '#C4CDD5' }}>
-            No Messages
-          </Text>
-        )}
-      </View>
+        </View>
 
-      <View className="items-center justify-center pl-1">
-        {unreadCount > 0 ? (
-          <View className="w-5 h-5 rounded-full items-center justify-center mb-1" style={{ backgroundColor: colors.primary.main }}>
-            <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
+        {/* Row 3: Message preview + unread badge + chevron */}
+        <View className="flex-row items-center">
+          <View className="flex-1 flex-row items-center pr-1">
+            {lastMsg ? (
+              <>
+                <Icon name="chatbubble-outline" size={14} color="#919EAB" style={{ marginRight: 4 }} />
+                <Text
+                  className="text-xs flex-1"
+                  numberOfLines={1}
+                  style={unreadCount > 0 ? { fontWeight: '600' } : undefined}
+                >
+                  <Text style={{ color: colors.primary.main, fontWeight: '700' }}>
+                    {senderName}:{' '}
+                  </Text>
+                  <Text style={{ color: unreadCount > 0 ? '#1C252E' : '#637381' }}>
+                    {messageContent}
+                  </Text>
+                </Text>
+              </>
+            ) : (
+              <Text className="text-xs italic" style={{ color: '#C4CDD5' }}>
+                No Messages
+              </Text>
+            )}
           </View>
-        ) : null}
-        <Icon name="chevron-forward" size={16} color="#C4CDD5" />
+          <View className="flex-row items-center">
+            {unreadCount > 0 && (
+              <View
+                className="w-5 h-5 rounded-full items-center justify-center mr-1"
+                style={{ backgroundColor: colors.primary.main }}
+              >
+                <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
+              </View>
+            )}
+            <Icon name="chevron-forward" size={16} color="#C4CDD5" />
+          </View>
+        </View>
       </View>
     </TouchableOpacity>
   );
