@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -11,6 +11,7 @@ import { useDynamicCalculators } from '../DynamicDealCenter/hooks/useDynamicCalc
 import { useSubmitDigitalConsentMutation, useFinalizeConsentUploadMutation } from '../../hooks/useLeadMutation';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { InvestmentPanel } from './InvestmentPanel';
+import { queryClient } from '../../services/api/queryClient';
 
 /**
  * Investment Center (web parity: `src/sections/job/components/investment-center/`).
@@ -58,6 +59,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const [localConsentSigned, setLocalConsentSigned] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
   const [consentBusy, setConsentBusy] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
   const consentSigned = localConsentSigned || hasSignedConsent(lead);
 
   const handleConsentSubmit = useCallback(
@@ -107,6 +109,15 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
 
   const isLoading = schemaLoading || jbLoading || calcLoading;
 
+  // Open the consent form DIRECTLY when the customer hasn't signed yet — the rep
+  // shouldn't have to tap through a gate first. Fires once per screen mount.
+  const consentAutoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (isLoading || consentSigned || consentAutoOpenedRef.current) return;
+    consentAutoOpenedRef.current = true;
+    setShowConsent(true);
+  }, [isLoading, consentSigned]);
+
   const Header = (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#fff' }}>
       <TouchableOpacity
@@ -115,9 +126,19 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
       >
         <Ionicons name="chevron-back" size={20} color="#334155" />
       </TouchableOpacity>
-      <Text style={{ flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '900', color: '#1C252E', marginRight: 34 }}>
+      <Text style={{ flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
         Investment Center
       </Text>
+      {/* Consent status: a green SIGNED badge once on file, else a spacer that keeps
+          the title centered against the back button. */}
+      {consentSigned ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EBF9E1', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
+          <Ionicons name="checkmark-circle" size={13} color="#16A34A" />
+          <Text style={{ fontSize: 10, fontWeight: '900', color: '#16A34A', letterSpacing: 0.5 }}>SIGNED</Text>
+        </View>
+      ) : (
+        <View style={{ width: 34 }} />
+      )}
     </View>
   );
 
@@ -168,9 +189,9 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
                   <TouchableOpacity
                     key={t.id}
                     onPress={() => setActiveTabId(t.id)}
-                    style={{ paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent', flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                    style={{ paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent', flexDirection: 'row', alignItems: 'center', gap: 6 }}
                   >
-                    <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#1C252E' : '#94A3B8' }}>{t.title}</Text>
+                    <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#1C252E' : '#94A3B8',paddingBottom:4 }}>{t.title}</Text>
                     <Ionicons name="checkmark" size={14} color={isActive ? '#16A34A' : '#CBD5E1'} />
                   </TouchableOpacity>
                 );
@@ -189,6 +210,13 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
               descriptionSchemas={descriptionSchemas}
               lead={lead}
               onOptIn={handleOptIn}
+              onRefresh={() => {
+                const lid = lead?._id || lead?.leadId || lead?.id;
+                if (lid) {
+                  queryClient.invalidateQueries({ queryKey: ['lead', lid] });
+                  queryClient.invalidateQueries({ queryKey: ['revrender-runs', lid] });
+                }
+              }}
             />
           )}
         </>
@@ -196,13 +224,41 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
 
       <ConsentFormModal
         visible={showConsent}
-        onClose={() => setShowConsent(false)}
+        // Cancel/close doesn't just dismiss — it asks to confirm exiting, then
+        // returns to the Tools menu (the consent form stays open behind the prompt).
+        onClose={() => setShowExitConfirm(true)}
         onPaperFallback={() => setShowConsent(false)}
         onSubmit={handleConsentSubmit}
         lead={lead}
         type="consent"
         loading={consentMutation.isPending}
       />
+
+      {/* Exit-consent confirmation (rendered after the consent modal so it layers on top). */}
+      <Modal visible={showExitConfirm} transparent animationType="fade" onRequestClose={() => setShowExitConfirm(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 20, padding: 24, alignItems: 'center' }}>
+            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+              <Ionicons name="warning-outline" size={24} color="#D97706" />
+            </View>
+            <Text style={{ fontSize: 17, fontWeight: '900', color: '#1C252E', textAlign: 'center' }}>Exit consent form?</Text>
+            <Text style={{ fontSize: 13, color: '#637381', textAlign: 'center', marginTop: 8, lineHeight: 19 }}>
+              You'll go back to your Tools menu without capturing consent. Any info on this form won't be kept.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 22, alignSelf: 'stretch' }}>
+              <TouchableOpacity onPress={() => setShowExitConfirm(false)} style={{ flex: 1, paddingVertical: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center' }}>
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#334155' }}>Stay on Form</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setShowExitConfirm(false); setShowConsent(false); navigation?.goBack(); }}
+                style={{ flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#EF4444', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#fff' }}>Exit to Tools</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

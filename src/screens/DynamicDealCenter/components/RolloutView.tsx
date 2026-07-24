@@ -1221,16 +1221,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           ) : null}
         </View>
 
-        {/* 2. RevRender slots — the rep picks which rendered before/after photos are
-            associated with THIS job build (persisted as `selectedRenders`). Shown
-            first so it's the first thing seen when the rollout card opens. */}
-        <RevRenderSlots
-          leadId={leadId}
-          selected={calculator.selectedRenders || []}
-          onChange={(renders: RenderPair[]) => onRendersChange(calculator.id, renders)}
-          locked={isLocked}
-        />
-
         {/* 3. Category pills */}
         {categoryChips.length > 0 && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
@@ -1264,6 +1254,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           );
         })}
         {itemRows.length > 0 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />}
+
+        {/* Add Renders — pick which before/after renders show on the estimate.
+            Sits right above Payment Method (mockup parity). */}
+        <RevRenderSlots
+          leadId={leadId}
+          selected={calculator.selectedRenders || []}
+          onChange={(renders: RenderPair[]) => onRendersChange(calculator.id, renders)}
+          locked={isLocked}
+        />
 
         {/* Payment Method selector — moved down to sit RIGHT ABOVE cost/par/retail so
             reps remember to adjust the plan before reading the price (web parity:
@@ -1877,19 +1876,30 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 });
               }
               onConfirmRollouts?.(confirmed);
-              // Web parity (new workflow): once rollouts are confirmed the rep is
-              // "in home" — return to the Lead Center tools so they can present
-              // (map / pitch book) and open the Investment Center. The confirmed
-              // calculators are already persisted, so re-entering Deal Center
-              // rehydrates their locked state.
-              if (onRolloutsConfirmedDone) {
-                FlashMessage.success('Rollouts confirmed', 'Open Investment Center from Tools to present.');
-                onRolloutsConfirmedDone();
-              }
+              // Just confirm — STAY on the rollout screen. Navigating away here raced
+              // the calculators' debounced save (the screen unmounted before the PUT
+              // flushed, so the confirmed price could be lost). Once every rollout is
+              // confirmed, the "Jobs Built — Back to Tools" button below appears and is
+              // the only thing that navigates to the tools menu.
+              FlashMessage.success('Rollouts confirmed', 'Tap “Jobs Built — Back to Tools” when ready.');
             }} disabled={!allHavePrices} style={{ minWidth: 200, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: allHavePrices ? '#4CBB17' : 'rgba(145,158,171,0.12)' }}>
               <Text style={{ fontSize: 14, fontWeight: '700', textAlign: 'center', color: allHavePrices ? '#fff' : 'rgba(145,158,171,0.4)' }}>Confirm Rollouts</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      )}
+
+      {/* All rollouts confirmed → the jobs are built; a single CTA takes the rep back
+          to the Lead Center tools to present (map / pitch book / Investment Center). */}
+      {visibleCalculators.length > 0 && allConfirmed && (
+        <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
+          <TouchableOpacity
+            onPress={() => onRolloutsConfirmedDone?.()}
+            style={{ maxWidth: 1200, alignSelf: 'center', width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#4CBB17', borderRadius: 12, paddingVertical: 15 }}
+          >
+            <Ionicons name="checkmark" size={18} color="#fff" />
+            <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Jobs Built — Back to Tools</Text>
+          </TouchableOpacity>
         </View>
       )}
     </KeyboardAvoidingView>

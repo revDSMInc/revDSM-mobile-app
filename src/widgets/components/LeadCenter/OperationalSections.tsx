@@ -141,7 +141,7 @@ export const ToolsSection = ({
     <View className="px-4 py-3">
       <ToolCard
         title="Customer Consent Form"
-        desc={consentReport ? 'View Uploaded PDF' : 'Customer consent agreements'}
+        desc=''
         icon={consentReport ? 'file-check' : 'file-document-edit'}
         onPress={handleConsentPress}
         isGenerated={!!consentReport}
@@ -159,10 +159,10 @@ export const ToolsSection = ({
       /> */}
       <ToolCard
         title="Deal Center"
-        desc="Calculator & job builder"
+        desc=''
         // Green status: "Calculator created" once a real calc exists, then
         // "All jobs built" once every rollout is confirmed (web parity).
-        statusText={allConfirmed ? 'All jobs built' : hasCalc ? 'Calculator created' : undefined}
+        statusText={allConfirmed ? 'All jobs built' : hasCalc ? '' : undefined}
         icon="cog"
         onPress={onShowDynamicDealCenter}
       />
@@ -170,8 +170,10 @@ export const ToolsSection = ({
         title="Investment Center"
         // Locked until every rollout is confirmed (web `allJobsConfirmed`). Tapping
         // while locked warns instead of opening.
-        desc={!allConfirmed ? 'Build & confirm all rollouts first' : 'Present quote & 1-yr free quote'}
+        desc={!allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote'}
         statusText={allConfirmed ? (consentReport ? 'Consent on file — present quote' : 'Ready to present') : undefined}
+        // Green SIGNED tag once the customer consent form is on file (mockup parity).
+        badgeText={allConfirmed && consentReport ? 'SIGNED' : undefined}
         locked={!allConfirmed}
         icon="chart-line"
         onPress={() => {
@@ -480,7 +482,7 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 };
 
 
-const ToolCard = ({ title, desc, statusText, statusColor, locked, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
+const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, locked, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
   const { colors, isDark } = useTheme();
   const green = statusColor || '#16A34A';
   // A locked card stays tappable on purpose — the parent's onPress shows a toast
@@ -528,8 +530,12 @@ const ToolCard = ({ title, desc, statusText, statusColor, locked, blur, icon, on
           <ActivityIndicator size="small" color={colors.primary.main} style={{ marginRight: 8 }} />
         )}
         {locked && !isLoading && (
-          <View className="px-3 py-1.5 rounded-xl mr-2" style={{ backgroundColor: '#919EAB14' }}>
-            <Text className="text-[11px] font-semibold" style={{ color: '#919EAB' }}>Locked</Text>
+            <Icon name="lock" size={12} color={'#919EAB'} style={{marginRight:8}} />
+        )}
+        {/* Generic right-side pill (e.g. the green "SIGNED" tag once consent is on file). */}
+        {!!badgeText && !isLoading && (
+          <View className="px-3 py-1.5 rounded-xl mr-2" style={{ backgroundColor: badgeBg || '#EBF9E1' }}>
+            <Text className="text-[12px] font-black tracking-wide" style={{ color: badgeColor || '#16A34A' }}>{badgeText}</Text>
           </View>
         )}
         {isGenerated && !isLoading && (

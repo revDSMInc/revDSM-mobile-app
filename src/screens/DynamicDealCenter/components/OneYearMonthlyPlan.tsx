@@ -4,7 +4,6 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   DealPlan,
   PayCategory,
-  planLabelOf,
   calcMonthly,
   isFinancing,
 } from '../hooks/useDealPricing';
@@ -44,6 +43,37 @@ interface Props {
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
+/** Catalog aprs are stored as fractions (0.0999 = 9.99%); tolerate a whole percent. */
+const aprPercent = (apr: any): number => {
+  const n = Number(apr) || 0;
+  if (n <= 0) return 0;
+  return n < 1 ? n * 100 : n;
+};
+
+/** 120 → "120th", 33 → "33rd", 1 → "1st" (web `getOrdinal`). */
+const getOrdinal = (n: number): string => {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+};
+
+/** Web `formatPlanTerms`: "9.99% APR · 1/29th" for a standard financing plan,
+ *  "0% for 6mo · 1/120th" for a deferred-interest plan. */
+function formatPlanTerms(plan: any): string {
+  const pf = Number(plan?.pf) || 0;
+  const totalLoanMonths = Number(plan?.totalLoanMonths) || 0;
+  const duration = Number(plan?.duration) || 0;
+  const deferredMonths = Number(plan?.deferredMonths) || 0;
+  const apr = aprPercent(plan?.apr);
+  let n = 0;
+  if (pf > 0) n = Math.round(1 / pf);
+  else if (totalLoanMonths > 0) n = totalLoanMonths;
+  else if (duration > 0) n = duration;
+  const fraction = n > 0 ? `1/${getOrdinal(n)}` : '';
+  const leading = apr > 0 ? `${Number(apr.toFixed(2))}% APR` : deferredMonths > 0 ? `0% for ${deferredMonths}mo` : '0% APR';
+  return fraction ? `${leading} · ${fraction}` : leading;
+}
+
 export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey, base, value, onChange, locked = false }: Props) {
   const [showPicker, setShowPicker] = useState(false);
   const mode = value?.mode || 'match';
@@ -80,6 +110,23 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
     [categories, plans],
   );
 
+  // Flat, presentation-friendly list for the picker sheet: every eligible financing
+  // plan as "$X/mo · terms", highest monthly first (web `oneYearPlanOptions`).
+  const planOptions = useMemo(() => {
+    const keys: string[] = [];
+    financingCategories.forEach((c) => (c.plans || []).forEach((k) => { if (!keys.includes(k)) keys.push(k); }));
+    return keys
+      .filter((k) => {
+        const p = plans[k];
+        if (!p) return false;
+        const min = Number(p.minPrice) || 0;
+        return !(min > 0 && base > 0 && base < min);
+      })
+      .map((k) => ({ key: k, monthly: calcMonthly(plans, base, k), terms: formatPlanTerms(plans[k]) }))
+      .filter((o) => o.monthly > 0)
+      .sort((a, b) => b.monthly - a.monthly);
+  }, [financingCategories, plans, base]);
+
   const segBtn = (label: string, active: boolean, onPress: () => void) => (
     <TouchableOpacity
       disabled={locked}
@@ -99,35 +146,34 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
 
   return (
     <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 10 }}>
-      <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 6 }}>1-YEAR MONTHLY</Text>
+      <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 6 }}>MONTHLY PLAN</Text>
 
       {/* Match / Default segmented control */}
       <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 10, padding: 3, marginBottom: 8 }}>
-        {segBtn('Match In-Home', mode === 'match', () => commit('match'))}
+        {segBtn('Match', mode === 'match', () => commit('match'))}
         {segBtn('Default', mode === 'default', () => commit('default'))}
       </View>
 
-      {/* Monthly + plan label + override */}
+      {/* Monthly + APR + edit — mockup: "$200 /mo  9.99% / APR  [pencil]" */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <View style={{ flex: 1 }}>
-          {financing && monthly > 0 ? (
-            <>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: '#60A5FA' }}>{fmt(monthly)}/mo</Text>
-              <Text numberOfLines={1} style={{ fontSize: 8, color: '#94A3B8' }}>
-                {mode === 'custom' ? 'Custom · ' : ''}{planLabelOf(plans, resolvedKey)}
-              </Text>
-            </>
-          ) : (
-            <Text style={{ fontSize: 9, color: '#94A3B8' }}>Pick a financing plan to show a monthly</Text>
-          )}
-        </View>
+        {financing && monthly > 0 ? (
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start' }}>
+            <Text style={{ fontSize: 22, fontWeight: '900', color: '#212B36' }}>{fmt(monthly)}</Text>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8', marginTop: 7 }}>/mo</Text>
+            <View style={{ marginLeft: 5, marginTop: 2 }}>
+              <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', lineHeight: 11 }}>{`${Number(aprPercent(plans[resolvedKey]?.apr).toFixed(2))}%`}</Text>
+              <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', lineHeight: 11 }}>APR</Text>
+            </View>
+          </View>
+        ) : (
+          <Text style={{ fontSize: 9, color: '#94A3B8', flex: 1 }}>Pick a financing plan to show a monthly</Text>
+        )}
         {!locked && (
           <TouchableOpacity
             onPress={() => setShowPicker(true)}
-            style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, gap: 4 }}
+            style={{ width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}
           >
-            <Ionicons name="create-outline" size={12} color="#4CBB17" />
-            <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17' }}>Change</Text>
+            <Ionicons name="create-outline" size={17} color="#3B82F6" />
           </TouchableOpacity>
         )}
       </View>
@@ -135,45 +181,46 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
       {/* Plan picker (custom) — bottom sheet matching the rollout PaymentPlanModal. */}
       <Modal visible={showPicker} transparent animationType="slide" onRequestClose={() => setShowPicker(false)}>
         <Pressable onPress={() => setShowPicker(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-          <Pressable onPress={() => {}} style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '82%', paddingBottom: 24 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: '#1C252E' }}>Pick 1-Year Monthly Plan</Text>
+          <Pressable onPress={() => {}} style={{ backgroundColor: '#F2F4F7', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '82%', paddingBottom: 24 }}>
+            {/* Drag handle */}
+            <View style={{ alignItems: 'center', paddingTop: 8 }}>
+              <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: '#CBD5E1' }} />
+            </View>
+            <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', flexDirection: 'row', alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 20, fontWeight: '900', color: '#1C252E' }}>Pick 1 Year Monthly Plan</Text>
+                <Text style={{ fontSize: 13, color: '#94A3B8', marginTop: 4 }}>This monthly flows through to the Investment Center.</Text>
+              </View>
               <TouchableOpacity onPress={() => setShowPicker(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Ionicons name="close" size={22} color="#637381" />
               </TouchableOpacity>
             </View>
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
-              {financingCategories.length === 0 ? (
-                <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', paddingVertical: 20 }}>No financing plans available.</Text>
+            <ScrollView contentContainerStyle={{ padding: 16 }}>
+              {planOptions.length === 0 ? (
+                <Text style={{ fontSize: 13, color: '#94A3B8', textAlign: 'center', paddingVertical: 24 }}>No financing plans are eligible for this total.</Text>
               ) : (
-                financingCategories.map((cat) => (
-                  <View key={cat.title}>
-                    {!!cat.title && (
-                      <View style={{ backgroundColor: cat.bg || '#F1F5F9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, marginBottom: 8, alignSelf: 'flex-start' }}>
-                        <Text style={{ fontSize: 10, fontWeight: '900', color: cat.text || '#637381' }}>{cat.title}</Text>
+                planOptions.map((opt) => {
+                  // Selected when this is the active plan (match/default resolve to a key too).
+                  const isSel = mode === 'custom' ? value?.planKey === opt.key : resolvedKey === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      activeOpacity={0.85}
+                      onPress={() => { commit('custom', opt.key); setShowPicker(false); }}
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', borderRadius: 14, paddingHorizontal: 18, paddingVertical: 16, marginBottom: 12, backgroundColor: isSel ? '#4CBB170D' : '#fff' }}
+                    >
+                      <Text style={{ fontSize: 20, fontWeight: '900', color: '#4CBB17' }}>
+                        {fmt(opt.monthly)}<Text style={{ fontSize: 12, fontWeight: '800' }}>/mo</Text>
+                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#637381' }} numberOfLines={1}>{opt.terms}</Text>
+                        <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: isSel ? 0 : 1.5, borderColor: '#CBD5E1', backgroundColor: isSel ? '#4CBB17' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                          {isSel && <Ionicons name="checkmark" size={15} color="#fff" />}
+                        </View>
                       </View>
-                    )}
-                    {cat.plans.map((key) => {
-                      const m = calcMonthly(plans, base, key);
-                      const active = resolvedKey === key && mode === 'custom';
-                      return (
-                        <TouchableOpacity
-                          key={key}
-                          onPress={() => { commit('custom', key); setShowPicker(false); }}
-                          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1.5, borderColor: active ? '#4CBB17' : '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8, backgroundColor: active ? '#4CBB170D' : '#fff' }}
-                        >
-                          <View style={{ flex: 1, paddingRight: 12 }}>
-                            <Text style={{ fontSize: 12, fontWeight: '900', color: '#1C252E' }}>{planLabelOf(plans, key)}</Text>
-                            {(plans[key]?.apr || 0) > 0 && (
-                              <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 2 }}>{plans[key]?.apr}% APR</Text>
-                            )}
-                          </View>
-                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#60A5FA' }}>{m > 0 ? `${fmt(m)}/mo` : '—'}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                ))
+                    </TouchableOpacity>
+                  );
+                })
               )}
             </ScrollView>
           </Pressable>

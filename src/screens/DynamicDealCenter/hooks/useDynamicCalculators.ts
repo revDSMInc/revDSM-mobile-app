@@ -601,12 +601,15 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   // from is still persisted (the debounce may not have fired yet).
   useEffect(() => {
     const timers = saveTimers.current;
-    const inFlight = saveInFlight.current;
     const dirtyMap = dirty.current;
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
+      // Fire a FINAL PUT for every dirty calculator with the latest state — even if a
+      // save is in flight. On unmount there's no follow-up mechanism left, so skipping
+      // an in-flight calc (as before) could drop a just-confirmed price when the rep
+      // navigates away; sending the latest state last makes it the winning write.
       tabsRef.current.forEach((tab) => {
-        if (tab.persisted && isBackendId(tab.id) && dirtyMap[tab.id] && !inFlight[tab.id]) {
+        if (tab.persisted && isBackendId(tab.id) && dirtyMap[tab.id]) {
           LeadService.updateCalculator(tab.id, buildPayloadRef.current(tab)).catch(() => {});
         }
       });

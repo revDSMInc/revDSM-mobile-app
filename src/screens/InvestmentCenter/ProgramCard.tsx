@@ -25,11 +25,19 @@ export interface ProgramRow {
 interface Props {
   title: string;
   highlighted?: boolean;
+  /** Show the dark "PRICE LOCK" pill above the title (the 1-Year program, web parity). */
+  priceLock?: boolean;
   rows: ProgramRow[];
   grandTotal: number;
   monthly?: number;
   planLabel?: string;
   downPayment?: number;
+  /** Optional editable down-payment control — replaces the read-only line. */
+  downPaymentSlot?: React.ReactNode;
+  /** Basic (non-financing) method badges shown next to Grand Total, e.g. CK/CC/AMEX. */
+  badges?: { key: string; label: string }[];
+  selectedBadgeKey?: string;
+  onSelectBadge?: (key: string) => void;
   selected?: boolean;
   crossedOff?: boolean;
   optInLabel: string;
@@ -47,14 +55,21 @@ function Row({ label, value, green }: ProgramRow) {
 }
 
 export function ProgramCard({
-  title, highlighted = false, rows, grandTotal, monthly, planLabel, downPayment,
+  title, highlighted = false, priceLock = false, rows, grandTotal, monthly, planLabel, downPayment, downPaymentSlot,
+  badges, selectedBadgeKey, onSelectBadge,
   selected = false, crossedOff = false, optInLabel, onOptIn, onRevert,
 }: Props) {
   const accent = highlighted ? '#4CBB17' : '#334155';
   return (
     <View style={{ flex: 1, borderRadius: 16, borderWidth: selected ? 2 : 1.5, borderColor: selected ? accent : '#E2E8F0', overflow: 'hidden', backgroundColor: '#fff', position: 'relative' }}>
-      {/* Header bar */}
-      <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#1E293B', paddingVertical: 9, alignItems: 'center' }}>
+      {/* Header bar (+ optional PRICE LOCK pill above the title) */}
+      <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#1E293B', paddingTop: priceLock ? 8 : 9, paddingBottom: 9, alignItems: 'center' }}>
+        {priceLock && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#0F172A', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 6 }}>
+            <Ionicons name="lock-closed" size={9} color="#fff" />
+            <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>PRICE LOCK</Text>
+          </View>
+        )}
         <Text style={{ fontSize: 10, fontWeight: '900', color: '#fff', letterSpacing: 0.5, textAlign: 'center' }} numberOfLines={2}>{title}</Text>
       </View>
 
@@ -64,18 +79,38 @@ export function ProgramCard({
 
         <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 }} />
 
-        {/* Grand Total */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
-          <Text style={{ fontSize: 15, fontWeight: '900', color: highlighted ? '#15803D' : '#1C252E' }}>{fmt(grandTotal)}</Text>
+        {/* Grand Total + basic method badges (CK/CC/AMEX) to the right */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flexShrink: 0 }}>
+            <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
+            <Text style={{ fontSize: 18, fontWeight: '900', color: highlighted ? '#15803D' : '#1C252E', marginTop: 1 }}>{fmt(grandTotal)}</Text>
+          </View>
+          {!!badges?.length && (
+            <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 4, marginLeft: 8, paddingTop: 2 }}>
+              {badges.map((b) => {
+                const sel = selectedBadgeKey === b.key;
+                return (
+                  <TouchableOpacity
+                    key={b.key}
+                    onPress={() => onSelectBadge?.(b.key)}
+                    style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1.5, borderColor: sel ? '#4CBB17' : '#E2E8F0', backgroundColor: sel ? '#4CBB170D' : '#fff' }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: sel ? '#15803D' : '#94A3B8' }}>{b.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
 
-        {(downPayment ?? 0) > 0 && (
+        {downPaymentSlot ? (
+          <View style={{ marginTop: 8 }}>{downPaymentSlot}</View>
+        ) : (downPayment ?? 0) > 0 ? (
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
             <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>Down Payment</Text>
             <Text style={{ fontSize: 10, fontWeight: '900', color: '#16a34a' }}>-{fmt(downPayment!)}</Text>
           </View>
-        )}
+        ) : null}
 
         {(monthly ?? 0) > 0 && (
           <View style={{ alignItems: 'center', marginTop: 10 }}>
