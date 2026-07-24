@@ -556,6 +556,12 @@ export const RevRenderHistoryModal = ({
                 {/* AFTER — background */}
                 {afterImage && (
                   <CachedImage
+                    // Key by the render so navigating REMOUNTS the image instead of
+                    // swapping `source.uri` on a live <Image> — React Native doesn't
+                    // reliably re-fire `onLoad` on a source swap (loader hangs forever)
+                    // and keeps painting the previous render's frame (one wrap "overtook"
+                    // the others). A fresh mount per render fixes both.
+                    key={`after-${currentIndex}-${afterImage}`}
                     uri={afterImage}
                     style={{
                       position: 'absolute',
@@ -597,6 +603,8 @@ export const RevRenderHistoryModal = ({
                     ]}
                   >
                     <CachedImage
+                      // Remount per render (see the AFTER image note above).
+                      key={`before-${currentIndex}-${beforeImage}`}
                       uri={beforeImage}
                       style={{ width: imageWidth, height: "100%" }}
                       resizeMode="cover"
