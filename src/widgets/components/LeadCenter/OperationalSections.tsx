@@ -5,6 +5,9 @@ import YearDropdown from '../../components/YearDropdown';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
+import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
+import { useFocusEffect } from '@react-navigation/native';
+import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal, prefetchToLocalCache } from '../../modals/lead-center/RevRenderHistoryModal';
 
 export const ToolsSection = ({
@@ -15,6 +18,7 @@ export const ToolsSection = ({
   onShowJobBuilder,
   onShowCalculator,
   onShowDynamicDealCenter,
+  onShowInvestmentCenter,
   onShowPitchbook,
   onShowRooflineDeck,
   revRenderJobs = [],
@@ -24,6 +28,18 @@ export const ToolsSection = ({
   isCalculatorLoading,
 }: any) => {
   const { colors, isDark } = useTheme();
+
+  // Calculator/rollout status for the Deal Center + Investment Center tiles.
+  // `allConfirmed` (web `allJobsConfirmed`) gates the Investment Center. Refetch on
+  // focus so returning from the Deal Center reflects a newly-confirmed rollout.
+  const { data: calcStatus, refetch: refetchCalcStatus } = useLeadCalculatorStatus(lead);
+  const hasCalc = !!calcStatus?.hasCalculator;
+  const allConfirmed = !!calcStatus?.allConfirmed;
+  useFocusEffect(
+    React.useCallback(() => {
+      refetchCalcStatus?.();
+    }, [refetchCalcStatus]),
+  );
 
   const buildRevRenderPairs = (rawRuns: any[]) => {
     if (!Array.isArray(rawRuns)) return [];
@@ -144,8 +160,27 @@ export const ToolsSection = ({
       <ToolCard
         title="Deal Center"
         desc="Calculator & job builder"
+        // Green status: "Calculator created" once a real calc exists, then
+        // "All jobs built" once every rollout is confirmed (web parity).
+        statusText={allConfirmed ? 'All jobs built' : hasCalc ? 'Calculator created' : undefined}
         icon="cog"
         onPress={onShowDynamicDealCenter}
+      />
+      <ToolCard
+        title="Investment Center"
+        // Locked until every rollout is confirmed (web `allJobsConfirmed`). Tapping
+        // while locked warns instead of opening.
+        desc={!allConfirmed ? 'Build & confirm all rollouts first' : 'Present quote & 1-yr free quote'}
+        statusText={allConfirmed ? (consentReport ? 'Consent on file — present quote' : 'Ready to present') : undefined}
+        locked={!allConfirmed}
+        icon="chart-line"
+        onPress={() => {
+          if (!allConfirmed) {
+            FlashMessage.warning('Investment Center', 'Please build and confirm all rollouts first.');
+            return;
+          }
+          onShowInvestmentCenter();
+        }}
       />
       <TouchableOpacity
         onPress={() => onAction('revrender')}
@@ -445,18 +480,22 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 };
 
 
-const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
+const ToolCard = ({ title, desc, statusText, statusColor, locked, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
   const { colors, isDark } = useTheme();
+  const green = statusColor || '#16A34A';
+  // A locked card stays tappable on purpose — the parent's onPress shows a toast
+  // (web parity: tapping the locked Investment Center warns "build all jobs first").
+  const disabled = isLoading;
   return (
     <View
       className="mb-4 flex-row items-center p-3 rounded-lg border"
       style={{
         borderColor: '#919EAB33',
         backgroundColor: isDark ? colors.surface : colors.background,
-        opacity: isLoading ? 0.6 : 1,
+        opacity: isLoading ? 0.6 : locked ? 0.55 : 1,
       }}
     >
-      <TouchableOpacity onPress={onPress} disabled={isLoading} className="flex-1 flex-row items-center">
+      <TouchableOpacity onPress={onPress} disabled={disabled} className="flex-1 flex-row items-center">
         <View
           className="w-8 h-8 rounded-full items-center justify-center"
           style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
@@ -464,19 +503,34 @@ const ToolCard = ({ title, blur, icon, onPress, onDownload, isGenerated, isLoadi
           {isLoading ? (
             <ActivityIndicator size="small" color={colors.primary.main} />
           ) : (
-            <Icon name={icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
+            <Icon name={locked ? 'lock' : icon} size={16} color={isDark ? colors.grey[0] : '#637381'} />
           )}
         </View>
         <View className="flex-1 ml-4">
           <Text
             className="text-base font-semibold"
-            style={{ color: isGenerated ? colors.primary.main : '#1C252E' }}
+            style={{ color: locked ? '#919EAB' : isGenerated ? colors.primary.main : '#1C252E' }}
           >
             {title}
           </Text>
+          {/* Green status line (e.g. "Calculator created" / "Rollout confirmed") wins
+              over the plain grey subtitle when present. */}
+          {statusText ? (
+            <View className="flex-row items-center mt-0.5">
+              <Icon name="check-circle" size={12} color={green} />
+              <Text className="text-[12px] font-semibold ml-1" style={{ color: green }}>{statusText}</Text>
+            </View>
+          ) : desc ? (
+            <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>{desc}</Text>
+          ) : null}
         </View>
         {isLoading && (
           <ActivityIndicator size="small" color={colors.primary.main} style={{ marginRight: 8 }} />
+        )}
+        {locked && !isLoading && (
+          <View className="px-3 py-1.5 rounded-xl mr-2" style={{ backgroundColor: '#919EAB14' }}>
+            <Text className="text-[11px] font-semibold" style={{ color: '#919EAB' }}>Locked</Text>
+          </View>
         )}
         {isGenerated && !isLoading && (
           <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2">

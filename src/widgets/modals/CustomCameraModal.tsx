@@ -13,6 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat } from 'react-native-vision-camera';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Reanimated, { useSharedValue, useAnimatedProps, runOnJS, withSpring } from 'react-native-reanimated';
@@ -211,9 +212,27 @@ export const CustomCameraModal = ({
         flash: flash === 'auto' ? 'auto' : flash === 'on' ? 'on' : 'off',
       });
 
-      const fileName = photo.path.split('/').pop() || `photo_${Date.now()}.jpg`;
+      // Vision-camera writes the photo to iOS's VOLATILE tmp/ dir, which the OS purges
+      // (and an app restart clears). If the upload doesn't happen immediately — a review
+      // delay, offline queue, or the app being backgrounded — the file is gone and the
+      // upload fails with NSCocoa 260 "no such file". Copy it into a DURABLE app dir now,
+      // the instant it's captured, so the uri always resolves to a real file.
+      let durablePath = photo.path;
+      try {
+        const fs = ReactNativeBlobUtil.fs;
+        const dir = `${fs.dirs.DocumentDir}/pending_uploads`;
+        if (!(await fs.exists(dir))) await fs.mkdir(dir);
+        const base = photo.path.split('/').pop() || `photo_${Date.now()}.jpg`;
+        const dest = `${dir}/${Date.now()}_${base}`;
+        await fs.cp(photo.path.replace(/^file:\/\//, ''), dest);
+        durablePath = dest;
+      } catch (e) {
+        console.warn('[CustomCameraModal] Could not persist captured photo, using tmp path:', e);
+      }
+
+      const fileName = durablePath.split('/').pop() || `photo_${Date.now()}.jpg`;
       const asset = {
-        uri: `file://${photo.path}`,
+        uri: `file://${durablePath}`,
         fileName,
         type: 'image/jpeg',
         width: photo.width,

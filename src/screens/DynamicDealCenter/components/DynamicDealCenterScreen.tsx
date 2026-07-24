@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { View, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,6 +30,9 @@ interface DynamicDealCenterScreenProps {
       // deal straight in the dynamic job builder (web PortalDynamicJobBuilderModal).
       mode?: 'new' | 'edit';
       calculatorResultData?: any;
+      // Opt-in handoff from the Investment Center — opens the Result Lead (Sale)
+      // modal for this calculator with the secured price/plan/down payment.
+      resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
     };
   };
 }
@@ -92,6 +95,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     handleSetDrops,
     handleSetDiscount,
     handleSetDownPayment,
+    handleSetRenders,
+    handleSetOneYearMonthly,
   } = useDynamicCalculators(lead, verticals);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
@@ -111,6 +116,23 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
     setCurrentCalculatorId(calculatorId);
   }, []);
+
+  // Opt-in handoff from the Investment Center: once the calculators have loaded,
+  // open the Result Lead (Sale) modal for the opted-in calculator with the secured
+  // price/plan/down payment (web parity: TabbedCalculator `readPendingOptIn`). Runs
+  // once per navigation so it doesn't reopen after the rep closes the modal.
+  const optInHandledRef = useRef(false);
+  useEffect(() => {
+    const optIn = route?.params?.resultOptIn;
+    if (!optIn?.calculatorId || optInHandledRef.current) return;
+    if (isCalcLoading) return;
+    const calc = tabs.find((t) => t.id === optIn.calculatorId);
+    if (!calc) return;
+    optInHandledRef.current = true;
+    setActiveTabId(optIn.calculatorId);
+    handleResultJob(optIn.calculatorId, 'sale', optIn.price, optIn.paymentMethod, optIn.downPayment);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route?.params?.resultOptIn, isCalcLoading, tabs]);
 
   const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
@@ -242,6 +264,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDropChange={handleSetDrops}
           onDiscountChange={handleSetDiscount}
           onDownPaymentChange={handleSetDownPayment}
+          onRendersChange={handleSetRenders}
+          onOneYearMonthlyChange={handleSetOneYearMonthly}
+          onRolloutsConfirmedDone={() =>
+            navigation?.navigate('LeadCenter', { lead, tab: 'tools' })
+          }
           activeTabId={activeTabId}
           onTabSelect={setActiveTabId}
         />

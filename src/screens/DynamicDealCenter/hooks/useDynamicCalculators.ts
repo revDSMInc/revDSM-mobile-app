@@ -62,6 +62,29 @@ export interface CalcTab {
   downPayment?: number;
   /** pre-order discount % (15/20/25) driving the In-Home Pre-Order grand total. */
   discountPercentage?: number;
+  /**
+   * RevRender before/after pairs the rep associated with THIS calculator's job
+   * build (web parity: `lfcalculator.selectedRenders`). Each item keeps
+   * `{ runId, originalUrl, generatedUrl, s3UrlOriginal, s3UrlGenerated, bucketName,
+   * viewLabel, category, subcategory }` so the Investment Center can re-resolve
+   * secure links and show them under the job scope.
+   */
+  selectedRenders?: any[];
+  /**
+   * The 1-Year Program monthly-payment selection (web parity:
+   * `lfcalculator.oneYearMonthlyPlan`). `mode` is how the plan is chosen:
+   * `match` mirrors the In-Home selected plan, `default` uses the 1-Year default
+   * financing plan, `custom` pins an explicit `planKey`. The rest are the resolved
+   * values persisted for the Investment Center to display without recomputing.
+   */
+  oneYearMonthlyPlan?: {
+    mode: 'match' | 'default' | 'custom';
+    planKey?: string;
+    apr?: number;
+    monthlyPayment?: number;
+    grandTotal?: number;
+    isDefault?: boolean;
+  } | null;
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
   /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
@@ -111,7 +134,14 @@ function tabSignature(tab: CalcTab): string {
         `${d?.price ?? ''}:${d?.status ?? ''}:${d?.downPayment ?? ''}:${d?.balance ?? ''}:${d?.paymentMethod ?? ''}:${Array.isArray(d?.paymentMethods) ? d.paymentMethods.join('|') : ''}`
     )
     .join(',');
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}`;
+  // Selected renders: a stable key of the chosen run ids so add/remove marks dirty.
+  const renderSig = (tab.selectedRenders || [])
+    .map((r: any) => r?.runId || r?._id || r?.generatedUrl || '')
+    .join('|');
+  // 1-Year monthly plan: mode + resolved plan key + default flag.
+  const oy = tab.oneYearMonthlyPlan;
+  const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -350,6 +380,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(tab.dropPrice)),
       downPayment: tab.downPayment,
       discountPercentage: tab.discountPercentage,
+      // Web parity: the renders bound to this job build + the 1-Year monthly plan
+      // selection both persist on the calculator so the Investment Center reads them.
+      selectedRenders: tab.selectedRenders || [],
+      oneYearMonthlyPlan: tab.oneYearMonthlyPlan ?? null,
       schemaSnapshotId: snapshotId(),
       leadId,
       enteredBy,
@@ -496,6 +530,8 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(c.dropPrice)),
               downPayment: c.downPayment || 0,
               discountPercentage: Number(c.discountPercentage) || undefined,
+              selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
+              oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
               persisted: true,
             };
           });
@@ -849,6 +885,36 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   );
 
   /**
+   * Replace the RevRender pairs bound to this calculator's job build (web parity:
+   * `selectedRenders`). Persisted on the next debounced save; the Investment Center
+   * reads them back to show before/after images under the job scope.
+   */
+  const handleSetRenders = useCallback(
+    (tabId: string, renders: any[]) => {
+      setTabs((prev) => {
+        const next = prev.map((t) => (t.id === tabId ? { ...t, selectedRenders: renders } : t));
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /** Set the 1-Year Program monthly-payment selection (persisted on next save). */
+  const handleSetOneYearMonthly = useCallback(
+    (tabId: string, plan: CalcTab['oneYearMonthlyPlan']) => {
+      setTabs((prev) => {
+        const next = prev.map((t) => (t.id === tabId ? { ...t, oneYearMonthlyPlan: plan } : t));
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /**
    * Clear every field of one category on the active calculator in a single pass,
    * firing ONE `section cleared` activity event — web parity (lf-calculator-view.js
    * category Clear → `action:'section cleared'`). Zeroing here rather than looping
@@ -945,5 +1011,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     handleSetDrops,
     handleSetDiscount,
     handleSetDownPayment,
+    handleSetRenders,
+    handleSetOneYearMonthly,
   };
 }

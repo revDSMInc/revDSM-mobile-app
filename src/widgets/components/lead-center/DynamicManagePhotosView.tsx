@@ -34,6 +34,7 @@ import {
   indexSchema,
   getCapturableSlots,
   uiKey,
+  norm,
   type InspectionProduct,
   type InspectionCategory,
   type InspectionSlot,
@@ -44,6 +45,8 @@ import { CategoryTabStrip, ProductDropdown } from './DynamicInspectionRenderer';
 import { useDynamicInspectionCapture, type CapturedPhoto } from './useDynamicInspectionCapture';
 import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
+import { useSecureUrls } from '../../../hooks/useSecureUrls';
+import { resolveS3Url } from '../../../utils/s3-utils';
 
 const GREEN = '#4CBB17';
 const RED = '#EF4444';
@@ -253,8 +256,69 @@ export function DynamicManagePhotosView({
     );
   }, [activeCategories, capture]);
 
+  // ── Orphaned / "unsorted" photos ────────────────────────────────────────────
+  // Photos in `lead.salesPhotos` whose stored `category` doesn't match ANY
+  // configured product's scoped leaf category (`{product} — {label}`) — e.g. photos
+  // captured via the static flow, before the inspection schema existed, or under a
+  // renamed product. The dynamic capture hook silently drops these (they fail its
+  // `expectedCats` filter), yet the "Manage Photos (N)" count includes them — which
+  // is the "count shows N but the view is empty" bug. Surface them here so they can
+  // be viewed and deleted instead of being invisible-but-counted.
+  const orphanPhotos = useMemo(() => {
+    const expected = new Set<string>();
+    (products || []).forEach((prod: any) => {
+      const pfx = prod?.name || prod?.id ? `${prod.name || prod.id} — ` : '';
+      indexSchema(prod?.categories || []).leafCategories.forEach((c: any) =>
+        expected.add(norm(`${pfx}${c.label}`)),
+      );
+    });
+    const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+    const seen = new Set<string>();
+    const out: any[] = [];
+    photos.forEach((p: any) => {
+      if (!p?.s3url) return;
+      const sub = String(p.subcategory || '');
+      if (sub.toLowerCase().includes('(annotated)')) return; // annotated copies aren't orphans
+      if (expected.has(norm(p.category))) return; // belongs to a configured product slot
+      if (seen.has(p.s3url)) return;
+      seen.add(p.s3url);
+      out.push(p);
+    });
+    return out;
+  }, [products, lead?.salesPhotos]);
+
+  // Resolve secure URLs for the orphans (they were never resolved by the capture
+  // hook, which filtered them out before the secure-URL step).
+  const orphanSecure = useSecureUrls(
+    orphanPhotos.map((p) => ({ s3url: p.s3url, bucketName: p.bucketName, category: p.category, subcategory: p.subcategory })),
+  );
+  const orphanUriByS3 = useMemo(() => {
+    const m: Record<string, string> = {};
+    Object.values(orphanSecure.data || {}).forEach((arr: any) =>
+      (arr || []).forEach((x: any) => { if (x?.s3url) m[x.s3url] = x.uri; }),
+    );
+    return m;
+  }, [orphanSecure.data]);
+
+  const orphanCards = useMemo<PhotoCard[]>(
+    () =>
+      orphanPhotos.map((p, i) => ({
+        // Synthetic category: its `label` doubles as the delete `categoryLabel`, so
+        // keep the photo's REAL stored category there; `id` is unique so it can't
+        // collide with an annotated-base key. deletePhoto identifies by s3url anyway.
+        cat: { id: `orphan-${p.s3url || i}`, label: p.category || 'Unsorted' } as any,
+        label: p.subcategory || p.category || 'Photo',
+        storageName: p.subcategory || '',
+        slot: { name: p.subcategory || 'Photo', storageName: p.subcategory || '' } as InspectionSlot,
+        key: `orphan-${p.s3url || p._id || i}`,
+        photo: { ...p, secureUrl: orphanUriByS3[p.s3url] || p.secureUrl || resolveS3Url(p.s3url) },
+      })),
+    [orphanPhotos, orphanUriByS3],
+  );
+
   const multiLeaf = sections.length > 1;
-  const isEmpty = sections.length === 0 && extraCards.length === 0 && annotated.length === 0;
+  const isEmpty =
+    sections.length === 0 && extraCards.length === 0 && annotated.length === 0 && orphanCards.length === 0;
 
   // Two columns, matching web's `xs: repeat(2, 1fr)` mobile breakpoint.
   const GAP = 12;
@@ -608,6 +672,26 @@ export function DynamicManagePhotosView({
                   </View>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP }}>
                     {annotated.map((card) => renderCard(card))}
+                  </View>
+                </View>
+              )}
+
+              {/* + UNSORTED — photos not mapped to any configured slot (static /
+                  pre-schema / renamed-product). Display + delete only; product-wide,
+                  so they show regardless of the active tab. */}
+              {orphanCards.length > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <Text style={{ color: '#F59E0B', fontWeight: '900', fontSize: 11, letterSpacing: 1 }}>
+                      + UNSORTED
+                    </Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '700' }}>
+                      {orphanCards.length} photo{orphanCards.length === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GAP }}>
+                    {orphanCards.map((card) => renderCard(card))}
                   </View>
                 </View>
               )}

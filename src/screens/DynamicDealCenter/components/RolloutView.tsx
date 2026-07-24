@@ -41,6 +41,8 @@ import {
 import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
 import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
+import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
+import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -83,6 +85,10 @@ interface CalculatorTab {
   dropPrice?: any[];
   downPayment?: number;
   discountPercentage?: number;
+  /** RevRender before/after pairs bound to this calculator's job build. */
+  selectedRenders?: any[];
+  /** 1-Year Program monthly-payment selection (persisted for the Investment Center). */
+  oneYearMonthlyPlan?: OneYearMonthlyValue;
 }
 
 interface RolloutViewProps {
@@ -113,6 +119,13 @@ interface RolloutViewProps {
   onDiscountChange?: (id: string, discount: number) => void;
   /** Persist a calculator's rollout down payment. */
   onDownPaymentChange?: (id: string, downPayment: number) => void;
+  /** Persist the RevRender pairs the rep bound to this calculator's job build. */
+  onRendersChange?: (id: string, renders: any[]) => void;
+  /** Persist the 1-Year Program monthly-payment selection. */
+  onOneYearMonthlyChange?: (id: string, plan: OneYearMonthlyValue) => void;
+  /** Fired after the rep taps Confirm Rollouts — the flow returns to the Lead
+   *  Center tools so they can present (map / pitch book) and open Investment Center. */
+  onRolloutsConfirmedDone?: () => void;
   /** Controlled active tab — syncs with the calculator view so switching views
    *  preserves which calculator the user was working on. */
   activeTabId?: string;
@@ -692,7 +705,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -707,6 +720,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onDropChange: (id: string, drops: any[]) => void;
   onDiscountChange: (id: string, discount: number) => void;
   onDownPaymentChange: (id: string, downPayment: number) => void;
+  onRendersChange: (id: string, renders: any[]) => void;
+  onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
 }) {
   const { user, refreshUser } = useAuth();
   const [endPrice, setEndPrice] = useState(initialPrice ? String(initialPrice) : String(calculator.price || ''));
@@ -740,6 +755,19 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const plans = pricing.plans;
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
+  // The "default" 1-Year monthly plan: the rep's default payment method if it's a
+  // financing plan, else the standard ~9.99% APR financing plan, else the first
+  // financing plan available (web resolves the same 9.99% default in OneYearMonthlyPlan).
+  const defaultOneYearKey = useMemo(() => {
+    const financingKeys = Object.keys(plans).filter((k) => isFinancing(plans, k));
+    if (user?.defaultPaymentMethod && isFinancing(plans, user.defaultPaymentMethod)) return user.defaultPaymentMethod;
+    return (
+      financingKeys.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) ||
+      financingKeys.find((k) => (plans[k]?.apr || 0) > 0) ||
+      financingKeys[0] ||
+      method
+    );
+  }, [plans, user?.defaultPaymentMethod, method]);
   const drops: any[] = calculator.dropPrice || [];
   const acceptedDrop = drops.find((d) => d.status === 'accepted');
   const activeMethod = acceptedDrop?.paymentMethod || method;
@@ -1193,8 +1221,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           ) : null}
         </View>
 
-        {/* 2. Payment Method selector + Set-as-Default toggle */}
-        {paymentMethodBlock}
+        {/* 2. RevRender slots — the rep picks which rendered before/after photos are
+            associated with THIS job build (persisted as `selectedRenders`). Shown
+            first so it's the first thing seen when the rollout card opens. */}
+        <RevRenderSlots
+          leadId={leadId}
+          selected={calculator.selectedRenders || []}
+          onChange={(renders: RenderPair[]) => onRendersChange(calculator.id, renders)}
+          locked={isLocked}
+        />
 
         {/* 3. Category pills */}
         {categoryChips.length > 0 && (
@@ -1229,6 +1264,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           );
         })}
         {itemRows.length > 0 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />}
+
+        {/* Payment Method selector — moved down to sit RIGHT ABOVE cost/par/retail so
+            reps remember to adjust the plan before reading the price (web parity:
+            QuoteResultCard puts PaymentPlanSelect immediately above the tiles). */}
+        {paymentMethodBlock}
 
         {/* 4. COST / PAR / RETAIL tiles */}
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
@@ -1338,6 +1378,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Text style={{ fontSize: 11, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
                   <Text style={{ fontSize: 13, fontWeight: '900', color: '#1C252E' }}>{fmt(oneYearGrandTotal)}</Text>
                 </View>
+                {/* 1-Year Program monthly payment — match In-Home or the rep's default,
+                    or override with any financing plan (may be "worse" than In-Home). */}
+                <OneYearMonthlyPlan
+                  plans={plans}
+                  categories={pricing.categories}
+                  inHomeMethod={method}
+                  defaultKey={defaultOneYearKey}
+                  base={oneYearGrandTotal}
+                  value={calculator.oneYearMonthlyPlan ?? null}
+                  onChange={(v) => onOneYearMonthlyChange(calculator.id, v)}
+                  locked={isLocked}
+                />
               </View>
 
               <View style={{ flex: 1, borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 16, overflow: 'hidden' }}>
@@ -1602,7 +1654,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -1761,7 +1813,9 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               }}
               onDropChange={(id, drops) => onDropChange?.(id, drops)}
               onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
-              onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)} />
+              onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)}
+              onRendersChange={(id, renders) => onRendersChange?.(id, renders)}
+              onOneYearMonthlyChange={(id, plan) => onOneYearMonthlyChange?.(id, plan)} />
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 80 }}>
               <Ionicons name="cube-outline" size={44} color="#CBD5E1" />
@@ -1823,6 +1877,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 });
               }
               onConfirmRollouts?.(confirmed);
+              // Web parity (new workflow): once rollouts are confirmed the rep is
+              // "in home" — return to the Lead Center tools so they can present
+              // (map / pitch book) and open the Investment Center. The confirmed
+              // calculators are already persisted, so re-entering Deal Center
+              // rehydrates their locked state.
+              if (onRolloutsConfirmedDone) {
+                FlashMessage.success('Rollouts confirmed', 'Open Investment Center from Tools to present.');
+                onRolloutsConfirmedDone();
+              }
             }} disabled={!allHavePrices} style={{ minWidth: 200, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: allHavePrices ? '#4CBB17' : 'rgba(145,158,171,0.12)' }}>
               <Text style={{ fontSize: 14, fontWeight: '700', textAlign: 'center', color: allHavePrices ? '#fff' : 'rgba(145,158,171,0.4)' }}>Confirm Rollouts</Text>
             </TouchableOpacity>
