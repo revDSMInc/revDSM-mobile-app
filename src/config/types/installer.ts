@@ -45,8 +45,15 @@ export interface PhotoTag {
    * nothing to ghost-match against, so they are optional (rendered dimmed / N/A).
    */
   hasRep: boolean;
-  /** Rep's reference shot. Populated by the API; undefined while mocked. */
+  /**
+   * Rep's reference shot as a displayable URL. For real jobs this is a short-lived
+   * signed S3 URL resolved from `repPhotoS3Url` (see `useRepPhotoSections`); undefined
+   * until it resolves, so the ghost placeholder shows meanwhile.
+   */
   repPhotoUrl?: string;
+  /** Raw bucket-relative S3 key of the rep shot, resolved to a signed URL on demand. */
+  repPhotoS3Url?: string;
+  repPhotoBucket?: string;
 }
 
 export interface PhotoSection {

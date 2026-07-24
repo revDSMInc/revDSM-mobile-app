@@ -13,8 +13,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
 import { HouseGhost, tagTint } from '../../../widgets/components/installer/HouseGhost';
-import { PHOTO_SECTIONS, REQUIRED_PHOTO_TAGS } from '../../../constants/installer';
-import type { CapturedPhoto, PhotoPhase, PhotoTag } from '../../../config/types/installer';
+import { PHOTO_SECTIONS } from '../../../constants/installer';
+import type {
+  CapturedPhoto,
+  PhotoPhase,
+  PhotoSection,
+  PhotoTag,
+} from '../../../config/types/installer';
 
 // Dark "tagger" theme — deliberately distinct from the light app chrome. Shooting
 // happens outdoors against bright surfaces, so the capture surface stays dark to
@@ -35,6 +40,11 @@ interface Props {
   extras: Record<string, CapturedPhoto[]>;
   /** Pre-install shots, shown as the reference during the post pass. */
   preMatched?: Record<string, CapturedPhoto>;
+  /**
+   * Tagger layout + rep reference photos. Built from the job's real
+   * `preInstallPhotos` (`buildRepPhotoSections`); falls back to the static mock.
+   */
+  sections?: PhotoSection[];
   onMatch: (tagId: string, photo: CapturedPhoto) => void;
   onAddExtra: (sectionId: string, photo: CapturedPhoto) => void;
   onComplete: () => void;
@@ -54,26 +64,35 @@ export function PhotoMatchStep({
   matched,
   extras,
   preMatched,
+  sections: sectionsProp,
   onMatch,
   onAddExtra,
   onComplete,
   onBack,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const [sectionId, setSectionId] = useState('home');
+
+  // Data-driven from the rep's real capture set when provided; static mock otherwise.
+  const sections = sectionsProp?.length ? sectionsProp : PHOTO_SECTIONS;
+  const requiredTags = useMemo(
+    () => sections.flatMap((s) => s.tags.filter((t) => t.hasRep)),
+    [sections]
+  );
+
+  const [sectionId, setSectionId] = useState(() => sections[0]?.id ?? '');
   const [selected, setSelected] = useState<PhotoTag>(
-    () => REQUIRED_PHOTO_TAGS.find((t) => !matched[t.id]) ?? REQUIRED_PHOTO_TAGS[0]
+    () => requiredTags.find((t) => !matched[t.id]) ?? requiredTags[0] ?? sections[0]?.tags[0]
   );
   const [cameraTag, setCameraTag] = useState<PhotoTag | null>(null);
   const [extraCamera, setExtraCamera] = useState(false);
   const [reviewTag, setReviewTag] = useState<PhotoTag | null>(null);
 
-  const section = PHOTO_SECTIONS.find((s) => s.id === sectionId)!;
-  const matchedTotal = REQUIRED_PHOTO_TAGS.filter((t) => matched[t.id]).length;
-  const allDone = matchedTotal === REQUIRED_PHOTO_TAGS.length;
+  const section = sections.find((s) => s.id === sectionId) ?? sections[0];
+  const matchedTotal = requiredTags.filter((t) => matched[t.id]).length;
+  const allDone = requiredTags.length > 0 && matchedTotal === requiredTags.length;
 
   const sectionCount = (sid: string) => {
-    const req = PHOTO_SECTIONS.find((s) => s.id === sid)!.tags.filter((t) => t.hasRep);
+    const req = (sections.find((s) => s.id === sid)?.tags ?? []).filter((t) => t.hasRep);
     return `${req.filter((t) => matched[t.id]).length}/${req.length}`;
   };
 
@@ -83,13 +102,15 @@ export function PhotoMatchStep({
 
   /** Next unmatched tag — prefers the current section, then falls through globally. */
   const advance = (fromId: string) => {
-    const inSection = section.tags.filter((t) => t.hasRep && !matched[t.id] && t.id !== fromId);
+    const inSection = (section?.tags ?? []).filter(
+      (t) => t.hasRep && !matched[t.id] && t.id !== fromId
+    );
     if (inSection.length) return setSelected(inSection[0]);
 
-    const next = REQUIRED_PHOTO_TAGS.find((t) => !matched[t.id] && t.id !== fromId);
+    const next = requiredTags.find((t) => !matched[t.id] && t.id !== fromId);
     if (next) {
       setSelected(next);
-      const ns = PHOTO_SECTIONS.find((s) => s.tags.some((x) => x.id === next.id));
+      const ns = sections.find((s) => s.tags.some((x) => x.id === next.id));
       if (ns) setSectionId(ns.id);
     }
   };
@@ -97,7 +118,7 @@ export function PhotoMatchStep({
   // Matched tags sink below pending ones; unavailable tags sink to the bottom.
   const orderedTags = useMemo(() => {
     const rank = (t: PhotoTag) => (!t.hasRep ? 2 : matched[t.id] ? 1 : 0);
-    return [...section.tags].sort((a, b) => rank(a) - rank(b));
+    return [...(section?.tags ?? [])].sort((a, b) => rank(a) - rank(b));
   }, [section, matched]);
 
   const isSelectedMatched = !!matched[selected?.id];
@@ -125,26 +146,33 @@ export function PhotoMatchStep({
           </TouchableOpacity>
           <Text className="text-xs font-black tracking-widest" style={{ color: T_DIM }}>
             {phase === 'pre' ? 'PRE-INSTALL' : 'POST-INSTALL'} • {matchedTotal}/
-            {REQUIRED_PHOTO_TAGS.length} MATCHED
+            {requiredTags.length} MATCHED
           </Text>
         </View>
 
-        {/* Section tabs */}
-        <View className="flex-row" style={{ backgroundColor: T_BAR, borderBottomWidth: 1, borderBottomColor: T_BORDER }}>
-          {PHOTO_SECTIONS.map((s) => {
+        {/* Section tabs — horizontally scrollable so any number of rep categories fits */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ backgroundColor: T_BAR, borderBottomWidth: 1, borderBottomColor: T_BORDER, flexGrow: 0 }}
+          contentContainerStyle={{ paddingHorizontal: 4 }}
+        >
+          {sections.map((s) => {
             const active = s.id === sectionId;
             return (
               <TouchableOpacity
                 key={s.id}
                 onPress={() => setSectionId(s.id)}
-                className="flex-1 items-center pt-2 pb-1.5"
+                className="items-center pt-2 pb-1.5 px-3"
                 style={{
+                  minWidth: 76,
                   borderBottomWidth: 2,
                   borderBottomColor: active ? T_GREEN : 'transparent',
                 }}
               >
                 <Icon name={s.icon} size={17} color={active ? T_GREEN : T_DIM} />
                 <Text
+                  numberOfLines={1}
                   className="text-[9px] font-black tracking-wide mt-0.5"
                   style={{ color: active ? T_GREEN : T_DIM }}
                 >
@@ -156,7 +184,7 @@ export function PhotoMatchStep({
               </TouchableOpacity>
             );
           })}
-        </View>
+        </ScrollView>
 
         {/* Reference photo — tap to shoot or review */}
         <TouchableOpacity

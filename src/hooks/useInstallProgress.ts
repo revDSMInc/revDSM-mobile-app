@@ -46,7 +46,14 @@ const readStored = (jobId: string): InstallProgress => {
  * losing captures, and mirrored through `InstallerService.saveProgress` — a no-op
  * against mocks today, a real PUT once the endpoint lands.
  */
-export function useInstallProgress(jobId: string, productIds: string[] = []) {
+const DEFAULT_REQUIRED_TAG_IDS = REQUIRED_PHOTO_TAGS.map((t) => t.id);
+
+export function useInstallProgress(
+  jobId: string,
+  productIds: string[] = [],
+  /** Tag ids the installer must match — from the job's real rep photos when available. */
+  requiredPhotoTagIds: string[] = DEFAULT_REQUIRED_TAG_IDS
+) {
   const [progress, setProgress] = useState<InstallProgress>(() => readStored(jobId));
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -89,9 +96,15 @@ export function useInstallProgress(jobId: string, productIds: string[] = []) {
         case 'coc':
           return progress.cocPages.length > 0;
         case 'pre':
-          return REQUIRED_PHOTO_TAGS.every((t) => !!progress.preMatched[t.id]);
+          return (
+            requiredPhotoTagIds.length > 0 &&
+            requiredPhotoTagIds.every((id) => !!progress.preMatched[id])
+          );
         case 'post':
-          return REQUIRED_PHOTO_TAGS.every((t) => !!progress.postMatched[t.id]);
+          return (
+            requiredPhotoTagIds.length > 0 &&
+            requiredPhotoTagIds.every((id) => !!progress.postMatched[id])
+          );
         case 'pec':
           if (progress.pecHasConditions === false) return true;
           if (progress.pecHasConditions !== true) return false;
@@ -107,7 +120,7 @@ export function useInstallProgress(jobId: string, productIds: string[] = []) {
           return !!progress.completedSteps[key];
       }
     },
-    [progress, productIds]
+    [progress, productIds, requiredPhotoTagIds]
   );
 
   const stepStatus = useMemo(() => {

@@ -1,25 +1,28 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Linking, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, TouchableOpacity, Linking, Modal, StyleSheet } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
 import Ionicon from 'react-native-vector-icons/Ionicons';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { format } from 'date-fns';
 import { useTheme } from '../../theme/ThemeProvider';
+import { getRawPhoneNumber } from '../../utils/phone-util';
 import { FlashMessage } from '../../config/message';
 import { useInstallProgress } from '../../hooks/useInstallProgress';
 import { useSubmitInstallerResult, useReportDiscrepancy } from '../../hooks/useInstallerJobs';
 import { InstallTimeline } from '../../widgets/components/installer/InstallTimeline';
 import { JobReferenceCards } from '../../widgets/components/installer/JobReferenceCards';
-import { RepPhotoCard } from '../../widgets/components/installer/RepPhotoCard';
 import { ResultJobModal } from '../../widgets/modals/installer/ResultJobModal';
 import { MaterialPhotoStep } from './steps/MaterialPhotoStep';
 import { PECStep } from './steps/PECStep';
 import { PhotoMatchStep } from './steps/PhotoMatchStep';
 import { VerifyScopeStep } from './steps/VerifyScopeStep';
 import { CoCStep } from './steps/CoCStep';
-import { INSTALLER_RESULT_TYPES, RESULT_COLORS, REQUIRED_PHOTO_TAGS } from '../../constants/installer';
+import { INSTALLER_RESULT_TYPES, RESULT_COLORS, PHOTO_SECTIONS } from '../../constants/installer';
+import { requiredTagIdsFromSections } from '../../utils/installer-photo-sections';
+import { useRepPhotoSections } from '../../hooks/useRepPhotoSections';
 import type { JobPhotoRef } from '../../widgets/modals/installer/DiscrepancyModal';
 import type {
   InstallerJob,
@@ -35,9 +38,20 @@ export default function InstallerJobDetail() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const job: InstallerJob = route.params?.job;
   const productIds = useMemo(() => (job?.products ?? []).map((p) => p.id), [job]);
+
+  // Pre-install tagger sections come from the rep's real capture set (rep photos
+  // resolved to signed S3 URLs); the static mock is only a fallback for jobs that
+  // carry no `preInstallPhotos`.
+  const repSections = useRepPhotoSections(job?.preInstallPhotos);
+  const photoSections = repSections.length ? repSections : PHOTO_SECTIONS;
+  const requiredPhotoTagIds = useMemo(
+    () => requiredTagIdsFromSections(photoSections),
+    [photoSections]
+  );
 
   const {
     progress,
@@ -55,13 +69,14 @@ export default function InstallerJobDetail() {
     addCocPage,
     removeCocPage,
     completeStep,
-  } = useInstallProgress(job?._id ?? 'unknown', productIds);
+  } = useInstallProgress(job?._id ?? 'unknown', productIds, requiredPhotoTagIds);
 
   const submitResult = useSubmitInstallerResult();
   const reportDiscrepancy = useReportDiscrepancy(job?._id ?? '');
 
   const [openStep, setOpenStep] = useState<InstallStepKey | null>(null);
   const [resultType, setResultType] = useState<InstallerResultType | null>(null);
+  const [showPhoneOptions, setShowPhoneOptions] = useState(false);
 
   // Shots captured so far, offered as evidence when reporting a discrepancy.
   const jobPhotos: JobPhotoRef[] = useMemo(() => {
@@ -70,13 +85,16 @@ export default function InstallerJobDetail() {
       label: `Pickup #${i + 1}`,
       uri: p.uri,
     }));
-    const pre = REQUIRED_PHOTO_TAGS.filter((t) => progress.preMatched[t.id]).map((t) => ({
-      id: progress.preMatched[t.id].id,
-      label: t.label,
-      uri: progress.preMatched[t.id].uri,
-    }));
+    const repTags = photoSections.flatMap((s) => s.tags.filter((t) => t.hasRep));
+    const pre = repTags
+      .filter((t) => progress.preMatched[t.id])
+      .map((t) => ({
+        id: progress.preMatched[t.id].id,
+        label: t.label,
+        uri: progress.preMatched[t.id].uri,
+      }));
     return [...pickup, ...pre];
-  }, [progress.pickup.photos, progress.preMatched]);
+  }, [progress.pickup.photos, progress.preMatched, photoSections]);
 
   // Per-step summary lines shown in place of the default description.
   const stepNotes = useMemo(() => {
@@ -99,8 +117,8 @@ export default function InstallerJobDetail() {
         : null;
 
     const matchNote = (m: Record<string, unknown>) => {
-      const n = REQUIRED_PHOTO_TAGS.filter((t) => m[t.id]).length;
-      return n > 0 ? `${n}/${REQUIRED_PHOTO_TAGS.length} shots matched` : null;
+      const n = requiredPhotoTagIds.filter((id) => m[id]).length;
+      return n > 0 ? `${n}/${requiredPhotoTagIds.length} shots matched` : null;
     };
 
     const settled = productIds.filter((id) => progress.scope[id]?.state !== 'pending' && progress.scope[id]);
@@ -117,7 +135,7 @@ export default function InstallerJobDetail() {
         ? `${progress.cocPages.length} page${progress.cocPages.length > 1 ? 's' : ''} scanned`
         : null,
     };
-  }, [progress, productIds]);
+  }, [progress, productIds, requiredPhotoTagIds]);
 
   // Guard sits below every hook so hook order stays identical across renders.
   if (!job) {
@@ -150,9 +168,24 @@ export default function InstallerJobDetail() {
     );
   };
 
-  const call = () => {
-    const phone = job.customerDetails?.phone;
-    if (phone) Linking.openURL(`tel:${phone.replace(/[^\d+]/g, '')}`);
+  const phone = job.customerDetails?.phone;
+
+  const handleCall = () => {
+    if (phone) Linking.openURL(`tel:${getRawPhoneNumber(phone)}`);
+    setShowPhoneOptions(false);
+  };
+
+  const handleTextMessage = () => {
+    if (phone) Linking.openURL(`sms:${getRawPhoneNumber(phone)}`);
+    setShowPhoneOptions(false);
+  };
+
+  const handleCopyPhone = () => {
+    if (phone) {
+      Clipboard.setString(phone);
+      FlashMessage.success('Copied', 'Phone number copied to clipboard');
+    }
+    setShowPhoneOptions(false);
   };
 
   return (
@@ -202,10 +235,14 @@ export default function InstallerJobDetail() {
             </View>
 
             <View className="flex-row items-center justify-between mb-2">
-              <TouchableOpacity className="flex-row items-center flex-1" onPress={call}>
+              <TouchableOpacity
+                className="flex-row items-center flex-1"
+                disabled={!phone}
+                onPress={() => setShowPhoneOptions(true)}
+              >
                 <Ionicon name="call" size={15} color={colors.primary.main} />
                 <Text className="ml-2 text-sm font-bold" style={{ color: colors.primary.main }}>
-                  {job.customerDetails?.phone || 'N/A'}
+                  {phone || 'N/A'}
                 </Text>
               </TouchableOpacity>
               <View className="flex-row items-center flex-1 justify-end">
@@ -329,12 +366,6 @@ export default function InstallerJobDetail() {
             onOpen={setOpenStep}
           />
 
-          {/* Rep's capture set — the reference for the pre-install ghost pass */}
-          <RepPhotoCard
-            photos={job.preInstallPhotos}
-            onOpenMatch={stepStatus.pre === 'locked' ? undefined : () => setOpenStep('pre')}
-          />
-
           {/* Read-only reference */}
           <JobReferenceCards
             packet={job.packet}
@@ -413,6 +444,7 @@ export default function InstallerJobDetail() {
       <PhotoMatchStep
         visible={openStep === 'pre'}
         phase="pre"
+        sections={photoSections}
         matched={progress.preMatched}
         extras={progress.preExtras}
         onMatch={(tagId, photo) => matchPhoto('pre', tagId, photo)}
@@ -424,6 +456,7 @@ export default function InstallerJobDetail() {
       <PhotoMatchStep
         visible={openStep === 'post'}
         phase="post"
+        sections={photoSections}
         matched={progress.postMatched}
         extras={progress.postExtras}
         preMatched={progress.preMatched}
@@ -461,6 +494,62 @@ export default function InstallerJobDetail() {
         onClose={() => setResultType(null)}
         onConfirm={handleSubmitResult}
       />
+
+      {/* Phone actions — Call / Text / Copy */}
+      <Modal
+        visible={showPhoneOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPhoneOptions(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setShowPhoneOptions(false)}
+        >
+          <View
+            style={{
+              backgroundColor: colors.card,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              padding: 24,
+              paddingBottom: insets.bottom + 16,
+            }}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 4,
+                backgroundColor: colors.textSecondary,
+                borderRadius: 2,
+                alignSelf: 'center',
+                marginBottom: 20,
+                opacity: 0.3,
+              }}
+            />
+            <TouchableOpacity onPress={handleCall} className="flex-row items-center py-4">
+              <Feather name="phone-call" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>
+                Call
+              </Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity onPress={handleTextMessage} className="flex-row items-center py-4">
+              <Feather name="message-square" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>
+                Text Message
+              </Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity onPress={handleCopyPhone} className="flex-row items-center py-4">
+              <Feather name="copy" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>
+                Copy Number
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </>
   );
 }
