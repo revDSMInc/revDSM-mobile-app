@@ -25,6 +25,7 @@ import JobBuilderScreen from '../screens/JobBuilder/index';
 import RevRenderScreen from '../screens/RevRender/index';
 import ImageAnnotationScreen from '../screens/ImageAnnotation/index';
 import DynamicDealCenterScreen from '../screens/DynamicDealCenter/components/DynamicDealCenterScreen';
+import InvestmentCenterScreen from '../screens/InvestmentCenter';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -109,11 +110,16 @@ export type RootStackParamList = {
     // LeadCenter Products → Edit). `calculatorResultData` carries the calculatorId.
     mode?: 'new' | 'edit';
     calculatorResultData?: any;
+    // Opt-in handoff from the Investment Center → open Result Lead (Sale).
+    resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
   };
   MyDeals: undefined;
   // Deal Detail — opened from My Deals; hosts the contract summary + the Edit
   // pencil that launches the 4-step dynamic edit wizard (DynamicDealCenter edit).
   DealDetail: { lead?: any; leadId?: string };
+  // Investment Center — the in-home presentation step opened from Lead Center tools.
+  // Consent-gated; shows per-calculator renders + dynamic job scope + program cards.
+  InvestmentCenter: { lead?: any };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -198,6 +204,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
                 <Stack.Screen name="DealCenter" component={DealCenter} />
                 <Stack.Screen name="DynamicDealCenter" component={DynamicDealCenterScreen} />
+                <Stack.Screen name="InvestmentCenter" component={InvestmentCenterScreen} />
                 <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
                 <Stack.Screen name="RevRender" component={RevRenderScreen} />
                 <Stack.Screen name="ImageAnnotation" component={ImageAnnotationScreen} options={{ gestureEnabled: false }} />

@@ -37,6 +37,12 @@ jest.mock('../../../src/services/api/SettingsService', () => ({
 jest.mock('../../../src/config/message', () => ({
   FlashMessage: { error: jest.fn(), success: jest.fn(), warning: jest.fn() },
 }));
+// The rollout card now renders <RevRenderSlots>, which calls useRevRenderRunsQuery
+// (react-query). This locked/readonly test renders RolloutView without a
+// QueryClientProvider, so stub the hook — renders aren't relevant to the pricing lock.
+jest.mock('../../../src/hooks/useLeadQuery', () => ({
+  useRevRenderRunsQuery: () => ({ data: [], isLoading: false }),
+}));
 
 const { RolloutView } = require('../../../src/screens/DynamicDealCenter/components/RolloutView');
 

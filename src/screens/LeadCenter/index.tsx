@@ -1355,6 +1355,7 @@ export default function LeadCenterPage() {
                   }
                 }}
                 onShowDynamicDealCenter={() => navigation.navigate('DynamicDealCenter', { lead })}
+                onShowInvestmentCenter={() => navigation.navigate('InvestmentCenter', { lead })}
                 onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
                 onShowRooflineDeck={() => navigation.navigate('RooflineDeck', { lead })}
                 onShowInspectionGrid={() => toggleModal('showInspectionGrid', true)}

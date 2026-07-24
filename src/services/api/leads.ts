@@ -96,7 +96,12 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
     'unit', 'label', 'productName', 'sectionId', 'categoryId', 'fieldId', 'schemaSnapshotId', 'leadId', 'enteredBy', 'enteredAt',
     // `pricemarkup` is a markup LABEL string (e.g. "RETAIL + 5%"), and reason/explain
     // are free text — coercing an empty one to 0 would corrupt the value.
-    'pricemarkup', 'reason', 'explain', 'demoReason', 'reasonExplanation'];
+    'pricemarkup', 'reason', 'explain', 'demoReason', 'reasonExplanation',
+    // `selectedRenders[]` descriptor fields (RevRender pairs) and the
+    // `oneYearMonthlyPlan` selection are string-valued — keep empty ones '' rather
+    // than coercing to 0 (a `mode: 0` or `viewLabel: 0` would break the read side).
+    'runId', 'originalUrl', 'generatedUrl', 's3UrlOriginal', 's3UrlGenerated', 's3url',
+    'bucketName', 'viewLabel', 'viewType', 'category', 'subcategory', 'mode', 'planKey'];
   Object.keys(sanitized).forEach((key) => {
     const val = sanitized[key];
     if (val === '' && !stringKeys.includes(key)) {
