@@ -61,12 +61,20 @@ export function useUpdateJobStatus() {
   });
 }
 
+/**
+ * Results a job — Can't Do Work / Reset / Not Hit.
+ *
+ * Goes through `PUT installer/v1/update-job-status/{jobId}` with `{ status, reason }`
+ * rather than the provisional `jobs/{id}/result` endpoint: the result actions ARE
+ * status transitions (`cancel` / `update` / `pending`), and this is the endpoint the
+ * backend actually serves.
+ */
 export function useSubmitInstallerResult() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (submission: InstallerResultSubmission) =>
-      InstallerService.submitResult(submission),
+    mutationFn: ({ jobId, status, reason }: InstallerResultSubmission) =>
+      InstallerService.updateJobStatus(jobId, status, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: installerKeys.all });
     },

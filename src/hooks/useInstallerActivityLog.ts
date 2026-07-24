@@ -15,13 +15,15 @@ const LOGGERS = {
   periodChanged: InstallerLog.logInstallerPeriodChanged,
   jobsRefreshed: InstallerLog.logInstallerJobsRefreshed,
 
-  // Job
-  jobCardTapped: InstallerLog.logInstallerJobCardTapped,
+  // Job session — check in / pause / resume
   jobStarted: InstallerLog.logInstallerJobStarted,
   jobStartFailed: InstallerLog.logInstallerJobStartFailed,
   jobOpened: InstallerLog.logInstallerJobOpened,
-  jobClosed: InstallerLog.logInstallerJobClosed,
+  jobPaused: InstallerLog.logInstallerJobPaused,
+  jobCompleted: InstallerLog.logInstallerJobCompleted,
+  jobReset: InstallerLog.logInstallerJobReset,
   customerContact: InstallerLog.logInstallerCustomerContact,
+  addressOpened: InstallerLog.logInstallerAddressOpened,
   packetViewed: InstallerLog.logInstallerPacketViewed,
   opsChatOpened: InstallerLog.logInstallerOpsChatOpened,
 
@@ -30,21 +32,22 @@ const LOGGERS = {
   stepClosed: InstallerLog.logInstallStepClosed,
   stepCompleted: InstallerLog.logInstallStepCompleted,
 
+  // Photos. Uploads that go to S3 are logged by `useInstallerPhotoUpload` once the
+  // s3url is known; `photoAdded` is for captures that are never uploaded (CoC pages
+  // have no backend field), and removals always originate from a screen.
+  photoAdded: InstallerLog.logInstallerPhotoUploaded,
+  photoRemoved: InstallerLog.logInstallerPhotoRemoved,
+
   // Material
-  materialPhotoAdded: InstallerLog.logMaterialPhotoAdded,
-  materialPhotoRemoved: InstallerLog.logMaterialPhotoRemoved,
   materialSkipped: InstallerLog.logMaterialSkipped,
 
   // Pre-existing conditions
   pecAnswered: InstallerLog.logPecAnswered,
   pecAreaToggled: InstallerLog.logPecAreaToggled,
-  pecPhotoAdded: InstallerLog.logPecPhotoAdded,
   pecNoteEntered: InstallerLog.logPecNoteEntered,
   pecConfirmed: InstallerLog.logPecConfirmed,
 
   // Photo matching
-  photoMatched: InstallerLog.logPhotoMatched,
-  photoExtraAdded: InstallerLog.logPhotoExtraAdded,
   photoSectionChanged: InstallerLog.logPhotoSectionChanged,
   photoPhaseCompleted: InstallerLog.logPhotoPhaseCompleted,
 
@@ -57,8 +60,6 @@ const LOGGERS = {
   discrepancyReported: InstallerLog.logDiscrepancyReported,
 
   // Certificate of Completion
-  cocPagesScanned: InstallerLog.logCocPagesScanned,
-  cocPageRemoved: InstallerLog.logCocPageRemoved,
   cocCompleted: InstallerLog.logCocCompleted,
 
   // Result

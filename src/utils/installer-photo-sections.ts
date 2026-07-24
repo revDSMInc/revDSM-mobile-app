@@ -56,6 +56,10 @@ export const buildRepPhotoSections = (photos?: PreInstallPhotos): PhotoSection[]
           hasRep: (slot.photos?.length ?? 0) > 0,
           repPhotoS3Url: first?.s3url,
           repPhotoBucket: first?.bucketName,
+          // Carried so the installer's matching shot can be uploaded with
+          // `salesPhotoId` + `category` — that pairing is what links the two images.
+          repPhotoId: first?._id,
+          categoryLabel: cat.label,
         };
       });
 
@@ -64,6 +68,7 @@ export const buildRepPhotoSections = (photos?: PreInstallPhotos): PhotoSection[]
         // Prefix the product when there's more than one, so tabs stay unambiguous.
         name: `${products.length > 1 ? `${prod.product} · ` : ''}${(cat.label || 'PHOTOS').toUpperCase()}`,
         icon: iconForCategory(cat.label || ''),
+        categoryLabel: cat.label,
         tags,
       });
     });

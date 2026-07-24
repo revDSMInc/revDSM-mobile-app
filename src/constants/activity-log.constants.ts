@@ -32,6 +32,8 @@ export const LOG_ACTIONS = {
   SUBMIT: 'submit',
   SAVE: 'save',
   START: 'start',
+  /** Left a session without finishing it — e.g. backing out of a job. */
+  PAUSE: 'pause',
   PREVIEW: 'preview',
   SEND: 'send',
   RESET: 'reset',
@@ -43,33 +45,49 @@ export type LogAction = (typeof LOG_ACTIONS)[keyof typeof LOG_ACTIONS];
 /**
  * Installer-module surfaces.
  *
- * ⚠️ Confirm these against the portal's module vocabulary before release — the sales
- * modules below them are verified, the installer ones are new with this module.
+ * The job-session trio mirrors how the sales side splits a lead visit
+ * (`lead_check_in` / `lead_resume` / `lead_check_out`): the first open of a job is a
+ * check-in, backing out pauses the session, and coming back is a resume. Everything
+ * inside the timeline is logged under the step it happened in — see
+ * `INSTALLER_STEP_MODULES` — so the portal can group a job's activity by step.
  */
 export const INSTALLER_MODULES = {
   /** The installer's own schedule (not lead-scoped — see `ExcludedModuleTypes`). */
   DASHBOARD: 'installer_dashboard',
-  /** One job: opening it, contacting the customer, reference cards, ops chat. */
+  /** First time this job is opened. */
+  JOB_CHECK_IN: 'job_check_in',
+  /** Backing out of the job detail screen — the session is paused, not finished. */
+  JOB_SESSION: 'job_session',
+  /** Re-opening a job that has been opened before. */
+  JOB_RESUME: 'job_resume',
+  /** Job-level actions that belong to no single step: address, packet, ops chat… */
   JOB: 'installer_job',
-  /** Timeline step open / complete. */
-  STEP: 'installer_step',
-  /** Material pickup & return photos. */
-  MATERIAL: 'installer_material',
-  /** Pre-existing conditions. */
-  PEC: 'installer_pec',
-  /** Pre / post install ghost-match photos. */
-  PHOTOS: 'installer_photos',
-  /** Sold-scope verification. */
-  SCOPE: 'installer_scope',
-  /** A scope discrepancy routed to the Install Manager. */
-  DISCREPANCY: 'installer_discrepancy',
-  /** Certificate of Completion scan. */
-  COC: 'installer_coc',
   /** Can't Do Work / Reset / Not Hit. */
   RESULT: 'installer_result',
 } as const;
 
 export type InstallerModule = (typeof INSTALLER_MODULES)[keyof typeof INSTALLER_MODULES];
+
+/**
+ * Timeline step → `module_type`.
+ *
+ * Anything that happens inside a step — opening it, a photo added or removed, a
+ * selection, completing it — is logged under the step's own name rather than a
+ * generic "installer_step", so a portal filter by module reads as the install
+ * timeline itself.
+ */
+export const INSTALLER_STEP_MODULES = {
+  pickup: 'pickup',
+  pec: 'pre_existing_conditions',
+  pre: 'pre_install_photos',
+  measure: 'verify_jobs',
+  post: 'post_install_photos',
+  coc: 'coc',
+  return: 'return',
+} as const;
+
+export type InstallerStepModule =
+  (typeof INSTALLER_STEP_MODULES)[keyof typeof INSTALLER_STEP_MODULES];
 
 /** Auth / session events. Excluded from lead auto-attach. */
 export const SYSTEM_MODULE = 'system';

@@ -10,6 +10,7 @@ import { generateGutterRooflineDescriptions } from '../../../../utils/dynamic-jo
 import { generateRoofingDescriptions } from '../../../../utils/dynamic-job-builder/agreement/roofing-description-generator';
 import { useAuth } from '../../../../hooks/useAuth';
 import { useLeadQuery } from '../../../../hooks/useLeadQuery';
+import { formatCurrency } from '../../../../utils/currency';
 
 interface DynamicAgreementDialogProps {
   visible: boolean;
@@ -74,7 +75,9 @@ function formatInstallDate(raw: any): string {
   }
 }
 
-const money = (v: any) => (v || v === 0 ? `$${v}` : '$0.00');
+// Was `$${v}`, which printed a contract price as "$22411". Grouped now, so the
+// agreement reads the same as the Contract Details card it is generated from.
+const money = (v: any) => formatCurrency(v, { fallback: '$0.00' });
 
 /**
  * RN port of web `dynamic-agreement-dialog.js`. Fetches the agreement config +

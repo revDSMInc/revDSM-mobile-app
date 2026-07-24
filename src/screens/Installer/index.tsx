@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MaterialDesignIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { FlashMessage } from '../../config/message';
@@ -52,6 +52,26 @@ export default function InstallerDashboard() {
     log.dashboardViewed({ period, jobCount, companyName });
   }, [loading, period, jobCount, companyName, log]);
 
+  /**
+   * Re-fetch the schedule every time the installer comes back to it.
+   *
+   * A job's status changes while they are inside it — started, resulted, completed —
+   * and `my-jobs` is the only thing that knows the new state, so returning has to hit
+   * the endpoint again rather than render the five-minute-stale cache. The first
+   * focus is skipped: the query is already fetching on mount, and refetching there
+   * would just double the request.
+   */
+  const hasFocused = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasFocused.current) {
+        hasFocused.current = true;
+        return;
+      }
+      refresh();
+    }, [refresh])
+  );
+
   const handlePeriodChange = (next: JobPeriod) => {
     if (next === period) return;
     log.periodChanged(next);
@@ -75,8 +95,9 @@ export default function InstallerDashboard() {
     const readOnly = period === 'tomorrow' || !!job.resulted;
     // Bind the job to the log context first so every downstream installer event —
     // including the start call below — carries its jobId / leadId / customer.
+    // The "opened" event itself is logged by the detail screen, as a check-in or a
+    // resume; logging the tap here too would double it.
     persistActiveInstallerJob(job);
-    log.jobCardTapped(job, { period, readOnly });
 
     if (readOnly) {
       navigation.navigate('InstallerJobDetail', { job });

@@ -1,18 +1,22 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { productColor } from '../../../constants/installer';
+import { formatCurrency } from '../../../utils/currency';
 import type { ContractDetails, JobPacket, SoldProduct } from '../../../config/types/installer';
 
-const currency = (n?: number) =>
-  typeof n === 'number' ? `$${n.toLocaleString('en-US')}` : 'N/A';
+// Same output as the old `toLocaleString('en-US')` call, minus the dependency on the
+// engine shipping Intl data — see `utils/currency`.
+const currency = (n?: number) => formatCurrency(n);
 
 interface Props {
   packet?: JobPacket;
   contract?: ContractDetails;
   products?: SoldProduct[];
   onViewPacket?: () => void;
+  /** True while the packet's signed URL is being fetched. */
+  packetLoading?: boolean;
 }
 
 /**
@@ -22,7 +26,13 @@ interface Props {
  * discrepancy flow in Verify Job Scope, so nothing here is interactive beyond
  * opening the packet.
  */
-export function JobReferenceCards({ packet, contract, products = [], onViewPacket }: Props) {
+export function JobReferenceCards({
+  packet,
+  contract,
+  products = [],
+  onViewPacket,
+  packetLoading,
+}: Props) {
   const { colors, isDark } = useTheme();
   const surface = isDark ? colors.surface : '#F4F6F8';
 
@@ -71,10 +81,15 @@ export function JobReferenceCards({ packet, contract, products = [], onViewPacke
             </View>
             <TouchableOpacity
               onPress={onViewPacket}
-              className="rounded-lg px-3.5 py-2"
-              style={{ backgroundColor: colors.primary.main }}
+              disabled={packetLoading}
+              className="rounded-lg px-3.5 py-2 items-center justify-center"
+              style={{ backgroundColor: colors.primary.main, minWidth: 58 }}
             >
-              <Text className="text-white text-xs font-bold">View</Text>
+              {packetLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text className="text-white text-xs font-bold">View</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>

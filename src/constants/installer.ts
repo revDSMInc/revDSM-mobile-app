@@ -206,6 +206,10 @@ export const INSTALLER_RESULT_TYPES: InstallerResultType[] = [
   'Not Hit',
 ];
 
+// The result action IS the status: `PUT update-job-status` takes the button label
+// verbatim (`"Can't Do Work"` / `"Reset"` / `"Not Hit"`) plus the chosen reason, so
+// there is no mapping between the two.
+
 /** Accent per result action, matching the app's semantic colors. */
 export const RESULT_COLORS: Record<InstallerResultType, string> = {
   "Can't Do Work": '#FF5630', // error.main

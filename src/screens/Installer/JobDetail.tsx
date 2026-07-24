@@ -1,7 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Linking, Modal, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Linking,
+  Modal,
+  ActivityIndicator,
+  StyleSheet,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import Feather from 'react-native-vector-icons/Feather';
 import Ionicon from 'react-native-vector-icons/Ionicons';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -11,25 +21,57 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { getRawPhoneNumber } from '../../utils/phone-util';
 import { FlashMessage } from '../../config/message';
 import { useInstallProgress } from '../../hooks/useInstallProgress';
-import { useSubmitInstallerResult, useReportDiscrepancy } from '../../hooks/useInstallerJobs';
+import {
+  useSubmitInstallerResult,
+  useReportDiscrepancy,
+  installerKeys,
+} from '../../hooks/useInstallerJobs';
 import { useInstallerActivityLog } from '../../hooks/useInstallerActivityLog';
+import { useInstallerPhotoUpload } from '../../hooks/useInstallerPhotoUpload';
+import { useAuth } from '../../hooks/useAuth';
 import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
+import { InstallerService } from '../../services/api/installer';
+import {
+  buildCocStepData,
+  buildPecStepData,
+  buildPickupStepData,
+  buildPostInstallStepData,
+  buildPreInstallStepData,
+  buildReturnStepData,
+  buildScopeStepData,
+  buildResetPatch,
+  indexPhotosById,
+  isEmptyPatch,
+} from '../../utils/installer-step-data';
+import { ConfirmActionModal } from '../../widgets/modals/installer/ConfirmActionModal';
 import { InstallTimeline } from '../../widgets/components/installer/InstallTimeline';
 import { JobReferenceCards } from '../../widgets/components/installer/JobReferenceCards';
 import { ResultJobModal } from '../../widgets/modals/installer/ResultJobModal';
+import { MapSelectionModal } from '../../widgets/common/modal/MapSelectionModal';
+import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
+import { resolvePacketUrl } from '../../utils/installer-packet';
 import { MaterialPhotoStep } from './steps/MaterialPhotoStep';
 import { PECStep } from './steps/PECStep';
 import { PhotoMatchStep } from './steps/PhotoMatchStep';
 import { VerifyScopeStep } from './steps/VerifyScopeStep';
 import { CoCStep } from './steps/CoCStep';
-import { INSTALLER_RESULT_TYPES, RESULT_COLORS, PHOTO_SECTIONS } from '../../constants/installer';
+import {
+  INSTALLER_RESULT_TYPES,
+  INSTALLER_RESULT_REASONS,
+  RESULT_COLORS,
+  PHOTO_SECTIONS,
+} from '../../constants/installer';
 import { requiredTagIdsFromSections } from '../../utils/installer-photo-sections';
 import { useRepPhotoSections } from '../../hooks/useRepPhotoSections';
 import type { JobPhotoRef } from '../../widgets/modals/installer/DiscrepancyModal';
 import type {
+  CapturedPhoto,
   InstallerJob,
+  InstallerJobPatch,
   InstallStepKey,
   InstallerResultType,
+  PECArea,
+  PhotoPhase,
 } from '../../config/types/installer';
 
 /**
@@ -57,6 +99,7 @@ export default function InstallerJobDetail() {
 
   const {
     progress,
+    progressRef,
     stepStatus,
     completedCount,
     totalSteps,
@@ -71,15 +114,31 @@ export default function InstallerJobDetail() {
     addCocPage,
     removeCocPage,
     completeStep,
+    patchPhoto,
+    reset: resetProgress,
   } = useInstallProgress(job?._id ?? 'unknown', productIds, requiredPhotoTagIds);
 
   const submitResult = useSubmitInstallerResult();
   const reportDiscrepancy = useReportDiscrepancy(job?._id ?? '');
   const log = useInstallerActivityLog();
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
+  const upload = useInstallerPhotoUpload(job?._id, patchPhoto);
+  const queryClient = useQueryClient();
 
   const [openStep, setOpenStep] = useState<InstallStepKey | null>(null);
   const [resultType, setResultType] = useState<InstallerResultType | null>(null);
   const [showPhoneOptions, setShowPhoneOptions] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false);
+  /** Signed URL for the submission PDF — set only once the viewer should open. */
+  const [packetUri, setPacketUri] = useState<string | null>(null);
+  const [resolvingPacket, setResolvingPacket] = useState(false);
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
+  const [completingJob, setCompletingJob] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resettingJob, setResettingJob] = useState(false);
+  /** Set once the sign-off succeeds, so the button stays inert without a refetch. */
+  const [justCompleted, setJustCompleted] = useState(false);
 
   // "Job opened" once per screen mount. The job is re-bound to the log context here
   // too, so a deep link or a back-navigation that skipped the dashboard still gives
@@ -96,10 +155,11 @@ export default function InstallerJobDetail() {
     });
   }, [job, completedCount, totalSteps, log]);
 
+  /** Back to the schedule. The job isn't finished, so the session is paused. */
   const handleLeave = useCallback(() => {
-    if (job?._id) log.jobClosed(job, completedCount);
+    if (job?._id) log.jobPaused(job, { completedSteps: completedCount, totalSteps });
     navigation.goBack();
-  }, [job, completedCount, log, navigation]);
+  }, [job, completedCount, totalSteps, log, navigation]);
 
   /** Opening a timeline step. Its status tells the portal whether it was a re-visit. */
   const handleOpenStep = useCallback(
@@ -110,10 +170,259 @@ export default function InstallerJobDetail() {
     [log, stepStatus]
   );
 
+  // ── Capture → S3 ──────────────────────────────────────────────────────────
+  // Each capture lands in local progress first (so the tile appears instantly) and
+  // is then uploaded to `installer/v1/{jobId}/images`. The upload writes its s3url
+  // back onto the same photo, which is what the step-data PATCH below references.
+
+  const handleMaterialPhoto = useCallback(
+    (mode: 'pickup' | 'return', photo: CapturedPhoto) => {
+      const index = progressRef.current[mode].photos.length + 1;
+      addMaterialPhoto(mode, photo);
+      upload.uploadMaterial(mode, photo, index);
+    },
+    [addMaterialPhoto, upload, progressRef]
+  );
+
+  const handlePecPhoto = useCallback(
+    (area: PECArea, photo: CapturedPhoto) => upload.uploadPreExisting(area.label, photo),
+    [upload]
+  );
+
+  const handleMatchPhoto = useCallback(
+    (phase: PhotoPhase, tagId: string, photo: CapturedPhoto) => {
+      // Read before the mutation: a tag that already holds a shot makes this a
+      // retake, which logs `update` rather than `add`.
+      const field = phase === 'pre' ? 'preMatched' : 'postMatched';
+      const replacing = !!progressRef.current[field][tagId];
+
+      matchPhoto(phase, tagId, photo);
+      // The tag carries `repPhotoId` + `categoryLabel`, which become `salesPhotoId`
+      // and `category` — the pairing the portal renders the before/after from.
+      const tag = photoSections.flatMap((s) => s.tags).find((t) => t.id === tagId);
+      if (tag) upload.uploadMatched(phase, tag, photo, replacing);
+    },
+    [matchPhoto, photoSections, upload, progressRef]
+  );
+
+  const handleExtraPhoto = useCallback(
+    (phase: PhotoPhase, sectionId: string, photo: CapturedPhoto) => {
+      addExtraPhoto(phase, sectionId, photo);
+      const section = photoSections.find((s) => s.id === sectionId);
+      if (section) upload.uploadExtra(phase, section, photo);
+    },
+    [addExtraPhoto, photoSections, upload]
+  );
+
+  // ── Step data → PATCH installer/v1/{jobId} ────────────────────────────────
+
+  /** tagId → the rep photo it ghosts, so pre/post refs carry their `salesPhotoId`. */
+  const repPhotoIdByTag = useMemo(() => {
+    const map = new Map<string, string>();
+    photoSections.forEach((s) =>
+      s.tags.forEach((t) => {
+        if (t.repPhotoId) map.set(t.id, t.repPhotoId);
+      })
+    );
+    return map;
+  }, [photoSections]);
+
+  /**
+   * Builds this step's slice of the patch body from the *current* progress.
+   *
+   * Reads `progressRef` rather than `progress` because completion handlers run in
+   * the same tick as the mutation that satisfied the step (skipping the return,
+   * confirming the last product), before React has re-rendered with it.
+   */
+  const buildStepData = useCallback(
+    (step: InstallStepKey): InstallerJobPatch | null => {
+      const current = progressRef.current;
+      switch (step) {
+        case 'pickup':
+          return buildPickupStepData(current);
+        case 'pec':
+          return buildPecStepData(current, userId);
+        case 'pre':
+          return buildPreInstallStepData(current, repPhotoIdByTag);
+        case 'measure':
+          return buildScopeStepData(
+            job?.products ?? [],
+            current,
+            indexPhotosById(current),
+            userId
+          );
+        case 'post':
+          return buildPostInstallStepData(current, repPhotoIdByTag);
+        case 'coc':
+          return buildCocStepData();
+        case 'return':
+          return buildReturnStepData(current);
+        default:
+          return null;
+      }
+    },
+    [progressRef, job, userId, repPhotoIdByTag]
+  );
+
+  /**
+   * Sends one step's data. In-flight uploads are drained first so a photo the PATCH
+   * references always has its s3url. A step with nothing to send (Pickup, CoC — no
+   * patchable field) resolves without a request.
+   *
+   * The body is flat — the server rejects a `stepData` wrapper — and `status` never
+   * travels here; that is `updateJobStatus`'s job.
+   */
+  const sendStepData = useCallback(
+    async (step: InstallStepKey) => {
+      if (!job?._id) return;
+      await upload.waitForUploads();
+
+      const body = buildStepData(step);
+      if (isEmptyPatch(body)) return;
+
+      try {
+        await InstallerService.updateJob(job._id, body!);
+      } catch (err) {
+        console.warn(`[InstallerJob] Failed to save "${step}" step data:`, err);
+        FlashMessage.error(
+          "Couldn't save this step",
+          'Your work is stored on this device — reopen the step once you have signal.'
+        );
+      }
+    },
+    [job, upload, buildStepData]
+  );
+
+  /** Marks the step done locally, logs it, then pushes its data to the server. */
+  const finishStep = useCallback(
+    (step: InstallStepKey, logMeta: Record<string, any> = {}) => {
+      completeStep(step);
+      log.stepCompleted(step, logMeta);
+      void sendStepData(step);
+    },
+    [completeStep, log, sendStepData]
+  );
+
+  // ── Job completion ────────────────────────────────────────────────────────
+
+  const allStepsDone = completedCount === totalSteps;
+
+  /**
+   * Whether this job is already signed off — either it arrived that way (reopened
+   * from the schedule, where resulted jobs open read-only) or it was completed on
+   * this screen. Completing is a one-way transition, so the button reflects that
+   * rather than offering a second, meaningless PATCH.
+   */
+  const isJobComplete =
+    justCompleted ||
+    !!job?.resulted ||
+    String(job?.status ?? '').toLowerCase() === 'completed';
+
+  /**
+   * The installer's explicit sign-off: drains uploads, syncs the last of the step
+   * data, then moves the job to `completed` via the status endpoint.
+   *
+   * Stays on the screen afterwards rather than navigating back, so the installer
+   * sees the button go inert and knows the sign-off landed.
+   */
+  const handleConfirmComplete = useCallback(async () => {
+    if (!job?._id || completingJob) return;
+    setCompletingJob(true);
+    try {
+      await upload.waitForUploads();
+      await InstallerService.completeJob(job._id, buildStepData('return') ?? undefined);
+      log.jobCompleted(job, { completedSteps: completedCount, totalSteps });
+      setJustCompleted(true);
+      setShowCompleteConfirm(false);
+      // Drop the cached schedule so the dashboard can't paint this job as live.
+      // `completeJob` calls the service directly rather than through
+      // `useUpdateJobStatus`, so nothing invalidates on its behalf.
+      queryClient.invalidateQueries({ queryKey: installerKeys.all });
+      FlashMessage.success('Job completed', 'Sent back to the Install Manager.');
+    } catch (err) {
+      console.warn('[InstallerJob] Failed to complete job:', err);
+      FlashMessage.error(
+        "Couldn't complete this job",
+        'Check your connection and try again.'
+      );
+    } finally {
+      setCompletingJob(false);
+    }
+  }, [
+    job,
+    completingJob,
+    upload,
+    buildStepData,
+    log,
+    completedCount,
+    totalSteps,
+    queryClient,
+  ]);
+
+  /**
+   * Clears everything this visit recorded — every capture, note and selection —
+   * locally and, as far as the allow-list permits, on the server.
+   *
+   * Used by the "Reset" result: the crew is coming back and starting over, so the
+   * work from this visit must not carry into the next one. Never rejects; a failed
+   * server wipe is reported but doesn't undo the local one.
+   */
+  const wipeJobData = useCallback(async () => {
+    if (!job?._id) return;
+    try {
+      // Let any in-flight upload land first — otherwise it would resolve after the
+      // wipe and re-attach an s3url to a photo that no longer exists.
+      await upload.waitForUploads();
+      resetProgress();
+      await InstallerService.updateJob(job._id, buildResetPatch(job.products ?? [], userId));
+      log.jobReset(job);
+    } catch (err) {
+      console.warn('[InstallerJob] Failed to clear job data:', err);
+      // The local wipe already happened, so say so rather than implying nothing did.
+      FlashMessage.error(
+        'Reset saved on this device only',
+        "The server copy couldn't be cleared — try again once you have signal."
+      );
+    }
+  }, [job, upload, resetProgress, userId, log]);
+
+  /**
+   * Reset — clears the lead result so the job can be re-entered.
+   *
+   * Posts `{ status: 'Reset', reason }` like the other two results (the API requires
+   * a reason on all three), then wipes the visit's work. The reason comes from the
+   * picker inside the confirmation dialog, so there is no second popup.
+   */
+  const handleConfirmReset = useCallback(
+    async (reason?: string) => {
+      if (!job?._id || resettingJob || !reason) return;
+      setResettingJob(true);
+      try {
+        await InstallerService.updateJobStatus(job._id, 'Reset', reason);
+        log.resultSubmitted('Reset', reason);
+        await wipeJobData();
+        queryClient.invalidateQueries({ queryKey: installerKeys.all });
+        setShowResetConfirm(false);
+        FlashMessage.success('Lead result reset', 'The job can be re-entered.');
+        navigation.goBack();
+      } catch (err) {
+        console.warn('[InstallerJob] Failed to reset lead result:', err);
+        log.resultFailed('Reset', reason);
+        FlashMessage.error('Could not reset this lead', 'Please try again.');
+      } finally {
+        setResettingJob(false);
+      }
+    },
+    [job, resettingJob, wipeJobData, log, queryClient, navigation]
+  );
+
   const handleCloseStep = useCallback(() => {
     if (openStep) log.stepClosed(openStep);
+    // Pickup and Return self-satisfy on their first photo — there is no explicit
+    // "done" action — so leaving the sub-screen is when their data is pushed.
+    if (openStep === 'pickup' || openStep === 'return') void sendStepData(openStep);
     setOpenStep(null);
-  }, [openStep, log]);
+  }, [openStep, log, sendStepData]);
 
   // Shots captured so far, offered as evidence when reporting a discrepancy.
   const jobPhotos: JobPhotoRef[] = useMemo(() => {
@@ -191,10 +500,18 @@ export default function InstallerJobDetail() {
     job.customerName ||
     [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
 
+  /**
+   * Sends the chosen result: `{ status, reason }` to `update-job-status`, where the
+   * status is the transition the button maps to — `cancel` for Can't Do Work,
+   * `pending` for Not Hit. Reset goes through `handleConfirmReset` instead.
+   */
   const handleSubmitResult = (reason: string) => {
     const result = resultType!;
+
     submitResult.mutate(
-      { jobId: job._id, result, reason },
+      // The status IS the button label — `"Can't Do Work"` / `"Not Hit"` — and the
+      // reason the installer picked is required alongside it.
+      { jobId: job._id, result, status: result, reason },
       {
         onSuccess: () => {
           log.resultSubmitted(result, reason);
@@ -210,9 +527,34 @@ export default function InstallerJobDetail() {
     );
   };
 
+  /**
+   * Opens the rep's job submission PDF.
+   *
+   * The URL is only exchanged for a signed one on tap, not on every job open — most
+   * installers never open the packet, and a signed URL expires in an hour anyway.
+   */
+  const handleViewPacket = async () => {
+    if (resolvingPacket) return;
+    log.packetViewed(job.packet?.fileName);
+    setResolvingPacket(true);
+    try {
+      const url = await resolvePacketUrl(job.packet);
+      if (url) setPacketUri(url);
+      else FlashMessage.info('No packet yet', 'This job has no submission PDF attached.');
+    } catch (err) {
+      console.warn('[InstallerJob] Failed to resolve packet URL:', err);
+      FlashMessage.error("Couldn't open the packet", 'Check your connection and try again.');
+    } finally {
+      setResolvingPacket(false);
+    }
+  };
+
   const handleOpenResult = (type: InstallerResultType) => {
     log.resultOpened(type);
-    setResultType(type);
+    // Reset has nothing to explain, so it takes a plain confirmation rather than the
+    // reason picker the other two results use.
+    if (type === 'Reset') setShowResetConfirm(true);
+    else setResultType(type);
   };
 
   const phone = job.customerDetails?.phone;
@@ -264,6 +606,19 @@ export default function InstallerJobDetail() {
           <Text className="text-lg font-black" style={{ color: colors.text }}>
             Lead Center
           </Text>
+          {/* Photos are uploaded in the background — say so, so the installer knows
+              there is still work in flight before they leave the job. */}
+          {upload.uploadingCount > 0 && (
+            <View className="flex-row items-center ml-auto">
+              <ActivityIndicator size="small" color={colors.primary.main} />
+              <Text
+                className="ml-1.5 text-[11px] font-bold"
+                style={{ color: colors.textSecondary }}
+              >
+                Uploading {upload.uploadingCount}
+              </Text>
+            </View>
+          )}
         </View>
 
         <ScrollView
@@ -330,7 +685,16 @@ export default function InstallerJobDetail() {
               </View>
             </View>
 
-            <View className="flex-row items-start mb-3">
+            {/* Tapping the address offers Google / Apple Maps — same handoff the
+                sales Lead Center uses, so a rep and an installer navigate the same way. */}
+            <TouchableOpacity
+              disabled={!job.fullAddress}
+              onPress={() => {
+                log.addressOpened(job.fullAddress);
+                setShowMapModal(true);
+              }}
+              className="flex-row items-start mb-3"
+            >
               <Ionicon
                 name="location-sharp"
                 size={16}
@@ -343,7 +707,7 @@ export default function InstallerJobDetail() {
               >
                 {job.fullAddress || 'Address Pending'}
               </Text>
-            </View>
+            </TouchableOpacity>
           </View>
 
           {/* Notes — rep build note + pinned IM updates on one surface */}
@@ -420,15 +784,40 @@ export default function InstallerJobDetail() {
             onOpen={handleOpenStep}
           />
 
+          {/* Sign-off — only once every step on the rail is satisfied. Goes inert
+              (not hidden) after completion, so the state stays legible. */}
+          {allStepsDone && (
+            <TouchableOpacity
+              disabled={isJobComplete || completingJob}
+              onPress={() => setShowCompleteConfirm(true)}
+              className="h-12 rounded-xl items-center justify-center flex-row mb-4"
+              style={{
+                backgroundColor: isJobComplete
+                  ? colors.textSecondary + '33'
+                  : colors.success.main,
+              }}
+            >
+              <MaterialIcon
+                name="check-decagram"
+                size={18}
+                color={isJobComplete ? colors.textSecondary : '#fff'}
+              />
+              <Text
+                className="ml-2 text-base font-black tracking-wide"
+                style={{ color: isJobComplete ? colors.textSecondary : '#fff' }}
+              >
+                Job Completed
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Read-only reference */}
           <JobReferenceCards
             packet={job.packet}
             contract={job.contract}
             products={job.products}
-            onViewPacket={() => {
-              log.packetViewed(job.packet?.fileName);
-              FlashMessage.info('Packet preview', 'Wire to PdfPreviewModal once the URL is served.');
-            }}
+            onViewPacket={handleViewPacket}
+            packetLoading={resolvingPacket}
           />
 
           {/* Result actions */}
@@ -465,7 +854,7 @@ export default function InstallerJobDetail() {
         visible={openStep === 'pickup'}
         mode="pickup"
         state={progress.pickup}
-        onAddPhoto={(p) => addMaterialPhoto('pickup', p)}
+        onAddPhoto={(p) => handleMaterialPhoto('pickup', p)}
         onRemovePhoto={(id) => removeMaterialPhoto('pickup', id)}
         onSkip={() => {
           skipMaterial('pickup');
@@ -478,7 +867,7 @@ export default function InstallerJobDetail() {
         visible={openStep === 'return'}
         mode="return"
         state={progress.return}
-        onAddPhoto={(p) => addMaterialPhoto('return', p)}
+        onAddPhoto={(p) => handleMaterialPhoto('return', p)}
         onRemovePhoto={(id) => removeMaterialPhoto('return', id)}
         onSkip={() => {
           skipMaterial('return');
@@ -493,13 +882,13 @@ export default function InstallerJobDetail() {
         entries={progress.pecEntries}
         onSetHasConditions={setPecHasConditions}
         onSetEntry={setPecEntry}
-        onComplete={() => {
-          completeStep('pec');
-          log.stepCompleted('pec', {
+        onPhotoCaptured={handlePecPhoto}
+        onComplete={() =>
+          finishStep('pec', {
             areaCount: Object.keys(progress.pecEntries).length,
             hasConditions: progress.pecHasConditions,
-          });
-        }}
+          })
+        }
         onBack={handleCloseStep}
       />
 
@@ -509,12 +898,9 @@ export default function InstallerJobDetail() {
         sections={photoSections}
         matched={progress.preMatched}
         extras={progress.preExtras}
-        onMatch={(tagId, photo) => matchPhoto('pre', tagId, photo)}
-        onAddExtra={(sid, photo) => addExtraPhoto('pre', sid, photo)}
-        onComplete={() => {
-          completeStep('pre');
-          log.stepCompleted('pre', { matched: requiredPhotoTagIds.length });
-        }}
+        onMatch={(tagId, photo) => handleMatchPhoto('pre', tagId, photo)}
+        onAddExtra={(sid, photo) => handleExtraPhoto('pre', sid, photo)}
+        onComplete={() => finishStep('pre', { matched: requiredPhotoTagIds.length })}
         onBack={handleCloseStep}
       />
 
@@ -525,12 +911,9 @@ export default function InstallerJobDetail() {
         matched={progress.postMatched}
         extras={progress.postExtras}
         preMatched={progress.preMatched}
-        onMatch={(tagId, photo) => matchPhoto('post', tagId, photo)}
-        onAddExtra={(sid, photo) => addExtraPhoto('post', sid, photo)}
-        onComplete={() => {
-          completeStep('post');
-          log.stepCompleted('post', { matched: requiredPhotoTagIds.length });
-        }}
+        onMatch={(tagId, photo) => handleMatchPhoto('post', tagId, photo)}
+        onAddExtra={(sid, photo) => handleExtraPhoto('post', sid, photo)}
+        onComplete={() => finishStep('post', { matched: requiredPhotoTagIds.length })}
         onBack={handleCloseStep}
       />
 
@@ -540,13 +923,15 @@ export default function InstallerJobDetail() {
         scope={progress.scope}
         jobPhotos={jobPhotos}
         onSetStatus={setScopeStatus}
-        onReportDiscrepancy={(productId, issue, note, attachments) =>
-          reportDiscrepancy.mutate({ productId, issue, note, attachments })
-        }
-        onComplete={() => {
-          completeStep('measure');
-          log.stepCompleted('measure', { productCount: productIds.length });
+        onReportDiscrepancy={(productId, issue, note, attachments) => {
+          reportDiscrepancy.mutate({ productId, issue, note, attachments });
+          // A flagged product leaves the step un-completable, so this is the only
+          // chance to record `DISCREPANCY_FOUND`. Safe to fire here even though the
+          // caller marks the product pending immediately after: `sendStepData`
+          // awaits before reading progress, so that synchronous update lands first.
+          void sendStepData('measure');
         }}
+        onComplete={() => finishStep('measure', { productCount: productIds.length })}
         onBack={handleCloseStep}
       />
 
@@ -556,6 +941,55 @@ export default function InstallerJobDetail() {
         onAddPage={addCocPage}
         onRemovePage={removeCocPage}
         onBack={handleCloseStep}
+      />
+
+      {/* Job submission PDF — reuses the app-wide viewer (download, zoom, retry). */}
+      {!!packetUri && (
+        <PdfPreviewModal
+          visible={!!packetUri}
+          uri={packetUri}
+          title={job.packet?.fileName || 'Job Packet'}
+          onClose={() => setPacketUri(null)}
+        />
+      )}
+
+      {showMapModal && (
+        <MapSelectionModal
+          visible={showMapModal}
+          address={job.fullAddress || ''}
+          onClose={() => setShowMapModal(false)}
+        />
+      )}
+
+      <ConfirmActionModal
+        visible={showCompleteConfirm}
+        icon="check-decagram"
+        title="Job Completed?"
+        description={
+          "All 7 install steps are done. This marks the job complete and hands it back " +
+          "to the Install Manager — you won't be able to change it from here."
+        }
+        submitting={completingJob}
+        onCancel={() => setShowCompleteConfirm(false)}
+        onConfirm={handleConfirmComplete}
+      />
+
+      <ConfirmActionModal
+        visible={showResetConfirm}
+        icon="alert"
+        tone="danger"
+        title="Reset Lead Result?"
+        description={
+          'Are you sure you want to reset this lead result? This will clear the ' +
+          'current result and allow you to re-enter the lead.'
+        }
+        // The API requires a reason on every result, Reset included, so the picker
+        // lives in this dialog rather than behind a second popup.
+        reasons={INSTALLER_RESULT_REASONS.Reset}
+        confirmLabel="Reset"
+        submitting={resettingJob}
+        onCancel={() => setShowResetConfirm(false)}
+        onConfirm={handleConfirmReset}
       />
 
       <ResultJobModal

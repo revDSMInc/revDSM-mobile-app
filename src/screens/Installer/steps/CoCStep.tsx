@@ -34,16 +34,21 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
 
       if (result?.scannedImages?.length) {
         result.scannedImages.forEach((uri: string, i: number) => {
-          onAddPage({
+          const page = {
             id: `${Date.now()}-${i}`,
             uri,
             takenAt: new Date().toISOString(),
+          };
+          onAddPage(page);
+          // Logged here rather than from the upload hook: the contract has no field
+          // for the CoC, so these pages never go to S3 and carry no s3url.
+          log.photoAdded({
+            step: 'coc',
+            category: 'Certificate of Completion',
+            subcategory: `Page ${pages.length + i + 1}`,
+            timestamp: page.takenAt,
           });
         });
-        log.cocPagesScanned(
-          result.scannedImages.length,
-          pages.length + result.scannedImages.length
-        );
       }
     } catch (error) {
       if (error instanceof Error && !error.message.includes('cancel')) {
@@ -54,9 +59,14 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
 
   const hasPages = pages.length > 0;
 
-  const handleRemovePage = (pageId: string) => {
-    onRemovePage(pageId);
-    log.cocPageRemoved(Math.max(0, pages.length - 1));
+  const handleRemovePage = (page: CapturedPhoto, index: number) => {
+    onRemovePage(page.id);
+    log.photoRemoved({
+      step: 'coc',
+      category: 'Certificate of Completion',
+      subcategory: `Page ${index + 1}`,
+      timestamp: page.takenAt,
+    });
   };
 
   const handleDone = () => {
@@ -127,7 +137,7 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
                 <Text className="text-white text-[10px] font-bold">Page {i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => handleRemovePage(page.id)}
+                onPress={() => handleRemovePage(page, i)}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >

@@ -14,6 +14,12 @@ interface Props {
   entries: Record<string, PECEntry>;
   onSetHasConditions: (value: boolean | null) => void;
   onSetEntry: (areaId: string, entry: PECEntry | null) => void;
+  /**
+   * Fired after a condition shot lands in state, so the parent can upload it.
+   * Photos reach state through `onSetEntry` (whole-entry replace), which gives the
+   * parent no way to tell which shot is new — hence the explicit callback.
+   */
+  onPhotoCaptured?: (area: PECArea, photo: CapturedPhoto) => void;
   onComplete: () => void;
   onBack: () => void;
 }
@@ -32,6 +38,7 @@ export function PECStep({
   entries,
   onSetHasConditions,
   onSetEntry,
+  onPhotoCaptured,
   onComplete,
   onBack,
 }: Props) {
@@ -66,10 +73,12 @@ export function PECStep({
     else onSetEntry(area.id, null);
   };
 
+  // The shot itself is logged by the upload hook, once S3 has answered with the
+  // s3url and byte size the portal's payload needs.
   const addPhoto = (area: PECArea, photo: CapturedPhoto) => {
     const current = entries[area.id] ?? { areaId: area.id, note: '', photos: [] };
     onSetEntry(area.id, { ...current, photos: [...current.photos, photo] });
-    log.pecPhotoAdded(area, current.photos.length + 1);
+    onPhotoCaptured?.(area, photo);
   };
 
   const setNote = (areaId: string, note: string) => {

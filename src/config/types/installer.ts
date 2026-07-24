@@ -46,6 +46,14 @@ export interface PhotoTag {
    */
   hasRep: boolean;
   /**
+   * `_id` of the rep's `salesPhotos` entry this tag ghosts against. Sent as
+   * `salesPhotoId` when uploading the installer's pre/post shot, which is how the
+   * backend pairs the two images.
+   */
+  repPhotoId?: string;
+  /** Rep category this tag belongs to, e.g. "Flooring — EXT". Sent as `category`. */
+  categoryLabel?: string;
+  /**
    * Rep's reference shot as a displayable URL. For real jobs this is a short-lived
    * signed S3 URL resolved from `repPhotoS3Url` (see `useRepPhotoSections`); undefined
    * until it resolves, so the ghost placeholder shows meanwhile.
@@ -61,6 +69,8 @@ export interface PhotoSection {
   name: string;
   /** MaterialCommunityIcons glyph name. */
   icon: string;
+  /** Raw rep-category label (un-uppercased), e.g. "Flooring — EXT". */
+  categoryLabel?: string;
   tags: PhotoTag[];
 }
 
@@ -114,6 +124,13 @@ export interface PreInstallPhotos {
   products: PhotoProductGroup[];
 }
 
+export type PhotoUploadStatus = 'pending' | 'uploading' | 'uploaded' | 'failed';
+
+export interface GeoCoordinates {
+  latitude: number;
+  longitude: number;
+}
+
 export interface CapturedPhoto {
   id: string;
   uri: string;
@@ -122,6 +139,19 @@ export interface CapturedPhoto {
   sectionId?: string;
   phase?: PhotoPhase;
   takenAt: string;
+
+  // ── Server round-trip ──────────────────────────────────────────────────────
+  // Filled in once `installer/v1/{jobId}/images` accepts the shot. The step-data
+  // PATCH references these, so a photo without `s3url` has not been persisted yet.
+  /** Undefined for shots that are never uploaded (CoC pages — no backend field). */
+  uploadStatus?: PhotoUploadStatus;
+  /** Bucket-relative S3 key returned by the upload. */
+  s3url?: string;
+  bucketName?: string;
+  /** `_id` the API assigned to the stored image. */
+  serverId?: string;
+  /** Fix at capture time; `null` when the device could not produce one. */
+  coordinates?: GeoCoordinates | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,14 +224,30 @@ export interface ContractDetails {
 export interface JobPacket {
   fileName: string;
   pages?: number;
+  /** Ready-to-open URL, when one is served directly. */
   fileUrl?: string;
+  /**
+   * Bucket-relative S3 key (`submissionPdf.url`). S3 objects are private, so this
+   * has to be exchanged for a signed URL before it can be opened.
+   */
+  s3url?: string;
+  bucketName?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Job
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type JobStatus = 'scheduled' | 'inProgress' | 'completed' | 'onHold';
+/**
+ * Statuses accepted by `PUT installer/v1/update-job-status/{jobId}`.
+ *
+ * The workflow statuses move a job through the schedule; the three result statuses
+ * are the button labels verbatim — `"Can't Do Work"`, `"Reset"`, `"Not Hit"` — and
+ * each must be sent with the reason the installer picked.
+ */
+export type JobWorkflowStatus = 'scheduled' | 'inProgress' | 'completed' | 'onHold';
+
+export type JobStatus = JobWorkflowStatus | InstallerResultType;
 
 export interface InstallerJob {
   _id: string;
@@ -271,9 +317,168 @@ export type InstallerResultType = "Can't Do Work" | 'Reset' | 'Not Hit';
 
 export interface InstallerResultSubmission {
   jobId: string;
+  /** The button the installer pressed — kept for logging and copy. */
   result: InstallerResultType;
+  /** Sent as `status` — the same string as `result`, which is what the API takes. */
+  status: JobStatus;
   reason: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image upload — `installer/v1/{jobId}/images` (multipart)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `phase` form field. One per capture surface; the backend routes each to its own
+ * array (`installerPickupPhotos`, `installerPreInstallPhotos`, …).
+ *
+ * There is no phase for CoC — the backend has no field for it yet.
+ */
+export type InstallerImagePhase = 'pickup' | 'preExisting' | 'pre' | 'post' | 'return';
+
+/**
+ * One entry of the `images` form field (sent as a JSON array alongside `files`).
+ * Which keys are present depends on the phase:
+ *  - `pickup` / `return` → `subcategory` = the phase name
+ *  - `preExisting`       → `conditionLabel` + `subcategory` = the flagged area
+ *  - `pre` / `post`      → `salesPhotoId` (+ `category` / `subcategory` from the slot)
+ */
+export interface InstallerImageDescriptor {
+  subcategory?: string;
+  conditionLabel?: string;
+  salesPhotoId?: string;
+  category?: string;
+  timestampTaken: string;
+  coordinates?: GeoCoordinates | null;
+}
+
+/** A stored image as the API returns it. */
+export interface InstallerStoredImage {
+  _id: string;
+  s3url: string;
+  bucketName: string;
+  subcategory?: string;
+  conditionLabel?: string;
+  salesPhotoId?: string;
+  category?: string;
+  timestampTaken?: string;
+  coordinates?: GeoCoordinates | null;
+}
+
+/** `data` of the upload response, normalized. */
+export interface InstallerImageUploadResult {
+  jobId?: string;
+  leadId?: string;
+  phase: InstallerImagePhase;
+  /** Just-added images, in request order. */
+  appended: InstallerStoredImage[];
+  /** The full array for this phase after the append. */
+  photos: InstallerStoredImage[];
+}
+
+/** A local file ready for multipart. */
+export interface InstallerUploadFile {
+  uri: string;
+  name: string;
+  type: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step data — `PATCH installer/v1/{jobId}`
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PreExistingConditionsStatus =
+  | 'NOT_CHECKED'
+  | 'NO_CONDITIONS_FOUND'
+  | 'CONDITIONS_PRESENT';
+
+/** Photo reference as the step-data payload carries it (no local uri). */
+export interface StepPhotoRef {
+  s3url: string;
+  bucketName?: string;
+  salesPhotoId?: string;
+  category?: string;
+  subcategory?: string;
+  timestampTaken?: string;
+  coordinates?: GeoCoordinates | null;
+}
+
+export interface PreExistingConditionPayload {
+  label: string;
+  isSelected: boolean;
+  description: string;
+  photos: StepPhotoRef[];
+}
+
+export interface PreExistingConditionsPayload {
+  status: PreExistingConditionsStatus;
+  /** Server fills these in when omitted. */
+  checkedBy?: string;
+  checkedAt?: string;
+  conditions: PreExistingConditionPayload[];
+}
+
+export type ScopeItemPayloadStatus = 'PENDING' | 'CORRECT' | 'DISCREPANCY';
+
+export type DiscrepancyCategory =
+  | 'MEASUREMENT'
+  | 'COLOR'
+  | 'WRONG_PRODUCT'
+  | 'MISSING_ITEM'
+  | 'OTHER';
+
+export interface ScopeDiscrepancyPayload {
+  category: DiscrepancyCategory;
+  details: string;
+  referenceImages: { id: string; s3url: string; bucketName?: string }[];
+  reportedAt: string;
+  reportedBy?: string;
+}
+
+export interface ScopeItemPayload {
+  scopeId: string;
+  productId: string;
+  productName: string;
+  status: ScopeItemPayloadStatus;
+  discrepancy: ScopeDiscrepancyPayload | null;
+}
+
+export interface JobScopeVerificationPayload {
+  verificationStatus: 'IN_PROGRESS' | 'COMPLETED' | 'DISCREPANCY_FOUND';
+  scopeItems: ScopeItemPayload[];
+}
+
+/**
+ * Body of `PATCH installer/v1/{jobId}`.
+ *
+ * **Flat — there is no `stepData` wrapper.** The server rejects anything outside its
+ * allow-list with `400 Unsupported patch fields`, and that list is exactly the five
+ * keys below (see `INSTALLER_PATCH_FIELDS`). Notably absent, and therefore *not*
+ * patchable: `installerPickupPhotos` and `installerReturnPhotos` — those reach the
+ * server only through the multipart images endpoint — and `status`, which moves
+ * through `PUT installer/v1/update-job-status/{jobId}`.
+ *
+ * Every key is optional: one step's worth of data per request.
+ */
+export interface InstallerJobPatch {
+  preExistingConditions?: PreExistingConditionsPayload;
+  installerPreInstallPhotos?: StepPhotoRef[];
+  installerPostInstallPhotos?: StepPhotoRef[];
+  jobScopeVerification?: JobScopeVerificationPayload;
+  materialReturnNothingToReturn?: boolean;
+}
+
+/**
+ * The server's allow-list, verbatim from its 400 message. Used to strip unknown keys
+ * before sending, so one stray field can't fail a whole step's save.
+ */
+export const INSTALLER_PATCH_FIELDS: (keyof InstallerJobPatch)[] = [
+  'preExistingConditions',
+  'installerPreInstallPhotos',
+  'installerPostInstallPhotos',
+  'jobScopeVerification',
+  'materialReturnNothingToReturn',
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-job progress (persisted locally today, server-backed later)

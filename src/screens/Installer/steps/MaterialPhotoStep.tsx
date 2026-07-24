@@ -40,14 +40,19 @@ export function MaterialPhotoStep({
   const isPickup = mode === 'pickup';
   const satisfied = state.photos.length > 0 || state.skipped;
 
-  const handleCapture = (photo: CapturedPhoto) => {
-    onAddPhoto(photo);
-    log.materialPhotoAdded(mode, state.photos.length + 1);
-  };
-
-  const handleRemove = (photoId: string) => {
-    onRemovePhoto(photoId);
-    log.materialPhotoRemoved(mode, Math.max(0, state.photos.length - 1));
+  // The capture itself is logged by the upload hook, once S3 has answered with the
+  // s3url and byte size the portal's payload needs.
+  const handleRemove = (photo: CapturedPhoto, index: number) => {
+    onRemovePhoto(photo.id);
+    log.photoRemoved({
+      step: mode,
+      category: isPickup ? 'Material Pickup' : 'Material Return',
+      subcategory: `${mode} #${index + 1}`,
+      timestamp: photo.takenAt,
+      coordinates: photo.coordinates,
+      s3url: photo.s3url,
+      bucketName: photo.bucketName,
+    });
   };
 
   const handleSkip = () => {
@@ -86,7 +91,7 @@ export function MaterialPhotoStep({
             }
             count={state.photos.length}
             onCancel={() => setCameraOpen(false)}
-            onCapture={handleCapture}
+            onCapture={onAddPhoto}
           />
         ) : undefined
       }
@@ -129,7 +134,7 @@ export function MaterialPhotoStep({
                 <Text className="text-[10px] font-bold text-white">#{i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => handleRemove(photo.id)}
+                onPress={() => handleRemove(photo, i)}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >

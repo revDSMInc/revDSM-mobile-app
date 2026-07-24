@@ -133,7 +133,11 @@ export const logEvent = async (eventType: string, details: any = {}) => {
         timeout: 15000,
       });
     } catch (err) {
-      console.error('[Logger] Failed to send log:', err);
+      // console.warn, NOT console.error: LogBox turns a console.error into a
+      // full-screen red "Console Error" overlay, so a single 502 from the logging
+      // service used to cover the screen the installer was working on. A dropped
+      // analytics event is a diagnostic, never something the user must act on.
+      console.warn('[Logger] Failed to send log:', err);
     }
   });
 

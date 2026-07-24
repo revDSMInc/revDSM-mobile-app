@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
-  Image,
   TouchableOpacity,
   ScrollView,
   Modal,
@@ -13,6 +12,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
 import { HouseGhost, tagTint } from '../../../widgets/components/installer/HouseGhost';
+import {
+  TaggerImage,
+  TaggerImageSpinner,
+} from '../../../widgets/components/installer/TaggerImage';
 import { PHOTO_SECTIONS } from '../../../constants/installer';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type {
@@ -126,36 +129,30 @@ export function PhotoMatchStep({
   const isSelectedMatched = !!matched[selected?.id];
   const selectedRef = selected ? referenceUri(selected) : undefined;
 
+  /**
+   * The rep captured this tag but its signed URL hasn't come back yet
+   * (`useRepPhotoSections` is still resolving). Distinct from "no rep photo exists",
+   * which is a permanent N/A — so this one gets a spinner over the ghost rather than
+   * looking like a tag with nothing to match.
+   */
+  const awaitingReference = !!selected?.hasRep && !selectedRef;
+
   const handleSelectSection = (s: PhotoSection) => {
     if (s.id === sectionId) return;
     log.photoSectionChanged(phase, { id: s.id, name: s.name });
     setSectionId(s.id);
   };
 
-  /** A ghost capture landed. `retake` distinguishes a re-shoot from a first match. */
+  // Captures are logged by the upload hook once S3 answers — it is the only place
+  // that knows the s3url, bucket and byte size the portal's payload carries.
   const handleGhostCapture = (tag: PhotoTag, photo: CapturedPhoto) => {
-    const retake = !!matched[tag.id];
     onMatch(tag.id, photo);
-    log.photoMatched(
-      phase,
-      { id: tag.id, label: tag.label },
-      {
-        matched: retake ? matchedTotal : matchedTotal + 1,
-        total: requiredTags.length,
-        retake,
-      }
-    );
     setCameraTag(null);
     advance(tag.id);
   };
 
   const handleExtraCapture = (photo: CapturedPhoto) => {
     onAddExtra(sectionId, photo);
-    log.photoExtraAdded(
-      phase,
-      { id: section.id, name: section.name },
-      (extras[sectionId]?.length ?? 0) + 1
-    );
   };
 
   const handleComplete = () => {
@@ -238,9 +235,12 @@ export function PhotoMatchStep({
           style={{ backgroundColor: selected ? tagTint(selected.id) : T_CARD }}
         >
           {selectedRef ? (
-            <Image source={{ uri: selectedRef }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <TaggerImage uri={selectedRef} tint={selected ? tagTint(selected.id) : undefined} />
           ) : (
-            <HouseGhost opacity={0.8} />
+            <>
+              <HouseGhost opacity={0.8} />
+              {awaitingReference && <TaggerImageSpinner />}
+            </>
           )}
 
           <View className="absolute top-2.5 left-0 right-0 items-center">
@@ -457,9 +457,12 @@ function ReviewPair({
             style={{ backgroundColor: tagTint(tag.id) }}
           >
             {referenceUri ? (
-              <Image source={{ uri: referenceUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <TaggerImage uri={referenceUri} tint={tagTint(tag.id)} />
             ) : (
-              <HouseGhost opacity={0.9} />
+              <>
+                <HouseGhost opacity={0.9} />
+                {tag.hasRep && <TaggerImageSpinner />}
+              </>
             )}
           </View>
         </View>
@@ -468,9 +471,7 @@ function ReviewPair({
             {phase === 'pre' ? 'PRE-INSTALL' : 'POST-INSTALL'}
           </Text>
           <View className="flex-1 rounded-xl overflow-hidden" style={{ backgroundColor: '#26364a' }}>
-            {shot && (
-              <Image source={{ uri: shot.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-            )}
+            {shot && <TaggerImage uri={shot.uri} tint="#26364a" />}
           </View>
         </View>
       </View>
