@@ -5,6 +5,8 @@ import type { Region } from 'react-native-maps';
 import Geolocation from 'react-native-geolocation-service';
 import axios from 'axios';
 
+import { useDeviceHeading } from './useDeviceHeading';
+
 import api from '../services/api';
 import { ENV } from '../config/env';
 import { logEvent } from '../services/api/LoggerService';
@@ -185,6 +187,19 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
     return stopWatch;
   }, [visible, isDrawingMode]);
+
+  // The blue-dot cone shows which way the rep is FACING, so it must come from the
+  // device compass (updates while standing still), not the GPS course above (which
+  // only changes while moving). Gated to the visible, non-drawing map to save
+  // battery; falls back to the GPS heading when no compass module is linked.
+  const compassHeading = useDeviceHeading(visible && !isDrawingMode);
+  const liveLocationWithHeading = useMemo(() => {
+    if (!liveLocation) return null;
+    return {
+      ...liveLocation,
+      heading: compassHeading != null ? compassHeading : liveLocation.heading,
+    };
+  }, [liveLocation, compassHeading]);
 
   const handleMapRegionChange = useCallback((region: Region) => {
     mapRegionRef.current = region;
@@ -808,7 +823,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     mapType,
     setMapType,
     userLocation,
-    liveLocation,
+    liveLocation: liveLocationWithHeading,
     initialRegion,
     isDrawingMode,
     drawType,
