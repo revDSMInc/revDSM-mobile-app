@@ -443,7 +443,15 @@ export const ConsentFormModal = ({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <View className="flex-1 bg-black/80 justify-center px-4">
+      <View className="flex-1 justify-center px-4">
+        <BlurView
+          style={StyleSheet.absoluteFill}
+          blurType="dark"
+          blurAmount={12}
+          reducedTransparencyFallbackColor="rgba(0,0,0,0.8)"
+          pointerEvents="none"
+        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} pointerEvents="none" />
         <View className="rounded-2xl overflow-hidden shadow-2xl h-4/5">
           <View
             className="flex-row items-center justify-between p-4"
