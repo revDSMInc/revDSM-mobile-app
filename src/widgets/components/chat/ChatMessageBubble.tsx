@@ -287,16 +287,27 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
       msg.imageUrl ||
       msg.video ||
       msg.videoUrl;
-    if (!raw || typeof raw !== 'string') return '';
-    // Priority: 1. Signed URL from cache, 2. optimistic just-signed previewUrl
-    // (a single appointment photo before its server echo), 3. Raw local/remote URI
-    let resolved = imageUrls[raw] || imageUrls[cleanFilePath(raw)];
+    if (!raw || typeof raw !== 'string') {
+      // No path/url on the file, but a just-signed optimistic URL may still exist.
+      if (typeof primaryFile?.previewUrl === 'string' && /^https?:\/\//.test(primaryFile.previewUrl)) {
+        return primaryFile.previewUrl;
+      }
+      return '';
+    }
+    // Priority: 1. Signed URL keyed by the file's STABLE id (web parity — robust for
+    // appointment photos), 2. signed URL by filePath, 3. optimistic previewUrl / url,
+    // 4. raw local/remote URI.
+    const idKey = (primaryFile as any)?.id || (primaryFile as any)?._id;
+    let resolved = (idKey && imageUrls[idKey]) || imageUrls[raw] || imageUrls[cleanFilePath(raw)];
     if (
       !resolved &&
       typeof primaryFile?.previewUrl === 'string' &&
       /^https?:\/\//.test(primaryFile.previewUrl)
     ) {
       resolved = primaryFile.previewUrl;
+    }
+    if (!resolved && typeof primaryFile?.url === 'string' && /^https?:\/\//.test(primaryFile.url)) {
+      resolved = primaryFile.url; // web parity: optimistic file carries the signed URL in `url`
     }
     if (!resolved) resolved = raw;
     if (resolved && !resolved.startsWith('http://') && !resolved.startsWith('https://') && !resolved.startsWith('file://')) {
@@ -321,10 +332,18 @@ export const ChatMessageBubble = React.memo(function ChatMessageBubble({
   // filePath); fall back to a just-signed optimistic `previewUrl` or a local
   // file:// — never a bare S3 URL (which 403s → blank). Empty string ⇒ spinner.
   const getGridSrc = (f: any): string => {
+    // Web parity (getSrc): the signed URL is keyed by the file's STABLE id first —
+    // robust for appointment photos whose S3 keys don't round-trip as object keys —
+    // then by filePath (voice / gallery / reload).
+    const idKey = f?.id || f?._id;
+    const byId = idKey ? imageUrls[idKey] : undefined;
+    if (byId) return byId;
     const fp = f?.filePath || f?.path;
     const signed = fp ? imageUrls[fp] || imageUrls[cleanFilePath(fp)] : undefined;
     if (signed) return signed;
     if (typeof f?.previewUrl === 'string' && /^https?:\/\//.test(f.previewUrl)) return f.previewUrl;
+    // Web parity: the optimistic appointment-photo file carries its signed URL in `url`.
+    if (typeof f?.url === 'string' && /^https?:\/\//.test(f.url)) return f.url;
     // Local, just-picked images (gallery batch). Android can hand back content://
     // URIs, which RN's <Image> renders natively — pass those through too.
     const local = [f?.url, f?.uri].find(

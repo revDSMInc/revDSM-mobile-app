@@ -49,16 +49,67 @@ export const useChatSession = (
 
   const fetchSecureUrls = async (newMessages: IMessage[]) => {
     try {
-      // Carry each file's bucketName so the signed URL is requested against the
-      // right bucket — otherwise reloaded images come back blank.
+      // Web parity (ChatModule.fetchSecureUrls): key each resolved signed URL by the
+      // file's STABLE id, aligning the getSecureLinks response POSITIONALLY to the
+      // request. Appointment-photo S3 keys (spaces/em-dashes, often an empty bucket)
+      // don't round-trip as object keys, so filePath-only keying left them unresolved
+      // and the tile showed a placeholder. We ALSO key by filePath so voice notes and
+      // gallery images (looked up by path) keep resolving.
+      const entries: Array<{ id?: string; filePath: string; cleaned: string; bucketName?: string }> = [];
       const seen = new Set<string>();
-      const cleaned = ChatService.extractFileRefs(newMessages)
-        .map((r) => ({ filePath: cleanFilePath(r.filePath), bucketName: r.bucketName }))
-        .filter((r) => r.filePath && !seen.has(r.filePath) && !!seen.add(r.filePath));
-      if (cleaned.length === 0) return;
-      const links = await ChatService.getSecureFileUrls(cleaned).catch(() => ({}));
-      console.log('[useChatSession] Fetched Secure URLs:', JSON.stringify(links, null, 2));
-      setImageUrls((prev) => ({ ...prev, ...links }));
+      const push = (rawFp: any, bucketName?: string, id?: string) => {
+        // Only real S3 keys — skip local (file://, content://) and already-signed
+        // (http) uris, which carry no S3 key to sign.
+        if (typeof rawFp !== 'string' || !rawFp) return;
+        if (/^(https?:|data:|file:|content:)/i.test(rawFp)) return;
+        if (seen.has(rawFp)) return;
+        seen.add(rawFp);
+        const cleaned = cleanFilePath(rawFp);
+        // Already resolved (by id or by either key form)?
+        if ((id && imageUrls[id]) || imageUrls[rawFp] || imageUrls[cleaned]) return;
+        // Request with the RAW S3 key — web (ChatModule) and the picker (useSecureUrls)
+        // both sign the raw `filePath`/`s3url`; a cleaned key can miss on the backend.
+        entries.push({ id, filePath: rawFp, cleaned, bucketName });
+      };
+      (newMessages as any[]).forEach((m) => {
+        (m.files || m.messageFiles || []).forEach((f: any) => {
+          const id = f.id || f._id;
+          const bn = f.bucketName;
+          // Primary path, then the alternate field names the old extractFileRefs covered.
+          push(f.filePath || f.path || (f.url && !String(f.url).startsWith('http') ? f.url : undefined), bn, id);
+          push(f.imageUrl, bn, id);
+          push(f.s3_path, bn, id);
+          push(f.voiceUrl, bn, id);
+          push(f.mediaUrl, bn, id);
+          push(f.thumbnailUrl, bn, id);
+        });
+        // Top-level media (no per-file id) — voice/image/video on the message itself.
+        [m.voice, m.voiceUrl, m.audio, m.audioUrl, m.image, m.imageUrl, m.video, m.s3_path, m.mediaUrl].forEach(
+          (v: any) => push(v),
+        );
+      });
+      if (entries.length === 0) return;
+
+      const data = await ChatService.getSecureLinks(
+        entries.map((e) => ({ filePath: e.filePath, bucketName: e.bucketName })),
+      ).catch(() => [] as any[]);
+
+      // TEMP DIAGNOSTIC — remove after debugging. Confirms this code runs and whether
+      // the backend actually returns signed URLs for these files.
+      console.log(
+        `[REVDSM-DIAG chat] requested=${entries.length} sampleKey=${entries[0]?.filePath?.slice(-50)} ` +
+          `sampleBucket=${entries[0]?.bucketName} → sampleUrl=${(data[0]?.secureUrl || data[0]?.url || 'EMPTY')?.toString().slice(0, 70)}`,
+      );
+
+      const newUrls: Record<string, string> = {};
+      entries.forEach((e, i) => {
+        const url = data[i]?.secureUrl || data[i]?.url;
+        if (!url) return;
+        if (e.id) newUrls[e.id] = url;                      // id keying (robust for appointment photos)
+        newUrls[e.filePath] = url;                          // raw filePath (display looks up f.filePath)
+        if (e.cleaned && e.cleaned !== e.filePath) newUrls[e.cleaned] = url; // cleaned form too
+      });
+      if (Object.keys(newUrls).length) setImageUrls((prev) => ({ ...prev, ...newUrls }));
     } catch (error) {
       console.error('Fetch secure URLs error:', error);
     }

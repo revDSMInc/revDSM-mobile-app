@@ -481,6 +481,10 @@ export const useChatLogic = (
           type: 'image',
           mimeType: 'image/jpeg',
           path: f.filePath,
+          // Web parity (ChatModule optimisticPhoto): the already-signed URL goes in
+          // BOTH `url` and `previewUrl` so the grid renders instantly (getGridSrc reads
+          // `url`; the display keys off the picker's resolved link, no fetch needed).
+          url: photos[i].secureUrl || undefined,
           previewUrl: photos[i].secureUrl || undefined,
           isAppointmentPhoto: true,
         })),
