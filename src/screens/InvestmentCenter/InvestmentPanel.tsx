@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, Modal, Pressable, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import Svg, { Path } from 'react-native-svg';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import { useSecureLogo } from '../../hooks/useSecureLogo';
@@ -98,7 +99,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // Live-adjustable during the presentation.
   const [downText, setDownText] = useState(calculator.downPayment ? String(calculator.downPayment) : '');
   const [showDownInput, setShowDownInput] = useState((calculator.downPayment || 0) > 0);
-  const [discountPct, setDiscountPct] = useState<number>(calculator.discountPercentage || pricing.defaultPreOrder);
+  // Pre-order discount is fixed at the calculator's saved value (else the config
+  // default) — the live % selector was removed per the Investment Center redesign.
+  const discountPct = calculator.discountPercentage || pricing.defaultPreOrder;
   // 1-Year card has its own independent down payment (web parity: "each independent").
   const [oneYearDownText, setOneYearDownText] = useState('');
   const [showOneYearDown, setShowOneYearDown] = useState(false);
@@ -233,7 +236,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           onChangeText={(t) => setText(stripAmount(t))}
           onEndEditing={commit}
           onBlur={commit}
-          placeholder="Down Payment"
+          placeholder="Add Down Payment"
           placeholderTextColor="#94A3B8"
           keyboardType="numeric"
         />
@@ -246,12 +249,26 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     ) : (
       <TouchableOpacity onPress={() => setShow(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8 }}>
         <Ionicons name="add" size={13} color="#2196F3" />
-        <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{`Down Pmt  ${fmt(dp)}`}</Text>
+        <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{`Add Down Payment`}</Text>
       </TouchableOpacity>
     );
   };
   const inHomeDownEditor = renderDownEditor(downText, setDownText, showDownInput, setShowDownInput, endPrice);
   const oneYearDownEditor = renderDownEditor(oneYearDownText, setOneYearDownText, showOneYearDown, setShowOneYearDown, oneYearGrandTotal);
+
+  // Program breakdown rows. In-Home carries an extra "% Discount" row, so reserve
+  // both cards' breakdown block to the taller count — this keeps the Grand Total /
+  // Add-Down-Payment / monthly on the same line across the two cards.
+  const oneYearRows = [
+    { label: 'Total', value: fmt(msrp) },
+    { label: `${seniorVetPct}% Sr + Vet`, value: `-${fmt(srVetDiscount)}`, green: true },
+  ];
+  const inHomeRows = [
+    { label: 'Total', value: fmt(msrp) },
+    { label: `${seniorVetPct}% Sr + Vet`, value: `-${fmt(srVetDiscount)}`, green: true },
+    { label: `${discountPct}% Discount`, value: `-${fmt(preOrderDiscountVal)}`, green: true },
+  ];
+  const maxProgramRows = Math.max(oneYearRows.length, inHomeRows.length);
 
   return (
     <ScrollView
@@ -357,44 +374,29 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         </View>
       </View>
 
-      {/* Branch connector: stem down from Total Investment, splitting to each program. */}
-      <View style={{ height: 26 }}>
-        <View style={{ position: 'absolute', top: 0, left: '50%', width: 2, height: 13, backgroundColor: '#CBD5E1' }} />
-        <View style={{ position: 'absolute', top: 13, left: '25%', right: '25%', height: 2, backgroundColor: '#CBD5E1' }} />
-        <View style={{ position: 'absolute', top: 13, left: '25%', width: 2, height: 13, backgroundColor: '#CBD5E1' }} />
-        <View style={{ position: 'absolute', top: 13, right: '25%', width: 2, height: 13, backgroundColor: '#CBD5E1' }} />
+      {/* Branch connector — MSRP branching DOWN into the two program cards with an
+          arrowhead pointing into each (web parity: investment-panel.js SVG). */}
+      <View style={{ alignItems: 'center', marginTop: 4, marginBottom: -6, zIndex: 1 }}>
+        <Svg width={200} height={40} viewBox="0 0 200 40">
+          <Path
+            d="M 100 0 L 100 15 M 20 15 L 180 15 M 20 15 L 20 35 M 180 15 L 180 35"
+            fill="none"
+            stroke="rgba(145,158,171,0.35)"
+            strokeWidth={2}
+          />
+          <Path d="M 15 30 L 20 40 L 25 30" fill="rgba(145,158,171,0.35)" />
+          <Path d="M 175 30 L 180 40 L 185 30" fill="rgba(145,158,171,0.35)" />
+        </Svg>
       </View>
 
-      {/* Pre-order discount selector — adjusts the In-Home program live */}
-      {pricing.preOrderOptions.length > 0 && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5 }}>PRE-ORDER DISCOUNT</Text>
-          <View style={{ flexDirection: 'row', gap: 6, flex: 1, justifyContent: 'flex-end' }}>
-            {pricing.preOrderOptions.map((d) => {
-              const active = discountPct === d;
-              return (
-                <TouchableOpacity
-                  key={d}
-                  onPress={() => setDiscountPct(d)}
-                  style={{ minWidth: 40, height: 30, paddingHorizontal: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-      )}
-
-      {/* Program branches */}
-      <View style={{ flexDirection: 'row', gap: 12 }}>
+      {/* Program branches — extra top padding leaves room for the floating PRICE
+          LOCK badge that sits above the 1-Year card. */}
+      <View style={{ flexDirection: 'row', gap: 12, paddingTop: 14 }}>
         <ProgramCard
           title="1 YEAR PROGRAM"
           priceLock
-          rows={[
-            { label: 'Total', value: fmt(msrp) },
-            { label: `${seniorVetPct}% Sr + Vet`, value: `-${fmt(srVetDiscount)}`, green: true },
-          ]}
+          rows={oneYearRows}
+          reserveRows={maxProgramRows}
           grandTotal={oneYearGrandTotal}
           badges={basicBadges}
           selectedBadgeKey={effectiveBadge}
@@ -411,11 +413,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         <ProgramCard
           title="IN-HOME PRE ORDER"
           highlighted
-          rows={[
-            { label: 'Total', value: fmt(msrp) },
-            { label: `${seniorVetPct}% Sr + Vet`, value: `-${fmt(srVetDiscount)}`, green: true },
-            { label: `${discountPct}% Discount`, value: `-${fmt(preOrderDiscountVal)}`, green: true },
-          ]}
+          rows={inHomeRows}
+          reserveRows={maxProgramRows}
           grandTotal={inHomeGrandTotal}
           badges={basicBadges}
           selectedBadgeKey={effectiveBadge}

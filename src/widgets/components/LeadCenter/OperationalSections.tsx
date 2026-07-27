@@ -139,14 +139,6 @@ export const ToolsSection = ({
 
   return (
     <View className="px-4 py-3">
-      <ToolCard
-        title="Customer Consent Form"
-        desc=''
-        icon={consentReport ? 'file-check' : 'file-document-edit'}
-        onPress={handleConsentPress}
-        isGenerated={!!consentReport}
-        isLoading={isConsentGenerating}
-      />
       {/* Dynamic is now the primary Deal Center (schema-driven, backend config).
           The classic calculator stays as an inert fallback directly below — used
           when the backend hasn't published a dynamic config yet. */}
@@ -289,13 +281,11 @@ export const ToolsSection = ({
       </TouchableOpacity>
       <ToolCard
         title="Pitch Book"
-        desc="Presentation materials"
         icon="book-open-page-variant"
         onPress={onShowPitchbook}
       />
       <ToolCard
         title="Roofline Deck"
-        desc="Roofline system presentation"
         icon="home-roof"
         onPress={onShowRooflineDeck}
       />
@@ -397,7 +387,6 @@ export const ToolsSection = ({
       </View>
       <ToolCard
         title="Inspection Report"
-        desc="Generate inspection report"
         icon="clipboard-text"
         onPress={() => {
           onAction('inspection');
@@ -407,11 +396,19 @@ export const ToolsSection = ({
       />
       <ToolCard
         title="Roof Waiver"
-        desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
+        // desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
         icon={waiverReport ? 'file-check' : 'home-roof'}
         onPress={handleWaiverPress}
         isGenerated={!!waiverReport}
         isLoading={isWaiverGenerating}
+      />
+      <ToolCard
+        title="Customer Consent Form"
+        desc=''
+        icon={consentReport ? 'file-check' : 'file-document-edit'}
+        onPress={handleConsentPress}
+        isGenerated={!!consentReport}
+        isLoading={isConsentGenerating}
       />
 
       <RevRenderHistoryModal

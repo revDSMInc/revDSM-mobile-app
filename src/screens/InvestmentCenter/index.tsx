@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -8,8 +8,9 @@ import { useDealPricing } from '../DynamicDealCenter/hooks/useDealPricing';
 import { useDynamicCalculatorSchemas } from '../DynamicDealCenter/hooks/useDynamicCalculatorSchemas';
 import { useGetDescriptionSchemas } from '../DynamicDealCenter/hooks/useDescriptionSchema';
 import { useDynamicCalculators } from '../DynamicDealCenter/hooks/useDynamicCalculators';
-import { useSubmitDigitalConsentMutation, useFinalizeConsentUploadMutation } from '../../hooks/useLeadMutation';
+import { useSubmitDigitalConsentMutation, useFinalizeConsentUploadMutation, useUploadPaperConsentOCRMutation } from '../../hooks/useLeadMutation';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
+import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { InvestmentPanel } from './InvestmentPanel';
 import { queryClient } from '../../services/api/queryClient';
 
@@ -56,10 +57,14 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   // ── Consent gate ────────────────────────────────────────────────────────────
   const consentMutation = useSubmitDigitalConsentMutation();
   const finalizeMutation = useFinalizeConsentUploadMutation();
+  const ocrMutation = useUploadPaperConsentOCRMutation();
   const [localConsentSigned, setLocalConsentSigned] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
   const [consentBusy, setConsentBusy] = useState(false);
-  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  // Paper Fallback: uploads a photo of a paper consent form, OCR-scans it, then
+  // reopens the consent form prefilled with the extracted fields (LeadCenter parity).
+  const [showPaperFallback, setShowPaperFallback] = useState(false);
+  const [prefilledOcrData, setPrefilledOcrData] = useState<any>(null);
   const consentSigned = localConsentSigned || hasSignedConsent(lead);
 
   const handleConsentSubmit = useCallback(
@@ -83,6 +88,70 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
       }
     },
     [consentMutation, finalizeMutation, lead?._id],
+  );
+
+  // OCR payload → consent form prefill (mirror of LeadCenter.parseOcrData).
+  const parseOcrData = useCallback((ocrResult: any) => {
+    const dataList = ocrResult?.data;
+    const getFromData = (label: string) => {
+      if (Array.isArray(dataList)) {
+        const item = dataList.find((i: any) => i?.label?.toLowerCase() === label.toLowerCase());
+        return item?.value ?? '';
+      }
+      if (dataList && typeof dataList === 'object') {
+        return dataList[label] ?? dataList[label.replace(/\s+/g, '')] ?? '';
+      }
+      return '';
+    };
+
+    const fullName = getFromData('Customer Name') || '';
+    const [firstName = '', ...lastNameParts] = fullName.split(' ');
+    const lastName = lastNameParts.join(' ');
+
+    const rawDate = getFromData('Date') || '';
+    const normalizeOcrDate = (input: string) => {
+      if (!input) return '';
+      const s = String(input).trim().replace(/[-.]/g, '/');
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (m) {
+        const mm = String(parseInt(m[1], 10)).padStart(2, '0');
+        const dd = String(parseInt(m[2], 10)).padStart(2, '0');
+        const y = m[3];
+        const yyyy = y.length === 2 ? 2000 + parseInt(y, 10) : parseInt(y, 10);
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      const d = new Date(s);
+      if (!Number.isNaN(d.getTime())) {
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const yyyy = d.getFullYear();
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      return s;
+    };
+
+    return {
+      firstName,
+      lastName,
+      phoneNumber: getFromData('Phone') || '',
+      email: getFromData('Email') || '',
+      leadId: getFromData('Lead ID') || '',
+      date: normalizeOcrDate(rawDate),
+    };
+  }, []);
+
+  const handlePaperFallbackSubmit = useCallback(
+    async (fileData: any) => {
+      try {
+        const res = await ocrMutation.mutateAsync(fileData);
+        setPrefilledOcrData(parseOcrData(res));
+        setShowPaperFallback(false);
+        setShowConsent(true);
+      } catch (err) {
+        console.error('OCR scanning error:', err);
+      }
+    },
+    [ocrMutation, parseOcrData],
   );
 
   // Only real, priced calculators appear (web `visibleCalculators`): a bare-number
@@ -129,16 +198,6 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
       <Text style={{ flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '900', color: '#1C252E' }}>
         Investment Center
       </Text>
-      {/* Consent status: a green SIGNED badge once on file, else a spacer that keeps
-          the title centered against the back button. */}
-      {consentSigned ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EBF9E1', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
-          <Ionicons name="checkmark-circle" size={13} color="#16A34A" />
-          <Text style={{ fontSize: 10, fontWeight: '900', color: '#16A34A', letterSpacing: 0.5 }}>SIGNED</Text>
-        </View>
-      ) : (
-        <View style={{ width: 34 }} />
-      )}
     </View>
   );
 
@@ -224,41 +283,27 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
 
       <ConsentFormModal
         visible={showConsent}
-        // Cancel/close doesn't just dismiss — it asks to confirm exiting, then
-        // returns to the Tools menu (the consent form stays open behind the prompt).
-        onClose={() => setShowExitConfirm(true)}
-        onPaperFallback={() => setShowConsent(false)}
+        // Cancel / header-✕ raise the "Exit consent form?" confirmation inside the
+        // modal itself (shared ConsentFormModal); only "Exit to Tools" reaches here,
+        // where we dismiss and return to the previous screen.
+        onClose={() => { setShowConsent(false); setPrefilledOcrData(null); navigation?.goBack(); }}
+        // Paper Fallback → close the consent form and open the photo-upload/OCR modal.
+        onPaperFallback={() => { setShowConsent(false); setShowPaperFallback(true); }}
         onSubmit={handleConsentSubmit}
         lead={lead}
         type="consent"
         loading={consentMutation.isPending}
+        prefilledData={prefilledOcrData}
       />
 
-      {/* Exit-consent confirmation (rendered after the consent modal so it layers on top). */}
-      <Modal visible={showExitConfirm} transparent animationType="fade" onRequestClose={() => setShowExitConfirm(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 28 }}>
-          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 20, padding: 24, alignItems: 'center' }}>
-            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-              <Ionicons name="warning-outline" size={24} color="#D97706" />
-            </View>
-            <Text style={{ fontSize: 17, fontWeight: '900', color: '#1C252E', textAlign: 'center' }}>Exit consent form?</Text>
-            <Text style={{ fontSize: 13, color: '#637381', textAlign: 'center', marginTop: 8, lineHeight: 19 }}>
-              You'll go back to your Tools menu without capturing consent. Any info on this form won't be kept.
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 22, alignSelf: 'stretch' }}>
-              <TouchableOpacity onPress={() => setShowExitConfirm(false)} style={{ flex: 1, paddingVertical: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center' }}>
-                <Text style={{ fontSize: 14, fontWeight: '900', color: '#334155' }}>Stay on Form</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => { setShowExitConfirm(false); setShowConsent(false); navigation?.goBack(); }}
-                style={{ flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#EF4444', alignItems: 'center' }}
-              >
-                <Text style={{ fontSize: 14, fontWeight: '900', color: '#fff' }}>Exit to Tools</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {showPaperFallback && (
+        <PaperFallbackModal
+          visible={showPaperFallback}
+          onClose={() => setShowPaperFallback(false)}
+          onSubmit={handlePaperFallbackSubmit}
+          loading={ocrMutation.isPending}
+        />
+      )}
     </SafeAreaView>
   );
 }

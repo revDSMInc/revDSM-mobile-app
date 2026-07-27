@@ -151,7 +151,10 @@ export const useChatThreads = (
         new Date(c.leadDetails.installationDate) < now
       );
     } else if (statusFilter === 'nosales') {
-      const noSaleStatuses = ['noSale', 'demoNoSale', 'noDemo', 'notHome', 'cancelled', 'notHit'];
+      // "No Sales" = every resulted-but-not-sold outcome. `reset` and `demo` were
+      // missing, so those leads were dropped from the list even though the backend
+      // returns them for the "No Sales" filter (QA: Reset/Demo not showing).
+      const noSaleStatuses = ['noSale', 'demoNoSale', 'noDemo', 'notHome', 'cancelled', 'notHit', 'reset', 'demo'];
       result = result.filter((c) => noSaleStatuses.includes(c.leadDetails?.status || ''));
     } else if (statusFilter !== 'all') {
       result = result.filter((c) => c.leadDetails?.status === statusFilter);

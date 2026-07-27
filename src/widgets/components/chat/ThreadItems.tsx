@@ -5,6 +5,7 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import { STATUS_CONFIG } from './constants';
 import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
+import { buildJobNumber } from '../../../utils/office-initials';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 // ─── MainTabOption ────────────────────────────────────────────────────────────
@@ -134,18 +135,19 @@ function formatShortDate(value: any): string {
 
 /**
  * Card heading, ported 1:1 from web `chat-thread-item.js`:
- *   sale               → office-prefixed job number (falls back to the job / lead number)
+ *   sale               → office-prefixed job number (e.g. "STN/A", "FL803")
  *   installer assigned → "{jobNumber} {lastName} {date}"
  *   otherwise          → "Lead {leadDate} {leadTime}"  e.g. "Lead 07.22.26 9am"
- * (The sale branch drops the office-initial prefix that lives in the job builder;
- * the chat list only needs the human-readable job/lead number.)
+ * The sale branch prefixes the office initials via `buildJobNumber` exactly like
+ * web (`buildJobNumber(assignedRepDetails, jobNumber || leadId)`).
  */
 function buildLeadHeading(leadDetails: any, leadId: string): string {
   const status = leadDetails?.status;
   const installerAssignment = leadDetails?.installerAssignment;
 
   if (status === 'sale') {
-    return String(installerAssignment?.jobNumber || leadId || 'N/A');
+    const jobNum = installerAssignment?.jobNumber || leadId;
+    return buildJobNumber(leadDetails?.assignedRepDetails, jobNum);
   }
   if (installerAssignment) {
     const jobNumber = installerAssignment.jobNumber || '';

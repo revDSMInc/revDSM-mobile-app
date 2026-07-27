@@ -1,0 +1,41 @@
+diff --git a/node_modules/react-native-compass-heading/react-native-compass-heading.podspec b/node_modules/react-native-compass-heading/react-native-compass-heading.podspec
+index 23462cf..bd8b64d 100644
+--- a/node_modules/react-native-compass-heading/react-native-compass-heading.podspec
++++ b/node_modules/react-native-compass-heading/react-native-compass-heading.podspec
+@@ -1,7 +1,6 @@
+ require "json"
+ 
+ package = JSON.parse(File.read(File.join(__dir__, "package.json")))
+-folly_compiler_flags = '-DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1 -Wno-comma -Wno-shorten-64-to-32'
+ 
+ Pod::Spec.new do |s|
+   s.name         = "react-native-compass-heading"
+@@ -16,20 +15,13 @@ Pod::Spec.new do |s|
+ 
+   s.source_files = "ios/**/*.{h,m,mm}"
+ 
++  # RN 0.84 / New Architecture: build as a LEGACY RCTEventEmitter module. It works
++  # through the bridgeless interop layer, so we intentionally do NOT opt into the
++  # new-arch TurboModule path: the library ships no `codegenConfig`, so
++  # `RNCompassHeadingSpec.h` is never generated and the `#ifdef RCT_NEW_ARCH_ENABLED`
++  # branch cannot compile. Not defining RCT_NEW_ARCH_ENABLED for this pod keeps the
++  # legacy `#else` branch, and dropping the manual RCT-Folly / React-Codegen /
++  # ReactCommon deps fixes "Unable to find a specification for `RCT-Folly`" (those are
++  # no longer standalone pods under RN 0.84's prebuilt ReactNativeDependencies model).
+   s.dependency "React-Core"
+-
+-  # Don't install the dependencies when we run `pod install` in the old architecture.
+-  if ENV['RCT_NEW_ARCH_ENABLED'] == '1' then
+-    s.compiler_flags = folly_compiler_flags + " -DRCT_NEW_ARCH_ENABLED=1"
+-    s.pod_target_xcconfig    = {
+-        "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/boost\"",
+-        "OTHER_CPLUSPLUSFLAGS" => "-DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1",
+-        "CLANG_CXX_LANGUAGE_STANDARD" => "c++17"
+-    }
+-    s.dependency "React-Codegen"
+-    s.dependency "RCT-Folly"
+-    s.dependency "RCTRequired"
+-    s.dependency "RCTTypeSafety"
+-    s.dependency "ReactCommon/turbomodule/core"
+-  end
+ end

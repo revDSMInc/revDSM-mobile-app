@@ -5,6 +5,7 @@ import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../typ
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
 import { normalizeSingleAcceptedDrop, dedupeDrops } from '../utils/drop-prices';
+import { scopeSignature } from '../utils/scope-signature';
 import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 
@@ -89,6 +90,14 @@ export interface CalcTab {
   manualTitle?: string;
   /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
   pricemarkup?: string;
+  /**
+   * Job-scope fingerprint (`scopeSignature`) captured when the Rollout End Price was
+   * entered/confirmed. If the calculator's scope later changes, the live signature no
+   * longer matches this, so the rollout shows the "Job Scope was changed" warning —
+   * the entered price is kept, never cleared. Dismissing the warning re-snapshots this
+   * to the current scope. Empty when no price has been entered.
+   */
+  priceScopeSig?: string;
   /** true when `id` is a real backend id (so it can be saved/deleted remotely) */
   persisted?: boolean;
 }
@@ -141,7 +150,7 @@ function tabSignature(tab: CalcTab): string {
   // 1-Year monthly plan: mode + resolved plan key + default flag.
   const oy = tab.oneYearMonthlyPlan;
   const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}`;
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${tab.priceScopeSig ?? ''}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -374,6 +383,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       isRolloutConfirmed: tab.isRolloutConfirmed,
       price: tab.price,
       pricemarkup: tab.pricemarkup,
+      // Job-scope fingerprint the entered price was priced against (drives the
+      // rollout "review the end price" warning). Persisted so the warning survives
+      // reload, never the price being auto-cleared.
+      priceScopeSig: tab.priceScopeSig ?? '',
       paymentMethod: tab.paymentMethod,
       // Web parity (`ViewAllCalculators.js:1116-1123`): normalize to at most one
     // accepted drop at SAVE time, so no path can ever persist two SECURED rows.
@@ -524,6 +537,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               totals: c.totals || computeTotals(entries),
               isRolloutConfirmed: c.isRolloutConfirmed,
               price: c.price,
+              priceScopeSig: c.priceScopeSig || '',
               paymentMethod: c.paymentMethod || undefined,
               // Repair records already corrupted by the pre-fix save race, which
               // otherwise render two SECURED rows on every reopen forever.
@@ -918,6 +932,50 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   );
 
   /**
+   * Persist the entered Rollout End Price on the calculator (debounced save), and
+   * snapshot the job scope it was priced against so a later calculator edit can
+   * surface the "review the end price" warning. Previously the typed price lived only
+   * in the rollout view's local state and was LOST when the rep went back to the
+   * calculator — this keeps it (spec: never delete the user's entered end prices).
+   * A price of 0 clears the snapshot (nothing to warn about).
+   */
+  const handleSetPrice = useCallback(
+    (tabId: string, price: number) => {
+      setTabs((prev) => {
+        const next = prev.map((t) =>
+          t.id === tabId
+            ? { ...t, price, priceScopeSig: price > 0 ? scopeSignature(t.entries) : '' }
+            : t
+        );
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /**
+   * Dismiss the "Job Scope was changed" warning for a calculator by re-baselining its
+   * scope snapshot to the CURRENT scope — the rep has reviewed the price and is
+   * satisfied. The warning reappears only if the scope changes again. The end price is
+   * untouched.
+   */
+  const handleAckScopeWarning = useCallback(
+    (tabId: string) => {
+      setTabs((prev) => {
+        const next = prev.map((t) =>
+          t.id === tabId ? { ...t, priceScopeSig: scopeSignature(t.entries) } : t
+        );
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /**
    * Clear every field of one category on the active calculator in a single pass,
    * firing ONE `section cleared` activity event — web parity (lf-calculator-view.js
    * category Clear → `action:'section cleared'`). Zeroing here rather than looping
@@ -978,7 +1036,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
           const par = Math.round(t.totals?.par || 0);
           const retail = Math.round(t.totals?.retail || 0);
           const pricemarkup = endPrice > 0 ? calculateMarkupLabel(endPrice, cost, par, retail) : undefined;
-          return { ...t, isRolloutConfirmed: true, price: endPrice, pricemarkup };
+          // Re-baseline the scope snapshot to the confirmed scope, so a calc confirmed
+          // via auto-confirm (which never went through handleSetPrice) still warns if
+          // its scope later changes.
+          return { ...t, isRolloutConfirmed: true, price: endPrice, pricemarkup, priceScopeSig: scopeSignature(t.entries) };
         });
         tabsRef.current = next;
         next.forEach((t) => {
@@ -1016,5 +1077,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     handleSetDownPayment,
     handleSetRenders,
     handleSetOneYearMonthly,
+    handleSetPrice,
+    handleAckScopeWarning,
   };
 }

@@ -12,6 +12,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from '@react-native-community/blur';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
@@ -188,6 +189,13 @@ export const ConsentFormModal = ({
     consent: false,
   });
   const [generatedPdf, setGeneratedPdf] = useState<string | null>(null);
+
+  // Cancel / header-✕ don't dismiss straight away — they raise a confirmation so a
+  // rep can't lose a half-filled form with a stray tap. Only "Exit to Tools" runs
+  // the real `onClose`. Programmatic closes (after a successful submit / PDF step)
+  // still call `onClose` directly and never hit this prompt.
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const isWaiver = type === 'roof_waiver';
 
   React.useEffect(() => {
     if (user) {
@@ -435,7 +443,7 @@ export const ConsentFormModal = ({
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <View className="flex-1 bg-black/50 justify-center px-4">
+      <View className="flex-1 bg-black/80 justify-center px-4">
         <View className="rounded-2xl overflow-hidden shadow-2xl h-4/5">
           <View
             className="flex-row items-center justify-between p-4"
@@ -448,7 +456,7 @@ export const ConsentFormModal = ({
                   <Text className="text-[#1C252E] text-sm">Paper Fallback</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity onPress={onClose}>
+              <TouchableOpacity onPress={() => setShowExitConfirm(true)}>
                 <Icon name="close" size={22} color="white" />
               </TouchableOpacity>
             </View>
@@ -542,7 +550,7 @@ export const ConsentFormModal = ({
             {/* Footer Buttons */}
             <View className="flex-row justify-end gap-3 pb-12">
               <TouchableOpacity
-                onPress={onClose}
+                onPress={() => setShowExitConfirm(true)}
                 className="px-3 py-1.5 rounded-lg border"
                 style={{ borderColor: '#919EAB52' }}
               >
@@ -746,6 +754,42 @@ export const ConsentFormModal = ({
             </View>
           </View>
         )}
+        {/* ── Exit confirmation overlay ── raised by Cancel / header-✕ so a rep
+            can't discard a half-filled form with a stray tap. Non-dismissable:
+            only the two buttons act. */}
+        {showExitConfirm && (
+          <View style={styles.exitOverlay}>
+            <BlurView
+              style={StyleSheet.absoluteFill}
+              blurType={isDark ? 'dark' : 'light'}
+              blurAmount={10}
+              reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+              pointerEvents="none"
+            />
+            <View style={styles.exitScrim} pointerEvents="none" />
+            <View style={styles.exitCard}>
+              <View style={styles.exitIconCircle}>
+                <Icon name="alert-outline" size={24} color="#D97706" />
+              </View>
+              <Text style={styles.exitTitle}>{isWaiver ? 'Exit waiver form?' : 'Exit consent form?'}</Text>
+              <Text style={styles.exitBody}>
+                {`You'll go back to your Tools menu without capturing ${isWaiver ? 'the waiver' : 'consent'}. Any info on this form won't be kept.`}
+              </Text>
+              <View style={styles.exitBtnRow}>
+                <TouchableOpacity onPress={() => setShowExitConfirm(false)} style={styles.exitStayBtn}>
+                  <Text style={styles.exitStayText}>Stay on Form</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => { setShowExitConfirm(false); onClose(); }}
+                  style={styles.exitLeaveBtn}
+                >
+                  <Text style={styles.exitLeaveText}>Exit to Tools</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
         <RNFlashMessage
           ref={flashRef}
           position="top"
@@ -849,4 +893,54 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   fieldInput: { flex: 1, fontSize: 12, padding: 0 },
+  // ── Exit confirmation overlay ──
+  exitOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    zIndex: 1002,
+  },
+  // Dims the frosted blur so the card stands out (over the BlurView, non-interactive).
+  exitScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  exitCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+  },
+  exitIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  exitTitle: { fontSize: 17, fontWeight: '900', color: '#1C252E', textAlign: 'center' },
+  exitBody: { fontSize: 13, color: '#637381', textAlign: 'center', marginTop: 8, lineHeight: 19 },
+  exitBtnRow: { flexDirection: 'row', gap: 12, marginTop: 22, alignSelf: 'stretch' },
+  exitStayBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  exitStayText: { fontSize: 14, fontWeight: '900', color: '#334155' },
+  exitLeaveBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+  },
+  exitLeaveText: { fontSize: 14, fontWeight: '900', color: '#fff' },
 });

@@ -20,6 +20,7 @@ import {
   DealPlan,
   PayCategory,
   planLabelOf,
+  planProviderAbbr,
   calcMonthly,
   withPlanFee,
   isFinancing,
@@ -43,6 +44,7 @@ import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
+import { scopeSignature } from '../utils/scope-signature';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -81,6 +83,9 @@ interface CalculatorTab {
   totals: { cost: number; par: number; retail: number };
   isRolloutConfirmed?: boolean;
   price?: number;
+  /** Job-scope fingerprint the entered price was priced against (drives the
+   *  "Job Scope was changed" warning). Empty when no price has been entered. */
+  priceScopeSig?: string;
   paymentMethod?: string;
   dropPrice?: any[];
   downPayment?: number;
@@ -111,6 +116,11 @@ interface RolloutViewProps {
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
   onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
+  /** Persist the entered end price on the calculator so it survives back-to-calculator
+   *  edits (spec: never delete the user's entered end prices) and snapshots its scope. */
+  onPriceCommit?: (id: string, price: number) => void;
+  /** Dismiss the "Job Scope was changed" warning (re-baseline the scope snapshot). */
+  onDismissScopeWarning?: (id: string) => void;
   /** Persist a calculator's payment plan (auto-saves like a field change). */
   onPaymentMethodChange?: (id: string, method: string) => void;
   /** Persist a calculator's drop-price list. */
@@ -542,6 +552,8 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                   const plan = plans[key] || ({} as DealPlan);
                   const sel = selectedPlan === key;
                   const monthly = calcMonthly(plans, balance, key);
+                  const abbr = planProviderAbbr(plan, key);
+                  const planName = plan.label?.split('(')[0]?.trim() || key;
                   return (
                     <Animated.View key={key} layout={LinearTransition} exiting={FadeOut}>
                       <Swipeable
@@ -552,7 +564,12 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                         <TouchableOpacity onPress={() => setSelectedPlan(key)} activeOpacity={0.9} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                           <View style={{ flex: 1, marginRight: 8 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
+                              {!!abbr && (
+                                <View style={{ backgroundColor: sel ? '#0F172A' : '#CBD5E1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginRight: 6 }}>
+                                  <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>{abbr}</Text>
+                                </View>
+                              )}
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{planName}</Text>
                               {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
@@ -714,7 +731,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, onDismissScopeWarning, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -723,6 +740,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   pricingConfig?: PricingConfig | null;
   leadId?: string;
   appointmentId?: string;
+  /** true when this calc's job scope changed after the price was entered. */
+  scopeChanged?: boolean;
+  /** dismiss the scope-changed warning (re-baselines the snapshot). */
+  onDismissScopeWarning?: () => void;
   onPriceChange: (id: string, price: number) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
@@ -1288,6 +1309,24 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           ))}
         </View>
 
+        {/* Job-scope-changed warning — shown when the calculator's scope changed after
+            this end price was entered. The price is KEPT; the rep is asked to review it,
+            and can dismiss (✕) once satisfied. Spec: only the changed rollout warns. */}
+        {scopeChanged && (
+          <View style={{ marginHorizontal: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 }}>
+            <Ionicons name="warning" size={16} color="#B45309" style={{ marginTop: 1 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, fontWeight: '900', color: '#92400E' }}>Job Scope was changed</Text>
+              <Text style={{ fontSize: 11, color: '#B45309', marginTop: 2, lineHeight: 15 }}>
+                Please review the Rollout End Price — your previously entered price may no longer be correct.
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onDismissScopeWarning} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={16} color="#B45309" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* 5. Rollout End Price — old UI style */}
         <View style={{ marginHorizontal: 14, marginBottom: 4 }}>
           <Text style={{ fontSize: 10, fontWeight: '900', color: calculator.isRolloutConfirmed ? '#16A34A' : '#F59E0B', marginBottom: 8, marginLeft: 4, letterSpacing: 1 }}>ROLLOUT END PRICE</Text>
@@ -1662,13 +1701,19 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPriceCommit, onDismissScopeWarning, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
   // Effective end price for a calculator: the freshly-entered value, else the
   // one already persisted on the tab (e.g. from a duplicated calculator).
   const effectivePrice = (c: CalculatorTab) => prices[c.id] ?? c.price ?? 0;
+  // A priced calculator whose job scope changed AFTER the price was entered (the live
+  // scope no longer matches the snapshot taken at pricing time). Drives the per-calc
+  // "Job Scope was changed. Please review the Rollout End Price." warning — the price
+  // itself is never cleared. Only fires when a snapshot exists (a price was entered).
+  const scopeChangedOf = (c: CalculatorTab) =>
+    effectivePrice(c) > 0 && !!c.priceScopeSig && scopeSignature(c.entries || {}) !== c.priceScopeSig;
   // Web parity (`ViewAllCalculators.visibleCalculators`): a calculator whose title
   // is still a bare number is empty (no entries → derived name is just its
   // position) and must NOT appear in the rollout — only real, named calculators
@@ -1764,6 +1809,9 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               {visibleCalculators.map((calc) => {
                 const isActive = calc.id === selectedCalc?.id;
                 const hasLockedDrop = (calc.dropPrice || []).some((d: any) => d.status === 'accepted');
+                // Amber dot flags a tab whose job scope changed after pricing, so the rep
+                // can spot which rollout to review without opening each one.
+                const needsReview = scopeChangedOf(calc);
                 return (
                   <TouchableOpacity key={calc.id} onPress={() => onTabSelect?.(calc.id)} style={{ flexDirection: 'row', alignItems: 'center', height: '100%', paddingHorizontal: 12, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1771,6 +1819,9 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                         <Ionicons name="lock-closed" size={12} color={isActive ? '#16A34A' : '#94A3B8'} style={{ marginRight: 6 }} />
                       )}
                       <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#212B36' : '#637381' }}>{calc.title}</Text>
+                      {needsReview && (
+                        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#F59E0B', marginLeft: 6 }} />
+                      )}
                     </View>
                   </TouchableOpacity>
                 );
@@ -1810,9 +1861,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               pricing={pricing}
               verticals={verticals || []}
               pricingConfig={pricingConfig}
+              scopeChanged={scopeChangedOf(selectedCalc)}
+              onDismissScopeWarning={() => onDismissScopeWarning?.(selectedCalc.id)}
               onPriceChange={(id, price) => {
                 setPrices((p) => ({ ...p, [id]: price }));
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
+                // Persist the entered price on the tab so it survives a back-to-calculator
+                // edit (and snapshot the scope it was priced against). The hook debounces
+                // the save, so per-keystroke calls coalesce.
+                onPriceCommit?.(id, price);
               }}
               onResult={(id, result, price, paymentMethod, downPayment) => onResultJob?.(id, result, price, paymentMethod, downPayment)}
               onPaymentMethodChange={(id, m) => {
