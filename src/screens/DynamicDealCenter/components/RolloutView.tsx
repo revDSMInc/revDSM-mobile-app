@@ -20,6 +20,7 @@ import {
   DealPlan,
   PayCategory,
   planLabelOf,
+  planProviderAbbr,
   calcMonthly,
   withPlanFee,
   isFinancing,
@@ -542,6 +543,8 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                   const plan = plans[key] || ({} as DealPlan);
                   const sel = selectedPlan === key;
                   const monthly = calcMonthly(plans, balance, key);
+                  const abbr = planProviderAbbr(plan, key);
+                  const planName = plan.label?.split('(')[0]?.trim() || key;
                   return (
                     <Animated.View key={key} layout={LinearTransition} exiting={FadeOut}>
                       <Swipeable
@@ -552,7 +555,12 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                         <TouchableOpacity onPress={() => setSelectedPlan(key)} activeOpacity={0.9} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                           <View style={{ flex: 1, marginRight: 8 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
+                              {!!abbr && (
+                                <View style={{ backgroundColor: sel ? '#0F172A' : '#CBD5E1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginRight: 6 }}>
+                                  <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>{abbr}</Text>
+                                </View>
+                              )}
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{planName}</Text>
                               {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
