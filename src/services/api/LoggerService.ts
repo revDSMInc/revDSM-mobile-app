@@ -3,7 +3,18 @@ import { ENV } from '../../config/env';
 import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 
-const ExcludedModuleTypes = ['leads_list', 'system', 'lms', 'self_gen_lead'];
+/**
+ * Modules that are not scoped to a single lead/job, so the active `leadId` in
+ * storage must NOT be auto-attached to their logs (it would link an auth event or
+ * a dashboard view to whichever lead the user happened to open last).
+ */
+const ExcludedModuleTypes = [
+  'leads_list',
+  'system',
+  'lms',
+  'self_gen_lead',
+  'installer_dashboard',
+];
 
 // ---------------------------------------------------------------------------
 // Location cache
@@ -13,9 +24,9 @@ const ExcludedModuleTypes = ['leads_list', 'system', 'lms', 'self_gen_lead'];
 // That fix takes a DIFFERENT amount of time on every call (tens of ms up to the 5s
 // timeout). Because the client sends NO timestamp, the backend stamps `createdAt` on
 // RECEIPT, and the portal timeline renders logs in arrival order (it does not sort by
-// `stepNumber`). So a burst of logs fired together — job-builder step_viewed +
-// auto-populated batches, calculator field entries, rollout events — arrived in a
-// scrambled order and rendered out of sequence on the portal.
+// `stepNumber`). So a burst of logs fired together — install-step events, photo-match
+// batches, calculator field entries, rollout events — arrived in a scrambled order and
+// rendered out of sequence on the portal.
 //
 // Fix: fetch a low-accuracy fix ONCE and reuse it for a short window, so the pre-POST
 // delay is ~0 and uniform (mirrors the web logger, which uses a fast cached browser
@@ -42,7 +53,9 @@ const getCachedLocation = (): Promise<{ lat: number; long: number } | null> =>
       (err) => {
         console.warn('[Logger] Could not get user location:', err);
         // Fall back to the last known fix (if any) rather than blocking.
-        resolve(cachedLocation ? { lat: cachedLocation.lat, long: cachedLocation.long } : null);
+        resolve(
+          cachedLocation ? { lat: cachedLocation.lat, long: cachedLocation.long } : null
+        );
       },
       // Low-accuracy + generous maximumAge → the OS returns a cached fix immediately
       // instead of powering up GPS for a fresh reading on each call.
@@ -55,7 +68,7 @@ const getCachedLocation = (): Promise<{ lat: number; long: number } | null> =>
 // ---------------------------------------------------------------------------
 // The portal orders timeline entries purely by server receipt time with no tiebreak,
 // so concurrent POSTs (a `Promise.all` burst of auto-populated logs, an un-awaited
-// step_viewed, etc.) could still arrive out of order even with a fast location fix.
+// step view, etc.) could still arrive out of order even with a fast location fix.
 // Chaining every log POST guarantees monotonic arrival order = fire order. The chain is
 // extended SYNCHRONOUSLY at the top of logEvent (before any await) so its FIFO order is
 // the call order; errors are swallowed so one failed POST never breaks the chain.
@@ -81,7 +94,9 @@ export const logEvent = async (eventType: string, details: any = {}) => {
 
   // Check current time in EST for location logging (9am to 7pm)
   const currentTime = new Date();
-  const estTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const estTime = new Date(
+    currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  );
   const hours = estTime.getHours();
   const minutes = estTime.getMinutes();
   const timeInMinutes = hours * 60 + minutes;
@@ -118,7 +133,11 @@ export const logEvent = async (eventType: string, details: any = {}) => {
         timeout: 15000,
       });
     } catch (err) {
-      console.error('[Logger] Failed to send log:', err);
+      // console.warn, NOT console.error: LogBox turns a console.error into a
+      // full-screen red "Console Error" overlay, so a single 502 from the logging
+      // service used to cover the screen the installer was working on. A dropped
+      // analytics event is a diagnostic, never something the user must act on.
+      console.warn('[Logger] Failed to send log:', err);
     }
   });
 

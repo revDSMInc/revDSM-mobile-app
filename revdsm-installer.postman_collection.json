@@ -1,0 +1,194 @@
+{
+  "info": {
+    "name": "revDSM — Installer Module",
+    "description": "Installer endpoints for the revDSM mobile app.\n\nUsage:\n1. Set the `base_url` collection variable (default: https://demo-api.revdsm.com).\n2. Run **Auth > Login** — the test script stores `token` automatically.\n3. Run **My Jobs**, copy a job `_id` into the `job_id` variable (or the list request's test script grabs the first one for you).\n4. **Update Job Status** with `{ \"status\": \"inProgress\" }` returns the full working payload (contractDetails + preInstallPhotos + productDetails).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://demo-api.revdsm.com", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "job_id", "value": "", "type": "string" },
+    { "key": "email", "value": "revdsminc@gmail.com", "type": "string" },
+    { "key": "password", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const token = res?.data?.accessToken || res?.accessToken || res?.data?.token || res?.token;",
+                  "if (token) {",
+                  "  pm.collectionVariables.set('token', token);",
+                  "  console.log('Saved token');",
+                  "} else {",
+                  "  console.warn('No token found in login response — set `token` manually.');",
+                  "}",
+                  "pm.test('Login OK', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"deviceId\": \"postman\",\n  \"trustDevice\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/company/login",
+              "host": ["{{base_url}}"],
+              "path": ["company", "login"]
+            },
+            "description": "Custom JWT bearer login. Captures `accessToken` into the `token` variable via the test script."
+          }
+        },
+        {
+          "name": "Get Me (profile)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/company",
+              "host": ["{{base_url}}"],
+              "path": ["company"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Installer",
+      "item": [
+        {
+          "name": "My Jobs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const payload = res?.data ?? res ?? {};",
+                  "const rows = Array.isArray(payload) ? payload : (payload.jobs || []);",
+                  "if (rows.length && rows[0]?._id) {",
+                  "  pm.collectionVariables.set('job_id', rows[0]._id);",
+                  "  console.log('job_id set to', rows[0]._id);",
+                  "}",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/installer/v1/my-jobs?period=today",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "my-jobs"],
+              "query": [
+                { "key": "period", "value": "today", "description": "today | tomorrow" }
+              ]
+            },
+            "description": "Jobs assigned to the signed-in installer for the given day. Response: `{ data: { jobs[], pagination, summaryCounts } }`."
+          }
+        },
+        {
+          "name": "Update Job Status (start job)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"inProgress\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/installer/v1/update-job-status/{{job_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "update-job-status", "{{job_id}}"]
+            },
+            "description": "Moves a job through the workflow. Statuses: `scheduled` | `inProgress` | `completed` | `onHold`.\n\nStarting a job (`inProgress`) returns the full working payload — `contractDetails`, `preInstallPhotos`, and `productDetails` (sold products the installer verifies). This is the only place that data is returned."
+          }
+        },
+        {
+          "name": "Get Job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/installer/v1/jobs/{{job_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "jobs", "{{job_id}}"]
+            },
+            "description": "Single job detail. (Provisional — confirm before use; mobile currently mocks this.)"
+          }
+        },
+        {
+          "name": "Save Progress",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"completedSteps\": {\n    \"pre\": true\n  },\n  \"updatedAt\": \"2026-07-23T09:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/installer/v1/jobs/{{job_id}}/progress",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "jobs", "{{job_id}}", "progress"]
+            },
+            "description": "Persists per-job install timeline progress. (Provisional.)"
+          }
+        },
+        {
+          "name": "Submit Result",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"result\": \"Can't Do Work\",\n  \"reason\": \"Access blocked — customer not home\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/installer/v1/jobs/{{job_id}}/result",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "jobs", "{{job_id}}", "result"]
+            },
+            "description": "Result types: `Can't Do Work` | `Reset` | `Not Hit`. (Provisional.)"
+          }
+        },
+        {
+          "name": "Report Discrepancy",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"6a28fa6ed6700f1190253ad2__6a34e97e39e195278cd47945\",\n  \"issue\": \"Footage mismatch\",\n  \"note\": \"Sold 40ft, site measures 52ft\",\n  \"attachments\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/installer/v1/jobs/{{job_id}}/discrepancy",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "jobs", "{{job_id}}", "discrepancy"]
+            },
+            "description": "Routes a scope discrepancy to the Install Manager and originating rep. (Provisional.)"
+          }
+        }
+      ]
+    }
+  ]
+}

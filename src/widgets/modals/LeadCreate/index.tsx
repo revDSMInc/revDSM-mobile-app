@@ -339,10 +339,10 @@ export default function LeadCreateModal({
       return;
     }
 
-    // Additional validation for LF Leads
+    // Additional validation for Issued Leads (backend key `lfLead`/`isLF` unchanged)
     if (isLF) {
       if (!form.lfLeadId || !form.leadCode || !form.lfLeadDate || !form.lfLeadTime) {
-        showError('Metadata Required', 'LF Leads require ID, Code, Date, and Time slot.');
+        showError('Metadata Required', 'Issued Leads require ID, Code, Date, and Time slot.');
         return;
       }
     }

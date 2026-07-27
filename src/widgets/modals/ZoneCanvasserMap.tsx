@@ -97,6 +97,9 @@ export default function ZoneCanvasserMap({
         )}
         <Header
           onFilterPress={() => z.setSearchModalVisible(true)}
+          // Here the filter button is a location search, not the map's filter
+          // set — so it never carries an applied-filter badge.
+          filterCount={0}
           onNavigate={(route: string) => {
             if (route === 'Leads') {
               onClose();

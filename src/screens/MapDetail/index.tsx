@@ -25,7 +25,7 @@ import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
 import { LeadMap } from '../../widgets/components/LeadCenter/LeadMap';
 import { RootStackParamList } from '../../navigation';
 import { Header, useHeader } from '../../widgets/common/MainHeader';
-import { MapFiltersModal, FilterState } from '../../widgets/modals/MapFiltersModal';
+import { MapFiltersModal, FilterState, countAppliedMapFilters } from '../../widgets/modals/MapFiltersModal';
 import { MapGalleryModal } from '../../widgets/components/LeadCenter/MapGalleryModal';
 import { ReferralModal } from '../../widgets/modals/ReferralModal';
 import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
@@ -124,21 +124,6 @@ export default function MapDetailScreen() {
   // Satellite / street map-view toggle (web parity: `isSatelliteView`).
   const [isSatelliteView, setIsSatelliteView] = useState(false);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      setHeaderActions({
-        onFilterPress: () => setShowFiltersModal(true),
-        onListPress: () => setIsListView(prev => !prev),
-      });
-      return () => {
-        setHeaderActions({
-          onFilterPress: null,
-          onListPress: null,
-        });
-      };
-    }, [isListView])
-  );
-
   const [filters, setFilters] = useState<FilterState>({
     jobNumber: '',
     sortOrder: 'date-desc',
@@ -154,6 +139,28 @@ export default function MapDetailScreen() {
     showRoute: false,
     showProduct: true,
   });
+
+  // Badge on the header's filter icon — how many filters are currently applied.
+  // Reads the applied `filters` (only written by the modal's Search/Reset), so
+  // it tracks what the map is actually filtered by, not in-progress edits.
+  const activeFilterCount = useMemo(() => countAppliedMapFilters(filters), [filters]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      setHeaderActions({
+        onFilterPress: () => setShowFiltersModal(true),
+        onListPress: () => setIsListView(prev => !prev),
+        filterCount: activeFilterCount,
+      });
+      return () => {
+        setHeaderActions({
+          onFilterPress: null,
+          onListPress: null,
+          filterCount: 0,
+        });
+      };
+    }, [isListView, activeFilterCount])
+  );
 
   const [jumpLead, setJumpLead] = useState<any>(null);
   const [centerCoords, setCenterCoords] = useState<{
@@ -430,6 +437,10 @@ export default function MapDetailScreen() {
           currentLead={centerCoords ?? currentLead}
           focusLead={jumpLead}
           fullScreen
+          // Open on the rep's office (`/company` → `user.office[]`) rather than
+          // their GPS position. Ignored when the screen was opened with a lead
+          // or a searched location to focus.
+          focusOfficeOnOpen
           leads={baseFilteredLeads}
           isFavoriteFilter={filters.isFavoriteOnly}
           isReferralFilter={filters.isReferralOnly}

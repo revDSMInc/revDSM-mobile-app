@@ -17,10 +17,13 @@ export interface HeaderContextType {
   onFilterPress?: (() => void) | null;
   onListPress?: (() => void) | null;
   onNavigate?: ((route: any) => void) | null;
+  /** Number of filters currently applied — shown as a badge on the filter icon. */
+  filterCount?: number | null;
   setHeaderActions: (actions: {
     onFilterPress?: (() => void) | null;
     onListPress?: (() => void) | null;
     onNavigate?: ((route: any) => void) | null;
+    filterCount?: number | null;
   }) => void;
 }
 
@@ -40,12 +43,14 @@ interface HeaderProps {
   onNavigate?: (route: any) => void;
   onFilterPress?: () => void;
   onListPress?: () => void;
+  filterCount?: number;
 }
 
 export function Header({
   onNavigate: parentOnNavigate,
   onFilterPress: parentOnFilterPress,
   onListPress: parentOnListPress,
+  filterCount: parentFilterCount,
 }: HeaderProps) {
   const { colors, isDark } = useTheme();
   const { user, logout } = useAuth();
@@ -64,6 +69,7 @@ export function Header({
   const activeOnNavigate = parentOnNavigate || ctx?.onNavigate;
   const activeOnFilterPress = parentOnFilterPress || ctx?.onFilterPress;
   const activeOnListPress = parentOnListPress || ctx?.onListPress;
+  const activeFilterCount = parentFilterCount ?? ctx?.filterCount ?? 0;
 
   const onNavigate = (route: any) => {
     if (activeOnNavigate) activeOnNavigate(route);
@@ -101,7 +107,16 @@ export function Header({
               onPress={activeOnFilterPress}
               className="w-9 h-9 rounded-full bg-[#4CBB17] items-center justify-center mr-3 shadow-sm"
             >
-              <Icon name="filter-variant" size={22} color="white" />
+              {/* Solid funnel + applied-filter badge, matching the web header
+                  (`header-filter.js`: filter-alt-sharp inside an error Badge). */}
+              <Icon name="filter" size={22} color="white" />
+              {activeFilterCount > 0 && (
+                <View style={styles.filterBadge}>
+                  <Text style={styles.filterBadgeText}>
+                    {activeFilterCount > 9 ? '9+' : activeFilterCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           )}
 
@@ -171,6 +186,27 @@ const styles = StyleSheet.create({
   logo: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  // Applied-filter count. Web parity: MUI <Badge color="error" max={9} />.
+  // Geometry matches the chat unread badge next to it (ChatThreadsManager).
+  filterBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#FF5630',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  filterBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
   },
   avatarBtn: {
     width: 32,
