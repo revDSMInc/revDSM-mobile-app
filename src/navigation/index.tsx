@@ -135,7 +135,6 @@ import { useUserRole } from '../hooks/useUserRole';
 import { useTheme } from '../theme/ThemeProvider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createNavigationContainerRef } from '@react-navigation/native';
-import { useEffect } from 'react';
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
