@@ -37,6 +37,12 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import FlashMessage from 'react-native-flash-message';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { queryClient } from './src/services/api/queryClient';
+import SplashScreen from './src/screens/Splash';
+import { useAuth } from './src/hooks/useAuth';
+
+// How long the splash will keep waiting for auth bootstrap after the animation
+// has finished, before handing over to the navigator's own loading state.
+const MAX_BOOTSTRAP_WAIT_MS = 8000;
 
 
 function AppContent() {
@@ -45,6 +51,21 @@ function AppContent() {
   const insets = useSafeAreaInsets();
   // Connect the global socket once — persists across all screens
   useSocketManager();
+  const { loading, isInitialized } = useAuth();
+
+  // Splash: play the logo animation, then continue into the normal navigation.
+  // We hold it a moment longer if auth bootstrap hasn't resolved yet, so the
+  // animation isn't followed by the navigator's bare spinner.
+  const [animationDone, setAnimationDone] = useState(false);
+  const [bootstrapTimedOut, setBootstrapTimedOut] = useState(false);
+  const bootstrapReady = isInitialized && !loading;
+  const showSplash = !animationDone || !(bootstrapReady || bootstrapTimedOut);
+
+  React.useEffect(() => {
+    if (!animationDone) return;
+    const timer = setTimeout(() => setBootstrapTimedOut(true), MAX_BOOTSTRAP_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [animationDone]);
 
   const [currentRouteName, setCurrentRouteName] = useState<string | null>(null);
 
@@ -92,6 +113,7 @@ function AppContent() {
         <RootNavigator currentRouteName={currentRouteName} />
       </NavigationContainer>
       <FlashMessage position="top" />
+      {showSplash && <SplashScreen onFinish={() => setAnimationDone(true)} />}
     </QueryClientProvider>
   );
 }
