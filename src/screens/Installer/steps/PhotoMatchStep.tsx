@@ -130,12 +130,18 @@ export function PhotoMatchStep({
   const selectedRef = selected ? referenceUri(selected) : undefined;
 
   /**
-   * The rep captured this tag but its signed URL hasn't come back yet
-   * (`useRepPhotoSections` is still resolving). Distinct from "no rep photo exists",
-   * which is a permanent N/A — so this one gets a spinner over the ghost rather than
-   * looking like a tag with nothing to match.
+   * A signed URL is genuinely on its way: the tag carries an S3 key that
+   * `useRepPhotoSections` hasn't exchanged yet.
+   *
+   * Gated on the KEY, not on `hasRep`. The static fallback sections (used when a job
+   * arrives with `preInstallPhotos.products: []`) claim `hasRep: true` but carry no
+   * key, so keying off `hasRep` left a spinner up forever on a photo that was never
+   * coming.
    */
-  const awaitingReference = !!selected?.hasRep && !selectedRef;
+  const awaitingReference = !!selected?.repPhotoS3Url && !selectedRef;
+
+  /** The tag expects a rep shot but this job shipped none — nothing to ghost against. */
+  const referenceUnavailable = !!selected?.hasRep && !selected?.repPhotoS3Url && !selectedRef;
 
   const handleSelectSection = (s: PhotoSection) => {
     if (s.id === sectionId) return;
@@ -264,7 +270,13 @@ export function PhotoMatchStep({
               </View>
             ) : (
               <View className="rounded-2xl px-3.5 py-1.5" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}>
-                <Text className="text-xs font-bold text-white/85">TAP PHOTO TO MATCH WITH GHOST</Text>
+                <Text className="text-xs font-bold text-white/85">
+                  {referenceUnavailable
+                    ? 'NO REP PHOTO FOR THIS TAG — TAP TO SHOOT'
+                    : awaitingReference
+                    ? 'LOADING REP PHOTO…'
+                    : 'TAP PHOTO TO MATCH WITH GHOST'}
+                </Text>
               </View>
             )}
           </View>
@@ -461,7 +473,8 @@ function ReviewPair({
             ) : (
               <>
                 <HouseGhost opacity={0.9} />
-                {tag.hasRep && <TaggerImageSpinner />}
+                {/* Only when a key is still being signed — see `awaitingReference`. */}
+                {!!tag.repPhotoS3Url && <TaggerImageSpinner />}
               </>
             )}
           </View>

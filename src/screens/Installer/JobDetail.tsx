@@ -92,6 +92,18 @@ export default function InstallerJobDetail() {
   // carry no `preInstallPhotos`.
   const repSections = useRepPhotoSections(job?.preInstallPhotos);
   const photoSections = repSections.length ? repSections : PHOTO_SECTIONS;
+
+  // A job whose `preInstallPhotos.products` is empty has no rep capture set, so the
+  // tagger runs on the static stand-in and NO tag can ever show a reference shot.
+  // Worth saying out loud — it reads on-device as "the images are broken".
+  useEffect(() => {
+    if (!__DEV__ || !job?._id || repSections.length) return;
+    console.warn(
+      `[InstallerJob] Job ${job._id} returned no pre-install rep photos ` +
+        `(preInstallPhotos.totalPhotos=${job.preInstallPhotos?.totalPhotos ?? 0}). ` +
+        'Falling back to the static PHOTO_SECTIONS stand-in — reference shots will be empty.'
+    );
+  }, [job, repSections.length]);
   const requiredPhotoTagIds = useMemo(
     () => requiredTagIdsFromSections(photoSections),
     [photoSections]
