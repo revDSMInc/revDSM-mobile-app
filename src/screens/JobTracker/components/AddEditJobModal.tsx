@@ -150,12 +150,14 @@ export const AddEditJobModal = ({ visible, onClose, onSuccess, job, isLowesLead 
           calculatorId: job.calculatorId || '',
         });
       } else {
-        // New job mode - "nothing pre-added" rule
+        // New job mode - "nothing pre-added" rule. Sales Price is seeded from the
+        // originating calculator's end price when provided (web parity, deal
+        // center's `endPrice`); manual adds carry none, so it stays 0.
         setFormData({
           jobNumber: '',
           customerName: job?.customerName || '',
           title: job?.title || '',
-          salesPrice: 0,
+          salesPrice: job?.salesPrice || 0,
           paymentMethod: job?.paymentMethod || 'check',
           commission: 0,
           installDate: null,

@@ -1,9 +1,17 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Switch, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { View, Text, TextInput, ScrollView, TouchableOpacity, Modal, Pressable, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { BlurView } from '@react-native-community/blur';
+import { useTheme } from '../../../theme/ThemeProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { useAnimatedStyle, LinearTransition, FadeOut } from 'react-native-reanimated';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { CalculatorSchema } from '../types/calculator';
 import { resolveSchemaStyle } from '../utils/icon-color';
+import { formatAmountInput, stripAmount } from '../utils/format-amount';
+import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
+import { dedupeDrops } from '../utils/drop-prices';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { SettingsService } from '../../../services/api/SettingsService';
@@ -18,8 +26,23 @@ import {
   planBelowMin,
   belowMinMsg,
 } from '../hooks/useDealPricing';
-
-const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString()}`;
+import {
+  endPriceError as computeEndPriceError,
+  effectiveCostOf as computeEffectiveCost,
+  floorTier as computeFloorTier,
+  computeRolloutResult,
+  computeCalculatorTiers,
+  screensCountFromEntries,
+  screenUnitPriceFromSchemas,
+  markupLabel,
+  WELLS_FARGO_HIGH_KEYS,
+  WF_HIGH_MIN_PRICE,
+} from '../utils/dynamic-rollout-pricing';
+import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
+import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
+import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
+import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
+import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 
 /** Resolve the payment plan shown for a calculator (saved → user default → lead-aware fallback). */
 const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?: string) =>
@@ -31,30 +54,24 @@ const resolveMethod = (calc: CalculatorTab, userDefault?: string, defaultMethod?
  * bumps any priced job to $200 **INDEPENDENTLY per tier**, so a tiny job can read
  * $200 across all three. Gated on the calc having items (`retail > 0`).
  */
-const floorTier = (value: number, hasItems: boolean) =>
-  hasItems && value < 200 ? 200 : value;
+const floorTier = computeFloorTier;
 
 /**
  * The calculator's cost with the $200 job-minimum floor applied — the value the
  * end price / drop price is validated against.
  */
 function effectiveCostOf(calc: CalculatorTab): number {
-  return floorTier(calc.totals?.cost || 0, (calc.totals?.retail || 0) > 0);
+  return computeEffectiveCost(calc.totals);
 }
 
 /**
  * Most-specific reason an end price is invalid (else null) — below the (floored)
- * cost, then below the selected plan's own minimum. Minimum-price-driven exactly
- * like the web (`validatePriceForPaymentMethod`), so no Wells-Fargo-high special
- * case is needed: a plan's `minPrice` (e.g. 7,500) is the single source of truth.
+ * cost, then the Wells-Fargo-high $7,500 hardcoded floor (web safety net), then
+ * the selected plan's own minimum. Strings match the web app exactly. Delegates
+ * to the unit-tested `dynamic-rollout-pricing` module.
  */
 function endPriceError(plans: Record<string, DealPlan>, price: number, calc: CalculatorTab, method: string): string | null {
-  if (price <= 0) return null;
-  const cost = effectiveCostOf(calc);
-  if (price < cost) return `Price cannot be less than cost (${fmtMoney(cost)})`;
-  const min = plans[method]?.minPrice || 0;
-  if (min && price < min) return `This plan requires a minimum price of ${fmtMoney(min)}.`;
-  return null;
+  return computeEndPriceError(plans, price, calc.totals, method);
 }
 
 interface CalculatorTab {
@@ -68,19 +85,32 @@ interface CalculatorTab {
   dropPrice?: any[];
   downPayment?: number;
   discountPercentage?: number;
+  /** RevRender before/after pairs bound to this calculator's job build. */
+  selectedRenders?: any[];
+  /** 1-Year Program monthly-payment selection (persisted for the Investment Center). */
+  oneYearMonthlyPlan?: OneYearMonthlyValue;
 }
 
 interface RolloutViewProps {
   calculators: CalculatorTab[];
-  /** All configured verticals — used to label the quote-card category pills. */
+  /** All configured verticals — used to label the quote-card category pills AND to
+   *  recompute the COST/PAR/RETAIL tiles live from the schema field prices. */
   verticals?: CalculatorSchema[];
+  /** Company pricing config (tier derivation + static fees) for the tile recompute. */
+  pricingConfig?: PricingConfig | null;
   /** Backend-driven payment plans + discount config (static fallback). */
   pricing: DealPricing;
   /** Lowe's leads get the Lowe's-only plan groups + `lowes_ach` default. */
   isLowesLead?: boolean;
+  /** Lead id — threaded into the rollout/drop activity logs (web parity). */
+  leadId?: string;
+  /** Appointment id — the CalcTab does NOT carry it, so the rollout/drop logs must
+   *  receive it here or they ship `appointmentId: undefined` and the portal can't
+   *  group them into the "Rollout & Drops" module (web keys on `calculator.appointmentId`). */
+  appointmentId?: string;
   onBack?: () => void;
   onConfirmRollouts?: (confirmed: Array<{ id: string; price: number }>) => void;
-  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number) => void;
+  onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   /** Persist a calculator's payment plan (auto-saves like a field change). */
   onPaymentMethodChange?: (id: string, method: string) => void;
   /** Persist a calculator's drop-price list. */
@@ -89,6 +119,13 @@ interface RolloutViewProps {
   onDiscountChange?: (id: string, discount: number) => void;
   /** Persist a calculator's rollout down payment. */
   onDownPaymentChange?: (id: string, downPayment: number) => void;
+  /** Persist the RevRender pairs the rep bound to this calculator's job build. */
+  onRendersChange?: (id: string, renders: any[]) => void;
+  /** Persist the 1-Year Program monthly-payment selection. */
+  onOneYearMonthlyChange?: (id: string, plan: OneYearMonthlyValue) => void;
+  /** Fired after the rep taps Confirm Rollouts — the flow returns to the Lead
+   *  Center tools so they can present (map / pitch book) and open Investment Center. */
+  onRolloutsConfirmedDone?: () => void;
   /** Controlled active tab — syncs with the calculator view so switching views
    *  preserves which calculator the user was working on. */
   activeTabId?: string;
@@ -153,28 +190,48 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
                 {cat.plans.map((key) => {
                   const plan = plans[key];
                   if (!plan) return null;
-                  const belowMin = planBelowMin(plans, key, price);
+                  const min = plan.minPrice || 0;
+                  // Rollout context (web `PaymentPlanSelect`): a min-price plan is
+                  // LOCKED until an end price at or above the minimum is entered, so
+                  // price 0 (not entered yet) counts as below-min — the plan greys out
+                  // with a red "Requires $X+ — enter end price first" hint. Mobile's
+                  // shared `planBelowMin` only flags an ENTERED price below the min
+                  // (price > 0), which is why the note was missing before any end price.
+                  const belowMin = min > 0 && (price <= 0 || price < min);
                   const isSel = key === selected;
                   return (
                     <TouchableOpacity
                       key={key}
-                      onPress={() => {
-                        if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
-                        onSelect(key);
-                      }}
+                      // DISABLED until the entered end price meets this plan's minimum
+                      // (web parity). With no end price the Lowe's financing plans stay
+                      // locked and non-selectable; only the basics (ACH/CC, no minimum)
+                      // are pickable. The row un-locks the moment a qualifying price is
+                      // typed into "Rollout End Price".
+                      disabled={belowMin}
+                      onPress={() => onSelect(key)}
                       style={{
                         padding: 14, borderRadius: 12, borderWidth: 1.5, marginBottom: 8,
-                        borderColor: isSel ? '#4CBB17' : '#E2E8F0',
+                        // Disabled (below-min) rows read as GREY/muted so they're clearly
+                        // distinct from the white, selectable active options.
+                        borderColor: isSel ? '#4CBB17' : belowMin ? '#E2E8F0' : '#E2E8F0',
                         backgroundColor: isSel ? '#4CBB170D' : belowMin ? '#F1F5F9' : '#fff',
                         opacity: belowMin ? 0.6 : 1,
                       }}
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : '#1C252E' }}>{plan.label}</Text>
+                        <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : belowMin ? '#94A3B8' : '#1C252E' }}>{plan.label}</Text>
                         {isSel && <Ionicons name="checkmark-circle" size={20} color="#4CBB17" />}
                       </View>
-                      {plan.minPrice && belowMin ? (
-                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 4 }}>Requires ${plan.minPrice.toLocaleString()}+</Text>
+                      {/* Web parity: red min-price hint (with "enter end price first"
+                          before any price, "(current: $X)" once one is entered), or the
+                          plan's own grey minPriceNote when it's not below the minimum. */}
+                      {belowMin ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 4 }}>
+                          Requires ${min.toLocaleString()}+
+                          {price > 0 ? ` (current: $${Number(price).toLocaleString()})` : ' — enter end price first'}
+                        </Text>
+                      ) : plan.minPriceNote && plan.minPriceNote !== '0' ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 4 }}>{plan.minPriceNote}</Text>
                       ) : null}
                     </TouchableOpacity>
                   );
@@ -270,37 +327,96 @@ function DropAddPlanModal({ visible, price, plans, categories, added, onAdd, onC
  * is disabled until a plan is selected and the down payment does not exceed the
  * drop price (web parity). Records the drop only on Secure/Decline.
  */
-function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onClose }: {
+/**
+ * Right-swipe "Delete" action for a Monthly-Options plan row (mirrors the regular
+ * rollout's drop modal, `CalculatorSummary`). Extracted to a component so the
+ * `useAnimatedStyle` hook lives in a real component, not a render callback.
+ */
+function SwipeDeleteAction({ drag, onDelete }: { drag: any; onDelete: () => void }) {
+  const styleAnimation = useAnimatedStyle(() => ({
+    transform: [{ translateX: drag.value + 80 }],
+  }));
+  return (
+    <View style={{ width: 80, marginLeft: 8, marginBottom: 12 }}>
+      <Animated.View style={styleAnimation}>
+        <TouchableOpacity
+          onPress={onDelete}
+          style={{ backgroundColor: '#FF5630', height: '100%', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>Delete</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
+function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existingDrop, isLowesLead, plans, dropAddCategories, onSecure, onDecline, onPlanSelected, onClose }: {
   visible: boolean;
   dropPrice: number;
   method: string;
+  /** The lead / calculator BASE payment method (deal-center pick, e.g. AMEX). Kept
+   * separate from `method` (which is the active/pre-select plan and can become a
+   * secured drop's financing plan) so the lead's method always shows as its own row,
+   * even when Displaying a drop that was secured with a different (financing) plan. */
+  calculatorMethod: string;
+  /** When reopening an already-recorded drop (Display), its saved values seed the
+   * modal so the previously-chosen plan / down payment are shown, not a blank form. */
+  existingDrop?: any | null;
   isLowesLead: boolean;
   plans: Record<string, DealPlan>;
   dropAddCategories: PayCategory[];
-  onSecure: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
-  onDecline: (data: { paymentMethod: string; downPayment: number; balance: number }) => void;
+  onSecure: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
+  onDecline: (data: { paymentMethod: string; paymentMethods: string[]; downPayment: number; balance: number }) => void;
+  /** Fired when the rep ADDS a financing plan → `drop price plan selected` rollout log. */
+  onPlanSelected?: (planKey: string) => void;
   onClose: () => void;
 }) {
+  const { isDark } = useTheme();
   const badges = isLowesLead
     ? [{ key: 'lowes_ach', label: 'ACH' }, { key: 'lowes_cc', label: 'CC' }]
     : [{ key: 'check', label: 'CK' }, { key: 'mcVisaDscvr', label: 'CC' }];
 
-  const [selectedPlan, setSelectedPlan] = useState(method);
-  const [addedPlans, setAddedPlans] = useState<string[]>(isFinancing(plans, method) ? [method] : []);
+  const [selectedPlan, setSelectedPlan] = useState(calculatorMethod);
+  const [addedPlans, setAddedPlans] = useState<string[]>(isFinancing(plans, calculatorMethod) ? [calculatorMethod] : []);
+  // The payment method chosen on the lead / rollout card — kept SEPARATELY from
+  // `selectedPlan` so it stays displayed as its own row even after the rep picks a
+  // different plan in the popup (it must not be replaced by the newly-selected one).
+  const [leadMethod, setLeadMethod] = useState(method);
   const [downText, setDownText] = useState('');
   const [showDown, setShowDown] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
 
-  // Reset for each newly-entered drop price (the modal stays mounted).
+  // Seed the modal each time it opens: from the saved drop when re-displaying an
+  // existing one, otherwise from the calculator's current payment method. Without
+  // this an already-secured drop reopened empty (dropped its plan + down payment).
   useEffect(() => {
-    if (visible) {
-      setSelectedPlan(method);
-      setAddedPlans(isFinancing(plans, method) ? [method] : []);
-      setDownText('');
-      setShowDown(false);
-    }
+    if (!visible) return;
+    // A NEW drop defaults to ONLY the lead's method (`calculatorMethod`, e.g. AMEX) —
+    // it must NOT carry over the plan a PREVIOUS drop was secured with (that came in
+    // via `method`/activeMethod). Displaying an existing drop still seeds from that
+    // drop's own saved method + plans.
+    const savedMethod = existingDrop?.paymentMethod || calculatorMethod;
+    const savedDown = Number(existingDrop?.downPayment) || 0;
+    // Restore EVERY plan the rep chose for this drop (Display parity): a secured/
+    // declined drop persists its full `paymentMethods` list, so reopening it shows
+    // all of them in Monthly Options — not just the one selected plan. Falls back
+    // to the single saved method for older records that stored only `paymentMethod`.
+    const savedPlans: string[] = (
+      Array.isArray(existingDrop?.paymentMethods) && existingDrop.paymentMethods.length
+        ? existingDrop.paymentMethods
+        : [savedMethod]
+    ).filter((k: string) => isFinancing(plans, k));
+    setSelectedPlan(savedMethod);
+    setAddedPlans(savedPlans);
+    // The lead's method is always the calculator's BASE method (`calculatorMethod`),
+    // independent of the plan the rep selects AND of a secured drop's financing plan
+    // (which flows through `method`). So Displaying a financing-secured drop still
+    // shows the lead's basic method (e.g. AMEX) as its own row.
+    setLeadMethod(calculatorMethod);
+    setDownText(savedDown > 0 ? String(savedDown) : '');
+    setShowDown(savedDown > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, method]);
+  }, [visible, method, calculatorMethod, existingDrop]);
 
   const down = parseFloat(downText) || 0;
   const balance = Math.max(0, dropPrice - down);
@@ -308,10 +424,14 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
   const canSecure = !!selectedPlan && !downExceeds;
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
+  // The rep can add MULTIPLE plans to Monthly Options — adding appends to the
+  // list (deduped) and marks the new one selected; each can still be removed via
+  // swipe. Only the currently-selected plan is what Secure/Decline records.
   const addPlan = (key: string) => {
     setAddedPlans((prev) => (prev.includes(key) ? prev : [...prev, key]));
     setSelectedPlan(key);
     setShowPicker(false);
+    onPlanSelected?.(key);
   };
   const removePlan = (key: string) => {
     setAddedPlans((prev) => prev.filter((k) => k !== key));
@@ -319,10 +439,23 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
-          <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%' }}>
+        {/* Non-dismissable backdrop — tapping outside must NOT close the drop without
+            saving; the rep has to choose Secure or Decline (web `DropPriceModal` passes
+            NO `onClose` + `disableEscapeKeyDown`). And animationType="none" (web's
+            `TransitionProps={{ timeout: 0 }}`) so handing off to the chooser / declined
+            modal is instant and never fades out to reveal the un-dimmed background. */}
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }}>
+          <BlurView
+            style={StyleSheet.absoluteFill}
+            blurType={isDark ? 'dark' : 'light'}
+            blurAmount={MODAL_BLUR_AMOUNT}
+            reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+            pointerEvents="none"
+          />
+          <View style={MODAL_SCRIM} pointerEvents="none" />
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 40, padding: 24, maxHeight: '88%', ...MODAL_CARD_SHADOW }}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Header — green check + UPDATED PRICE + price + method badges */}
               <View style={{ alignItems: 'center', marginBottom: 24 }}>
@@ -354,8 +487,8 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
                       <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A', marginRight: 4 }}>$</Text>
                       <TextInput
                         style={{ flex: 1, fontSize: 16, fontWeight: '900', color: '#0F172A', padding: 0 }}
-                        value={downText}
-                        onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                        value={formatAmountInput(downText)}
+                        onChangeText={(t) => setDownText(stripAmount(t))}
                         placeholder="0" placeholderTextColor="#94A3B8" keyboardType="numeric"
                       />
                     </View>
@@ -366,7 +499,7 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
                   </View>
                 </View>
               ) : (
-                <TouchableOpacity onPress={() => setShowDown(true)} style={{ alignSelf: 'flex-start', marginBottom: 24, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: '#E2E8F0', borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity onPress={() => setShowDown(true)} style={{ alignSelf: 'center', marginBottom: 24, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: '#E2E8F0', borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name="add" size={16} color="#919EAB" />
                   <Text style={{ marginLeft: 4, fontSize: 14, fontWeight: '700', color: '#919EAB' }}>Add Down Payment</Text>
                 </TouchableOpacity>
@@ -375,45 +508,77 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
 
               <View style={{ height: 1, backgroundColor: '#F1F5F9', width: '100%', marginBottom: 20 }} />
 
-              {/* Monthly Options — financing plans, each showing its monthly on the balance */}
+              {/* Monthly Options — financing plans, each showing its monthly on the balance.
+                  Swipe a plan LEFT to delete it (matches the regular rollout's drop modal). */}
               <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 }}>Monthly Options</Text>
-              {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
-                const plan = plans[key] || ({} as DealPlan);
-                const sel = selectedPlan === key;
-                const monthly = calcMonthly(plans, balance, key);
-                return (
-                  <View key={key} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <TouchableOpacity style={{ flex: 1, marginRight: 8 }} onPress={() => setSelectedPlan(key)}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
-                        {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
+              {/* Always show the LEAD-selected payment method as its own row.
+                  Financing plans render as their own rows below; a BASIC method
+                  (check / MC-VISA-DSCVR / AMEX / ACH etc.) has no financing row, so
+                  surface it here. Driven by `leadMethod` (not `selectedPlan`) so it
+                  stays visible even after the rep selects a different plan in the
+                  popup — the lead's method must not be replaced by the new pick. It
+                  is still selectable, and shows SELECTED only when it's the active plan. */}
+              {leadMethod && !isFinancing(plans, leadMethod) && (
+                <TouchableOpacity
+                  onPress={() => setSelectedPlan(leadMethod)}
+                  activeOpacity={0.9}
+                  style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: selectedPlan === leadMethod ? '#31D076' : '#F1F5F9', backgroundColor: selectedPlan === leadMethod ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <View style={{ flex: 1, marginRight: 8, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '900', color: selectedPlan === leadMethod ? '#0F172A' : '#94A3B8', marginRight: 6 }}>{planLabelOf(plans, leadMethod)}</Text>
+                    {selectedPlan === leadMethod && (
+                      <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text>
                       </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                        <Text style={{ fontSize: 20, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }}>${Math.round(monthly).toLocaleString()}</Text>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginLeft: 2 }}>/mo</Text>
-                      </View>
-                    </TouchableOpacity>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                      <TouchableOpacity onPress={() => setSelectedPlan(key)} style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
-                        {sel && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => removePlan(key)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Ionicons name="close-circle" size={20} color="#FF5630" />
-                      </TouchableOpacity>
-                    </View>
+                    )}
                   </View>
-                );
-              })}
+                  <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: selectedPlan === leadMethod ? '#31D076' : '#E2E8F0', backgroundColor: selectedPlan === leadMethod ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                    {selectedPlan === leadMethod && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
+                  </View>
+                </TouchableOpacity>
+              )}
+              <GestureHandlerRootView>
+                {addedPlans.filter((k) => isFinancing(plans, k)).map((key) => {
+                  const plan = plans[key] || ({} as DealPlan);
+                  const sel = selectedPlan === key;
+                  const monthly = calcMonthly(plans, balance, key);
+                  return (
+                    <Animated.View key={key} layout={LinearTransition} exiting={FadeOut}>
+                      <Swipeable
+                        renderRightActions={(_prog, drag) => <SwipeDeleteAction drag={drag} onDelete={() => removePlan(key)} />}
+                        rightThreshold={40}
+                        onSwipeableWillOpen={() => removePlan(key)}
+                      >
+                        <TouchableOpacity onPress={() => setSelectedPlan(key)} activeOpacity={0.9} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
+                              {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                              <Text style={{ fontSize: 20, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8' }}>${Math.round(monthly).toLocaleString()}</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginLeft: 2 }}>/mo</Text>
+                            </View>
+                          </View>
+                          <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: sel ? '#31D076' : '#E2E8F0', backgroundColor: sel ? '#fff' : '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                            {sel && <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#31D076' }} />}
+                          </View>
+                        </TouchableOpacity>
+                      </Swipeable>
+                    </Animated.View>
+                  );
+                })}
+              </GestureHandlerRootView>
               <TouchableOpacity onPress={() => setShowPicker(true)} style={{ height: 52, borderWidth: 2, borderStyle: 'dashed', borderColor: '#31D076', borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', marginBottom: 20 }}>
                 <Text style={{ fontSize: 14, fontWeight: '900', color: '#31D076' }}>+ Add Plan</Text>
               </TouchableOpacity>
 
               {/* Actions — Decline / Secure This Price */}
               <View style={{ flexDirection: 'row', gap: 12 }}>
-                <TouchableOpacity onPress={() => onDecline({ paymentMethod: selectedPlan, downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity onPress={() => onDecline({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Decline</Text>
                 </TouchableOpacity>
-                <TouchableOpacity disabled={!canSecure} onPress={() => onSecure({ paymentMethod: selectedPlan, downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity disabled={!canSecure} onPress={() => onSecure({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '900', color: canSecure ? '#fff' : '#94A3B8' }}>Secure This Price</Text>
                 </TouchableOpacity>
               </View>
@@ -429,7 +594,7 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
               onClose={() => setShowPicker(false)}
             />
           </Pressable>
-        </Pressable>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -445,18 +610,30 @@ function DropOutcomeModal({ visible, dropPrice, method, isLowesLead, plans, drop
 function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
   visible: boolean; name: string; price: number; onSale: () => void; onDemo: () => void; onClose: () => void;
 }) {
+  const { isDark } = useTheme();
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+  // animationType="none" so the drop → chooser hand-off is instant: the dimmed
+  // backdrop is up on the same frame the drop modal disappears, never revealing the
+  // un-dimmed background (web parity — the drop dialog uses timeout:0).
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
-        <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16 }}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        <BlurView
+          style={StyleSheet.absoluteFill}
+          blurType={isDark ? 'dark' : 'light'}
+          blurAmount={MODAL_BLUR_AMOUNT}
+          reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+          pointerEvents="none"
+        />
+        <View style={MODAL_SCRIM} pointerEvents="none" />
+        <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16, ...MODAL_CARD_SHADOW }}>
           <View style={{ alignItems: 'center' }}>
             <View style={{ padding: 16, marginBottom: 24, backgroundColor: '#FFF0D9', borderRadius: 12 }}>
               <Ionicons name="document-text" size={28} color="#FF9800" />
             </View>
           </View>
           <Text style={{ fontSize: 16, fontWeight: '600', color: '#1C252E', textAlign: 'center', marginBottom: 12 }}>Result Job {name}</Text>
-          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>Most recent price: {fmt(price)}</Text>
+          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>How Would You Like to Result this Lead?</Text>
           <View style={{ gap: 12 }}>
             <TouchableOpacity onPress={onSale} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#4CBB17', alignItems: 'center' }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>Sale</Text>
@@ -474,17 +651,86 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange }: {
+/**
+ * "Price Declined" modal — port of web `deal-center/components/DeclinePriceModal.js`
+ * (and the regular rollout's copy at `CalculatorSummary` ~L1740). Web opens this
+ * the moment the drop modal closes on a decline ("keeps blur continuous, no gap
+ * between modals"), offering **Result Lead** — which results the lead as a DEMO at
+ * the most recent drop price — or **Exit**.
+ */
+function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
+  visible: boolean; declinedPrice: number; onResultLead: () => void; onClose: () => void;
+}) {
+  const { isDark } = useTheme();
+  // animationType="none" so decline → this modal is instant with no background flash.
+  return (
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        <BlurView
+          style={StyleSheet.absoluteFill}
+          blurType={isDark ? 'dark' : 'light'}
+          blurAmount={10}
+          reducedTransparencyFallbackColor={isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.5)'}
+          pointerEvents="none"
+        />
+        {/* The card needs its own elevation/shadow: on a `light` blur the backdrop
+            goes near-white, so an unshadowed white card melts into it and the two
+            read as one surface. The regular rollout's copy uses `shadow-2xl` for
+            exactly this reason. */}
+        <Pressable
+          style={{
+            backgroundColor: '#fff',
+            borderRadius: 16,
+            padding: 24,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.18,
+            shadowRadius: 24,
+            elevation: 12,
+          }}
+        >
+          <View style={{ alignItems: 'center' }}>
+            <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#FDECEA', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Ionicons name="close" size={28} color="#F44336" />
+            </View>
+          </View>
+          <Text style={{ fontSize: 18, fontWeight: '800', color: '#1C252E', textAlign: 'center', marginBottom: 12 }}>
+            Price Declined
+          </Text>
+          <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>
+            {`$${Math.round(declinedPrice || 0).toLocaleString()} was not accepted. What would you like to do?`}
+          </Text>
+          <View style={{ gap: 12 }}>
+            <TouchableOpacity onPress={onResultLead} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#FF9800', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>Result Lead</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onClose} style={{ borderRadius: 8, paddingVertical: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#637381' }}>Exit</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
   pricing: DealPricing;
+  verticals: CalculatorSchema[];
+  pricingConfig?: PricingConfig | null;
+  leadId?: string;
+  appointmentId?: string;
   onPriceChange: (id: string, price: number) => void;
-  onResult: (id: string, result: 'sale' | 'demo', price?: number) => void;
+  onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
   onDropChange: (id: string, drops: any[]) => void;
   onDiscountChange: (id: string, discount: number) => void;
   onDownPaymentChange: (id: string, downPayment: number) => void;
+  onRendersChange: (id: string, renders: any[]) => void;
+  onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
 }) {
   const { user, refreshUser } = useAuth();
   const [endPrice, setEndPrice] = useState(initialPrice ? String(initialPrice) : String(calculator.price || ''));
@@ -500,50 +746,159 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // Pending drop price waiting on the Secure/Decline modal (web `DropPriceModal`).
   const [pendingDrop, setPendingDrop] = useState(0);
   const [showDropModal, setShowDropModal] = useState(false);
+  // The index of the already-recorded drop being re-displayed (-1 = a brand-new
+  // drop). Re-securing/declining an existing drop updates it in place instead of
+  // appending a duplicate, and its saved values seed the modal.
+  const [pendingDropIndex, setPendingDropIndex] = useState(-1);
   // Sale/Demo chooser (web `showResultModal`) — opened from Result Lead or after
   // securing a drop; picking an outcome opens the full Result Lead outcome modal.
   const [showChooser, setShowChooser] = useState(false);
   const [chooserPrice, setChooserPrice] = useState(0);
+  // Web `ViewAllCalculators.declineModal` — null when hidden, else the declined price.
+  const [declinedPrice, setDeclinedPrice] = useState<number | null>(null);
+  // Down payment carried into the Result Lead modal — seeded from the drop being
+  // resulted (secured/viewed) or the accepted drop, so a down payment entered in
+  // the drop price flow prefills the outcome modal (web parity).
+  const [chooserDown, setChooserDown] = useState(0);
 
   const plans = pricing.plans;
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
+  // The "default" 1-Year monthly plan: the rep's default payment method if it's a
+  // financing plan, else the standard ~9.99% APR financing plan, else the first
+  // financing plan available (web resolves the same 9.99% default in OneYearMonthlyPlan).
+  const defaultOneYearKey = useMemo(() => {
+    const financingKeys = Object.keys(plans).filter((k) => isFinancing(plans, k));
+    if (user?.defaultPaymentMethod && isFinancing(plans, user.defaultPaymentMethod)) return user.defaultPaymentMethod;
+    return (
+      financingKeys.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) ||
+      financingKeys.find((k) => (plans[k]?.apr || 0) > 0) ||
+      financingKeys[0] ||
+      method
+    );
+  }, [plans, user?.defaultPaymentMethod, method]);
   const drops: any[] = calculator.dropPrice || [];
+  const acceptedDrop = drops.find((d) => d.status === 'accepted');
+  const activeMethod = acceptedDrop?.paymentMethod || method;
+  const activeDownPayment = Number(acceptedDrop?.downPayment) || 0;
 
-  // COST/PAR/RETAIL each reflect the selected payment plan (fee-inflated via
-  // `withPlanFee`) AND the $200 job-minimum floor — mirroring `calculateResultUtil`
-  // exactly, where every tier runs through the same `price < 200 → 200` clamp
-  // independently (fee gross-up first, then the floor). So on a tiny job all three
-  // read $200; once a tier's own fee-inflated basis clears $200 it grows normally.
-  // This is why "if cost is 200, par and retail are according to 200, not the raw
-  // price of the selected items".
+  // ── Rollout activity logs the portal timeline renders (web parity) ──────────
+  const logCalculator = { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId };
+
+  // Fire the "end price entered" log once per DISTINCT committed price (web guards on
+  // `Number(price) === Number(calculator.price)`), not on every blur — otherwise
+  // re-blurring the same value spams duplicate portal rows. This is the FIRST rollout
+  // price log the portal shows under CONFIRMED ROLLOUTS.
+  const loggedPriceRef = useRef<number | null>(calculator.price ? Number(calculator.price) : null);
+  const logEndPriceEntered = () => {
+    const uid = user?._id || user?.id;
+    const p = parseFloat(endPrice) || 0;
+    if (!uid || p <= 0 || loggedPriceRef.current === p) return;
+    const prev = loggedPriceRef.current;
+    loggedPriceRef.current = p;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: calculator.totals,
+      percentageOfRollout: markupLabel(p, calculator.totals),
+      change: {
+        fieldName: 'endPrice', fieldLabel: 'End Price', fieldValue: p, fieldCategory: 'rollout',
+        oldValue: prev ?? (calculator.price || ''), newValue: p,
+        action: 'end price entered',
+      },
+    }).catch(() => {});
+  };
+
+  // Web `handlePaymentMethodChange` → `payment method changed` (or, once the rollout
+  // is confirmed, `payment method changed for drop`). Portal reads `newPaymentMethodLabel`.
+  const logPaymentMethodChanged = (newKey: string) => {
+    const uid = user?._id || user?.id;
+    const oldKey = method;
+    if (!uid || newKey === oldKey) return;
+    const isConfirmed = !!(calculator as any).isRolloutConfirmed;
+    const currentPrice = parseFloat(endPrice) || Number(calculator.price) || 0;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: calculator.totals,
+      percentageOfRollout: markupLabel(currentPrice, calculator.totals),
+      change: {
+        fieldName: 'paymentMethod', fieldLabel: 'Payment Method', fieldValue: currentPrice,
+        fieldCategory: isConfirmed ? 'drop' : 'rollout',
+        oldValue: oldKey, newValue: currentPrice,
+        oldPaymentMethod: oldKey, newPaymentMethod: newKey,
+        oldPaymentMethodLabel: planLabelOf(plans, oldKey),
+        newPaymentMethodLabel: planLabelOf(plans, newKey),
+        action: isConfirmed ? 'payment method changed for drop' : 'payment method changed',
+      },
+    }).catch(() => {});
+  };
+
+  // Web `handleSelectPlan` → `drop price plan selected` (portal "Added Payment Plan"
+  // row). Fired when the rep adds a financing plan inside the drop-price modal.
+  const logDropPlanSelected = (planKey: string) => {
+    const uid = user?._id || user?.id;
+    if (!uid || !planKey) return;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: calculator.totals,
+      percentageOfRollout: markupLabel(pendingDrop, calculator.totals),
+      change: {
+        fieldName: 'dropPricePlan', fieldLabel: 'Drop Price Plan', fieldValue: pendingDrop, fieldCategory: 'drop',
+        oldValue: '', newValue: pendingDrop,
+        paymentPlanKey: planKey, paymentPlanLabel: planLabelOf(plans, planKey), dropPrice: pendingDrop,
+        action: 'drop price plan selected',
+      },
+    }).catch(() => {});
+  };
+
+  // COST/PAR/RETAIL are recomputed LIVE from the entered quantities × the current
+  // schema field prices (web `getCalculationResult` parity) — NOT from the stored
+  // `calculator.totals`, which for a blank-tier schema (only retail priced) carried
+  // par/cost = 0 and floored every tile to $200. `computeCalculatorTiers` resolves
+  // each tier via the company pricing config's derivation rules (par/cost derived
+  // from retail) as a PURE tier sum (this mirrors web's stored `totals`, which are
+  // pre-fee — DealCenterContext `computeTotals`).
+  const liveTotals = useMemo(
+    () => computeCalculatorTiers(calculator.entries, verticals, pricingConfig),
+    [calculator.entries, verticals, pricingConfig],
+  );
+  // The DISPLAYED tile then reproduces web `calculateResultUtil` EXACTLY, per tier:
+  //   pure tier sum  →  applyFeesToTier (static company fee, e.g. a par-only fee)
+  //   →  withPlanFee (bank-fee gross-up for the selected plan)  →  $200 floor.
+  // Applying the static fee here (not inside the sum) matches web: web stores pure
+  // totals and adds the tier fee only at render, so e.g. PAR shows `sum + parFee`
+  // (this closed the mobile↔web PAR gap where mobile showed the raw sum).
   const tiers = useMemo(() => {
-    const hasItems = calculator.totals.retail > 0;
+    const hasItems = liveTotals.retail > 0;
+    const tierValue = (key: 'cost' | 'par' | 'retail') => {
+      const withFee = applyFeesToTier(liveTotals[key], key, pricingConfig, { hasLineItems: liveTotals[key] > 0 });
+      return floorTier(withPlanFee(plans, withFee, method), hasItems);
+    };
     return [
-      { label: 'COST', value: floorTier(withPlanFee(plans, calculator.totals.cost, method), hasItems), isRetail: false },
-      { label: 'PAR', value: floorTier(withPlanFee(plans, calculator.totals.par, method), hasItems), isRetail: false },
-      { label: 'RETAIL', value: floorTier(withPlanFee(plans, calculator.totals.retail, method), hasItems), isRetail: true },
+      { label: 'COST', value: tierValue('cost'), isRetail: false },
+      { label: 'PAR', value: tierValue('par'), isRetail: false },
+      { label: 'RETAIL', value: tierValue('retail'), isRetail: true },
     ];
-  }, [calculator.totals.cost, calculator.totals.par, calculator.totals.retail, method, plans]);
-
-  const markup = useMemo(() => {
-    const price = parseFloat(endPrice) || 0;
-    if (price <= 0) return null;
-    for (const tier of [...tiers].reverse()) {
-      if (tier.value > 0 && price >= tier.value) {
-        const pct = ((price - tier.value) / tier.value * 100).toFixed(0);
-        return `${tier.label} + ${pct}%`;
-      }
-    }
-    return 'Below COST';
-  }, [endPrice, tiers]);
+  }, [liveTotals, method, plans, pricingConfig]);
 
   const categoryChips = useMemo(() => {
-    const cats = new Set<string>();
-    // Only categories with an entered value (entries now hold the full seeded
-    // field list, so untouched fields must be excluded).
-    Object.values(calculator.entries || {}).forEach((e: any) => { if (e?.categoryId && e.inputValue > 0) cats.add(e.categoryId); });
-    return Array.from(cats);
+    // Count of entered line items per category — the pill shows "Gutters (10)".
+    // Only categories with an entered value (entries hold the full seeded field
+    // list, so untouched fields must be excluded).
+    const counts: Record<string, number> = {};
+    const order: string[] = [];
+    Object.values(calculator.entries || {}).forEach((e: any) => {
+      if (e?.categoryId && e.inputValue > 0) {
+        if (counts[e.categoryId] === undefined) order.push(e.categoryId);
+        counts[e.categoryId] = (counts[e.categoryId] || 0) + 1;
+      }
+    });
+    return order.map((id) => ({ id, count: counts[id] }));
   }, [calculator.entries]);
 
   // Entered line-items, grouped by category (mirrors the old mobile locked view).
@@ -551,6 +906,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const rows = Object.values(calculator.entries || {}).filter((e: any) => e && e.inputValue > 0) as any[];
     return rows.sort((a, b) => String(a.categoryId).localeCompare(String(b.categoryId)));
   }, [calculator.entries]);
+
+  // sectionId → label so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
@@ -560,23 +918,50 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const finalPrice = drops.length ? drops[drops.length - 1].price : (calculator.price || priceNum);
 
   // ── Result-section values (mirror the regular rollout, CalculatorSummary.tsx:422-429) ──
-  // Shown live once a valid end price is entered. Schema-driven calcs have no
-  // dedicated "check to installers" screens field yet → screensCount is 0, so
-  // "End Price w/ Screens" equals the end price. MSRP grosses the price up by the
-  // Sr+Vet % + pre-order discount (both from the backend discount config), then
-  // each program subtracts its discounts.
+  // Shown live once a valid end price is entered. Computed via the unit-tested
+  // `computeRolloutResult`: MSRP/programs are DATA-DRIVEN from the backend discount
+  // config when present (web parity — includeInMsrp sum, per-program linked
+  // discounts, ≥100% clamp), else the pre-order + Sr/Vet two-program fallback.
+  // Screens (`number_of_screen`) fold into End-Price-w/-Screens + MSRP; the
+  // financing monthly base is endPrice − downPayment (excludes screens), per web.
   const discountPct = calculator.discountPercentage || pricing.defaultPreOrder;
   const seniorVetPct = pricing.seniorVetPct;
   const isDefaultDiscount = !!user?.defaultPercentage && user.defaultPercentage === discountPct;
-  const screensCount = 0;
-  const priceWithScreens = (priceNum > 0 ? priceNum : tiers[2].value) + screensCount * 75;
-  const msrp = priceWithScreens / (1 - (discountPct + seniorVetPct) / 100);
+  const screensCount = screensCountFromEntries(calculator.entries);
+  // Web parity (`PremiumQuoteCard.js:274`): the per-screen price comes from the
+  // schema's `number_of_screen` field, NOT a constant. This was omitted, so
+  // `computeRolloutResult` silently applied its legacy $75 fallback and the
+  // rollout disagreed with web whenever a company priced screens differently.
+  const screenUnitPrice = useMemo(
+    () => screenUnitPriceFromSchemas(verticals, pricingConfig),
+    [verticals, pricingConfig],
+  );
+  const downPay = calculator.downPayment || 0;
+  const rolloutResult = useMemo(
+    () =>
+      computeRolloutResult({
+        endPrice: priceNum > 0 ? priceNum : tiers[2].value,
+        screensCount,
+        screenUnitPrice,
+        discountConfig: pricing.discountConfig,
+        discountPct,
+        seniorVetPct,
+        downPayment: downPay,
+        plan: plans[method],
+      }),
+    [priceNum, tiers, screensCount, screenUnitPrice, pricing.discountConfig, discountPct, seniorVetPct, downPay, plans, method],
+  );
+  const priceWithScreens = rolloutResult.priceWithScreens;
+  const msrp = rolloutResult.msrp;
+  // Map the (fallback or config) programs onto the two-box layout: highlighted =
+  // In-Home Pre-Order, the other = 1-Year Program.
+  const inHomeProgram = rolloutResult.programs.find((p) => p.isHighlighted) || rolloutResult.programs[rolloutResult.programs.length - 1];
+  const oneYearProgram = rolloutResult.programs.find((p) => !p.isHighlighted) || rolloutResult.programs[0];
+  const oneYearGrandTotal = oneYearProgram?.grandTotal ?? msrp;
+  const preOrderGrandTotal = inHomeProgram?.grandTotal ?? msrp;
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
-  const oneYearGrandTotal = msrp - srVetDiscount;
-  const preOrderGrandTotal = msrp - srVetDiscount - preOrderDiscountVal;
-  const downPay = calculator.downPayment || 0;
-  const preOrderMonthly = calcMonthly(plans, preOrderGrandTotal - downPay, method);
+  const preOrderMonthly = rolloutResult.monthly;
   // Before lock: the breakdown auto-shows as soon as a valid end price is entered.
   // After lock: it's collapsed behind the end-price box's chevron (web parity —
   // `(price>0 && !error && !confirmed) || (confirmed && isRolloutExpanded)`).
@@ -592,7 +977,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
   };
 
+  // A confirmed rollout is a LOCKED quote: the breakdown behind the chevron is a
+  // receipt, not a form. Anything that would move MSRP / the program totals is
+  // read-only from here on (the end price input already is) — otherwise a rep
+  // could re-price a locked calculator by tapping a Pre-Order Discount tile.
+  const isLocked = !!calculator.isRolloutConfirmed;
+
   const toggleDefaultDiscount = async (next: boolean) => {
+    if (isLocked) return;
     try {
       await SettingsService.updateCalculatorsSetting({ defaultPercentage: next ? discountPct : null });
       await refreshUser?.();
@@ -604,10 +996,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
 
   const commitDownPayment = () => {
     let v = parseFloat(downText) || 0;
-    // Web parity (PremiumQuoteCard): a down payment can't exceed the end price.
-    if (priceNum > 0 && v > priceNum) {
-      FlashMessage.warning('Down payment', `Down payment cannot be greater than the end price (${fmt(priceNum)}).`);
-      v = priceNum;
+    // Web parity (PremiumQuoteCard `validatedDownPaymentChange`): a down payment
+    // can't exceed the end price. The cap reference is `rolloutPrice || calculator.price`,
+    // so it still applies when the end price was persisted but not re-typed this session.
+    const cap = priceNum > 0 ? priceNum : (calculator.price || 0);
+    if (cap > 0 && v > cap) {
+      FlashMessage.warning('Down payment', `Down payment cannot be greater than the end price (${fmt(cap)}).`);
+      v = cap;
       setDownText(String(v));
     }
     onDownPaymentChange(calculator.id, v);
@@ -628,38 +1023,162 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Mirrors the regular rollout's drop checks: below the floored cost → exceeds
     // the rollout end price → the selected plan's own minimum (minPrice-driven,
     // web parity — a plan's minPrice, e.g. 7,500, is the single source of truth).
-    const cost = effectiveCostOf(calculator);
-    if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price cannot be less than cost (${fmt(cost)})`); return; }
+    // Web `handleOpenDropPrice` floors the drop at the calc's COST tier priced at its
+    // OWN payment method (fee-inflated) — i.e. the displayed COST tile ($1,117) — NOT
+    // the fee-free cost the end-price check uses. Reuse the COST tile value so the
+    // threshold and message match web (`getCalculationResult(calc, '50', method)`).
+    const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
+    if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price must be at least the cost price (${fmt(cost)}).`); return; }
     if (priceNum > 0 && v > priceNum) { FlashMessage.error('Invalid drop price', `Drop price cannot exceed rollout end price (${fmt(priceNum)})`); return; }
+    // Wells Fargo "high" $7,500 hardcoded floor (web `handleAddDrop`) — enforced
+    // even if the backend plan omits minPrice.
+    if (WELLS_FARGO_HIGH_KEYS.includes(method) && v < WF_HIGH_MIN_PRICE) {
+      FlashMessage.error('Invalid drop price', `This Wells Fargo plan requires a minimum price of $${WF_HIGH_MIN_PRICE.toLocaleString()}`);
+      return;
+    }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
     setPendingDrop(v);
+    setPendingDropIndex(-1); // brand-new drop
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
   };
 
+  // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
+  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a
+  // fresh drop via "+ Nth Drop" (pendingDropIndex < 0) always APPENDS a new entry
+  // — "1st Dropped Price", "2nd Dropped Price", … — even at the same price, so the
+  // rep sees every round they ran. Re-negotiating an existing row via its Display
+  // button (pendingDropIndex >= 0) edits THAT row in place. (The old same-price
+  // dedup collapsed distinct rounds into one row; the multiple-payment-methods
+  // duplication it guarded against is now handled by storing all plans on a single
+  // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
+  const resolveDropTargetIndex = () => pendingDropIndex;
+
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
   // open the Result Lead outcome modal carrying the drop price.
-  const secureDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
-    const cleared = drops.map((d) => (d.status === 'accepted' ? { ...d, status: 'declined' } : d));
-    onDropChange(calculator.id, [...cleared, { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', ...data }]);
+  const secureDrop = (data: { paymentMethod: string; paymentMethods?: string[]; downPayment: number; balance: number }) => {
+    // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
+    // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
+    const pricemarkup = markupLabel(pendingDrop, calculator.totals);
+    const targetIndex = resolveDropTargetIndex();
+    const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data };
+    // Edit in place (preserving any existing `_id`, web `...item`) when targeting an
+    // existing drop; demote every OTHER accepted drop (single-accepted rule).
+    const next = drops.map((d, idx) => {
+      if (idx === targetIndex) return { ...d, ...accepted };
+      return d.status === 'accepted' ? { ...d, status: 'declined' } : d;
+    });
+    if (targetIndex < 0) next.push(accepted); // genuinely-new price → append
+    onDropChange(calculator.id, dedupeDrops(next));
+    // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
+    const uidS = user?._id || user?.id;
+    if (uidS) {
+      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
+      logRolloutChange({
+        userId: uidS,
+        leadId,
+        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
+        tiers: calculator.totals,
+        percentageOfRollout: pricemarkup,
+        change: {
+          fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
+          oldValue: lastDrop, newValue: pendingDrop,
+          isSecured: true, isDeclined: false, dropNumber, dropPrice: pendingDrop,
+          paymentPlanKey: data.paymentMethod,
+          action: 'drop price secured',
+        },
+      }).catch(() => {});
+      // Web `handleSecurePrice` also fires `drop price plan selected on secure`
+      // (portal "Selected Payment Plan" row) when the secured drop uses a financing plan.
+      if (isFinancing(pricing.plans, data.paymentMethod)) {
+        logRolloutChange({
+          userId: uidS,
+          leadId,
+          calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
+          tiers: calculator.totals,
+          percentageOfRollout: pricemarkup,
+          change: {
+            fieldName: 'dropPricePlan', fieldLabel: 'Drop Price Plan', fieldValue: pendingDrop, fieldCategory: 'drop',
+            oldValue: '', newValue: pendingDrop,
+            paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
+            dropPrice: pendingDrop, dropNumber,
+            action: 'drop price plan selected on secure',
+          },
+        }).catch(() => {});
+      }
+    }
     setShowDropModal(false);
     setShowDropInput(false);
+    setPendingDropIndex(-1);
     // Web parity: securing a drop opens the Sale/Demo chooser (→ outcome modal).
     setChooserPrice(pendingDrop);
+    setChooserDown(Number(data.downPayment) || 0);
     setShowChooser(true);
   };
 
   // Decline the pending drop → record it declined (web shows a "Price Declined"
   // confirmation; the drop then lists as Declined and Result Lead stays available).
-  const declineDrop = (data: { paymentMethod: string; downPayment: number; balance: number }) => {
-    onDropChange(calculator.id, [...drops, { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', ...data }]);
+  const declineDrop = (data: { paymentMethod: string; paymentMethods?: string[]; downPayment: number; balance: number }) => {
+    const pricemarkup = markupLabel(pendingDrop, calculator.totals);
+    const targetIndex = resolveDropTargetIndex();
+    const declined = { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined', pricemarkup, ...data };
+    // Edit the existing entry in place (preserving `_id`) or append a new declined
+    // one; declining never demotes other drops (only Secure enforces single-accepted).
+    const next = targetIndex >= 0
+      ? drops.map((d, idx) => (idx === targetIndex ? { ...d, ...declined } : d))
+      : [...drops, declined];
+    onDropChange(calculator.id, dedupeDrops(next));
+    // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
+    const uidD = user?._id || user?.id;
+    if (uidD) {
+      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
+      logRolloutChange({
+        userId: uidD,
+        leadId,
+        calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
+        tiers: calculator.totals,
+        percentageOfRollout: pricemarkup,
+        change: {
+          fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
+          oldValue: lastDrop, newValue: pendingDrop,
+          isSecured: false, isDeclined: true, dropNumber, dropPrice: pendingDrop,
+          paymentPlanKey: data.paymentMethod,
+          action: 'drop price declined',
+        },
+      }).catch(() => {});
+    }
     setShowDropModal(false);
     setShowDropInput(false);
-    FlashMessage.warning('Price declined', `${fmt(pendingDrop)} was recorded as a declined price.`);
+    setPendingDropIndex(-1);
+    // Web `handleDropDecline`: "Open DeclinePriceModal immediately — keeps blur
+    // continuous, no gap between modals". Replaces the mobile-only toast; neither
+    // web nor the regular rollout shows one, they show this modal.
+    setDeclinedPrice(pendingDrop);
   };
+
+  // Web `handleDeclineResultLead`: close the modal and result the lead as a DEMO at
+  // the MOST RECENT drop price (falling back to the rollout end price when there are
+  // no drops) — it does NOT go through the Sale/Demo chooser.
+  const declineResultLead = () => {
+    setDeclinedPrice(null);
+    const lastDrop = drops.length
+      ? Number(drops[drops.length - 1]?.price ?? drops[drops.length - 1]?.dropedPrice) || 0
+      : Number(calculator.price) || 0;
+    onResult(calculator.id, 'demo', lastDrop, activeMethod, activeDownPayment);
+  };
+
+  // The resolved `method` can be a key that ISN'T offered for this lead/company —
+  // e.g. a saved user default of `check` on a company whose dynamic plans have no
+  // `check`, or a Lowe's-only key on a standard lead. Showing that stale label on a
+  // selector whose dropdown doesn't list it is confusing, so when the method isn't
+  // one of the AVAILABLE options we prompt "Select payment method" instead.
+  const methodCategory = pricing.categories.find((c) => c.plans.includes(method));
+  const methodAvailable = !!plans[method] && !!methodCategory;
 
   // Shared payment-method block (heading follows it, matching the regular rollout:
   // name → payment method → items → cost/par/retail → end price → actions).
@@ -682,8 +1201,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         style={{ minHeight: 56, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
         <View style={{ flex: 1, paddingRight: 16 }}>
-          <Text style={{ fontSize: 8, fontWeight: '900', color: '#637381', letterSpacing: 1.5, marginBottom: 2, textTransform: 'uppercase' }}>{pricing.categories.find((c) => c.plans.includes(method))?.title || 'BASIC'}</Text>
-          <Text style={{ fontSize: 14, fontWeight: '900', color: '#212B36' }}>{planLabelOf(plans, method)}</Text>
+          <Text style={{ fontSize: 8, fontWeight: '900', color: '#637381', letterSpacing: 1.5, marginBottom: 2, textTransform: 'uppercase' }}>{methodAvailable ? (methodCategory?.title || 'BASIC') : 'PAYMENT METHOD'}</Text>
+          <Text style={{ fontSize: 10, fontWeight: '900', color: methodAvailable ? '#212B36' : '#919EAB' }}>{methodAvailable ? planLabelOf(plans, method) : 'Select payment method'}</Text>
         </View>
         <Ionicons name="chevron-down" size={16} color="#637381" />
       </TouchableOpacity>
@@ -696,7 +1215,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       <View style={{ backgroundColor: '#fff', borderWidth: 2, borderColor: calculator.isRolloutConfirmed ? '#16A34A' : '#DFE3E8', borderRadius: 24, paddingBottom: 16 }}>
         {/* 1. Heading — calculator name + confirmed/required badge (old UI parity) */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
-          <Text style={{ fontSize: 12, fontWeight: '600', color: '#212B36', flex: 1 }}>{calculator.title}</Text>
+          {/* Web `QuoteResultCard.js:153-165` renders the calculator title at
+              fontWeight 800 — mobile had it at 600, so it read as normal text. */}
+          <Text style={{ fontSize: 14, fontWeight: '900', color: '#212B36', flex: 1 }}>{calculator.title}</Text>
           {calculator.isRolloutConfirmed ? (
             <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="lock-closed" size={10} color="#fff" />
@@ -709,18 +1230,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           ) : null}
         </View>
 
-        {/* 2. Payment Method selector + Set-as-Default toggle */}
-        {paymentMethodBlock}
-
         {/* 3. Category pills */}
         {categoryChips.length > 0 && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-            {categoryChips.map((catId) => {
+            {categoryChips.map(({ id: catId, count }) => {
               const meta = categoryMeta[catId] || { label: catId, style: styleForKey(catId) };
               return (
                 <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: meta.style.bg }}>
                   <Ionicons name={meta.style.icon} size={11} color={meta.style.color} style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label} ({count})</Text>
                 </View>
               );
             })}
@@ -738,13 +1256,27 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                 </View>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{item.unit || "'"}</Text>{'  '}{item.label}
+                  <Text style={{ fontWeight: '900' }}>{item.inputValue}{unitSuffix(item)}</Text>{'  '}{labelWithSection(item.label, item.sectionId, sectionLabelMap)}
                 </Text>
               </View>
             </View>
           );
         })}
         {itemRows.length > 0 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 8, marginBottom: 14 }} />}
+
+        {/* Add Renders — pick which before/after renders show on the estimate.
+            Sits right above Payment Method (mockup parity). */}
+        <RevRenderSlots
+          leadId={leadId}
+          selected={calculator.selectedRenders || []}
+          onChange={(renders: RenderPair[]) => onRendersChange(calculator.id, renders)}
+          locked={isLocked}
+        />
+
+        {/* Payment Method selector — moved down to sit RIGHT ABOVE cost/par/retail so
+            reps remember to adjust the plan before reading the price (web parity:
+            QuoteResultCard puts PaymentPlanSelect immediately above the tiles). */}
+        {paymentMethodBlock}
 
         {/* 4. COST / PAR / RETAIL tiles */}
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 14 }}>
@@ -785,15 +1317,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 style={{ flex: 1, fontSize: 16, fontWeight: '900', color: focused ? '#16A34A' : '#212B36', padding: 0, margin: 0, height: '100%', lineHeight: 20, textAlignVertical: 'center' }}
                 value={endPrice}
                 onChangeText={(t) => { const c = t.replace(/[^0-9.]/g, ''); setEndPrice(c); onPriceChange(calculator.id, parseFloat(c) || 0); }}
-                onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+                onFocus={() => setFocused(true)} onBlur={() => { setFocused(false); logEndPriceEntered(); }}
                 placeholder="Enter End Price" placeholderTextColor="#919EAB" keyboardType="numeric"
               />
             </View>
           )}
-          {priceErr ? (
+          {/* Only the validation error renders under the end price. Web shows NO
+              caption here — the green "RETAIL + X%" markup line was mobile-only. */}
+          {!!priceErr && (
             <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 8, marginLeft: 4 }}>{priceErr}</Text>
-          ) : (
-            markup && <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A', marginTop: 8, marginLeft: 4 }}>{markup}</Text>
           )}
         </View>
 
@@ -809,15 +1341,28 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                   <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>Pre Order{'\n'}Discount</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 4 }}>Default</Text>
-                    <Switch value={isDefaultDiscount} onValueChange={toggleDefaultDiscount} trackColor={{ false: '#E2E8F0', true: '#4CBB17' }} thumbColor="#fff" />
+                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#94A3B8', marginRight: 6 }}>Default</Text>
+                    <TouchableOpacity
+                      disabled={isLocked}
+                      onPress={() => toggleDefaultDiscount(!isDefaultDiscount)}
+                      style={{ width: 32, height: 20, borderRadius: 10, justifyContent: 'center', paddingHorizontal: 4, backgroundColor: isDefaultDiscount ? '#22C55E' : '#CBD5E1', alignItems: isDefaultDiscount ? 'flex-end' : 'flex-start', opacity: isLocked ? 0.5 : 1 }}
+                    >
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff' }} />
+                    </TouchableOpacity>
                   </View>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 6 }}>
                   {pricing.preOrderOptions.map((d) => {
                     const active = discountPct === d;
                     return (
-                      <TouchableOpacity key={d} onPress={() => onDiscountChange(calculator.id, d)} style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff' }}>
+                      <TouchableOpacity
+                        key={d}
+                        disabled={isLocked}
+                        onPress={() => onDiscountChange(calculator.id, d)}
+                        // Locked: the chosen % still reads clearly, the rest fade
+                        // out so the row presents as a record, not a choice.
+                        style={{ flex: 1, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: active ? '#4CBB17' : '#E2E8F0', backgroundColor: active ? '#4CBB170D' : '#fff', opacity: isLocked && !active ? 0.4 : 1 }}
+                      >
                         <Text style={{ fontSize: 12, fontWeight: '900', color: active ? '#15803D' : '#94A3B8' }}>{d}%</Text>
                       </TouchableOpacity>
                     );
@@ -841,6 +1386,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Text style={{ fontSize: 11, fontWeight: '900', color: '#94A3B8' }}>Grand Total</Text>
                   <Text style={{ fontSize: 13, fontWeight: '900', color: '#1C252E' }}>{fmt(oneYearGrandTotal)}</Text>
                 </View>
+                {/* 1-Year Program monthly payment — match In-Home or the rep's default,
+                    or override with any financing plan (may be "worse" than In-Home). */}
+                <OneYearMonthlyPlan
+                  plans={plans}
+                  categories={pricing.categories}
+                  inHomeMethod={method}
+                  defaultKey={defaultOneYearKey}
+                  base={oneYearGrandTotal}
+                  value={calculator.oneYearMonthlyPlan ?? null}
+                  onChange={(v) => onOneYearMonthlyChange(calculator.id, v)}
+                  locked={isLocked}
+                />
               </View>
 
               <View style={{ flex: 1, borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 16, overflow: 'hidden' }}>
@@ -862,8 +1419,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginRight: 4, lineHeight: 14 }}>$</Text>
                       <TextInput
                         style={{ flex: 1, fontSize: 11, fontWeight: '900', color: '#1C252E', padding: 0, margin: 0, height: '100%', lineHeight: 14, textAlignVertical: 'center' }}
-                        value={downText}
-                        onChangeText={(t) => setDownText(t.replace(/[^0-9.]/g, ''))}
+                        value={formatAmountInput(downText)}
+                        onChangeText={(t) => setDownText(stripAmount(t))}
                         onEndEditing={commitDownPayment}
                         onBlur={commitDownPayment}
                         placeholder="Down Payment"
@@ -900,13 +1457,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             </View>
           </View>
         )}
-
-        {/* Unconfirmed prompt (stays inside card) */}
-        {!calculator.isRolloutConfirmed && (
-          <View style={{ alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14 }}>
-            <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>Enter price, then confirm below to lock</Text>
-          </View>
-        )}
       </View>
 
       {/* ── Outside card: Installers Check + Drops + Actions (old UI parity) ── */}
@@ -915,20 +1465,32 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           {/* Installers Check bar */}
           <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#1C252E' }}>Check to installers (screens)</Text>
-            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(screensCount * 75)}</Text>
+            {/* Reuse the computed screensCost rather than re-deriving it — a second
+                copy of the math is exactly how this drifted from the schema price. */}
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#16A34A' }}>{fmt(rolloutResult.screensCost)}</Text>
           </View>
 
           {/* Drops list with old-UI View/Unselect/Display */}
           {drops.map((d, i) => {
             const ordinal = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][i] || `${i + 1}th`;
+            // Web parity (`ViewAllCalculators.js:472-473` hydration): secured and
+            // declined are INDEPENDENT positive tests — `status === 'accepted'` and
+            // `status === 'declined'`. Mobile derived secured as `!declined`, which is
+            // strictly weaker: a drop with a missing/unknown status rendered SECURED
+            // while the demotion (`=== 'accepted'`, line ~866) and the tab lock icon
+            // both ignored it, so it could never be cleared.
             const declined = d.status === 'declined';
-            const secured = !declined;
+            const secured = d.status === 'accepted';
             const dp = d.price ?? d.dropedPrice ?? 0;
             return (
               <View key={i} style={{ marginBottom: 24 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#16A34A', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
+                    {/* Web parity (QuoteResultCard): the "Nth Dropped Price" label is
+                        green ONLY for the secured drop; locked/declined drops use the
+                        muted secondary gray (web `isSecured ? '#2e7d32' : text.secondary`).
+                        Was hardcoded green for every row. */}
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: secured ? '#16A34A' : '#64748B', marginRight: 8, letterSpacing: -0.3 }}>{ordinal} Dropped Price</Text>
                     {secured && (
                       <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>✓ SECURED</Text>
@@ -937,12 +1499,17 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     {!declined && (
-                      <TouchableOpacity onPress={() => { setChooserPrice(dp); setShowChooser(true); }}>
+                      <TouchableOpacity onPress={() => { setChooserPrice(dp); setChooserDown(Number(d.downPayment) || 0); setShowChooser(true); }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: secured ? '#16A34A' : '#64748B' }}>View</Text>
                       </TouchableOpacity>
                     )}
                     {secured && (
-                      <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.filter((_, idx) => idx !== i))}>
+                      // Unselect DECLINES the secured drop (keeps it in the list, marked
+                      // declined) — it does NOT remove it. Mirrors the regular rollout's
+                      // handleUnselectDrop ({ secured:false, declined:true }); here the
+                      // dynamic drop model uses status='declined'. Was filtering the drop
+                      // out entirely, losing the record.
+                      <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2)))}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
                       </TouchableOpacity>
                     )}
@@ -953,8 +1520,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                     <TouchableOpacity
                       onPress={() => {
-                        // Display action — in old UI opens the drop modal for re-negotiation
+                        // Display action — in old UI opens the drop modal for re-negotiation,
+                        // seeded with this drop's saved plan + down payment (index i).
                         setPendingDrop(dp);
+                        setPendingDropIndex(i);
                         setShowDropModal(true);
                       }}
                       style={{ paddingHorizontal: 24, paddingVertical: 8, borderRadius: 8, backgroundColor: secured ? '#22C55E' : '#E2E8F0' }}
@@ -975,9 +1544,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                 <Text style={{ fontSize: 14, fontWeight: '900', color: '#94A3B8', marginRight: 8 }}>$</Text>
                 <TextInput
                   style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1C252E' }}
-                  value={dropText}
-                  onChangeText={(t) => setDropText(t.replace(/[^0-9.]/g, ''))}
+                  // State stays the raw digits (openDrop parseFloats it); only the
+                  // display is comma-grouped.
+                  value={formatAmountInput(dropText)}
+                  onChangeText={(t) => setDropText(stripAmount(t))}
                   onSubmitEditing={openDrop}
+                  // iOS's numeric pad has NO return key, so `onSubmitEditing` never
+                  // fires there and focusing out dropped the typed price on the
+                  // floor; Android's numeric IME has a submit action, hence the
+                  // platform split. The regular rollout (`CalculatorSummary`) already
+                  // runs the same commit from both handlers. `openDrop` no-ops on an
+                  // empty/zero value, so a blur with nothing typed does nothing.
+                  onBlur={Platform.OS === 'ios' ? openDrop : undefined}
                   placeholder="Enter price..."
                   placeholderTextColor="#919EAB"
                   keyboardType="numeric"
@@ -1006,7 +1584,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => { setChooserPrice(finalPrice); setShowChooser(true); }}
+              onPress={() => { setChooserPrice(finalPrice); setChooserDown(activeDownPayment); setShowChooser(true); }}
               style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F97316', backgroundColor: '#fff' }}
             >
               <Ionicons name="document-text-outline" size={16} color="#EA580C" style={{ marginBottom: 2 }} />
@@ -1025,35 +1603,66 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         price={priceNum}
         plans={plans}
         categories={pricing.categories}
-        onSelect={(key) => { onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false); }}
+        onSelect={(key) => {
+          // Web parity (CalculatorSummary.handlePaymentPlanSelect): warn via a toast
+          // when the method is switched on a rollout whose price is already locked —
+          // the dynamic flow previously changed it silently with no feedback.
+          if (key !== method) {
+            if (WELLS_FARGO_HIGH_KEYS.includes(key) && priceNum > 0 && priceNum < WF_HIGH_MIN_PRICE) {
+              FlashMessage.warning(`Payment plan changed - this Wells Fargo plan requires a minimum end price of $${WF_HIGH_MIN_PRICE.toLocaleString()}. Please update the end price.`);
+            } else if (calculator.isRolloutConfirmed && priceNum > 0) {
+              FlashMessage.warning(`Payment method updated - the rollout price $${priceNum.toLocaleString()} is already confirmed.`);
+            }
+          }
+          onPaymentMethodChange(calculator.id, key);
+          setShowPlanPicker(false);
+          logPaymentMethodChanged(key); onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false);
+        }}
         onClose={() => setShowPlanPicker(false)}
       />
 
       <DropOutcomeModal
         visible={showDropModal}
         dropPrice={pendingDrop}
-        method={method}
+        // Pre-select the ACTIVE payment method when opening a fresh drop: the plan
+        // from the currently-accepted drop if one exists, else the calculator's
+        // method. So the popup opens with the method the rep is already on (shown in
+        // the rollout card / used on the last secured drop) highlighted — they can
+        // still switch it, and Secure/Decline saves whatever is selected.
+        method={activeMethod}
+        // Base lead/calculator method (e.g. AMEX) — always shown as its own row,
+        // even when Displaying a drop secured with a different financing plan.
+        calculatorMethod={method}
+        existingDrop={pendingDropIndex >= 0 ? drops[pendingDropIndex] : null}
         isLowesLead={isLowesLead}
         plans={plans}
         dropAddCategories={pricing.dropAddCategories}
         onSecure={secureDrop}
         onDecline={declineDrop}
-        onClose={() => setShowDropModal(false)}
+        onPlanSelected={logDropPlanSelected}
+        onClose={() => { setShowDropModal(false); setPendingDropIndex(-1); }}
       />
 
       <ResultJobChooser
         visible={showChooser}
         name={calculator.title}
         price={chooserPrice}
-        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice); }}
-        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice); }}
+        onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, activeMethod, chooserDown); }}
+        onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, activeMethod, chooserDown); }}
         onClose={() => setShowChooser(false)}
+      />
+
+      <DeclinedPriceModal
+        visible={declinedPrice !== null}
+        declinedPrice={declinedPrice || 0}
+        onResultLead={declineResultLead}
+        onClose={() => setDeclinedPrice(null)}
       />
     </>
   );
 }
 
-export function RolloutView({ calculators, verticals, pricing, isLowesLead = false, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -1076,6 +1685,42 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
   const enteredCount = visibleCalculators.filter((c) => effectivePrice(c) > 0).length;
   const progress = visibleCalculators.length > 0 ? (enteredCount / visibleCalculators.length) * 100 : 0;
   const selectedCalc = visibleCalculators.find((c) => c.id === activeTabId) || visibleCalculators[0];
+
+  // Web parity (ViewAllCalculators): auto-confirm after 10 minutes of inactivity.
+  // Track the last time each calculator's price or payment method was changed.
+  const AUTO_CONFIRM_DELAY = 600000; // 10 min
+  const rolloutLastChangedRef = useRef<Record<string, number>>({});
+  const onConfirmRolloutsRef = useRef(onConfirmRollouts);
+  onConfirmRolloutsRef.current = onConfirmRollouts;
+
+  const checkAndAutoConfirm = useCallback(async (calc: CalculatorTab) => {
+    if (calc.isRolloutConfirmed) return;
+    if (/^\d+$/.test((calc.title || '').trim())) return; // empty calc
+    const enteredPrice = prices[calc.id] ?? calc.price ?? 0;
+    if (enteredPrice <= 0) return;
+    const lastChanged = rolloutLastChangedRef.current[calc.id];
+    if (!lastChanged) return;
+    const elapsed = Date.now() - lastChanged;
+    if (elapsed < AUTO_CONFIRM_DELAY) return;
+    const method = resolveMethod(calc, user?.defaultPaymentMethod, pricing.defaultMethod);
+    const err = endPriceError(pricing.plans, enteredPrice, calc, method);
+    if (err) return;
+    onConfirmRolloutsRef.current?.([{ id: calc.id, price: enteredPrice }]);
+  }, [prices, pricing, user]);
+
+  // Check on mount and every 30 seconds (web parity: mount + polling interval).
+  useEffect(() => {
+    if (selectedCalc) checkAndAutoConfirm(selectedCalc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!visibleCalculators.length) return;
+    const interval = setInterval(() => {
+      visibleCalculators.forEach((calc) => checkAndAutoConfirm(calc));
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [visibleCalculators, checkAndAutoConfirm]);
 
   // Map categoryId -> { label, style } across all verticals so quote-card pills
   // and item rows read nicely. Icon/color are schema-driven (Iconify → Ionicons).
@@ -1160,13 +1805,25 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
               initialPrice={effectivePrice(selectedCalc)}
               categoryMeta={categoryMeta}
               isLowesLead={isLowesLead}
+              leadId={leadId}
+              appointmentId={appointmentId}
               pricing={pricing}
-              onPriceChange={(id, price) => setPrices((p) => ({ ...p, [id]: price }))}
-              onResult={(id, result, price) => onResultJob?.(id, result, price)}
-              onPaymentMethodChange={(id, m) => onPaymentMethodChange?.(id, m)}
+              verticals={verticals || []}
+              pricingConfig={pricingConfig}
+              onPriceChange={(id, price) => {
+                setPrices((p) => ({ ...p, [id]: price }));
+                rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
+              }}
+              onResult={(id, result, price, paymentMethod, downPayment) => onResultJob?.(id, result, price, paymentMethod, downPayment)}
+              onPaymentMethodChange={(id, m) => {
+                onPaymentMethodChange?.(id, m);
+                rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
+              }}
               onDropChange={(id, drops) => onDropChange?.(id, drops)}
               onDiscountChange={(id, d) => onDiscountChange?.(id, d)}
-              onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)} />
+              onDownPaymentChange={(id, dp) => onDownPaymentChange?.(id, dp)}
+              onRendersChange={(id, renders) => onRendersChange?.(id, renders)}
+              onOneYearMonthlyChange={(id, plan) => onOneYearMonthlyChange?.(id, plan)} />
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 80 }}>
               <Ionicons name="cube-outline" size={44} color="#CBD5E1" />
@@ -1207,11 +1864,51 @@ export function RolloutView({ calculators, verticals, pricing, isLowesLead = fal
                 }
               }
               const confirmed = pending.map((c) => ({ id: c.id, price: effectivePrice(c) }));
+              // Web parity (ViewAllCalculators.js:1559): one `rollout confirmed`
+              // rollout log per calculator being confirmed.
+              const uidC = user?._id || user?.id;
+              if (uidC) {
+                pending.forEach((c) => {
+                  const p = effectivePrice(c);
+                  logRolloutChange({
+                    userId: uidC,
+                    leadId,
+                    calculator: { id: c.id, title: c.title, appointmentId: (c as any).appointmentId || appointmentId },
+                    tiers: c.totals,
+                    percentageOfRollout: markupLabel(p, c.totals),
+                    change: {
+                      fieldName: 'rolloutConfirmed', fieldLabel: 'Rollout Confirmed',
+                      fieldValue: p, fieldCategory: 'rollout', oldValue: '', newValue: p,
+                      action: 'rollout confirmed',
+                    },
+                  }).catch(() => {});
+                });
+              }
               onConfirmRollouts?.(confirmed);
+              // Just confirm — STAY on the rollout screen. Navigating away here raced
+              // the calculators' debounced save (the screen unmounted before the PUT
+              // flushed, so the confirmed price could be lost). Once every rollout is
+              // confirmed, the "Jobs Built — Back to Tools" button below appears and is
+              // the only thing that navigates to the tools menu.
+              FlashMessage.success('Rollouts confirmed', 'Tap “Jobs Built — Back to Tools” when ready.');
             }} disabled={!allHavePrices} style={{ minWidth: 200, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: allHavePrices ? '#4CBB17' : 'rgba(145,158,171,0.12)' }}>
               <Text style={{ fontSize: 14, fontWeight: '700', textAlign: 'center', color: allHavePrices ? '#fff' : 'rgba(145,158,171,0.4)' }}>Confirm Rollouts</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      )}
+
+      {/* All rollouts confirmed → the jobs are built; a single CTA takes the rep back
+          to the Lead Center tools to present (map / pitch book / Investment Center). */}
+      {visibleCalculators.length > 0 && allConfirmed && (
+        <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
+          <TouchableOpacity
+            onPress={() => onRolloutsConfirmedDone?.()}
+            style={{ maxWidth: 1200, alignSelf: 'center', width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#4CBB17', borderRadius: 12, paddingVertical: 15 }}
+          >
+            <Ionicons name="checkmark" size={18} color="#fff" />
+            <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Jobs Built — Back to Tools</Text>
+          </TouchableOpacity>
         </View>
       )}
     </KeyboardAvoidingView>

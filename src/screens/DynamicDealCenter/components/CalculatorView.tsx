@@ -12,11 +12,18 @@ import {
   resolveConditionalFixedValue,
 } from '../utils/field-dependency';
 import { directSectionId } from '../utils/build-all-entries';
+import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-util';
+import { JobTrackerButton } from './JobTrackerButton';
+import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
+import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
+import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface CalculatorTabLite {
   id: string;
   title: string;
   isRolloutConfirmed?: boolean;
+  paymentMethod?: string;
 }
 
 interface CalculatorViewProps {
@@ -24,6 +31,8 @@ interface CalculatorViewProps {
   verticals: CalculatorSchema[];
   entries: Record<string, CalculatorEntry>;
   onEntryChange: (fieldId: string, entry: CalculatorEntry) => void;
+  /** Clear one category's fields in a single pass (fires one `section cleared` log). */
+  onClearSection?: (categoryId: string, categoryLabel: string) => void;
   totals: CalculatorTotals;
   readOnly?: boolean;
   tabs?: CalculatorTabLite[];
@@ -40,6 +49,21 @@ interface CalculatorViewProps {
   price?: number;
   /** Confirmed drop-price list — the last drop shows as "Updated End Price". */
   drops?: any[];
+  /** Company pricing config — the locked receipt adds the per-tier static fee (web parity). */
+  pricingConfig?: PricingConfig | null;
+  /**
+   * Resolved payment plans (web `paymentPlans`) — the locked receipt grosses each
+   * COST/PAR/RETAIL tier up by the selected plan's bank fee, exactly like the live
+   * rollout tiles and web `calculateResultUtil`. Without this the locked tiles
+   * showed the pre-fee sum (e.g. COST $972 vs web's fee-inflated $1,117).
+   */
+  plans?: Record<string, DealPlan>;
+  /** Lead-aware default payment method (web `getDefaultPaymentMethod`) — fallback when the calc/user have none. */
+  defaultMethod?: string;
+  /** Resolved appointment id — enables the "Add This Job to Job Tracker" button. */
+  appointmentId?: string;
+  /** Lowe's lead flag — drives the job-tracker modal's payment-method grouping. */
+  isLowesLead?: boolean;
 }
 
 type CatStyle = SchemaStyle;
@@ -145,12 +169,19 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
           placeholderTextColor="#919EAB"
           keyboardType="numeric"
         />
-        {/* Right side shows only the price (name + price) — the sqft/ft unit is
-            intentionally omitted to match the regular calculator form, where the
-            per-row `unit` is never surfaced (it lives in the field label instead). */}
-        {!!field.price && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', borderLeftWidth: 1, borderLeftColor: '#919EAB33', paddingLeft: 12, marginLeft: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>${field.price.retail}</Text>
+        {/* Right block: green retail PRICE with the measurement unit joined by a
+            slash — "$650/unit" (web `dynamic-field.js` parity). A unit-less field
+            shows just the price ("$650"); a price-less field shows the bare unit. */}
+        {(!!field.price || !!field.unit) && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
+            {!!field.price ? (
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>
+                ${field.price.retail}
+                {!!field.unit && <Text style={{ color: '#919EAB' }}>/{field.unit}</Text>}
+              </Text>
+            ) : (
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#919EAB' }}>{field.unit}</Text>
+            )}
           </View>
         )}
       </View>
@@ -163,10 +194,11 @@ function FieldRow({ field, value, onChange, readOnly, highlightColor, isFixed, f
  * (rounded white card, icon-circle header, chevron toggle) with schema-driven
  * `FieldRow` inputs stacked inside.
  */
-function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, onToggle, allFields, formState }: {
+function CategoryCard({ category, entries, onEntryChange, onClearSection, readOnly, expanded, onToggle, allFields, formState }: {
   category: CalculatorCategory;
   entries: Record<string, CalculatorEntry>;
   onEntryChange: (fieldId: string, entry: CalculatorEntry) => void;
+  onClearSection?: (categoryId: string, categoryLabel: string) => void;
   readOnly?: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -182,20 +214,30 @@ function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, on
 
   const handleFieldChange = useCallback((field: CalculatorField, sectionId: string, value: number) => {
     const price = field.price || { cost: 0, par: 0, retail: 0 };
+    // Preserve the seeded `productName` (build-all-entries sets it from schema.name)
+    // instead of reading a non-existent `category.productName`, which blanked it on
+    // every touched field and diverged from the zero-seed for the same field.
+    const productName = (entries[field.id] as any)?.productName ?? (category as any)._productName ?? (category as any).productName ?? '';
     onEntryChange(field.id, {
-      fieldId: field.id, categoryId: category.id, sectionId, productName: (category as any).productName || '',
+      fieldId: field.id, categoryId: category.id, sectionId, productName,
       name: field.name, label: field.label, unit: field.unit || '',
       inputValue: value,
       computed: { cost: value * price.cost, par: value * price.par, retail: value * price.retail },
       pricingAtTimeOfEntry: { cost: String(price.cost), par: String(price.par), retail: String(price.retail) },
     });
-  }, [category, onEntryChange]);
+  }, [category, onEntryChange, entries]);
 
   // Clear all fields in this category (mirrors web's category "Clear" button).
+  // Prefer the hook's single-pass clear (one `section cleared` activity event, web
+  // parity); fall back to the per-field loop only if no handler is wired.
   const clearCategory = useCallback(() => {
+    if (onClearSection) {
+      onClearSection(category.id, category.label);
+      return;
+    }
     directFields.forEach((f) => handleFieldChange(f, directSectionId(category.id), 0));
     (category.sections || []).forEach((s) => s.fields.forEach((f) => handleFieldChange(f, s.id, 0)));
-  }, [directFields, category.sections, category.id, handleFieldChange]);
+  }, [onClearSection, category.id, category.label, directFields, category.sections, handleFieldChange]);
 
   const renderField = (field: CalculatorField, sectionId: string) => {
     const highlightColor = resolveConditionalFieldHighlight(field, formState, allFields);
@@ -258,23 +300,34 @@ function CategoryCard({ category, entries, onEntryChange, readOnly, expanded, on
 }
 
 /**
- * Job Summary card — mirrors the old deal center summary block: entered items
- * grouped by category with an item count. Spans every vertical the calculator
- * has entries in.
+ * Job Summary card — matches the web deal center summary block: one card with a
+ * header + item-count badge, a single row of category pills across every vertical
+ * with entries, then a FLAT list of the entered items (each row carries its own
+ * category icon/color). The items are NOT split into separate per-category
+ * sub-sections (that was the mobile-only divergence). Spans every vertical the
+ * calculator has entries in.
  */
-function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEntry>; catMeta: Record<string, { label: string; style: CatStyle }> }) {
-  const grouped = useMemo(() => {
-    const map: Record<string, CalculatorEntry[]> = {};
+function JobSummary({ entries, catMeta, sectionLabelMap }: { entries: Record<string, CalculatorEntry>; catMeta: Record<string, { label: string; style: CatStyle }>; sectionLabelMap: Record<string, string> }) {
+  // Entered items ordered by category (so rows of the same category stay
+  // together), flattened into a single list — web parity.
+  const { items, categories } = useMemo(() => {
+    const grouped: Record<string, CalculatorEntry[]> = {};
+    const order: string[] = [];
     Object.values(entries).forEach((e) => {
       if (!e || e.inputValue <= 0) return;
       const key = e.categoryId || 'other';
-      if (!map[key]) map[key] = [];
-      map[key].push(e);
+      if (!grouped[key]) { grouped[key] = []; order.push(key); }
+      grouped[key].push(e);
     });
-    return map;
+    return {
+      items: order.flatMap((key) => grouped[key]),
+      categories: order,
+    };
   }, [entries]);
 
-  const totalItems = Object.values(grouped).reduce((n, items) => n + items.length, 0);
+  const metaFor = (catId: string) =>
+    catMeta[catId] || { label: catId, style: { color: '#637381', icon: 'list', bg: '#F4F6F8' } };
+  const totalItems = items.length;
 
   return (
     <View style={{ marginBottom: 24, backgroundColor: '#F8F7FF', borderRadius: 32, borderWidth: 1, borderColor: '#E5D9FF' }}>
@@ -293,38 +346,44 @@ function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEn
         </View>
       </View>
 
-      <View style={{ paddingHorizontal: 20 }}>
+      <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
         {totalItems === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 24, paddingBottom: 32 }}>
             <Ionicons name="cube-outline" size={30} color="#CBD5E1" />
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', marginTop: 8 }}>No items yet — enter values above</Text>
           </View>
         ) : (
-          Object.entries(grouped).map(([catId, items]) => {
-            const meta = catMeta[catId] || { label: catId, style: { color: '#637381', icon: 'list', bg: '#F4F6F8' } };
-            return (
-              <View key={catId} style={{ marginBottom: 24 }}>
-                <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: meta.style.bg }}>
-                    <Ionicons name={meta.style.icon} size={14} color={meta.style.color} />
-                    <Text style={{ marginLeft: 8, fontSize: 10, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
+          <>
+            {/* All category pills in a single row (web parity) */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              {categories.map((catId) => {
+                const meta = metaFor(catId);
+                return (
+                  <View key={catId} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: meta.style.bg }}>
+                    <Ionicons name={meta.style.icon} size={13} color={meta.style.color} />
+                    <Text style={{ marginLeft: 6, fontSize: 11, fontWeight: '900', color: meta.style.color }}>{meta.label}</Text>
                   </View>
-                </View>
-                <View style={{ gap: 12 }}>
-                  {items.map((item) => (
-                    <View key={item.fieldId} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#F4F6F8' }}>
-                      <View style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 16, backgroundColor: meta.style.bg }}>
-                        <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>{item.inputValue}{item.unit || "'"} {item.label}</Text>
-                      </View>
+                );
+              })}
+            </View>
+
+            {/* Flat list of entered items */}
+            <View style={{ gap: 12 }}>
+              {items.map((item) => {
+                const meta = metaFor(item.categoryId || 'other');
+                return (
+                  <View key={item.fieldId} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#F4F6F8' }}>
+                    <View style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 16, backgroundColor: meta.style.bg }}>
+                      <Ionicons name={meta.style.icon} size={18} color={meta.style.color} />
                     </View>
-                  ))}
-                </View>
-              </View>
-            );
-          })
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1C252E' }}>{item.inputValue}{unitSuffix(item)} {labelWithSection(item.label, item.sectionId, sectionLabelMap)}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </>
         )}
       </View>
     </View>
@@ -336,13 +395,16 @@ function JobSummary({ entries, catMeta }: { entries: Record<string, CalculatorEn
  * center `LockedCalculatorView` (`CalculatorForm.tsx`). Rendered instead of the
  * editable category list once a tab's rollout price is confirmed (`readOnly`).
  */
-function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: {
+function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals, plans, method }: {
   name: string;
   entries: Record<string, CalculatorEntry>;
-  totals: CalculatorTotals;
   catMeta: Record<string, { label: string; style: CatStyle }>;
   price: number;
   drops: any[];
+  pricingConfig?: PricingConfig | null;
+  verticals: CalculatorSchema[];
+  plans?: Record<string, DealPlan>;
+  method?: string;
 }) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -353,8 +415,11 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: 
   const items = useMemo(() => (
     Object.values(entries)
       .filter((e) => e && e.inputValue > 0)
-      .map((e) => ({ value: e.inputValue, unit: e.unit, label: e.label, categoryId: e.categoryId }))
+      .map((e) => ({ value: e.inputValue, unit: e.unit, label: e.label, categoryId: e.categoryId, sectionId: e.sectionId }))
   ), [entries]);
+
+  // sectionId → label, so item rows read "5' 5" Gutter/DS/E (All Stories)" (web parity).
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
   // Distinct categories among entered items + per-category counts.
   const categoryCounts = useMemo(() => {
@@ -366,12 +431,27 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: 
 
   const visibleItems = selectedCat ? items.filter((it) => it.categoryId === selectedCat) : items;
 
+  const liveTotals = useMemo(
+    () => computeCalculatorTiers(entries, verticals, pricingConfig),
+    [entries, verticals, pricingConfig],
+  );
+
   // $200 job-minimum floor per tile (only once there's a real retail total).
-  const floorTier = (v: number) => (totals.retail > 0 && v < 200 ? 200 : v);
+  const floorTier = (v: number) => (liveTotals.retail > 0 && v < 200 ? 200 : v);
+  // Reproduce web `calculateResultUtil` EXACTLY, per tier — matching the live rollout
+  // tiles so the values don't change on lock:
+  //   pure tier sum  →  applyFeesToTier (static company fee, e.g. a par-only fee)
+  //   →  withPlanFee (bank-fee gross-up for the confirmed plan)  →  $200 floor.
+  // The plan gross-up was previously missing here, so a financing-plan calc showed the
+  // pre-fee sum (COST $972) instead of web's fee-inflated tile (COST $1,117).
+  const tierValue = (v: number, key: 'cost' | 'par' | 'retail') => {
+    const withFee = applyFeesToTier(v, key, pricingConfig, { hasLineItems: v > 0 });
+    return floorTier(withPlanFee(plans || {}, withFee, method));
+  };
   const tiers = [
-    { label: 'COST', value: floorTier(totals.cost), isRetail: false },
-    { label: 'PAR', value: floorTier(totals.par), isRetail: false },
-    { label: 'RETAIL', value: floorTier(totals.retail), isRetail: true },
+    { label: 'COST', value: tierValue(liveTotals.cost, 'cost'), isRetail: false },
+    { label: 'PAR', value: tierValue(liveTotals.par, 'par'), isRetail: false },
+    { label: 'RETAIL', value: tierValue(liveTotals.retail, 'retail'), isRetail: true },
   ];
 
   const lastDrop = drops.length > 0 ? drops[drops.length - 1] : null;
@@ -429,7 +509,7 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: 
                     <Ionicons name={style.icon} size={18} color={style.color} />
                   </View>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C252E', flex: 1 }}>
-                    <Text style={{ fontWeight: '900' }}>{item.value}{item.unit || "'"}</Text>{'  '}{item.label}
+                    <Text style={{ fontWeight: '900' }}>{item.value}{unitSuffix(item)}</Text>{'  '}{labelWithSection(item.label, item.sectionId, sectionLabelMap)}
                   </Text>
                 </View>
               </View>
@@ -484,10 +564,18 @@ function LockedCalculatorView({ name, entries, totals, catMeta, price, drops }: 
 }
 
 export function CalculatorView({
-  verticals, entries, onEntryChange, totals, readOnly = false,
+  verticals, entries, onEntryChange, onClearSection, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
-  price = 0, drops = [],
+  price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig, plans, defaultMethod,
 }: CalculatorViewProps) {
+  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  const { user } = useAuth();
+  // Payment method the locked receipt prices against — resolved exactly like the
+  // live rollout view (`RolloutView.resolveMethod`): the calc's own saved method,
+  // else the user default, else the lead-aware default. Drives the tier bank-fee.
+  const lockedMethod = activeTab?.paymentMethod || user?.defaultPaymentMethod || defaultMethod || 'check';
+  // sectionId → label so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)".
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; tabId: string; name: string }>({ visible: false, tabId: '', name: '' });
   const [selectedVerticalId, setSelectedVerticalId] = useState<string | undefined>(verticals[0]?.id);
@@ -561,7 +649,13 @@ export function CalculatorView({
   }, [entries]);
 
   // Adapt the id-based tab model to the index-based draggable-tabs component.
-  const tabCalcs = useMemo(() => tabs.map((t) => ({ _id: t.id, name: /^\d+$/.test(t.title) ? '' : t.title, isRolloutConfirmed: t.isRolloutConfirmed })), [tabs]);
+  const tabCalcs = useMemo(() => tabs.map((t) => ({
+    _id: t.id,
+    // Numeric draft titles are internal identifiers. New tabs intentionally
+    // remain untitled and display only their overflow menu.
+    name: /^\d+$/.test(t.title) ? '' : t.title,
+    isRolloutConfirmed: t.isRolloutConfirmed,
+  })), [tabs]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
   const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
@@ -589,7 +683,6 @@ export function CalculatorView({
                 >
                   <Ionicons name={style.icon} size={15} color={isActive ? '#fff' : style.color} style={{ marginRight: 6 }} />
                   <Text style={{ fontSize: 13, fontWeight: isActive ? '800' : '600', color: isActive ? '#fff' : '#637381' }}>{name}</Text>
-                  {isActive && <Ionicons name="close" size={14} color="#fff" style={{ marginLeft: 6, opacity: 0.85 }} />}
                 </TouchableOpacity>
               );
             })}
@@ -597,15 +690,18 @@ export function CalculatorView({
         </View>
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 140 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {readOnly ? (
           <LockedCalculatorView
             name={tabs.find((t) => t.id === activeTabId)?.title || 'Calculator'}
             entries={entries}
-            totals={totals}
             catMeta={catMeta}
             price={price}
             drops={drops}
+            pricingConfig={pricingConfig}
+            verticals={verticals}
+            plans={plans}
+            method={lockedMethod}
           />
         ) : (
           <>
@@ -616,6 +712,7 @@ export function CalculatorView({
                   category={cat}
                   entries={entries}
                   onEntryChange={onEntryChange}
+                  onClearSection={onClearSection}
                   readOnly={readOnly}
                   expanded={expanded[cat.id] !== false}
                   onToggle={() => setExpanded((p) => ({ ...p, [cat.id]: p[cat.id] === false }))}
@@ -630,17 +727,19 @@ export function CalculatorView({
               </View>
             )}
 
-            <JobSummary entries={entries} catMeta={catMeta} />
+            <JobSummary entries={entries} catMeta={catMeta} sectionLabelMap={sectionLabelMap} />
 
-            {(totals.cost > 0 || totals.par > 0 || totals.retail > 0) && (
-              <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(145,158,171,0.12)', padding: 14 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#637381', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Totals</Text>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Cost</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.cost.toFixed(2)}</Text></View>
-                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Par</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#637381' }}>${totals.par.toFixed(2)}</Text></View>
-                  <View><Text style={{ fontSize: 10, color: '#94A3B8', fontWeight: '600' }}>Retail</Text><Text style={{ fontSize: 14, fontWeight: '800', color: '#444c97' }}>${totals.retail.toFixed(2)}</Text></View>
-                </View>
-              </View>
+            {/* Add This Job to Job Tracker — web parity (rendered under the Job
+                Summary in the editable calculator view, hidden when locked). */}
+            {appointmentId && (
+              <JobTrackerButton
+                appointmentId={appointmentId}
+                calculatorId={activeTabId}
+                title={activeTab?.title}
+                endPrice={price}
+                paymentMethod={activeTab?.paymentMethod}
+                isLowesLead={isLowesLead}
+              />
             )}
           </>
         )}
@@ -659,8 +758,8 @@ export function CalculatorView({
               onContentSizeChange={(w) => setContentWidth(w)}
               onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
               scrollEventThrottle={16}
-              style={{ overflow: isDragging ? 'visible' : 'hidden' }}
-              contentContainerStyle={{ alignItems: 'center' }}
+              style={{ flex: 1, overflow: isDragging ? 'visible' : 'hidden'}}
+              contentContainerStyle={{ alignItems: 'center', flexGrow: 0,paddingEnd:20 }}
             >
               <HorizontalDraggableTabs
                 calculators={tabCalcs}
@@ -673,29 +772,10 @@ export function CalculatorView({
                 scrollXRef={scrollXRef}
                 getIsDuplicate={() => false}
               />
-              <View style={{ width: 40 }} />
             </ScrollView>
-
-            {/* Left progressive fade overlay */}
-            {!isDragging && scrollOffset > 5 && (
-              <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
-                {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
-                  <View key={`left-fade-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
-                ))}
-              </View>
-            )}
-
-            {/* Right progressive fade overlay */}
-            {!isDragging && scrollOffset + scrollViewWidth < contentWidth - 5 && (
-              <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
-                {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
-                  <View key={`right-fade-${idx}`} style={{ width: 4, height: '100%', backgroundColor: `rgba(255,255,255,${opacity})` }} />
-                ))}
-              </View>
-            )}
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {onAddTab && (
               <TouchableOpacity onPress={onAddTab} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#F4F6F8', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="add" size={24} color="#1C252E" />

@@ -9,6 +9,8 @@ interface AllocatorBarProps {
   unit?: string;
   inactive?: boolean;
   compact?: boolean;
+  /** Stretch to the full height of the grid cell, so cards sharing a row match. */
+  fillHeight?: boolean;
 }
 
 // Styled to match the normal Job Builder footage tracker card
@@ -16,7 +18,7 @@ interface AllocatorBarProps {
 // #22C55E "Perfectly allocated" banner, red over-allocation banner.
 // `compact` drops the outer horizontal margin so the card fills its grid column
 // inside the collapsible Footage Allocation Tracker.
-export function AllocatorBar({ label, avail = 0, used = 0, unit = '', inactive = false, compact = false }: AllocatorBarProps) {
+export function AllocatorBar({ label, avail = 0, used = 0, unit = '', inactive = false, compact = false, fillHeight = false }: AllocatorBarProps) {
   const left = avail - used;
   const complete = Math.abs(left) <= 0.1 && avail > 0;
   const over = left < -0.1;
@@ -32,6 +34,13 @@ export function AllocatorBar({ label, avail = 0, used = 0, unit = '', inactive =
         shadowRadius: 15,
         elevation: 2,
         opacity: inactive ? 0.45 : 1,
+        // In a grid cell the row stretches every cell to the tallest card, and
+        // flexGrow makes the card fill that cell — so two cards in a row match
+        // height even when only one shows the "Perfectly allocated!" banner.
+        // MUST be flexGrow, not `flex: 1`: RN expands `flex: 1` to flexBasis 0,
+        // which zeroes the card's measured height (the cell sizes to its content,
+        // so there is no free space to grow back into) and the card renders empty.
+        ...(fillHeight ? { flexGrow: 1 } : null),
       }}
     >
       {label && (

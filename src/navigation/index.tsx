@@ -8,6 +8,7 @@ import ProfilePage from '../screens/Profile/index';
 import JobTrackerPage from '../screens/JobTracker/index';
 import MyDealsPage from '../screens/MyDeals/index';
 import DealDetailPage from '../screens/DealDetail/index';
+import AppointmentsPage from '../screens/Appointments/index';
 import LearningPage from '../screens/Learning/index';
 import ChatThreadsScreen from '../screens/ChatThreads/index';
 import ChatDetailScreen from '../screens/ChatDetail/index';
@@ -26,6 +27,7 @@ import ImageAnnotationScreen from '../screens/ImageAnnotation/index';
 import DynamicDealCenterScreen from '../screens/DynamicDealCenter/components/DynamicDealCenterScreen';
 import InstallerDashboard from '../screens/Installer/index';
 import InstallerJobDetail from '../screens/Installer/JobDetail';
+import InvestmentCenterScreen from '../screens/InvestmentCenter';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -39,6 +41,7 @@ export type RootStackParamList = {
   };
   Profile: undefined;
   AppointmentDetails: { leadId: string };
+  Appointments: undefined;
   JobTracker: undefined;
   MyLearning: undefined;
   ChatThreads: undefined;
@@ -49,6 +52,14 @@ export type RootStackParamList = {
     description?: string;
     chatType?: 'lead' | 'channel';
     initialParticipants?: any[];
+    // Full lead photo array, handed straight from an already-loaded lead
+    // (LeadCenter) so the Appointment Photos picker doesn't have to refetch.
+    salesPhotos?: any[];
+    // Lead preview thumbnail source, handed from the already-loaded lead so the
+    // chat header shows the same street-view image as the Recent-Leads row (web
+    // parity: `quick-chat-dialog.js`).
+    previewImage?: any;
+    previewImages?: any;
   };
   MapDetail: { currentLead?: any };
   Pitchbook: { lead: any };
@@ -101,6 +112,8 @@ export type RootStackParamList = {
     // LeadCenter Products → Edit). `calculatorResultData` carries the calculatorId.
     mode?: 'new' | 'edit';
     calculatorResultData?: any;
+    // Opt-in handoff from the Investment Center → open Result Lead (Sale).
+    resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
   };
   MyDeals: undefined;
   // Deal Detail — opened from My Deals; hosts the contract summary + the Edit
@@ -110,6 +123,9 @@ export type RootStackParamList = {
   // `installer_dashboard` dashboard permission (see useUserRole).
   InstallerDashboard: undefined;
   InstallerJobDetail: { job: any };
+  // Investment Center — the in-home presentation step opened from Lead Center tools.
+  // Consent-gated; shows per-calculator renders + dynamic job scope + program cards.
+  InvestmentCenter: { lead?: any };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -201,6 +217,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="JobTracker" component={JobTrackerPage} />
                 <Stack.Screen name="MyDeals" component={MyDealsPage} />
                 <Stack.Screen name="DealDetail" component={DealDetailPage} />
+                <Stack.Screen name="Appointments" component={AppointmentsPage} />
                 <Stack.Screen name="MyLearning" component={LearningPage} />
                 <Stack.Screen name="ChatThreads" component={ChatThreadsScreen} />
                 <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
@@ -214,6 +231,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
                 <Stack.Screen name="RooflineDeck" component={RooflineDeckScreen} />
                 <Stack.Screen name="DealCenter" component={DealCenter} />
                 <Stack.Screen name="DynamicDealCenter" component={DynamicDealCenterScreen} />
+                <Stack.Screen name="InvestmentCenter" component={InvestmentCenterScreen} />
                 <Stack.Screen name="JobBuilder" component={JobBuilderScreen} />
                 <Stack.Screen name="RevRender" component={RevRenderScreen} />
                 <Stack.Screen name="ImageAnnotation" component={ImageAnnotationScreen} options={{ gestureEnabled: false }} />

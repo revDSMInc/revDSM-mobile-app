@@ -19,7 +19,6 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getScheduledDateTime } from '../../utils/location-util';
 import {
   executeStartAppointmentFlow,
-  logLeadCardSelect,
   persistActiveLeadId,
 } from '../../utils/lead-activity-log';
 import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
@@ -314,7 +313,10 @@ export default function LeadsPage() {
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
     setNavigatingLeadId(item._id!);
-    await logLeadCardSelect(user, item);
+    // NOTE: no `lead_card` / `view_lead_details` log here. Web fires that event only
+    // from the MAP job-card click (`useJobCard.handleCardClick`), NOT when a lead is
+    // opened from the leads list — so firing it on list-open was a mobile-only event
+    // that showed up on lead entry. Removed for web parity.
 
     try {
       const { lead: targetLead } = await executeStartAppointmentFlow({
@@ -423,8 +425,22 @@ export default function LeadsPage() {
               marginHorizontal: 12,
             }}
           >
-            <Feather name="calendar" size={24} color={'#FFFFFF'} />
+            <Feather name="edit-3" size={24} color={'#FFFFFF'} />
           </TouchableOpacity>
+          {/* <TouchableOpacity
+            onPress={() => navigation.navigate('Appointments')}
+            style={{
+              backgroundColor: '#22C55E',
+              borderRadius: 8,
+              height: 36,
+              width: 36,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 12,
+            }}
+          >
+            <Feather name="clock" size={22} color={'#FFFFFF'} />
+          </TouchableOpacity> */}
           <TouchableOpacity
             onPress={() => setZoneCanvasserVisible(true)}
             style={{
@@ -498,8 +514,8 @@ export default function LeadsPage() {
 
       {currentTab === 'rehash' ? (
         <View className="flex-1 items-center pt-[30%]">
-          <MaterialDesignIcon name="briefcase-off-outline" style={{ opacity: 0.7 }} size={64} color={colors.textSecondary} />
-          <Text className="text-xs text-center mt-4" style={{ color: colors.textSecondary }}>
+          <Clipboard className="text-text-secondary" />
+          <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
             No jobs available
           </Text>
         </View>

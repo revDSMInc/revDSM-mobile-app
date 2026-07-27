@@ -49,8 +49,12 @@ export const useChatSession = (
 
   const fetchSecureUrls = async (newMessages: IMessage[]) => {
     try {
-      const paths = ChatService.extractFilePaths(newMessages).map(cleanFilePath);
-      const cleaned = Array.from(new Set(paths)).filter(Boolean);
+      // Carry each file's bucketName so the signed URL is requested against the
+      // right bucket — otherwise reloaded images come back blank.
+      const seen = new Set<string>();
+      const cleaned = ChatService.extractFileRefs(newMessages)
+        .map((r) => ({ filePath: cleanFilePath(r.filePath), bucketName: r.bucketName }))
+        .filter((r) => r.filePath && !seen.has(r.filePath) && !!seen.add(r.filePath));
       if (cleaned.length === 0) return;
       const links = await ChatService.getSecureFileUrls(cleaned).catch(() => ({}));
       console.log('[useChatSession] Fetched Secure URLs:', JSON.stringify(links, null, 2));
@@ -256,10 +260,22 @@ export const useChatSession = (
             video: localMsg.video || normalized.video,
             voice: localMsg.voice || normalized.voice,
             audio: localMsg.audio || normalized.audio,
-            files: normalized.files?.map((nf: any, i: number) => ({
-              ...nf,
-              url: localMsg.files?.[i]?.url || nf.url, // Keep local file:// or content://
-            })),
+            files: normalized.files?.map((nf: any, i: number) => {
+              const lf: any = localMsg.files?.[i] || {};
+              return {
+                ...nf,
+                url: lf.url || nf.url, // Keep local file:// or content://
+                // Preserve the optimistic signed preview URL + appointment markers.
+                // Dynamic scoped-category ("<product> — <label>") inspection photos do
+                // NOT re-resolve via imageUrls[filePath] after the echo (em-dash/space
+                // S3 keys + often empty bucketName), so dropping previewUrl left the
+                // grid cell / single image with no working src → a perpetual spinner.
+                // previewUrl still points at the valid signed URL the optimistic bubble
+                // was already showing; isAppointmentPhoto keeps its grid classification.
+                previewUrl: nf.previewUrl || lf.previewUrl,
+                isAppointmentPhoto: nf.isAppointmentPhoto ?? lf.isAppointmentPhoto,
+              };
+            }),
           };
           return updated;
         }

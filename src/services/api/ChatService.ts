@@ -10,7 +10,14 @@ import api from './index';
 import SocketManager from '../SocketManager';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
-import { ENV } from '../../config/env';
+
+// Bucket to sign against when a chat file carries no bucketName of its own.
+// Mirrors the web ChatModule, which falls back to 'np-revdsm-staging'. The env
+// bucket (mhalt-revdsm) is the WRONG bucket for chat uploads on this backend,
+// which is why signed URLs came back empty and images reloaded blank.
+const CHAT_FALLBACK_BUCKET = 'np-revdsm-staging';
+
+type FileRef = { filePath: string; bucketName?: string };
 
 class ChatService {
   private urlCache: Record<string, { url: string; expiresAt: number }> = {};
@@ -50,28 +57,35 @@ class ChatService {
     return res.data?.data?.chat || res.data?.data;
   }
 
-  async getSecureFileUrls(filePaths: string[]): Promise<Record<string, string>> {
+  async getSecureFileUrls(
+    refs: Array<string | FileRef>
+  ): Promise<Record<string, string>> {
     const now = Date.now();
     const links: Record<string, string> = {};
-    const pathsToFetch: string[] = [];
+    const toFetch: FileRef[] = [];
 
-    // 1. Check Memory Cache First
-    filePaths.forEach((p) => {
-      const cached = this.urlCache[p];
+    // 1. Check Memory Cache First (dedupe by filePath)
+    const seen = new Set<string>();
+    refs.forEach((r) => {
+      const ref: FileRef = typeof r === 'string' ? { filePath: r } : r;
+      if (!ref.filePath || seen.has(ref.filePath)) return;
+      seen.add(ref.filePath);
+      const cached = this.urlCache[ref.filePath];
       if (cached && cached.expiresAt > now) {
-        links[p] = cached.url;
+        links[ref.filePath] = cached.url;
       } else {
-        pathsToFetch.push(p);
+        toFetch.push(ref);
       }
     });
 
-    if (pathsToFetch.length === 0) return links;
+    if (toFetch.length === 0) return links;
 
-    // 2. Fetch from backend for remaining paths
+    // 2. Fetch from backend for remaining paths. Sign against each file's OWN
+    // bucket (falling back to the chat bucket) — the env bucket is wrong here.
     const payload = {
-      filePaths: pathsToFetch.map((p) => ({
-        bucketName: ENV.S3_BUCKET,
-        filePath: p,
+      filePaths: toFetch.map((r) => ({
+        bucketName: r.bucketName || CHAT_FALLBACK_BUCKET,
+        filePath: r.filePath,
       })),
     };
 
@@ -80,10 +94,13 @@ class ChatService {
       const rawData = res.data?.data || res.data;
 
       if (Array.isArray(rawData)) {
-        rawData.forEach((item: any) => {
-          const key = item.filePath || item.path;
-          const val = item.secureUrl || item.url;
-          if (key && val) {
+        rawData.forEach((item: any, idx: number) => {
+          const val = item?.secureUrl || item?.url;
+          if (!val) return;
+          // Prefer the echoed path; fall back to positional alignment with the
+          // request (web parity — the endpoint may not echo filePath back).
+          const key = item?.filePath || item?.path || toFetch[idx]?.filePath;
+          if (key) {
             links[key] = val;
             this.urlCache[key] = { url: val, expiresAt: now + this.CACHE_DURATION };
           }
@@ -137,6 +154,47 @@ class ChatService {
           typeof p === 'string' && p.length > 0 && !p.startsWith('data:') && !p.startsWith('http')
       )
       .filter(Boolean);
+  }
+
+  // Like extractFilePaths, but carries each file's own bucketName so signed URLs
+  // are requested against the correct S3 bucket (web parity). Top-level media
+  // fields (voice/image on the message itself) have no per-file bucket and fall
+  // back to the chat bucket in getSecureFileUrls.
+  extractFileRefs(messages: any[]): FileRef[] {
+    const refs: FileRef[] = [];
+    const push = (p: any, bucketName?: string) => {
+      if (typeof p === 'string' && p.length > 0 && !p.startsWith('data:') && !p.startsWith('http')) {
+        refs.push({ filePath: p, bucketName });
+      }
+    };
+    messages.forEach((m) => {
+      const files = m.files || m.messageFiles || [];
+      files.forEach((f: any) => {
+        const bn = f.bucketName || undefined;
+        if (f.filePath || f.path) push(f.filePath || f.path, bn);
+        else if (f.url && !f.url.startsWith('http')) push(f.url, bn);
+        if (f.imageUrl) push(f.imageUrl, bn);
+        if (f.s3_path) push(f.s3_path, bn);
+        if (f.voiceUrl) push(f.voiceUrl, bn);
+        if (f.mediaUrl) push(f.mediaUrl, bn);
+        if (f.thumbnailUrl) push(f.thumbnailUrl, bn);
+      });
+      if (m.audio) push(m.audio);
+      if (m.voice) push(m.voice);
+      if (m.voiceUrl) push(m.voiceUrl);
+      if (m.audioUrl) push(m.audioUrl);
+      if (m.image) push(m.image);
+      if (m.video) push(m.video);
+      if (m.imageUrl) push(m.imageUrl);
+      if (m.s3_path) push(m.s3_path);
+      if (m.mediaUrl) push(m.mediaUrl);
+      const isMsgVoice =
+        m.isVoiceNote === true || m.messageType === 'voice' || m.contentType === 'audio';
+      if (isMsgVoice && m.body && typeof m.body === 'string' && !m.body.includes(' ')) {
+        push(m.body);
+      }
+    });
+    return refs;
   }
 
   normalizeFileSize(file: any): number {
@@ -326,10 +384,101 @@ class ChatService {
       type: file.type || 'application/octet-stream',
     } as any);
 
-    // Do NOT set Content-Type — let the networking layer append the multipart boundary.
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
+    // Set the multipart Content-Type explicitly (matching the working job-image
+    // upload path `LeadService.updateBeforeImages`). Omitting it works on iOS but on
+    // Android axios falls back to a non-multipart content type, so the server can't
+    // parse the upload and every attachment fails with "Failed to send attachment".
+    // React Native's networking still appends the boundary to this header.
+    await api.post<any>(`/chat/v1/${chatId}/messages`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
   }
 
+  // Send MULTIPLE local files in ONE message (multipart) — so a batch of gallery
+  // photos sent together lands as a single message and renders as a grid, just
+  // like appointment photos. The backend accepts multiple `files` parts (same
+  // multer-array pattern the offline image upload uses).
+  async sendFilesMessage(
+    chatId: string,
+    files: Array<{ uri?: string; name?: string; fileName?: string; type?: string }>,
+    message = '',
+    replyTo?: string
+  ): Promise<void> {
+    const formData = new FormData();
+    formData.append('message', message || ' ');
+    if (replyTo) formData.append('replyTo', replyTo);
+
+    for (const file of files) {
+      let resolvedUri = file?.uri ?? '';
+      const name = file.name || file.fileName || `file_${Date.now()}`;
+
+      if (Platform.OS === 'android' && resolvedUri.startsWith('content://')) {
+        try {
+          const ext = name.split('.').pop() || 'file';
+          const dest = `${RNFS.CachesDirectoryPath}/upload_${Date.now()}_${Math.random()
+            .toString(36)
+            .slice(2)}.${ext}`;
+          await RNFS.copyFile(resolvedUri, dest);
+          resolvedUri = dest;
+        } catch (e) {
+          console.warn('[sendFilesMessage] Android content copy failed, using original URI:', e);
+        }
+      }
+
+      if (
+        resolvedUri &&
+        !resolvedUri.startsWith('file://') &&
+        !resolvedUri.startsWith('content://') &&
+        !resolvedUri.startsWith('http')
+      ) {
+        resolvedUri = `file://${resolvedUri}`;
+      }
+
+      formData.append('files', {
+        uri: resolvedUri,
+        name,
+        type: file.type || 'application/octet-stream',
+      } as any);
+    }
+
+    // Explicit multipart Content-Type — required for Android (see sendFileMessage);
+    // without it axios sends a non-multipart type and the upload fails on Android.
+    await api.post<any>(`/chat/v1/${chatId}/messages`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  }
+
+
+  // Send already-in-S3 photos (the lead's appointment/sales photos) as ONE
+  // message carrying an array of file REFERENCES — not a binary upload. Mirrors
+  // the web MessageInput.handleSend appointment-photo branch: a single JSON POST
+  // with `type: 'appointment_photo'` and `files: [{ filePath, bucketName, ... }]`.
+  // The backend echoes these files back (with bucketName), so on reload the chat
+  // signs each filePath against its own bucket and the grid renders correctly.
+  async sendAppointmentPhotos(
+    chatId: string,
+    files: Array<{
+      _id?: string;
+      bucketName?: string;
+      filePath: string;
+      category?: string;
+      subcategory?: string;
+      fileName?: string;
+      fileType?: string;
+    }>,
+    message = ' ',
+    replyTo?: string
+  ): Promise<void> {
+    const payload: any = {
+      chatId,
+      message: message || ' ',
+      type: 'appointment_photo',
+      files,
+    };
+    if (replyTo) payload.replyTo = replyTo;
+    // Plain JSON body (default Content-Type) — NOT multipart.
+    await api.post<any>(`/chat/v1/${chatId}/messages`, payload);
+  }
 
   async sendMessageREST(payload: {
     chatId: string;
@@ -444,6 +593,63 @@ class ChatService {
     SocketManager.emit('mark-channel-as-read', {
       channelId,
       userId: user?.id || user?._id,
+    });
+  }
+
+  /**
+   * Create a new team channel.
+   * Web parity: `use-team-channels.js` `createChannel` emits the `create-team-channel`
+   * socket event with the channel payload built in the create-channel dialog. The
+   * backend responds by broadcasting `team-channel-created`, which the threads screen
+   * listens for to refresh the channel list.
+   */
+  createChannel(channelData: any): void {
+    console.log('[ChatService] create-team-channel:', channelData);
+    SocketManager.emit('create-team-channel', channelData);
+  }
+
+  /**
+   * Send previously-uploaded appointment/inspection/gallery photos as a chat message.
+   * Web parity: `ChatModule.js` `handleSendAppointmentPhotos` posts a JSON body with
+   * `type: 'appointment_photo'` and a `files[]` array of S3 descriptors (already stored
+   * on the lead's `salesPhotos`) — NOT a multipart upload. The server dereferences the
+   * S3 keys, so no file bytes are re-sent.
+   */
+  async sendAppointmentPhotos(
+    chatId: string,
+    photos: {
+      _id?: string;
+      bucketName: string;
+      s3url: string;
+      category?: string;
+      subcategory?: string;
+      fileName: string;
+      fileType?: string;
+    }[],
+    senderId?: string,
+    replyTo?: string,
+  ): Promise<void> {
+    const files = photos.map((p) => ({
+      _id: p._id,
+      bucketName: p.bucketName,
+      filePath: p.s3url,
+      category: p.category || '',
+      subcategory: p.subcategory || '',
+      fileName: p.fileName,
+      fileType: p.fileType || 'image/jpeg',
+    }));
+
+    const payload: any = {
+      chatId,
+      message: ' ',
+      senderId,
+      type: 'appointment_photo',
+      files,
+    };
+    if (replyTo) payload.replyTo = replyTo;
+
+    await api.post<any>(`/chat/v1/${chatId}/messages`, payload, {
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 

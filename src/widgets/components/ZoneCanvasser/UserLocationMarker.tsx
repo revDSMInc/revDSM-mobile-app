@@ -1,0 +1,177 @@
+import React, { useEffect, useMemo, useRef } from 'react';
+import { View, Animated, Easing, StyleSheet } from 'react-native';
+import { ShapeSource, FillLayer, LineLayer, MarkerView } from '@rnmapbox/maps';
+
+/**
+ * UserLocationMarker (Mapbox / React Native)
+ *
+ * Google-Maps-style "blue dot" live-location marker — the RN counterpart of web's
+ * `sections/map/zone-canvasser/user-location-marker.js`:
+ *   - Semi-transparent accuracy ring (GeoJSON circle polygon, metres)
+ *   - Directional heading cone (rotated by compass heading)
+ *   - Pulsing blue dot
+ *
+ * Props:
+ *   latitude / longitude – required
+ *   heading  – degrees (0 = north, clockwise) | null → cone hidden
+ *   accuracy – metres | null → default 20m ring
+ */
+
+const BLUE = '#0D47A1';
+const RING_BLUE = '#1565C0';
+
+// GeoJSON circle polygon of `radiusM` metres around [lng, lat].
+function circlePolygon(lng: number, lat: number, radiusM: number, points = 64) {
+  const coords: [number, number][] = [];
+  const earth = 6378137; // metres
+  const dLat = (radiusM / earth) * (180 / Math.PI);
+  const dLng = dLat / Math.cos((lat * Math.PI) / 180);
+  for (let i = 0; i <= points; i += 1) {
+    const theta = (i / points) * 2 * Math.PI;
+    coords.push([lng + dLng * Math.cos(theta), lat + dLat * Math.sin(theta)]);
+  }
+  return {
+    type: 'Feature' as const,
+    geometry: { type: 'Polygon' as const, coordinates: [coords] },
+    properties: {},
+  };
+}
+
+type Props = {
+  latitude: number;
+  longitude: number;
+  heading?: number | null;
+  accuracy?: number | null;
+};
+
+export function UserLocationMarker({ latitude, longitude, heading = null, accuracy = null }: Props) {
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  const radius = accuracy && accuracy > 0 ? accuracy : 20;
+  const ring = useMemo(
+    () =>
+      typeof longitude === 'number' && typeof latitude === 'number'
+        ? circlePolygon(longitude, latitude, radius)
+        : null,
+    [longitude, latitude, radius]
+  );
+
+  if (typeof longitude !== 'number' || typeof latitude !== 'number') return null;
+
+  const showCone = heading !== null && !Number.isNaN(heading);
+
+  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.4] });
+  const pulseOpacity = pulse.interpolate({ inputRange: [0, 0.7, 1], outputRange: [0.8, 0, 0] });
+
+  return (
+    <>
+      {/* Accuracy ring */}
+      {ring && (
+        <ShapeSource id="ulm-accuracy" shape={ring}>
+          <FillLayer id="ulm-accuracy-fill" style={{ fillColor: RING_BLUE, fillOpacity: 0.15 }} />
+          <LineLayer
+            id="ulm-accuracy-line"
+            style={{ lineColor: RING_BLUE, lineOpacity: 0.8, lineWidth: 2 }}
+          />
+        </ShapeSource>
+      )}
+
+      {/* Heading cone + pulsing blue dot */}
+      <MarkerView
+        coordinate={[longitude, latitude]}
+        anchor={{ x: 0.5, y: 0.5 }}
+        allowOverlap={true}
+      >
+        <View style={styles.wrapper} pointerEvents="none">
+          {/* Heading cone: a full-size square centred on the dot so rotating it
+              spins the cone around the dot (apex at dot, fanning north by default). */}
+          {showCone && (
+            <View
+              style={[styles.coneContainer, { transform: [{ rotate: `${heading}deg` }] }]}
+              pointerEvents="none"
+            >
+              <View style={styles.coneTriangle} />
+            </View>
+          )}
+
+          {/* Pulse ring */}
+          <Animated.View
+            style={[
+              styles.pulseRing,
+              { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
+            ]}
+          />
+
+          {/* Blue dot */}
+          <View style={styles.dot} />
+        </View>
+      </MarkerView>
+    </>
+  );
+}
+
+const CONE_SIZE = 120;
+
+const styles = StyleSheet.create({
+  wrapper: {
+    width: CONE_SIZE,
+    height: CONE_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Full-size square centred on the dot; rotated by heading.
+  coneContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: CONE_SIZE,
+    height: CONE_SIZE,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  // Down-pointing triangle: wide base at the top (north), apex at the container
+  // centre where the dot sits — a "flashlight" cone emanating from the dot.
+  coneTriangle: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 30,
+    borderRightWidth: 30,
+    borderTopWidth: CONE_SIZE / 2,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: 'rgba(21,101,192,0.45)',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(13,71,161,0.4)',
+  },
+  dot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: BLUE,
+    borderWidth: 2.5,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+});

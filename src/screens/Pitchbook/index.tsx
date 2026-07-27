@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useWindowDimensions } from 'react-native';
 import {
   View,
@@ -15,7 +15,11 @@ import {
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import pitchBookImages from '../../constants/pitchbook-images';
+import pitchBookImagesDefault from '../../constants/pitchbook-images';
+import greenRooflinesImages, {
+  GREEN_ROOFLINES_COMPANY_ID,
+  GREEN_ROOFLINES_CATEGORIES,
+} from '../../constants/green-rooflines-pitchbook';
 import { IMAGE_CATEGORIES } from '../../constants/lead-center';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
@@ -43,7 +47,7 @@ const { width } = Dimensions.get('window');
 // Persisted slide position per lead, so the pitchbook resumes where the rep left off.
 const progressKey = (leadId?: string | null) => `pitchbook-progress-${leadId || 'default'}`;
 
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   { id: 'leafFilter_story', label: 'LeafFilter Story' },
   { id: 'problems_risk', label: 'Problems & Risk' },
   { id: 'rules_elimination', label: 'Rules & Elimination' },
@@ -55,6 +59,21 @@ const CATEGORIES = [
 export default function PitchbookScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  // Company-scoped deck swap — web parity (`pitch-book.js` `isGreenRooflines`). For
+  // the Green Rooflines company the pitchbook is a single-tab 12-slide deck; every
+  // other company keeps the default LeafFilter deck. `CATEGORIES` and
+  // `pitchBookImages` below shadow the module defaults so all downstream reads are
+  // deck-aware with no further changes. No schema/API — the choice is companyId only.
+  const isGreenRooflines = (user?.companyId || '') === GREEN_ROOFLINES_COMPANY_ID;
+  const CATEGORIES = useMemo(
+    () => (isGreenRooflines ? GREEN_ROOFLINES_CATEGORIES : DEFAULT_CATEGORIES),
+    [isGreenRooflines]
+  );
+  const pitchBookImages: Record<string, Record<string, any>> = useMemo(
+    () => (isGreenRooflines ? greenRooflinesImages : pitchBookImagesDefault),
+    [isGreenRooflines]
+  );
+  const defaultCategoryId = isGreenRooflines ? 'green_rooflines' : 'leafFilter_story';
   const insets = useSafeAreaInsets();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const isLandscape = winWidth > winHeight;
@@ -78,9 +97,13 @@ export default function PitchbookScreen() {
   }, [leadId]);
 
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
-  const [activeCategory, setActiveCategory] = useState(
-    savedProgress?.category || 'leafFilter_story'
-  );
+  const [activeCategory, setActiveCategory] = useState(() => {
+    // Only restore a saved tab that exists in THIS deck — a lead pitched on the
+    // default deck must not restore into a Green Rooflines-only tab (or vice versa),
+    // which would render a blank slide. Otherwise start on the deck's first tab.
+    const saved = savedProgress?.category;
+    return saved && CATEGORIES.some((c) => c.id === saved) ? saved : defaultCategoryId;
+  });
   const [currentSlideIndex, setCurrentSlideIndex] = useState(savedProgress?.slideIndex || 0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTools, setShowTools] = useState(false);
@@ -109,7 +132,7 @@ export default function PitchbookScreen() {
     setShowTools(!showTools);
   };
 
-  const getGlobalPosition = (categoryId: string, slideIndex: number) => {
+  const getGlobalPosition = useCallback((categoryId: string, slideIndex: number) => {
     let count = 0;
     for (const cat of CATEGORIES) {
       if (cat.id === categoryId) {
@@ -119,25 +142,25 @@ export default function PitchbookScreen() {
       count += Object.keys(pitchBookImages[cat.id] || {}).length;
     }
     return count;
-  };
+  }, [CATEGORIES, pitchBookImages]);
 
-  const getCurrentSlideName = (categoryId: string, slideIndex: number): string => {
+  const getCurrentSlideName = useCallback((categoryId: string, slideIndex: number): string => {
     const imagesObj = pitchBookImages[categoryId] || {};
     return Object.keys(imagesObj)[slideIndex] || '';
-  };
+  }, [pitchBookImages]);
 
   const currentCategoryImages = useMemo(() => {
     const imagesObj = pitchBookImages[activeCategory] || {};
     return Object.values(imagesObj);
-  }, [activeCategory]);
+  }, [activeCategory, pitchBookImages]);
 
   const totalGlobalPages = useMemo(() => {
     return Object.values(pitchBookImages).reduce((acc, cat) => acc + Object.keys(cat).length, 0);
-  }, []);
+  }, [pitchBookImages]);
 
   const currentGlobalPageNumber = useMemo(() => {
     return getGlobalPosition(activeCategory, currentSlideIndex);
-  }, [activeCategory, currentSlideIndex]);
+  }, [activeCategory, currentSlideIndex, getGlobalPosition]);
 
   const activeCategoryRef = useRef(activeCategory);
   const currentSlideIndexRef = useRef(currentSlideIndex);
@@ -182,7 +205,7 @@ export default function PitchbookScreen() {
         });
       }
     };
-  }, [user?._id, user?.id, leadId, totalGlobalPages]);
+  }, [user?._id, user?.id, leadId, totalGlobalPages, getCurrentSlideName]);
 
   // Persist the current slide position for this lead whenever it changes.
   useEffect(() => {

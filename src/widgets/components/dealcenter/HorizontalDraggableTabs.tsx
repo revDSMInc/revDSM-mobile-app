@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,6 @@ import {
   Dimensions,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { getCalculatorBaseName } from '../../../utils/calculator/tab-naming.utils';
 
 interface HorizontalDraggableTabsProps {
   calculators: any[];
@@ -73,10 +72,10 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
 
   const panX = useRef(new Animated.Value(0)).current;
   const panY = useRef(new Animated.Value(0)).current;
-  
+
   // Track layouts of all tabs
   const layouts = useRef<{ x: number; width: number }[]>([]);
-  
+
   // Array of Animated.Values to shift other tabs smoothly
   const shiftAnims = useRef<Animated.Value[]>([]);
 
@@ -115,6 +114,23 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   };
 
   const hasPanResponderCapturedRef = useRef<boolean>(false);
+
+  // A horizontal ScrollView must measure its child by its intrinsic content
+  // width. Keep the selected tab in view after a programmatic tab change (for
+  // example, selecting it from the grid), rather than relying on a guessed
+  // fixed tab width in each screen.
+  useEffect(() => {
+    const layout = layouts.current[activeIdx];
+    if (!layout || !tabsScrollViewRef?.current) return;
+
+    const frame = requestAnimationFrame(() => {
+      tabsScrollViewRef.current?.scrollTo({
+        x: Math.max(0, layout.x - 8),
+        animated: true,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeIdx, calculators.length, tabsScrollViewRef]);
 
   const getTabPanResponder = (index: number) => {
     return PanResponder.create({
@@ -213,7 +229,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
         if (draggedLayout) {
           const scrollDelta = scrollXRef ? (scrollXRef.current - initialScrollX.current) : 0;
           const currentCenterX = draggedLayout.x + draggedLayout.width / 2 + gestureState.dx + scrollDelta;
-          
+
           let minDistance = Infinity;
           for (let i = 0; i < calculators.length; i++) {
             const layout = layouts.current[i];
@@ -241,7 +257,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
           panX.setValue(0);
           panY.setValue(0);
           shiftAnims.current.forEach(anim => anim.setValue(0));
-          
+
           onReorder(updated, newActiveIdx >= 0 ? newActiveIdx : 0);
         } else {
           Animated.parallel([
@@ -366,13 +382,15 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                 />
               )}
               <Text
+                numberOfLines={1}
+                ellipsizeMode="tail"
                 style={[
                   styles.tabText,
                   isActive ? styles.activeTabText : styles.inactiveTabText,
                   isCurrentlyDragging && styles.draggingTabText,
                 ]}
               >
-                {!getCalculatorBaseName(calc) ? '' : calc.name === '.' ? '' : calc.name || `Rollout ${idx + 1}`}
+                {calc.name === '.' ? '' : calc.name || ''}
               </Text>
               <TouchableOpacity
                 onPress={() => setMenuVisible(idx)}
@@ -398,9 +416,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   tabWrapper: {
     marginRight: 8,
+    flexShrink: 0,
   },
   tab: {
     paddingHorizontal: 16,
@@ -410,6 +431,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   activeTab: {
     backgroundColor: '#22C55E', // green-500
@@ -430,6 +452,8 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 10,
     fontWeight: '900',
+    maxWidth: 199,
+    flexShrink: 1,
   },
   activeTabText: {
     color: '#FFFFFF',

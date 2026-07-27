@@ -58,6 +58,14 @@ const getNativeModules = () => {
 import { ContractDetailsCard } from './ContractDetailsCard';
 import { TagPhotoModal } from './TagPhotoModal';
 import { ManagePhotosModal } from './ManagePhotosModal';
+import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView';
+import { DynamicInspectionView } from '../lead-center/DynamicInspectionView';
+import { useInspectionSchema } from '../../../hooks/useInspectionSchema';
+import {
+  indexSchema,
+  getCapturableSlots,
+  norm,
+} from '../lead-center/dynamic-inspection-schema-utils';
 import { ImageSlideshowModal } from './ImageSlideshowModal';
 import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue';
 
@@ -155,6 +163,17 @@ export const JobDocsSection = ({
   const [taggingAsset, setTaggingAsset] = useState<any>(null);
   const [showTagModal, setShowTagModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
+  const [showDynamicCapture, setShowDynamicCapture] = useState(false);
+  // Schema-driven ("dynamic") inspection photos — web parity: `job-docs-tab.js`
+  // owns BOTH dynamic dialogs. When the company has configured an inspection
+  // schema, capture AND manage must both run through it: the dynamic flow stores
+  // photos under product-scoped categories (`{product} — {label}`), while the
+  // static flow stores them under IMAGE_CATEGORIES names. Mixing the two means
+  // photos captured statically are invisible to the dynamic manage view (they
+  // fail its `expectedCats` filter), which is exactly the "count shows but no
+  // images" bug. Fetched eagerly because the capture CTA also branches on it.
+  const { configuredProducts, productsLoading } = useInspectionSchema({ enabled: true });
+  const isDynamicInspection = configuredProducts.length > 0;
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -274,9 +293,33 @@ export const JobDocsSection = ({
         isOptimistic: true,
       }));
 
-    // Don't duplicate: exclude queue items already reflected in s3Images by matching uri
-    const existingUris = new Set(s3Images.map((img) => img.uri));
-    const uniquePending = pendingForSection.filter((p) => !existingUris.has(p.uri));
+    // Don't duplicate. Matching on `uri` never worked — a queue item's uri is a
+    // local `file://` path while a server image's is a signed S3 URL, so they can
+    // never be equal. Instead, per subcategory, only surface as many optimistic
+    // entries as the server has NOT yet accounted for:
+    //
+    //   server 0 / pending 1 → 1 optimistic  (photo taken, not yet uploaded)
+    //   server 1 / pending 1 → 0 optimistic  (uploaded; server copy is the truth)
+    //   server 1 / pending 0 → 0 optimistic  (queue item retired)
+    //
+    // so the count holds steady at 1 across the whole handover instead of dipping
+    // to 0 (item retired before data landed) or spiking to 2 (counted twice).
+    // Counting rather than flag-matching keeps multi-photo slots correct: a real
+    // second photo in the same slot still shows while it uploads.
+    const serverCountBySub = new Map<string, number>();
+    s3Images.forEach((img) => {
+      const k = (img.subcategory || '').toLowerCase();
+      serverCountBySub.set(k, (serverCountBySub.get(k) || 0) + 1);
+    });
+    const uniquePending = pendingForSection.filter((p) => {
+      const k = (p.subcategory || '').toLowerCase();
+      const remaining = serverCountBySub.get(k) || 0;
+      if (remaining > 0) {
+        serverCountBySub.set(k, remaining - 1); // this pending item is already on the server
+        return false;
+      }
+      return true;
+    });
 
     return [...s3Images, ...uniquePending];
   }, [sectionImages, queueItems, lead?._id]);
@@ -662,13 +705,8 @@ export const JobDocsSection = ({
 
   const hasAndroidPermission = async () => {
     const version = Number(Platform.Version);
-    if (version >= 33) {
-      const [hasImage, hasVideo] = await Promise.all([
-        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES),
-        PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO),
-      ]);
-      return hasImage && hasVideo;
-    }
+    // Android 13+ (API 33+) saves to the gallery via MediaStore with no storage permission.
+    if (version >= 33) return true;
     return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
   };
 
@@ -684,28 +722,16 @@ export const JobDocsSection = ({
 
     let permissionRequested = false;
 
+    // Only legacy Android (<=32) reaches here; hasAndroidPermission() returns true on 33+,
+    // which saves to the gallery via MediaStore with no storage permission.
     if (Platform.OS === 'android' && !(await hasAndroidPermission())) {
       permissionRequested = true;
-      const version = Number(Platform.Version);
-      if (version >= 33) {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
-        ]);
-        if (
-          granted[PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES] !== PermissionsAndroid.RESULTS.GRANTED
-        ) {
-          Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
-          return;
-        }
-      } else {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
-          return;
-        }
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+      );
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        Alert.alert('Permission Denied', 'Storage permission is required to save photos.');
+        return;
       }
     }
 
@@ -737,11 +763,18 @@ export const JobDocsSection = ({
     setIsDownloading(true);
     setDownloadProgress(0);
 
+    // Iterate EVERY sectionImages bucket, not just the static IMAGE_CATEGORIES ones.
+    // Dynamic-inspection photos live under product-scoped category keys (e.g.
+    // "Windows — Front", built by useLeadCenterData), so the old IMAGE_CATEGORIES-only
+    // loop downloaded 0 images for a dynamic-inspection lead. Dedupe by uri so a photo
+    // that appears under multiple keys isn't saved twice.
     const imagesToDownload: SectionImage[] = [];
-    IMAGE_CATEGORIES.forEach((cat) => {
-      const imgs = sectionImages[cat.name] || [];
-      imgs.forEach((img) => {
-        if (img.uri) {
+    const seenDownloadUris = new Set<string>();
+    Object.values(sectionImages || {}).forEach((imgs) => {
+      (Array.isArray(imgs) ? imgs : []).forEach((img) => {
+        const uri = img?.uri || (img as any)?.s3url;
+        if (uri && !seenDownloadUris.has(uri)) {
+          seenDownloadUris.add(uri);
           imagesToDownload.push(img);
         }
       });
@@ -821,6 +854,13 @@ export const JobDocsSection = ({
   };
 
   const handleStartTakingPhotos = () => {
+    // With a configured inspection schema the whole capture flow lives in the
+    // dynamic view (photo-first: shoot, then tag into a schema slot), so capture
+    // and Manage Photos write/read the same product-scoped categories.
+    if (isDynamicInspection) {
+      setShowDynamicCapture(true);
+      return;
+    }
     setIsContinuousCamera(true);
     reopenCameraContinuous();
   };
@@ -1207,15 +1247,82 @@ export const JobDocsSection = ({
     return { captured: totalCaptured, total: totalSlots };
   }, [getTabCounts]);
 
+  // When the company has a configured inspection schema, photos are captured
+  // under product-scoped categories (`{product} — {label}`) that the static
+  // IMAGE_CATEGORIES counters can't see — so the "Manage Photos (N)" number and
+  // the progress bar read 0. Recount slots + photos straight from the schema and
+  // the lead's salesPhotos, exactly the way the dynamic capture/manage views do.
+  const dynamicCounts = useMemo(() => {
+    if (!isDynamicInspection) return null;
+    const photos = (Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : []).filter(Boolean);
+
+    // scopedSubKey (`norm(category)||norm(subcategory)`) → deduped photo count.
+    const seen = new Set<string>();
+    const countBySub = new Map<string, number>();
+    let totalPhotos = 0;
+    photos.forEach((p: any) => {
+      const sub = String(p.subcategory || '');
+      if (sub.toLowerCase().includes('(annotated)')) return; // annotated aren't slot photos
+      const id = p.s3url || p._id;
+      if (id) {
+        if (seen.has(id)) return;
+        seen.add(id);
+      }
+      const k = `${norm(p.category)}||${norm(sub)}`;
+      countBySub.set(k, (countBySub.get(k) || 0) + 1);
+      totalPhotos += 1;
+    });
+
+    // OPTIMISTIC: fold in photos still uploading from the offline queue so the
+    // number jumps the instant a photo is tagged, instead of waiting for the
+    // upload + lead refetch. A queue item that has already landed on the server
+    // is not double-counted — per slot we only add pending BEYOND what the server
+    // already shows (the same handover rule the section image list uses), so the
+    // count rises 0→1 and holds at 1 through the upload, never 0→1→0→1.
+    const pendingBySub = new Map<string, number>();
+    (queueItems || []).forEach((it: any) => {
+      if (it.leadId !== lead?._id) return;
+      const sub = String(it.subcategory || '');
+      if (sub.toLowerCase().includes('(annotated)')) return;
+      const k = `${norm(it.categoryName)}||${norm(sub)}`;
+      pendingBySub.set(k, (pendingBySub.get(k) || 0) + 1);
+    });
+    pendingBySub.forEach((pd, k) => {
+      const extra = Math.max(0, pd - (countBySub.get(k) || 0));
+      if (extra > 0) {
+        countBySub.set(k, (countBySub.get(k) || 0) + extra);
+        totalPhotos += extra;
+      }
+    });
+
+    let totalSlots = 0;
+    let filledSlots = 0;
+    configuredProducts.forEach((prod: any) => {
+      const pfx = prod?.name || prod?.id ? `${prod.name || prod.id} — ` : '';
+      indexSchema(prod?.categories || []).leafCategories.forEach((cat: any) => {
+        getCapturableSlots(cat).forEach((slot: any) => {
+          totalSlots += 1;
+          const k = `${norm(`${pfx}${cat.label}`)}||${norm(slot.storageName)}`;
+          if ((countBySub.get(k) || 0) > 0) filledSlots += 1;
+        });
+      });
+    });
+
+    return { totalPhotos, totalSlots, filledSlots };
+  }, [isDynamicInspection, configuredProducts, lead?.salesPhotos, queueItems, lead?._id]);
+
   const displayTotal = useMemo(() => {
+    if (dynamicCounts) return dynamicCounts.totalSlots;
     return globalCounts.total;
-  }, [globalCounts]);
+  }, [dynamicCounts, globalCounts]);
 
   const totalUploaded = useMemo(() => {
+    if (dynamicCounts) return dynamicCounts.filledSlots;
     return globalCounts.captured;
-  }, [globalCounts]);
+  }, [dynamicCounts, globalCounts]);
 
   const totalPhotosCount = useMemo(() => {
+    if (dynamicCounts) return dynamicCounts.totalPhotos;
     let count = 0;
     IMAGE_CATEGORIES.forEach((cat) => {
       const imgs = getImagesForSection(cat);
@@ -1223,7 +1330,7 @@ export const JobDocsSection = ({
       count += nonAnnotated.length;
     });
     return count;
-  }, [getImagesForSection]);
+  }, [dynamicCounts, getImagesForSection]);
 
   const progressPercent = useMemo(() => {
     if (displayTotal === 0) return 0;
@@ -1535,9 +1642,50 @@ export const JobDocsSection = ({
         waitForPendingUpload={waitForPendingUpload}
       />
 
-      {/* Manage Photos Modal */}
+      {/* Dynamic capture (web `DynamicInspectionPhotosDialog`) — the schema-driven
+          replacement for the static camera → TagPhotoModal flow. */}
+      {showDynamicCapture && isDynamicInspection && (
+        // No slide animation + black backdrop: the camera is launched immediately
+        // on open, so a sliding green panel must not flash before it. The view
+        // itself paints its own chrome once the first photo starts the tag flow.
+        <Modal visible animationType="none" onRequestClose={() => setShowDynamicCapture(false)}>
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
+            <DynamicInspectionView
+              lead={lead}
+              products={configuredProducts}
+              onClose={() => setShowDynamicCapture(false)}
+              refetch={refetch}
+            />
+          </View>
+        </Modal>
+      )}
+
+      {/* Manage Photos — schema-driven when the company configured an inspection
+          schema (web `DynamicManagePhotosDialog`), else the static slot grid. */}
+      {showManageModal && isDynamicInspection && (
+        <Modal visible animationType="slide" onRequestClose={() => setShowManageModal(false)}>
+          <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: '#0D1F1A' }}>
+            <DynamicManagePhotosView
+              lead={lead}
+              products={configuredProducts}
+              onClose={() => setShowManageModal(false)}
+              onReopen={() => setShowManageModal(true)}
+              refetch={refetch}
+            />
+          </View>
+        </Modal>
+      )}
+
+      {showManageModal && !isDynamicInspection && productsLoading && (
+        <Modal visible transparent animationType="fade">
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+            <ActivityIndicator size="large" color="#fff" />
+          </View>
+        </Modal>
+      )}
+
       <ManagePhotosModal
-        visible={showManageModal}
+        visible={showManageModal && !isDynamicInspection && !productsLoading}
         onClose={() => setShowManageModal(false)}
         lead={lead}
         insets={insets}

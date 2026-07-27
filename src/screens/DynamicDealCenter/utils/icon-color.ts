@@ -113,3 +113,47 @@ export function resolveSchemaStyle(
   const bg = fallback?.bg && !entity?.color ? fallback.bg : softBg(color);
   return { color, icon, bg };
 }
+
+/**
+ * Name-based category palette — the fallback look used across the dynamic flow
+ * (calculator cards, rollout pills, Job Summary rows) when the schema supplies no
+ * icon/color. Keys are matched case-insensitively against a category name/label.
+ */
+export const CATEGORY_STYLE_MAP: Record<string, SchemaStyle> = {
+  gutters: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+  gutter: { color: '#00B8D9', icon: 'home', bg: '#E0F8FB' },
+  leaffilter: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  'leaf filter': { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  leaf: { color: '#4CBB17', icon: 'shield-checkmark', bg: '#EBF9E1' },
+  soffit: { color: '#00B8D9', icon: 'build', bg: '#E0F8FB' },
+  fascia: { color: '#8E33FF', icon: 'layers', bg: '#F2E8FF' },
+  lighting: { color: '#FFAB00', icon: 'bulb', bg: '#FFF8E6' },
+  additional: { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+  'additional services': { color: '#FFAB00', icon: 'add-circle', bg: '#FFF8E6' },
+  miscellaneous: { color: '#637381', icon: 'ellipsis-horizontal-circle', bg: '#F4F6F8' },
+};
+
+/** Name-based fallback style for a category id/name (schema-less path). */
+export function styleForKey(name: string, color?: string): SchemaStyle {
+  const found = CATEGORY_STYLE_MAP[(name || '').toLowerCase()];
+  if (found) return found;
+  const c = color || '#637381';
+  return { color: c, icon: 'pricetag', bg: color ? `${c}1A` : '#F4F6F8' };
+}
+
+/**
+ * Build a `categoryId → { label, style }` map across every vertical's categories,
+ * resolving icon/color from the schema (Iconify → Ionicons) with the name-based
+ * palette as fallback. Shared by the rollout quote card and the Result Lead Job
+ * Summary so category pills + item-row icons are consistent everywhere.
+ */
+export function buildCategoryMeta(
+  verticals: Array<{ categories?: Array<{ id: string; label?: string; name?: string; icon?: string; color?: string }> }> | undefined,
+): Record<string, { label: string; style: SchemaStyle }> {
+  const map: Record<string, { label: string; style: SchemaStyle }> = {};
+  (verticals || []).forEach((v) => (v.categories || []).forEach((cat) => {
+    const named = CATEGORY_STYLE_MAP[(cat.name || '').toLowerCase()] || CATEGORY_STYLE_MAP[(cat.label || '').toLowerCase()];
+    map[cat.id] = { label: cat.label || cat.id, style: resolveSchemaStyle({ icon: cat.icon, color: cat.color }, named) };
+  }));
+  return map;
+}

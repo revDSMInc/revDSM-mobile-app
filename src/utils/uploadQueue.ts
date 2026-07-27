@@ -66,17 +66,82 @@ class UploadQueueManager {
   }
 
   public async addToQueue(item: Omit<UploadQueueItem, 'id' | 'timestamp'>) {
+    const id = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Camera / image-picker photos live in the volatile `tmp/` dir, which iOS purges
+    // aggressively (and an app restart clears too). A queued upload that runs after
+    // that purge fails with NSCocoa 260 / POSIX 2 "No such file". Copy the file into a
+    // DURABLE queue dir up front so it survives until the (possibly offline) upload.
+    let uri = item.uri;
+    try {
+      const persisted = await this.persistLocalFile(item.uri, id);
+      if (persisted) uri = persisted;
+    } catch (e) {
+      console.warn('[UploadQueue] Could not persist queued file, using original uri:', e);
+    }
     const newItem: UploadQueueItem = {
       ...item,
-      id: `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      uri,
+      id,
       timestamp: new Date().toISOString(),
     };
     this.queue.push(newItem);
     this.saveQueue();
-    
+
     // Process queue in the background (fire and forget)
     this.processQueue();
     return newItem.id;
+  }
+
+  /** Local filesystem path for a uri (strips the `file://` scheme, collapses the
+   *  leading slash run that produced the malformed `file://////…` uris). */
+  private toFsPath(uri: string): string {
+    return decodeURIComponent(String(uri || '').replace(/^file:\/\//i, '')).replace(/^\/+/, '/');
+  }
+
+  /** A well-formed `file://` uri RCTNetworking can open on both platforms. */
+  private toFileUri(uri: string): string {
+    return `file://${this.toFsPath(uri)}`;
+  }
+
+  /** Copy a captured local photo into a durable per-item queue dir so it can't be
+   *  purged before upload. Returns the new `file://` uri, or null when the source is
+   *  remote/content/already-missing (caller keeps the original uri). */
+  private async persistLocalFile(uri: string, id: string): Promise<string | null> {
+    if (!uri) return null;
+    // Only local file paths are copyable — leave remote/content uris untouched.
+    if (/^(https?|content):/i.test(uri)) return null;
+    const fs = ReactNativeBlobUtil.fs;
+    const src = this.toFsPath(uri);
+    // Already in durable app storage (e.g. the camera pre-persisted it to
+    // `pending_uploads`) — use it as-is instead of making a redundant copy.
+    if (src.includes('/pending_uploads/') || src.includes('/upload_queue/')) {
+      return (await fs.exists(src)) ? this.toFileUri(src) : null;
+    }
+    try {
+      if (!(await fs.exists(src))) return null; // already gone → let uploadItem skip it
+      const dir = `${fs.dirs.DocumentDir}/upload_queue`;
+      if (!(await fs.exists(dir))) await fs.mkdir(dir);
+      const ext = (src.split('/').pop() || '').split('.').pop()?.split('?')[0] || 'jpg';
+      const dest = `${dir}/${id}.${ext}`;
+      await fs.cp(src, dest);
+      return this.toFileUri(dest);
+    } catch (e) {
+      console.warn('[UploadQueue] persistLocalFile failed:', e);
+      return null;
+    }
+  }
+
+  /** Delete the durable copy once an item leaves the queue (success or drop). */
+  private async cleanupPersistedFile(item: UploadQueueItem) {
+    try {
+      const path = this.toFsPath(item.uri);
+      const fs = ReactNativeBlobUtil.fs;
+      if ((path.includes('/upload_queue/') || path.includes('/pending_uploads/')) && (await fs.exists(path))) {
+        await fs.unlink(path);
+      }
+    } catch {
+      // best-effort cleanup; a leftover temp copy is harmless
+    }
   }
 
   private async checkOnline(): Promise<boolean> {
@@ -90,7 +155,7 @@ class UploadQueueManager {
       });
       clearTimeout(timeoutId);
       return true;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -101,25 +166,40 @@ class UploadQueueManager {
 
     console.log(`[UploadQueue] Processing started. Queue length: ${this.queue.length}`);
 
-    while (this.queue.length > 0) {
-      const isOnline = await this.checkOnline();
-      if (!isOnline) {
-        console.log('[UploadQueue] Device is offline. Pausing queue processing.');
-        // Schedule next check in 5 seconds
-        setTimeout(() => this.processQueue(), 5000);
-        break;
-      }
+    // Connectivity is checked ONCE here, not before every item. The old code ran a
+    // `fetch('https://www.google.com')` HEAD round-trip (up to 3s) BEFORE every
+    // single upload, so a burst of N photos paid N extra round-trips and felt slow.
+    // Now: one pre-flight check, then all queued items upload back-to-back; any
+    // connectivity loss mid-burst is caught by the per-item catch below (which
+    // re-checks and pauses without burning a retry).
+    if (!(await this.checkOnline())) {
+      console.log('[UploadQueue] Device is offline. Pausing queue processing.');
+      this.isProcessing = false;
+      setTimeout(() => this.processQueue(), 5000);
+      return;
+    }
 
+    while (this.queue.length > 0) {
       const activeItem = this.queue[0];
       try {
         console.log(`[UploadQueue] Uploading item: ${activeItem.id} for slot: ${activeItem.subcategory}`);
         await this.uploadItem(activeItem);
-        
+
         // Remove completed item from queue
         this.queue.shift();
         this.saveQueue();
+        this.cleanupPersistedFile(activeItem); // fire-and-forget: delete the durable copy
         console.log(`[UploadQueue] Upload success: ${activeItem.id}`);
       } catch (error) {
+        // The local file is permanently gone (tmp purged before upload). Retrying can
+        // never succeed, so drop it immediately — no 5× retry, no red error screen.
+        if ((error as any)?.localFileMissing) {
+          console.warn(`[UploadQueue] Local file missing for ${activeItem.id}; dropping (photo must be re-taken).`);
+          this.queue.shift();
+          this.saveQueue();
+          this.cleanupPersistedFile(activeItem);
+          continue;
+        }
         // Double-check if we became offline during the upload attempt
         const stillOnline = await this.checkOnline();
         if (!stillOnline) {
@@ -130,13 +210,19 @@ class UploadQueueManager {
         }
 
         const retryCount = (activeItem.retryCount || 0) + 1;
-        console.error(`[UploadQueue] Upload failed for item: ${activeItem.id} (attempt ${retryCount}):`, error);
+        // A transient failure that will be retried is NOT a hard error — logging it
+        // via console.error made React Native's LogBox pop a full-screen red
+        // "Console Error" overlay on every attempt, alarming the rep even though the
+        // photo uploads fine on the next retry. Use console.warn so it stays a quiet
+        // diagnostic; the permanent give-up below is what actually matters.
+        console.warn(`[UploadQueue] Upload failed for item: ${activeItem.id} (attempt ${retryCount}):`, error);
 
         if (retryCount >= 5) {
           // Permanent failure after 5 attempts while online (e.g. invalid file, server rejection) — drop this item
           console.warn(`[UploadQueue] Giving up on item ${activeItem.id} after ${retryCount} attempts. Dropping.`);
           this.queue.shift();
           this.saveQueue();
+          this.cleanupPersistedFile(activeItem);
         } else {
           // Update retry count in place and persist
           this.queue[0] = { ...activeItem, retryCount };
@@ -174,9 +260,23 @@ class UploadQueueManager {
     }
 
     // 2. Prepare Form Data
+    // Guard: a local file that no longer exists (tmp purged before this upload ran,
+    // or already cleaned up) must NOT be attached — RCTNetworking throws
+    // NSCocoaErrorDomain 260 "no such file" and, in a dev build, pops a full-screen
+    // red error. Detect it and signal a HARD skip so the while-loop drops the item
+    // instead of retrying 5× against a file that will never come back.
+    const isLocalFile = !/^(https?|content):/i.test(item.uri);
+    if (isLocalFile && !(await ReactNativeBlobUtil.fs.exists(this.toFsPath(item.uri)))) {
+      const err: any = new Error('LOCAL_FILE_MISSING');
+      err.localFileMissing = true;
+      throw err;
+    }
+
     const formData = new FormData();
     formData.append('files', {
-      uri: item.uri,
+      // Normalize to a well-formed `file://` uri (fixes the malformed `file://////…`
+      // paths that also fail to open); leave remote/content uris as-is.
+      uri: isLocalFile ? this.toFileUri(item.uri) : item.uri,
       type: item.type,
       name: item.name,
     } as any);
@@ -267,12 +367,17 @@ class UploadQueueManager {
           }
         }
 
-        // Invalidate React Query cache to refresh the UI immediately for each upload
+        // Refresh React Query and WAIT for the lead to actually come back before
+        // this item is retired from the queue (the caller shifts it as soon as we
+        // return). `invalidateQueries` is fire-and-forget, so the optimistic queue
+        // entry used to disappear while the server photo had not landed yet — the
+        // count visibly dropped 1 → 0 → 1. Awaiting the refetch closes that gap so
+        // the optimistic item hands over to real data with no flicker.
         try {
           queryClient.invalidateQueries({ queryKey: ['leads'] });
-          queryClient.invalidateQueries({ queryKey: ['lead', item.leadId] });
+          await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
         } catch (qcErr) {
-          console.warn('[UploadQueue] Failed to invalidate queries:', qcErr);
+          console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
         }
 
         logEvent('add', {
@@ -285,6 +390,7 @@ class UploadQueueManager {
             subcategory: item.subcategory,
             timestamp: item.timestamp,
             coordinates: coords,
+            size: 0,
             action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',
             image_url: s3url,
             imageData: {

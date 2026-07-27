@@ -589,6 +589,27 @@ export const MapFiltersModal = ({
                   >
                     <View className={`w-4 h-4 bg-white rounded-full ${localFilters.showProduct ? 'self-end' : 'self-start'}`} />
                   </TouchableOpacity>
+
+                  {/* Route / directions toggle (web parity: ToggleSwitchRoute). */}
+                  <Icon name="map-marker-path" size={24} color="#000" />
+                  <TouchableOpacity
+                    onPress={() => {
+                      const next = !localFilters.showRoute;
+                      setLocalFilters({ ...localFilters, showRoute: next });
+                      if (user?._id || user?.id) {
+                        logEvent('toggle', {
+                          user_id: user._id || user.id,
+                          module_type: 'route_filter',
+                          created_by: user._id || user.id,
+                          meta: { routeEnabled: next },
+                        });
+                      }
+                    }}
+                    className="w-11 h-6 rounded-full px-1 justify-center"
+                    style={{ backgroundColor: localFilters.showRoute ? colors.primary.main : '#e2e8f0' }}
+                  >
+                    <View className={`w-4 h-4 bg-white rounded-full ${localFilters.showRoute ? 'self-end' : 'self-start'}`} />
+                  </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity

@@ -436,6 +436,11 @@ export default function LeadCenterPage() {
         const dateStr = lead.leadDate ? format(new Date(lead.leadDate), 'MM.dd.yy') : '';
         return `${lead.office || ''} Lead ${dateStr} - ${lead.leadId || 'N/A'}`.trim() || 'Discussion';
       })(),
+      // Hand the loaded photos to the Appointment Photos picker (web parity —
+      // web passes selectedJob.salesPhotos straight into the chat composer).
+      salesPhotos: lead.salesPhotos || [],
+      previewImage: lead.previewImage,
+      previewImages: lead.previewImages,
     });
   };
 
@@ -535,7 +540,7 @@ export default function LeadCenterPage() {
     setIsConsentGenerating(true);
     try {
       const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
-      
+
       // Log successful consent form submission
       if (user?._id || user?.id) {
         logEvent('submit', {
@@ -816,10 +821,10 @@ export default function LeadCenterPage() {
           },
         });
       }
-      
+
       // Close the modal first so that the flash message and sharesheet appear on the main screen
       toggleModal('showInspectionModal', false);
-      
+
       setTimeout(async () => {
         try {
           await downloadPdfToDevice(pdfPath, 'Inspection Report', false);
@@ -958,7 +963,7 @@ export default function LeadCenterPage() {
           <View className="px-4">
             <View className="flex-row gap-[10%] mb-4">
               <View className="flex-col gap-4">
-                <Text className="text-base" style={{ color: colors.primary.main }}>
+                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadId}
@@ -1011,7 +1016,7 @@ export default function LeadCenterPage() {
               </View>
 
               <View className="flex-col gap-4">
-                <Text className="text-base text-right" style={{ color: colors.primary.main }}>
+                <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>
                     {lead.leadCode || 'N/A'}
@@ -1350,6 +1355,7 @@ export default function LeadCenterPage() {
                   }
                 }}
                 onShowDynamicDealCenter={() => navigation.navigate('DynamicDealCenter', { lead })}
+                onShowInvestmentCenter={() => navigation.navigate('InvestmentCenter', { lead })}
                 onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
                 onShowRooflineDeck={() => navigation.navigate('RooflineDeck', { lead })}
                 onShowInspectionGrid={() => toggleModal('showInspectionGrid', true)}

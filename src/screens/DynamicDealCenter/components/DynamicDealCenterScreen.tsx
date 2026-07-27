@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { View, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,6 +13,10 @@ import { ResultJobModal } from './ResultJobModal';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
 import { DynamicDealEditScreen } from './DynamicDealEditScreen';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
+import { buildSectionLabelMap } from '../utils/item-format';
+import { LeadService } from '../../../services/api/leads';
+import { useAuth } from '../../../hooks/useAuth';
+import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -26,11 +30,18 @@ interface DynamicDealCenterScreenProps {
       // deal straight in the dynamic job builder (web PortalDynamicJobBuilderModal).
       mode?: 'new' | 'edit';
       calculatorResultData?: any;
+      // Opt-in handoff from the Investment Center — opens the Result Lead (Sale)
+      // modal for this calculator with the secured price/plan/down payment.
+      resultOptIn?: { calculatorId?: string; price?: number; paymentMethod?: string; downPayment?: number };
     };
   };
 }
 
 export default function DynamicDealCenterScreen({ navigation, route }: DynamicDealCenterScreenProps) {
+  // useAuth sits ABOVE the edit-mode branch so it runs unconditionally (its result
+  // is simply unused in the edit branch) — the activity-log user id, without adding
+  // another hook after the early return.
+  const { user } = useAuth();
   // Edit flow is a distinct screen (its own hooks/loading). Branch BEFORE any hook
   // below runs — `mode` is stable for a navigated screen instance, so this keeps
   // hook order consistent across renders.
@@ -40,7 +51,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   const lead = route?.params?.lead;
   const [flowStep, setFlowStep] = useState<FlowStep>('calculator');
-  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number }>({ visible: false });
+  const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string; downPayment?: number }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
   const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
 
@@ -54,6 +65,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     configuredSchemas,
     isConfigured: hasCalculatorSchema,
     isLoading: isSchemaLoading,
+    pricingConfig,
   } = useCalculatorSchema();
   // Backend-driven payment plans + discount tiers (web parity), static fallback.
   const pricing = useDealPricing(lead);
@@ -67,10 +79,12 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     tabs,
     activeTabId,
     setActiveTabId,
+    appointmentId,
     loading: isCalcLoading,
     isSaving,
     lastUpdated,
     handleEntryChange,
+    handleClearSection,
     handleAddTab,
     handleDuplicateTab,
     handleDeleteTab,
@@ -81,9 +95,13 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     handleSetDrops,
     handleSetDiscount,
     handleSetDownPayment,
+    handleSetRenders,
+    handleSetOneYearMonthly,
   } = useDynamicCalculators(lead, verticals);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  // sectionId → label for the Result Lead Job Summary rows (web parity).
+  const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
   // Header shows the LEAD (customer name + lead time), matching the regular
   // DealCenter header (`src/screens/DealCenter/index.tsx`). The active calculator
@@ -94,16 +112,72 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     : lead?.title || lead?.customerName || 'Lead Center';
   const leadTime = lead?.leadTime || '';
 
-  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number) => {
-    setResultModal({ visible: true, calculatorId, resultType: result, price });
+  const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => {
+    setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
     setCurrentCalculatorId(calculatorId);
   }, []);
 
+  // Opt-in handoff from the Investment Center: once the calculators have loaded,
+  // open the Result Lead (Sale) modal for the opted-in calculator with the secured
+  // price/plan/down payment (web parity: TabbedCalculator `readPendingOptIn`). Runs
+  // once per navigation so it doesn't reopen after the rep closes the modal.
+  const optInHandledRef = useRef(false);
+  useEffect(() => {
+    const optIn = route?.params?.resultOptIn;
+    if (!optIn?.calculatorId || optInHandledRef.current) return;
+    if (isCalcLoading) return;
+    const calc = tabs.find((t) => t.id === optIn.calculatorId);
+    if (!calc) return;
+    optInHandledRef.current = true;
+    setActiveTabId(optIn.calculatorId);
+    handleResultJob(optIn.calculatorId, 'sale', optIn.price, optIn.paymentMethod, optIn.downPayment);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route?.params?.resultOptIn, isCalcLoading, tabs]);
+
   const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
-    setCalculatorResultData({ ...data, calculatorId: currentCalculatorId });
+    // Attach the calculator snapshot + appointment so the outcome payload can send
+    // `LFCalculator` and `selectedAppointmentId` (web parity — every outcome save
+    // carries the associated calculator object; previously omitted on mobile).
+    const calc: any = tabs.find((t) => t.id === currentCalculatorId);
+    setCalculatorResultData({
+      ...data,
+      calculatorId: currentCalculatorId,
+      LFCalculator: calc || {},
+      selectedAppointmentId: calc?.appointmentId,
+    });
+    // Web parity (result-lead-modal.js:3192 "Build Job" click): tapping Build Job
+    // COMPLETES the lead-result milestone and moves the job build to active —
+    // `{ leadResulted: 'completed', jobBuild: 'active' }` (salesProcess already done).
+    // This previously sent `leadResulted: 'active'`, which is the value the WEB sends
+    // at the earlier Sale/Demo PICK, not at Build Job — so the portal's Forever Record
+    // showed "Lead Resulted — in progress / Pending / Result: N/A" and never flipped to
+    // Complete (the milestone's Complete gate is `status === 'completed'`). The job
+    // builder's finalize (DynamicJobBuilderScreen) still sets jobBuild:'complete' after.
+    const leadIdForProgress = lead?._id || lead?.leadId || lead?.id;
+    if (leadIdForProgress) {
+      LeadService.updateLeadTimelineProgress(leadIdForProgress, {
+        salesProcess: 'completed',
+        leadResulted: 'completed',
+        jobBuild: 'active',
+      }).catch((e: any) => console.warn('[DynamicDealCenter] timeline progress failed:', e?.message || e));
+    }
+    // Web parity (result-lead-modal.js:1748): "Build Job" clicked → transition into
+    // the job builder. Fires ONLY here (the LeadCenter build_job_initiated calls are
+    // for the legacy JobBuilder navigation, not this dynamic step).
+    const uId = user?._id || user?.id;
+    if (uId && leadIdForProgress) {
+      logBuildJobInitiated({
+        userId: uId,
+        leadId: leadIdForProgress,
+        result: data?.resultType || data?.result || undefined,
+        calculatorId: currentCalculatorId || undefined,
+        appointmentId: calc?.appointmentId || appointmentId || undefined,
+        calculatorType: 'dynamic',
+      }).catch(() => {});
+    }
     setFlowStep('jobBuilder');
-  }, [currentCalculatorId]);
+  }, [currentCalculatorId, tabs, lead, user, appointmentId]);
 
   const handleJobBuilderBack = useCallback(() => {
     setFlowStep('calculator');
@@ -126,20 +200,40 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   // buildDealCenterSessionData — extracts field-option aliases from the
   // calculator form schemas so that tab.dcField references (which may use
   // a field's legacy name rather than its id) are correctly resolved.
+  //
+  // Source the entries from the RESULTED calculator (the one the job builder
+  // belongs to), NOT `activeTab` — they can differ, and the job builder's
+  // LOCKED, dcField-driven fields (e.g. gutter Extras: Wedges/Straps/Modify
+  // Height) resolve their values from THIS map on reopen. If it were built from
+  // the wrong/empty tab, those locked fields resolve to their blank default and
+  // the saved values are wiped on load (confirmed against live data). Falls back
+  // to the active tab, then the resulted calc snapshot carried on resultData.
   const consolidatedDealCenterData = useMemo(() => {
+    const resultedId = calculatorResultData?.calculatorId || currentCalculatorId;
+    const resultedTab = resultedId ? tabs.find((t) => t.id === resultedId) : undefined;
+    const entries =
+      resultedTab?.entries ||
+      calculatorResultData?.LFCalculator?.entries ||
+      activeTab?.entries ||
+      {};
     return buildDealCenterData({
-      entries: activeTab?.entries || {},
+      entries,
       resultData: calculatorResultData || {},
       schemas: verticals,   // CalculatorSchema[] — same array used by the calculator
       lead: lead || {},
     });
-  }, [lead, calculatorResultData, activeTab, verticals]);
+  }, [lead, calculatorResultData, currentCalculatorId, tabs, activeTab, verticals]);
 
   if (flowStep === 'jobBuilder') {
     return (
       <DynamicJobBuilderScreen
         navigation={navigation}
         initialConfig={jobBuilderConfig ?? undefined}
+        // System A calculator schemas — the summary tab resolves each card's
+        // header colour from the matching schema CATEGORY's colour (web parity:
+        // `resolveTabAccentColor` → `findTabCategoryColorFromSchemas`). These are
+        // NOT on `initialConfig`, which is the System B job-builder config.
+        calculatorSchemas={verticals}
         dealCenterData={consolidatedDealCenterData}
         calculatorResultData={calculatorResultData}
         leadId={lead?._id || lead?.leadId || lead?.id}
@@ -158,8 +252,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         <RolloutView
           calculators={tabs}
           verticals={verticals}
+          pricingConfig={pricingConfig}
           pricing={pricing}
           isLowesLead={lead?.lowesLead === true}
+          leadId={lead?._id || lead?.leadId || lead?.id}
+          appointmentId={appointmentId || undefined}
           onBack={() => setFlowStep('calculator')}
           onConfirmRollouts={handleConfirmRollouts}
           onResultJob={handleResultJob}
@@ -167,15 +264,25 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDropChange={handleSetDrops}
           onDiscountChange={handleSetDiscount}
           onDownPaymentChange={handleSetDownPayment}
+          onRendersChange={handleSetRenders}
+          onOneYearMonthlyChange={handleSetOneYearMonthly}
+          onRolloutsConfirmedDone={() =>
+            navigation?.navigate('LeadCenter', { lead, tab: 'tools' })
+          }
           activeTabId={activeTabId}
           onTabSelect={setActiveTabId}
         />
         <ResultJobModal
           visible={resultModal.visible}
+          lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
+          initialPaymentMethod={resultModal.paymentMethod}
+          initialDownPayment={resultModal.downPayment}
           entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          verticals={verticals}
+          sectionLabelMap={sectionLabelMap}
           isLowesLead={lead?.lowesLead === true}
           pricing={pricing}
           onClose={() => setResultModal({ visible: false })}
@@ -247,8 +354,10 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       ) : (
         <CalculatorView
           verticals={verticals}
+          pricingConfig={pricingConfig}
           entries={activeTab?.entries || {}}
           onEntryChange={handleEntryChange}
+          onClearSection={handleClearSection}
           totals={activeTab?.totals || { cost: 0, par: 0, retail: 0 }}
           readOnly={activeTab?.isRolloutConfirmed || false}
           price={activeTab?.price || 0}
@@ -261,21 +370,35 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDuplicateTab={handleDuplicateTab}
           onDeleteTab={handleDeleteTab}
           onReorderTabs={handleReorderTabs}
-          onViewAll={() => setFlowStep('rollout')}
+          onViewAll={() => {
+            // Web parity (TabbedCalculator.js:667): view-all/rollout entry event.
+            const uId = user?._id || user?.id;
+            if (uId) logViewAllCalculators(uId).catch(() => {});
+            setFlowStep('rollout');
+          }}
+          appointmentId={appointmentId || undefined}
+          isLowesLead={lead?.lowesLead === true}
+          plans={pricing.plans}
+          defaultMethod={pricing.defaultMethod}
         />
       )}
 
-      <ResultJobModal
-        visible={resultModal.visible}
-        calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
-        resultType={resultModal.resultType}
-        initialPrice={resultModal.price}
-        entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
-        isLowesLead={lead?.lowesLead === true}
-        pricing={pricing}
-        onClose={() => setResultModal({ visible: false })}
-        onConfirm={handleResultConfirm}
-      />
+        <ResultJobModal
+          visible={resultModal.visible}
+          lead={lead}
+          calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
+          resultType={resultModal.resultType}
+          initialPrice={resultModal.price}
+          initialPaymentMethod={resultModal.paymentMethod}
+          initialDownPayment={resultModal.downPayment}
+          entries={tabs.find((t) => t.id === resultModal.calculatorId)?.entries || {}}
+          verticals={verticals}
+          sectionLabelMap={sectionLabelMap}
+          isLowesLead={lead?.lowesLead === true}
+          pricing={pricing}
+          onClose={() => setResultModal({ visible: false })}
+          onConfirm={handleResultConfirm}
+        />
     </SafeAreaView>
   );
 }

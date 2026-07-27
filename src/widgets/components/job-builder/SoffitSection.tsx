@@ -153,7 +153,12 @@ export const SoffitSection = ({
                   onChange(opt);
                 }
               }}
-              className={`py-3 rounded-xl border-2 items-center justify-center flex-row w-[48.5%] ${
+              // Fixed 48.5% inline width → exactly two option boxes per row (a clean
+              // 2-column grid). The old NativeWind `w-[48.5%]` arbitrary class (decimal
+              // percent) didn't reliably compile, so buttons fell back to content width
+              // and packed 3 short options into one row.
+              style={{ width: '48.5%' }}
+              className={`py-3 rounded-xl border-2 items-center justify-center flex-row ${
                 selected ? 'bg-[#22C55E] border-[#22C55E]' : 'bg-white border-slate-100'
               }`}
             >

@@ -45,6 +45,12 @@ jest.mock('../../../src/config/message', () => ({
 
 jest.mock('react-native-vector-icons/Ionicons', () => 'Ionicons');
 
+// useOutcomeLogging pulls user from Redux (useAuth); stub it so the modal renders
+// without a <Provider>. Its only job is firing activity logs, not UI.
+jest.mock('../../../src/hooks/useOutcomeLogging', () => ({
+  useOutcomeLogging: () => ({ logReset: jest.fn() }),
+}));
+
 import { ResultJobModal } from '../../../src/screens/DynamicDealCenter/components/ResultJobModal';
 
 const defaultPricing = {

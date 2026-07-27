@@ -458,6 +458,11 @@ export const InspectionFormModal = ({
     );
   };
 
+  // ── Inspection Report form ────────────────────────────────────────────────
+  // The schema-driven photo-capture flow (`DynamicInspectionView`) deliberately
+  // does NOT live here: this tool generates the report. Photo capture/management
+  // belongs to Job Docs → Manage Photos, matching web, where `job-docs-tab.js`
+  // — not the report — owns the dynamic inspection dialogs.
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={styles.backdrop}>

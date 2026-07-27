@@ -1,17 +1,10 @@
 pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
 plugins { id("com.facebook.react.settings") }
-// Invoke the CLI through node directly instead of the plugin's default
-// `npx @react-native-community/cli config`. npm's `exec` cannot resolve the bin of a scoped
-// package whose bin name differs from the package name (`rnc-cli`), and fails silently with
-// exit 1 and no output, which surfaces here as an opaque "command 'cmd' finished with non-zero
-// exit value 1". Calling bin.js by path is equivalent and platform independent.
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex ->
-    ex.autolinkLibrariesFromCommand([
-        "node",
-        "node_modules/@react-native-community/cli/build/bin.js",
-        "config"
-    ])
-}
+// Invoke the RN CLI directly via `node` instead of the default `npx @react-native-community/cli`.
+// npx triggers npm's background update-notifier, which can hit `spawn EPERM` on Windows; that
+// unhandled rejection makes the process exit 1 on Node 22+ even though valid config JSON is produced,
+// which aborts autolinking (native modules like @rnmapbox/maps & vision-camera silently fail to link).
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand(["node", "node_modules/react-native/cli.js", "config"]) }
 rootProject.name = 'revDSM_Sales'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')

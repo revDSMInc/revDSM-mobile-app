@@ -1,0 +1,694 @@
+// ─── useDynamicInspectionCapture.ts ──────────────────────────────────────────
+// Capture/upload/load/delete state for the DYNAMIC inspection photos flow
+// (sales side, mobile). Adapted from the web reference
+//   src/sections/job/components/dynamic-inspection-photos/use-dynamic-inspection-capture.js
+//
+// Differences from web (mobile parity, not divergence):
+//  - Uploads go through the existing offline-capable MMKV upload queue
+//    (`uploadQueueManager`) instead of a direct multipart POST, so photos taken
+//    offline are queued and retried — the mobile app's core strength.
+//  - Secure URLs are resolved via `LeadService.getSecureUrls`; deletes via
+//    `LeadService.deleteImage` (both already used across the lead-center).
+//  - Photos are the single source of truth from `lead.salesPhotos`; a lead
+//    refetch (query invalidation from the queue) re-resolves the grid.
+//
+// Photos are addressed type-agnostically by (product-scoped category label,
+// storageName). Any category type resolves its slot to that pair, so nothing
+// schema-specific is persisted.
+//
+// NOTE (deferred vs web): move-photo and annotated sections are NOT implemented
+// here — see the web file above for `movePhoto` / `getAnnotatedFor`. Core capture,
+// categorized display, delete, and local tag-as-extra are complete.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LeadService } from '../../../services/api/leads';
+import { queryClient } from '../../../services/api/queryClient';
+import { uploadQueueManager } from '../../../utils/uploadQueue';
+import { logEvent } from '../../../services/api/LoggerService';
+import {
+  indexSchema,
+  getCapturableSlots,
+  norm,
+  uiKey,
+  extraSlotId,
+  nextExtraLabel,
+  type InspectionCategory,
+  type InspectionSlot,
+  type SchemaIndex,
+} from './dynamic-inspection-schema-utils';
+
+const subKey = (label: string, subcategory: string) => `${norm(label)}||${norm(subcategory)}`;
+
+export interface CapturedPhoto {
+  s3url?: string;
+  bucketName?: string;
+  category?: string;
+  subcategory?: string;
+  secureUrl?: string | null;
+  timestampTaken?: string;
+  coordinates?: any;
+  _id?: string;
+  isOptimistic?: boolean;
+  [key: string]: any;
+}
+
+interface CaptureAsset {
+  uri: string;
+  type?: string;
+  fileName?: string;
+}
+
+interface UseDynamicInspectionCaptureArgs {
+  lead: any;
+  categories: InspectionCategory[];
+  productKey?: string;
+  userId?: string;
+  refreshLeadData?: (leadId: string) => void | Promise<void>;
+}
+
+const dedupeExtras = (...lists: (InspectionSlot | InspectionSlot[])[]): InspectionSlot[] => {
+  const seen = new Set<string>();
+  const out: InspectionSlot[] = [];
+  lists.flat().forEach((e) => {
+    if (!e) return;
+    const k = norm(e.name);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(e);
+  });
+  return out;
+};
+
+export interface DynamicInspectionCapture {
+  leadId: string | undefined;
+  loading: boolean;
+  getPhotos: (label: string, subcategory: string) => CapturedPhoto[];
+  countUnderLabel: (label: string) => number;
+  totalPhotos: number;
+  capturedPreviews: Record<string, string>;
+  uploadingKeys: Record<string, boolean>;
+  deletingKeys: Record<string, boolean>;
+  movingKeys: Record<string, boolean>;
+  extrasFor: (category: InspectionCategory) => InspectionSlot[];
+  addExtra: (category: InspectionCategory) => void;
+  removeExtra: (category: InspectionCategory, extra: InspectionSlot) => void;
+  tagAsExtraInCategory: (args: { category: InspectionCategory; asset: CaptureAsset }) => void;
+  captureToSlot: (args: {
+    categoryLabel: string;
+    subcategory: string;
+    key: string;
+    asset: CaptureAsset;
+  }) => void;
+  deletePhoto: (args: {
+    categoryLabel: string;
+    subcategory: string;
+    key: string;
+    photo: CapturedPhoto;
+  }) => Promise<void>;
+  movePhoto: (args: {
+    photo: CapturedPhoto;
+    fromCategoryLabel: string;
+    fromSubcategory: string;
+    toCategoryLabel: string;
+    toSubcategory: string;
+    key?: string;
+  }) => Promise<void>;
+  getAnnotatedFor: (label: string) => { subcategory: string; photo: CapturedPhoto }[];
+  progress: { total: number; filled: number; percent: number };
+}
+
+export function useDynamicInspectionCapture({
+  lead,
+  categories,
+  productKey,
+  userId,
+  refreshLeadData,
+}: UseDynamicInspectionCaptureArgs): DynamicInspectionCapture {
+  const leadId: string | undefined = lead?._id || lead?.id;
+
+  const index: SchemaIndex = useMemo(() => indexSchema(categories), [categories]);
+
+  // Photos are stored/loaded per product: the saved salesPhoto.category is
+  // prefixed with the product so each product owns its own images.
+  const scopeCat = useCallback(
+    (label: string) => (productKey ? `${productKey} — ${label}` : label),
+    [productKey]
+  );
+
+  const [photosBySubcat, setPhotosBySubcat] = useState<Record<string, CapturedPhoto[]>>({});
+  const [localExtras, setLocalExtras] = useState<Record<string, InspectionSlot[]>>({});
+  // Optimistic previews for a just-captured photo, keyed by subKey(scopedLabel, storage).
+  const [capturedPreviews, setCapturedPreviews] = useState<Record<string, string>>({});
+  const [uploadingKeys, setUploadingKeys] = useState<Record<string, boolean>>({});
+  const [deletingKeys, setDeletingKeys] = useState<Record<string, boolean>>({});
+  const [movingKeys, setMovingKeys] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(false);
+
+  // s3urls we just deleted but that a briefly-stale lead refresh may still return.
+  const pendingDeletesRef = useRef<Set<string>>(new Set());
+  // s3url -> destination subKey for a just-moved photo. Until a refetch reports the
+  // photo at its NEW position, an eventually-consistent replica may still return it
+  // at the OLD position; this guard drops those stale copies so the photo doesn't
+  // flash back into the original slot (it stays optimistically in the new one).
+  const pendingMovesRef = useRef<Map<string, string>>(new Map());
+  // Monotonic cache of every server-confirmed photo we've ever seen (keyed by
+  // subKey, deduped by s3url). The backend is eventually consistent: right after
+  // an upload, some lead refetches come back from a replica that does NOT yet
+  // have the new photo. Rebuilding purely from such a refetch would blank a slot
+  // that was just filled — the "active → inactive → active" flicker. So the
+  // displayed map is the UNION of this cache and the fresh lead; a photo only
+  // leaves the cache on an explicit in-app delete (pendingDeletesRef), never on a
+  // transient empty read. This is also what guarantees no tagged photo is missed.
+  const knownPhotosRef = useRef<Record<string, CapturedPhoto[]>>({});
+  // subKey -> uiKey, so when a server photo arrives we can clear the right uploading flag.
+  const pendingUploadKeyRef = useRef<Record<string, string>>({});
+
+  // Only reload when the lead's photos actually change.
+  const salesPhotosSignature = useMemo(() => {
+    const photos = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+    return photos
+      .map((p: any) => `${p?.s3url || ''}:${p?.category || ''}:${p?.subcategory || ''}`)
+      .join('|');
+  }, [lead?.salesPhotos]);
+
+  // Load + resolve secure URLs for photos whose category belongs to this schema.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const rawPhotos: any[] = Array.isArray(lead?.salesPhotos) ? lead.salesPhotos : [];
+
+      // Drop any photo we just deleted that the server still returns.
+      const pending = pendingDeletesRef.current;
+      if (pending.size) {
+        const stillReturned = new Set(rawPhotos.map((p) => p?.s3url).filter(Boolean));
+        pending.forEach((u) => {
+          if (!stillReturned.has(u)) pending.delete(u);
+        });
+      }
+      const photos = pending.size
+        ? rawPhotos.filter((p) => !pending.has(p?.s3url))
+        : rawPhotos;
+
+      const pfx = productKey ? `${productKey} — ` : '';
+      const expectedCats = new Set(index.leafCategories.map((c) => norm(`${pfx}${c.label}`)));
+      const scoped = photos.filter(
+        (p) => p && (p.s3url || p.secureUrl) && expectedCats.has(norm(p.category))
+      );
+
+      const filePaths: { bucketName: string; filePath: string }[] = [];
+      scoped.forEach((p) => {
+        if (p.bucketName && p.s3url) filePaths.push({ bucketName: p.bucketName, filePath: p.s3url });
+      });
+
+      let secureMap: Record<string, string | null> = {};
+      if (filePaths.length > 0) {
+        setLoading(true);
+        try {
+          const res = await LeadService.getSecureUrls(filePaths);
+          const data = res?.data?.data || res?.data || [];
+          filePaths.forEach((fp, i) => {
+            const entry = Array.isArray(data)
+              ? data.find((d: any) => d?.filePath === fp.filePath) || data[i]
+              : null;
+            secureMap[`${fp.bucketName}:${fp.filePath}`] =
+              entry?.secureUrl || entry?.url || null;
+          });
+        } catch (e) {
+          secureMap = {};
+        }
+      }
+
+      if (cancelled) return;
+
+      const fresh: Record<string, CapturedPhoto[]> = {};
+      scoped.forEach((p) => {
+        const k = subKey(p.category, p.subcategory);
+        // A just-moved photo: if this (possibly stale) refetch still reports it at
+        // the OLD slot, drop it so it doesn't flash back; once it appears at the new
+        // slot the guard clears and normal handling resumes.
+        if (p.s3url && pendingMovesRef.current.has(p.s3url)) {
+          const target = pendingMovesRef.current.get(p.s3url);
+          if (k === target) pendingMovesRef.current.delete(p.s3url);
+          else return;
+        }
+        if (!fresh[k]) fresh[k] = [];
+        if (p.s3url && fresh[k].some((x) => x.s3url === p.s3url)) return;
+        fresh[k].push({
+          ...p,
+          secureUrl: p.secureUrl || secureMap[`${p.bucketName}:${p.s3url}`] || null,
+        });
+      });
+
+      // Merge fresh photos into the monotonic cache: a transient refetch that is
+      // missing a photo must NOT drop it, but a fresh copy DOES refresh a stale
+      // one (e.g. a newly-resolved secureUrl). Explicitly-deleted s3urls are
+      // pruned so real deletions still take effect.
+      const merged: Record<string, CapturedPhoto[]> = {};
+      const allKeys = new Set([...Object.keys(knownPhotosRef.current), ...Object.keys(fresh)]);
+      allKeys.forEach((k) => {
+        const list: CapturedPhoto[] = [];
+        const push = (p: CapturedPhoto) => {
+          if (p.s3url && pending.has(p.s3url)) return; // just deleted
+          const idx = p.s3url ? list.findIndex((e) => e.s3url && e.s3url === p.s3url) : -1;
+          if (idx >= 0) list[idx] = p; // fresh copy wins (secureUrl refresh)
+          else list.push(p);
+        };
+        (knownPhotosRef.current[k] || []).forEach(push);
+        (fresh[k] || []).forEach(push);
+        if (list.length) merged[k] = list;
+      });
+
+      const map = merged;
+      knownPhotosRef.current = merged;
+      setPhotosBySubcat(merged);
+      setLoading(false);
+
+      // Clear optimistic previews / uploading flags for slots now backed by a
+      // real server photo.
+      setCapturedPreviews((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        Object.keys(prev).forEach((sk) => {
+          if (map[sk] && map[sk].length > 0) {
+            delete next[sk];
+            changed = true;
+            const key = pendingUploadKeyRef.current[sk];
+            if (key) {
+              setUploadingKeys((u) => {
+                const un = { ...u };
+                delete un[key];
+                return un;
+              });
+              delete pendingUploadKeyRef.current[sk];
+            }
+          }
+        });
+        return changed ? next : prev;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salesPhotosSignature, index, productKey]);
+
+  const getPhotos = useCallback(
+    (label: string, subcategory: string): CapturedPhoto[] => {
+      const sk = subKey(scopeCat(label), subcategory);
+      const server = photosBySubcat[sk] || [];
+      if (server.length > 0) return server;
+      // Surface the optimistic preview so the slot shows filled immediately.
+      const preview = capturedPreviews[sk];
+      if (preview) {
+        return [{ secureUrl: preview, subcategory, isOptimistic: true }];
+      }
+      return [];
+    },
+    [photosBySubcat, capturedPreviews, scopeCat]
+  );
+
+  const countUnderLabel = useCallback(
+    (label: string) => {
+      const prefix = `${norm(scopeCat(label))}||`;
+      let n = 0;
+      Object.entries(photosBySubcat).forEach(([k, arr]) => {
+        if (k.startsWith(prefix)) n += arr.length;
+      });
+      return n;
+    },
+    [photosBySubcat, scopeCat]
+  );
+
+  const totalPhotos = useMemo(
+    () => Object.values(photosBySubcat).reduce((n, arr) => n + arr.length, 0),
+    [photosBySubcat]
+  );
+
+  // Extras derived from the server merged with locally-added, photo-less ones.
+  const serverExtrasFor = useCallback(
+    (category: InspectionCategory): InspectionSlot[] => {
+      if (!category?.allowDynamicAdd) return [];
+      const defined = index.definedNamesByLabel.get(norm(category.label)) || new Set<string>();
+      const out: InspectionSlot[] = [];
+      Object.keys(photosBySubcat).forEach((k) => {
+        const [labelPart] = k.split('||');
+        if (labelPart !== norm(scopeCat(category.label))) return;
+        const sample = photosBySubcat[k]?.[0];
+        const subcat = sample?.subcategory;
+        if (!subcat || defined.has(norm(subcat))) return;
+        if (subcat.toLowerCase().includes('(annotated)')) return;
+        out.push({
+          id: extraSlotId(subcat),
+          name: subcat,
+          storageName: subcat,
+          key: uiKey(category.id, extraSlotId(subcat)),
+          isExtra: true,
+        });
+      });
+      return out;
+    },
+    [photosBySubcat, index, scopeCat]
+  );
+
+  const extrasFor = useCallback(
+    (category: InspectionCategory): InspectionSlot[] =>
+      dedupeExtras(serverExtrasFor(category), localExtras[category.id] || []),
+    [serverExtrasFor, localExtras]
+  );
+
+  const buildExtraSlot = useCallback(
+    (category: InspectionCategory): InspectionSlot | null => {
+      if (!category?.id) return null;
+      const combined = dedupeExtras(serverExtrasFor(category), localExtras[category.id] || []);
+      const name = nextExtraLabel(combined);
+      return {
+        id: extraSlotId(name),
+        name,
+        storageName: name,
+        key: uiKey(category.id, extraSlotId(name)),
+        isExtra: true,
+      };
+    },
+    [serverExtrasFor, localExtras]
+  );
+
+  const addExtra = useCallback(
+    (category: InspectionCategory) => {
+      const extra = buildExtraSlot(category);
+      if (!extra) return;
+      setLocalExtras((prev) => ({
+        ...prev,
+        [category.id]: [...(prev[category.id] || []), extra],
+      }));
+    },
+    [buildExtraSlot]
+  );
+
+  const removeExtra = useCallback(
+    (category: InspectionCategory, extra: InspectionSlot) => {
+      if (getPhotos(category.label, extra.storageName).length > 0) return; // has photos
+      setLocalExtras((prev) => ({
+        ...prev,
+        [category.id]: (prev[category.id] || []).filter((e) => e.id !== extra.id),
+      }));
+    },
+    [getPhotos]
+  );
+
+  const captureToSlot = useCallback(
+    ({
+      categoryLabel,
+      subcategory,
+      key,
+      asset,
+    }: {
+      categoryLabel: string;
+      subcategory: string;
+      key: string;
+      asset: CaptureAsset;
+    }) => {
+      if (!leadId || !asset?.uri || !categoryLabel || !subcategory) return;
+      const scopedCategory = scopeCat(categoryLabel);
+      const sk = subKey(scopedCategory, subcategory);
+
+      // Optimistic preview + uploading flag.
+      setCapturedPreviews((prev) => ({ ...prev, [sk]: asset.uri }));
+      setUploadingKeys((prev) => ({ ...prev, [key]: true }));
+      pendingUploadKeyRef.current[sk] = key;
+
+      // Push to the persistent, offline-capable MMKV upload queue. The queue
+      // invalidates ['lead', leadId] on success, which refreshes the lead prop
+      // and, via the load effect, clears the optimistic preview.
+      uploadQueueManager.addToQueue({
+        leadId,
+        categoryName: scopedCategory,
+        subcategory,
+        uri: asset.uri,
+        type: asset.type || 'image/jpeg',
+        name: asset.fileName || `photo_${Date.now()}.jpg`,
+        userId,
+      });
+    },
+    [leadId, scopeCat, userId]
+  );
+
+  const tagAsExtraInCategory = useCallback(
+    ({ category, asset }: { category: InspectionCategory; asset: CaptureAsset }) => {
+      const extra = buildExtraSlot(category);
+      if (!extra || !asset) return;
+      setLocalExtras((prev) => ({
+        ...prev,
+        [category.id]: [...(prev[category.id] || []), extra],
+      }));
+      captureToSlot({
+        categoryLabel: category.label,
+        subcategory: extra.storageName,
+        key: extra.key as string,
+        asset,
+      });
+    },
+    [buildExtraSlot, captureToSlot]
+  );
+
+  const deletePhoto = useCallback(
+    async ({
+      categoryLabel,
+      subcategory,
+      key,
+      photo,
+    }: {
+      categoryLabel: string;
+      subcategory: string;
+      key: string;
+      photo: CapturedPhoto;
+    }) => {
+      if (!leadId || !photo?.s3url) return;
+      const url = photo.s3url;
+      if (key) setDeletingKeys((prev) => ({ ...prev, [key]: true }));
+      try {
+        await LeadService.deleteImage(leadId, { s3urls: [url], category: 'salesPhotos' });
+
+        // Activity log — web parity with `logPhotoDelete`. The stored photo
+        // carries its own fully-scoped category/subcategory, so read them off the
+        // photo (falling back to the passed args). `(annotated)` copies log under
+        // the annotated module, exactly as upload does.
+        const logCategory = photo.category || categoryLabel;
+        const logSub = photo.subcategory || subcategory;
+        const isAnnotated = String(logSub || '').toLowerCase().includes('(annotated)');
+        if (userId) {
+          logEvent('delete', {
+            user_id: userId,
+            created_by: userId,
+            module_type: isAnnotated ? 'annotated_photos' : 'inspection_photo',
+            meta: {
+              leadId,
+              category: logCategory,
+              subcategory: logSub,
+              timestamp: photo.timestampTaken || new Date().toISOString(),
+              coordinates: photo.coordinates || null,
+              size: (photo as any).size || 0,
+              action: 'deleted_image',
+              imageData: {
+                s3url: photo.s3url,
+                bucketName: photo.bucketName,
+                category: photo.category,
+                subcategory: photo.subcategory,
+                timestampTaken: photo.timestampTaken,
+                coordinates: photo.coordinates || null,
+              },
+            },
+          });
+        }
+
+        // Remove from the grid only after the server confirms; mark pending so a
+        // briefly-stale refresh can't flash it back in.
+        pendingDeletesRef.current.add(url);
+        const dk = subKey(scopeCat(categoryLabel), subcategory);
+        // Prune the monotonic cache too, else the union would resurrect it.
+        knownPhotosRef.current = {
+          ...knownPhotosRef.current,
+          [dk]: (knownPhotosRef.current[dk] || []).filter((p) => p.s3url !== url),
+        };
+        setPhotosBySubcat((prev) => ({
+          ...prev,
+          [dk]: (prev[dk] || []).filter((p) => p.s3url !== url),
+        }));
+        try {
+          queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
+          queryClient.invalidateQueries({ queryKey: ['leads'] });
+        } catch (e) {
+          /* noop */
+        }
+        await refreshLeadData?.(leadId);
+      } catch (error) {
+        await refreshLeadData?.(leadId); // restore truth
+      } finally {
+        if (key)
+          setDeletingKeys((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+      }
+    },
+    [leadId, scopeCat, refreshLeadData, userId]
+  );
+
+  // Move a stored photo to a different slot (category/subcategory) without
+  // re-shooting it. Reuses the image-position endpoint, which re-tags the
+  // salesPhoto and re-files the S3 object when the subcategory changes. Both
+  // source and target are addressed the same way capture uses everywhere:
+  // product-scoped category label + storageName. Port of web `movePhoto`.
+  //
+  // Deliberately NOT optimistic (web parity): nothing touches photosBySubcat, so
+  // the moved photo re-resolves into its new slot purely from the lead refresh.
+  const movePhoto = useCallback(
+    async ({
+      photo,
+      fromCategoryLabel,
+      fromSubcategory,
+      toCategoryLabel,
+      toSubcategory,
+      key,
+    }: {
+      photo: CapturedPhoto;
+      fromCategoryLabel: string;
+      fromSubcategory: string;
+      toCategoryLabel: string;
+      toSubcategory: string;
+      key?: string;
+    }) => {
+      // The endpoint is id-based. The salesPhoto identifier is inconsistent across
+      // the API — some payloads expose `_id`, some `id` (the regular/static move in
+      // JobDocsSection uses `.id`). Guarding on `_id` ALONE made the move silently
+      // no-op whenever the photo only carried `id`, so the photo appeared to "not
+      // move". Accept either.
+      const photoId = photo?._id || (photo as any)?.id;
+      if (!leadId || !photoId) return;
+      if (
+        norm(scopeCat(fromCategoryLabel)) === norm(scopeCat(toCategoryLabel)) &&
+        norm(fromSubcategory) === norm(toSubcategory)
+      ) {
+        return; // same slot — nothing to do
+      }
+      if (key) setMovingKeys((prev) => ({ ...prev, [key]: true }));
+
+      // Optimistically relocate the photo so the rep sees it in the destination slot
+      // immediately (web relies on a fast refetch; on mobile the refetch can lag, so
+      // without this the photo looked like it "didn't move"). The refetch below
+      // reconciles to server truth; `pendingMovesRef` stops a stale replica read from
+      // flashing it back to the old slot in the meantime.
+      const fromK = subKey(scopeCat(fromCategoryLabel), fromSubcategory);
+      const toK = subKey(scopeCat(toCategoryLabel), toSubcategory);
+      const movedPhoto = { ...photo, category: scopeCat(toCategoryLabel), subcategory: toSubcategory };
+      const relocate = (m: Record<string, CapturedPhoto[]>): Record<string, CapturedPhoto[]> => {
+        const next = { ...m };
+        const stripped = (next[fromK] || []).filter((p) => p.s3url !== photo.s3url);
+        if (stripped.length) next[fromK] = stripped;
+        else delete next[fromK];
+        const dest = (next[toK] || []).filter((p) => p.s3url !== photo.s3url);
+        dest.push(movedPhoto);
+        next[toK] = dest;
+        return next;
+      };
+      if (photo.s3url) pendingMovesRef.current.set(photo.s3url, toK);
+      knownPhotosRef.current = relocate(knownPhotosRef.current);
+      setPhotosBySubcat((prev) => relocate(prev));
+
+      try {
+        await LeadService.updateImagePosition(leadId, {
+          photoId,
+          currentPosition: {
+            category: scopeCat(fromCategoryLabel),
+            subcategory: fromSubcategory,
+          },
+          newPosition: {
+            category: scopeCat(toCategoryLabel),
+            subcategory: toSubcategory,
+          },
+        });
+        try {
+          queryClient.invalidateQueries({ queryKey: ['lead', leadId] });
+          queryClient.invalidateQueries({ queryKey: ['leads'] });
+        } catch {
+          /* noop */
+        }
+        await refreshLeadData?.(leadId);
+      } catch {
+        // Move failed — drop the optimistic guard so the refetch can restore the
+        // photo to its real (original) slot instead of stranding it in the target.
+        if (photo.s3url) pendingMovesRef.current.delete(photo.s3url);
+        await refreshLeadData?.(leadId); // restore truth
+      } finally {
+        if (key)
+          setMovingKeys((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+      }
+    },
+    [leadId, scopeCat, refreshLeadData]
+  );
+
+  // Every stored photo under this category label whose subcategory marks it as
+  // annotated (created by the annotation editor), regardless of slot config.
+  // Returns [{ subcategory, photo }] for the "+ ANNOTATED" section. Port of web
+  // `getAnnotatedFor` — scans every subKey under the product-scoped label.
+  const getAnnotatedFor = useCallback(
+    (label: string): { subcategory: string; photo: CapturedPhoto }[] => {
+      const prefix = `${norm(scopeCat(label))}||`;
+      const out: { subcategory: string; photo: CapturedPhoto }[] = [];
+      Object.entries(photosBySubcat).forEach(([k, arr]) => {
+        if (!k.startsWith(prefix)) return;
+        (arr || []).forEach((photo) => {
+          const sub = photo?.subcategory || '';
+          if (sub.toLowerCase().includes('(annotated)')) out.push({ subcategory: sub, photo });
+        });
+      });
+      return out;
+    },
+    [photosBySubcat, scopeCat]
+  );
+
+  // Header progress over defined slots + extras (context-selector excluded).
+  const progress = useMemo(() => {
+    let total = 0;
+    let filled = 0;
+    index.leafCategories.forEach((cat) => {
+      getCapturableSlots(cat).forEach((slot) => {
+        total += 1;
+        if (getPhotos(cat.label, slot.storageName).length > 0) filled += 1;
+      });
+      extrasFor(cat).forEach((extra) => {
+        total += 1;
+        if (getPhotos(cat.label, extra.storageName).length > 0) filled += 1;
+      });
+    });
+    return { total, filled, percent: total === 0 ? 0 : Math.round((filled / total) * 100) };
+  }, [index.leafCategories, getPhotos, extrasFor]);
+
+  return {
+    leadId,
+    loading,
+    getPhotos,
+    countUnderLabel,
+    totalPhotos,
+    capturedPreviews,
+    uploadingKeys,
+    deletingKeys,
+    movingKeys,
+    extrasFor,
+    addExtra,
+    removeExtra,
+    tagAsExtraInCategory,
+    captureToSlot,
+    deletePhoto,
+    movePhoto,
+    getAnnotatedFor,
+    progress,
+  };
+}

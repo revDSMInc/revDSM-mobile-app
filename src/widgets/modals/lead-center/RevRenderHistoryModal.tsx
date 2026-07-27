@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,13 +23,26 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 // Global Map to track active download promises and prevent duplicate parallel writes/corruption
 const activeDownloads = new Map<string, Promise<boolean>>();
 
-// Helper to resolve clean cache path for pre-signed S3 URL
+// Stable short hash (djb2) of a string — used to make the cache filename unique.
+const hashString = (s: string): string => {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+};
+
+// Helper to resolve clean cache path for a pre-signed S3 URL.
 const getLocalCachePath = (url: string) => {
   if (!url) return null;
-  const cleanUrl = url.split('?')[0];
+  const cleanUrl = url.split('?')[0]; // drop the signature so re-signs still hit cache
   const filename = cleanUrl.split('/').pop();
   if (!filename) return null;
-  return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${filename}`;
+  // Key on the FULL object path, not just the basename: different renders routinely
+  // share a filename (e.g. ".../<runIdA>/generated.png" vs ".../<runIdB>/generated.png"),
+  // and keying on the basename alone made them collide in the cache — so a cached render
+  // showed in place of another ("white overtook both", wrong image when navigating). The
+  // hash disambiguates while the readable suffix keeps the file recognisable.
+  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${hashString(cleanUrl)}_${safeName}`;
 };
 
 // Unified download helper ensuring only one download occurs per cache path
@@ -51,11 +64,11 @@ const downloadImage = (url: string, path: string): Promise<boolean> => {
         await ReactNativeBlobUtil.fs.mv(tempPath, path);
         return true;
       } else {
-        await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+        await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => { });
         return false;
       }
     } catch (err) {
-      await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => {});
+      await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => { });
       return false;
     } finally {
       activeDownloads.delete(path);
@@ -126,7 +139,7 @@ const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {
         // If loading from local file fails, delete it and fallback to network URL
         if (sourceUri.startsWith('file://')) {
           const rawPath = sourceUri.replace('file://', '');
-          ReactNativeBlobUtil.fs.unlink(rawPath).catch(() => {});
+          ReactNativeBlobUtil.fs.unlink(rawPath).catch(() => { });
           setSourceUri(uri);
         }
         if (onError) onError();
@@ -158,7 +171,7 @@ export const RevRenderHistoryModal = ({
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
-  
+
   // Persistent cache of loaded image runs
   const [loadedImages, setLoadedImages] = useState<Record<number, { before: boolean; after: boolean }>>({});
   const [beforeLoaded, setBeforeLoaded] = useState(false);
@@ -178,17 +191,60 @@ export const RevRenderHistoryModal = ({
             const isTemp = file.filename.startsWith('revrender_') && file.filename.endsWith('.tmp');
             const isCorrupted = file.filename.startsWith('revrender_') && Number(file.size) < 10240; // under 10KB is corrupted
             if (isTemp || isCorrupted) {
-              ReactNativeBlobUtil.fs.unlink(`${cacheDir}/${file.filename}`).catch(() => {});
+              ReactNativeBlobUtil.fs.unlink(`${cacheDir}/${file.filename}`).catch(() => { });
             }
           });
         })
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [visible]);
 
   const currentRun = runs[currentIndex];
   const beforeImage = currentRun ? (currentRun.originalUrl || currentRun.s3UrlOriginal) : null;
   const afterImage = currentRun ? (currentRun.generatedUrl || currentRun.s3UrlGenerated) : null;
+
+  // The colors/components the rep selected when generating this render, shown as
+  // swatch chips below the header. Supports every backend shape: an explicit
+  // `summary`/`components` array, or the raw `selections` + `textureImageUrls` maps.
+  const renderColors = useMemo(() => {
+    const run = currentRun;
+    if (!run) return [] as { label: string; colorName: string; colorHex: string }[];
+    const arr = Array.isArray(run.summary)
+      ? run.summary
+      : Array.isArray(run.components)
+        ? run.components
+        : null;
+    const cap = (s?: string) =>
+      typeof s === 'string' && s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+    if (arr && arr.length) {
+      return arr
+        .map((c: any) => ({
+          label: c?.label || c?.id || '',
+          colorName: cap(c?.colorName || c?.textureName || c?.type || ''),
+          colorHex: c?.colorHex || c?.textureUrl || '',
+        }))
+        .filter((c: any) => c.colorName || c.colorHex);
+    }
+    const sel = run.selections;
+    const tex = run.textureImageUrls || {};
+    if (sel && typeof sel === 'object') {
+      const COMPONENTS = [
+        { key: 'soffit', label: 'Soffit' },
+        { key: 'fascia', label: 'Fascia Wrap' },
+        { key: 'gutter', label: 'Gutter' },
+        { key: 'downspout', label: 'Downspout' },
+      ];
+      return COMPONENTS
+        .filter((c) => sel[c.key])
+        .map((c) => ({
+          label: c.label,
+          colorName: cap(typeof sel[c.key] === 'string' ? sel[c.key] : ''),
+          colorHex: tex[c.key] || '',
+        }))
+        .filter((c) => c.colorName || c.colorHex);
+    }
+    return [];
+  }, [currentRun]);
 
   // Track if current slide is fully loaded (prioritizing persistent cache)
   useEffect(() => {
@@ -270,7 +326,7 @@ export const RevRenderHistoryModal = ({
         runId: run.runId || run._id || null,
       },
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, currentIndex]);
 
   useEffect(() => {
@@ -316,7 +372,7 @@ export const RevRenderHistoryModal = ({
           },
         });
       }
-      
+
       if (onDeleteSuccess) {
         onDeleteSuccess();
       }
@@ -342,7 +398,7 @@ export const RevRenderHistoryModal = ({
 
   const screenWidth = Dimensions.get('window').width;
   const imageWidth = screenWidth - 40;
-  const imageHeight = 400;
+  const imageHeight = "75%";
 
   // ── Pinch / pan for zooming ───────────────────────────────────────────
   const scale = useSharedValue(1);
@@ -484,6 +540,26 @@ export const RevRenderHistoryModal = ({
             </TouchableOpacity>
           </View>
 
+          {/* Selected colors — the component colors the rep applied when creating
+              this render, shown as swatch chips (color dot + component + color name). */}
+          {renderColors.length > 0 && (
+            <View style={styles.colorsRow}>
+              {renderColors.map((c: { label: string; colorName: string; colorHex: string }, i: number) => (
+                <View key={`${c.label}-${i}`} style={styles.colorChip}>
+                  <View
+                    style={[
+                      styles.colorSwatch,
+                      { backgroundColor: c.colorHex && c.colorHex.startsWith('#') ? c.colorHex : '#B0B0B0' },
+                    ]}
+                  />
+                  <Text style={styles.colorChipText} numberOfLines={1}>
+                    {c.label ? `${c.label}: ` : ''}{c.colorName || '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
           {/* Comparison Slider — zoom wrapper */}
           <GestureDetector gesture={composedGesture}>
             <Reanimated.View
@@ -493,13 +569,19 @@ export const RevRenderHistoryModal = ({
                 {/* AFTER — background */}
                 {afterImage && (
                   <CachedImage
+                    // Key by the render so navigating REMOUNTS the image instead of
+                    // swapping `source.uri` on a live <Image> — React Native doesn't
+                    // reliably re-fire `onLoad` on a source swap (loader hangs forever)
+                    // and keeps painting the previous render's frame (one wrap "overtook"
+                    // the others). A fresh mount per render fixes both.
+                    key={`after-${currentIndex}-${afterImage}`}
                     uri={afterImage}
                     style={{
                       position: 'absolute',
                       width: imageWidth,
-                      height: imageHeight,
+                      height: "100%",
                     }}
-                    resizeMode="cover"
+                    resizeMode="contain"
                     onLoad={() => {
                       setAfterLoaded(true);
                       setLoadedImages((prev) => ({
@@ -525,7 +607,7 @@ export const RevRenderHistoryModal = ({
                         position: 'absolute',
                         top: 0,
                         left: 0,
-                        height: imageHeight,
+                        height: "100%",
                         overflow: 'hidden',
                         borderRightWidth: 1,
                         borderRightColor: 'rgba(255,255,255,0.5)',
@@ -534,9 +616,11 @@ export const RevRenderHistoryModal = ({
                     ]}
                   >
                     <CachedImage
+                      // Remount per render (see the AFTER image note above).
+                      key={`before-${currentIndex}-${beforeImage}`}
                       uri={beforeImage}
-                      style={{ width: imageWidth, height: imageHeight }}
-                      resizeMode="cover"
+                      style={{ width: imageWidth, height: "100%" }}
+                      resizeMode="contain"
                       onLoad={() => {
                         setBeforeLoaded(true);
                         setLoadedImages((prev) => ({
@@ -565,7 +649,7 @@ export const RevRenderHistoryModal = ({
 
                 {/* Draggable handle — uses its own RNGH Pan so it doesn't fight PanResponder */}
                 <GestureDetector gesture={sliderPan}>
-                  <Reanimated.View style={[styles.handle, { height: imageHeight }, handleAnimStyle]}>
+                  <Reanimated.View style={[styles.handle, { height: "100%" }, handleAnimStyle]}>
                     <View style={styles.handleLine} />
                     <View style={styles.handleCircle}>
                       <Icon name="compare-horizontal" size={20} color="#1C252E" />
@@ -698,6 +782,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 4,
     fontWeight: '600',
+  },
+  colorsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 24,
+    marginTop: -28,
+    marginBottom: 20,
+    gap: 8,
+  },
+  colorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 999,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  colorSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  colorChipText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    maxWidth: 180,
   },
   closeBtn: {
     marginLeft: 'auto',

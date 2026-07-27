@@ -18,6 +18,9 @@ export const SettingsService = {
     api.get('/two-factor-auth/v1/trusted-devices'),
   revokeDevice: (deviceId: string): Promise<AxiosResponse<any>> =>
     api.delete('/two-factor-auth/v1/trusted-devices', { data: { deviceId } }),
+  // Revoke ALL trusted devices (web parity: api/two-factor-auth.js revokeAllTrustedDevices)
+  revokeAllTrustedDevices: (): Promise<AxiosResponse<any>> =>
+    api.delete('/two-factor-auth/v1/trusted-devices/all'),
 
   // Profile & Company
   updateProfile: (data: any, headers?: any): Promise<AxiosResponse<any>> => 

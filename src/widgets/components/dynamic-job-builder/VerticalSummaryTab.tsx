@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text, ScrollView, Platform } from 'react-native';
 import { buildVerticalSummarySections } from '../../../utils/dynamic-job-builder/engine/vertical-summary-utils';
 import { SummaryFinalizeCards } from './agreement/SummaryFinalizeCards';
 
@@ -12,6 +12,11 @@ interface VerticalSummaryTabProps {
   // Finalize extras (appointment / agreement / order-sheet). Provided only when
   // rendered inside the live Job Builder; absent in preview/config contexts.
   products?: any[];
+  /** Calculator form schemas — supply the per-tab category colour (web parity). */
+  schemas?: any[];
+  repDetails?: any;
+  /** Web `useDealEditMode()` — editing an already-resulted deal. */
+  editMode?: boolean;
   leadId?: string;
   calculatorResultData?: any;
   customerName?: string;
@@ -25,17 +30,41 @@ interface VerticalSummaryTabProps {
   resolvedDocuments?: { agreements: any[]; orderSheets: any[] };
   setResolvedDocuments?: React.Dispatch<React.SetStateAction<{ agreements: any[]; orderSheets: any[] }>>;
   isDocUploadingRef?: React.MutableRefObject<boolean>;
-  onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<boolean>;
+  /** Resolves to the category's server documents (signed URLs), or null on failure. */
+  onUploadDocs?: (cat: 'agreement' | 'orderSheet', payloads: any[]) => Promise<any[] | null>;
+  /** Re-reads the lead's stored documents for a category (no upload). */
+  onRefreshDocs?: (cat: 'agreement' | 'orderSheet') => Promise<any[] | null>;
 }
 
 function SummaryFieldRow({ label, text, variant, showLabel = true }: { label?: string; text: string; variant?: string; showLabel?: boolean }) {
   const valueColor = variant === 'missing' ? '#ef4444' : '#1e293b';
+  // Labels come verbatim from the portal-authored schema (`field.label`), which
+  // can carry stray whitespace — e.g. " LeafFilter Profile" renders indented
+  // while its sibling rows sit flush. Trim for display only; the underlying
+  // field data is untouched.
+  const labelText = label?.trim();
+
+  // No label → value spans the full width (web `SummaryFieldRow` early return).
+  if (!showLabel || !labelText) {
+    return (
+      <View className="py-1">
+        <Text className="text-sm font-medium" style={{ color: valueColor }}>{text}</Text>
+      </View>
+    );
+  }
+
+  // Web parity (`SummaryFieldRow` Grid: label md={4} + value md={8}): the label
+  // sits in a left column and the value to its right, instead of stacked — this is
+  // the summary layout the web reference shows.
   return (
-    <View className="py-1">
-      {showLabel && label && (
-        <Text className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{label}</Text>
-      )}
-      <Text className="text-sm font-medium" style={{ color: valueColor }}>{text}</Text>
+    <View className="flex-row items-start py-1">
+      <Text
+        className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider"
+        style={{ width: '40%', paddingRight: 8, paddingTop: 2 }}
+      >
+        {labelText}
+      </Text>
+      <Text className="text-sm font-medium flex-1" style={{ color: valueColor }}>{text}</Text>
     </View>
   );
 }
@@ -97,19 +126,27 @@ function ExtrasList({ label, items }: { label?: string; items: any[] }) {
 }
 
 function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; accentColor: string; isLast: boolean }) {
+  // Web parity (`CombinationSummaryItem` Grid: label md={4} + body md={8}): the
+  // "Combination #N" chip sits in a left column with the combo's summary line to
+  // its right; the per-field rows below keep the same label/value column split so
+  // labels align under the chip — matching the web summary reference layout.
   return (
     <View className={isLast ? '' : 'mb-3 pb-3 border-b border-slate-100'}>
-      <View className="flex-row items-center gap-2 mb-1.5">
-        <View className="px-2 py-0.5 rounded" style={{ backgroundColor: `${accentColor}1A` }}>
-          <Text className="text-[9px] font-bold" style={{ color: accentColor }}>
-            Combination #{entry.displayNumber}
-          </Text>
+      <View className="flex-row items-start">
+        <View style={{ width: '40%', paddingRight: 8 }}>
+          <View className="self-start px-2 py-0.5 rounded" style={{ backgroundColor: `${accentColor}1A` }}>
+            <Text className="text-[9px] font-bold" style={{ color: accentColor }}>
+              Combination #{entry.displayNumber}
+            </Text>
+          </View>
+        </View>
+        <View className="flex-1">
+          {entry.summaryLine && (
+            <Text className="text-sm font-semibold text-slate-800">{entry.summaryLine}</Text>
+          )}
+          <LocationRowsDisplay locationRows={entry.locationRows} />
         </View>
       </View>
-      {entry.summaryLine && (
-        <Text className="text-sm font-semibold text-slate-800 mb-1">{entry.summaryLine}</Text>
-      )}
-      <LocationRowsDisplay locationRows={entry.locationRows} />
       {entry.comboFieldRows?.length > 0 && (
         <View className="mt-1 space-y-1">
           {entry.comboFieldRows.map((row: any, idx: number) => (
@@ -128,6 +165,10 @@ export function VerticalSummaryTab({
   lockedTabIds = [],
   dealCenterData = {},
   applyConditions = true,
+  products,
+  schemas,
+  repDetails,
+  editMode,
   leadId,
   calculatorResultData,
   customerName,
@@ -142,10 +183,27 @@ export function VerticalSummaryTab({
   setResolvedDocuments,
   isDocUploadingRef,
   onUploadDocs,
+  onRefreshDocs,
 }: VerticalSummaryTabProps) {
+  // `products` + `schemas` feed `resolveTabAccentColor` (web parity): they carry the
+  // per-tab category colour that gives each summary card its own header colour.
+  // They were previously omitted, so every card fell through to `vertical.color`
+  // — one colour shared by every tab, which is why all headers rendered the same.
   const summarySections = useMemo(
-    () => buildVerticalSummarySections(vertical, verticalState, { lockedTabIds, dealCenterData, applyConditions }),
-    [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions]
+    () =>
+      buildVerticalSummarySections(vertical, verticalState, {
+        lockedTabIds,
+        dealCenterData,
+        applyConditions,
+        products,
+        schemas,
+        // Deal-edit: drives the "no rep content → empty summary" gate AND lets
+        // formatFieldSummaryValue prefer the rep's live value over the deal-center
+        // one for editable locked fields (web parity). Was never threaded, so the
+        // summary always fell back to the calculator value.
+        editMode,
+      }),
+    [vertical, verticalState, lockedTabIds, dealCenterData, applyConditions, products, schemas, editMode]
   );
 
   // Only show the finalize cards inside the live builder (a root-state setter is
@@ -154,7 +212,17 @@ export function VerticalSummaryTab({
   const productKey = vertical?.productId || vertical?.id;
 
   return (
-    <ScrollView style={{ flex: 1 }} className="p-4" showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={{ flex: 1 }}
+      className="p-4"
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingBottom: 160 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      // Keep a focused input (appointment / agreement fields) above the keyboard —
+      // the screen no longer wraps this in a padding KeyboardAvoidingView.
+      automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+    >
       <View className="mb-4">
         <Text className="text-xl font-extrabold text-slate-850">Job Builder Summary</Text>
         <Text className="text-xs text-slate-500 mt-0.5">Review all configured job details before completing the job.</Text>
@@ -239,6 +307,12 @@ export function VerticalSummaryTab({
           setResolvedDocuments={setResolvedDocuments}
           isDocUploadingRef={isDocUploadingRef}
           onUploadDocs={onUploadDocs}
+          onRefreshDocs={onRefreshDocs}
+          // SummaryFinalizeCards declares + destructures repDetails and hands it to
+          // DynamicAgreementDialog, but nothing was passing it — generated
+          // agreements got `repDetails={undefined}`.
+          repDetails={repDetails}
+          editMode={editMode}
           productKey={productKey}
           verticalState={verticalState}
           jobState={rootJobState}

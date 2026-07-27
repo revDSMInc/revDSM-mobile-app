@@ -1,5 +1,9 @@
 module.exports = {
   preset: 'react-native',
+  // Only treat *.test.* / *.spec.* files as suites, so shared fixtures and case
+  // definitions under __tests__/fixtures can live alongside the tests without
+  // jest trying to run them as empty suites.
+  testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
   moduleNameMapper: {
     '\\.css$': '<rootDir>/__mocks__/styleMock.js',
     // @testing-library/react-native v14 imports `test-renderer` (React 19

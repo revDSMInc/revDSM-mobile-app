@@ -49,3 +49,22 @@ jest.mock('react-native-flash-message', () => {
     hideMessage: jest.fn(),
   };
 });
+
+// react-native-mmkv loads Nitro TurboModules which cannot initialize under jest.
+// Route it to the in-memory mock in __mocks__/react-native-mmkv.js.
+jest.mock('react-native-mmkv');
+
+// react-native-geolocation-service constructs a NativeEventEmitter at import
+// time, which fails under jest (no native module). It is pulled into the module
+// graph via LoggerService → useAuth (e.g. AppointmentSchedulerModal →
+// ContractAmendmentModal). Provide a no-op mock.
+jest.mock('react-native-geolocation-service', () => ({
+  __esModule: true,
+  default: {
+    getCurrentPosition: jest.fn(),
+    watchPosition: jest.fn(() => 0),
+    clearWatch: jest.fn(),
+    stopObserving: jest.fn(),
+    requestAuthorization: jest.fn(() => Promise.resolve('granted')),
+  },
+}));

@@ -44,6 +44,21 @@ export const useChatThreads = (
     const unsubConnect = SocketManager.on('connect', refreshData);
 
     const unsubChats = SocketManager.on('all-lead-chats-response', (data: any) => {
+      // ── Chat socket debug ──────────────────────────────────────────────────
+      // Full response + a per-lead preview summary (the fields that drive the
+      // Recent-Leads / chat-header thumbnails). Remove once verified.
+      console.log('[ChatSocket] all-lead-chats-response:', JSON.stringify(data, null, 2));
+      console.log('[ChatSocket] chats:', data?.chats?.length ?? 0, 'totalUnread:', data?.totalUnreadCount ?? 0);
+      (data?.chats || []).forEach((c: any, i: number) => {
+        const ld = c?.leadDetails || {};
+        console.log(
+          `[ChatSocket] #${i} lead ${ld.leadId || ld.selfGenLeadId || 'N/A'} (${ld._id || '-'}) ` +
+            `previewImage=${ld.previewImage?.filePath || 'none'} ` +
+            `previewImages.active=${ld.previewImages?.active || 'none'} ` +
+            `streetView=${ld.previewImages?.streetView?.filePath || 'none'}`
+        );
+      });
+
       if (data) {
         setChats(data.chats || []);
         setTotalUnread(data.totalUnreadCount || 0);
@@ -53,6 +68,7 @@ export const useChatThreads = (
     });
 
     const unsubChannels = SocketManager.on('team-channels-response', (data: any) => {
+      console.log('[ChatSocket] team-channels-response:', JSON.stringify(data, null, 2));
       setChannels(data.channels || []);
       setChannelsLoading(false);
     });

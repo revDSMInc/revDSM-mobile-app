@@ -140,6 +140,7 @@ export default function ZoneCanvasserMap({
             zones={z.zones}
             allBuildings={z.allBuildings}
             searchCoords={z.searchCoords}
+            liveLocation={z.liveLocation}
             onMapPress={z.handleMapPress}
             onBuildingPress={z.handleBuildingPress}
             onPolygonPress={z.handlePolygonPress}

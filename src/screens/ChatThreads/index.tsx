@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   TextInput,
+  SectionList,
   FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,11 +16,16 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import SafeBottomSpacer from '../../widgets/common/SafeBottomSpacer';
 import {
   MainTabOption,
-  StatusChip,
   LeadChatThreadItem,
   ChannelThreadItem,
+  DateSectionHeader,
+  groupChatsByLeadDate,
 } from '../../widgets/components/chat/ThreadItems';
 import { useChatThreads } from '../../hooks/useChatThreads';
+import CreateChannelModal from '../../widgets/modals/chat/CreateChannelModal';
+import ChatService from '../../services/api/ChatService';
+import SocketManager from '../../services/SocketManager';
+import { FlashMessage } from '../../config/message';
 
 const STATUS_OPTIONS = [
   'All',
@@ -42,117 +47,160 @@ export default function ChatThreadsScreen({ navigation }: any) {
   const [filterUnread, setFilterUnread] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('Unresulted Leads');
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+
+  useEffect(() => {
+    const unsub = SocketManager.on('team-channel-created', (data: any) => {
+      if (data?.success === false) {
+        FlashMessage.error('Failed to create channel', data?.message || '');
+        return;
+      }
+      FlashMessage.success('Channel created', data?.channel?.title || data?.channel?.name || '');
+      SocketManager.emit('get-team-channels');
+    });
+    return unsub;
+  }, []);
+
+  const handleCreateChannel = (channelData: any) => {
+    if (!SocketManager.isConnected()) {
+      FlashMessage.warning('Socket not connected');
+      return;
+    }
+    ChatService.createChannel(channelData);
+  };
 
   const {
     filteredChats,
     filteredChannels,
     loading,
-    totalUnread,
-    availableStatuses,
-    channels,
-    chats,
   } = useChatThreads(user, mainTab, searchQuery, statusFilter, filterUnread);
 
-  const renderItem = ({ item }: any) =>
-    mainTab === 'myleads' ? (
-      <LeadChatThreadItem
-        chat={item}
-        onPress={() =>
-          navigation.navigate('ChatDetail', {
-            leadId: item.leadDetails?._id,
-            chatId: item._id || item.id,
-            customerName: (() => {
-              const dateStr = item.leadDetails?.leadDate ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy') : '';
-              return `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() || 'Discussion';
-            })(),
-            chatType: 'lead',
-            initialParticipants: item.participants || [],
-          })
-        }
-      />
-    ) : (
-      <ChannelThreadItem
-        channel={item}
-        onPress={() =>
-          navigation.navigate('ChatDetail', {
-            chatId: item._id || item.id,
-            customerName: item.title || item.name,
-            description: item.channelConfig?.description,
-            chatType: 'channel',
-            initialParticipants: item.participants || [],
-          })
-        }
-      />
-    );
+  const leadSections = useMemo(() => groupChatsByLeadDate(filteredChats), [filteredChats]);
+
+  const navigateToChat = (item: any) => {
+    navigation.navigate('ChatDetail', {
+      leadId: item.leadDetails?._id,
+      chatId: item._id || item.id,
+      customerName: (() => {
+        const dateStr = item.leadDetails?.leadDate
+          ? format(new Date(item.leadDetails.leadDate), 'MM.dd.yy')
+          : '';
+        return (
+          `${item.leadDetails?.office || ''} Lead ${dateStr} - ${item.leadDetails?.leadId || 'N/A'}`.trim() ||
+          'Discussion'
+        );
+      })(),
+      chatType: 'lead',
+      initialParticipants: item.participants || [],
+      previewImage: item.leadDetails?.previewImage,
+      previewImages: item.leadDetails?.previewImages,
+    });
+  };
+
+  const navigateToChannel = (item: any) => {
+    navigation.navigate('ChatDetail', {
+      chatId: item._id || item.id,
+      customerName: item.title || item.name,
+      description: item.channelConfig?.description,
+      chatType: 'channel',
+      initialParticipants: item.participants || [],
+    });
+  };
+
+  const emptyState = (
+    <View className="pt-[30%] items-center">
+      {loading ? (
+        <ActivityIndicator color={colors.primary.main} />
+      ) : (
+        <>
+          <Icon
+            name={mainTab === 'myleads' ? 'chatbubble-ellipses-outline' : 'people-outline'}
+            size={64}
+            color="#C4CDD5"
+          />
+          <Text className="mt-4 text-xs text-center" style={{ color: '#919EAB' }}>
+            No {mainTab === 'myleads' ? 'Leads Conversations' : 'Channels'} found
+          </Text>
+        </>
+      )}
+    </View>
+  );
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      <View
-        className="px-6 py-4 flex-row items-center justify-between border-b"
-        style={{ borderColor: colors.border }}
-      >
+    <View style={{ flex: 1, backgroundColor: '#FFFFFF', paddingTop: insets.top }}>
+      {/* Header */}
+      <View className="px-5 pt-2 pb-3 flex-row items-center justify-between">
+        <Text className="text-xl font-bold" style={{ color: '#1C252E' }}>
+          Recent Leads
+        </Text>
         <View className="flex-row items-center">
-          <Text className="text-lg font-black" style={{ color: colors.text }}>
-            Recent Leads
-          </Text>
-        </View>
-        <View className="flex-row items-center">
+          {/* {mainTab === 'channels' && (
+            <TouchableOpacity
+              onPress={() => setShowCreateChannel(true)}
+              className="flex-row items-center h-8 px-3 mr-2 rounded-full"
+              style={{ backgroundColor: colors.primary.main }}
+            >
+              <Icon name="add" size={16} color="#fff" />
+              <Text className="text-xs font-bold ml-1" style={{ color: '#fff' }}>
+                New Channel
+              </Text>
+            </TouchableOpacity>
+          )} */}
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             className="w-8 h-8 items-center justify-center"
           >
-            <Icon name="close" size={20} color={colors.text} />
+            <Icon name="close" size={22} color="#1C252E" />
           </TouchableOpacity>
         </View>
       </View>
 
-      <View className="px-4 pt-4">
-        <View className="flex-row p-1.5 mb-2">
+      {/* Tabs */}
+      <View className="px-5 border-b" style={{ borderColor: '#F4F6F8' }}>
+        <View className="flex-row">
           <MainTabOption
             label="My Leads"
             active={mainTab === 'myleads'}
             onPress={() => setMainTab('myleads')}
-            count={totalUnread}
           />
           <MainTabOption
             label="Channels"
             active={mainTab === 'channels'}
             onPress={() => setMainTab('channels')}
-            count={(channels || []).reduce((acc: number, c: any) => acc + (c.unreadCount || 0), 0)}
           />
         </View>
       </View>
 
-      <View className="px-4 py-2 pt-4">
+      {/* Filters */}
+      <View className="px-4 py-3">
         {mainTab === 'myleads' ? (
-          <View className="flex-row items-center gap-3">
-            {/* Custom Dropdown */}
+          <View className="flex-row items-center gap-2">
             <View className="relative z-50">
               <TouchableOpacity
                 onPress={() => setShowStatusDropdown(!showStatusDropdown)}
-                className="h-12 px-3 rounded-xl border flex-row items-center justify-between"
+                className="h-11 px-3 rounded-xl border flex-row items-center justify-between"
                 style={{
-                  backgroundColor: colors.card,
-                  width: 160,
-                  borderColor: colors.border,
+                  backgroundColor: '#FFFFFF',
+                  width: 148,
+                  borderColor: '#DFE3E8',
                 }}
               >
                 <Text
-                  className="text-xs flex-1 mr-2"
+                  className="text-xs flex-1 mr-1"
                   numberOfLines={1}
-                  style={{ color: colors.text }}
+                  style={{ color: '#1C252E' }}
                 >
                   {selectedStatus}
                 </Text>
-                <Icon name="chevron-down" size={16} color={colors.textSecondary} />
+                <Icon name="chevron-down" size={14} color="#919EAB" />
               </TouchableOpacity>
 
               {showStatusDropdown && (
                 <View
-                  className="absolute top-14 left-0 w-52 rounded-2xl shadow-2xl border overflow-hidden"
+                  className="absolute top-12 left-0 w-52 rounded-xl shadow-lg border overflow-hidden"
                   style={{
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: '#DFE3E8',
                     zIndex: 999,
                   }}
                 >
@@ -164,21 +212,22 @@ export default function ChatThreadsScreen({ navigation }: any) {
                         setStatusFilter(opt.toLowerCase().replace(/ /g, ''));
                         setShowStatusDropdown(false);
                       }}
-                      className="px-4 py-3 border-b last:border-0"
+                      className="px-4 py-3 border-b"
                       style={{
-                        borderColor: colors.border,
+                        borderColor: '#F4F6F8',
                         backgroundColor:
                           selectedStatus === opt
                             ? isDark
                               ? colors.background
-                              : '#F4F6F8'
+                              : '#F9FAFB'
                             : 'transparent',
                       }}
                     >
                       <Text
-                        className="text-sm font-medium"
+                        className="text-sm"
                         style={{
-                          color: selectedStatus === opt ? colors.primary.main : colors.text,
+                          color: selectedStatus === opt ? colors.primary.main : '#1C252E',
+                          fontWeight: selectedStatus === opt ? '600' : '400',
                         }}
                       >
                         {opt}
@@ -189,75 +238,84 @@ export default function ChatThreadsScreen({ navigation }: any) {
               )}
             </View>
 
-            {/* Search Input */}
             <View
-              className="flex-1 h-12 rounded-xl border flex-row items-center px-4"
-              style={{ backgroundColor: colors.card, borderColor: colors.border }}
+              className="flex-1 h-11 rounded-xl border flex-row items-center px-3"
+              style={{ backgroundColor: '#FFFFFF', borderColor: '#DFE3E8' }}
             >
-              <Icon name="search" size={18} color={colors.textSecondary} style={{ opacity: 0.5 }} />
+              <Icon name="search" size={16} color="#919EAB" />
               <TextInput
-                className="flex-1 ml-3 text-xs"
-                placeholder="Search by Lead ID."
-                placeholderTextColor={'#919EAB'}
+                className="flex-1 ml-2 text-xs"
+                placeholder="Search by Lead ID"
+                placeholderTextColor="#919EAB"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                style={{ color: colors.text }}
+                style={{ color: '#1C252E', paddingVertical: 0 }}
               />
             </View>
 
-            {/* Filter Icon */}
-            <TouchableOpacity className="p-2">
-              <Icon name="filter" size={22} color={colors.textSecondary} />
+            <TouchableOpacity
+              onPress={() => setFilterUnread((prev) => !prev)}
+              className="w-10 h-11 items-center justify-center"
+            >
+              <Icon
+                name="filter"
+                size={20}
+                color={filterUnread ? colors.primary.main : '#637381'}
+              />
             </TouchableOpacity>
           </View>
         ) : (
           <View
-            className="h-12 rounded-xl border flex-row items-center px-4"
-            style={{ backgroundColor: colors.card, borderColor: colors.border }}
+            className="h-11 rounded-xl border flex-row items-center px-3"
+            style={{ backgroundColor: '#FFFFFF', borderColor: '#DFE3E8' }}
           >
-            <Icon name="search" size={18} color={colors.textSecondary} style={{ opacity: 0.5 }} />
+            <Icon name="search" size={16} color="#919EAB" />
             <TextInput
-              className="flex-1 ml-3 text-xs"
+              className="flex-1 ml-2 text-xs"
               placeholder="Search channels..."
-              placeholderTextColor={'#919EAB'}
+              placeholderTextColor="#919EAB"
               value={searchQuery}
               onChangeText={setSearchQuery}
-              style={{ color: colors.text }}
+              style={{ color: '#1C252E', paddingVertical: 0 }}
             />
           </View>
         )}
       </View>
 
-      <FlatList
-        key={mainTab}
-        data={mainTab === 'myleads' ? filteredChats : filteredChannels || []}
-        keyExtractor={(item: any) => (item._id || item.id || Math.random().toString()).toString()}
-        contentContainerStyle={{ padding: 16, paddingBottom: 0 }}
-        showsVerticalScrollIndicator={false}
-        renderItem={renderItem}
-        ListFooterComponent={<SafeBottomSpacer height={40} />}
-        ListEmptyComponent={
-          <View className="pt-[30%] items-center">
-            {loading ? (
-              <ActivityIndicator color={colors.primary.main} />
-            ) : (
-              <>
-                <Icon
-                  name={mainTab === 'myleads' ? 'chatbubble-ellipses-outline' : 'people-outline'}
-                  size={64}
-                  color={colors.textSecondary}
-                  style={{ opacity: 0.7 }}
-                />
-                <Text
-                  className="mt-4 text-xs text-center"
-                  style={{ color: colors.textSecondary }}
-                >
-                  No {mainTab === 'myleads' ? 'Leads Conversations' : 'Channels'} found
-                </Text>
-              </>
-            )}
-          </View>
-        }
+      {/* List */}
+      {mainTab === 'myleads' ? (
+        <SectionList
+          sections={leadSections}
+          keyExtractor={(item: any) => (item._id || item.id || Math.random().toString()).toString()}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 0, flexGrow: 1 }}
+          showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={() => setShowStatusDropdown(false)}
+          renderSectionHeader={({ section: { title } }) => <DateSectionHeader label={title} />}
+          renderItem={({ item }) => (
+            <LeadChatThreadItem chat={item} onPress={() => navigateToChat(item)} />
+          )}
+          ListFooterComponent={<SafeBottomSpacer height={40} />}
+          ListEmptyComponent={emptyState}
+          stickySectionHeadersEnabled={false}
+        />
+      ) : (
+        <FlatList
+          data={filteredChannels || []}
+          keyExtractor={(item: any) => (item._id || item.id || Math.random().toString()).toString()}
+          contentContainerStyle={{ padding: 16, paddingBottom: 0, flexGrow: 1 }}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => (
+            <ChannelThreadItem channel={item} onPress={() => navigateToChannel(item)} />
+          )}
+          ListFooterComponent={<SafeBottomSpacer height={40} />}
+          ListEmptyComponent={emptyState}
+        />
+      )}
+
+      <CreateChannelModal
+        visible={showCreateChannel}
+        onClose={() => setShowCreateChannel(false)}
+        onCreate={handleCreateChannel}
       />
     </View>
   );

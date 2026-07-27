@@ -38,6 +38,9 @@ interface RoofWaiverModalProps {
 }
 
 import { useRoofWaiver } from '../../../hooks/useRoofWaiver';
+import { useRepProducts } from '../../../hooks/useRepProducts';
+import { useAuth } from '../../../hooks/useAuth';
+import { buildRoofWaiverText } from '../../../utils/roof-waiver-text';
 import { SignaturePad } from './components/SignaturePad';
 
 export const RoofWaiverModal = ({
@@ -53,6 +56,17 @@ export const RoofWaiverModal = ({
 }: RoofWaiverModalProps) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+
+  // Web parity (REVDSM-1053): the agreement names the signed-in company and the
+  // products it publishes, not LeafFilter. Both have safe fallbacks, so the
+  // paragraph is still complete while the products request is in flight.
+  const { user } = useAuth();
+  const { products: repProducts } = useRepProducts();
+  const companyName = user?.companyName;
+  const roofWaiverText = useMemo(
+    () => buildRoofWaiverText({ companyName, products: repProducts }),
+    [companyName, repProducts]
+  );
 
   const flashRef = React.useRef<RNFlashMessage>(null);
   const FlashMessage = {
@@ -217,18 +231,7 @@ export const RoofWaiverModal = ({
           >
             <View style={styles.disclaimerBox}>
               <Text style={styles.disclaimerTitle}>Roof Waiver Agreement</Text>
-              <Text style={styles.disclaimerBody}>
-                I have contracted LeafFilter North to install gutters and/or LeafFilter gutter
-                protection on my home. I understand that the installer(s) must walk on my roof
-                during the installation, in order to properly install the job. I will allow the
-                installer(s) to walk on my roof during the installation process. I understand that
-                neither Leaffilter North nor the installer(s) will be held responsible for any
-                alleged damage caused to the roof, thus waiving Leaffilter North and the
-                installer(s) from any and all liability concerning the roof, its components and any
-                alleged damage resulting from walking on the roof. I understand that the Leaffilter
-                warranty will only cover the gutter protection installation, and not the potential
-                damage caused by walking on the roof.
-              </Text>
+              <Text style={styles.disclaimerBody}>{roofWaiverText}</Text>
             </View>
 
             {renderField('First Name*', formData.firstName, 'firstName', undefined, true)}
@@ -289,7 +292,7 @@ export const RoofWaiverModal = ({
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => Linking.openURL('https://leafhome.trusthub.com/privacypolicy')}>
                   <Text style={[styles.checkboxLinks, { color: colors.primary.main }]}>
-                    Privacy Policy | LeafFilter
+                    {`Privacy Policy${companyName ? ` | ${companyName}` : ''}`}
                   </Text>
                 </TouchableOpacity>
               </View>

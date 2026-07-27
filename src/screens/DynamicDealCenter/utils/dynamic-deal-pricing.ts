@@ -1,30 +1,16 @@
 // Pricing helpers for the DYNAMIC deal-edit flow (mobile).
 //
 // FAITHFUL port of web `src/sections/deal/components/dynamic-deal-pricing.js`.
-// The dynamic job builder itself computes NO dollar price — money lives on the
-// deal-center calculator (schema `field.price` × quantities). For the guided
-// "Job Price" (rollout reconfirm) step we therefore:
-//   1. `previous` = the deal's CURRENT stored cost/PAR/retail tiers (what the
-//      customer is paying), from the saved calculator (`totals`/`entries`), grossed
-//      up by the balance payment method's bank fee — exactly as web's tier engine.
-//   2. `next` = `previous + delta`, where `delta` is the difference between the
-//      edited and original dynamic build, PRICED THROUGH THE CALCULATOR SCHEMA
-//      (each build quantity — direct `dcField` fields AND allocation-derived
-//      gutter/downspout footage — mapped onto the schema fields and summed at
-//      `field.price[tier]`). Unedited fields cancel; edited fields drive the delta.
-//      `changed` is true only when the delta is non-zero.
-//
-// Unlike web this does NOT touch the shared `calculation-results-util.ts` (used by
-// RolloutView/Summary): the schema-sum pricing is implemented self-contained here,
-// which is exactly the branch web's `computeEditedTiers` exercises (it strips
-// `totals`/`entries` so only the schema path runs). When the backend supplies no
-// schemas (should not happen in the configured dynamic flow — Phase B requires
-// them) the delta safely degrades to 0 and the rep sets the price manually.
 
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
 import { collectAllocationFields } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
 import { extractDealCenterFieldOptions, type DealCenterFieldOption } from './build-deal-center-data';
+import { resolveFieldTierPrice, applyFeesToTier, type PricingConfig } from './pricing-config-util';
+
+// TEMP diagnostic — flip to true to trace the [dealEditPricing] delta computation
+// (mirrors web's `MYDEALFLOW_DEBUG`; logs schemaPrev/schemaNext/delta + changed qty).
+const DEAL_PRICING_DEBUG = false;
 
 export interface Tiers {
   cost: number;
@@ -42,6 +28,8 @@ export interface EditedTiersResult {
 interface TierOpts {
   schemas: any[];
   paymentMethod?: string;
+  isLowesLead?: boolean;
+  pricingConfig?: PricingConfig | null;
 }
 
 export const parsePrice = (val: any): number => {
@@ -82,7 +70,7 @@ const normName = (s: any): string =>
  * exactly the web tier engine, for both the stored (`previous`) and the
  * schema-priced (`next` delta) computations.
  */
-function tierFor(details: any, markupKey: string, { schemas, paymentMethod }: TierOpts): number {
+function tierFor(details: any, markupKey: string, { schemas, paymentMethod, pricingConfig }: TierOpts): number {
   const tierKey = markupToTierKey(markupKey);
   const plan = paymentPlans[paymentMethod || 'check'] || {};
   const fee = Number(plan.fee) || 0;
@@ -96,26 +84,72 @@ function tierFor(details: any, markupKey: string, { schemas, paymentMethod }: Ti
       0
     );
   } else {
+    // Price each schema field's quantity via `resolveFieldTierPrice` (web
+    // `calculateResultUtil`), NOT a bare `field.price[tierKey]` read: a schema that
+    // prices a field at ONE tier (usually retail) and leaves cost/par blank relies
+    // on the company config's derivation rule to fill the others. The old direct
+    // read returned 0 for those derived tiers, so COST/PAR stayed $0.
     (schemas || []).forEach((schema: any) => {
       (schema?.categories || []).forEach((cat: any) => {
         const directFields = cat.directFields || cat.fields || [];
         directFields.forEach((field: any) => {
           const qty = Number(details?.[field.name] ?? details?.[field.id] ?? 0);
-          if (qty > 0) checkRetail += qty * Number(field.price?.[tierKey] || 0);
+          if (qty > 0) checkRetail += qty * resolveFieldTierPrice(field, tierKey, pricingConfig);
         });
         (cat.sections || []).forEach((sec: any) => {
           (sec.fields || []).forEach((field: any) => {
             const qty = Number(details?.[field.name] ?? details?.[field.id] ?? 0);
-            if (qty > 0) checkRetail += qty * Number(field.price?.[tierKey] || 0);
+            if (qty > 0) checkRetail += qty * resolveFieldTierPrice(field, tierKey, pricingConfig);
           });
         });
       });
     });
   }
 
+  // Company-authored static fees (web `applyFeesToTier`), gated on line items so a
+  // fee alone never floors an empty job to $200.
+  checkRetail = applyFeesToTier(checkRetail, tierKey, pricingConfig, { hasLineItems: checkRetail > 0 });
+
   let price = fee >= 1 ? checkRetail : checkRetail / (1 - fee);
   if (price < 200 && checkRetail > 0) price = 200;
   return Math.round(Number(price) || 0);
+}
+
+/**
+ * DIAGNOSTIC: the per-field RETAIL contributions for a `details` map, biggest first.
+ * Mirrors the exact lookup `tierFor` uses (`details[field.name] ?? details[field.id]`
+ * × retail price) so the log shows precisely which field(s) sum to the retail tier —
+ * used to trace a garbage tier back to the stray quantity that produced it.
+ */
+function schemaRetailBreakdown(
+  details: any,
+  schemas: any[],
+  pricingConfig?: PricingConfig | null
+): Array<{ field: string; qty: number; unit: number; subtotal: number }> {
+  const rows: Array<{ field: string; qty: number; unit: number; subtotal: number }> = [];
+  (schemas || []).forEach((schema: any) => {
+    (schema?.categories || []).forEach((cat: any) => {
+      const all = [
+        ...(cat.directFields || cat.fields || []),
+        ...((cat.sections || []) as any[]).flatMap((s: any) => s.fields || []),
+      ];
+      all.forEach((field: any) => {
+        const qty = Number(details?.[field.name] ?? details?.[field.id] ?? 0);
+        if (qty > 0) {
+          const unit = resolveFieldTierPrice(field, 'retail', pricingConfig);
+          if (unit > 0) {
+            rows.push({
+              field: field.label || field.name || field.id,
+              qty,
+              unit,
+              subtotal: Math.round(qty * unit),
+            });
+          }
+        }
+      });
+    });
+  });
+  return rows.sort((a, b) => b.subtotal - a.subtotal).slice(0, 20);
 }
 
 function tiersFromDetails(details: any, opts: TierOpts): Tiers {
@@ -195,8 +229,14 @@ export function extractQuantitiesByFieldId(jobState: any): Record<string, number
         if (group?.sectionState) ingestFieldMap(secId, group.sectionState);
       });
 
-      // Tab-level direct fields / legacy tab-level combinations.
-      const { sectionFields, comboGroups, combinations, ...rest } = tab;
+      // Tab-level direct fields / legacy tab-level combinations — skip sectionFields/comboGroups
+      // as they are handled above (sectionFields) and comboGroups.
+      const rest: Record<string, any> = {};
+      Object.keys(tab).forEach((k) => {
+        if (k !== 'sectionFields' && k !== 'comboGroups') rest[k] = (tab as any)[k];
+      });
+      const combinations = rest.combinations;
+      delete rest.combinations;
       ingestFieldMap(tabId, rest);
       (combinations || []).forEach((combo: any) => ingestFieldMap(tabId, combo));
     });
@@ -309,7 +349,7 @@ function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any =
           allocated =
             resolveAllocationMetrics(alloc, { field: alloc, tab: t, tabState, dealCenterData })
               ?.allocated || 0;
-        } catch (err) {
+        } catch {
           allocated = 0;
         }
         if (!allocated) return;
@@ -322,6 +362,148 @@ function buildAllocationQtyMap(jobState: any, config: any, dealCenterData: any =
   );
 
   return map;
+}
+
+/**
+ * Index the edited build's quantities under every key a calculator entry might
+ * match on: by dcField (authoritative), by field id, by normalized name, and
+ * by section label. Quantities feeding the same key across sections are summed.
+ */
+function buildBuilderQtyIndex(jobState: any, config: any, dealCenterData: any = {}): {
+  byDcField: Record<string, number>;
+  byId: Record<string, number>;
+  byName: Record<string, number>;
+  bySection: Record<string, number>;
+} {
+  const flat = extractQuantitiesByFieldId(jobState);
+  const byDcField: Record<string, number> = {};
+  const byId: Record<string, number> = {};
+  const byName: Record<string, number> = {};
+  const bySection: Record<string, number> = {};
+
+  const addSum = (bucket: Record<string, number>, key: any, qty: number) => {
+    if (key === undefined || key === null || key === '') return;
+    bucket[key] = (bucket[key] || 0) + qty;
+  };
+
+  const walk = (fields: any[], sectionLabel: string, scopeId: string) =>
+    (fields || []).forEach((f: any) => {
+      if (f?.id) {
+        const qty = flat[qualify(scopeId, f.id)];
+        if (qty !== undefined) {
+          const dcs = f.dcFields?.length ? f.dcFields : f.dcField ? [f.dcField] : [];
+          dcs.forEach((d: string) => {
+            addSum(byDcField, d, qty);
+            addSum(byDcField, normName(d), qty);
+          });
+          addSum(byId, f.id, qty);
+          const base = String(f.id).split('__')[0];
+          if (base !== f.id) addSum(byId, base, qty);
+          addSum(byName, normName(f.label), qty);
+          addSum(byName, normName(f.name), qty);
+          addSum(byName, normName(f.key), qty);
+          addSum(bySection, normName(sectionLabel), qty);
+        }
+      }
+      if (f?.fields) walk(f.fields, sectionLabel, scopeId);
+    });
+
+  (config?.verticals || []).forEach((v: any) =>
+    (v.tabs || []).forEach((t: any) => {
+      walk(t.fields, t.label, t.id);
+      (t.sections || []).forEach((s: any) => walk(s.fields, s.label, s.id));
+      if (t.combinations?.fields) walk(t.combinations.fields, t.label, t.id);
+      (t.combinationGroups || []).forEach((cg: any) => walk(cg.fields, cg.label || cg.id, cg.id));
+    })
+  );
+
+  // Overlay allocation-derived quantities.
+  const allocMap = buildAllocationQtyMap(jobState, config, dealCenterData);
+  Object.entries(allocMap).forEach(([ref, qty]) => {
+    addSum(byDcField, ref, qty);
+    addSum(byDcField, normName(ref), qty);
+  });
+
+  return { byDcField, byId, byName, bySection };
+}
+
+/**
+ * Rebuild calculator entries from the edited build: for each priced entry,
+ * find its build quantity by the strongest available link (dcField, id,
+ * name, section) and recompute tiers. Returns null when the calculator has
+ * no entries array.
+ */
+export function rebuildCalculatorEntries(
+  calculatorData: any,
+  editedJobState: any,
+  originalJobState: any,
+  config: any,
+  dealCenterData: any = {}
+): { entries: any[]; changed: boolean } | null {
+  const entries = calculatorData?.entries;
+  if (!Array.isArray(entries) || !entries.length || !editedJobState || !config) return null;
+
+  const editedIdx = buildBuilderQtyIndex(editedJobState, config, dealCenterData);
+  const originalIdx = originalJobState
+    ? buildBuilderQtyIndex(originalJobState, config, dealCenterData)
+    : editedIdx;
+  let changed = false;
+
+  const resolveQty = (idx: ReturnType<typeof buildBuilderQtyIndex>, entry: any): number | undefined => {
+    const fid = entry?.fieldId;
+    if (fid !== undefined && fid !== null && fid !== '') {
+      if (idx.byDcField[fid] !== undefined) return idx.byDcField[fid];
+      if (idx.byId[fid] !== undefined) return idx.byId[fid];
+      const fidN = normName(fid);
+      if (fidN && idx.byDcField[fidN] !== undefined) return idx.byDcField[fidN];
+      if (fidN && idx.byName[fidN] !== undefined) return idx.byName[fidN];
+    }
+    const cands = [entry?.name, entry?.label].map(normName).filter(Boolean);
+    for (let i = 0; i < cands.length; i += 1) {
+      if (idx.byName[cands[i]] !== undefined) return idx.byName[cands[i]];
+    }
+    for (let i = 0; i < cands.length; i += 1) {
+      if (idx.byDcField[cands[i]] !== undefined) return idx.byDcField[cands[i]];
+    }
+    for (let i = 0; i < cands.length; i += 1) {
+      if (idx.bySection[cands[i]] !== undefined) return idx.bySection[cands[i]];
+    }
+    return undefined;
+  };
+
+  const nextEntries = entries.map((e: any) => {
+    const editedQty = resolveQty(editedIdx, e);
+    if (editedQty === undefined) return e;
+    const originalQty = resolveQty(originalIdx, e) ?? 0;
+    if (editedQty === originalQty) return e;
+
+    const inputValue = Number(e.inputValue) || 0;
+    const newQty = Math.max(0, editedQty);
+
+    const unit = e.pricingAtTimeOfEntry && typeof e.pricingAtTimeOfEntry === 'object'
+      ? e.pricingAtTimeOfEntry
+      : inputValue
+        ? {
+            cost: (Number(e.computed?.cost) || 0) / inputValue,
+            par: (Number(e.computed?.par) || 0) / inputValue,
+            retail: (Number(e.computed?.retail) || 0) / inputValue,
+          }
+        : null;
+    if (!unit) return e;
+
+    changed = true;
+    return {
+      ...e,
+      inputValue: newQty,
+      computed: {
+        cost: newQty * (Number(unit.cost) || 0),
+        par: newQty * (Number(unit.par) || 0),
+        retail: newQty * (Number(unit.retail) || 0),
+      },
+    };
+  });
+
+  return { entries: nextEntries, changed };
 }
 
 /**
@@ -371,18 +553,6 @@ export function buildCalculatorDetails(
 }
 
 /**
- * Stored cost/par/retail tiers, from `totals` (mobile RolloutView's source), with a
- * contract-price retail fallback so the "Previous" card is never blank on legacy
- * deals that predate stored totals.
- */
-function storedTiersWithFallback(calculatorData: any, opts: TierOpts, originalContractPrice?: any): Tiers {
-  const stored = computeStoredTiers(calculatorData, opts);
-  if (stored.cost || stored.par || stored.retail) return stored;
-  const contract = parsePrice(originalContractPrice);
-  return contract ? { cost: 0, par: 0, retail: contract } : stored;
-}
-
-/**
  * Full guided-pricing recompute (web `computeEditedTiers`). `previous` = the deal's
  * actual stored tiers; `next` = `previous + delta`, where the delta is the edited
  * build priced against the calculator SCHEMA minus the original build so priced.
@@ -396,6 +566,8 @@ export function computeEditedTiers({
   schemas = [],
   paymentMethod = 'check',
   originalContractPrice,
+  isLowesLead = false,
+  pricingConfig = null,
 }: {
   calculatorData: any;
   dealCenterData?: any;
@@ -406,16 +578,32 @@ export function computeEditedTiers({
   paymentMethod?: string;
   isLowesLead?: boolean;
   originalContractPrice?: any;
+  pricingConfig?: any;
 }): EditedTiersResult {
-  const opts: TierOpts = { schemas, paymentMethod };
+  const opts: TierOpts = { schemas, paymentMethod, isLowesLead, pricingConfig };
   const clamp = (v: number) => Math.max(0, Math.round(v));
-  const stored = storedTiersWithFallback(calculatorData, opts, originalContractPrice);
+  // Use the deal's REAL stored tiers to decide `previous`; DON'T let the
+  // contract-price fallback stand in, or it poisons the branch selection below.
+  // Mobile never persists LFCalculator (see DynamicDealEditScreen note), so on a
+  // dynamic deal `computeStoredTiers` is all-zero and we must price `previous`
+  // from the schema instead — otherwise COST/PAR read $0 and only RETAIL (the
+  // contract price) shows on the Previous card.
+  const rawStored = computeStoredTiers(calculatorData, opts);
+  const storedHasValue = !!(rawStored.cost || rawStored.par || rawStored.retail);
+  const contractRetail = parsePrice(originalContractPrice);
+  // Contract-price fallback (RETAIL only) — applied ONLY when nothing else priced
+  // the build, so a legacy deal with neither totals nor schema-priceable build is
+  // never left fully blank.
+  const withContractFallback = (t: Tiers): Tiers =>
+    t.cost || t.par || t.retail
+      ? t
+      : contractRetail
+        ? { cost: 0, par: 0, retail: contractRetail }
+        : t;
 
   const hasSchema = Array.isArray(schemas) && schemas.length > 0;
   if (hasSchema && config && (editedJobState || originalJobState)) {
     const fieldOptions = extractDealCenterFieldOptions(schemas);
-    // Strip totals/entries so the schema-sum path prices the overlaid build
-    // quantities (never the stale stored totals) — exactly web's `stripped(d)`.
     const stripped = (d: any) => ({ ...d, totals: undefined, entries: undefined });
     const prevDetails = buildCalculatorDetails(dealCenterData, originalJobState, config, fieldOptions);
     const nextDetails = buildCalculatorDetails(dealCenterData, editedJobState, config, fieldOptions);
@@ -426,7 +614,18 @@ export function computeEditedTiers({
       par: schemaNext.par - schemaPrev.par,
       retail: schemaNext.retail - schemaPrev.retail,
     };
-    const previous = stored.retail || stored.par || stored.cost ? stored : schemaPrev;
+    if (DEAL_PRICING_DEBUG) {
+      // Per-field retail breakdown of the PREVIOUS build — the biggest contributors
+      // to schemaPrev.retail. A garbage tier (e.g. $268k on a $500 job) shows up here
+      // as one field with an absurd `qty` (a stray large value the schema priced) or
+      // as far more line items than the rep actually entered.
+      const breakdown = schemaRetailBreakdown(stripped(prevDetails), schemas, opts.pricingConfig);
+      // eslint-disable-next-line no-console
+      console.warn('[dealEditPricing]', JSON.stringify({ stored: rawStored, schemaPrev, schemaNext, delta, topRetailFields: breakdown }));
+    }
+    // Real stored totals win; otherwise the schema-priced ORIGINAL build (which
+    // carries COST/PAR/RETAIL), and only then the bare contract-price fallback.
+    const previous = withContractFallback(storedHasValue ? rawStored : schemaPrev);
     return {
       previous,
       next: {
@@ -439,29 +638,98 @@ export function computeEditedTiers({
     };
   }
 
-  // No schemas configured — safe degradation: no delta, rep sets the price.
+  // Entry-based rebuild path: when calculator has entries but no schemas,
+  // rebuild entries from the edited build and recompute tiers.
+  const rebuilt = rebuildCalculatorEntries(calculatorData, editedJobState, originalJobState, config, dealCenterData);
+  if (rebuilt) {
+    const calcNoTotals = { ...calculatorData, totals: undefined };
+    const entriesPrev = tiersFromDetails(
+      { ...calcNoTotals, entries: calculatorData.entries },
+      opts
+    );
+    const entriesNext = tiersFromDetails({ ...calcNoTotals, entries: rebuilt.entries }, opts);
+    const delta: Tiers = {
+      cost: entriesNext.cost - entriesPrev.cost,
+      par: entriesNext.par - entriesPrev.par,
+      retail: entriesNext.retail - entriesPrev.retail,
+    };
+    const previous = withContractFallback(storedHasValue ? rawStored : entriesPrev);
+    return {
+      previous,
+      next: {
+        cost: clamp(previous.cost + delta.cost),
+        par: clamp(previous.par + delta.par),
+        retail: clamp(previous.retail + delta.retail),
+      },
+      delta,
+      changed: rebuilt.changed,
+    };
+  }
+
+  // Schema-overlay bridge fallback: price build fields against schema.
+  const prevDc = tiersFromDetails(
+    buildCalculatorDetails(dealCenterData, originalJobState, config, []),
+    opts
+  );
+  const nextDc = tiersFromDetails(
+    buildCalculatorDetails(dealCenterData, editedJobState, config, []),
+    opts
+  );
+  const delta: Tiers = {
+    cost: nextDc.cost - prevDc.cost,
+    par: nextDc.par - prevDc.par,
+    retail: nextDc.retail - prevDc.retail,
+  };
+  const previous = withContractFallback(storedHasValue ? rawStored : prevDc);
   return {
-    previous: stored,
-    next: { ...stored },
-    delta: { cost: 0, par: 0, retail: 0 },
-    changed: false,
+    previous,
+    next: {
+      cost: clamp(previous.cost + delta.cost),
+      par: clamp(previous.par + delta.par),
+      retail: clamp(previous.retail + delta.retail),
+    },
+    delta,
+    changed: delta.cost !== 0 || delta.par !== 0 || delta.retail !== 0,
   };
 }
 
-/** COST/PAR/RETAIL markup label + % vs the closest tier, for the price input badge. */
+/**
+ * COST/PAR/RETAIL markup label + % for the price input badge. FAITHFUL port of web
+ * `dynamic-deal-edit-modal.js:getMarkupInfo`. Express the price as a POSITIVE
+ * premium over the nearest LOWER tier (order tiers low→high, pick the highest tier
+ * the price is at or above), NOT the nearest tier by absolute distance. This is what
+ * keeps the RETAIL % consistent between the Previous and New cards: Auto Adjust sets
+ * `newContract = next.retail × (originalContract / previous.retail)`, so when the
+ * original price sits at/above retail both cards read RETAIL and the SAME +X%
+ * (X = (originalContract − previous.retail) / previous.retail). The old nearest-tier
+ * logic could snap the New badge to a different tier and show a different %.
+ */
 export function getMarkupInfo(
   price: any,
-  tiers: Tiers | undefined | null
-): { text: string; markupPct: number | null } {
+  tiers: Tiers | undefined | null,
+  tierLabels?: Record<string, string> | null
+): { text: string; markupPct: number | null; baseKey: keyof Tiers | null } {
   const p = Number(price) || 0;
-  if (p === 0 || !tiers?.retail) return { text: '—', markupPct: null };
-  const diffs: Record<string, number> = {
-    RETAIL: Math.abs(p - tiers.retail),
-    PAR: Math.abs(p - tiers.par),
-    COST: Math.abs(p - tiers.cost),
-  };
-  const base = Object.keys(diffs).reduce((a, b) => (diffs[a] <= diffs[b] ? a : b));
-  const baseVal = { RETAIL: tiers.retail, PAR: tiers.par, COST: tiers.cost }[base] || 0;
+  if (p === 0 || !tiers?.retail) return { text: '—', markupPct: null, baseKey: null };
+  const ordered: [keyof Tiers, number][] = (
+    [
+      ['cost', tiers.cost],
+      ['par', tiers.par],
+      ['retail', tiers.retail],
+    ] as [keyof Tiers, number][]
+  )
+    .filter(([, v]) => Number(v) > 0)
+    .sort((a, b) => a[1] - b[1]);
+  if (!ordered.length) return { text: '—', markupPct: null, baseKey: null };
+  let [baseKey, baseVal] = ordered[0];
+  ordered.forEach(([key, val]) => {
+    if (p >= val) {
+      baseKey = key;
+      baseVal = val;
+    }
+  });
   const pct = baseVal > 0 ? Math.round(((p - baseVal) / baseVal) * 100) : 0;
-  return { text: base, markupPct: pct };
+  const upperKey = String(baseKey).toUpperCase();
+  const text = tierLabels ? (tierLabels[baseKey] || upperKey).toUpperCase() : upperKey;
+  return { text, markupPct: pct, baseKey };
 }

@@ -1,5 +1,10 @@
-import React, { useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { View, Text, Modal, TouchableOpacity, ScrollView, TextInput, Platform, Pressable, Keyboard, InputAccessoryView } from 'react-native';
+
+// iOS-only "Done" bar id for the multiline TBD-reason input. A multiline TextInput
+// has no return-key dismiss on iOS, so without an accessory bar the keyboard can't
+// be closed. Android ignores inputAccessoryViewID and dismisses via its own controls.
+const TBD_REASON_ACCESSORY_ID = 'tbdReasonDoneBar';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
@@ -14,6 +19,9 @@ import {
   isSameDay,
   startOfToday,
 } from 'date-fns';
+import { LeadService } from '../../../services/api/leads';
+import { FlashMessage } from '../../../config/message';
+import { ContractAmendmentModal, AmendmentChange } from '../lead-center/ContractAmendmentModal';
 
 interface AppointmentSchedulerModalProps {
   visible: boolean;
@@ -25,6 +33,25 @@ interface AppointmentSchedulerModalProps {
   isEdit?: boolean;
   initialDate?: string;
   initialTimeWindow?: string;
+  /**
+   * View the modal opens on. Defaults to `'date'` (the calendar). Pass `'time'`
+   * to jump straight to the time-proposal step for `initialDate` — used by the
+   * deal-edit Step-0 inline calendar, which already picked the date, so the modal
+   * shouldn't show a second calendar.
+   */
+  initialView?: 'date' | 'time';
+  /**
+   * When true, rescheduling an EXISTING appointment with real changes requires a
+   * customer signature (contract amendment) before the change is committed.
+   * Web parity: `appointment-scheduler.js` `requireScheduleAmendment`.
+   */
+  requireScheduleAmendment?: boolean;
+  /** Lead id — needed to create/update the amendment lead-draft. */
+  leadId?: string;
+  /** Full lead object — provides customer phone/email/name for the amendment modal. */
+  lead?: any;
+  /** Old schedule values, diffed against the new selection to build the amendment changes list. */
+  scheduleTime?: { date?: string; timeWindow?: string; reason?: string };
 }
 
 export const AppointmentSchedulerModal = ({
@@ -37,10 +64,23 @@ export const AppointmentSchedulerModal = ({
   isEdit = false,
   initialDate,
   initialTimeWindow,
+  initialView,
+  requireScheduleAmendment = false,
+  leadId,
+  lead,
+  scheduleTime,
 }: AppointmentSchedulerModalProps) => {
   const { colors, isDark } = useTheme();
 
   const [view, setView] = useState<'date' | 'time' | 'tbd' | 'success'>('date');
+
+  // ── Contract-amendment gating (web parity: appointment-scheduler.js) ────────
+  const [amendmentOpen, setAmendmentOpen] = useState(false);
+  const [amendmentChanges, setAmendmentChanges] = useState<AmendmentChange[]>([]);
+  const [amendmentSubmitting, setAmendmentSubmitting] = useState(false);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const pendingDataRef = useRef<any>(null);
+  const pendingPayloadRef = useRef<any>(null);
 
   const windows = [
     { label: '8:00 AM - 12:00 PM', value: '8:00 AM - 12:00 PM' },
@@ -77,17 +117,26 @@ export const AppointmentSchedulerModal = ({
           setCurrentMonth(parsed);
         }
         setIsTBD(false);
+        // Jump straight to the time-proposal step when the caller already picked
+        // the date (deal-edit inline calendar). Default stays the calendar view.
+        if (initialView === 'time' && !isNaN(parsed.getTime())) {
+          setTimeSlotIdx(0);
+          setView('time');
+        }
       } else if (initialDate === 'TBD') {
         setIsTBD(true);
         setView('tbd');
       }
 
-      if (initialTimeWindow) {
+      // Seed the current window when re-opening on an existing appointment, but
+      // NOT when jumping to a fresh time proposal (initialView='time' starts at
+      // the first slot, matching handleDateSelect / web).
+      if (initialTimeWindow && initialView !== 'time') {
         const idx = windows.findIndex(w => w.value === initialTimeWindow);
         if (idx !== -1) setTimeSlotIdx(idx);
       }
     }
-  }, [visible, initialDate, initialTimeWindow]);
+  }, [visible, initialDate, initialTimeWindow, initialView]);
 
   const handleDateSelect = (date: Date) => {
     if (getDay(date) === 0) return; // Disable Sunday
@@ -128,7 +177,143 @@ export const AppointmentSchedulerModal = ({
       setTimeSlotIdx(0);
       setTbdReason('');
       setIsTBD(false);
+      setAmendmentOpen(false);
+      setAmendmentChanges([]);
+      pendingDataRef.current = null;
+      pendingPayloadRef.current = null;
     }, 300);
+  };
+
+  // ── Amendment gating ────────────────────────────────────────────────────────
+  // Diff old (scheduleTime / initial* props) vs new selection — web parity with
+  // `appointment-scheduler.js` `buildScheduleChanges`.
+  const buildScheduleChanges = (appointmentData: any): AmendmentChange[] => {
+    const oldDate = scheduleTime?.date ?? initialDate ?? '';
+    const oldWindow = scheduleTime?.timeWindow ?? initialTimeWindow ?? '';
+    const oldReason = scheduleTime?.reason ?? '';
+    const newDate = appointmentData?.date || '';
+    const newWindow = appointmentData?.timeWindow || '';
+    const newReason = appointmentData?.reason || '';
+
+    const changes: AmendmentChange[] = [];
+    if (String(oldDate) !== String(newDate)) {
+      changes.push({ key: 'scheduledDate', label: 'Scheduled Date', oldValue: oldDate, newValue: newDate });
+    }
+    if (String(oldWindow) !== String(newWindow)) {
+      changes.push({ key: 'timeWindow', label: 'Time Window', oldValue: oldWindow, newValue: newWindow });
+    }
+    if (String(oldReason) !== String(newReason)) {
+      changes.push({ key: 'scheduleReason', label: 'Schedule — Reason', oldValue: oldReason, newValue: newReason });
+    }
+    return changes;
+  };
+
+  // Build the appointmentData object emitted by the edit "Save Changes" button.
+  const buildEditAppointmentData = () =>
+    isTBD
+      ? { date: 'TBD', reason: tbdReason, customerName }
+      : { date: format(selectedDate, 'M/d/yyyy'), timeWindow: windows[timeSlotIdx].value, customerName };
+
+  const openAmendmentFlow = async (appointmentData: any, changes: AmendmentChange[]) => {
+    if (!leadId) return;
+    try {
+      const dateRaw = appointmentData?.date;
+      const scheduleTimeDraft = {
+        customerName:
+          appointmentData?.customerName != null && appointmentData.customerName !== ''
+            ? String(appointmentData.customerName)
+            : null,
+        date: dateRaw === 'TBD' ? 'TBD' : dateRaw != null && dateRaw !== '' ? String(dateRaw) : null,
+        timeWindow:
+          appointmentData?.timeWindow != null && appointmentData.timeWindow !== ''
+            ? String(appointmentData.timeWindow)
+            : null,
+        reason:
+          appointmentData?.reason != null && appointmentData.reason !== ''
+            ? String(appointmentData.reason)
+            : null,
+      };
+
+      // Schedule amendment only — do not send contract fields so a pending contract
+      // proposal on the draft is preserved (web parity).
+      const draftRes = await LeadService.upsertLeadDraft(leadId, { scheduleTime: scheduleTimeDraft });
+      const newDraftId =
+        draftRes?.data?._id ||
+        draftRes?.data?.data?._id ||
+        draftRes?.data?.id ||
+        (draftRes?.data as any)?.data?.id ||
+        null;
+      setDraftId(newDraftId);
+
+      pendingDataRef.current = appointmentData;
+      pendingPayloadRef.current = {
+        leadData: {},
+        jobState: {
+          scheduleTime: {
+            customerName: appointmentData.customerName,
+            date: appointmentData.date,
+            timeWindow: appointmentData.timeWindow,
+            reason: appointmentData.reason,
+          },
+        },
+      };
+      setAmendmentChanges(changes);
+      setAmendmentOpen(true);
+      FlashMessage.show('Amendment requires customer signature', '', 'info');
+    } catch (error) {
+      console.error('Failed to create lead draft:', error);
+      FlashMessage.error('Error', 'Failed to start amendment flow');
+    }
+  };
+
+  // Edit "Save Changes" handler: gate on amendment when required + changed.
+  const handleEditConfirm = async () => {
+    const appointmentData = buildEditAppointmentData();
+    const changes = buildScheduleChanges(appointmentData);
+    const scheduleChanged = changes.length > 0;
+
+    if (leadId && scheduleChanged && requireScheduleAmendment) {
+      await openAmendmentFlow(appointmentData, changes);
+      return;
+    }
+
+    onConfirm(appointmentData);
+    handleModalClose();
+  };
+
+  // Amendment signed → persist schedule + accept draft, then run onConfirm.
+  const handleAmendmentSubmit = async ({ signature }: { signature: string }) => {
+    if (!pendingPayloadRef.current || !leadId) return;
+    setAmendmentSubmitting(true);
+    try {
+      await LeadService.submitJobBuilder(leadId, pendingPayloadRef.current);
+      await LeadService.updateJobBuilder(leadId, pendingPayloadRef.current);
+      if (draftId) {
+        try {
+          await LeadService.updateLeadDraft(draftId, {
+            status: 'accepted',
+            customerSignature: signature || null,
+          });
+        } catch {
+          // non-fatal
+        }
+      }
+      FlashMessage.success('Installation time updated successfully');
+      setAmendmentOpen(false);
+      const data = pendingDataRef.current;
+      pendingDataRef.current = null;
+      try {
+        await onConfirm?.(data ?? {});
+      } catch {
+        // non-fatal
+      }
+      handleModalClose();
+    } catch (error) {
+      console.error(error);
+      FlashMessage.error('Error', 'Failed to submit amendment');
+    } finally {
+      setAmendmentSubmitting(false);
+    }
   };
 
   // Calendar Logic
@@ -220,7 +405,8 @@ export const AppointmentSchedulerModal = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <>
+    <Modal visible={visible && !amendmentOpen} transparent animationType="fade">
       <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.4)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 }}>
         <View style={{ width: '100%', backgroundColor: 'white', borderRadius: 24, overflow: 'hidden', maxWidth: 400 }}>
           {/* Header */}
@@ -332,8 +518,33 @@ export const AppointmentSchedulerModal = ({
                     placeholder={"Please explain why the installation date cannot be determined at this time...\nExamples: \u2022 Waiting for material delivery \u2022 Customer needs to confirm schedule \u2022 Weather-dependent installation \u2022 Pending"}
                     placeholderTextColor="#94a3b8"
                     style={{ flex: 1, textAlignVertical: 'top', fontSize: 14, fontWeight: '700', color: '#0f172a' }}
+                    // iOS: a multiline field has no return-key dismiss, so link a
+                    // "Done" accessory bar (below) to close the keyboard. No-op on Android.
+                    inputAccessoryViewID={Platform.OS === 'ios' ? TBD_REASON_ACCESSORY_ID : undefined}
                   />
                 </View>
+
+                {/* iOS-only "Done" bar above the keyboard to dismiss it (the multiline
+                    TBD-reason field can't be dismissed with the return key on iOS). */}
+                {Platform.OS === 'ios' && (
+                  <InputAccessoryView nativeID={TBD_REASON_ACCESSORY_ID}>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        justifyContent: 'flex-end',
+                        backgroundColor: '#F1F5F9',
+                        borderTopWidth: 1,
+                        borderTopColor: '#E2E8F0',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                      }}
+                    >
+                      <TouchableOpacity onPress={() => Keyboard.dismiss()} style={{ paddingHorizontal: 16, paddingVertical: 6 }}>
+                        <Text style={{ color: '#2563EB', fontWeight: '800', fontSize: 16 }}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </InputAccessoryView>
+                )}
 
                 <View style={{ flexDirection: 'row', gap: 12 }}>
                   <TouchableOpacity
@@ -411,19 +622,7 @@ export const AppointmentSchedulerModal = ({
 
                 {isEdit ? (
                   <TouchableOpacity
-                    onPress={() => {
-                      const data = isTBD ? {
-                        date: 'TBD',
-                        reason: tbdReason,
-                        customerName,
-                      } : {
-                        date: format(selectedDate, 'M/d/yyyy'),
-                        timeWindow: windows[timeSlotIdx].value,
-                        customerName,
-                      };
-                      onConfirm(data);
-                      handleModalClose();
-                    }}
+                    onPress={handleEditConfirm}
                     style={{ width: '100%' }}
                   >
                     <View
@@ -518,5 +717,27 @@ export const AppointmentSchedulerModal = ({
         </View>
       </View>
     </Modal>
+
+    {/* Contract amendment (customer signature) — required schedule changes only */}
+    {leadId && (
+      <ContractAmendmentModal
+        visible={amendmentOpen}
+        onClose={() => {
+          pendingDataRef.current = null;
+          pendingPayloadRef.current = null;
+          setAmendmentOpen(false);
+        }}
+        changes={amendmentChanges}
+        submitting={amendmentSubmitting}
+        leadId={leadId}
+        draftId={draftId}
+        defaultPhone={lead?.customerDetails?.phone || ''}
+        defaultEmail={lead?.customerDetails?.email || ''}
+        customerFirstName={lead?.customerDetails?.firstName || ''}
+        customerLastName={lead?.customerDetails?.lastName || ''}
+        onSubmitAmendment={handleAmendmentSubmit}
+      />
+    )}
+    </>
   );
 };

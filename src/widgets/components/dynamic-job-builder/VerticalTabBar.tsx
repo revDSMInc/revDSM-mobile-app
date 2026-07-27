@@ -18,7 +18,13 @@ interface VerticalTabBarProps {
   onVerticalChange?: (id: string) => void;
   onChange?: (id: string) => void;
   jobState?: any;
-  lockedTabIds?: string[];
+  /**
+   * VERTICAL ids that are locked because none of their steps are configured for
+   * this deal (web `verticalHasUnlockedSteps === false`). A locked vertical shows a
+   * padlock, greys out and can't be opened — only the configured Job Builder(s) are
+   * navigable in a multi-product deal.
+   */
+  lockedVerticalIds?: string[];
 }
 
 // Product/vertical selector — slate pills, font-black, #22C55E (or vertical color)
@@ -29,7 +35,7 @@ export function VerticalTabBar({
   activeId,
   onVerticalChange,
   onChange,
-  lockedTabIds = [],
+  lockedVerticalIds = [],
 }: VerticalTabBarProps) {
   const activeIdResolved = selectedVerticalId || activeId;
   const handleChange = onVerticalChange || onChange;
@@ -41,7 +47,7 @@ export function VerticalTabBar({
       <View className="flex-row gap-2">
         {verticals.map((v) => {
           const active = v.id === activeIdResolved;
-          const isLocked = lockedTabIds.includes(v.id);
+          const isLocked = lockedVerticalIds.includes(v.id);
           const label = v.label || v.title || v.name || v.id;
 
           return (

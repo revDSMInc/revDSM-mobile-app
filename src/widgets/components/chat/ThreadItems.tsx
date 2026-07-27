@@ -1,42 +1,30 @@
-import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, TouchableOpacity, Image } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import { STATUS_CONFIG } from './constants';
+import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
+import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 // ─── MainTabOption ────────────────────────────────────────────────────────────
-// NOTE: Conditional dark: variants are intentionally avoided here.
-// NativeWind v4 requires dark: classes to be present from initial render.
-// Dynamic addition triggers printUpgradeWarning → navigation proxy crash.
-// All dynamic theming uses isDark from useTheme() + style prop instead.
-export function MainTabOption({ label, active, onPress, count }: any) {
-  const { colors, isDark } = useTheme();
+export function MainTabOption({ label, active, onPress }: any) {
+  const { colors } = useTheme();
   return (
     <TouchableOpacity
       onPress={onPress}
-      className="flex-1 py-1.5 items-center justify-center rounded-xl flex-row"
-      style={
-        active
-          ? {
-            backgroundColor: isDark ? '#1e293b' : '#ffffff',
-            borderBottomWidth: 2,
-            borderColor: isDark ? '#1e293b' : colors.primary.main,
-          }
-          : {}
-      }
+      className="flex-1 pb-2 items-center justify-center"
+      style={{
+        borderBottomWidth: active ? 3 : 0,
+        borderColor: active ? colors.primary.main : 'transparent',
+      }}
     >
       <Text
         className="font-semibold text-sm"
-        style={{ color: active ? colors.primary.main : '#8D90A4' }}
+        style={{ color: active ? colors.primary.main : '#919EAB' }}
       >
         {label}
       </Text>
-      {count > 0 && (
-        <View className="ml-2 w-6 h-6 rounded-full bg-red-500 items-center justify-center">
-          <Text className="text-white text-[8px] font-black">{count}</Text>
-        </View>
-      )}
     </TouchableOpacity>
   );
 }
@@ -88,121 +76,242 @@ export function StatusChip({ label, active, onPress, count, specialMode }: any) 
   );
 }
 
+// ─── DateSectionHeader ────────────────────────────────────────────────────────
+export function DateSectionHeader({ label }: { label: string }) {
+  return (
+    <View className="flex-row items-center my-3">
+      <View className="flex-1 h-px" style={{ backgroundColor: '#DFE3E8' }} />
+      <Text
+        className="mx-3 text-[11px] font-bold tracking-wider"
+        style={{ color: '#919EAB' }}
+      >
+        {label}
+      </Text>
+      <View className="flex-1 h-px" style={{ backgroundColor: '#DFE3E8' }} />
+    </View>
+  );
+}
+
+export function getDateSectionLabel(dateStr?: string): string {
+  if (!dateStr) return 'OLDER';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return 'OLDER';
+  const monthDay = format(date, 'MMM dd').toUpperCase();
+  if (isToday(date)) return `TODAY • ${monthDay}`;
+  if (isYesterday(date)) return `YESTERDAY • ${monthDay}`;
+  return `${format(date, 'EEE').toUpperCase()} • ${monthDay}`;
+}
+
+export function groupChatsByLeadDate(chats: any[]) {
+  const groups = new Map<string, { label: string; sortKey: number; data: any[] }>();
+
+  chats.forEach((chat) => {
+    const dateKey =
+      chat.leadDetails?.leadDate ||
+      chat.leadDetails?.leadDatetime ||
+      chat.lastMessageAt ||
+      chat.createdAt;
+    const label = getDateSectionLabel(dateKey);
+    const sortKey = dateKey ? new Date(dateKey).getTime() : 0;
+
+    if (!groups.has(label)) {
+      groups.set(label, { label, sortKey, data: [] });
+    }
+    groups.get(label)!.data.push(chat);
+  });
+
+  return Array.from(groups.values())
+    .sort((a, b) => b.sortKey - a.sortKey)
+    .map(({ label, data }) => ({ title: label, data }));
+}
+
+/** `MM.dd.yy`, or '' for a missing / unparseable date (web uses date-fns `format`). */
+function formatShortDate(value: any): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : format(date, 'MM.dd.yy');
+}
+
+/**
+ * Card heading, ported 1:1 from web `chat-thread-item.js`:
+ *   sale               → office-prefixed job number (falls back to the job / lead number)
+ *   installer assigned → "{jobNumber} {lastName} {date}"
+ *   otherwise          → "Lead {leadDate} {leadTime}"  e.g. "Lead 07.22.26 9am"
+ * (The sale branch drops the office-initial prefix that lives in the job builder;
+ * the chat list only needs the human-readable job/lead number.)
+ */
+function buildLeadHeading(leadDetails: any, leadId: string): string {
+  const status = leadDetails?.status;
+  const installerAssignment = leadDetails?.installerAssignment;
+
+  if (status === 'sale') {
+    return String(installerAssignment?.jobNumber || leadId || 'N/A');
+  }
+  if (installerAssignment) {
+    const jobNumber = installerAssignment.jobNumber || '';
+    const lastName = leadDetails?.customerDetails?.lastName || '';
+    return `${jobNumber} ${lastName} ${formatShortDate(leadDetails?.leadDate)}`.trim();
+  }
+
+  const rawLeadTime = leadDetails?.leadTime || '';
+  const leadTime =
+    rawLeadTime && String(rawLeadTime).trim().toUpperCase() === 'N/A'
+      ? ''
+      : rawLeadTime
+        ? String(rawLeadTime).toLowerCase().replace(/\s/g, '')
+        : '';
+  return `Lead ${formatShortDate(leadDetails?.leadDate)} ${leadTime}`.trim();
+}
+
+/** Status chip label + colours, via web's `STATUS_CONFIG` (unmapped → notResulted). */
+function getStatusProps(status?: string) {
+  const config = STATUS_CONFIG[status || ''] || STATUS_CONFIG.notResulted;
+  return { label: config.label, color: config.color, textColor: config.textColor };
+}
+
+/** Human lead id — issued leads carry `leadId`, self-gens carry `selfGenLeadId`. */
+function getLeadIdDisplay(leadDetails: any) {
+  return leadDetails?.leadId || leadDetails?.selfGenLeadId || 'N/A';
+}
+
+/**
+ * "4 days ago" relative stamp of the last message — shown top-right of each row,
+ * same as the previous list UI (and the web `chat-thread-item.js`).
+ */
+function formatLastMessageAgo(lastMessageAt?: string | null) {
+  if (!lastMessageAt) return '';
+  const date = new Date(lastMessageAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return formatDistanceToNow(date, { addSuffix: true }).replace(/^about\s/, '');
+}
+
+function LeadThreadThumbnail({ leadDetails }: { leadDetails: any }) {
+  const thumbnailUrl = useLeadPreviewUrl(leadDetails);
+
+  if (thumbnailUrl) {
+    return (
+      <Image
+        source={{ uri: thumbnailUrl }}
+        className="rounded-lg"
+        style={{ width: 56, height: 56, backgroundColor: '#F4F6F8' }}
+        resizeMode="cover"
+      />
+    );
+  }
+
+  // No preview image or street-view on the lead yet → home-outline placeholder,
+  // matching web's `mdi:home-outline` in the disabled-text colour.
+  return (
+    <View
+      className="rounded-lg items-center justify-center"
+      style={{ width: 56, height: 56, backgroundColor: '#F4F6F8' }}
+    >
+      <MaterialCommunityIcon name="home-outline" size={26} color="#919EAB" />
+    </View>
+  );
+}
+
 // ─── LeadChatThreadItem ───────────────────────────────────────────────────────
 export function LeadChatThreadItem({ chat, onPress }: any) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { leadDetails, unreadCount, recentMessages, lastMessageAt } = chat;
 
-  const dateStr = leadDetails?.leadDate ? format(new Date(leadDetails.leadDate), 'MM.dd.yy') : '';
-  const heading =
-    `${leadDetails?.office || ''} Lead ${dateStr}`.trim() ||
-    'Discussion';
-
   const lastMsg = recentMessages?.[0];
-  const repName = leadDetails?.assignedRepDetails
-    ? `${leadDetails.assignedRepDetails.firstName}`
-    : 'Rep';
+  const leadIdDisplay = getLeadIdDisplay(leadDetails);
+  const heading = buildLeadHeading(leadDetails, leadIdDisplay);
+  const status = getStatusProps(leadDetails?.status);
+  const timeAgo = useMemo(
+    () => formatLastMessageAgo(lastMessageAt || chat?.updatedAt || chat?.createdAt),
+    [lastMessageAt, chat?.updatedAt, chat?.createdAt]
+  );
+
+  // Web `renderMessagePreview`: sender first name in green, an attachment-only
+  // message falls back to "Sent an attachment" rather than reading "No Messages".
+  const senderName = lastMsg?.senderDetails?.firstName || 'User';
+  const messageContent = lastMsg?.message?.trim() || 'Sent an attachment';
 
   return (
     <TouchableOpacity
       onPress={onPress}
-      className="mb-4 p-3 rounded-xl"
+      activeOpacity={0.7}
+      className="mb-3 p-3 rounded-xl flex-row items-center"
       style={{
-        borderColor: unreadCount > 0 ? colors.primary.main : isDark ? '#2A2A2A' : '#F1F1F1',
-        backgroundColor:
-          unreadCount > 0
-            ? isDark
-              ? 'rgba(37,99,235,0.1)'
-              : '#ffffff'
-            : isDark
-              ? '#0f172a'
-              : '#ffffff',
-        borderWidth: unreadCount > 0 ? 0 : 1,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: isDark ? 0 : 0.05,
-        shadowRadius: 10,
-        elevation: 2,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: unreadCount > 0 ? colors.primary.main : '#F4F6F8',
       }}
     >
-      <View className="flex-row items-center justify-between mb-2">
-        <View className="flex-row items-center flex-1 pr-2">
+      <LeadThreadThumbnail leadDetails={leadDetails} />
+
+      <View className="flex-1 ml-3">
+        {/* Row 1: Heading + relative time */}
+        <View className="flex-row items-center mb-0.5">
           <Text
-            className="font-semibold text-xs mr-2"
-            style={{ color: colors.text }}
+            className="font-bold flex-1"
+            style={{ color: '#1C252E', fontSize: 15 }}
             numberOfLines={1}
           >
             {heading}
           </Text>
-          <View className="px-1.5 py-0.5 rounded-md" style={{ backgroundColor: STATUS_CONFIG[leadDetails?.status]?.color || '#94a3b8' }}>
-            <Text className="text-[10px] font-bold" style={{ color: STATUS_CONFIG[leadDetails?.status]?.textColor || '#fff' }}>
-              {STATUS_CONFIG[leadDetails?.status]?.label || leadDetails?.status || 'N/A'}
+          {!!timeAgo && (
+            <Text className="text-[11px] ml-2" style={{ color: '#919EAB' }} numberOfLines={1}>
+              {timeAgo}
+            </Text>
+          )}
+        </View>
+
+        {/* Row 2: Lead ID + status chip */}
+        <View className="flex-row items-center mb-1">
+          <Text className="text-xs font-medium" style={{ color: '#919EAB' }}>
+            Lead ID: {leadIdDisplay}
+          </Text>
+          <View className="ml-2 px-1.5 py-0.5 rounded" style={{ backgroundColor: status.color }}>
+            <Text
+              className="text-[10px] font-extrabold"
+              style={{ color: status.textColor, textTransform: 'uppercase' }}
+            >
+              {status.label}
             </Text>
           </View>
         </View>
-        {lastMessageAt && (
-          <Text className="text-[12px]" style={{ color: '#637381' }}>
-            {formatDistanceToNow(new Date(lastMessageAt), { addSuffix: true }).replace(
-              'about ',
-              ''
+
+        {/* Row 3: Message preview + unread badge + chevron */}
+        <View className="flex-row items-center">
+          <View className="flex-1 flex-row items-center pr-1">
+            {lastMsg ? (
+              <>
+                <Icon name="chatbubble-outline" size={14} color="#919EAB" style={{ marginRight: 4 }} />
+                <Text
+                  className="text-xs flex-1"
+                  numberOfLines={1}
+                  style={unreadCount > 0 ? { fontWeight: '600' } : undefined}
+                >
+                  <Text style={{ color: colors.primary.main, fontWeight: '700' }}>
+                    {senderName}:{' '}
+                  </Text>
+                  <Text style={{ color: unreadCount > 0 ? '#1C252E' : '#637381' }}>
+                    {messageContent}
+                  </Text>
+                </Text>
+              </>
+            ) : (
+              <Text className="text-xs italic" style={{ color: '#C4CDD5' }}>
+                No Messages
+              </Text>
             )}
-          </Text>
-        )}
-      </View>
-
-      <View className="flex-row items-center mb-1">
-        <Text className="text-xs" style={{ color: colors.textSecondary }}>
-          Lead ID: {leadDetails?.leadId || 'N/A'}
-        </Text>
-      </View>
-
-      <View className="flex-row items-center mb-1">
-        <Icon name="chatbubble" size={16} color={colors.textSecondary} style={{ marginRight: 4 }} />
-        <View className="flex-1">
-          <Text
-            className="text-xs font-semibold"
-            style={{ color: colors.textSecondary }}
-            numberOfLines={2}
-          >
-            <Text style={{ color: colors.primary.main }}>
-              {(() => {
-                const fn = lastMsg?.senderDetails?.firstName;
-                const ln = lastMsg?.senderDetails?.lastName;
-                if (!fn && !ln) return 'User';
-                return `${fn || ''} ${ln || ''}`.trim();
-              })()}
-              :{' '}
-            </Text>
-          </Text>
-        </View>
-        <View className="absolute right-0 w-6 h-6 items-center justify-center">
-          <Icon name="chevron-forward-outline" size={12} color={colors.textSecondary} />
-        </View>
-      </View>
-      <View className="flex-row items-center">
-        <View className="">
-          <Text
-            className="text-[10px] font-semibold"
-            style={{ color: colors.textSecondary }}
-            numberOfLines={2}
-          >
-            <Text style={{ color: colors.primary.main }}>
-              {(() => {
-                const fn = lastMsg?.senderDetails?.firstName;
-                const ln = lastMsg?.senderDetails?.lastName;
-                if (!fn && !ln) return 'User';
-                return `${fn || ''} ${ln || ''}`.trim();
-              })()}
-              :{' '}
-            </Text>
-            {lastMsg?.message || 'Started a new discussion.'}
-          </Text>
-        </View>
-        {unreadCount > 0 && (
-          <View className="absolute right-0 w-6 h-6 rounded-full bg-blue-600 items-center justify-center">
-            <Text className="text-white text-[10px] font-black">{unreadCount}</Text>
           </View>
-        )}
+          <View className="flex-row items-center">
+            {unreadCount > 0 && (
+              <View
+                className="w-5 h-5 rounded-full items-center justify-center mr-1"
+                style={{ backgroundColor: colors.primary.main }}
+              >
+                <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
+              </View>
+            )}
+            <Icon name="chevron-forward" size={16} color="#C4CDD5" />
+          </View>
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -223,44 +332,39 @@ export function ChannelThreadItem({ channel, onPress }: any) {
   const { colors, isDark } = useTheme();
   const { title, name, unreadCount, channelConfig } = channel;
   const displayName = title || name || 'General';
-  const scheme = CHANNEL_SCHEMES[displayName] || CHANNEL_SCHEMES['General'];
+  const scheme = CHANNEL_SCHEMES[displayName] || CHANNEL_SCHEMES.General;
 
   return (
     <TouchableOpacity
       onPress={onPress}
-      className="mb-3 p-4 rounded-lg border flex-row items-center"
+      className="mb-3 p-4 rounded-xl border flex-row items-center"
       style={{
-        borderColor: isDark ? '#2A2A2A' : '#919EAB33',
+        borderColor: isDark ? '#2A2A2A' : '#F4F6F8',
         backgroundColor: isDark ? colors.surface : '#fff',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: isDark ? 0 : 0.05,
-        shadowRadius: 6,
-        elevation: 1,
       }}
     >
       <View
-        className="w-10 h-10 rounded-md items-center justify-center mr-4"
+        className="w-12 h-12 rounded-lg items-center justify-center mr-3"
         style={{ backgroundColor: scheme.color + '20' }}
       >
         <Text className="text-lg">{scheme.icon}</Text>
       </View>
 
-      <View className="flex-1 pr-4">
-        <Text className="font-semibold text-xs mb-1" style={{ color: '#1C252E' }}>
+      <View className="flex-1 pr-2">
+        <Text className="font-semibold text-sm mb-0.5" style={{ color: '#1C252E' }}>
           {title || name}
         </Text>
-        <Text className="text-xs" style={{ color: '#637381' }}>
+        <Text className="text-xs" style={{ color: '#637381' }} numberOfLines={1}>
           {channelConfig?.description || 'Team Communication Channel'}
         </Text>
       </View>
 
       {unreadCount > 0 && (
-        <View className="w-6 h-6 rounded-full bg-red-500 items-center justify-center">
-          <Text className="text-white text-[10px] font-black">{unreadCount}</Text>
+        <View className="w-5 h-5 rounded-full items-center justify-center mr-2" style={{ backgroundColor: colors.primary.main }}>
+          <Text className="text-white text-[9px] font-black">{unreadCount}</Text>
         </View>
       )}
-      <Icon name="caret-forward" size={16} color={'#637381'} style={{ marginLeft: 10 }} />
+      <Icon name="chevron-forward" size={16} color="#C4CDD5" />
     </TouchableOpacity>
   );
 }

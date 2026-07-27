@@ -4,6 +4,9 @@ import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
+import { normalizeSingleAcceptedDrop, dedupeDrops } from '../utils/drop-prices';
+import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
+import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 
 /**
  * Persistence hook for the Dynamic Deal Center calculators — the schema-driven
@@ -59,8 +62,33 @@ export interface CalcTab {
   downPayment?: number;
   /** pre-order discount % (15/20/25) driving the In-Home Pre-Order grand total. */
   discountPercentage?: number;
+  /**
+   * RevRender before/after pairs the rep associated with THIS calculator's job
+   * build (web parity: `lfcalculator.selectedRenders`). Each item keeps
+   * `{ runId, originalUrl, generatedUrl, s3UrlOriginal, s3UrlGenerated, bucketName,
+   * viewLabel, category, subcategory }` so the Investment Center can re-resolve
+   * secure links and show them under the job scope.
+   */
+  selectedRenders?: any[];
+  /**
+   * The 1-Year Program monthly-payment selection (web parity:
+   * `lfcalculator.oneYearMonthlyPlan`). `mode` is how the plan is chosen:
+   * `match` mirrors the In-Home selected plan, `default` uses the 1-Year default
+   * financing plan, `custom` pins an explicit `planKey`. The rest are the resolved
+   * values persisted for the Investment Center to display without recomputing.
+   */
+  oneYearMonthlyPlan?: {
+    mode: 'match' | 'default' | 'custom';
+    planKey?: string;
+    apr?: number;
+    monthlyPayment?: number;
+    grandTotal?: number;
+    isDefault?: boolean;
+  } | null;
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
+  /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
+  pricemarkup?: string;
   /** true when `id` is a real backend id (so it can be saved/deleted remotely) */
   persisted?: boolean;
 }
@@ -92,8 +120,28 @@ function tabSignature(tab: CalcTab): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, e]) => `${id}:${e?.inputValue ?? ''}`)
     .join('|');
-  const dropSig = (tab.dropPrice || []).map((d: any) => d?.price ?? '').join(',');
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}`;
+  // Every PERSISTED field of a drop must be in the signature, not just its price.
+  // With price alone, securing/unselecting an EXISTING drop changed no prices, so a
+  // status-only edit that landed while a save was in flight looked identical to the
+  // snapshot: `flushSave` cleared `dirty` (line ~354) and computed `hasNewerEdits`
+  // false (line ~362), so no follow-up was scheduled and the demotion was NEVER PUT.
+  // The server kept the older accepted drop alongside the new one — two SECURED rows
+  // on reopen. Adding a genuinely-new drop changed `dropSig` and so always converged,
+  // which is exactly why the bug looked intermittent.
+  const dropSig = (tab.dropPrice || [])
+    .map(
+      (d: any) =>
+        `${d?.price ?? ''}:${d?.status ?? ''}:${d?.downPayment ?? ''}:${d?.balance ?? ''}:${d?.paymentMethod ?? ''}:${Array.isArray(d?.paymentMethods) ? d.paymentMethods.join('|') : ''}`
+    )
+    .join(',');
+  // Selected renders: a stable key of the chosen run ids so add/remove marks dirty.
+  const renderSig = (tab.selectedRenders || [])
+    .map((r: any) => r?.runId || r?._id || r?.generatedUrl || '')
+    .join('|');
+  // 1-Year monthly plan: mode + resolved plan key + default flag.
+  const oy = tab.oneYearMonthlyPlan;
+  const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -154,6 +202,25 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
   }
 }
 
+/** Inherited defaults / lineage seeded onto a new or duplicated calculator (web parity). */
+interface CreateExtra {
+  /** user.defaultPercentage (web `addTab` seeds this when set). */
+  discountPercentage?: number;
+  /** Lowe's → lowes_ach, else user.defaultPaymentMethod (web addTab). */
+  paymentMethod?: string;
+  paymentMethodLabel?: string;
+  /** Duplicate lineage — the source calculator's backend id (web `handleDuplicateSubmit`). */
+  originalCalculatorId?: string;
+  /**
+   * Web parity (tab-action-utils.js:196-206): the `calculator_duplicated` activity
+   * log is handed to the create POST so the BACKEND writes it with the NEW
+   * calculator's id as entityId — attributing it to the right tab. Firing a
+   * separate client logEvent (with only meta.calculatorId, no entityId) lands it
+   * in a stray group, which is exactly why web moved it into the create body.
+   */
+  duplicateLog?: any;
+}
+
 async function createRemoteTab(
   appointmentId: string,
   title: string,
@@ -161,7 +228,8 @@ async function createRemoteTab(
   leadId: string | undefined,
   enteredBy: string | undefined,
   schemas: CalculatorSchema[],
-  position: number
+  position: number,
+  extra: CreateExtra = {}
 ): Promise<CalcTab | null> {
   try {
     // Web parity: a new calculator is seeded with the FULL flattened field list
@@ -178,6 +246,12 @@ async function createRemoteTab(
       leadId,
       enteredBy,
       enteredAt: new Date().toISOString(),
+      // Web parity (tab-action-utils.js:48-60 / 166-188): inherited rep defaults +
+      // duplicate lineage. Only sent when present so we don't clobber with blanks.
+      ...(extra.discountPercentage != null ? { discountPercentage: extra.discountPercentage } : {}),
+      ...(extra.paymentMethod ? { paymentMethod: extra.paymentMethod, paymentMethodLabel: extra.paymentMethodLabel } : {}),
+      ...(extra.originalCalculatorId ? { originalCalculatorId: extra.originalCalculatorId } : {}),
+      ...(extra.duplicateLog ? { duplicateLog: extra.duplicateLog } : {}),
     });
     const c = res.data?.data || res.data;
     const id = c?._id || c?.id;
@@ -189,6 +263,8 @@ async function createRemoteTab(
       entries: c.entries ? mergeFullEntries(parseEntries(c.entries), schemas) : seeded,
       totals: c.totals || totals,
       persisted: true,
+      paymentMethod: extra.paymentMethod || c.paymentMethod,
+      discountPercentage: extra.discountPercentage ?? c.discountPercentage,
     };
   } catch {
     return null;
@@ -197,6 +273,17 @@ async function createRemoteTab(
 
 export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = []) {
   const { user } = useAuth();
+
+  // Web parity (tab-action-utils.js:48-60): a newly-created/duplicated calculator
+  // inherits the rep's default discount % and payment method (Lowe's → lowes_ach).
+  const inheritedDefaults = useCallback((): CreateExtra => {
+    const isLowesLead = lead?.lowesLead === true;
+    const paymentMethod = isLowesLead ? 'lowes_ach' : (user?.defaultPaymentMethod || undefined);
+    return {
+      ...(user?.defaultPercentage ? { discountPercentage: Number(user.defaultPercentage) } : {}),
+      ...(paymentMethod ? { paymentMethod } : {}),
+    };
+  }, [lead?.lowesLead, user?.defaultPaymentMethod, user?.defaultPercentage]);
 
   const [tabs, setTabs] = useState<CalcTab[]>([
     { id: 'local-1', title: '1', entries: {}, totals: { ...ZERO } },
@@ -213,6 +300,15 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const saveInFlight = useRef<Record<string, boolean>>({});
   const needsFollowUp = useRef<Record<string, boolean>>({});
   const dirty = useRef<Record<string, boolean>>({});
+  // Last title actually PERSISTED for each calculator. A save that writes a title
+  // different from this fires `calculator_auto_renamed` (web parity — the calc name
+  // is derived from the entries, so it changes as the rep edits). Seeded at hydrate/
+  // create so the FIRST save can already detect a load→edit rename.
+  const lastSavedTitle = useRef<Record<string, string>>({});
+  // Calculators already logged as `calculator viewed` this session — web fires that
+  // view event ONCE per calculator (DealCenterContext `loggedViewCalculatorIds`),
+  // not on every tab switch.
+  const loggedViewIds = useRef<Set<string>>(new Set());
   // Bootstrap (appointment/calculator creation) must run once per lead — this
   // guards against the hydrate effect re-entering and creating duplicates.
   const bootstrapLeadRef = useRef<string | null>(null);
@@ -227,11 +323,46 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const leadId = lead?._id || lead?.leadId || lead?.id;
   const enteredBy = user?._id || user?.id || '';
 
+  // Web parity (DealCenterContext view effect): fire `calculator viewed` ONCE per
+  // calculator, when it first becomes the active tab. Only persisted (backend)
+  // calculators are logged — a placeholder local tab has no real calculatorId yet.
+  useEffect(() => {
+    if (!enteredBy || !activeTabId) return;
+    const active = tabs.find((t) => t.id === activeTabId);
+    if (!active) return;
+    const calcId = (active as any).calculatorId || active.id;
+    if (!isBackendId(active.id) || loggedViewIds.current.has(calcId)) return;
+    loggedViewIds.current.add(calcId);
+    logCalculatorViewed({
+      userId: enteredBy,
+      calculatorId: calcId,
+      appointmentId: (active as any).appointmentId || appointmentId,
+      calculatorTitle: active.title,
+      leadId: leadId || undefined,
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId, tabs, enteredBy]);
+
   // Keep the latest schemas available to the (stable) retitle/save callbacks
   // without churning their identities.
   const schemasRef = useRef(schemas);
   schemasRef.current = schemas;
   const snapshotId = () => schemasRef.current?.[0]?.id || 'static';
+
+  // Resolve a field's category id to its human name (web parity: DealCenterContext
+  // logs `fieldCategory: category.name`, not the raw id). The portal groups
+  // calculator field logs by this value into section headers ("Soffit", "LeafFilter",
+  // …); shipping the raw id made those logs group under an unrecognizable header, so
+  // they appeared missing/cut on the timeline.
+  const categoryNameOf = useCallback((categoryId?: string): string => {
+    if (!categoryId) return '';
+    for (const s of schemasRef.current || []) {
+      for (const c of s.categories || []) {
+        if (c.id === categoryId) return c.name || c.label || categoryId;
+      }
+    }
+    return categoryId;
+  }, []);
 
   // Latest payload builder in a ref so the unmount flush (a [] effect) always
   // uses current leadId/enteredBy/schema instead of the mount-time closure.
@@ -242,10 +373,17 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       totals: tab.totals,
       isRolloutConfirmed: tab.isRolloutConfirmed,
       price: tab.price,
+      pricemarkup: tab.pricemarkup,
       paymentMethod: tab.paymentMethod,
-      dropPrice: tab.dropPrice || [],
+      // Web parity (`ViewAllCalculators.js:1116-1123`): normalize to at most one
+    // accepted drop at SAVE time, so no path can ever persist two SECURED rows.
+    dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(tab.dropPrice)),
       downPayment: tab.downPayment,
       discountPercentage: tab.discountPercentage,
+      // Web parity: the renders bound to this job build + the 1-Year monthly plan
+      // selection both persist on the calculator so the Investment Center reads them.
+      selectedRenders: tab.selectedRenders || [],
+      oneYearMonthlyPlan: tab.oneYearMonthlyPlan ?? null,
       schemaSnapshotId: snapshotId(),
       leadId,
       enteredBy,
@@ -263,7 +401,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const retitle = useCallback((list: CalcTab[]): CalcTab[] => {
     const titles = computeDerivedTitles(
       list.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
-      schemasRef.current || []
+      schemasRef.current || [],
     );
     let changed = false;
     const next = list.map((t) => {
@@ -303,11 +441,25 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       saveInFlight.current[tabId] = true;
       setIsSaving(true);
 
+      const savedTitle = tab.title;
       try {
         await LeadService.updateCalculator(tabId, buildPayloadRef.current(tab));
         setLastUpdated(
           new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
         );
+        // Web parity (DealCenterContext.flushSave): when this save changed the
+        // calculator's persisted title, log an auto-rename against its own id.
+        const prevTitle = lastSavedTitle.current[tabId];
+        if (enteredBy && prevTitle !== undefined && prevTitle !== savedTitle) {
+          logCalculatorAutoRenamed({
+            userId: enteredBy,
+            calculatorId: (tab as any).calculatorId || tab.id,
+            appointmentId: (tab as any).appointmentId || appointmentId,
+            calculatorTitle: savedTitle,
+            leadId: leadId || undefined,
+          }).catch(() => {});
+        }
+        lastSavedTitle.current[tabId] = savedTitle;
         // Only mark clean if nothing changed since we snapshotted this save.
         const latest = tabsRef.current.find((t) => t.id === tabId);
         if (latest && tabSignature(latest) === sig) dirty.current[tabId] = false;
@@ -325,7 +477,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
         }
       }
     },
-    [scheduleSave]
+    [scheduleSave, enteredBy, appointmentId, leadId]
   );
   flushSaveRef.current = flushSave;
 
@@ -373,20 +525,42 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               isRolloutConfirmed: c.isRolloutConfirmed,
               price: c.price,
               paymentMethod: c.paymentMethod || undefined,
-              dropPrice: Array.isArray(c.dropPrice) ? c.dropPrice : [],
+              // Repair records already corrupted by the pre-fix save race, which
+              // otherwise render two SECURED rows on every reopen forever.
+              dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(c.dropPrice)),
               downPayment: c.downPayment || 0,
               discountPercentage: Number(c.discountPercentage) || undefined,
+              selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
+              oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
               persisted: true,
             };
           });
+          // Baseline the persisted titles so an auto-rename after the first edit
+          // is detected against the loaded name, not a lazily-set one.
+          hydrated.forEach((t) => { lastSavedTitle.current[t.id] = t.title; });
           setTabs(retitle(hydrated));
           setActiveTabId(hydrated[0].id);
         } else {
           const created = await createRemoteTab(apptId, '1', {}, leadId, enteredBy, schemasRef.current, 1);
           if (cancelled) return;
           if (created) {
+            lastSavedTitle.current[created.id] = created.title;
             setTabs(retitle([created]));
             setActiveTabId(created.id);
+            // Web parity (tab-action-utils.js first-calc create): the auto-created
+            // FIRST calculator logs `isFirstCalculator: true` / "Created new
+            // calculator tab" (no calculatorPosition). Previously the mobile bootstrap
+            // created it silently, so the portal never saw its create event.
+            if (enteredBy) {
+              logCalculatorCreated({
+                userId: enteredBy,
+                calculatorId: (created as any).calculatorId || created.id,
+                appointmentId: apptId,
+                calculatorTitle: created.title,
+                isFirstCalculator: true,
+                leadId: leadId || undefined,
+              }).catch(() => {});
+            }
           }
         }
       } catch {
@@ -427,12 +601,15 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   // from is still persisted (the debounce may not have fired yet).
   useEffect(() => {
     const timers = saveTimers.current;
-    const inFlight = saveInFlight.current;
     const dirtyMap = dirty.current;
     return () => {
       Object.values(timers).forEach((t) => clearTimeout(t));
+      // Fire a FINAL PUT for every dirty calculator with the latest state — even if a
+      // save is in flight. On unmount there's no follow-up mechanism left, so skipping
+      // an in-flight calc (as before) could drop a just-confirmed price when the rep
+      // navigates away; sending the latest state last makes it the winning write.
       tabsRef.current.forEach((tab) => {
-        if (tab.persisted && isBackendId(tab.id) && dirtyMap[tab.id] && !inFlight[tab.id]) {
+        if (tab.persisted && isBackendId(tab.id) && dirtyMap[tab.id]) {
           LeadService.updateCalculator(tab.id, buildPayloadRef.current(tab)).catch(() => {});
         }
       });
@@ -442,6 +619,8 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const handleEntryChange = useCallback(
     (fieldId: string, entry: CalculatorEntry) => {
       setTabs((prev) => {
+        const prevActive = prev.find((t) => t.id === activeTabId);
+        const oldEntry = prevActive?.entries?.[fieldId] as any;
         const updated = prev.map((t) => {
           if (t.id !== activeTabId) return t;
           const entries = { ...t.entries, [fieldId]: entry };
@@ -452,27 +631,72 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
         if (active) {
           tabsRef.current = retitled; // let the debounced flush read this immediately
           markDirty(active.id);
+          // Web parity (DealCenterContext.js:218-234): log the field change. Only
+          // when the value actually changed, so re-renders don't spam events.
+          const e = entry as any;
+          if (enteredBy && (oldEntry?.inputValue ?? '') !== (e?.inputValue ?? '')) {
+            logCalculatorFieldEntry({
+              userId: enteredBy,
+              calculatorId: (active as any).calculatorId || active.id,
+              appointmentId: (active as any).appointmentId,
+              calculatorTitle: active.title,
+              fieldLabel: e?.label,
+              fieldValue: e?.inputValue,
+              fieldCategory: categoryNameOf(e?.categoryId),
+              oldValue: oldEntry?.inputValue ?? '',
+              newValue: e?.inputValue,
+              leadId: leadId || undefined,
+            }).catch(() => {});
+          }
         }
         return retitled;
       });
     },
-    [activeTabId, retitle, markDirty]
+    [activeTabId, retitle, markDirty, enteredBy, leadId, categoryNameOf]
   );
 
   const handleAddTab = useCallback(async () => {
     const placeholder = String(tabs.length + 1);
     if (appointmentId) {
-      const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, tabs.length + 1);
+      const defaults = inheritedDefaults();
+      const created = await createRemoteTab(appointmentId, placeholder, {}, leadId, enteredBy, schemasRef.current, tabs.length + 1, defaults);
       if (created) {
+        lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
         setTabs((p) => retitle([...p, created]));
         setActiveTabId(created.id);
+        // Web parity (tab-action-utils.js:62): calculator_created activity event.
+        if (enteredBy) {
+          logCalculatorCreated({
+            userId: enteredBy,
+            calculatorId: (created as any).calculatorId || created.id,
+            appointmentId: appointmentId,
+            calculatorTitle: created.title,
+            calculatorPosition: tabs.length + 1,
+            leadId: leadId || undefined,
+          }).catch(() => {});
+          // Web parity (tab-action-utils.js:75-91): a new calculator that inherits
+          // the rep's DEFAULT payment method logs that inheritance.
+          if (defaults.paymentMethod) {
+            logPaymentMethodInherited({
+              userId: enteredBy,
+              calculatorId: (created as any).calculatorId || created.id,
+              appointmentId: appointmentId,
+              calculatorTitle: created.title,
+              fromCalculator: null,
+              toCalculator: (created as any).calculatorId || created.id,
+              paymentMethod: defaults.paymentMethod,
+              inheritanceSource: 'default payment method',
+              ...(leadId ? { leadId } : {}),
+            }).catch(() => {});
+          }
+        }
         return;
       }
     }
     const local: CalcTab = { id: `local-${Date.now()}`, title: placeholder, entries: buildAllEntriesMap(schemasRef.current), totals: { ...ZERO } };
     setTabs((p) => retitle([...p, local]));
     setActiveTabId(local.id);
-  }, [tabs.length, appointmentId, leadId, enteredBy, retitle]);
+  }, [tabs.length, appointmentId, leadId, enteredBy, retitle, inheritedDefaults]);
 
   const handleDuplicateTab = useCallback(
     async (tabId: string) => {
@@ -481,11 +705,57 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       const placeholder = String(tabs.length + 1);
       // Copy the source's full entries (back-filled from schema so nothing is lost).
       const entries = mergeFullEntries(JSON.parse(JSON.stringify(source.entries)), schemasRef.current);
+      const position = tabs.length + 1;
+      const sourceBackendId = isBackendId(source.id) ? source.id : undefined;
+      // Web parity (tab-action-utils.js:196-206): hand the `calculator_duplicated`
+      // log to the create POST so the backend attributes it to the NEW calculator.
+      const duplicateLog =
+        enteredBy && sourceBackendId
+          ? {
+              user_id: enteredBy,
+              created_by: enteredBy,
+              module_type: 'calculator',
+              actionType: 'duplicate',
+              meta: {
+                ...(leadId ? { leadId } : {}),
+                sourceCalculatorId: sourceBackendId,
+                sourceCalculatorTitle: source.title,
+                newCalculatorTitle: placeholder,
+                appointmentId,
+                position,
+                action: 'calculator_duplicated',
+              },
+            }
+          : undefined;
       if (appointmentId) {
-        const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, tabs.length + 1);
+        const created = await createRemoteTab(appointmentId, placeholder, entries, leadId, enteredBy, schemasRef.current, position, {
+          ...inheritedDefaults(),
+          // Web parity (tab-action-utils.js:166-188): carry the duplicate lineage.
+          ...(sourceBackendId ? { originalCalculatorId: sourceBackendId } : {}),
+          ...(duplicateLog ? { duplicateLog } : {}),
+        });
         if (created) {
+          lastSavedTitle.current[created.id] = created.title; // baseline for auto_rename
           setTabs((p) => retitle([...p, created]));
           setActiveTabId(created.id);
+          // Web parity (tab-action-utils.js:225-244): if the SOURCE carried a
+          // payment method, the duplicate inherits it — log that inheritance.
+          const inheritedPaymentMethod = (source as any).paymentMethod || '';
+          if (enteredBy && inheritedPaymentMethod) {
+            logPaymentMethodInherited({
+              userId: enteredBy,
+              calculatorId: (created as any).calculatorId || created.id,
+              appointmentId: appointmentId,
+              calculatorTitle: placeholder,
+              fromCalculator: sourceBackendId ?? null,
+              toCalculator: (created as any).calculatorId || created.id,
+              paymentMethod: inheritedPaymentMethod,
+              inheritanceSource: 'calculator duplication',
+              sourceCalculatorTitle: source.title,
+              newCalculatorTitle: placeholder,
+              ...(leadId ? { leadId } : {}),
+            }).catch(() => {});
+          }
           return;
         }
       }
@@ -493,7 +763,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       setTabs((p) => retitle([...p, local]));
       setActiveTabId(local.id);
     },
-    [tabs, appointmentId, leadId, enteredBy, retitle]
+    [tabs, appointmentId, leadId, enteredBy, retitle, inheritedDefaults]
   );
 
   const handleDeleteTab = useCallback(
@@ -520,14 +790,25 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   const handleRenameTab = useCallback(
     (tabId: string, name: string) => {
       setTabs((prev) => {
+        const before = prev.find((t) => t.id === tabId);
         const updated = prev.map((t) => (t.id === tabId ? { ...t, manualTitle: name } : t));
         const retitled = retitle(updated);
         tabsRef.current = retitled;
         markDirty(tabId);
+        // Web parity (tab-action-utils.js:126): calculator_rename activity event.
+        if (enteredBy && before && before.title !== name) {
+          logCalculatorRename({
+            userId: enteredBy,
+            calculatorId: (before as any).calculatorId || before.id,
+            appointmentId: (before as any).appointmentId || '',
+            previousCalculatorTitle: before.title,
+            newCalculatorTitle: name,
+          }).catch(() => {});
+        }
         return retitled;
       });
     },
-    [retitle, markDirty]
+    [retitle, markDirty, enteredBy]
   );
 
   const handleReorderTabs = useCallback(
@@ -535,7 +816,19 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       setTabs((prev) => {
         const byId = new Map(prev.map((t) => [t.id, t]));
         const next = orderedIds.map((id) => byId.get(id)).filter(Boolean) as CalcTab[];
-        return next.length === prev.length ? retitle(next) : prev;
+        if (next.length !== prev.length) return prev;
+        // Web parity (tab-action-utils.js:282 updateLfCalculatorPositions): persist
+        // the new order as [{ id, position }] for the backend calculators. Previously
+        // reorder was local-only, so a reload lost the order.
+        const positions = next
+          .map((t, position) => ({ id: t.id, position }))
+          .filter((p) => isBackendId(p.id));
+        if (positions.length) {
+          LeadService.reorderCalculators(positions).catch((e) =>
+            console.warn('[DynamicCalculators] reorder persist failed:', e?.message || e),
+          );
+        }
+        return retitle(next);
       });
       if (activeId) setActiveTabId(activeId);
     },
@@ -594,13 +887,98 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     [markDirty]
   );
 
+  /**
+   * Replace the RevRender pairs bound to this calculator's job build (web parity:
+   * `selectedRenders`). Persisted on the next debounced save; the Investment Center
+   * reads them back to show before/after images under the job scope.
+   */
+  const handleSetRenders = useCallback(
+    (tabId: string, renders: any[]) => {
+      setTabs((prev) => {
+        const next = prev.map((t) => (t.id === tabId ? { ...t, selectedRenders: renders } : t));
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /** Set the 1-Year Program monthly-payment selection (persisted on next save). */
+  const handleSetOneYearMonthly = useCallback(
+    (tabId: string, plan: CalcTab['oneYearMonthlyPlan']) => {
+      setTabs((prev) => {
+        const next = prev.map((t) => (t.id === tabId ? { ...t, oneYearMonthlyPlan: plan } : t));
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /**
+   * Clear every field of one category on the active calculator in a single pass,
+   * firing ONE `section cleared` activity event — web parity (lf-calculator-view.js
+   * category Clear → `action:'section cleared'`). Zeroing here rather than looping
+   * `handleEntryChange` avoids emitting N `calculator field changed` events for a
+   * single clear (web logs only the one `section cleared`).
+   */
+  const handleClearSection = useCallback(
+    (categoryId: string, categoryLabel: string) => {
+      let clearedTab: CalcTab | undefined;
+      setTabs((prev) => {
+        const updated = prev.map((t) => {
+          if (t.id !== activeTabId) return t;
+          const entries = { ...t.entries };
+          let changed = false;
+          Object.keys(entries).forEach((fid) => {
+            const e = entries[fid] as any;
+            if (e?.categoryId === categoryId && Number(e.inputValue || 0) !== 0) {
+              entries[fid] = { ...e, inputValue: 0, computed: { cost: 0, par: 0, retail: 0 } };
+              changed = true;
+            }
+          });
+          if (!changed) return t;
+          return { ...t, entries, totals: computeTotals(entries) };
+        });
+        const retitled = retitle(updated);
+        clearedTab = retitled.find((t) => t.id === activeTabId);
+        tabsRef.current = retitled;
+        return retitled;
+      });
+      if (clearedTab) {
+        markDirty(clearedTab.id);
+        if (enteredBy) {
+          logSectionCleared({
+            userId: enteredBy,
+            calculatorId: (clearedTab as any).calculatorId || clearedTab.id,
+            appointmentId: (clearedTab as any).appointmentId || appointmentId,
+            calculatorTitle: clearedTab.title,
+            fieldName: categoryLabel,
+            fieldLabel: categoryLabel,
+            fieldCategory: categoryNameOf(categoryId) || categoryLabel,
+          }).catch(() => {});
+        }
+      }
+    },
+    [activeTabId, retitle, markDirty, enteredBy, appointmentId, categoryNameOf]
+  );
+
   const handleConfirmRollouts = useCallback(
     (confirmed: Array<{ id: string; price: number }>) => {
       const priceById = new Map(confirmed.map((c) => [c.id, c.price]));
       setTabs((prev) => {
         const next = prev.map((t) => {
           if (!priceById.has(t.id)) return t;
-          return { ...t, isRolloutConfirmed: true, price: priceById.get(t.id) };
+          const endPrice = priceById.get(t.id) || 0;
+          // Web parity (ViewAllCalculators.calculateMarkup): compute the markup
+          // string (e.g. "COST + 25%") using the raw schema totals as anchors.
+          const cost = Math.round(t.totals?.cost || 0);
+          const par = Math.round(t.totals?.par || 0);
+          const retail = Math.round(t.totals?.retail || 0);
+          const pricemarkup = endPrice > 0 ? calculateMarkupLabel(endPrice, cost, par, retail) : undefined;
+          return { ...t, isRolloutConfirmed: true, price: endPrice, pricemarkup };
         });
         tabsRef.current = next;
         next.forEach((t) => {
@@ -621,6 +999,11 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     isSaving,
     lastUpdated,
     handleEntryChange,
+    handleClearSection,
+
+
+
+
     handleAddTab,
     handleDuplicateTab,
     handleDeleteTab,
@@ -631,5 +1014,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     handleSetDrops,
     handleSetDiscount,
     handleSetDownPayment,
+    handleSetRenders,
+    handleSetOneYearMonthly,
   };
 }

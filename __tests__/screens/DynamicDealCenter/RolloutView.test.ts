@@ -223,3 +223,74 @@ describe('visibleCalculators filtering', () => {
     expect(visibleCalculators([{ id: 'a', title: '   ' }])).toHaveLength(1);
   });
 });
+
+// ── drop edit-vs-append resolution ───────────────────────────────────────
+// Web parity: `handleDisplayDropAction` edits an existing drop by index, and
+// `handleAddDrop`'s `existingDeclinedIndex` dedup edits an existing DECLINED drop
+// at the same price instead of appending a duplicate. Only a genuinely-new price
+// appends. This mirrors RolloutView.tsx `resolveDropTargetIndex` + secure/decline.
+describe('drop target resolution (edit in place vs. append)', () => {
+  const resolveDropTargetIndex = (drops: any[], pendingDropIndex: number, pendingDrop: number) =>
+    pendingDropIndex >= 0
+      ? pendingDropIndex
+      : drops.findIndex(
+          (d) => d.status === 'declined' && Number(d.price ?? d.dropedPrice) === pendingDrop,
+        );
+
+  // Port of secureDrop's array math.
+  const secure = (drops: any[], pendingDropIndex: number, pendingDrop: number) => {
+    const target = resolveDropTargetIndex(drops, pendingDropIndex, pendingDrop);
+    const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted' };
+    const next = drops.map((d, idx) => {
+      if (idx === target) return { ...d, ...accepted };
+      return d.status === 'accepted' ? { ...d, status: 'declined' } : d;
+    });
+    if (target < 0) next.push(accepted as any);
+    return next;
+  };
+
+  // Port of declineDrop's array math.
+  const decline = (drops: any[], pendingDropIndex: number, pendingDrop: number) => {
+    const target = resolveDropTargetIndex(drops, pendingDropIndex, pendingDrop);
+    const declined = { price: pendingDrop, dropedPrice: pendingDrop, status: 'declined' };
+    return target >= 0
+      ? drops.map((d, idx) => (idx === target ? { ...d, ...declined } : d))
+      : [...drops, declined];
+  };
+
+  test('Display (explicit index) edits that drop in place — no duplicate', () => {
+    const drops = [{ _id: 'a', price: 5000, status: 'declined' }];
+    const next = secure(drops, 0, 5000);
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ _id: 'a', price: 5000, status: 'accepted' }); // _id preserved
+  });
+
+  test('re-entering a price that matches an existing DECLINED drop edits it, not appends', () => {
+    const drops = [{ _id: 'a', price: 5000, status: 'declined' }];
+    const next = secure(drops, -1, 5000); // pendingDropIndex -1 = came from the +Drop input
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ price: 5000, status: 'accepted' });
+  });
+
+  test('a genuinely-new price appends a new drop', () => {
+    const drops = [{ _id: 'a', price: 5000, status: 'declined' }];
+    const next = secure(drops, -1, 4500);
+    expect(next).toHaveLength(2);
+    expect(next[1]).toMatchObject({ price: 4500, status: 'accepted' });
+  });
+
+  test('securing enforces single-accepted (demotes any prior accepted drop)', () => {
+    const drops = [{ price: 5000, status: 'accepted' }, { price: 4500, status: 'declined' }];
+    const next = secure(drops, -1, 4200);
+    expect(next.find((d) => d.price === 5000)?.status).toBe('declined');
+    expect(next.find((d) => d.price === 4200)?.status).toBe('accepted');
+  });
+
+  test('decline edits a matching declined drop in place and never demotes others', () => {
+    const drops = [{ price: 5000, status: 'accepted' }, { _id: 'b', price: 4500, status: 'declined' }];
+    const next = decline(drops, -1, 4500);
+    expect(next).toHaveLength(2);
+    expect(next.find((d) => d.price === 5000)?.status).toBe('accepted'); // untouched
+    expect(next.find((d) => (d as any)._id === 'b')?.status).toBe('declined');
+  });
+});

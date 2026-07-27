@@ -38,6 +38,14 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
 
   const [mapType, setMapType] = useState<'standard' | 'satellite'>('satellite');
   const [userLocation, setUserLocation] = useState<MapCoordinate | null>(null);
+  // Continuous live GPS position for the blue-dot marker (web parity: live-location-layer.js).
+  const [liveLocation, setLiveLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    heading: number | null;
+    accuracy: number | null;
+  } | null>(null);
+  const watchIdRef = useRef<number | null>(null);
   const [initialRegion, setInitialRegion] = useState<any>(null);
 
   const [isDrawingMode, setIsDrawingMode] = useState(false);
@@ -138,6 +146,45 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     const saved = peekZoneMapState();
     if (saved) pendingRestoreRef.current = saved;
   }, [visible, fetchZones, handleGetCurrentLocation]);
+
+  // Continuous live-location watch (web parity: useUserLocation in live-location-layer.js).
+  // Runs only while the map is visible and NOT while drawing a zone; cleaned up on unmount.
+  useEffect(() => {
+    const stopWatch = () => {
+      if (watchIdRef.current != null) {
+        Geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+
+    if (!visible || isDrawingMode) {
+      stopWatch();
+      return;
+    }
+
+    watchIdRef.current = Geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, heading, accuracy } = position.coords;
+        setLiveLocation({
+          latitude,
+          longitude,
+          heading: heading != null && !Number.isNaN(heading) && heading >= 0 ? heading : null,
+          accuracy: accuracy != null && accuracy > 0 ? accuracy : null,
+        });
+      },
+      (err) => {
+        console.warn('[ZoneCanvasser] live-location watch error:', err?.message);
+      },
+      {
+        enableHighAccuracy: true,
+        distanceFilter: 1,
+        interval: 2000,
+        fastestInterval: 1000,
+      }
+    );
+
+    return stopWatch;
+  }, [visible, isDrawingMode]);
 
   const handleMapRegionChange = useCallback((region: Region) => {
     mapRegionRef.current = region;
@@ -761,6 +808,7 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     mapType,
     setMapType,
     userLocation,
+    liveLocation,
     initialRegion,
     isDrawingMode,
     drawType,

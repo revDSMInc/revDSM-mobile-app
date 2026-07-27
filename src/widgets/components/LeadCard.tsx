@@ -9,12 +9,17 @@ import {
   StyleSheet,
   Modal,
   Pressable,
+  Linking,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import type { Lead } from '../../config/types/lead';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Ionicon from 'react-native-vector-icons/Ionicons';
+import Feather from 'react-native-vector-icons/Feather';
+import { getRawPhoneNumber } from '../../utils/phone-util';
 import {
   useArchiveLeadMutation,
   useDeleteLeadMutation,
@@ -28,8 +33,10 @@ import {
   calculateDistance,
   isSelfGeneratedLead,
   getScheduledDateTime,
-  canCheckIn,
   isResumeAppointment,
+  isBeforeTimeWindow,
+  isGpsBypassActive,
+  isEarlyStartBypassActive,
   GEOFENCE_RADIUS_MILES,
 } from '../../utils/location-util';
 
@@ -167,9 +174,15 @@ function getLeadState(
     };
   }
 
-  // ── Tomorrow view — ALL cards forced UPCOMING (web parity shortcut) ───────
-  // Matches: isTomorrowIssuedView shortcut in job-card.js lines 553-564
-  if (isTomorrow) {
+  // ── Manager-applied bypass overrides (web parity: job-card-utils.js) ─────
+  // gpsBypass  → replaces the physical geofence check
+  // earlyStart → replaces the time-window gate
+  const gpsBypassActive = isGpsBypassActive(lead);
+  const earlyStartBypassActive = isEarlyStartBypassActive(lead);
+
+  // ── Tomorrow-issued view — locked to Preview UNLESS BOTH bypasses active ──
+  // Web parity: getJobStatus() isTomorrowIssuedView override
+  if (isTomorrow && !(gpsBypassActive && earlyStartBypassActive)) {
     return {
       status: 'UPCOMING',
       color: CARD_COLOR.UPCOMING,
@@ -181,7 +194,7 @@ function getLeadState(
   }
 
   // ── Geo check ────────────────────────────────────────────────────────────
-  const isInRange =
+  const rawInRange =
     userLocation && lead.location?.coordinates
       ? calculateDistance(
         userLocation.latitude,
@@ -190,9 +203,10 @@ function getLeadState(
         lead.location.coordinates[0]  // lng is index 0
       ) <= GEOFENCE_RADIUS_MILES
       : false;
+  // GPS bypass replaces the physical geofence check
+  const isInRange = rawInRange || gpsBypassActive;
 
   const isSelfGen = isSelfGeneratedLead(lead);
-  const canCheckInLead = canCheckIn(lead);
   const isResumeLead = isResumeAppointment(lead);
 
   // Helper: get review/resume counts for button text
@@ -200,37 +214,11 @@ function getLeadState(
     actionCounts[action] || 0;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BRANCH A: Self-Generated Leads (location-only, no time windows)
-  // Web parity: job-card.js lines 569-644
+  // BRANCH A: Self-Generated Leads — location only (no time windows)
+  // Web parity: job-card-utils.js getSelfGenJobStatus()
   // ─────────────────────────────────────────────────────────────────────────
   if (isSelfGen) {
-    // State 1: ACTIVE — At location + Never checked in
-    if (canCheckInLead && isInRange) {
-      return {
-        status: 'ACTIVE',
-        color: CARD_COLOR.ACTIVE,
-        action: 'Start Appointment',
-        label: 'ACTIVE NOW',
-        disabled: false,
-        shouldPulse: true,
-      };
-    }
-
-    // State 3: REVIEW (OFF-SITE) — NOT at location AND NOT checked in
-    // Web parity: lines 583-598 — this must be checked BEFORE resume
-    if (!isInRange && !canCheckInLead) {
-      const reviewCount = getCount('lead_review');
-      return {
-        status: 'OFFSITE',
-        color: CARD_COLOR.OFFSITE,
-        action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
-        label: 'OFF-SITE',
-        disabled: false,
-        shouldPulse: false,
-      };
-    }
-
-    // State 2: PROGRESS — At location + Has checked in (workflowState "resume")
+    // Resume: checked in before + on-site (or GPS bypass)
     if (isResumeLead && isInRange) {
       const resumeCount = getCount('lead_resume');
       return {
@@ -243,20 +231,32 @@ function getLeadState(
       };
     }
 
-    // State 4: UPCOMING fallback — NOT at location (any other case)
-    // Web parity: lines 623-633
-    if (!isInRange) {
+    // Start: never checked in + on-site (or GPS bypass)
+    if (!isResumeLead && isInRange) {
       return {
-        status: 'UPCOMING',
-        color: CARD_COLOR.UPCOMING,
-        action: 'Preview Appointment',
-        label: 'UPCOMING',
-        disabled: true,
+        status: 'ACTIVE',
+        color: CARD_COLOR.ACTIVE,
+        action: 'Start Appointment',
+        label: 'ACTIVE NOW',
+        disabled: false,
+        shouldPulse: true,
+      };
+    }
+
+    // Review: checked in before but now off-site
+    if (isResumeLead && !isInRange) {
+      const reviewCount = getCount('lead_review');
+      return {
+        status: 'OFFSITE',
+        color: CARD_COLOR.OFFSITE,
+        action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
+        label: 'OFF-SITE',
+        disabled: false,
         shouldPulse: false,
       };
     }
 
-    // Fallback (at location, canCheckIn already returned above)
+    // Preview: never checked in + off-site (default — NEVER Review)
     return {
       status: 'UPCOMING',
       color: CARD_COLOR.UPCOMING,
@@ -268,61 +268,30 @@ function getLeadState(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BRANCH B: LF (Issued) Leads — time + location based
-  // Web parity: job-card.js lines 647-756
+  // BRANCH B: Regular (Issued/LF) Leads — time + location
+  // Web parity: job-card-utils.js getRegularJobStatus()
   // ─────────────────────────────────────────────────────────────────────────
-
   const scheduledDateTime = getScheduledDateTime(lead);
-  const now = new Date();
-  const nowTime = now.getTime();
+  const beforeTimeWindow = isBeforeTimeWindow(scheduledDateTime);
+  // Early-start bypass replaces the time-window gate (only meaningful on-site)
+  const earlyStartActive =
+    ((lead as any)?.earlyStart === true || earlyStartBypassActive) && isInRange;
 
-  // Time window boundaries
-  const fifteenMinBefore = scheduledDateTime
-    ? scheduledDateTime.getTime() - 15 * 60 * 1000
-    : null;
-  const oneHourAfter = scheduledDateTime
-    ? scheduledDateTime.getTime() + 60 * 60 * 1000
-    : null;
+  // Has checked in before → Resume/Review.
+  // Time window does NOT apply — once checked in, only GPS decides Resume vs Review.
+  if (isResumeLead) {
+    if (isInRange) {
+      const resumeCount = getCount('lead_resume');
+      return {
+        status: 'PROGRESS',
+        color: CARD_COLOR.PROGRESS,
+        action: resumeCount >= 1 ? `Resume Appointment (${resumeCount})` : 'Resume Appointment',
+        label: 'IN PROGRESS',
+        disabled: false,
+        shouldPulse: false,
+      };
+    }
 
-  const isBeforeTimeWindow = fifteenMinBefore !== null ? nowTime < fifteenMinBefore : false;
-  const isWithinTimeWindow =
-    fifteenMinBefore !== null && oneHourAfter !== null
-      ? nowTime >= fifteenMinBefore && nowTime <= oneHourAfter
-      : false;
-  const timeHasPassed =
-    fifteenMinBefore !== null ? !isBeforeTimeWindow && !isWithinTimeWindow : false;
-
-  // ── Priority 1: UPCOMING — Too early (before 15-min window) ─────────────
-  // Web parity: lines 653-665
-  if (isBeforeTimeWindow) {
-    return {
-      status: 'UPCOMING',
-      color: CARD_COLOR.UPCOMING,
-      action: 'Preview Appointment',
-      label: 'UPCOMING',
-      disabled: true,
-      shouldPulse: false,
-    };
-  }
-
-  // ── Priority 2: REVIEW — Time expired AND already checked in ─────────────
-  // Web parity: lines 667-683
-  // Location doesn't matter once time has fully passed and rep already worked it
-  if (timeHasPassed && isResumeLead) {
-    const reviewCount = getCount('lead_review');
-    return {
-      status: 'OFFSITE',
-      color: CARD_COLOR.OFFSITE,
-      action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
-      label: isInRange ? 'ON-SITE' : 'OFF-SITE',
-      disabled: false,
-      shouldPulse: false,
-    };
-  }
-
-  // ── Priority 3: REVIEW — Off-site (during or after window, not checked in) ─
-  // Web parity: lines 685-700
-  if (!isInRange) {
     const reviewCount = getCount('lead_review');
     return {
       status: 'OFFSITE',
@@ -334,24 +303,23 @@ function getLeadState(
     };
   }
 
-  // ── Priority 4: PROGRESS — On-site + Resume + Within time window ─────────
-  // Web parity: lines 702-720
-  if (isResumeLead && isInRange && isWithinTimeWindow) {
-    const resumeCount = getCount('lead_resume');
+  // ── Never checked in → time window + GPS gate ────────────────────────────
+
+  // Preview: before the time window and no early-start bypass
+  if (beforeTimeWindow && !earlyStartActive) {
     return {
-      status: 'PROGRESS',
-      color: CARD_COLOR.PROGRESS,
-      action: resumeCount >= 1 ? `Resume Appointment (${resumeCount})` : 'Resume Appointment',
-      label: 'IN PROGRESS',
-      disabled: false,
+      status: 'UPCOMING',
+      color: CARD_COLOR.UPCOMING,
+      action: 'Preview Appointment',
+      label: 'UPCOMING',
+      disabled: true,
       shouldPulse: false,
     };
   }
 
-  // ── Priority 5: ACTIVE — On-site + Within window + (Never checked in OR preview state) ──
-  // Web parity: lines 722-733
-  // workflowState "preview" = checked in once but NOT yet set to "resume" — still show Start
-  if ((!canCheckInLead || lead.workflowState === 'preview') && isWithinTimeWindow && isInRange) {
+  // Start: on-site (or GPS bypass) + not too early (or early-start bypass).
+  // No upper time bound — rep can start even hours late if GPS confirms presence.
+  if (isInRange && (!beforeTimeWindow || earlyStartActive)) {
     return {
       status: 'ACTIVE',
       color: CARD_COLOR.ACTIVE,
@@ -362,28 +330,13 @@ function getLeadState(
     };
   }
 
-  // ── Priority 6: ACTIVE — On-site, time expired, but rep showed up ────────
-  // Web parity: lines 735-746 — allow check-in even if time window closed
-  if (!canCheckInLead && isInRange && !isWithinTimeWindow && !isBeforeTimeWindow) {
-    return {
-      status: 'ACTIVE',
-      color: CARD_COLOR.ACTIVE,
-      action: 'Start Appointment',
-      label: 'ON-SITE',
-      disabled: false,
-      shouldPulse: true,
-    };
-  }
-
-  // ── Fallback: Expired + Off-site ─────────────────────────────────────────
-  // Web parity: lines 748-756
-  const reviewCount = getCount('lead_review');
+  // Preview: never checked in — off-site OR time expired (NEVER Review)
   return {
-    status: 'OFFSITE',
-    color: CARD_COLOR.OFFSITE,
-    action: reviewCount >= 1 ? `Review Appointment (${reviewCount})` : 'Review Appointment',
-    label: 'OFF-SITE',
-    disabled: false,
+    status: 'UPCOMING',
+    color: CARD_COLOR.UPCOMING,
+    action: 'Preview Appointment',
+    label: 'UPCOMING',
+    disabled: true,
     shouldPulse: false,
   };
 }
@@ -406,9 +359,11 @@ export const LeadCard = React.memo(
     userLocation,
   }: Props) {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [showPhoneOptions, setShowPhoneOptions] = useState(false);
   const archiveMutation = useArchiveLeadMutation();
   const deleteMutation = useDeleteLeadMutation();
   const resetMutation = useResetLeadMutation();
@@ -489,6 +444,58 @@ export const LeadCard = React.memo(
         'hh:mm a'
       )} when you arrive on-site.`;
     FlashMessage.success(msg);
+  };
+
+  // ── Contact customer (Call / Text / Copy) ───────────────────────────────
+  // Gated purely by TIME, regardless of GPS: reps can only reach the customer
+  // starting 15 minutes before the appointment start — so a running-late rep can
+  // give a heads-up, but nobody can contact the customer hours ahead of the appt.
+  const contactWindowStart = useMemo(() => {
+    const t = getScheduledDateTime(lead);
+    return t ? t.getTime() - 15 * 60 * 1000 : null;
+  }, [lead]);
+  const isSelfGen = useMemo(() => isSelfGeneratedLead(lead), [lead]);
+  const canContactNow = isSelfGen || (contactWindowStart != null && Date.now() >= contactWindowStart);
+
+  const handlePhonePress = () => {
+    if (isSelfGen) {
+      setShowPhoneOptions(true);
+      return;
+    }
+    if (contactWindowStart == null) {
+      FlashMessage.info(
+        'Not available yet',
+        'You can contact the customer starting 15 minutes before the appointment.'
+      );
+      return;
+    }
+    if (Date.now() < contactWindowStart) {
+      FlashMessage.info(
+        'Not available yet',
+        `You can contact the customer starting ${format(new Date(contactWindowStart), 'hh:mm a')} — 15 minutes before the appointment.`
+      );
+      return;
+    }
+    setShowPhoneOptions(true);
+  };
+
+  const handleCall = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) Linking.openURL(`tel:${getRawPhoneNumber(phone)}`);
+    setShowPhoneOptions(false);
+  };
+  const handleTextMessage = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) Linking.openURL(`sms:${getRawPhoneNumber(phone)}`);
+    setShowPhoneOptions(false);
+  };
+  const handleCopyPhone = () => {
+    const phone = lead?.customerDetails?.phone;
+    if (phone) {
+      Clipboard.setString(phone);
+      FlashMessage.success('Copied', 'Phone number copied to clipboard');
+    }
+    setShowPhoneOptions(false);
   };
 
   // ── Card press handler — UPCOMING shows info snackbar, others navigate ───
@@ -612,19 +619,21 @@ export const LeadCard = React.memo(
           </View>
         </View>
 
-        {/* ── Lead Code & Pitchbook ────────────────────────────────────── */}
+        {/* ── Lead Code & Contact Customer ─────────────────────────────── */}
         <View className="flex-row justify-between items-center mb-4">
           <Text className="text-base font-semibold" style={{ color: colors.textSecondary }}>
             Lead Code:{' '}
             <Text style={{ color: colors.primary.main }}>{lead.leadCode || 'N/A'}</Text>
           </Text>
+          {/* Phone button — reachable only 15 min before the appt (time-gated,
+              regardless of GPS). Muted until the window opens; tapping early
+              explains when it becomes available. */}
           <TouchableOpacity
-            onPress={onPitchbookPress || onPress}
-            disabled={leadState.disabled}
+            onPress={handlePhonePress}
             className="w-9 h-9 rounded-full items-center justify-center bg-green-600"
-            style={{ opacity: leadState.disabled ? 0.5 : 1 }}
+            style={{ opacity: canContactNow ? 1 : 0.5 }}
           >
-            <MaterialIcon name="book-open-blank-variant" size={18} color="white" />
+            <Feather name="phone" size={17} color="white" />
           </TouchableOpacity>
         </View>
 
@@ -862,6 +871,45 @@ export const LeadCard = React.memo(
         address={lead.fullAddress || ''}
         onClose={() => setShowMapModal(false)}
       />
+
+      {/* Contact-customer action sheet (Call / Text / Copy) */}
+      <Modal
+        visible={showPhoneOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPhoneOptions(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+          onPress={() => setShowPhoneOptions(false)}
+        >
+          <Pressable
+            style={{
+              backgroundColor: colors.card,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              padding: 24,
+              paddingBottom: insets.bottom + 16,
+            }}
+          >
+            <View style={{ width: 40, height: 4, backgroundColor: colors.textSecondary, borderRadius: 2, alignSelf: 'center', marginBottom: 20, opacity: 0.3 }} />
+            <TouchableOpacity onPress={handleCall} className="flex-row items-center py-4">
+              <Feather name="phone-call" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Call</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity onPress={handleTextMessage} className="flex-row items-center py-4">
+              <Feather name="message-square" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Text Message</Text>
+            </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.5 }} />
+            <TouchableOpacity onPress={handleCopyPhone} className="flex-row items-center py-4">
+              <Feather name="copy" size={18} color={colors.text} />
+              <Text className="ml-4 text-base font-semibold" style={{ color: colors.text }}>Copy Number</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </TouchableOpacity>
   );
 },

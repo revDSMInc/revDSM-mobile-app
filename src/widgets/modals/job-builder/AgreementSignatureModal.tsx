@@ -26,6 +26,50 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+// Drawing-pad height. Single source of truth: the pad view, the on-screen preview
+// viewBoxes, and the SVG written for upload must all share one coordinate space.
+const PAD_HEIGHT = 300;
+
+// The sign request uses `responseType: 'blob'`, so when the server rejects it the
+// error body arrives as a Blob (application/json) — the axios interceptor rejects
+// with `error.response.data` (that Blob). Logging it prints an opaque
+// `{_data:{…,name:'sign.json'}}` with no message. These helpers READ the Blob so the
+// real server reason is surfaced to the rep (and the console) instead.
+const readBlobAsText = (blob: any): Promise<string> =>
+  new Promise((resolve) => {
+    try {
+      if (!blob || (typeof blob.size !== 'number' && !blob._data)) return resolve('');
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsText(blob as Blob);
+    } catch {
+      resolve('');
+    }
+  });
+
+// Pull the most useful human message out of a signing error, which may be a Blob
+// (application/json body), the parsed `error.response.data`, or a plain Error.
+const extractServerMessage = async (err: any): Promise<string> => {
+  const isBlobLike = (v: any) => v && (v._data || typeof v.size === 'number');
+  const candidate = isBlobLike(err)
+    ? err
+    : isBlobLike(err?.data)
+      ? err.data
+      : err?.response?.data;
+  const text = await readBlobAsText(candidate);
+  if (text) {
+    try {
+      const parsed = JSON.parse(text);
+      return parsed?.message || parsed?.error || text.slice(0, 300);
+    } catch {
+      return text.slice(0, 300);
+    }
+  }
+  if (typeof err?.message === 'string' && err.message) return err.message;
+  return '';
+};
+
 interface AgreementSignatureModalProps {
   visible: boolean;
   onClose: () => void;
@@ -133,38 +177,72 @@ export const AgreementSignatureModal = ({
     ],
   }));
 
+  const fmt = (n: number) => n.toFixed(1);
+
   const createPanResponder = (
     currentRef: React.MutableRefObject<string>,
     setCurrent: (p: string) => void,
     setLive: React.Dispatch<React.SetStateAction<string[]>>
-  ) =>
-    PanResponder.create({
+  ) => {
+    // Last raw point of the in-progress stroke. Held in the responder's closure
+    // (not state) so it is always current inside the move handler.
+    let last: { x: number; y: number } | null = null;
+
+    return PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponderCapture: () => true,
       onPanResponderGrant: (evt) => {
         const { locationX, locationY } = evt.nativeEvent;
-        const path = `M${locationX.toFixed(1)},${locationY.toFixed(1)}`;
+        last = { x: locationX, y: locationY };
+        const path = `M${fmt(locationX)},${fmt(locationY)}`;
         currentRef.current = path;
         setCurrent(path);
       },
       onPanResponderMove: (evt) => {
         const { locationX, locationY } = evt.nativeEvent;
-        const next = `${currentRef.current} L${locationX.toFixed(1)},${locationY.toFixed(1)}`;
+        if (!last) {
+          last = { x: locationX, y: locationY };
+          return;
+        }
+        const dx = locationX - last.x;
+        const dy = locationY - last.y;
+        // Drop sub-pixel jitter — without this the finger's micro-tremor emits a
+        // curve per event and the stroke reads as fuzzy rather than clean.
+        if (dx * dx + dy * dy < 1) return;
+
+        // Smooth with the midpoint technique: the PREVIOUS raw point becomes the
+        // quadratic control point and the midpoint between it and the current
+        // point becomes the endpoint. Consecutive segments then share a tangent,
+        // so the stroke curves continuously instead of showing a corner at every
+        // sampled touch (the old `L` line-to produced a visible polyline).
+        const mx = (last.x + locationX) / 2;
+        const my = (last.y + locationY) / 2;
+        const next = `${currentRef.current} Q${fmt(last.x)},${fmt(last.y)} ${fmt(mx)},${fmt(my)}`;
+        last = { x: locationX, y: locationY };
         currentRef.current = next;
         setCurrent(next);
       },
       onPanResponderRelease: () => {
+        // Close on the final raw point: the loop above always ends at a midpoint,
+        // so the last half-segment would otherwise be clipped. For a tap with no
+        // movement this is a zero-length line, which strokeLinecap="round" renders
+        // as a dot (previously a bare `M` drew nothing at all).
+        if (last && currentRef.current) {
+          currentRef.current = `${currentRef.current} L${fmt(last.x)},${fmt(last.y)}`;
+        }
         const finished = currentRef.current;
         if (finished) {
           setLive((prev) => [...prev, finished]);
         }
+        last = null;
         currentRef.current = '';
         setCurrent('');
       },
       onPanResponderTerminationRequest: () => false,
     });
+  };
 
   const initialsPanResponder = useMemo(
     () => createPanResponder(currentInitialsRef, setCurrentInitialsPath, setLiveInitials),
@@ -196,8 +274,15 @@ export const AgreementSignatureModal = ({
   };
 
   const convertToSvgFile = async (paths: string[], fileName: string) => {
+    // The viewBox MUST match the pad's own coordinate space (padWidth × PAD_HEIGHT),
+    // because the path data is in raw pad pixels. It was hardcoded to 500×200 while
+    // the pad is 300 tall, so everything the customer drew below y=200 — typically
+    // the lower third of a signature — was cropped out of the file sent to
+    // `/agreement/{leadId}/sign`, even though the on-screen preview (which uses the
+    // correct viewBox) looked complete.
+    const w = padWidth || 500;
     const svgContent = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-      <svg width="500" height="200" viewBox="0 0 500 200" xmlns="http://www.w3.org/2000/svg">
+      <svg width="${w}" height="${PAD_HEIGHT}" viewBox="0 0 ${w} ${PAD_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
         ${paths
         .map(
           (p) =>
@@ -240,6 +325,14 @@ export const AgreementSignatureModal = ({
         throw new Error('Received empty blob from server');
       }
 
+      // The real success returns a PDF. A JSON body here means the server reported an
+      // error with a 2xx status — read it and surface the message instead of writing
+      // the JSON out as a bogus ".pdf".
+      if (typeof blob.type === 'string' && blob.type.includes('json')) {
+        const msg = await extractServerMessage(blob);
+        throw new Error(msg || 'The server could not sign this agreement.');
+      }
+
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
@@ -266,8 +359,11 @@ export const AgreementSignatureModal = ({
         setLoading(false);
       };
     } catch (error) {
-      console.error('Signing failed:', error);
-      FlashMessage.error('Error', 'Failed to sign agreement');
+      // Surface the ACTUAL server reason (read out of the error Blob) so a signing
+      // failure is diagnosable instead of a blanket "Failed to sign agreement".
+      const serverMsg = await extractServerMessage(error);
+      console.error('Signing failed:', serverMsg || error);
+      FlashMessage.error('Error', serverMsg || 'Failed to sign agreement');
       setLoading(false);
     }
   };
@@ -410,7 +506,7 @@ export const AgreementSignatureModal = ({
                                       <Svg
                                         width="100%"
                                         height="100%"
-                                        viewBox={`0 0 ${padWidth || 500} 300`}
+                                        viewBox={`0 0 ${padWidth || 500} ${PAD_HEIGHT}`}
                                       >
                                         {initialsPaths.map((p, i) => (
                                           <Path
@@ -473,7 +569,7 @@ export const AgreementSignatureModal = ({
                                       <Svg
                                         width="100%"
                                         height="100%"
-                                        viewBox={`0 0 ${padWidth || 500} 300`}
+                                        viewBox={`0 0 ${padWidth || 500} ${PAD_HEIGHT}`}
                                       >
                                         {signaturePaths.map((p, i) => (
                                           <Path
@@ -560,13 +656,21 @@ export const AgreementSignatureModal = ({
 
                   <View style={{ padding: 24 }}>
                     <View
-                      style={{ height: 300, width: '100%', backgroundColor: '#f8fafc', borderWidth: 2, borderStyle: 'dashed', borderColor: '#e2e8f0', borderRadius: 24, overflow: 'hidden' }}
+                      style={{ height: PAD_HEIGHT, width: '100%', backgroundColor: '#f8fafc', borderWidth: 2, borderStyle: 'dashed', borderColor: '#e2e8f0', borderRadius: 24, overflow: 'hidden' }}
                       onLayout={(e) => setPadWidth(e.nativeEvent.layout.width)}
                       {...(activePad === 'initials'
                         ? initialsPanResponder.panHandlers
                         : signaturePanResponder.panHandlers)}
                     >
-                      <Svg width="100%" height="100%">
+                      {/* pointerEvents="none" is REQUIRED, not cosmetic. Without it
+                          the accumulating <Path> children become touch targets, and
+                          `locationX/locationY` on a move event is reported relative
+                          to whichever child was hit rather than the pad. Mid-stroke
+                          the coordinates then jump to a different origin, which is
+                          what produced the long straight lines shooting across the
+                          pad. Making the Svg transparent to touches keeps every
+                          event anchored to the pad view. */}
+                      <Svg width="100%" height="100%" pointerEvents="none">
                         {(activePad === 'initials' ? liveInitials : liveSignature).map((p, i) => (
                           <Path
                             key={i}

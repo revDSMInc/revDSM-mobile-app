@@ -1,8 +1,10 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, Pressable } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, Pressable, Image } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
 import Pin from '../../../assets/svgs/icons/pin';
+import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
 
 const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
   Announcements: { icon: '📢', color: '#FF6B6B' },
@@ -14,9 +16,39 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
   Questions: { icon: '❓', color: '#9775FA' },
 };
 
+/**
+ * Lead preview thumbnail shown before the title in a lead chat header — the same
+ * street-view image as the Recent-Leads row, resolved via the shared hook. Falls
+ * back to a home-outline glyph, matching web's `quick-chat-dialog.js` header.
+ */
+function LeadHeaderThumbnail({ leadPreview }: { leadPreview: any }) {
+  const thumbnailUrl = useLeadPreviewUrl(leadPreview);
+
+  if (thumbnailUrl) {
+    return (
+      <Image
+        source={{ uri: thumbnailUrl }}
+        className="w-10 h-10 rounded-xl mr-3"
+        style={{ backgroundColor: '#F1F5F9' }}
+        resizeMode="cover"
+      />
+    );
+  }
+
+  return (
+    <View
+      className="w-10 h-10 rounded-xl items-center justify-center mr-3"
+      style={{ backgroundColor: '#F1F5F9' }}
+    >
+      <MaterialCommunityIcon name="home-outline" size={22} color="#919EAB" />
+    </View>
+  );
+}
+
 export const ChatHeader = ({
   customerName,
   description,
+  leadPreview,
   isChannel,
   isViewOnly,
   colors,
@@ -72,7 +104,7 @@ export const ChatHeader = ({
 
       <View className="flex-row items-center justify-between mb-4">
         <View className="flex-row items-center flex-1">
-          {isChannel && (
+          {isChannel ? (
             <View
               className="w-10 h-10 rounded-xl items-center justify-center mr-3"
               style={{
@@ -81,6 +113,8 @@ export const ChatHeader = ({
             >
               <Text className="text-md">{CHANNEL_SCHEMES[customerName]?.icon || '💬'}</Text>
             </View>
+          ) : (
+            <LeadHeaderThumbnail leadPreview={leadPreview} />
           )}
           <View className="flex-1">
             <Text

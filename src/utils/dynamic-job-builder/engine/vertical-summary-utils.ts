@@ -13,35 +13,123 @@ import {
   shouldIncludeSectionInTabSummary,
 } from './grand-total-utils';
 import { isCombinationSummaryField, isContainerFieldType } from '../constants/field-types';
+import { getFieldGridColumns } from './field-layout-utils';
 import { resolveLocationGridConfig } from './location-grid-utils';
+import { resolveSchemaColor } from '../../../screens/DynamicDealCenter/utils/icon-color';
+import { stateHasContent, collectLockedFieldIds } from './empty-step-gate';
 
-// Fallback palette colors (mobile has no MUI theme)
-const PRODUCT_PALETTE_COLORS = [
-  '#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed',
-  '#0891b2', '#be185d', '#65a30d',
-];
+// Web's `theme.palette.primary.main` — the fallback `resolveSchemaColorValue` uses.
+const PALETTE_PRIMARY = '#4CBB17';
+
+// Web `PRODUCT_UI_COLORS` (product-catalog-utils.js) — the index fallback must be
+// the SAME list in the SAME order, or tab N falls back to a different colour than web.
+const PRODUCT_PALETTE_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 const SKIPPED_FIELD_TYPES = new Set(['sectionLabel', 'combinationSummary', 'allocation']);
 const LABELED_SELECTION_TYPES = new Set(['toggle', 'optionList', 'dropdown']);
 
 // ─── Color resolution ─────────────────────────────────────────────────────────
 
+function normalizeComparableName(value: any): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+}
+
+/** Web `findProductForVertical` (product-catalog-utils.js). */
+function findProductForVertical(vertical: any, products: any[] = []) {
+  const verticalProductId = String(vertical?.productId || vertical?.id || '');
+  if (!verticalProductId) return null;
+  return (products || []).find((product: any) => String(product?.id) === verticalProductId) || null;
+}
+
+/** Web `findSchemasForVertical` (vertical-summary-utils.js). */
+function findSchemasForVertical(vertical: any, schemas: any[] = []) {
+  const verticalProductId = String(vertical?.productId || vertical?.id || '');
+  const verticalLabel = normalizeComparableName(vertical?.label);
+
+  const matched = (schemas || []).filter((schema: any) => {
+    const schemaId = String(schema?.id || schema?._id || '');
+    const schemaName = normalizeComparableName(schema?.name || schema?.label || schema?.product);
+    return (
+      (verticalProductId && schemaId && verticalProductId === schemaId) ||
+      (verticalLabel &&
+        schemaName &&
+        (verticalLabel === schemaName ||
+          verticalLabel.includes(schemaName) ||
+          schemaName.includes(verticalLabel)))
+    );
+  });
+
+  return matched.length ? matched : schemas || [];
+}
+
+/** Web `extractAllCategories` (calculator-items-format-util.js). */
+function extractAllCategories(schemasOrCategories: any[]): any[] {
+  if (!Array.isArray(schemasOrCategories) || schemasOrCategories.length === 0) return [];
+
+  const first = schemasOrCategories[0];
+  if (first?.calculatorFormSchema || Array.isArray(first?.categories)) {
+    const allCategories: any[] = [];
+    schemasOrCategories.forEach((schema: any) => {
+      const cats = schema.calculatorFormSchema?.categories || schema.categories || [];
+      cats.forEach((cat: any) => allCategories.push({ ...cat, _productName: schema.name || '' }));
+    });
+    return allCategories;
+  }
+  return schemasOrCategories;
+}
+
+/**
+ * Web `findTabCategoryColorFromSchemas`. Matches the TAB (e.g. GUTTERS / LEAFFILTER
+ * / SOFFIT) to its calculator-schema CATEGORY and takes that category's colour.
+ * This is the branch that gives each summary card its own colour — without it every
+ * tab in a vertical falls through to the single `vertical.color` and they all match.
+ */
+function findTabCategoryColorFromSchemas(tab: any, vertical: any, schemas: any[] = []) {
+  const tabCategory = normalizeComparableName(tab?.productCategory || tab?.label);
+  if (!tabCategory || !schemas?.length) return null;
+
+  const categories = extractAllCategories(findSchemasForVertical(vertical, schemas));
+  const match = categories.find(
+    (category: any) => normalizeComparableName(category?.name || category?.label) === tabCategory
+  );
+
+  return match?.color || null;
+}
+
+/**
+ * Resolve the summary card header colour from runtime config only.
+ * Web parity (`resolveTabAccentColor`) — priority:
+ *   tab.summaryColor/tab.color → calculator schema category colour → vertical.color
+ *   → product.color → palette index fallback.
+ * Colours may be a hex OR an MUI token ('info', 'error.main'); `resolveSchemaColor`
+ * resolves both, mirroring web's `resolveSchemaColorValue`. The previous
+ * `startsWith('#')` guards silently DISCARDED token colours and skipped both the
+ * schema-category and product branches entirely.
+ */
 export function resolveTabAccentColor(
   tab: any,
   vertical: any,
-  _theme: any,
+  _theme?: any,
   options: any = {}
 ): string {
-  const { tabIndex = 0 } = options;
+  const { tabIndex = 0, products = [], schemas = [] } = options;
+  const verticalFallback = vertical?.color
+    ? resolveSchemaColor(vertical.color, PALETTE_PRIMARY)
+    : PALETTE_PRIMARY;
 
   const configured = tab?.summaryColor || tab?.color;
-  if (configured && typeof configured === 'string' && configured.startsWith('#')) {
-    return configured;
-  }
+  if (configured) return resolveSchemaColor(configured, verticalFallback);
 
-  if (vertical?.color && typeof vertical.color === 'string' && vertical.color.startsWith('#')) {
-    return vertical.color;
-  }
+  const schemaCategoryColor = findTabCategoryColorFromSchemas(tab, vertical, schemas);
+  if (schemaCategoryColor) return resolveSchemaColor(schemaCategoryColor, verticalFallback);
+
+  if (vertical?.color) return resolveSchemaColor(vertical.color, PALETTE_PRIMARY);
+
+  const product = findProductForVertical(vertical, products);
+  if (product?.color) return resolveSchemaColor(product.color, PALETTE_PRIMARY);
 
   return PRODUCT_PALETTE_COLORS[tabIndex % PRODUCT_PALETTE_COLORS.length];
 }
@@ -103,7 +191,14 @@ function getSectionCombos(section: any, tabState: any) {
 function buildComboDisplayState(combo: any = {}, colorValues: any = {}) {
   const displayState = { ...combo, colorValues: combo.colorValues || colorValues };
   Object.entries(colorValues || {}).forEach(([key, val]) => {
-    if (val !== '' && val !== null && val !== undefined) {
+    if (val === '' || val === null || val === undefined) return;
+    // colorValues only FILLS a field the direct state lacks — it must never
+    // override a present direct value. The deal-center save hydrates colorValues
+    // with every field's value (colorKey defaults to field.id), so it becomes a
+    // stale mirror; overriding from it would clobber a fresh edit to the direct
+    // field value (e.g. Gutter Opening Width "2.5 - 3.4" masked by a stale "> 7").
+    const direct = (combo as any)[key];
+    if (direct === undefined || direct === null || direct === '') {
       (displayState as any)[key] = val;
     }
   });
@@ -170,11 +265,24 @@ function isDisplayableFieldSummary(field: any, formatted: any) {
 // ─── Field value formatting ───────────────────────────────────────────────────
 
 function formatFieldSummaryValue(field: any, state: any = {}, options: any = {}) {
-  const { dealCenterData } = options;
+  const { dealCenterData, editMode } = options;
   const colorValues = state?.colorValues || {};
   const resolvedState = { ...state };
 
-  if (isFieldLocked(field) && dealCenterData && Object.keys(dealCenterData).length) {
+  // Web parity (`vertical-summary-utils.js:247-255`): in deal-EDIT mode a "locked"
+  // field is editable, so the rep's live value must win. Fall back to the
+  // deal-center value only when they left it blank. Without this guard the summary
+  // silently reverted every edited locked field to the calculator's value — the
+  // rep's change was saved but never shown back to them.
+  const liveValue = state?.[field.id];
+  const hasLiveValue = liveValue !== undefined && liveValue !== null && liveValue !== '';
+
+  if (
+    isFieldLocked(field) &&
+    dealCenterData &&
+    Object.keys(dealCenterData).length &&
+    !(editMode && hasLiveValue)
+  ) {
     const lockedValue = resolveLockedValue(field, dealCenterData);
     if (lockedValue !== undefined && lockedValue !== null && lockedValue !== '' && lockedValue !== '—') {
       resolvedState[field.id] = lockedValue;
@@ -223,13 +331,100 @@ function buildSingleFieldDetailRow(field: any, state: any, ctx: any): any {
     return locationRows.length ? { locationRows } : null;
   }
 
-  const formatted = formatFieldSummaryValue(field, state, { dealCenterData: ctx.dealCenterData });
+  const formatted = formatFieldSummaryValue(field, state, { dealCenterData: ctx.dealCenterData, editMode: ctx.editMode });
   if (!isDisplayableFieldSummary(field, formatted)) return null;
 
   return { label: field.label || field.key || '', text: formatted.text, variant: formatted.variant };
 }
 
+/**
+ * Merge a bordered stack's paired children into ONE row — web parity
+ * (`vertical-summary-utils.js` `buildStackRowSummary`, commit 5a54070). For an
+ * "Extras" group `[Ground Spout = 4, Color = Black]` this returns
+ * `{ label: 'Ground Spout', text: '4 · Black' }`: the label comes from the first
+ * non-color child (the color field's own "Color" label is skipped) and the
+ * formatted values are joined with " · ". Was rendering as two separate rows.
+ */
+function buildStackRowSummary(children: any[] = [], state: any, ctx: any): any {
+  const values: string[] = [];
+  let rowLabel = '';
+
+  children.forEach((child: any) => {
+    if (!child?.id || !isSummaryFieldVisible(child, state, ctx)) return;
+
+    const formatted = formatFieldSummaryValue(child, state, {
+      dealCenterData: ctx.dealCenterData,
+      editMode: ctx.editMode,
+    });
+    if (!isDisplayableFieldSummary(child, formatted)) return;
+
+    if (
+      !rowLabel &&
+      child.label &&
+      child.type !== 'swatch' &&
+      child.type !== 'colorSelection' &&
+      child.type !== 'customColor'
+    ) {
+      rowLabel = child.label;
+    }
+
+    values.push(formatted.text);
+  });
+
+  if (!values.length) return null;
+
+  if (!rowLabel) {
+    const labeledChild = children.find((child: any) => child?.label);
+    rowLabel = labeledChild?.label || '';
+  }
+
+  return { label: rowLabel, text: values.join(' · '), variant: 'value' };
+}
+
+/**
+ * A bordered, multi-column stack groups its children into rows of `columns`
+ * (each group merged by `buildStackRowSummary`). A single-column / non-bordered
+ * stack keeps one row per child — the original behaviour.
+ */
+function processStackFieldSummary(stackField: any, state: any, ctx: any): any {
+  const result = { parts: [], extras: [], detailRows: [], locationRows: [] };
+  const children = (stackField.fields || []).filter((child: any) =>
+    isSummaryFieldVisible(child, state, ctx)
+  );
+  if (!children.length) return result;
+
+  const columns = getFieldGridColumns(stackField);
+  const groupSize = stackField.bordered && columns >= 2 ? columns : 1;
+
+  for (let index = 0; index < children.length; index += groupSize) {
+    const group = children.slice(index, index + groupSize);
+
+    if (groupSize > 1) {
+      const row = buildStackRowSummary(group, state, ctx);
+      if (row) (result.detailRows as any[]).push(row);
+      continue;
+    }
+
+    const child = group[0];
+    if (isContainerFieldType(child.type)) {
+      mergeSummaryContent(result, processContainerFieldSummary(child, state, ctx));
+      continue;
+    }
+
+    const row = buildSingleFieldDetailRow(child, state, ctx);
+    if (!row) continue;
+    if (row.locationRows) (result.locationRows as any[]).push(...row.locationRows);
+    else (result.detailRows as any[]).push(row);
+  }
+
+  return result;
+}
+
 function processContainerFieldSummary(field: any, state: any, ctx: any): any {
+  if (field?.type === 'stack') {
+    return processStackFieldSummary(field, state, ctx);
+  }
+  // accordion (and any other container): one row per child, no grouping.
   const result = { parts: [], extras: [], detailRows: [], locationRows: [] };
   (field.fields || []).forEach((child: any) => {
     if (!isSummaryFieldVisible(child, state, ctx)) return;
@@ -274,7 +469,7 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
       return;
     }
 
-    const formatted = formatFieldSummaryValue(field, displayState, { dealCenterData: ctx.dealCenterData });
+    const formatted = formatFieldSummaryValue(field, displayState, { dealCenterData: ctx.dealCenterData, editMode: ctx.editMode });
     if (!isDisplayableFieldSummary(field, formatted)) return;
 
     if (inCombination && !isContainerFieldType(field.type)) {
@@ -420,7 +615,29 @@ export function buildTabSummaryEntries(tab: any, tabState: any, ctx: any = {}) {
 }
 
 export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = {}) {
-  const { dealCenterData = {}, applyConditions = true, vertical, tabIndex = 0 } = ctx;
+  const { dealCenterData = {}, applyConditions = true, vertical, tabIndex = 0, editMode = false, lockedFieldIds = null } = ctx;
+
+  // Deal-EDIT parity with the "No details yet" step gate (`stateHasContent`): a tab
+  // whose only state is deal-center-seeded (locked) values holds NO rep input, so it
+  // must summarize as empty. Otherwise the summary lists auto-defined calculator
+  // values (e.g. Gutters "Ground Spout", LeafFilter combinations) the rep never
+  // entered — the very inconsistency where the step shows "No details yet" but the
+  // summary shows data. Only user-entered values reach the summary.
+  if (editMode && lockedFieldIds && !stateHasContent(tabState, lockedFieldIds)) {
+    return {
+      tabId: tab.id,
+      tabLabel: tab.label || tab.id,
+      accentColor: resolveTabAccentColor(tab, vertical, null, {
+        tabIndex,
+        products: ctx?.products,
+        schemas: ctx?.schemas,
+      }),
+      combinationSections: [],
+      simpleSections: [],
+      tabFields: [],
+      isEmpty: true,
+    };
+  }
 
   const sections = getTabSections(tab);
   const combinationSections = buildAllCombinationSectionSummaries(tab, tabState, ctx);
@@ -446,7 +663,13 @@ export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = 
   return {
     tabId: tab.id,
     tabLabel: tab.label || tab.id,
-    accentColor: resolveTabAccentColor(tab, vertical, null, { tabIndex }),
+    // Web parity: `products` + `schemas` MUST reach the resolver — the schema
+    // category branch is what colours each tab card individually.
+    accentColor: resolveTabAccentColor(tab, vertical, null, {
+      tabIndex,
+      products: ctx?.products,
+      schemas: ctx?.schemas,
+    }),
     combinationSections,
     simpleSections,
     tabFields,
@@ -455,13 +678,17 @@ export function buildTabSummarySection(tab: any, tabState: any = {}, ctx: any = 
 }
 
 export function buildVerticalSummarySections(vertical: any, verticalState: any = {}, ctx: any = {}) {
-  const { lockedTabIds = [] } = ctx;
+  const { lockedTabIds = [], editMode = false } = ctx;
   const locked = new Set(lockedTabIds || []);
   const tabs = vertical?.tabs || [];
+
+  // In deal-edit, precompute the locked (deal-center-seeded) field ids so each tab's
+  // summary can drop to empty when the rep entered nothing (see buildTabSummarySection).
+  const lockedFieldIds = editMode && vertical ? collectLockedFieldIds({ verticals: [vertical] }) : null;
 
   return tabs
     .filter((tab: any) => !tab.isSummary && !locked.has(tab.id))
     .map((tab: any, tabIndex: number) =>
-      buildTabSummarySection(tab, verticalState[tab.id] || {}, { ...ctx, vertical, tabIndex })
+      buildTabSummarySection(tab, verticalState[tab.id] || {}, { ...ctx, vertical, tabIndex, lockedFieldIds })
     );
 }

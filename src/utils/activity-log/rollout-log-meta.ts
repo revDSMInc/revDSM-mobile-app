@@ -169,3 +169,41 @@ export const logPaymentMethodInherited = async (opts: {
 };
 
 export const getPaymentPlanLabel = (key: string) => paymentPlans[key]?.label || key;
+
+/**
+ * Per-ACTION rollout/drop activity event — web parity with `fireRolloutLog`
+ * (ViewAllCalculators.js:245). Fired for discrete rollout/drop actions: rollout
+ * confirmed, drop price secured/declined/plan-selected/unselected, etc. The
+ * caller supplies the calculator, its cost/par/retail tiers, and the change
+ * descriptor (fieldLabel/fieldValue/oldValue/newValue/action + any extras).
+ */
+export const logRolloutChange = async (opts: {
+  userId: string;
+  leadId?: string;
+  calculator: { id?: string; _id?: string; title?: string; appointmentId?: string };
+  tiers: { cost: number; par: number; retail: number };
+  percentageOfRollout?: number | string;
+  change: Record<string, any>;
+}) => {
+  if (!opts.userId) return;
+  const { fieldValue, oldValue, newValue, ...restChange } = opts.change;
+  await logEvent('change', {
+    user_id: opts.userId,
+    created_by: opts.userId,
+    module_type: 'rollout_and_drop',
+    meta: {
+      calculatorId: opts.calculator._id || opts.calculator.id,
+      appointmentId: opts.calculator.appointmentId,
+      calculatorTitle: opts.calculator.title,
+      fieldValue,
+      oldValue: oldValue ?? '',
+      newValue: newValue ?? fieldValue,
+      costPrice: Math.round(opts.tiers.cost || 0),
+      parPrice: Math.round(opts.tiers.par || 0),
+      retailPrice: Math.round(opts.tiers.retail || 0),
+      ...(opts.percentageOfRollout !== undefined && { percentageOfRollout: opts.percentageOfRollout }),
+      ...(opts.leadId && { leadId: opts.leadId }),
+      ...restChange,
+    },
+  });
+};

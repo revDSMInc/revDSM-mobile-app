@@ -95,3 +95,35 @@ export const getScheduledDateTime = (lead: any): Date | null => {
 
   return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), hours, 0, 0);
 };
+
+/**
+ * Web parity: job-card-utils.js isGpsBypassActive()
+ * Manager-applied override that REPLACES the physical GPS/geofence check.
+ */
+export const isGpsBypassActive = (lead: any): boolean => lead?.bypass?.gpsBypass === true;
+
+/**
+ * Web parity: job-card-utils.js isEarlyStartBypassActive()
+ * Manager-applied override that REPLACES the time-window gate.
+ */
+export const isEarlyStartBypassActive = (lead: any): boolean => lead?.bypass?.earlyStart === true;
+
+/**
+ * Web parity: job-card-utils.js isWithinTimeWindow()
+ * True when now is within 15 min before → 1 hour after the scheduled time.
+ */
+export const isWithinTimeWindow = (scheduledDateTime: Date | null): boolean => {
+  if (!scheduledDateTime) return false;
+  const now = Date.now();
+  const scheduled = scheduledDateTime.getTime();
+  return now >= scheduled - 15 * 60 * 1000 && now <= scheduled + 60 * 60 * 1000;
+};
+
+/**
+ * Web parity: job-card-utils.js isBeforeTimeWindow()
+ * True when now is earlier than 15 min before the scheduled time.
+ */
+export const isBeforeTimeWindow = (scheduledDateTime: Date | null): boolean => {
+  if (!scheduledDateTime) return false;
+  return Date.now() < scheduledDateTime.getTime() - 15 * 60 * 1000;
+};

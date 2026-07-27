@@ -512,6 +512,21 @@ export function isDefaultColorActive(field: any, state: any = {}, ctx: any = {})
   return evaluateRuleGroup(defaultWhen, buildRuleEvaluationContext(ctx, state));
 }
 
+/**
+ * Fallback default for `resolveLockedValue` on a field whose default is conditional
+ * (`dependencies.defaultWhen`). Returns '' when the condition is NOT met so the raw
+ * `field.defaultValue` is never leaked past the rule (this is what stops a
+ * not-included product — e.g. a LeafFilter whose inclusion condition isn't met — from
+ * persisting a phantom non-zero default that the portal then renders as a product),
+ * and `undefined` when the field has no conditional default at all, letting the caller
+ * keep its existing `field.defaultValue` behaviour untouched.
+ * Web parity: dependency-engine.js:608.
+ */
+export function resolveConditionalDefault(field: any, state: any = {}, ctx: any = {}) {
+  if (!field?.dependencies?.defaultWhen) return undefined;
+  return isDefaultColorActive(field, state, ctx) ? (field.defaultValue ?? '') : '';
+}
+
 function walkFields(fields: any[], visitor: (field: any) => void) {
   (fields || []).forEach((field) => visitor(field));
 }

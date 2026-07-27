@@ -36,12 +36,16 @@ interface SummaryFinalizeCardsProps {
   isDocUploadingRef?: React.MutableRefObject<boolean>;
   // Persists the base64 doc payloads via the screen (which holds config +
   // dealCenterData to serialize field state and writes the web-shaped outcome).
-  onUploadDocs?: (cat: DocCategory, payloads: any[]) => Promise<boolean>;
+  onUploadDocs?: (cat: DocCategory, payloads: any[]) => Promise<any[] | null>;
+  /** Re-reads the lead's stored documents for a category (no upload). */
+  onRefreshDocs?: (cat: DocCategory) => Promise<any[] | null>;
   productKey?: string;
   verticalState?: any;
   jobState?: any;
   calculatorResultData?: any;
   repDetails?: any;
+  /** Web `useDealEditMode()` — true when editing an already-resulted deal. */
+  editMode?: boolean;
 }
 
 const GREEN = '#22C55E';
@@ -54,6 +58,24 @@ const isPdf = (f: any) =>
   (f?.contentType || f?.mimeType || '').includes('pdf') ||
   String(f?.name || f?.uri || f?.url || '').toLowerCase().endsWith('.pdf');
 const fileSrc = (f: any) => f?.secureUrl || f?.displayUrl || f?.url || f?.uri || f?.thumbnailUrl || f?.file;
+// Stable identity for reconciling a document across the scanner round-trip AND for
+// de-duplicating the two display sources: a server doc keeps its serverId (or its
+// immutable S3 filePath); a freshly-scanned one falls back to url/uri/name.
+const docIdentity = (d: any): string =>
+  String(d?.serverId ?? d?._id ?? d?.filePath ?? d?.id ?? d?.url ?? d?.uri ?? d?.name ?? '');
+// The same document reaches us from two places once it is on the server: the draft
+// copy on `jobState` (what web reads, and what survives a reopen) and the freshly
+// signed copy from the outcome query. Keep the FIRST occurrence — callers pass the
+// server-resolved list first, so the live signed URL wins over the draft's stale one.
+const dedupeDocs = (files: any[]): any[] => {
+  const seen = new Set<string>();
+  return files.filter((f) => {
+    const key = docIdentity(f);
+    if (!key || seen.has(key)) return !key;
+    seen.add(key);
+    return true;
+  });
+};
 
 /**
  * Appointment + Agreement + Order-sheet cards for the dynamic Job Builder summary
@@ -73,12 +95,20 @@ export function SummaryFinalizeCards({
   setResolvedDocuments,
   isDocUploadingRef,
   onUploadDocs,
+  onRefreshDocs,
   productKey,
   verticalState,
   jobState,
   calculatorResultData,
   repDetails,
+  editMode = false,
 }: SummaryFinalizeCardsProps) {
+  // Web `vertical-summary-tab.js:407-409` (uses `useDealEditMode()`): editing an
+  // already-resulted deal drops the "Required" gates and hides the demo-only
+  // order-sheet card.
+  const agreementRequired = !!isSale && !editMode;
+  const orderSheetRequired = !!isDemo && !editMode;
+  const showOrderSheetCard = !!isSale || (!!isDemo && !editMode);
   const [schedulerVisible, setSchedulerVisible] = useState(false);
   const [isEditingAppt, setIsEditingAppt] = useState(false);
   const [scannerCategory, setScannerCategory] = useState<DocCategory | null>(null);
@@ -102,13 +132,16 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // Display = resolved (server / just-uploaded) docs + any flat local drafts.
+  // Display = server-resolved docs first (live signed URLs), then the draft copy
+  // held on `jobState` (web's `existingAgreements={jobState?.agreements}`), deduped
+  // so a document that exists in both — the normal case once it has uploaded — is
+  // listed once.
   const agreementFiles = useMemo(
-    () => [...toFlatFiles(agreements), ...(resolvedDocuments?.agreements || [])],
+    () => dedupeDocs([...(resolvedDocuments?.agreements || []), ...toFlatFiles(agreements)]),
     [agreements, resolvedDocuments]
   );
   const orderSheetFiles = useMemo(
-    () => [...toFlatFiles(orderSheets), ...(resolvedDocuments?.orderSheets || [])],
+    () => dedupeDocs([...(resolvedDocuments?.orderSheets || []), ...toFlatFiles(orderSheets)]),
     [orderSheets, resolvedDocuments]
   );
 
@@ -205,12 +238,18 @@ export function SummaryFinalizeCards({
       // serialize the field state and writes the web-shaped outcome payload
       // (top-level agreements/orderSheets → upserts the LeadOutcomeDocument S3
       // rows; serialized jobBuilder.dynamicJobState so field state isn't lost).
-      const ok = onUploadDocs ? await onUploadDocs(cat, payloads) : false;
-      if (!ok) {
+      // It resolves to the category's SERVER documents (serverId + filePath +
+      // signed URL), or null when the upload itself failed.
+      const serverDocs = onUploadDocs ? await onUploadDocs(cat, payloads) : null;
+      if (!serverDocs) {
         Alert.alert('Upload failed', 'Could not save the document. Please try again.');
         return null;
       }
-      return displayDocs;
+      // Prefer the server copies — they carry the serverId a later delete needs and
+      // a URL that is valid on every device (and on web). Only if the read-back came
+      // back empty do we fall back to the local thumbnails so the rep still sees the
+      // document they just added.
+      return serverDocs.length ? serverDocs : displayDocs;
     } catch (e) {
       console.warn('[SummaryFinalizeCards] upload failed', e);
       Alert.alert('Upload failed', 'Could not save the document. Please try again.');
@@ -220,29 +259,69 @@ export function SummaryFinalizeCards({
     }
   };
 
-  // After a successful upload the doc lives on the server. Clear the local draft so
-  // the debounced auto-save doesn't resend base64 (which would also trip the
-  // backend's "file required" validation), and mirror the uploaded docs into
-  // resolvedDocuments for display — matching the normal JB (clear draft + refetch).
-  const commitUploaded = (cat: DocCategory, displayDocs: any[]) => {
-    onUpdateRootState?.(rootKeyFor(cat), []);
+  // Record the uploaded documents ON THE JOB STATE — web parity, and the fix for
+  // "the PDF is gone when I come back".
+  //
+  // Web holds its documents at `jobState.agreements` / `.orderSheets` in
+  // `[{ files: [...] }]` groups (`dynamic-job-builder.js#handleAgreementDocumentsChange`)
+  // and renders the summary from exactly that (`existingAgreements={jobState?.agreements}`).
+  // The storage serializer passes both keys through, so the draft save persists them
+  // and a reopen — on either platform — restores them. Mobile used to CLEAR the key
+  // here and lean on the calculator-scoped outcome echoing `leadOutcomeDocuments`,
+  // which it does not reliably do: the document had uploaded, but nothing that the
+  // reopened screen (or web) reads knew about it.
+  //
+  // `files` are the server rows (serverId + filePath + signed URL) — durable and
+  // cross-platform, and NOT base64, so the draft payload stays small.
+  const commitUploaded = (cat: DocCategory, files: any[]) => {
+    const key = rootKeyFor(cat);
+    onUpdateRootState?.(key, files.length ? [{ files }] : []);
     setResolvedDocuments?.((prev) => {
-      const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
       const base = prev || { agreements: [], orderSheets: [] };
-      return { ...base, [key]: [...(base[key] || []), ...displayDocs] };
+      // The server read-back is the full list for this category, so replace rather
+      // than append — appending duplicated every previously-listed document.
+      return { ...base, [key]: files };
     });
-    // Refresh the outcome query so the authoritative server doc (with its secure
-    // URL) replaces the local copy — and so a quick re-open isn't served stale cache.
-    if (leadId) queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
+    // Refresh the outcome + document queries so a re-open isn't served stale cache.
+    if (leadId) {
+      queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
+      queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
+      queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
+    }
   };
 
   const handleScannerSave = async (cat: DocCategory, images: any[]) => {
+    const key = cat === 'agreement' ? 'agreements' : 'orderSheets';
+    // Reflect REMOVALS immediately, in BOTH display sources. The scanner already
+    // fired the DELETE for any doc the rep crossed out, but only the resolved list
+    // was pruned — the copy on the job state was left alone, so a delete-only Update
+    // left the removed page on screen until a reopen. Keep just the documents still
+    // present in the set the scanner returned (matched by identity).
+    const surviving = new Set((images || []).map(docIdentity).filter(Boolean));
+    const keep = (d: any) => surviving.has(docIdentity(d));
+    setResolvedDocuments?.((prev) => {
+      const base = prev || { agreements: [], orderSheets: [] };
+      return { ...base, [key]: (base[key] || []).filter(keep) };
+    });
+    const remainingDraft = toFlatFiles(cat === 'agreement' ? agreements : orderSheets).filter(keep);
+    onUpdateRootState?.(key, remainingDraft.length ? [{ files: remainingDraft }] : []);
+
     const newFiles = (images || []).filter((f) => f?.isNew !== false);
+    if (!newFiles.length) {
+      // Delete-only Update: no upload to piggyback the refresh on, so drop the cached
+      // document lists here — the next read reflects the rows the scanner deleted.
+      if (leadId) {
+        queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
+        queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
+      }
+      setScannerCategory(null);
+      return;
+    }
     const displayDocs = await uploadNewFiles(cat, newFiles);
     if (displayDocs) {
       commitUploaded(cat, displayDocs);
       // Audit log: a scanned/presigned agreement was uploaded (web parity — the
-      // generated path is logged in DynamicAgreementGenerator as agreement_generated).
+      // generated path is logged in DynamicAgreementDialog as agreement_generated).
       if (cat === 'agreement' && user?._id) {
         logEvent('add', {
           user_id: user._id,
@@ -251,7 +330,9 @@ export function SummaryFinalizeCards({
           meta: {
             leadId,
             fieldName: 'agreement',
-            fieldLabel: 'Agreement',
+            // Web parity (document-summary-cards.js): the UPLOADED path labels the
+            // field 'Agreement Uploaded'; only the GENERATED path uses 'Agreement'.
+            fieldLabel: 'Agreement Uploaded',
             action: 'agreement_uploaded',
           },
         });
@@ -261,19 +342,86 @@ export function SummaryFinalizeCards({
   };
 
   const handleAgreementGenerated = async (file: any) => {
+    // A GENERATED agreement is rendered AND FILED by the server.
+    //
+    // Mobile generates through `pdf-reports/v1/agreement/{leadId}/preview` + `/sign`
+    // (web can't share this path — it rasterises the agreement in the browser with
+    // html2canvas and has no sign call at all, see `dynamic-agreement-generator.js`).
+    // That sign endpoint stores its OWN LeadOutcomeDocument, named server-side from
+    // the real job number. Uploading the returned PDF on top of it filed a SECOND row
+    // for the same agreement — the two differently-named cards ("Agreement_STN-…" from
+    // the server, "Agreement_SPN/A_…" from `handleSigned`'s own template).
+    //
+    // So a system-generated agreement is NEVER UPLOADED — that is the only way to
+    // guarantee one row. An earlier version tried to confirm the server's row first
+    // and uploaded when it could not see one, but the confirmation reads the
+    // CALCULATOR-scoped outcome, which does not echo `leadOutcomeDocuments`: the check
+    // always came back empty, so it always uploaded and the duplicate returned.
+    //
+    // We still try to adopt the server's row (one cheap read) purely to get its
+    // serverId/filePath, which is what makes the draft copy durable off-device and
+    // lets a later delete reach the server. When that read shows nothing we record the
+    // local `file://` reference instead — the document is stored either way, and
+    // `buildDocumentPayloads` knows not to re-send a system-generated one at submit.
+    if (file?.isSystemGenerated) {
+      const localRef = {
+        name: file.name,
+        uri: file.uri,
+        contentType: 'application/pdf',
+        documentType: 'agreement' as const,
+        isNew: false,
+        // Marks this as already filed by the sign endpoint — never upload, never
+        // re-send. Read by `utils/document-payloads.ts`.
+        isSystemGenerated: true,
+      };
+      const knownIds = new Set(agreementFiles.map(docIdentity).filter(Boolean));
+      let serverDocs: any[] | null = null;
+      try {
+        serverDocs = onRefreshDocs ? await onRefreshDocs('agreement') : null;
+      } catch (e) {
+        console.warn('[SummaryFinalizeCards] could not re-read stored agreements', e);
+      }
+      const adopted = (serverDocs || []).some((d) => !knownIds.has(docIdentity(d)));
+      commitUploaded(
+        'agreement',
+        adopted
+          ? serverDocs!.map((d) => ({ ...d, isSystemGenerated: true }))
+          : [...toFlatFiles(agreements), localRef]
+      );
+      setAgreementDialogVisible(false);
+      return;
+    }
+    // Scanned / manually added agreements have no server-side filing step, so they
+    // need an explicit upload. `uploadNewFiles` reads the on-disk `file://` PDF to
+    // base64 TRANSIENTLY (never into React state — that was the OOM crash) and PUTs it
+    // via `handleUploadDocs`.
     const displayDocs = await uploadNewFiles('agreement', [file]);
     if (displayDocs) commitUploaded('agreement', displayDocs);
     setAgreementDialogVisible(false);
   };
 
-  const renderDocSection = (title: string, iconName: string, accent: string, files: any[], cat: DocCategory, isAgreement: boolean) => {
+  const renderDocSection = (
+    title: string,
+    iconName: string,
+    accent: string,
+    files: any[],
+    cat: DocCategory,
+    isAgreement: boolean,
+    // Web `document-summary-cards.js`: the badge is driven by a `required` FLAG
+    // (agreements → sale, order sheets → demo), not by "is this the agreement
+    // card". Mobile hardcoded `isAgreement`, so agreements were always badged
+    // Required and order sheets never were.
+    required = false,
+  ) => {
     const isEmpty = files.length === 0;
     return (
       <View style={styles.card}>
         <View style={[styles.sectionHeader, { backgroundColor: accent }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text style={styles.sectionHeaderText}>{title}</Text>
-            {isAgreement && (
+            {/* Web parity: Required shows only while there are NO documents —
+                once uploaded the badge is replaced by the edit affordance. */}
+            {required && isEmpty && (
               <View style={{ backgroundColor: 'white', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
                 <Text style={{ color: accent, fontSize: 6, fontWeight: '900' }}>REQUIRED</Text>
               </View>
@@ -281,7 +429,8 @@ export function SummaryFinalizeCards({
           </View>
           {!isEmpty && (
             <TouchableOpacity onPress={() => setScannerCategory(cat)} hitSlop={10}>
-              <Icon name="plus-circle" size={20} color="white" />
+              {/* Web swaps to a pencil once documents exist (mdi:pencil). */}
+              <Icon name="pencil" size={20} color="white" />
             </TouchableOpacity>
           )}
         </View>
@@ -292,32 +441,38 @@ export function SummaryFinalizeCards({
                 <Icon name={iconName} size={32} color="#CBD5E1" />
               </View>
               <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#94a3b8', marginBottom: 24 }}>No documents</Text>
+              {/* Web `document-summary-cards.js` empty state: the agreements card
+                  shows Generate AND Add Document side by side. Generate is merely
+                  DISABLED until an appointment exists (web tooltip: "Schedule the
+                  appointment first to generate the agreement") — Add Document is
+                  always available. Mobile made the two mutually exclusive and
+                  dropped Add Document from agreements entirely, so with no
+                  appointment there was no way to attach one at all. */}
               <View style={{ width: '100%', paddingHorizontal: 48, gap: 12 }}>
-                {isAgreement ? (
-                  isAppointmentSet ? (
+                {isAgreement && (
+                  <>
                     <TouchableOpacity
-                      onPress={() => setAgreementDialogVisible(true)}
-                      style={styles.outlineActionBtn}
+                      onPress={() => isAppointmentSet && setAgreementDialogVisible(true)}
+                      disabled={!isAppointmentSet}
+                      style={[styles.outlineActionBtn, !isAppointmentSet && { opacity: 0.4 }]}
                     >
                       <Icon name="auto-fix" size={18} color="#22C55E" style={{ marginRight: 8 }} />
                       <Text style={{ color: '#059669', fontWeight: '900', fontSize: 10 }}>Generate</Text>
                     </TouchableOpacity>
-                  ) : (
-                    <View style={{ alignItems: 'center', padding: 8 }}>
+                    {!isAppointmentSet && (
                       <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#ef4444', textAlign: 'center' }}>
                         Schedule an appointment to enable agreements
                       </Text>
-                    </View>
-                  )
-                ) : (
-                  <TouchableOpacity
-                    onPress={() => setScannerCategory(cat)}
-                    style={styles.outlineActionBtn}
-                  >
-                    <Icon name="plus" size={18} color="#0F172A" />
-                    <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 10, marginLeft: 8 }}>Add Document</Text>
-                  </TouchableOpacity>
+                    )}
+                  </>
                 )}
+                <TouchableOpacity
+                  onPress={() => setScannerCategory(cat)}
+                  style={styles.outlineActionBtn}
+                >
+                  <Icon name="plus" size={18} color="#0F172A" />
+                  <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 10, marginLeft: 8 }}>Add Document</Text>
+                </TouchableOpacity>
               </View>
             </View>
           ) : (
@@ -422,11 +577,15 @@ export function SummaryFinalizeCards({
           </View>
         ))}
 
-      {/* AGREEMENT (sale only) — styled to match old SummarySection */}
-      {isSale && renderDocSection('Agreements', 'file-certificate-outline', '#ef4444', agreementFiles, 'agreement', true)}
+      {/* Web `vertical-summary-tab.js`:
+            const agreementRequired  = isSale && !editMode;
+            const orderSheetRequired = isDemo && !editMode;
+            const showOrderSheetCard = isSale || (isDemo && !editMode);
+          The order-sheet card was gated on `isSale` alone, so on a DEMO — the very
+          case where web marks it Required — the card never rendered at all. */}
+      {isSale && renderDocSection('Agreements', 'file-certificate-outline', '#ef4444', agreementFiles, 'agreement', true, agreementRequired)}
 
-      {/* ORDER SHEET (sale only — web parity) */}
-      {isSale && renderDocSection('Order Sheets', 'file-document-outline', '#00B8D9', orderSheetFiles, 'orderSheet', false)}
+      {showOrderSheetCard && renderDocSection('Order Sheets', 'file-document-outline', '#00B8D9', orderSheetFiles, 'orderSheet', false, orderSheetRequired)}
 
       {/* MODALS */}
       <AppointmentSchedulerModal
