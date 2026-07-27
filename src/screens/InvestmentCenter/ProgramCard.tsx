@@ -28,6 +28,10 @@ interface Props {
   /** Show the dark "PRICE LOCK" pill above the title (the 1-Year program, web parity). */
   priceLock?: boolean;
   rows: ProgramRow[];
+  /** Reserve breakdown-row height for this many rows (pads short cards with
+   *  invisible rows) so cards with different row counts keep the same height above
+   *  the Grand Total — aligning the Add-Down-Payment button across both cards. */
+  reserveRows?: number;
   grandTotal: number;
   monthly?: number;
   planLabel?: string;
@@ -55,27 +59,45 @@ function Row({ label, value, green }: ProgramRow) {
 }
 
 export function ProgramCard({
-  title, highlighted = false, priceLock = false, rows, grandTotal, monthly, planLabel, downPayment, downPaymentSlot,
+  title, highlighted = false, priceLock = false, rows, reserveRows, grandTotal, monthly, planLabel, downPayment, downPaymentSlot,
   badges, selectedBadgeKey, onSelectBadge,
   selected = false, crossedOff = false, optInLabel, onOptIn, onRevert,
 }: Props) {
   const accent = highlighted ? '#4CBB17' : '#334155';
   return (
-    <View style={{ flex: 1, borderRadius: 16, borderWidth: selected ? 2 : 1.5, borderColor: selected ? accent : '#E2E8F0', overflow: 'hidden', backgroundColor: '#fff', position: 'relative' }}>
-      {/* Header bar (+ optional PRICE LOCK pill above the title) */}
-      <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#1E293B', paddingTop: priceLock ? 8 : 9, paddingBottom: 9, alignItems: 'center' }}>
-        {priceLock && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#0F172A', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 6 }}>
-            <Ionicons name="lock-closed" size={9} color="#fff" />
-            <Text style={{ fontSize: 8, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>PRICE LOCK</Text>
+    <View style={{ flex: 1, borderRadius: 16, borderWidth: selected ? 2 : 1.5, borderColor: selected ? accent : '#E2E8F0', overflow: 'visible', backgroundColor: '#fff', position: 'relative' }}>
+      {/* PRICE LOCK badge — floats above the card's top edge (web parity: the
+          non-highlighted 1-Year program). The outer card is overflow:visible so the
+          pill can poke above; the header + content live in the clip layer below. */}
+      {priceLock && (
+        <View style={{ position: 'absolute', top: -12, left: 0, right: 0, alignItems: 'center', zIndex: 5 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#16324F', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 }}>
+            <Ionicons name="lock-closed" size={10} color="#fff" />
+            <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>PRICE LOCK</Text>
           </View>
-        )}
-        <Text style={{ fontSize: 10, fontWeight: '900', color: '#fff', letterSpacing: 0.5, textAlign: 'center' }} numberOfLines={2}>{title}</Text>
-      </View>
+        </View>
+      )}
 
-      <View style={{ padding: 12 }}>
-        {/* Breakdown rows — Total / Sr+Vet / [Discount] */}
+      {/* Clip layer — rounds the colored header to the card radius (web parity). */}
+      <View style={{ borderRadius: 14.5, overflow: 'hidden' }}>
+        {/* Header bar — light-gray + dark title (1-Year) / green + white (In-Home),
+            matching the reference (was a dark-navy 1-Year header). */}
+        <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#EEF1F4', paddingVertical: 13, alignItems: 'center' }}>
+          <Text style={{ fontSize: 13, fontWeight: '900', color: highlighted ? '#fff' : '#1C252E', letterSpacing: 0.5, textAlign: 'center', textTransform: 'uppercase' }} numberOfLines={2}>{title}</Text>
+        </View>
+
+        <View style={{ padding: 12 }}>
+        {/* Breakdown rows — Total / Sr+Vet / [Discount]. Invisible placeholder rows
+            pad the block up to `reserveRows` so a card with fewer rows keeps the same
+            height here, aligning the Grand Total / Add-Down-Payment / monthly across
+            both program cards. */}
         {rows.map((r, i) => <Row key={i} {...r} />)}
+        {reserveRows != null && reserveRows > rows.length &&
+          Array.from({ length: reserveRows - rows.length }).map((_, i) => (
+            <View key={`ph-${i}`} style={{ opacity: 0 }} pointerEvents="none">
+              <Row label="placeholder" value="$0" />
+            </View>
+          ))}
 
         <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 }} />
 
@@ -129,11 +151,12 @@ export function ProgramCard({
             {selected ? 'Selected' : optInLabel}
           </Text>
         </TouchableOpacity>
+        </View>
       </View>
 
       {/* Crossed-off overlay (the other program was chosen) */}
       {crossedOff && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(241,245,249,0.88)', alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, backgroundColor: 'rgba(241,245,249,0.88)', alignItems: 'center', justifyContent: 'center' }}>
           <View style={{ position: 'absolute', top: '50%', left: 8, right: 8, height: 2, backgroundColor: '#94A3B8' }} />
           <TouchableOpacity onPress={onRevert} style={{ backgroundColor: '#fff', borderRadius: 20, width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#CBD5E1' }}>
             <Ionicons name="close" size={18} color="#64748B" />

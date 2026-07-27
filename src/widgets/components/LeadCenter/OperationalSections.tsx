@@ -281,13 +281,11 @@ export const ToolsSection = ({
       </TouchableOpacity>
       <ToolCard
         title="Pitch Book"
-        desc="Presentation materials"
         icon="book-open-page-variant"
         onPress={onShowPitchbook}
       />
       <ToolCard
         title="Roofline Deck"
-        desc="Roofline system presentation"
         icon="home-roof"
         onPress={onShowRooflineDeck}
       />
@@ -389,7 +387,6 @@ export const ToolsSection = ({
       </View>
       <ToolCard
         title="Inspection Report"
-        desc="Generate inspection report"
         icon="clipboard-text"
         onPress={() => {
           onAction('inspection');
@@ -399,7 +396,7 @@ export const ToolsSection = ({
       />
       <ToolCard
         title="Roof Waiver"
-        desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
+        // desc={waiverReport ? 'View Signed Waiver' : 'Roof waiver documents'}
         icon={waiverReport ? 'file-check' : 'home-roof'}
         onPress={handleWaiverPress}
         isGenerated={!!waiverReport}
