@@ -50,7 +50,7 @@ import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/Op
 import Icon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
 import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { EditCustomerModal } from '../../widgets/modals/lead-center/EditCustomerModal';
+import { EditCustomerModal, EditCustomerPayload } from '../../widgets/modals/lead-center/EditCustomerModal';
 import Feather from 'react-native-vector-icons/Feather';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
@@ -607,19 +607,27 @@ export default function LeadCenterPage() {
     }
   };
 
-  const handleCustomerSubmit = async (data: { firstName: string; lastName: string; phone: string; email: string }) => {
+  const handleCustomerSubmit = async (data: EditCustomerPayload) => {
     try {
       const customerId = lead.customerDetails?._id || lead.customerDetails?.id || lead?._id || lead?.id;
       if (!customerId) {
         throw new Error('Customer ID is missing. Unable to update customer.');
       }
 
-      const payload = {
+      // Coordinates ride along only when the address was resolved (picked from
+      // the suggestions or taken from GPS) — web parity with `edit-customer-modal.js`.
+      const payload: Record<string, any> = {
         firstName: data.firstName,
         lastName: data.lastName,
         phone: getRawPhoneNumber(data.phone),
         email: data.email,
+        address: data.address,
+        coBuyers: data.coBuyers,
       };
+      if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+        payload.latitude = data.latitude;
+        payload.longitude = data.longitude;
+      }
 
       console.log('[EditCustomer] PATCH lead/v1/customer/' + customerId, payload);
       await LeadService.updateCustomer(customerId, payload);
@@ -628,12 +636,20 @@ export default function LeadCenterPage() {
         if (!prev) return prev;
         return {
           ...prev,
+          // The header reads `fullAddress` first, so patch both — `refetch()`
+          // below reconciles either one with what the server actually stored.
+          fullAddress: data.address || prev.fullAddress,
           customerDetails: {
             ...prev.customerDetails,
             firstName: data.firstName,
             lastName: data.lastName,
             phone: data.phone,
             email: data.email,
+            address: data.address,
+            coBuyers: data.coBuyers,
+            ...(typeof data.latitude === 'number' && typeof data.longitude === 'number'
+              ? { latitude: data.latitude, longitude: data.longitude }
+              : {}),
           },
         };
       });

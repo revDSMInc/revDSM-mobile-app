@@ -26,6 +26,30 @@ export interface FilterState {
   centerCoords?: { latitude: number; longitude: number };
 }
 
+/**
+ * How many filters are actually applied — drives the badge on the header's
+ * filter icon. Port of web `header-filter.js`'s `filteredItemsCount`, which
+ * counts: address, job number, distance, min, max, date range, favourites.
+ *
+ * Mobile keeps the location text in the same `jobNumber` field as a job-number
+ * search, so a geocoded location (which also sets `centerCoords`) counts once
+ * rather than twice. The product/route switches are display toggles and are not
+ * counted, matching web.
+ */
+export const countAppliedMapFilters = (filters: FilterState | null | undefined): number => {
+  if (!filters) return 0;
+
+  return [
+    !!filters.centerCoords,
+    !filters.centerCoords && !!filters.jobNumber?.trim(),
+    !!filters.radius,
+    !!filters.minPrice?.trim(),
+    !!filters.maxPrice?.trim(),
+    !!(filters.startDate || filters.endDate),
+    !!filters.isFavoriteOnly,
+  ].filter(Boolean).length;
+};
+
 interface MapFiltersModalProps {
   visible: boolean;
   onClose: () => void;

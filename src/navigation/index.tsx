@@ -147,6 +147,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
     onFilterPress?: (() => void) | null;
     onListPress?: (() => void) | null;
     onNavigate?: ((route: any) => void) | null;
+    filterCount?: number | null;
   }>({});
 
   const contextValue = React.useMemo(() => ({
