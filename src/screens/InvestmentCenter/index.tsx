@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView, Modal, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { BlurView } from '@react-native-community/blur';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCalculatorSchema } from '../DynamicDealCenter/hooks/useCalculatorSchema';
@@ -60,17 +61,17 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const ocrMutation = useUploadPaperConsentOCRMutation();
   const [localConsentSigned, setLocalConsentSigned] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
-  const [consentBusy, setConsentBusy] = useState(false);
   // Paper Fallback: uploads a photo of a paper consent form, OCR-scans it, then
   // reopens the consent form prefilled with the extracted fields (LeadCenter parity).
   const [showPaperFallback, setShowPaperFallback] = useState(false);
   const [prefilledOcrData, setPrefilledOcrData] = useState<any>(null);
+  // Back button raises a confirm before leaving (the presentation shouldn't close on
+  // a stray tap); only "Exit" actually navigates back.
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
   const consentSigned = localConsentSigned || hasSignedConsent(lead);
 
   const handleConsentSubmit = useCallback(
     async (data: any) => {
-      setShowConsent(false);
-      setConsentBusy(true);
       try {
         const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
         // On a digital submission the mutation returns the generated PDF path; register
@@ -81,10 +82,10 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
             .catch(() => {});
         }
         setLocalConsentSigned(true);
+        setShowConsent(false);
+        setPrefilledOcrData(null);
       } catch {
         // leave the gate up; the rep can retry
-      } finally {
-        setConsentBusy(false);
       }
     },
     [consentMutation, finalizeMutation, lead?._id],
@@ -190,7 +191,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const Header = (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#fff' }}>
       <TouchableOpacity
-        onPress={() => navigation?.goBack()}
+        onPress={() => setShowExitConfirm(true)}
         style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}
       >
         <Ionicons name="chevron-back" size={20} color="#334155" />
@@ -222,11 +223,11 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
           </Text>
           <TouchableOpacity
             onPress={() => setShowConsent(true)}
-            disabled={consentBusy}
-            style={{ marginTop: 22, paddingHorizontal: 26, paddingVertical: 13, borderRadius: 14, backgroundColor: '#4CBB17', opacity: consentBusy ? 0.6 : 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+            disabled={consentMutation.isPending}
+            style={{ marginTop: 22, paddingHorizontal: 26, paddingVertical: 13, borderRadius: 14, backgroundColor: '#4CBB17', opacity: consentMutation.isPending ? 0.6 : 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
           >
-            {consentBusy && <ActivityIndicator size="small" color="#fff" />}
-            <Text style={{ fontSize: 14, fontWeight: '900', color: '#fff' }}>{consentBusy ? 'Submitting…' : 'Sign Consent Form'}</Text>
+            {consentMutation.isPending && <ActivityIndicator size="small" color="#fff" />}
+            <Text style={{ fontSize: 14, fontWeight: '900', color: '#fff' }}>{consentMutation.isPending ? 'Submitting…' : 'Sign Consent Form'}</Text>
           </TouchableOpacity>
         </View>
       ) : visible.length === 0 ? (
@@ -304,6 +305,38 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
           loading={ocrMutation.isPending}
         />
       )}
+
+      {/* Exit confirmation — blurred backdrop, matching the consent form's exit
+          prompt. Non-dismissable: only Stay / Exit act. */}
+      <Modal visible={showExitConfirm} transparent animationType="fade" onRequestClose={() => setShowExitConfirm(false)}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 }}>
+          <BlurView
+            style={StyleSheet.absoluteFill}
+            blurType="light"
+            blurAmount={10}
+            reducedTransparencyFallbackColor="rgba(255,255,255,0.5)"
+            pointerEvents="none"
+          />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.25)' }]} pointerEvents="none" />
+          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 20, padding: 24, alignItems: 'center' }}>
+            <Text style={{ fontSize: 17, fontWeight: '900', color: '#1C252E', textAlign: 'center' }}>Exit Investment Center?</Text>
+            <Text style={{ fontSize: 13, color: '#637381', textAlign: 'center', marginTop: 8, lineHeight: 19 }}>
+              This will return to your Tools menu. The signed consent stays on file.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 22, alignSelf: 'stretch' }}>
+              <TouchableOpacity onPress={() => setShowExitConfirm(false)} style={{ flex: 1, paddingVertical: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center' }}>
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#334155' }}>Stay</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setShowExitConfirm(false); navigation?.goBack(); }}
+                style={{ flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#EF4444', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#fff' }}>Exit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
