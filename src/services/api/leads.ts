@@ -97,6 +97,9 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
     // `pricemarkup` is a markup LABEL string (e.g. "RETAIL + 5%"), and reason/explain
     // are free text — coercing an empty one to 0 would corrupt the value.
     'pricemarkup', 'reason', 'explain', 'demoReason', 'reasonExplanation',
+    // `priceScopeSig` is the job-scope fingerprint string the end price was priced
+    // against — an empty one (no price entered) must stay '' not 0.
+    'priceScopeSig',
     // `selectedRenders[]` descriptor fields (RevRender pairs) and the
     // `oneYearMonthlyPlan` selection are string-valued — keep empty ones '' rather
     // than coercing to 0 (a `mode: 0` or `viewLabel: 0` would break the read side).

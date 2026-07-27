@@ -139,14 +139,6 @@ export const ToolsSection = ({
 
   return (
     <View className="px-4 py-3">
-      <ToolCard
-        title="Customer Consent Form"
-        desc=''
-        icon={consentReport ? 'file-check' : 'file-document-edit'}
-        onPress={handleConsentPress}
-        isGenerated={!!consentReport}
-        isLoading={isConsentGenerating}
-      />
       {/* Dynamic is now the primary Deal Center (schema-driven, backend config).
           The classic calculator stays as an inert fallback directly below — used
           when the backend hasn't published a dynamic config yet. */}
@@ -405,6 +397,14 @@ export const ToolsSection = ({
         onPress={handleWaiverPress}
         isGenerated={!!waiverReport}
         isLoading={isWaiverGenerating}
+      />
+      <ToolCard
+        title="Customer Consent Form"
+        desc=''
+        icon={consentReport ? 'file-check' : 'file-document-edit'}
+        onPress={handleConsentPress}
+        isGenerated={!!consentReport}
+        isLoading={isConsentGenerating}
       />
 
       <RevRenderHistoryModal

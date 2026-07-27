@@ -31,6 +31,7 @@
     "react-is": "^19.2.6",
     "react-native": "0.84.1",
     "react-native-blob-util": "0.24.7",
+    "react-native-compass-heading": "^1.2.0",
     "react-native-document-scanner-plugin": "^2.0.4",
     "react-native-file-viewer": "^2.1.5",
     "react-native-flash-message": "^0.4.2",

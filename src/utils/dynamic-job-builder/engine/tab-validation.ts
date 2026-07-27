@@ -20,7 +20,7 @@ import {
   isFieldVisibleWithConditions,
 } from './dependency-engine';
 import { filterVisibleToggleOptions } from './toggle-utils';
-import { isRequiredNumberValueMissing } from './field-value-utils';
+import { isRequiredFieldValueMissing } from './field-value-utils';
 import { getWarningConfig } from './field-layout-utils';
 
 // Ported to full web parity. Previously this file was a heavily stripped
@@ -145,7 +145,10 @@ function isEmptyRequiredValue(field: any, state: any, colorValues: any = {}, dep
     case 'textarea':
       return !value;
     case 'number':
-      return isRequiredNumberValueMissing(value);
+      // Field-aware: a required number of 0 is missing EXCEPT for miters/end caps,
+      // where an explicitly-entered 0 is a valid count (blank still blocks). Same
+      // helper the render warning uses, so the `*`/banner and the gate agree.
+      return isRequiredFieldValueMissing(field, value);
     case 'roomPicker':
       return !Array.isArray(value) || value.length === 0;
     case 'swatch':
@@ -209,7 +212,7 @@ export function isFieldValueComplete(field: any, state: any, ctx: any = {}) {
   if (empty && typeof __DEV__ !== 'undefined' && __DEV__) {
     console.log(
       `[TabCheck] required field "${field?.label || field?.id}" (type=${field?.type}) blocks completion: value is empty` +
-        (field?.type === 'number' ? ' (note: a required number of 0 counts as empty).' : '.')
+        (field?.type === 'number' ? ' (note: a required number of 0 counts as empty, except miters/end caps where a typed 0 is valid).' : '.')
     );
   }
   return !empty;

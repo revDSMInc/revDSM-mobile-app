@@ -488,7 +488,8 @@ function renderField(
       // `dependencies.requiredWhen` (e.g. Miters becomes required once measurements
       // are entered) — shows an "INCOMPLETE — Value Required" warning above it and
       // a ` *` on its label until a value is entered. `isRequiredFieldValueMissing`
-      // treats 0/'0' as missing for number fields.
+      // treats 0/'0' as missing for number fields — EXCEPT miters/end caps, where a
+      // typed 0 is a valid count (a straight run has none) and only a blank blocks.
       const showRequired =
         isFieldRequired(field, state, depCtx) && isRequiredFieldValueMissing(field, value);
       // Ticket "Job builder > Gutter > Downspout combination > Remove the required

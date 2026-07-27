@@ -97,6 +97,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     handleSetDownPayment,
     handleSetRenders,
     handleSetOneYearMonthly,
+    handleSetPrice,
+    handleAckScopeWarning,
   } = useDynamicCalculators(lead, verticals);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
@@ -260,6 +262,10 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onBack={() => setFlowStep('calculator')}
           onConfirmRollouts={handleConfirmRollouts}
           onResultJob={handleResultJob}
+          // Persist the entered end price live (survives back-to-calculator edits) and
+          // let the rep dismiss the "job scope changed" warning once reviewed.
+          onPriceCommit={handleSetPrice}
+          onDismissScopeWarning={handleAckScopeWarning}
           onPaymentMethodChange={handleSetPaymentMethod}
           onDropChange={handleSetDrops}
           onDiscountChange={handleSetDiscount}
