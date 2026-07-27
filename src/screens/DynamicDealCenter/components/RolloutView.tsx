@@ -20,6 +20,7 @@ import {
   DealPlan,
   PayCategory,
   planLabelOf,
+  planProviderAbbr,
   calcMonthly,
   withPlanFee,
   isFinancing,
@@ -448,9 +449,14 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
+        {/* Non-dismissable backdrop — tapping outside must NOT close the drop without
+            saving; the rep has to choose Secure or Decline (web `DropPriceModal` passes
+            NO `onClose` + `disableEscapeKeyDown`). And animationType="none" (web's
+            `TransitionProps={{ timeout: 0 }}`) so handing off to the chooser / declined
+            modal is instant and never fades out to reveal the un-dimmed background. */}
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }}>
           <BlurView
             style={StyleSheet.absoluteFill}
             blurType={isDark ? 'dark' : 'light'}
@@ -546,6 +552,8 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                   const plan = plans[key] || ({} as DealPlan);
                   const sel = selectedPlan === key;
                   const monthly = calcMonthly(plans, balance, key);
+                  const abbr = planProviderAbbr(plan, key);
+                  const planName = plan.label?.split('(')[0]?.trim() || key;
                   return (
                     <Animated.View key={key} layout={LinearTransition} exiting={FadeOut}>
                       <Swipeable
@@ -556,7 +564,12 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
                         <TouchableOpacity onPress={() => setSelectedPlan(key)} activeOpacity={0.9} style={{ marginBottom: 12, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: sel ? '#31D076' : '#F1F5F9', backgroundColor: sel ? '#fff' : '#F8FAFC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                           <View style={{ flex: 1, marginRight: 8 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{plan.label?.split('(')[0]?.trim() || key}</Text>
+                              {!!abbr && (
+                                <View style={{ backgroundColor: sel ? '#0F172A' : '#CBD5E1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginRight: 6 }}>
+                                  <Text style={{ fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}>{abbr}</Text>
+                                </View>
+                              )}
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: sel ? '#0F172A' : '#94A3B8', marginRight: 6 }} numberOfLines={1}>{planName}</Text>
                               {sel && <View style={{ backgroundColor: '#31D076', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ fontSize: 8, fontWeight: '900', color: '#fff' }}>SELECTED</Text></View>}
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
@@ -598,7 +611,7 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
               onClose={() => setShowPicker(false)}
             />
           </Pressable>
-        </Pressable>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -616,8 +629,11 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
 }) {
   const { isDark } = useTheme();
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+  // animationType="none" so the drop → chooser hand-off is instant: the dimmed
+  // backdrop is up on the same frame the drop modal disappears, never revealing the
+  // un-dimmed background (web parity — the drop dialog uses timeout:0).
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
         <BlurView
           style={StyleSheet.absoluteFill}
@@ -663,8 +679,9 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   visible: boolean; declinedPrice: number; onResultLead: () => void; onClose: () => void;
 }) {
   const { isDark } = useTheme();
+  // animationType="none" so decline → this modal is instant with no background flash.
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }} onPress={onClose}>
         <BlurView
           style={StyleSheet.absoluteFill}

@@ -244,10 +244,17 @@ export const ToolsSection = ({
           </View>
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row">
-            {/* Show Skeletons for active RevRender jobs */}
-            {revRenderJobs.filter((j: any) => j.status !== 'completed' && j.status !== 'failed').map((job: any, idx: number) => (
-              <PulsingSkeleton key={`skeleton-${idx}`} isDark={isDark} />
-            ))}
+            {/* One skeleton PER RENDER still generating. A single job (payload) can be a
+                backend batch that produces several renders (`job.total`), so render that
+                many placeholders — otherwise a 2-render batch showed a single "AI
+                RENDERING" tile yet finished as "2 Runs". */}
+            {revRenderJobs
+              .filter((j: any) => j.status !== 'completed' && j.status !== 'failed')
+              .flatMap((job: any, jIdx: number) =>
+                Array.from({ length: Math.max(1, Number(job.total) || 1) }).map((_, sIdx) => (
+                  <PulsingSkeleton key={`skeleton-${jIdx}-${sIdx}`} isDark={isDark} />
+                ))
+              )}
 
             {orderedRuns && orderedRuns.length > 0 ? (
               orderedRuns.map((run: any, idx: number) => (

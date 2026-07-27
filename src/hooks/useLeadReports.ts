@@ -447,12 +447,26 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
 
         const res = await LeadService.generateRevRender(job.payload);
         const resData = res.data;
-        const batchId = resData?.batch?.batchId || 
-                        resData?.batchId || 
-                        resData?.id || 
-                        resData?.data?.batchId || 
-                        resData?.data?.batch?.batchId || 
+        const batchId = resData?.batch?.batchId ||
+                        resData?.batchId ||
+                        resData?.id ||
+                        resData?.data?.batchId ||
+                        resData?.data?.batch?.batchId ||
                         resData?.batch?.id;
+
+        // A single payload's batch can render MORE than one image; capture the count
+        // so the Tools card shows one "AI Rendering" placeholder PER render (not one
+        // per job). Set as early as the create response exposes it.
+        const initialTotal = Number(
+          resData?.batch?.total ?? resData?.data?.batch?.total ?? resData?.total ?? 0
+        ) || 0;
+        if (initialTotal > 1) {
+          updateJobStateAndPersistence(prev => {
+            const next = [...prev];
+            if (next[index]) next[index].total = initialTotal;
+            return next;
+          });
+        }
 
         if (!batchId) {
           isCompleted = true;
@@ -479,6 +493,18 @@ export const useLeadReports = (lead: any, refetch: () => void) => {
             const batch = statusRes.data?.batch || statusRes.data;
             const batchStatus = batch?.status;
             const batchTotal = batch?.total || 1;
+
+            // Keep the job's render count in sync so the Tools card shows one
+            // placeholder per render while the batch is still generating.
+            if (batchTotal > 1) {
+              updateJobStateAndPersistence(prev => {
+                const next = [...prev];
+                if (next[index] && (Number(next[index].total) || 1) !== batchTotal) {
+                  next[index].total = batchTotal;
+                }
+                return next;
+              });
+            }
 
             if (batchStatus === 'completed' || batchStatus === 'succeeded' || batchStatus === 'done') {
               isDone = true;

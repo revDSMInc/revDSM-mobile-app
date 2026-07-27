@@ -28,13 +28,14 @@ import {
   norm,
   type InspectionCategory,
 } from '../../widgets/components/lead-center/dynamic-inspection-schema-utils';
-import { iconifyToMdi } from '../../widgets/components/lead-center/DynamicInspectionRenderer';
+import { IconifyIcon } from '../../widgets/common/IconifyIcon';
 
 // ─── Dynamic (schema-driven) product picker helpers — port of web before.js ─────
 // Photos captured via the dynamic inspection flow are stored under a PRODUCT-SCOPED
 // category `"<productName> — <categoryLabel>"` (em dash). RevRender groups them by
 // product + schema tab, exactly like the web "before" picker.
 const GREEN = '#4CBB17';
+
 const scopeCategory = (productKey: string, label: string) =>
   productKey ? `${productKey} — ${label}` : label;
 const isAnnotatedRR = (p: any) =>
@@ -604,14 +605,14 @@ export default function RevRenderScreen() {
                     activeOpacity={0.7}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, height: 44, borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(76,187,23,0.5)' }}
                   >
-                    {selectedProduct?.icon ? <Icon name={iconifyToMdi(selectedProduct.icon)} size={18} color={GREEN} /> : null}
+                    <IconifyIcon name={selectedProduct?.icon} size={18} />
                     <Text style={{ color: GREEN, fontWeight: '800', fontSize: 15 }}>{selectedProduct?.name || 'Select product'}</Text>
                     <MIcon name="arrow-drop-down" size={22} color={GREEN} />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {selectedProduct?.icon ? <Icon name={iconifyToMdi(selectedProduct.icon)} size={18} color={GREEN} /> : null}
+                  <IconifyIcon name={selectedProduct?.icon} size={18} />
                   <Text style={{ color: GREEN, fontWeight: '800', fontSize: 15 }}>{selectedProduct?.name}</Text>
                 </View>
               )}
@@ -634,7 +635,7 @@ export default function RevRenderScreen() {
                       onPress={() => setDynTab(i)}
                       style={{ paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: active ? GREEN : 'transparent' }}
                     >
-                      {tab.icon ? <Icon name={iconifyToMdi(tab.icon)} size={18} color={active ? GREEN : '#919EAB'} /> : null}
+                      {tab.icon ? <IconifyIcon name={tab.icon as string} size={18} color={active ? GREEN : '#919EAB'} /> : null}
                       <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase', color: active ? GREEN : '#919EAB', marginTop: 2 }}>
                         {tab.label as string}
                       </Text>
@@ -706,7 +707,7 @@ export default function RevRenderScreen() {
                     onPress={() => { setSelectedProductId(p.id as string); setProdMenuOpen(false); }}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: isDark ? '#2A2A2A' : '#F4F6F8', backgroundColor: active ? 'rgba(76,187,23,0.08)' : 'transparent' }}
                   >
-                    {p.icon ? <Icon name={iconifyToMdi(p.icon)} size={18} color={active ? GREEN : '#637381'} /> : null}
+                    <IconifyIcon name={p.icon} size={18} />
                     <Text style={{ color: active ? GREEN : colors.text, fontWeight: active ? '800' : '600', fontSize: 15 }} numberOfLines={1}>{p.name}</Text>
                     {active && <MIcon name="check" size={18} color={GREEN} style={{ marginLeft: 'auto' }} />}
                   </TouchableOpacity>

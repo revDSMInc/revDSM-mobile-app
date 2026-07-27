@@ -385,6 +385,38 @@ export function planLabelOf(plans: Record<string, DealPlan>, key?: string): stri
   return plans[key || '']?.label || 'Select payment plan';
 }
 
+/**
+ * Short company/provider abbreviation for a financing plan, e.g. `WF` (Wells
+ * Fargo), `GS` (GreenSky), so a rep can tell at a glance which lender a plan
+ * belongs to when only its code shows (`1157`, `2521`). Resolves from the plan's
+ * `provider` name (dynamic `/provider-plans` path) and falls back to the plan
+ * KEY prefix (`wf*`, `greensky*`, `concora`, `lowes_*`) for the static
+ * `payment-plans.ts` fallback, which carries no `provider` field. Returns `''`
+ * for basic (cash/card) methods and unknown providers so callers show the bare
+ * label unchanged.
+ */
+export function planProviderAbbr(plan?: DealPlan, key?: string): string {
+  const prov = (plan?.provider || '').trim();
+  if (prov) {
+    const lower = prov.toLowerCase();
+    if (lower.includes('wells')) return 'WF';
+    if (lower.includes('green')) return 'GS';
+    if (lower.includes('concora')) return 'CN';
+    if (lower.includes('lowe')) return 'LW';
+    const words = prov.split(/\s+/).filter(Boolean);
+    if (words.length > 1) return words.map((w) => w[0]).join('').toUpperCase().slice(0, 3);
+    const caps = prov.replace(/[^A-Z]/g, '');
+    if (caps.length >= 2) return caps.slice(0, 3);
+    return prov.slice(0, 2).toUpperCase();
+  }
+  const k = (key || plan?.key || '').toLowerCase();
+  if (k.startsWith('wf')) return 'WF';
+  if (k.startsWith('greensky') || k.startsWith('gs')) return 'GS';
+  if (k.startsWith('concora')) return 'CN';
+  if (k.startsWith('lowes')) return 'LW';
+  return '';
+}
+
 export function isFinancing(plans: Record<string, DealPlan>, key?: string): boolean {
   return plans[key || '']?.type === 'financing';
 }

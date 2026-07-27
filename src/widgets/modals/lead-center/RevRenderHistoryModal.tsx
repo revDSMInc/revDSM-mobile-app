@@ -23,13 +23,26 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 // Global Map to track active download promises and prevent duplicate parallel writes/corruption
 const activeDownloads = new Map<string, Promise<boolean>>();
 
-// Helper to resolve clean cache path for pre-signed S3 URL
+// Stable short hash (djb2) of a string — used to make the cache filename unique.
+const hashString = (s: string): string => {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+};
+
+// Helper to resolve clean cache path for a pre-signed S3 URL.
 const getLocalCachePath = (url: string) => {
   if (!url) return null;
-  const cleanUrl = url.split('?')[0];
+  const cleanUrl = url.split('?')[0]; // drop the signature so re-signs still hit cache
   const filename = cleanUrl.split('/').pop();
   if (!filename) return null;
-  return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${filename}`;
+  // Key on the FULL object path, not just the basename: different renders routinely
+  // share a filename (e.g. ".../<runIdA>/generated.png" vs ".../<runIdB>/generated.png"),
+  // and keying on the basename alone made them collide in the cache — so a cached render
+  // showed in place of another ("white overtook both", wrong image when navigating). The
+  // hash disambiguates while the readable suffix keeps the file recognisable.
+  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${hashString(cleanUrl)}_${safeName}`;
 };
 
 // Unified download helper ensuring only one download occurs per cache path
@@ -556,13 +569,19 @@ export const RevRenderHistoryModal = ({
                 {/* AFTER — background */}
                 {afterImage && (
                   <CachedImage
+                    // Key by the render so navigating REMOUNTS the image instead of
+                    // swapping `source.uri` on a live <Image> — React Native doesn't
+                    // reliably re-fire `onLoad` on a source swap (loader hangs forever)
+                    // and keeps painting the previous render's frame (one wrap "overtook"
+                    // the others). A fresh mount per render fixes both.
+                    key={`after-${currentIndex}-${afterImage}`}
                     uri={afterImage}
                     style={{
                       position: 'absolute',
                       width: imageWidth,
                       height: "100%",
                     }}
-                    resizeMode="cover"
+                    resizeMode="contain"
                     onLoad={() => {
                       setAfterLoaded(true);
                       setLoadedImages((prev) => ({
@@ -597,9 +616,11 @@ export const RevRenderHistoryModal = ({
                     ]}
                   >
                     <CachedImage
+                      // Remount per render (see the AFTER image note above).
+                      key={`before-${currentIndex}-${beforeImage}`}
                       uri={beforeImage}
                       style={{ width: imageWidth, height: "100%" }}
-                      resizeMode="cover"
+                      resizeMode="contain"
                       onLoad={() => {
                         setBeforeLoaded(true);
                         setLoadedImages((prev) => ({
