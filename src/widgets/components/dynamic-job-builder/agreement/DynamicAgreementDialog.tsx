@@ -11,6 +11,7 @@ import { generateRoofingDescriptions } from '../../../../utils/dynamic-job-build
 import { logEvent } from '../../../../services/api/LoggerService';
 import { useAuth } from '../../../../hooks/useAuth';
 import { useLeadQuery } from '../../../../hooks/useLeadQuery';
+import { formatCurrency } from '../../../../utils/currency';
 
 interface DynamicAgreementDialogProps {
   visible: boolean;
@@ -75,16 +76,10 @@ function formatInstallDate(raw: any): string {
   }
 }
 
-// Format a price for the agreement with a thousands separator (web parity: the
-// result-lead-modal formats contract price / down payment / balance with
-// `.toLocaleString()` before they reach the agreement, e.g. "6,000"). Mobile keeps
-// them as raw numbers, so add the commas here — "$6000" → "$6,000". Strips any
-// pre-existing `$`/commas so an already-formatted string doesn't double up.
-const money = (v: any) => {
-  if (v === '' || v === null || v === undefined) return '$0.00';
-  const num = Number(String(v).replace(/[$,\s]/g, ''));
-  return Number.isFinite(num) ? `$${num.toLocaleString('en-US')}` : `$${v}`;
-};
+// Grouped thousands so the agreement reads the same as the Contract Details card it
+// is generated from — was `$${v}`, which printed a contract price as "$22411".
+// `formatCurrency` is engine-independent (no Intl dependency); see utils/currency.
+const money = (v: any) => formatCurrency(v, { fallback: '$0.00' });
 
 /**
  * Agreement generation for the dynamic Job Builder.

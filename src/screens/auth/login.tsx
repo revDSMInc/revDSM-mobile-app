@@ -126,8 +126,17 @@ export default function LoginScreen() {
         }
       }
     } catch (err: any) {
-      const backendMsg = err?.message || err?.response?.data?.message || '';
-      let cleanMsg = 'Incorrect email or password';
+      // Keep the raw cause visible — the messages below are deliberately vague.
+      console.warn('[login] failed', err);
+
+      const backendMsg =
+        (typeof err?.message === 'string' && err.message) ||
+        err?.response?.data?.message ||
+        '';
+      // No message at all means the rejection wasn't an API error object — a
+      // misconfigured API_URL answering 405/HTML, or the request never landing.
+      // Blaming the password there sends people hunting the wrong problem.
+      let cleanMsg = 'Could not reach revDSM. Check your connection and try again.';
       if (backendMsg) {
         const lowerMsg = backendMsg.toLowerCase();
         if (

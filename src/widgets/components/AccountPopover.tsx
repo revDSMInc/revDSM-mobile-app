@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Modal, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
+import { useUserRole } from '../../hooks/useUserRole';
 import { useTheme } from '../../theme/ThemeProvider';
 
 interface AccountPopoverProps {
@@ -12,6 +13,7 @@ interface AccountPopoverProps {
 
 export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }: AccountPopoverProps) {
   const { user } = useAuth();
+  const { isInstaller } = useUserRole();
   const { colors, isDark } = useTheme();
 
   const hasLmsPermission = user?.permissions?.LMS?.includes('view_lms') || false;
@@ -65,20 +67,23 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => {
-                onClose();
-                onNavigate('JobTracker');
-              }}
-              className="p-3 rounded-2xl"
-            >
-              <Text
-                className="text-[13px] font-medium  tracking-widest"
-                style={{ color: colors.text }}
+            {/* Job Tracker is a sales surface — installers have no route for it. */}
+            {!isInstaller && (
+              <TouchableOpacity
+                onPress={() => {
+                  onClose();
+                  onNavigate('JobTracker');
+                }}
+                className="p-3 rounded-2xl"
               >
-                Job Tracker
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  className="text-[13px] font-medium  tracking-widest"
+                  style={{ color: colors.text }}
+                >
+                  Job Tracker
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               onPress={() => {

@@ -38,6 +38,7 @@ import { MapJobCard } from './MapJobCard';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import { logFavoriteJobClick, logMapPinSelected } from '../../../utils/activity-log/map-activity-log';
+import { getOfficeCoords, OFFICE_ZOOM } from '../../../utils/office-location';
 import { MapGalleryModal } from './MapGalleryModal';
 import { MapToggleSwitch } from '../../common/MapToggleSwitch';
 import { JobImageUploadModal } from '../../modals/JobImageUploadModal';
@@ -67,6 +68,15 @@ const MAP_BOUNDS = {
   ne: [-40, 85] as [number, number],
   sw: [-180, 15] as [number, number],
 };
+
+// True when [lng, lat] falls inside MAP_BOUNDS (web parity: `isWithinMapBounds`).
+// Anything outside is unusable as a camera target: `maxBounds` clamps it to the
+// edge of the box, which lands the map in open ocean rather than on the point.
+const isWithinMapBounds = (longitude: number, latitude: number) =>
+  longitude >= MAP_BOUNDS.sw[0] &&
+  longitude <= MAP_BOUNDS.ne[0] &&
+  latitude >= MAP_BOUNDS.sw[1] &&
+  latitude <= MAP_BOUNDS.ne[1];
 
 // Match web app logic exactly - check salesRepId and name-based properties
 const isJobOwner = (item: any, user: any): boolean => {
@@ -123,6 +133,10 @@ interface LeadMapProps {
   // When the parent makes an optimistic patch to a job (e.g. after referral submit)
   // it passes the updated job here so the open job card reflects instantly.
   updatedJob?: any;
+  // Open the map framed on the rep's office (`user.office[]` from `/company`)
+  // instead of drifting to their GPS position. Used by the full Map screen; the
+  // Lead Center map leaves this off so it still opens on the lead.
+  focusOfficeOnOpen?: boolean;
 }
 
 export const LeadMap = ({
@@ -144,6 +158,7 @@ export const LeadMap = ({
   isSatelliteView = false,
   showRoute: showRouteProp = false,
   updatedJob,
+  focusOfficeOnOpen = false,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
@@ -447,6 +462,84 @@ export const LeadMap = ({
     }
   }, [currentLead]);
 
+  // ─── Opening view: the rep's office ────────────────────────────────────────
+  // The Map screen opens framed on the office from `/company` (`user.office[]`,
+  // coords in `verifiedAddress`) instead of sliding to wherever the rep happens
+  // to be standing. An explicit target — a lead handed in, or a searched
+  // location — always wins, and the 🎯 button still recentres on the rep.
+  const officeCoords = useMemo(() => {
+    const coords = getOfficeCoords(user);
+    if (!coords) {
+      if (focusOfficeOnOpen) {
+        console.log('[LeadMap] No locatable office on the profile — opening on the rep instead.', {
+          office: user?.office,
+        });
+      }
+      return null;
+    }
+    // A point outside the map's bounds (bad or lat/lon-swapped API data) would be
+    // clamped to the edge of the box and open on water — refuse it and fall back.
+    if (!isWithinMapBounds(coords.longitude, coords.latitude)) {
+      console.log('[LeadMap] Office coordinates are outside the map bounds — ignoring.', coords);
+      return null;
+    }
+    if (focusOfficeOnOpen) {
+      console.log('[LeadMap] Opening on office:', coords);
+    }
+    return coords;
+  }, [user, focusOfficeOnOpen]);
+
+  const hasExplicitTarget = !!(currentLead || focusLead);
+  const didFrameOfficeRef = useRef(false);
+  const [mapReady, setMapReady] = useState(false);
+  // Read from inside startTracking's async callbacks, which capture their
+  // creation scope — a ref keeps them looking at the current value.
+  const suppressInitialRecenterRef = useRef(false);
+
+  const officeCoordsRef = useRef(officeCoords);
+
+  useEffect(() => {
+    officeCoordsRef.current = officeCoords;
+    suppressInitialRecenterRef.current =
+      focusOfficeOnOpen && !!officeCoords && !hasExplicitTarget;
+  }, [focusOfficeOnOpen, officeCoords, hasExplicitTarget]);
+
+  // Mapbox reads `defaultSettings` once, at mount — when the office is already
+  // known by then the very first paint lands on it, with no Tampa→office jump.
+  const defaultCameraSettings = useMemo(() => {
+    if (focusOfficeOnOpen && officeCoords && !hasExplicitTarget) {
+      return {
+        centerCoordinate: [officeCoords.longitude, officeCoords.latitude],
+        zoomLevel: OFFICE_ZOOM,
+      };
+    }
+    return {
+      centerCoordinate: [TAMPA_COORDS.longitude, TAMPA_COORDS.latitude],
+      zoomLevel: 10,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!focusOfficeOnOpen || didFrameOfficeRef.current) return;
+    if (hasExplicitTarget || !officeCoords) return;
+    // setCamera before the style has loaded is dropped on the floor, so wait for
+    // the map to report ready. `defaultSettings` has usually put us there already;
+    // this makes it certain, and covers a profile that arrives late.
+    if (!mapReady) return;
+
+    didFrameOfficeRef.current = true;
+    // NB: a non-zero duration is required. `animationDuration: 0` is dropped by
+    // @rnmapbox v10 and the camera falls back to (0,0), which `maxBounds` then
+    // clamps to the edge of the box — i.e. the map opens on open ocean.
+    cameraRef.current?.setCamera({
+      centerCoordinate: [officeCoords.longitude, officeCoords.latitude],
+      zoomLevel: OFFICE_ZOOM,
+      animationMode: 'moveTo',
+      animationDuration: 300,
+    });
+  }, [focusOfficeOnOpen, hasExplicitTarget, officeCoords, mapReady]);
+
   useEffect(() => {
     if (focusLead?.location?.coordinates) {
       const coords = focusLead.location.coordinates;
@@ -464,7 +557,36 @@ export const LeadMap = ({
       const { latitude, longitude } = position.coords;
       setUserLocation({ latitude, longitude });
 
-      // Always animate to user's current location when opening map or clicking GPS
+      // Opening framed on the office? Then the first GPS fix must not steal the
+      // camera — only an explicit 🎯 tap (forceAnimate) recentres on the rep.
+      if (!forceAnimate && suppressInitialRecenterRef.current) return;
+
+      // Out of region — e.g. testing from outside the US. Flying there would be
+      // clamped by `maxBounds` to the edge of the box, which leaves the map on
+      // open ocean. Anchor on the office instead (web parity: map.js's
+      // out-of-region branch), or stay put when there isn't one.
+      if (!isWithinMapBounds(longitude, latitude)) {
+        console.log('[LeadMap] Current position is outside the map bounds — not recentring.', {
+          latitude,
+          longitude,
+        });
+        if (officeCoordsRef.current) {
+          cameraRef.current?.setCamera({
+            centerCoordinate: [
+              officeCoordsRef.current.longitude,
+              officeCoordsRef.current.latitude,
+            ],
+            zoomLevel: OFFICE_ZOOM,
+            animationMode: 'moveTo',
+            animationDuration: 300,
+          });
+        } else if (forceAnimate) {
+          FlashMessage.warning('Your current location is outside the coverage area');
+        }
+        return;
+      }
+
+      // Otherwise animate to the user's current location on open / GPS tap.
       cameraRef.current?.setCamera({
         centerCoordinate: [longitude, latitude],
         zoomLevel: 13,
@@ -776,6 +898,7 @@ export const LeadMap = ({
         rotateEnabled={false}
         pitchEnabled={false}
         onPress={handleMapPress}
+        onDidFinishLoadingMap={() => setMapReady(true)}
         onCameraChanged={(e: any) => {
           if (e?.properties?.zoom != null) zoomRef.current = e.properties.zoom;
         }}
@@ -784,10 +907,7 @@ export const LeadMap = ({
           ref={cameraRef}
           maxBounds={MAP_BOUNDS}
           maxZoomLevel={20}
-          defaultSettings={{
-            centerCoordinate: [TAMPA_COORDS.longitude, TAMPA_COORDS.latitude],
-            zoomLevel: 10,
-          }}
+          defaultSettings={defaultCameraSettings}
         />
 
         {/* Route line */}
