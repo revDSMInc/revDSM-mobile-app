@@ -417,6 +417,31 @@ export function planProviderAbbr(plan?: DealPlan, key?: string): string {
   return '';
 }
 
+/**
+ * Compact one-line plan label for the Investment Center monthly, e.g.
+ * `GS1599, 9.99% APR, 180M` (was the full `1599 (Fixed Rate of 9.99% APR for 180
+ * Months) (Bank Fee: 4.75%)`). Format: `{providerAbbr}{code}, {apr}% APR, {months}M`.
+ * The APR part is dropped for 0% plans; months come from the label's "X Months"
+ * (else `duration`). Falls back to the raw label if nothing parses.
+ */
+export function compactPlanLabel(plans: Record<string, DealPlan>, key?: string): string {
+  const plan = plans[key || ''];
+  if (!plan) return '';
+  const label = String(plan.label || '');
+  const abbr = planProviderAbbr(plan, key);
+  const code = label.match(/^\s*(\d+)/)?.[1] || '';
+  // Catalog APR is stored as a fraction (0.0999) or a whole percent (9.99).
+  const aprRaw = Number(plan.apr) || 0;
+  const aprPct = aprRaw > 0 && aprRaw < 1 ? aprRaw * 100 : aprRaw;
+  const months = Number(label.match(/(\d+)\s*Months?/i)?.[1] || 0) || Number(plan.duration) || 0;
+  const parts: string[] = [];
+  const codePart = `${abbr}${code}`.trim();
+  if (codePart) parts.push(codePart);
+  if (aprPct > 0) parts.push(`${Number(aprPct.toFixed(2))}% APR`);
+  if (months > 0) parts.push(`${months}M`);
+  return parts.length ? parts.join(', ') : label;
+}
+
 export function isFinancing(plans: Record<string, DealPlan>, key?: string): boolean {
   return plans[key || '']?.type === 'financing';
 }

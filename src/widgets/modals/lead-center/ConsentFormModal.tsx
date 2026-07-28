@@ -576,14 +576,19 @@ export const ConsentFormModal = ({
                   opacity: loading ? 0.6 : 1,
                 }}
               >
-                <Text
-                  className="font-semibold text-sm"
-                  style={{
-                    color: !formData.consent || savedPaths.length === 0 ? '#919EABCC' : '#FFFFFF',
-                  }}
-                >
-                  {loading ? '...' : 'Submit'}
-                </Text>
+                {loading ? (
+                  <View className="flex-row items-center" style={{ gap: 6 }}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text className="font-semibold text-sm" style={{ color: '#FFFFFF' }}>Submitting…</Text>
+                  </View>
+                ) : (
+                  <Text
+                    className="font-semibold text-sm"
+                    style={{ color: !formData.consent || savedPaths.length === 0 ? '#919EABCC' : '#FFFFFF' }}
+                  >
+                    Submit
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
           </ScrollView>

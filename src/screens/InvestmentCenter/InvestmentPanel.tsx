@@ -9,7 +9,7 @@ import { useAuth } from '../../hooks/useAuth';
 import {
   DealPricing,
   calcMonthly,
-  planLabelOf,
+  compactPlanLabel,
   isFinancing,
 } from '../DynamicDealCenter/hooks/useDealPricing';
 import {
@@ -21,6 +21,7 @@ import { buildInvestmentJobScope } from '../DynamicDealCenter/utils/investment-j
 import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/format-amount';
 import { ProgramCard } from './ProgramCard';
 import { OptInConfirmModal } from './OptInConfirmModal';
+import { AddPlanModal } from './AddPlanModal';
 
 /**
  * One calculator's Investment Center panel (web parity: `investment-panel.js`),
@@ -47,11 +48,13 @@ interface Props {
   descriptionSchemas: any[];
   lead: any;
   onOptIn: (calculatorId: string, opts: { price: number; paymentMethod?: string; downPayment?: number }) => void;
+  /** Persist the In-Home Monthly shortlist to `lfcalculator.in_home` (debounced). */
+  onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number }) => void;
   /** Pull-to-refresh hook from the screen (refetch calculators / lead). */
   onRefresh?: () => void;
 }
 
-export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onRefresh }: Props) {
+export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
   const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -66,6 +69,25 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const plans = pricing.plans;
   const method = calculator.paymentMethod || pricing.defaultMethod || 'check';
   const isLowesLead = lead?.lowesLead === true;
+
+  // In-Home "Monthly" shortlist (web parity: `addedPlansByProgram`). The rep builds
+  // a selectable $/mo list the customer picks from; the selected plan drives the
+  // In-Home monthly + the opt-in payment method. Hydrated from the persisted
+  // `lfcalculator.inHome` when present, else seeded from the calculator's saved
+  // financing method (a basic cash/card method leaves the shortlist empty). The panel
+  // remounts per calculator (keyed by tab id) so no cross-calculator reset is needed.
+  const seedFinancingKey = isFinancing(plans, method) ? method : '';
+  const savedInHome = calculator.inHome;
+  const seedAdded: string[] = Array.isArray(savedInHome?.addedPlans) && savedInHome.addedPlans.length
+    ? savedInHome.addedPlans
+    : seedFinancingKey ? [seedFinancingKey] : [];
+  const seedSelected: string = savedInHome?.planKey || seedFinancingKey;
+  const [addedPlanKeys, setAddedPlanKeys] = useState<string[]>(seedAdded);
+  const [selectedPlanKey, setSelectedPlanKey] = useState<string>(seedSelected);
+  const [showAddPlan, setShowAddPlan] = useState(false);
+  // The financing plan driving the In-Home monthly + opt-in: the rep's selection,
+  // else the calculator's own method (unchanged from before when nothing is picked).
+  const inHomePlanKey = selectedPlanKey || method;
 
   // Basic (non-financing) method badges shown next to each Grand Total — CK/CC/AMEX
   // for standard leads, ACH/CC for Lowe's (web parity: program-card.js `basicPlans`).
@@ -133,7 +155,56 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const oneYearProgram = result.programs.find((p: any) => !p.isHighlighted) || result.programs[0];
   const inHomeGrandTotal = inHomeProgram?.grandTotal ?? msrp;
   const oneYearGrandTotal = oneYearProgram?.grandTotal ?? msrp;
-  const inHomeMonthly = result.monthly;
+  // In-Home monthly follows the selected shortlist plan (same base `result.monthly`
+  // uses — endPrice − downPay — so it's unchanged when the rep hasn't re-picked).
+  const inHomeMonthlyBase = Math.max(0, endPrice - downPay);
+  const inHomeMonthly = useMemo(
+    () => calcMonthly(plans, inHomeMonthlyBase, inHomePlanKey),
+    [plans, inHomeMonthlyBase, inHomePlanKey],
+  );
+  // The shortlist rows the In-Home card renders (financing plans only, each with
+  // its $/mo on the current base + a compact terms label).
+  const inHomeShortlist = useMemo(
+    () =>
+      addedPlanKeys
+        .filter((k) => isFinancing(plans, k))
+        .map((k) => ({ key: k, monthly: calcMonthly(plans, inHomeMonthlyBase, k), terms: compactPlanLabel(plans, k) })),
+    [addedPlanKeys, plans, inHomeMonthlyBase],
+  );
+
+  // Persist the shortlist to `lfcalculator.inHome` (debounced through the calculator
+  // hook, so it coordinates with the same in-flight guard the other saves use — no
+  // racing direct PUT). Fired on add / select / remove; the seed itself isn't pushed
+  // until the rep first interacts (it mirrors the already-persisted paymentMethod).
+  const persistInHome = (added: string[], selected: string) => {
+    const planKey = selected && isFinancing(plans, selected) ? selected : '';
+    onSetInHome?.(calculator.id, {
+      planKey,
+      addedPlans: added,
+      apr: Number(plans[planKey]?.apr) || 0,
+      monthlyPayment: calcMonthly(plans, inHomeMonthlyBase, planKey),
+      grandTotal: inHomeGrandTotal,
+    });
+  };
+  const handleAddPlan = (key: string) => {
+    setShowAddPlan(false);
+    const nextAdded = addedPlanKeys.includes(key) ? addedPlanKeys : [...addedPlanKeys, key];
+    setAddedPlanKeys(nextAdded);
+    setSelectedPlanKey(key); // adding a plan also selects it (web parity)
+    persistInHome(nextAdded, key);
+  };
+  const handleRemovePlan = (key: string) => {
+    const nextAdded = addedPlanKeys.filter((k) => k !== key);
+    const nextSel = selectedPlanKey === key ? '' : selectedPlanKey;
+    setAddedPlanKeys(nextAdded);
+    setSelectedPlanKey(nextSel);
+    persistInHome(nextAdded, nextSel);
+  };
+  const handleSelectPlan = (key: string) => {
+    setSelectedPlanKey(key);
+    persistInHome(addedPlanKeys, key);
+  };
+
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
 
@@ -155,8 +226,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         jobBuilderConfig,
         descriptionSchemas,
         lead,
+        calculatorDescriptions: calculator.descriptions,
       }),
-    [calculator.entries, verticals, jobBuilderConfig, descriptionSchemas, lead],
+    [calculator.entries, verticals, jobBuilderConfig, descriptionSchemas, lead, calculator.descriptions],
   );
 
   // Product/category names present in this calculator (for the heading).
@@ -173,6 +245,11 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     );
     return Array.from(new Set(names));
   }, [calculator.entries, verticals]);
+
+  // "Includes the Following" list — the calculator's job-scope descriptions when
+  // present, otherwise the product/category names. Shown as bullet points below the
+  // heading (was a "·"-joined subtitle line for the product names).
+  const inclusions = jobScope.length > 0 ? jobScope : productNames;
 
   // ── Renders: resolve fresh secure URLs (stored ones may have expired) ────────
   const renders: any[] = useMemo(
@@ -201,7 +278,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
 
   const confirmInHome = () => {
     setShowConfirm(false);
-    onOptIn(calculator.id, { price: endPrice, paymentMethod: method, downPayment: downPay });
+    onOptIn(calculator.id, { price: endPrice, paymentMethod: inHomePlanKey, downPayment: downPay });
   };
 
   const onPullRefresh = async () => {
@@ -303,26 +380,35 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 6 }}>Loading renders…</Text>
         </View>
       ) : renders.length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingBottom: 4 }} style={{ marginBottom: 16 }}>
+        // Render pairs are STACKED VERTICALLY (web parity: investment-panel.js
+        // `<Stack spacing={2}>`), each full-width so the before/after aren't tiny —
+        // was a horizontal scroller of small 220px cards. Within a pair the two
+        // photos sit side by side, each a 4:3 half that scales with the screen.
+        <View style={{ gap: 16, marginBottom: 16 }}>
           {renders.map((pair, i) => {
             const b = beforeUriOf(pair);
             const a = afterUriOf(pair);
             return (
-              <View key={pair?.runId || i} style={{ width: 220, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                <View style={{ flexDirection: 'row' }}>
+              <View key={pair?.runId || i}>
+                {!!pair?.viewLabel && (
+                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
+                    {pair.viewLabel} · revRender™
+                  </Text>
+                )}
+                <View style={{ flexDirection: 'row', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <TouchableOpacity activeOpacity={0.85} disabled={!b} onPress={() => b && setPreview(b)} style={{ flex: 1 }}>
-                    <Image source={{ uri: b }} style={{ width: '100%', height: 110, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
-                    <Text style={{ fontSize: 8, fontWeight: '900', color: '#94A3B8', textAlign: 'center', paddingVertical: 3 }}>BEFORE</Text>
+                    <Image source={{ uri: b }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
+                    <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', textAlign: 'center', paddingVertical: 4 }}>BEFORE</Text>
                   </TouchableOpacity>
                   <TouchableOpacity activeOpacity={0.85} disabled={!a} onPress={() => a && setPreview(a)} style={{ flex: 1 }}>
-                    <Image source={{ uri: a }} style={{ width: '100%', height: 110, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
-                    <Text style={{ fontSize: 8, fontWeight: '900', color: '#4CBB17', textAlign: 'center', paddingVertical: 3 }}>AFTER</Text>
+                    <Image source={{ uri: a }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
+                    <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', textAlign: 'center', paddingVertical: 4 }}>AFTER</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             );
           })}
-        </ScrollView>
+        </View>
       ) : null}
 
       {/* "Your Investment with {company}" heading (web parity) + the product list */}
@@ -334,24 +420,21 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           </Text>
           <View style={{ flex: 1, height: 1, backgroundColor: '#E2E8F0' }} />
         </View>
-        {productNames.length > 0 && (
-          <Text style={{ fontSize: 12, fontWeight: '800', color: '#4CBB17', marginTop: 4, textAlign: 'center' }}>
-            {productNames.join(' · ')}
-          </Text>
-        )}
       </View>
 
-      {/* Includes the Following — the DYNAMIC job scope matrix */}
+      {/* Includes the Following — job-scope descriptions (else product/category
+          names), as bullet points below the heading. */}
       <View style={{ marginBottom: 18 }}>
-        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 12 }}>Includes the Following:</Text>
-        {jobScope.length === 0 ? (
+        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 10 }}>Includes the Following:</Text>
+        <View style={{ height: 2, backgroundColor: '#16324F', borderRadius: 1, marginBottom: 14 }} />
+        {inclusions.length === 0 ? (
           <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', fontStyle: 'italic' }}>
             Job scope will appear once products are configured.
           </Text>
         ) : (
-          jobScope.map((line, i) => (
+          inclusions.map((line, i) => (
             <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10, paddingHorizontal: 4 }}>
-              <Ionicons name="checkmark-circle" size={16} color="#4CBB17" style={{ marginTop: 1, marginRight: 8 }} />
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4CBB17', marginTop: 7, marginRight: 10 }} />
               <Text style={{ flex: 1, fontSize: 14, color: '#1C252E', lineHeight: 20 }}>{line}</Text>
             </View>
           ))
@@ -403,7 +486,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           onSelectBadge={setSelectedBadge}
           downPaymentSlot={oneYearDownEditor}
           monthly={oneYearMonthly}
-          planLabel={oneYearMonthly > 0 ? planLabelOf(plans, oneYearKey) : undefined}
+          planLabel={oneYearMonthly > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
           selected={selectedProgram === 'oneyear'}
           crossedOff={selectedProgram === 'inhome'}
           optInLabel="Opt In (1-Yr)"
@@ -419,8 +502,12 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           badges={basicBadges}
           selectedBadgeKey={effectiveBadge}
           onSelectBadge={setSelectedBadge}
-          monthly={inHomeMonthly}
-          planLabel={inHomeMonthly > 0 ? planLabelOf(plans, method) : undefined}
+          planInteractive
+          shortlistPlans={inHomeShortlist}
+          selectedPlanKey={selectedPlanKey}
+          onSelectPlan={handleSelectPlan}
+          onRemovePlan={handleRemovePlan}
+          onAddPlan={() => setShowAddPlan(true)}
           downPaymentSlot={inHomeDownEditor}
           selected={selectedProgram === 'inhome'}
           crossedOff={selectedProgram === 'oneyear'}
@@ -434,12 +521,24 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         visible={showConfirm}
         price={inHomeGrandTotal}
         monthly={inHomeMonthly}
-        planLabel={inHomeMonthly > 0 ? planLabelOf(plans, method) : undefined}
+        planLabel={inHomeMonthly > 0 ? compactPlanLabel(plans, inHomePlanKey) : undefined}
         downPayment={downPay}
-        method={method}
+        method={effectiveBadge}
         isLowesLead={lead?.lowesLead === true}
         onConfirm={confirmInHome}
         onClose={() => { setShowConfirm(false); setSelectedProgram(null); }}
+      />
+
+      {/* "+ Add Plan" financing picker for the In-Home Monthly shortlist. Gates on
+          the current end price (− down payment) and adds financing plans only. */}
+      <AddPlanModal
+        visible={showAddPlan}
+        price={inHomeMonthlyBase}
+        plans={plans}
+        categories={pricing.dropAddCategories}
+        added={addedPlanKeys}
+        onAdd={handleAddPlan}
+        onClose={() => setShowAddPlan(false)}
       />
 
       {/* Full-screen render preview */}
