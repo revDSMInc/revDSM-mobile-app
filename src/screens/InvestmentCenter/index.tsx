@@ -53,7 +53,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const pricing = useDealPricing(lead);
   const { config: jobBuilderConfig, isLoading: jbLoading } = useDynamicCalculatorSchemas();
   const { schemas: descriptionSchemas } = useGetDescriptionSchemas();
-  const { tabs, activeTabId, setActiveTabId, loading: calcLoading } = useDynamicCalculators(lead, verticals);
+  const { tabs, activeTabId, setActiveTabId, loading: calcLoading, handleSetInHome } = useDynamicCalculators(lead, verticals);
 
   // ── Consent gate ────────────────────────────────────────────────────────────
   const consentMutation = useSubmitDigitalConsentMutation();
@@ -270,6 +270,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
               descriptionSchemas={descriptionSchemas}
               lead={lead}
               onOptIn={handleOptIn}
+              onSetInHome={handleSetInHome}
               onRefresh={() => {
                 const lid = lead?._id || lead?.leadId || lead?.id;
                 if (lid) {

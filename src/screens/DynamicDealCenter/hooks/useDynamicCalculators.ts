@@ -86,6 +86,20 @@ export interface CalcTab {
     grandTotal?: number;
     isDefault?: boolean;
   } | null;
+  /**
+   * The In-Home Pre-Order "Monthly" shortlist the rep builds in the Investment
+   * Center (persisted as `lfcalculator.inHome`): the financing plans added for the
+   * customer to compare (`addedPlans`) and which one is selected (`planKey`), plus
+   * the resolved values so the read side can show them without recomputing. Persisted
+   * on the next debounced save; hydrated back on reopen so the shortlist survives.
+   */
+  inHome?: {
+    planKey?: string;
+    addedPlans?: string[];
+    apr?: number;
+    monthlyPayment?: number;
+    grandTotal?: number;
+  } | null;
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
   /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
@@ -150,7 +164,10 @@ function tabSignature(tab: CalcTab): string {
   // 1-Year monthly plan: mode + resolved plan key + default flag.
   const oy = tab.oneYearMonthlyPlan;
   const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${tab.priceScopeSig ?? ''}`;
+  // In-Home Monthly shortlist: selected plan + the added-plan list.
+  const ih = tab.inHome;
+  const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}` : '';
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${inHomeSig}#${tab.priceScopeSig ?? ''}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -397,6 +414,8 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       // selection both persist on the calculator so the Investment Center reads them.
       selectedRenders: tab.selectedRenders || [],
       oneYearMonthlyPlan: tab.oneYearMonthlyPlan ?? null,
+      // Investment Center In-Home Monthly shortlist (added plans + selection).
+      inHome: tab.inHome ?? null,
       schemaSnapshotId: snapshotId(),
       leadId,
       enteredBy,
@@ -546,6 +565,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               discountPercentage: Number(c.discountPercentage) || undefined,
               selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
               oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
+              inHome: c.inHome ?? c.in_home ?? null,
               persisted: true,
             };
           });
@@ -932,6 +952,24 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   );
 
   /**
+   * Set the In-Home Monthly shortlist (added plans + selection) from the Investment
+   * Center. Persisted as `in_home` on the next debounced save (web keeps this local;
+   * mobile persists it so the shortlist survives reopen). A no-op merge with the same
+   * value leaves the signature unchanged, so it won't trigger a redundant save.
+   */
+  const handleSetInHome = useCallback(
+    (tabId: string, inHome: CalcTab['inHome']) => {
+      setTabs((prev) => {
+        const next = prev.map((t) => (t.id === tabId ? { ...t, inHome } : t));
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /**
    * Persist the entered Rollout End Price on the calculator (debounced save), and
    * snapshot the job scope it was priced against so a later calculator edit can
    * surface the "review the end price" warning. Previously the typed price lived only
@@ -1077,6 +1115,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     handleSetDownPayment,
     handleSetRenders,
     handleSetOneYearMonthly,
+    handleSetInHome,
     handleSetPrice,
     handleAckScopeWarning,
   };

@@ -1,5 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { useAnimatedStyle, LinearTransition, FadeOut } from 'react-native-reanimated';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 /**
@@ -22,6 +24,34 @@ export interface ProgramRow {
   green?: boolean;
 }
 
+/** One financing plan in the In-Home "Monthly" shortlist (web `shortlistPlans`). */
+export interface ShortlistPlan {
+  key: string;
+  monthly: number;
+  /** compact terms label, e.g. "GS1599, 9.99% APR, 180M" */
+  terms: string;
+}
+
+/**
+ * Right-swipe "Delete" action for a Monthly-Options plan row (mirrors the dynamic
+ * rollout's `SwipeDeleteAction`). Narrower to fit the compact program card.
+ */
+function PlanSwipeDelete({ drag, onDelete }: { drag: any; onDelete: () => void }) {
+  const styleAnimation = useAnimatedStyle(() => ({ transform: [{ translateX: drag.value + 64 }] }));
+  return (
+    <View style={{ width: 64, marginLeft: 6, marginBottom: 8 }}>
+      <Animated.View style={styleAnimation}>
+        <TouchableOpacity
+          onPress={onDelete}
+          style={{ backgroundColor: '#FF5630', height: '100%', borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 11 }}>Delete</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
 interface Props {
   title: string;
   highlighted?: boolean;
@@ -38,6 +68,15 @@ interface Props {
   downPayment?: number;
   /** Optional editable down-payment control — replaces the read-only line. */
   downPaymentSlot?: React.ReactNode;
+  /** In-Home (highlighted) card only: render the interactive "Monthly" shortlist —
+   *  a selectable $/mo list the rep builds (add/select/swipe-to-delete) — instead
+   *  of the single read-only monthly the 1-Year card shows. */
+  planInteractive?: boolean;
+  shortlistPlans?: ShortlistPlan[];
+  selectedPlanKey?: string;
+  onSelectPlan?: (key: string) => void;
+  onRemovePlan?: (key: string) => void;
+  onAddPlan?: () => void;
   /** Basic (non-financing) method badges shown next to Grand Total, e.g. CK/CC/AMEX. */
   badges?: { key: string; label: string }[];
   selectedBadgeKey?: string;
@@ -60,6 +99,7 @@ function Row({ label, value, green }: ProgramRow) {
 
 export function ProgramCard({
   title, highlighted = false, priceLock = false, rows, reserveRows, grandTotal, monthly, planLabel, downPayment, downPaymentSlot,
+  planInteractive = false, shortlistPlans, selectedPlanKey, onSelectPlan, onRemovePlan, onAddPlan,
   badges, selectedBadgeKey, onSelectBadge,
   selected = false, crossedOff = false, optInLabel, onOptIn, onRevert,
 }: Props) {
@@ -134,14 +174,60 @@ export function ProgramCard({
           </View>
         ) : null}
 
-        {(monthly ?? 0) > 0 && (
+        {planInteractive ? (
+          // In-Home: an interactive "Monthly" shortlist (web parity). The rep adds
+          // financing plans the customer picks from; each is selectable (radio →
+          // check) and swipe-left deletes it. Empty until the first plan is added.
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 6, textTransform: 'uppercase' }}>Monthly</Text>
+            {!shortlistPlans || shortlistPlans.length === 0 ? (
+              <Text style={{ fontSize: 10, color: '#94A3B8', marginBottom: 8, lineHeight: 14 }}>No plan selected — add one below.</Text>
+            ) : (
+              shortlistPlans.map((opt) => {
+                const isSel = selectedPlanKey === opt.key;
+                return (
+                  <Animated.View key={opt.key} layout={LinearTransition} exiting={FadeOut}>
+                    <Swipeable
+                      renderRightActions={(_prog, drag) => <PlanSwipeDelete drag={drag} onDelete={() => onRemovePlan?.(opt.key)} />}
+                      rightThreshold={36}
+                      onSwipeableWillOpen={() => onRemovePlan?.(opt.key)}
+                    >
+                      <TouchableOpacity
+                        onPress={() => onSelectPlan?.(opt.key)}
+                        activeOpacity={0.9}
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', backgroundColor: isSel ? '#4CBB170D' : '#fff', marginBottom: 8 }}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '900', color: isSel ? '#15803D' : '#1C252E', flexShrink: 0 }}>
+                          {opt.monthly > 0 ? fmt(opt.monthly) : '—'}
+                          <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>/mo</Text>
+                        </Text>
+                        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5, minWidth: 0 }}>
+                          {!!opt.terms && (
+                            <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8', flexShrink: 1 }}>{opt.terms}</Text>
+                          )}
+                          <Ionicons name={isSel ? 'checkmark-circle' : 'ellipse-outline'} size={17} color={isSel ? '#4CBB17' : '#CBD5E1'} />
+                        </View>
+                      </TouchableOpacity>
+                    </Swipeable>
+                  </Animated.View>
+                );
+              })
+            )}
+            <TouchableOpacity
+              onPress={onAddPlan}
+              style={{ paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: '#4CBB17', backgroundColor: '#4CBB170D', alignItems: 'center', marginTop: 2 }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#15803D' }}>+ Add Plan</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (monthly ?? 0) > 0 ? (
           <View style={{ alignItems: 'center', marginTop: 10 }}>
             <Text style={{ fontSize: 16, fontWeight: '900', color: '#60A5FA' }}>{fmt(monthly!)}/mo</Text>
             {!!planLabel && (
               <Text style={{ fontSize: 8, color: '#94A3B8', textAlign: 'center', marginTop: 2 }} numberOfLines={2}>{planLabel}</Text>
             )}
           </View>
-        )}
+        ) : null}
 
         <TouchableOpacity
           onPress={onOptIn}
