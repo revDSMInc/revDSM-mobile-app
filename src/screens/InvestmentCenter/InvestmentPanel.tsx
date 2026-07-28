@@ -84,13 +84,31 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const seedAdded: string[] = Array.isArray(savedInHome?.addedPlans) && savedInHome.addedPlans.length
     ? savedInHome.addedPlans
     : seedFinancingKey ? [seedFinancingKey] : [];
-  const seedSelected: string = savedInHome?.planKey || seedFinancingKey;
+  // The panel's DEFAULT payment selection = the method the rep actually chose in the Deal
+  // Center (web parity: `defaultPlanKey = calculator.paymentMethod && plans[...] ? ... : ''`).
+  // It stays EMPTY when the calculator has no saved method, so NOTHING is pre-selected on
+  // landing — a CK badge lights up only when the deal-center method IS `check`. NOTE: this
+  // deliberately does NOT use `method`'s `'check'` fallback (which was pre-selecting CK for
+  // everyone regardless of what the rep picked upstream).
+  const defaultChoice = calculator.paymentMethod && plans[calculator.paymentMethod] ? calculator.paymentMethod : '';
+  const seedChoice = savedInHome?.planKey || defaultChoice;
   const [addedPlanKeys, setAddedPlanKeys] = useState<string[]>(seedAdded);
-  const [selectedPlanKey, setSelectedPlanKey] = useState<string>(seedSelected);
+  // Single "active payment choice" for the WHOLE panel — SHARED by BOTH program cards
+  // (web parity: one payment method per lead). It holds EITHER a financing plan key
+  // (→ a "Monthly" shortlist row is selected on In-Home; no basic badge) OR a basic method
+  // key (→ the SAME CK/CC/AMEX badge lights up on BOTH cards; no shortlist row). Because
+  // every badge/plan control writes this one value: (a) selecting a badge on one card
+  // selects it on both, and (b) badges and the monthly plan are mutually exclusive.
+  const [paymentChoice, setPaymentChoice] = useState<string>(seedChoice);
   const [showAddPlan, setShowAddPlan] = useState(false);
-  // The financing plan driving the In-Home monthly + opt-in: the rep's selection,
-  // else the calculator's own method (unchanged from before when nothing is picked).
-  const inHomePlanKey = selectedPlanKey || method;
+  const choiceIsFinancing = isFinancing(plans, paymentChoice);
+  // Shortlist highlight + monthly/opt-in driver: the choice when it's a financing plan
+  // (empty when a basic method is active — no monthly row is selected then).
+  const selectedPlanKey = choiceIsFinancing ? paymentChoice : '';
+  const inHomePlanKey = paymentChoice;
+  // Basic CK/CC/AMEX badge highlight — SHARED by both cards: the choice when it's a basic
+  // method; none when a financing plan is the active choice (a monthly row is selected).
+  const badgeSelection = choiceIsFinancing ? '' : paymentChoice;
 
   // Basic (non-financing) method badges shown next to each Grand Total — CK/CC/AMEX
   // for standard leads, ACH/CC for Lowe's (web parity: program-card.js `basicPlans`).
@@ -108,9 +126,6 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     });
     return out;
   }, [plans, isLowesLead]);
-  const [selectedBadge, setSelectedBadge] = useState('');
-  // Effective badge: the rep's pick, else the calc's method if it's a basic one, else the first.
-  const effectiveBadge = selectedBadge || basicBadges.find((b) => b.key === method)?.key || basicBadges[0]?.key || 'check';
 
   // An accepted drop is the negotiated current price — present that (else the
   // confirmed end price). Both flow through the SAME computeRolloutResult the rollout
@@ -189,23 +204,28 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       grandTotal: inHomeGrandTotal,
     });
   };
+  // The one write path for the shared choice — used by BOTH cards' CK/CC/AMEX badges AND
+  // the In-Home shortlist rows. Selecting any of them lights it up on both cards and
+  // deselects the other kind (badge ⇄ monthly), because they all read this single value.
+  const selectPaymentChoice = (key: string) => {
+    setPaymentChoice(key);
+    persistInHome(addedPlanKeys, key);
+  };
   const handleAddPlan = (key: string) => {
     setShowAddPlan(false);
     const nextAdded = addedPlanKeys.includes(key) ? addedPlanKeys : [...addedPlanKeys, key];
     setAddedPlanKeys(nextAdded);
-    setSelectedPlanKey(key); // adding a plan also selects it (web parity)
+    setPaymentChoice(key); // adding a plan also selects it (web parity)
     persistInHome(nextAdded, key);
   };
   const handleRemovePlan = (key: string) => {
     const nextAdded = addedPlanKeys.filter((k) => k !== key);
-    const nextSel = selectedPlanKey === key ? '' : selectedPlanKey;
+    // If the removed plan was the active choice, revert to the deal-center default
+    // (empty when none) rather than leaving a dangling selection.
+    const nextChoice = paymentChoice === key ? defaultChoice : paymentChoice;
     setAddedPlanKeys(nextAdded);
-    setSelectedPlanKey(nextSel);
-    persistInHome(nextAdded, nextSel);
-  };
-  const handleSelectPlan = (key: string) => {
-    setSelectedPlanKey(key);
-    persistInHome(addedPlanKeys, key);
+    setPaymentChoice(nextChoice);
+    persistInHome(nextAdded, nextChoice);
   };
 
   const srVetDiscount = msrp * (seniorVetPct / 100);
@@ -219,20 +239,25 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const oneYear = calculator.oneYearMonthlyPlan;
   // Web parity (`investment-panel.js`: `const mode = saved?.mode || 'match'`): when the
   // rep hasn't explicitly configured a 1-Year monthly plan, the 1-Year card MIRRORS the
-  // In-Home (highlighted) selection — i.e. the plan the rep actually picked — rather than
-  // snapping to the 9.99% default. Previously mobile fell through to `defaultOneYearKey`
-  // (the 9.99% GreenSky plan), so selecting Wells Fargo on In-Home still showed
-  // "GS… 9.99% APR" on the 1-Year card. `'match'` uses the same key the In-Home card
-  // resolves (`inHomePlanKey = selectedPlanKey || method`); `'default'` keeps the 9.99%
-  // plan; `'custom'` pins the saved plan key.
+  // In-Home financing selection — the plan the rep actually picked — rather than snapping
+  // to the 9.99% default (which showed "GS… 9.99% APR" even after Wells Fargo was chosen).
+  // `'match'` resolves to a FINANCING key that stays stable while the rep toggles the
+  // shared basic badges: the live In-Home shortlist pick (`selectedPlanKey`), else the
+  // deal-center financing method (`seedFinancingKey`), else the 9.99% default — so the
+  // 1-Year monthly never blanks out when CK/CC/AMEX is selected. `'default'` keeps the
+  // 9.99% plan; `'custom'` pins the saved plan key.
   const oneYearMode = oneYear?.mode || 'match';
   const oneYearKey =
     oneYearMode === 'match'
-      ? inHomePlanKey
+      ? selectedPlanKey || seedFinancingKey || defaultOneYearKey
       : oneYearMode === 'custom'
         ? oneYear?.planKey || defaultOneYearKey
         : defaultOneYearKey;
   const oneYearMonthly = useMemo(() => calcMonthly(plans, oneYearGrandTotal, oneYearKey), [plans, oneYearGrandTotal, oneYearKey]);
+  // Hide the 1-Year read-only monthly when a basic CK/CC/AMEX method is the active choice
+  // — the customer picked a cash/card method, so there's no monthly to show (mirrors the
+  // In-Home shortlist deselecting, and the web 1-Year monthly box deselecting on a badge).
+  const oneYearMonthlyShown = badgeSelection ? 0 : oneYearMonthly;
 
   // Dynamic per-product job-scope matrix (no footages/colors) — the corrected data.
   const jobScope = useMemo(
@@ -529,11 +554,11 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           reserveRows={maxProgramRows}
           grandTotal={oneYearGrandTotal}
           badges={basicBadges}
-          selectedBadgeKey={effectiveBadge}
-          onSelectBadge={setSelectedBadge}
+          selectedBadgeKey={badgeSelection}
+          onSelectBadge={selectPaymentChoice}
           downPaymentSlot={oneYearDownEditor}
-          monthly={oneYearMonthly}
-          planLabel={oneYearMonthly > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
+          monthly={oneYearMonthlyShown}
+          planLabel={oneYearMonthlyShown > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
           selected={selectedProgram === 'oneyear'}
           crossedOff={selectedProgram === 'inhome'}
           optInLabel="Opt In (1-Yr)"
@@ -547,12 +572,12 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           reserveRows={maxProgramRows}
           grandTotal={inHomeGrandTotal}
           badges={basicBadges}
-          selectedBadgeKey={effectiveBadge}
-          onSelectBadge={setSelectedBadge}
+          selectedBadgeKey={badgeSelection}
+          onSelectBadge={selectPaymentChoice}
           planInteractive
           shortlistPlans={inHomeShortlist}
           selectedPlanKey={selectedPlanKey}
-          onSelectPlan={handleSelectPlan}
+          onSelectPlan={selectPaymentChoice}
           onRemovePlan={handleRemovePlan}
           onAddPlan={() => setShowAddPlan(true)}
           downPaymentSlot={inHomeDownEditor}
@@ -570,7 +595,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         monthly={inHomeMonthly}
         planLabel={inHomeMonthly > 0 ? compactPlanLabel(plans, inHomePlanKey) : undefined}
         downPayment={downPay}
-        method={effectiveBadge}
+        method={paymentChoice}
         isLowesLead={lead?.lowesLead === true}
         onConfirm={confirmInHome}
         onClose={() => { setShowConfirm(false); setSelectedProgram(null); }}

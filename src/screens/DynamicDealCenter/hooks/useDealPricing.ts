@@ -437,7 +437,10 @@ export function compactPlanLabel(plans: Record<string, DealPlan>, key?: string):
   const parts: string[] = [];
   const codePart = `${abbr}${code}`.trim();
   if (codePart) parts.push(codePart);
-  if (aprPct > 0) parts.push(`${Number(aprPct.toFixed(2))}% APR`);
+  // Always surface the APR — a deferred-interest / 0% plan shows "0% APR" rather than
+  // omitting it, so the customer always sees the rate (web parity: `formatPlanTerms`
+  // returns "0% APR" when the plan carries no APR).
+  parts.push(aprPct > 0 ? `${Number(aprPct.toFixed(2))}% APR` : '0% APR');
   if (months > 0) parts.push(`${months}M`);
   return parts.length ? parts.join(', ') : label;
 }
