@@ -245,7 +245,7 @@ export function DynamicInspectionView({ lead, products, onClose, refetch }: Dyna
   const clearPending = () => setPendingPhoto(null);
 
   const onSlotClick = (category: InspectionCategory, slot: InspectionSlot, key: string) => {
-    if (capture.uploadingKeys[key] || capture.deletingKeys[key]) return;
+    if (capture.deletingKeys[key]) return;
 
     const capacity = slotCapacity(category, slot);
     const photos = capture.getPhotos(category.label, slot.storageName);

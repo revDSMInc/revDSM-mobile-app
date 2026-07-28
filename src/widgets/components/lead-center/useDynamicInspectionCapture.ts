@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LeadService } from '../../../services/api/leads';
 import { queryClient } from '../../../services/api/queryClient';
 import { uploadQueueManager } from '../../../utils/uploadQueue';
+import { resolveS3Url } from '../../../utils/s3-utils';
 import { logEvent } from '../../../services/api/LoggerService';
 import {
   indexSchema,
@@ -140,6 +141,12 @@ export function useDynamicInspectionCapture({
   const [localExtras, setLocalExtras] = useState<Record<string, InspectionSlot[]>>({});
   // Optimistic previews for a just-captured photo, keyed by subKey(scopedLabel, storage).
   const [capturedPreviews, setCapturedPreviews] = useState<Record<string, string>>({});
+  // Mirror of `capturedPreviews` for the resolve effect (whose deps don't include it),
+  // so a just-captured LOCAL uri can back the server photo instantly.
+  const capturedPreviewsRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    capturedPreviewsRef.current = capturedPreviews;
+  }, [capturedPreviews]);
   const [uploadingKeys, setUploadingKeys] = useState<Record<string, boolean>>({});
   const [deletingKeys, setDeletingKeys] = useState<Record<string, boolean>>({});
   const [movingKeys, setMovingKeys] = useState<Record<string, boolean>>({});
@@ -202,9 +209,78 @@ export function useDynamicInspectionCapture({
         if (p.bucketName && p.s3url) filePaths.push({ bucketName: p.bucketName, filePath: p.s3url });
       });
 
-      let secureMap: Record<string, string | null> = {};
+      // Build the displayed photo map for a given signed-URL map. The `secureUrl`
+      // falls back to the just-captured LOCAL preview (always renders) and then a
+      // direct S3 url, so a photo shows INSTANTLY without waiting on the signed-URL
+      // round trip — that wait is what made added photos "take time to come".
+      const buildMap = (secureMap: Record<string, string | null>) => {
+        const fresh: Record<string, CapturedPhoto[]> = {};
+        scoped.forEach((p) => {
+          const k = subKey(p.category, p.subcategory);
+          // A just-moved photo: if this (possibly stale) refetch still reports it at
+          // the OLD slot, drop it so it doesn't flash back; once it appears at the new
+          // slot the guard clears and normal handling resumes.
+          if (p.s3url && pendingMovesRef.current.has(p.s3url)) {
+            const target = pendingMovesRef.current.get(p.s3url);
+            if (k === target) pendingMovesRef.current.delete(p.s3url);
+            else return;
+          }
+          if (!fresh[k]) fresh[k] = [];
+          if (p.s3url && fresh[k].some((x) => x.s3url === p.s3url)) return;
+          fresh[k].push({
+            ...p,
+            secureUrl:
+              p.secureUrl ||
+              secureMap[`${p.bucketName}:${p.s3url}`] ||
+              capturedPreviewsRef.current[k] || // just-captured local uri (always loads)
+              resolveS3Url(p.s3url), // direct S3 url so the tile never sits empty
+          });
+        });
+
+        // Merge fresh photos into the monotonic cache: a transient refetch that is
+        // missing a photo must NOT drop it, but a fresh copy DOES refresh a stale
+        // one (e.g. a newly-resolved secureUrl). Explicitly-deleted s3urls are
+        // pruned so real deletions still take effect.
+        const merged: Record<string, CapturedPhoto[]> = {};
+        const allKeys = new Set([...Object.keys(knownPhotosRef.current), ...Object.keys(fresh)]);
+        allKeys.forEach((k) => {
+          const list: CapturedPhoto[] = [];
+          const push = (p: CapturedPhoto) => {
+            if (p.s3url && pending.has(p.s3url)) return; // just deleted
+            const idx = p.s3url ? list.findIndex((e) => e.s3url && e.s3url === p.s3url) : -1;
+            if (idx >= 0) {
+              const existing = list[idx];
+              const incomingUrl = p.secureUrl || '';
+              const existingUrl = existing.secureUrl || '';
+              const rawS3 = resolveS3Url(p.s3url);
+              const isIncomingFallback = !incomingUrl || incomingUrl === rawS3;
+              const isExistingValid = existingUrl && existingUrl !== rawS3;
+
+              list[idx] = {
+                ...p,
+                secureUrl: (isIncomingFallback && isExistingValid) ? existingUrl : incomingUrl,
+              };
+            } else {
+              list.push(p);
+            }
+          };
+          (knownPhotosRef.current[k] || []).forEach(push);
+          (fresh[k] || []).forEach(push);
+          if (list.length) merged[k] = list;
+        });
+        return merged;
+      };
+
+      // ── Phase 1: render INSTANTLY from the local preview / direct S3 url. ──
+      if (cancelled) return;
+      const immediate = buildMap({});
+      knownPhotosRef.current = immediate;
+      setPhotosBySubcat(immediate);
+
+      // ── Phase 2: resolve the real signed URLs in the background, swap them in. ──
       if (filePaths.length > 0) {
         setLoading(true);
+        const secureMap: Record<string, string | null> = {};
         try {
           const res = await LeadService.getSecureUrls(filePaths);
           const data = res?.data?.data || res?.data || [];
@@ -212,66 +288,26 @@ export function useDynamicInspectionCapture({
             const entry = Array.isArray(data)
               ? data.find((d: any) => d?.filePath === fp.filePath) || data[i]
               : null;
-            secureMap[`${fp.bucketName}:${fp.filePath}`] =
-              entry?.secureUrl || entry?.url || null;
+            secureMap[`${fp.bucketName}:${fp.filePath}`] = entry?.secureUrl || entry?.url || null;
           });
         } catch (e) {
-          secureMap = {};
+          // keep the phase-1 fallbacks
         }
+        if (cancelled) return;
+        const signed = buildMap(secureMap);
+        knownPhotosRef.current = signed;
+        setPhotosBySubcat(signed);
       }
-
-      if (cancelled) return;
-
-      const fresh: Record<string, CapturedPhoto[]> = {};
-      scoped.forEach((p) => {
-        const k = subKey(p.category, p.subcategory);
-        // A just-moved photo: if this (possibly stale) refetch still reports it at
-        // the OLD slot, drop it so it doesn't flash back; once it appears at the new
-        // slot the guard clears and normal handling resumes.
-        if (p.s3url && pendingMovesRef.current.has(p.s3url)) {
-          const target = pendingMovesRef.current.get(p.s3url);
-          if (k === target) pendingMovesRef.current.delete(p.s3url);
-          else return;
-        }
-        if (!fresh[k]) fresh[k] = [];
-        if (p.s3url && fresh[k].some((x) => x.s3url === p.s3url)) return;
-        fresh[k].push({
-          ...p,
-          secureUrl: p.secureUrl || secureMap[`${p.bucketName}:${p.s3url}`] || null,
-        });
-      });
-
-      // Merge fresh photos into the monotonic cache: a transient refetch that is
-      // missing a photo must NOT drop it, but a fresh copy DOES refresh a stale
-      // one (e.g. a newly-resolved secureUrl). Explicitly-deleted s3urls are
-      // pruned so real deletions still take effect.
-      const merged: Record<string, CapturedPhoto[]> = {};
-      const allKeys = new Set([...Object.keys(knownPhotosRef.current), ...Object.keys(fresh)]);
-      allKeys.forEach((k) => {
-        const list: CapturedPhoto[] = [];
-        const push = (p: CapturedPhoto) => {
-          if (p.s3url && pending.has(p.s3url)) return; // just deleted
-          const idx = p.s3url ? list.findIndex((e) => e.s3url && e.s3url === p.s3url) : -1;
-          if (idx >= 0) list[idx] = p; // fresh copy wins (secureUrl refresh)
-          else list.push(p);
-        };
-        (knownPhotosRef.current[k] || []).forEach(push);
-        (fresh[k] || []).forEach(push);
-        if (list.length) merged[k] = list;
-      });
-
-      const map = merged;
-      knownPhotosRef.current = merged;
-      setPhotosBySubcat(merged);
       setLoading(false);
 
-      // Clear optimistic previews / uploading flags for slots now backed by a
-      // real server photo.
+      // Clear optimistic previews / uploading flags for slots now backed by a real
+      // server photo (runs after phase 2 so the preview persists until then).
+      const finalMap = knownPhotosRef.current;
       setCapturedPreviews((prev) => {
         const next = { ...prev };
         let changed = false;
         Object.keys(prev).forEach((sk) => {
-          if (map[sk] && map[sk].length > 0) {
+          if (finalMap[sk] && finalMap[sk].length > 0) {
             delete next[sk];
             changed = true;
             const key = pendingUploadKeyRef.current[sk];

@@ -119,6 +119,33 @@ class ChatService {
     return links;
   }
 
+  /**
+   * Web parity: `getSecureLinks({ filePaths })` — POST the file paths and return the
+   * raw response array in REQUEST ORDER. The caller aligns each entry positionally to
+   * its source file and keys the signed URL by the file's stable id. This avoids the
+   * S3-key round-trip problem (appointment-photo keys have spaces/em-dashes and often
+   * an empty bucket, so object-key lookups miss and the tile shows a placeholder).
+   */
+  async getSecureLinks(
+    refs: FileRef[]
+  ): Promise<Array<{ secureUrl?: string; url?: string } | null>> {
+    if (!refs?.length) return [];
+    const payload = {
+      filePaths: refs.map((r) => ({
+        bucketName: r.bucketName || CHAT_FALLBACK_BUCKET,
+        filePath: r.filePath,
+      })),
+    };
+    try {
+      const res = await api.post<any>('url/v1/secure/multiple', payload);
+      const rawData = res.data?.data || res.data;
+      return Array.isArray(rawData) ? rawData : [];
+    } catch (e) {
+      console.error('[ChatService] getSecureLinks failed:', e);
+      return [];
+    }
+  }
+
   extractFilePaths(messages: any[]): string[] {
     const paths: string[] = [];
     messages.forEach((m) => {
@@ -384,14 +411,13 @@ class ChatService {
       type: file.type || 'application/octet-stream',
     } as any);
 
-    // Set the multipart Content-Type explicitly (matching the working job-image
-    // upload path `LeadService.updateBeforeImages`). Omitting it works on iOS but on
-    // Android axios falls back to a non-multipart content type, so the server can't
-    // parse the upload and every attachment fails with "Failed to send attachment".
-    // React Native's networking still appends the boundary to this header.
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    // Do NOT set Content-Type — let React Native's networking layer append the
+    // multipart boundary. Setting `multipart/form-data` here (as a merge did) sends it
+    // WITHOUT the boundary, so the backend can't parse the body and the image never
+    // uploads. This is the `main`-branch behavior that works; the boundary-less header
+    // was the regression. (The web sets the header, but browsers rewrite it with the
+    // boundary for FormData — React Native does not.)
+    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
   }
 
   // Send MULTIPLE local files in ONE message (multipart) — so a batch of gallery
@@ -441,11 +467,11 @@ class ChatService {
       } as any);
     }
 
-    // Explicit multipart Content-Type — required for Android (see sendFileMessage);
-    // without it axios sends a non-multipart type and the upload fails on Android.
-    await api.post<any>(`/chat/v1/${chatId}/messages`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    // Do NOT set Content-Type — let React Native's networking layer append the
+    // multipart boundary (same as sendFileMessage / the working `main` branch). A
+    // boundary-less `multipart/form-data` header makes the backend fail to parse the
+    // upload, so the image never sends.
+    await api.post<any>(`/chat/v1/${chatId}/messages`, formData);
   }
 
 
@@ -607,6 +633,8 @@ class ChatService {
     console.log('[ChatService] create-team-channel:', channelData);
     SocketManager.emit('create-team-channel', channelData);
   }
+
+
 
   emitChannelTyping(channelId: string, isTyping: boolean): void {
     if (!SocketManager.isConnected()) return;

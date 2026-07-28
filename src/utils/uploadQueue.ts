@@ -312,102 +312,19 @@ class UploadQueueManager {
     // 3. Upload S3 image
     const response = await LeadService.uploadImages(item.leadId, formData);
 
-    // 3b. Log analytical event on upload success
+    // 3b. Log analytical event on upload success in the background (fire-and-forget)
+    this.logUploadSuccessAsync(item, response, coords, existingUrls);
+
+    // 3c. Refresh React Query and WAIT for the lead to actually come back before
+    // this item is retired from the queue (the caller shifts it as soon as we
+    // return). Awaiting the refetch closes that gap so the optimistic item hands
+    // over to real data with no flicker.
     try {
-      const isAnnotated = item.subcategory?.includes('(Annotated)');
-      if (userId) {
-        let s3url = '';
-        let bucketName = '';
-
-        // Try to match the photo from the upload response first
-        const responseSalesPhotos = response.data?.salesPhotos || response.data?.data?.salesPhotos || [];
-        const immediateMatch = [...responseSalesPhotos].reverse().find(
-          (p: any) =>
-            p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-            p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-            p.s3url &&
-            !existingUrls.has(p.s3url)
-        );
-
-        if (immediateMatch && immediateMatch.s3url) {
-          s3url = immediateMatch.s3url;
-          bucketName = immediateMatch.bucketName || '';
-        } else {
-          // Fallback to polling
-          let refreshAttempt = 0;
-          const maxRefreshAttempts = 5;
-          let waitTime = 1000;
-          let foundPhoto = false;
-
-          while (!foundPhoto && refreshAttempt < maxRefreshAttempts) {
-            await new Promise<void>((resolve) => setTimeout(resolve, waitTime));
-            try {
-              const leadRes = await LeadService.workLead(item.leadId, userId);
-              const refreshedLead = leadRes.data?.data || leadRes.data;
-              if (refreshedLead?.salesPhotos && Array.isArray(refreshedLead.salesPhotos)) {
-                const matched = [...refreshedLead.salesPhotos].reverse().find(
-                  (p: any) =>
-                    p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
-                    p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
-                    p.s3url &&
-                    !existingUrls.has(p.s3url)
-                );
-                if (matched && matched.s3url) {
-                  s3url = matched.s3url;
-                  bucketName = matched.bucketName || '';
-                  foundPhoto = true;
-                  break;
-                }
-              }
-            } catch (err) {
-              console.warn(`[UploadQueue] Refresh attempt ${refreshAttempt + 1} failed:`, err);
-            }
-            refreshAttempt++;
-            waitTime = Math.min(waitTime + 1000, 5000);
-          }
-        }
-
-        // Refresh React Query and WAIT for the lead to actually come back before
-        // this item is retired from the queue (the caller shifts it as soon as we
-        // return). `invalidateQueries` is fire-and-forget, so the optimistic queue
-        // entry used to disappear while the server photo had not landed yet — the
-        // count visibly dropped 1 → 0 → 1. Awaiting the refetch closes that gap so
-        // the optimistic item hands over to real data with no flicker.
-        try {
-          queryClient.invalidateQueries({ queryKey: ['leads'] });
-          await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
-        } catch (qcErr) {
-          console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
-        }
-
-        logEvent('add', {
-          user_id: userId,
-          module_type: isAnnotated ? 'annotated_photos' : 'inspection_photo',
-          created_by: userId,
-          meta: {
-            leadId: item.leadId,
-            category: item.categoryName,
-            subcategory: item.subcategory,
-            timestamp: item.timestamp,
-            coordinates: coords,
-            size: 0,
-            action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',
-            image_url: s3url,
-            imageData: {
-              s3url,
-              bucketName,
-              category: item.categoryName,
-              subcategory: item.subcategory,
-              timestampTaken: item.timestamp,
-              coordinates: coords,
-            },
-          },
-        });
-      }
-    } catch (logErr) {
-      console.warn('[UploadQueue] Analytics logging failed:', logErr);
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      await queryClient.refetchQueries({ queryKey: ['lead', item.leadId] });
+    } catch (qcErr) {
+      console.warn('[UploadQueue] Failed to refresh queries:', qcErr);
     }
-
 
     // 4. Cleanup local cache file if applicable
     try {
@@ -417,6 +334,96 @@ class UploadQueueManager {
       }
     } catch (cleanupError) {
       console.warn('[UploadQueue] Failed to delete temporary cache file:', cleanupError);
+    }
+  }
+
+  private async logUploadSuccessAsync(
+    item: UploadQueueItem,
+    response: any,
+    coords: { latitude: number; longitude: number },
+    existingUrls: Set<string>
+  ) {
+    try {
+      const userId = item.userId;
+      if (!userId) return;
+
+      const isAnnotated = item.subcategory?.includes('(Annotated)');
+      let s3url = '';
+      let bucketName = '';
+
+      // Try to match the photo from the upload response first
+      const responseSalesPhotos = response.data?.salesPhotos || response.data?.data?.salesPhotos || [];
+      const immediateMatch = [...responseSalesPhotos].reverse().find(
+        (p: any) =>
+          p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+          p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
+          p.s3url &&
+          !existingUrls.has(p.s3url)
+      );
+
+      if (immediateMatch && immediateMatch.s3url) {
+        s3url = immediateMatch.s3url;
+        bucketName = immediateMatch.bucketName || '';
+      } else {
+        // Fallback to polling
+        let refreshAttempt = 0;
+        const maxRefreshAttempts = 5;
+        let waitTime = 1000;
+        let foundPhoto = false;
+
+        while (!foundPhoto && refreshAttempt < maxRefreshAttempts) {
+          await new Promise<void>((resolve) => setTimeout(resolve, waitTime));
+          try {
+            const leadRes = await LeadService.workLead(item.leadId, userId);
+            const refreshedLead = leadRes.data?.data || leadRes.data;
+            if (refreshedLead?.salesPhotos && Array.isArray(refreshedLead.salesPhotos)) {
+              const matched = [...refreshedLead.salesPhotos].reverse().find(
+                (p: any) =>
+                  p.category?.toLowerCase() === item.categoryName?.toLowerCase() &&
+                  p.subcategory?.toLowerCase() === item.subcategory?.toLowerCase() &&
+                  p.s3url &&
+                  !existingUrls.has(p.s3url)
+              );
+              if (matched && matched.s3url) {
+                s3url = matched.s3url;
+                bucketName = matched.bucketName || '';
+                foundPhoto = true;
+                break;
+              }
+            }
+          } catch (err) {
+            console.warn(`[UploadQueue] Refresh attempt ${refreshAttempt + 1} failed:`, err);
+          }
+          refreshAttempt++;
+          waitTime = Math.min(waitTime + 1000, 5000);
+        }
+      }
+
+      logEvent('add', {
+        user_id: userId,
+        module_type: isAnnotated ? 'annotated_photos' : 'inspection_photo',
+        created_by: userId,
+        meta: {
+          leadId: item.leadId,
+          category: item.categoryName,
+          subcategory: item.subcategory,
+          timestamp: item.timestamp,
+          coordinates: coords,
+          size: 0,
+          action: isAnnotated ? 'annotated_photo_uploaded' : 'photo_uploaded',
+          image_url: s3url,
+          imageData: {
+            s3url,
+            bucketName,
+            category: item.categoryName,
+            subcategory: item.subcategory,
+            timestampTaken: item.timestamp,
+            coordinates: coords,
+          },
+        },
+      });
+    } catch (logErr) {
+      console.warn('[UploadQueue] Analytics logging failed:', logErr);
     }
   }
 }

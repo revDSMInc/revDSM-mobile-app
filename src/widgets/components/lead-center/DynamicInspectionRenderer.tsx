@@ -288,8 +288,9 @@ function SlotButton({
   const uploading = !!capture.uploadingKeys[key];
   const deleting = !!capture.deletingKeys[key];
   const moving = !!capture.movingKeys?.[key];
-  const busy = uploading || deleting || moving;
   const filled = photos.length > 0;
+  const showSpinner = deleting || moving || (uploading && !filled);
+  const disabled = deleting || moving || (!!moveFromKey && moveFromKey === key);
   // The slot this photo is being moved out of — amber, and not tappable.
   const isMoveSource = !!moveFromKey && moveFromKey === key;
 
@@ -297,7 +298,7 @@ function SlotButton({
     <View style={{ flex: 1, minWidth: 0 }}>
       <TouchableOpacity
         activeOpacity={0.7}
-        disabled={busy || isMoveSource}
+        disabled={disabled}
         onPress={() => onSlotClick(category, slot, key)}
         style={{
           minHeight: 52,
@@ -318,11 +319,14 @@ function SlotButton({
               : 'rgba(0,120,103,0.1)',
         }}
       >
-        {busy ? (
+        {showSpinner ? (
           <ActivityIndicator size="small" color={filled ? '#fff' : GREEN} />
         ) : (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
+            {uploading && (
+              <ActivityIndicator size="small" color="#fff" style={{ marginRight: 2 }} />
+            )}
             <Text
               numberOfLines={2}
               style={{
