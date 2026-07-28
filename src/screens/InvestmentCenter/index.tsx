@@ -252,7 +252,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                style={{ flexGrow: 0 }}
+                style={{ flexGrow: 0,marginHorizontal:10 }}
                 contentContainerStyle={{ paddingHorizontal: 12 }}
                 onScroll={(e) => setTabScrollOffset(e.nativeEvent.contentOffset.x)}
                 onContentSizeChange={(w) => setTabContentWidth(w)}
