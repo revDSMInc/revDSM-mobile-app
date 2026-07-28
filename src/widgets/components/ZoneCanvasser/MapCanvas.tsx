@@ -22,6 +22,7 @@ import type { MapCoordinate, ZoneCanvasserBuilding } from '../../../types/zone-c
 import { BuildingMapMarker } from './BuildingMapMarker';
 import { ClusterMapMarker } from './ClusterMapMarker';
 import { UserLocationMarker } from './UserLocationMarker';
+import { useSalesMapPins, SalesLeadPinsLayer, SalesLeadPinsModals } from './SalesLeadPins';
 
 // Mapbox access token (idempotent — safe to set from multiple map screens).
 Mapbox.setAccessToken(ENV.MAPBOX_ACCESS_TOKEN);
@@ -50,6 +51,10 @@ type Props = {
   onTouchMove: (e: any) => void;
   onTouchEnd: () => void;
   onRegionChangeComplete?: (region: Region) => void;
+  /** Show the Sales Map lead/job pins overlay (single show/hide toggle). Also gates
+   *  the one-time job fetch, so nothing is requested until the Zone Canvasser is
+   *  open AND the toggle is on. */
+  leadPinsEnabled?: boolean;
 };
 
 const DEFAULT_REGION: Region = {
@@ -104,8 +109,14 @@ export function MapCanvas({
   onTouchMove,
   onTouchEnd,
   onRegionChangeComplete,
+  leadPinsEnabled = false,
 }: Props) {
   const rectangleDrawing = isDrawingMode && drawType === 'rectangle';
+  // Sales Map lead pins overlay (single show/hide toggle). Owns its own state/data.
+  // Suppressed while drawing a zone so pin taps can't steal polygon-vertex taps
+  // (the building/cluster markers are hidden the same way).
+  const salesPinsEnabled = leadPinsEnabled && !isDrawingMode;
+  const salesPins = useSalesMapPins({ enabled: salesPinsEnabled, cameraRef });
   const [mapRegion, setMapRegion] = useState<Region>(
     initialRegion ?? DEFAULT_REGION
   );
@@ -212,11 +223,14 @@ export function MapCanvas({
   // { nativeEvent: { coordinate } } shape the hook's handleMapPress expects.
   const handleMapboxPress = useCallback(
     (feature: any) => {
+      // A background tap dismisses the open lead-pin card (guarded so tapping a pin
+      // doesn't immediately close it), then runs the existing zone/building logic.
+      salesPins.onBackgroundPress();
       const c = feature?.geometry?.coordinates;
       if (!c) return;
       onMapPress({ nativeEvent: { coordinate: { latitude: c[1], longitude: c[0] } } });
     },
-    [onMapPress]
+    [onMapPress, salesPins]
   );
 
   // ─── Zones → FillLayer + LineLayer ─────────────────────────────────────────
@@ -420,8 +434,14 @@ export function MapCanvas({
                 </MarkerView>
               );
             })}
+
+          {/* Sales Map lead/job pins overlay (green teardrop pins + anchored job card). */}
+          <SalesLeadPinsLayer pins={salesPins} enabled={salesPinsEnabled} cameraRef={cameraRef} />
         </MapView>
       </View>
+
+      {/* Gallery / upload / referral modals for the lead card — must sit OUTSIDE MapView. */}
+      <SalesLeadPinsModals pins={salesPins} />
     </View>
   );
 }

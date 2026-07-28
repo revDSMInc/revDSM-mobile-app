@@ -58,6 +58,8 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
   const [searchCoords, setSearchCoords] = useState<MapCoordinate | null>(null);
   const [isEditingGoBack, setIsEditingGoBack] = useState(false);
   const [legendOpen, setLegendOpen] = useState(false);
+  // Single show/hide toggle for the Sales Map lead/job pins overlay (default on).
+  const [showLeadPins, setShowLeadPins] = useState(true);
   const [startPoint, setStartPoint] = useState<any>(null);
 
   const [zones, setZones] = useState<any[]>([]);
@@ -837,6 +839,8 @@ export function useZoneCanvasser({ visible, user }: Pick<ZoneCanvasserMapProps, 
     isEditingGoBack,
     legendOpen,
     setLegendOpen,
+    showLeadPins,
+    setShowLeadPins,
     zones,
     loadingZones,
     allBuildings,
