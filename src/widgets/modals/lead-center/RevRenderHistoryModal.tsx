@@ -155,6 +155,7 @@ interface RevRenderHistoryModalProps {
   initialIndex: number;
   leadId?: string;
   onDeleteSuccess?: () => void;
+  showDelete?: boolean;
 }
 
 export const RevRenderHistoryModal = ({
@@ -164,6 +165,7 @@ export const RevRenderHistoryModal = ({
   initialIndex,
   leadId,
   onDeleteSuccess,
+  showDelete = true,
 }: RevRenderHistoryModalProps) => {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -524,7 +526,7 @@ export const RevRenderHistoryModal = ({
             <View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={styles.headerTitle}>Render #{currentIndex + 1}</Text>
-                {(currentRun?.runId || currentRun?._id) && (
+                {showDelete && (currentRun?.runId || currentRun?._id) && (
                   <TouchableOpacity onPress={handleDeletePress} style={{ marginLeft: 12 }}>
                     <Icon name="trash-can-outline" size={22} color="#FF5630" />
                   </TouchableOpacity>

@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, Image, ScrollView, TouchableOpacity, Modal, Pressable, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
+import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Svg, { Path } from 'react-native-svg';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
 import { useSecureLogo } from '../../hooks/useSecureLogo';
 import { useAuth } from '../../hooks/useAuth';
+import { useRevRenderRunsQuery } from '../../hooks/useLeadQuery';
+import { RevRenderHistoryModal } from '../../widgets/modals/lead-center/RevRenderHistoryModal';
 import {
   DealPricing,
   calcMonthly,
@@ -57,7 +59,8 @@ interface Props {
 export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
   const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
+  // Which render pair the before/after slider viewer is open on (null = closed).
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   // Company branding (web parity: investment-panel.js) — the tenant's dynamic logo +
@@ -276,6 +279,34 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const afterUriOf = (p: any) => uriByS3[p?.s3UrlGenerated] || p?.generatedUrl || (p?.s3UrlGenerated ? resolveS3Url(p.s3UrlGenerated) : '') || '';
   const rendersLoading = renderPhotos.length > 0 && renderSecure.isLoading && Object.keys(uriByS3).length === 0;
 
+  // Full rev-render runs for this lead — merged into the viewer runs by `runId` so
+  // the before/after slider shows the same color-selection chips ("Soffit: Linen")
+  // the Tools flow shows (the persisted `selectedRenders` carries no color summary).
+  const leadId = lead?._id || lead?.leadId || lead?.id;
+  const { data: allRuns } = useRevRenderRunsQuery(leadId || '');
+  const runsById = useMemo(() => {
+    const m: Record<string, any> = {};
+    (Array.isArray(allRuns) ? allRuns : []).forEach((r: any) => {
+      const id = String(r?.runId || r?._id || '');
+      if (id) m[id] = r;
+    });
+    return m;
+  }, [allRuns]);
+  // Runs fed to the shared RevRenderHistoryModal: the calculator's selected pairs,
+  // enriched with the full run (color summary/selections) and freshly-resolved
+  // secure before/after URLs (the stored ones may have expired).
+  const viewerRuns = useMemo(
+    () =>
+      renders.map((pair) => ({
+        ...(runsById[String(pair?.runId || '')] || {}),
+        ...pair,
+        originalUrl: beforeUriOf(pair),
+        generatedUrl: afterUriOf(pair),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [renders, runsById, uriByS3],
+  );
+
   const confirmInHome = () => {
     setShowConfirm(false);
     onOptIn(calculator.id, { price: endPrice, paymentMethod: inHomePlanKey, downPayment: downPay });
@@ -395,12 +426,14 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
                     {pair.viewLabel} · revRender™
                   </Text>
                 )}
+                {/* Tapping either half opens the shared before/after slider viewer
+                    (same flow as Tools/revRender), positioned on this pair. */}
                 <View style={{ flexDirection: 'row', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <TouchableOpacity activeOpacity={0.85} disabled={!b} onPress={() => b && setPreview(b)} style={{ flex: 1 }}>
+                  <TouchableOpacity activeOpacity={0.85} disabled={!b} onPress={() => b && setViewerIndex(i)} style={{ flex: 1 }}>
                     <Image source={{ uri: b }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
                     <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', textAlign: 'center', paddingVertical: 4 }}>BEFORE</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity activeOpacity={0.85} disabled={!a} onPress={() => a && setPreview(a)} style={{ flex: 1 }}>
+                  <TouchableOpacity activeOpacity={0.85} disabled={!a} onPress={() => a && setViewerIndex(i)} style={{ flex: 1 }}>
                     <Image source={{ uri: a }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
                     <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', textAlign: 'center', paddingVertical: 4 }}>AFTER</Text>
                   </TouchableOpacity>
@@ -541,15 +574,18 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         onClose={() => setShowAddPlan(false)}
       />
 
-      {/* Full-screen render preview */}
-      <Modal visible={!!preview} transparent animationType="fade" onRequestClose={() => setPreview(null)}>
-        <Pressable onPress={() => setPreview(null)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' }}>
-          {preview && <Image source={{ uri: preview }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />}
-          <TouchableOpacity onPress={() => setPreview(null)} style={{ position: 'absolute', top: 48, right: 20, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="close" size={24} color="#fff" />
-          </TouchableOpacity>
-        </Pressable>
-      </Modal>
+      {/* Before/After slider viewer — the SAME shared component the Tools/revRender
+          flow uses (before/after compare slider, color chips, prev/next through every
+          render, delete, Close). Opened on the tapped pair. */}
+      <RevRenderHistoryModal
+        visible={viewerIndex !== null}
+        initialIndex={viewerIndex ?? 0}
+        runs={viewerRuns}
+        leadId={leadId}
+        onClose={() => setViewerIndex(null)}
+        onDeleteSuccess={onRefresh}
+        showDelete={false}
+      />
     </ScrollView>
   );
 }
