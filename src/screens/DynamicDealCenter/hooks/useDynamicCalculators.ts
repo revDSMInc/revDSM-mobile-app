@@ -6,7 +6,6 @@ import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
 import { normalizeSingleAcceptedDrop, dedupeDrops } from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
-import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 
 /**
@@ -1024,18 +1023,19 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   );
 
   const handleConfirmRollouts = useCallback(
-    (confirmed: Array<{ id: string; price: number }>) => {
+    (confirmed: Array<{ id: string; price: number; pricemarkup?: string }>) => {
       const priceById = new Map(confirmed.map((c) => [c.id, c.price]));
+      const markupById = new Map(confirmed.map((c) => [c.id, c.pricemarkup]));
       setTabs((prev) => {
         const next = prev.map((t) => {
           if (!priceById.has(t.id)) return t;
           const endPrice = priceById.get(t.id) || 0;
-          // Web parity (ViewAllCalculators.calculateMarkup): compute the markup
-          // string (e.g. "COST + 25%") using the raw schema totals as anchors.
-          const cost = Math.round(t.totals?.cost || 0);
-          const par = Math.round(t.totals?.par || 0);
-          const retail = Math.round(t.totals?.retail || 0);
-          const pricemarkup = endPrice > 0 ? calculateMarkupLabel(endPrice, cost, par, retail) : undefined;
+          // Markup label ("COST + 25%") is computed by RolloutView, which has the
+          // pricing config + payment plans to anchor on the fee-adjusted, $200-floored
+          // tiers shown on the card (web `calculateMarkup`). The old inline recompute
+          // used the raw stored `totals`, whose blank par/cost tiers (retail-only
+          // schema) came through as 0 → the markup snapped to the wrong tier.
+          const pricemarkup = endPrice > 0 ? markupById.get(t.id) : undefined;
           // Re-baseline the scope snapshot to the confirmed scope, so a calc confirmed
           // via auto-confirm (which never went through handleSetPrice) still warns if
           // its scope later changes.
