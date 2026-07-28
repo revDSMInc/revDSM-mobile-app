@@ -99,6 +99,15 @@ export interface CalcTab {
     monthlyPayment?: number;
     grandTotal?: number;
   } | null;
+  /**
+   * Backend-computed job-scope sentences for this calculator (web/backend parity:
+   * `lfcalculator.descriptions`) — e.g. `["Install Soffit", "Installation: Install
+   * J Channel …"]`. Read-only display data: the backend derives it from the agreement
+   * description schemas, so mobile never sends it in a save (web doesn't either). The
+   * Investment Center's "Includes the Following" list uses it verbatim (footages/colors
+   * stripped) instead of re-deriving the scope locally.
+   */
+  descriptions?: string[];
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
   /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
@@ -565,6 +574,9 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
               oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
               inHome: c.inHome ?? c.in_home ?? null,
+              // Backend-computed job-scope sentences — surfaced verbatim in the
+              // Investment Center "Includes the Following" list (read-only, never re-sent).
+              descriptions: Array.isArray(c.descriptions) ? c.descriptions : [],
               persisted: true,
             };
           });

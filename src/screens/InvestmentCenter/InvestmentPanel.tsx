@@ -217,7 +217,21 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     return fin.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) || fin.find((k) => (plans[k]?.apr || 0) > 0) || fin[0] || method;
   }, [plans, method]);
   const oneYear = calculator.oneYearMonthlyPlan;
-  const oneYearKey = oneYear?.mode === 'match' ? method : oneYear?.mode === 'custom' ? (oneYear?.planKey || defaultOneYearKey) : defaultOneYearKey;
+  // Web parity (`investment-panel.js`: `const mode = saved?.mode || 'match'`): when the
+  // rep hasn't explicitly configured a 1-Year monthly plan, the 1-Year card MIRRORS the
+  // In-Home (highlighted) selection — i.e. the plan the rep actually picked — rather than
+  // snapping to the 9.99% default. Previously mobile fell through to `defaultOneYearKey`
+  // (the 9.99% GreenSky plan), so selecting Wells Fargo on In-Home still showed
+  // "GS… 9.99% APR" on the 1-Year card. `'match'` uses the same key the In-Home card
+  // resolves (`inHomePlanKey = selectedPlanKey || method`); `'default'` keeps the 9.99%
+  // plan; `'custom'` pins the saved plan key.
+  const oneYearMode = oneYear?.mode || 'match';
+  const oneYearKey =
+    oneYearMode === 'match'
+      ? inHomePlanKey
+      : oneYearMode === 'custom'
+        ? oneYear?.planKey || defaultOneYearKey
+        : defaultOneYearKey;
   const oneYearMonthly = useMemo(() => calcMonthly(plans, oneYearGrandTotal, oneYearKey), [plans, oneYearGrandTotal, oneYearKey]);
 
   // Dynamic per-product job-scope matrix (no footages/colors) — the corrected data.
