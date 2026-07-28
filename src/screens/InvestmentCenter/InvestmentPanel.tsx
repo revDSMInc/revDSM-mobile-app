@@ -9,7 +9,7 @@ import { useAuth } from '../../hooks/useAuth';
 import {
   DealPricing,
   calcMonthly,
-  planLabelOf,
+  compactPlanLabel,
   isFinancing,
 } from '../DynamicDealCenter/hooks/useDealPricing';
 import {
@@ -406,7 +406,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           onSelectBadge={setSelectedBadge}
           downPaymentSlot={oneYearDownEditor}
           monthly={oneYearMonthly}
-          planLabel={oneYearMonthly > 0 ? planLabelOf(plans, oneYearKey) : undefined}
+          planLabel={oneYearMonthly > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
           selected={selectedProgram === 'oneyear'}
           crossedOff={selectedProgram === 'inhome'}
           optInLabel="Opt In (1-Yr)"
@@ -423,7 +423,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           selectedBadgeKey={effectiveBadge}
           onSelectBadge={setSelectedBadge}
           monthly={inHomeMonthly}
-          planLabel={inHomeMonthly > 0 ? planLabelOf(plans, method) : undefined}
+          planLabel={inHomeMonthly > 0 ? compactPlanLabel(plans, method) : undefined}
           downPaymentSlot={inHomeDownEditor}
           selected={selectedProgram === 'inhome'}
           crossedOff={selectedProgram === 'oneyear'}
@@ -437,7 +437,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         visible={showConfirm}
         price={inHomeGrandTotal}
         monthly={inHomeMonthly}
-        planLabel={inHomeMonthly > 0 ? planLabelOf(plans, method) : undefined}
+        planLabel={inHomeMonthly > 0 ? compactPlanLabel(plans, method) : undefined}
         downPayment={downPay}
         method={method}
         isLowesLead={lead?.lowesLead === true}
