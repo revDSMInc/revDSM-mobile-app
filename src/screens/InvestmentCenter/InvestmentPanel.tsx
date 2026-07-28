@@ -51,13 +51,15 @@ interface Props {
   lead: any;
   onOptIn: (calculatorId: string, opts: { price: number; paymentMethod?: string; downPayment?: number }) => void;
   /** Persist the In-Home Monthly shortlist to `lfcalculator.in_home` (debounced). */
-  onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number }) => void;
+  onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number; optInProgram?: 'inhome' | 'oneyear' | null }) => void;
   /** Pull-to-refresh hook from the screen (refetch calculators / lead). */
   onRefresh?: () => void;
 }
 
 export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
-  const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(null);
+  const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(
+    calculator.inHome?.optInProgram ?? null,
+  );
   const [showConfirm, setShowConfirm] = useState(false);
   // Which render pair the before/after slider viewer is open on (null = closed).
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -194,7 +196,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // hook, so it coordinates with the same in-flight guard the other saves use — no
   // racing direct PUT). Fired on add / select / remove; the seed itself isn't pushed
   // until the rep first interacts (it mirrors the already-persisted paymentMethod).
-  const persistInHome = (added: string[], selected: string) => {
+  const persistInHome = (added: string[], selected: string, optInOverride?: 'inhome' | 'oneyear' | null) => {
     const planKey = selected && isFinancing(plans, selected) ? selected : '';
     onSetInHome?.(calculator.id, {
       planKey,
@@ -202,6 +204,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       apr: Number(plans[planKey]?.apr) || 0,
       monthlyPayment: calcMonthly(plans, inHomeMonthlyBase, planKey),
       grandTotal: inHomeGrandTotal,
+      optInProgram: optInOverride !== undefined ? optInOverride : (selectedProgram ?? calculator.inHome?.optInProgram ?? null),
     });
   };
   // The one write path for the shared choice — used by BOTH cards' CK/CC/AMEX badges AND
@@ -562,8 +565,15 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           selected={selectedProgram === 'oneyear'}
           crossedOff={selectedProgram === 'inhome'}
           optInLabel="Opt In (1-Yr)"
-          onOptIn={() => setSelectedProgram(selectedProgram === 'oneyear' ? null : 'oneyear')}
-          onRevert={() => setSelectedProgram(null)}
+          onOptIn={() => {
+            const next = selectedProgram === 'oneyear' ? null : 'oneyear';
+            setSelectedProgram(next);
+            persistInHome(addedPlanKeys, paymentChoice, next);
+          }}
+          onRevert={() => {
+            setSelectedProgram(null);
+            persistInHome(addedPlanKeys, paymentChoice, null);
+          }}
         />
         <ProgramCard
           title="IN-HOME PRE ORDER"
@@ -584,8 +594,15 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           selected={selectedProgram === 'inhome'}
           crossedOff={selectedProgram === 'oneyear'}
           optInLabel="Opt In"
-          onOptIn={() => { setSelectedProgram('inhome'); setShowConfirm(true); }}
-          onRevert={() => setSelectedProgram(null)}
+          onOptIn={() => {
+            setSelectedProgram('inhome');
+            setShowConfirm(true);
+            persistInHome(addedPlanKeys, paymentChoice, 'inhome');
+          }}
+          onRevert={() => {
+            setSelectedProgram(null);
+            persistInHome(addedPlanKeys, paymentChoice, null);
+          }}
         />
       </View>
 
@@ -598,7 +615,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         method={paymentChoice}
         isLowesLead={lead?.lowesLead === true}
         onConfirm={confirmInHome}
-        onClose={() => { setShowConfirm(false); setSelectedProgram(null); }}
+        onClose={() => { setShowConfirm(false); setSelectedProgram(null); persistInHome(addedPlanKeys, paymentChoice, null); }}
       />
 
       {/* "+ Add Plan" financing picker for the In-Home Monthly shortlist. Gates on

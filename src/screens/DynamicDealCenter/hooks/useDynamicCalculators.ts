@@ -98,6 +98,9 @@ export interface CalcTab {
     apr?: number;
     monthlyPayment?: number;
     grandTotal?: number;
+    /** Which program card the rep opted into in the Investment Center ('inhome' or
+     *  'oneyear'), so the panel survives tab switches without losing the selection. */
+    optInProgram?: 'inhome' | 'oneyear' | null;
   } | null;
   /**
    * Backend-computed job-scope sentences for this calculator (web/backend parity:
@@ -174,7 +177,7 @@ function tabSignature(tab: CalcTab): string {
   const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
   // In-Home Monthly shortlist: selected plan + the added-plan list.
   const ih = tab.inHome;
-  const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}` : '';
+  const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}:${ih.optInProgram ?? ''}` : '';
   return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${inHomeSig}#${tab.priceScopeSig ?? ''}`;
 }
 
