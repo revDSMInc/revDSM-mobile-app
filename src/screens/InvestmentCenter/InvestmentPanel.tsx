@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
+import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Svg, { Path } from 'react-native-svg';
 import { resolveS3Url } from '../../utils/s3-utils';
@@ -57,9 +58,11 @@ interface Props {
 }
 
 export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
+  const isLeadSold = lead?.status === 'sale';
   const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(
     calculator.inHome?.optInProgram ?? null,
   );
+  const activeProgram = isLeadSold ? (selectedProgram || 'inhome') : selectedProgram;
   const [showConfirm, setShowConfirm] = useState(false);
   // Which render pair the before/after slider viewer is open on (null = closed).
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -92,7 +95,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // landing — a CK badge lights up only when the deal-center method IS `check`. NOTE: this
   // deliberately does NOT use `method`'s `'check'` fallback (which was pre-selecting CK for
   // everyone regardless of what the rep picked upstream).
-  const defaultChoice = calculator.paymentMethod && plans[calculator.paymentMethod] ? calculator.paymentMethod : '';
+  const defaultChoice = (calculator.paymentMethod || lead?.paymentMethod) && plans[calculator.paymentMethod || lead?.paymentMethod] ? (calculator.paymentMethod || lead?.paymentMethod) : '';
   const seedChoice = savedInHome?.planKey || defaultChoice;
   const [addedPlanKeys, setAddedPlanKeys] = useState<string[]>(seedAdded);
   // Single "active payment choice" for the WHOLE panel — SHARED by BOTH program cards
@@ -389,17 +392,36 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           placeholder="Add Down Payment"
           placeholderTextColor="#94A3B8"
           keyboardType="numeric"
+          editable={!isLeadSold}
         />
-        {dp > 0 && (
+        {dp > 0 && !isLeadSold && (
           <TouchableOpacity onPress={() => { setText(''); setShow(false); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="close-circle" size={15} color="#FF5630" />
           </TouchableOpacity>
         )}
       </View>
     ) : (
-      <TouchableOpacity onPress={() => setShow(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8 }}>
-        <Ionicons name="add" size={13} color="#2196F3" />
-        <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{`Add Down Payment`}</Text>
+      <TouchableOpacity
+        onPress={isLeadSold ? undefined : () => setShow(true)}
+        disabled={isLeadSold}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          borderWidth: 1,
+          borderStyle: 'dashed',
+          borderColor: isLeadSold ? '#94A3B8' : '#2196F3',
+          backgroundColor: isLeadSold ? '#F1F5F9' : '#2196F30D',
+          borderRadius: 10,
+          paddingVertical: 8,
+          opacity: isLeadSold ? 0.8 : 1,
+        }}
+      >
+        <Ionicons name="add" size={13} color={isLeadSold ? '#94A3B8' : '#2196F3'} />
+        <Text style={{ fontSize: 10, fontWeight: '800', color: isLeadSold ? '#94A3B8' : '#2196F3' }}>
+          {`Add Down Payment`}
+        </Text>
       </TouchableOpacity>
     );
   };
@@ -418,6 +440,30 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     { label: `${seniorVetPct}% Sr + Vet`, value: `-${fmt(srVetDiscount)}`, green: true },
     { label: `${discountPct}% Discount`, value: `-${fmt(preOrderDiscountVal)}`, green: true },
   ];
+  const customer = lead?.customerDetails;
+  const preparedFor = customer ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim() : (lead?.jobBuilder?.scheduleTime?.customerName || 'N/A');
+  const address = customer?.address || lead?.fullAddress || 'N/A';
+
+  const formattedDate = useMemo(() => {
+    let displayDate = new Date();
+    const dateStr = lead?.updatedAt || lead?.leadDatetime || lead?.createdAt;
+    if (dateStr) {
+      const parsed = new Date(dateStr);
+      if (!isNaN(parsed.getTime())) {
+        displayDate = parsed;
+      }
+    }
+    try {
+      return format(displayDate, 'MM/dd/yyyy, hh:mm:ss a');
+    } catch (err) {
+      return displayDate.toLocaleString();
+    }
+  }, [lead]);
+
+  const repName = lead?.assignedRep || (lead?.assignedRepDetails ? `${lead.assignedRepDetails.firstName || ''} ${lead.assignedRepDetails.lastName || ''}`.trim() : '');
+  const regionID = lead?.assignedRepDetails?.region?.[0]?.regionID || '';
+  const repText = regionID ? `${repName} · ${regionID}` : (repName || 'N/A');
+
   const maxProgramRows = Math.max(oneYearRows.length, inHomeRows.length);
 
   return (
@@ -574,6 +620,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
             setSelectedProgram(null);
             persistInHome(addedPlanKeys, paymentChoice, null);
           }}
+          readOnly={isLeadSold}
         />
         <ProgramCard
           title="IN-HOME PRE ORDER"
@@ -583,16 +630,17 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           grandTotal={inHomeGrandTotal}
           badges={basicBadges}
           selectedBadgeKey={badgeSelection}
-          onSelectBadge={selectPaymentChoice}
+          onSelectBadge={isLeadSold ? undefined : selectPaymentChoice}
           planInteractive
           shortlistPlans={inHomeShortlist}
           selectedPlanKey={selectedPlanKey}
-          onSelectPlan={selectPaymentChoice}
-          onRemovePlan={handleRemovePlan}
-          onAddPlan={() => setShowAddPlan(true)}
-          downPaymentSlot={inHomeDownEditor}
-          selected={selectedProgram === 'inhome'}
-          crossedOff={selectedProgram === 'oneyear'}
+          onSelectPlan={isLeadSold ? undefined : selectPaymentChoice}
+          onRemovePlan={isLeadSold ? undefined : handleRemovePlan}
+          onAddPlan={isLeadSold ? undefined : () => setShowAddPlan(true)}
+          downPaymentSlot={isLeadSold ? undefined : inHomeDownEditor}
+          downPayment={isLeadSold ? (calculator.downPayment || lead?.downPayment || 0) : downPay}
+          selected={activeProgram === 'inhome'}
+          crossedOff={activeProgram === 'oneyear'}
           optInLabel="Opt In"
           onOptIn={() => {
             setSelectedProgram('inhome');
@@ -603,6 +651,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
             setSelectedProgram(null);
             persistInHome(addedPlanKeys, paymentChoice, null);
           }}
+          readOnly={isLeadSold}
         />
       </View>
 
@@ -629,6 +678,35 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         onAdd={handleAddPlan}
         onClose={() => setShowAddPlan(false)}
       />
+
+      {/* Lead details footer shown when lead is sold */}
+      {isLeadSold && (
+        <View style={{
+          backgroundColor: '#F1F5F9',
+          borderRadius: 12,
+          padding: 16,
+          marginTop: 24,
+          borderWidth: 1,
+          borderColor: '#E2E8F0',
+        }}>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20, marginBottom: 6 }}>
+            <Text style={{ fontWeight: 'bold' }}>Prepared for: </Text>
+            {preparedFor}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20, marginBottom: 6 }}>
+            <Text style={{ fontWeight: 'bold' }}>Address: </Text>
+            {address}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20, marginBottom: 6 }}>
+            <Text style={{ fontWeight: 'bold' }}>Date: </Text>
+            {formattedDate}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20 }}>
+            <Text style={{ fontWeight: 'bold' }}>Rep: </Text>
+            {repText}
+          </Text>
+        </View>
+      )}
 
       {/* Before/After slider viewer — the SAME shared component the Tools/revRender
           flow uses (before/after compare slider, color chips, prev/next through every

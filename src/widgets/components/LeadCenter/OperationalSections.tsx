@@ -34,7 +34,8 @@ export const ToolsSection = ({
   // focus so returning from the Deal Center reflects a newly-confirmed rollout.
   const { data: calcStatus, refetch: refetchCalcStatus } = useLeadCalculatorStatus(lead);
   const hasCalc = !!calcStatus?.hasCalculator;
-  const allConfirmed = !!calcStatus?.allConfirmed;
+  const isLeadSold = lead?.status === 'sale';
+  const allConfirmed = !!calcStatus?.allConfirmed || isLeadSold;
   useFocusEffect(
     React.useCallback(() => {
       refetchCalcStatus?.();
@@ -162,10 +163,10 @@ export const ToolsSection = ({
         title="Investment Center"
         // Locked until every rollout is confirmed (web `allJobsConfirmed`). Tapping
         // while locked warns instead of opening.
-        desc={!allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote'}
-        statusText={allConfirmed ? (consentReport ? 'Consent on file — present quote' : 'Ready to present') : undefined}
+        desc={isLeadSold ? 'View finalized proposal details' : (!allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
+        statusText={allConfirmed ? (isLeadSold ? 'Sale finalized' : (consentReport ? 'Consent on file — present quote' : 'Ready to present')) : undefined}
         // Green SIGNED tag once the customer consent form is on file (mockup parity).
-        badgeText={allConfirmed && consentReport ? 'SIGNED' : undefined}
+        badgeText={isLeadSold ? 'SOLD' : (allConfirmed && consentReport ? 'SIGNED' : undefined)}
         locked={!allConfirmed}
         icon="chart-line"
         onPress={() => {

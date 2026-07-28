@@ -73,7 +73,8 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const [tabScrollOffset, setTabScrollOffset] = useState(0);
   const [tabScrollViewWidth, setTabScrollViewWidth] = useState(0);
   const [tabContentWidth, setTabContentWidth] = useState(0);
-  const consentSigned = localConsentSigned || hasSignedConsent(lead);
+  const isLeadSold = lead?.status === 'sale';
+  const consentSigned = localConsentSigned || hasSignedConsent(lead) || isLeadSold;
 
   const handleConsentSubmit = useCallback(
     async (data: any) => {
