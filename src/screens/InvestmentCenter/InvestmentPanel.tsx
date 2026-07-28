@@ -155,8 +155,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         jobBuilderConfig,
         descriptionSchemas,
         lead,
+        calculatorDescriptions: calculator.descriptions,
       }),
-    [calculator.entries, verticals, jobBuilderConfig, descriptionSchemas, lead],
+    [calculator.entries, verticals, jobBuilderConfig, descriptionSchemas, lead, calculator.descriptions],
   );
 
   // Product/category names present in this calculator (for the heading).
@@ -173,6 +174,11 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     );
     return Array.from(new Set(names));
   }, [calculator.entries, verticals]);
+
+  // "Includes the Following" list — the calculator's job-scope descriptions when
+  // present, otherwise the product/category names. Shown as bullet points below the
+  // heading (was a "·"-joined subtitle line for the product names).
+  const inclusions = jobScope.length > 0 ? jobScope : productNames;
 
   // ── Renders: resolve fresh secure URLs (stored ones may have expired) ────────
   const renders: any[] = useMemo(
@@ -334,24 +340,21 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           </Text>
           <View style={{ flex: 1, height: 1, backgroundColor: '#E2E8F0' }} />
         </View>
-        {productNames.length > 0 && (
-          <Text style={{ fontSize: 12, fontWeight: '800', color: '#4CBB17', marginTop: 4, textAlign: 'center' }}>
-            {productNames.join(' · ')}
-          </Text>
-        )}
       </View>
 
-      {/* Includes the Following — the DYNAMIC job scope matrix */}
+      {/* Includes the Following — job-scope descriptions (else product/category
+          names), as bullet points below the heading. */}
       <View style={{ marginBottom: 18 }}>
-        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 12 }}>Includes the Following:</Text>
-        {jobScope.length === 0 ? (
+        <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8', textAlign: 'center', marginBottom: 10 }}>Includes the Following:</Text>
+        <View style={{ height: 2, backgroundColor: '#16324F', borderRadius: 1, marginBottom: 14 }} />
+        {inclusions.length === 0 ? (
           <Text style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', fontStyle: 'italic' }}>
             Job scope will appear once products are configured.
           </Text>
         ) : (
-          jobScope.map((line, i) => (
+          inclusions.map((line, i) => (
             <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10, paddingHorizontal: 4 }}>
-              <Ionicons name="checkmark-circle" size={16} color="#4CBB17" style={{ marginTop: 1, marginRight: 8 }} />
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4CBB17', marginTop: 7, marginRight: 10 }} />
               <Text style={{ flex: 1, fontSize: 14, color: '#1C252E', lineHeight: 20 }}>{line}</Text>
             </View>
           ))
