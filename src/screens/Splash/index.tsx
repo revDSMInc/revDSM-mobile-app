@@ -11,9 +11,11 @@ const getVideo = () => {
   }
 };
 
-// Background behind the animation. Change this one constant if the logo
-// animation is exported on a dark canvas.
-const SPLASH_BG = '#FFFFFF';
+// Background behind the animation. The logo animation is exported on a dark
+// green canvas, so this matches its edge tone — otherwise the letterbox/pillar
+// bars (and the pre-reveal blank frame) flash white on screens whose aspect
+// ratio differs from the video (e.g. thin white lines on the sides on iOS).
+const SPLASH_BG = '#10261A';
 
 // Playback speed for the logo animation. The source clip plays too fast at 1x,
 // so it's slowed down here (0.5 = half speed) instead of re-exporting the mp4.
@@ -84,12 +86,15 @@ export default function SplashScreen({ onFinish }: Props) {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BG} />
+      <StatusBar barStyle="light-content" backgroundColor={SPLASH_BG} />
       {!!Video && (
         <Video
           source={require('../../assets/gif/logo_animation.mp4')}
           style={[StyleSheet.absoluteFill, playing ? styles.visible : styles.hidden]}
-          resizeMode="contain"
+          // "cover" fills the screen edge-to-edge so no white/background bars
+          // show when the video's aspect ratio differs from the device's. The
+          // logo is centred, so the small top/bottom crop is never visible.
+          resizeMode="cover"
           repeat={false}
           muted
           rate={SPLASH_PLAYBACK_RATE}
