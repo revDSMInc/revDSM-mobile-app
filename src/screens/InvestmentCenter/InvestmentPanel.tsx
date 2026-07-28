@@ -380,26 +380,35 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 6 }}>Loading renders…</Text>
         </View>
       ) : renders.length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingBottom: 4 }} style={{ marginBottom: 16 }}>
+        // Render pairs are STACKED VERTICALLY (web parity: investment-panel.js
+        // `<Stack spacing={2}>`), each full-width so the before/after aren't tiny —
+        // was a horizontal scroller of small 220px cards. Within a pair the two
+        // photos sit side by side, each a 4:3 half that scales with the screen.
+        <View style={{ gap: 16, marginBottom: 16 }}>
           {renders.map((pair, i) => {
             const b = beforeUriOf(pair);
             const a = afterUriOf(pair);
             return (
-              <View key={pair?.runId || i} style={{ width: 220, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                <View style={{ flexDirection: 'row' }}>
+              <View key={pair?.runId || i}>
+                {!!pair?.viewLabel && (
+                  <Text style={{ fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
+                    {pair.viewLabel} · revRender™
+                  </Text>
+                )}
+                <View style={{ flexDirection: 'row', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <TouchableOpacity activeOpacity={0.85} disabled={!b} onPress={() => b && setPreview(b)} style={{ flex: 1 }}>
-                    <Image source={{ uri: b }} style={{ width: '100%', height: 110, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
-                    <Text style={{ fontSize: 8, fontWeight: '900', color: '#94A3B8', textAlign: 'center', paddingVertical: 3 }}>BEFORE</Text>
+                    <Image source={{ uri: b }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
+                    <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', textAlign: 'center', paddingVertical: 4 }}>BEFORE</Text>
                   </TouchableOpacity>
                   <TouchableOpacity activeOpacity={0.85} disabled={!a} onPress={() => a && setPreview(a)} style={{ flex: 1 }}>
-                    <Image source={{ uri: a }} style={{ width: '100%', height: 110, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
-                    <Text style={{ fontSize: 8, fontWeight: '900', color: '#4CBB17', textAlign: 'center', paddingVertical: 3 }}>AFTER</Text>
+                    <Image source={{ uri: a }} style={{ width: '100%', aspectRatio: 4 / 3, backgroundColor: '#F1F5F9' }} resizeMode="cover" />
+                    <Text style={{ fontSize: 9, fontWeight: '900', color: '#4CBB17', textAlign: 'center', paddingVertical: 4 }}>AFTER</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             );
           })}
-        </ScrollView>
+        </View>
       ) : null}
 
       {/* "Your Investment with {company}" heading (web parity) + the product list */}
