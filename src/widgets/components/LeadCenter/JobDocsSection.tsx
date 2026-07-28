@@ -143,7 +143,7 @@ export const JobDocsSection = ({
 
   // Scanner states for direct upload
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet'>('agreement');
+  const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet' | 'downPaymentReceipt'>('agreement');
   const [isGenerating, setIsGenerating] = useState(false);
 
   // Slideshow preview states
@@ -219,13 +219,15 @@ export const JobDocsSection = ({
   const [selectedAnnotationPhotos, setSelectedAnnotationPhotos] = useState<SectionImage[]>([]);
 
   // Contract outcome states
-  const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
+  const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[]; downPaymentReceipts: any[] }>({
     agreements: [],
     orderSheets: [],
+    downPaymentReceipts: [],
   });
-  const [expandedDocs, setExpandedDocs] = useState<{ agreements: boolean; orderSheets: boolean }>({
+  const [expandedDocs, setExpandedDocs] = useState<{ agreements: boolean; orderSheets: boolean; downPaymentReceipts: boolean }>({
     agreements: true,
     orderSheets: true,
+    downPaymentReceipts: true,
   });
   const [leadDraft, setLeadDraft] = useState<any>(null);
 
@@ -522,7 +524,7 @@ export const JobDocsSection = ({
     }
   };
 
-  const handleAddDocument = (type: 'agreement' | 'orderSheet') => {
+  const handleAddDocument = (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => {
     setScannerType(type);
     setScannerOpen(true);
   };
@@ -574,8 +576,14 @@ export const JobDocsSection = ({
   };
 
   const handleSaveScannedDocument = async (pages: any[]) => {
-    const scannerCategory = scannerType === 'agreement' ? 'agreement' : 'orderSheet';
-    const stateField = scannerCategory === 'agreement' ? 'agreements' : 'orderSheets';
+    // Backend job-builder document category (matches web `submitJobBuilder`):
+    // agreement / orderSheet / downPaymentReceipt. The state (submit) field mirrors
+    // web too — agreements / orderSheets / downPaymentReceipt.
+    const scannerCategory = scannerType;
+    const stateField =
+      scannerCategory === 'agreement' ? 'agreements'
+      : scannerCategory === 'orderSheet' ? 'orderSheets'
+      : 'downPaymentReceipt';
     const leadId = lead?._id;
 
     if (!leadId) {
@@ -602,7 +610,8 @@ export const JobDocsSection = ({
         const dataObj = response.data?.data || response.data || {};
         preFetchedAppendedDocs = [
           ...(dataObj.agreements || []),
-          ...(dataObj.orderSheets || [])
+          ...(dataObj.orderSheets || []),
+          ...(dataObj.downPaymentReceipt || [])
         ];
       } catch (err) {
         console.warn('[JobDocsSection] Failed to pre-fetch outcome documents', err);
@@ -612,7 +621,7 @@ export const JobDocsSection = ({
       for (let i = 0; i < pages.length; i++) {
         const p = pages[i];
         const docNum = i + 1;
-        const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
+        const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : scannerCategory === 'orderSheet' ? 'Order_Sheet' : 'Down_Payment_Receipt';
         const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
         const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
 
@@ -1188,10 +1197,12 @@ export const JobDocsSection = ({
     const resolveDocs = async () => {
       const docs = lead?.jobBuilderDocuments;
       if (docs) {
-        const { agreements = [], orderSheets = [] } = docs;
+        // Web parity (contract-details.js): receipts live under `downPaymentReceipt`.
+        const { agreements = [], orderSheets = [], downPaymentReceipt = [] } = docs;
         const allDocs = [
           ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
           ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
+          ...downPaymentReceipt.map((d: any) => ({ ...d, _sourceGroup: 'downPaymentReceipt' })),
         ];
 
         const allPaths = allDocs.map((doc: any) => ({
@@ -1210,7 +1221,7 @@ export const JobDocsSection = ({
               const finalType = doc.documentType || doc._sourceGroup;
               return {
                 uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-                name: finalType === 'agreement' ? 'Agreement' : 'Order Sheet',
+                name: finalType === 'agreement' ? 'Agreement' : finalType === 'orderSheet' ? 'Order Sheet' : 'Down Payment Receipt',
                 serverId: doc._id,
                 size,
                 documentType: finalType,
@@ -1220,15 +1231,16 @@ export const JobDocsSection = ({
             setResolvedDocuments({
               agreements: mappedAll.filter((d: any) => d.documentType === 'agreement'),
               orderSheets: mappedAll.filter((d: any) => d.documentType === 'orderSheet'),
+              downPaymentReceipts: mappedAll.filter((d: any) => d.documentType === 'downPaymentReceipt'),
             });
           } catch (error) {
             console.error('Failed to resolve secure URLs', error);
           }
         } else {
-          setResolvedDocuments({ agreements: [], orderSheets: [] });
+          setResolvedDocuments({ agreements: [], orderSheets: [], downPaymentReceipts: [] });
         }
       } else {
-        setResolvedDocuments({ agreements: [], orderSheets: [] });
+        setResolvedDocuments({ agreements: [], orderSheets: [], downPaymentReceipts: [] });
       }
     };
     resolveDocs();
@@ -1508,11 +1520,11 @@ export const JobDocsSection = ({
       <DocumentScannerModal
         visible={scannerOpen}
         onClose={() => setScannerOpen(false)}
-        title={scannerType === 'agreement' ? 'Scan Agreement' : 'Scan Order Sheet'}
+        title={scannerType === 'agreement' ? 'Scan Agreement' : scannerType === 'orderSheet' ? 'Scan Order Sheet' : 'Scan Down Payment Receipt'}
         leadId={lead?._id || ''}
         category={scannerType}
         initialFiles={
-          resolvedDocuments[scannerType === 'agreement' ? 'agreements' : 'orderSheets'] || []
+          resolvedDocuments[scannerType === 'agreement' ? 'agreements' : scannerType === 'orderSheet' ? 'orderSheets' : 'downPaymentReceipts'] || []
         }
         onSave={handleSaveScannedDocument}
       />

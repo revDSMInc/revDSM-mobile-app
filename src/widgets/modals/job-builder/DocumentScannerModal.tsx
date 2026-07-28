@@ -26,7 +26,7 @@ interface DocumentScannerModalProps {
   onChange?: (images: any[]) => void;
   title: string;
   leadId: string;
-  category: 'agreement' | 'orderSheet';
+  category: 'agreement' | 'orderSheet' | 'downPaymentReceipt';
   initialFiles?: any[];
 }
 
