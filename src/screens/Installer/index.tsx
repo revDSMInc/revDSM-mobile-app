@@ -14,12 +14,24 @@ import MaterialDesignIcon from 'react-native-vector-icons/MaterialCommunityIcons
 import { useTheme } from '../../theme/ThemeProvider';
 import { FlashMessage } from '../../config/message';
 import { useInstallerJobs, useUpdateJobStatus } from '../../hooks/useInstallerJobs';
+import { useAuth } from '../../hooks/useAuth';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useInstallerActivityLog } from '../../hooks/useInstallerActivityLog';
 import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
 import { InstallerJobCard } from '../../widgets/components/installer/InstallerJobCard';
-import { mergeInstallerJob, type JobPeriod } from '../../services/api/installer';
-import type { InstallerJob } from '../../config/types/installer';
+import {
+  InstallerService,
+  mergeInstallerJob,
+  type JobPeriod,
+} from '../../services/api/installer';
+import {
+  CHECK_IN_RADIUS_METERS,
+  resolveCheckInEligibility,
+} from '../../utils/installer-geofence';
+import type {
+  InstallerCheckInPayload,
+  InstallerJob,
+} from '../../config/types/installer';
 
 /**
  * Installer dashboard — the signed-in installer's schedule.
@@ -31,6 +43,8 @@ export default function InstallerDashboard() {
   const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
   const { installerCompanyName } = useUserRole();
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
   const [period, setPeriod] = useState<JobPeriod>('today');
   const [startingId, setStartingId] = useState<string | null>(null);
   const { jobs, summaryCounts, loading, isError, refreshing, refresh } =
@@ -89,7 +103,13 @@ export default function InstallerDashboard() {
    * pre-install photos), which exists nowhere else, so the card holds a spinner
    * until it lands and the detail screen opens with real data.
    *
-   * Tomorrow's previews and already-resulted jobs open read-only: no status change.
+   * Tomorrow's previews and already-resulted jobs open read-only: no status change
+   * and no check-in — nobody is on site for those.
+   *
+   * A live job is **geofenced**: the installer has to be within
+   * `CHECK_IN_RADIUS_METERS` of the customer's address or of a company office before
+   * anything is sent (`utils/installer-geofence.ts`). The check runs first, so a
+   * refusal costs no request and never flips the job to `inProgress`.
    */
   const openJob = async (job: InstallerJob) => {
     const readOnly = period === 'tomorrow' || !!job.resulted;
@@ -106,18 +126,145 @@ export default function InstallerDashboard() {
     if (startingId) return;
 
     setStartingId(job._id);
+
+    // ── Geofence ───────────────────────────────────────────────────────────────
+    // Waiting on a GPS fix is why the card spinner starts before this rather than
+    // after: on a cold fix this is the slowest part of opening a job.
+    let eligibility;
+    try {
+      eligibility = await resolveCheckInEligibility(job, user);
+    } catch (err) {
+      // A crash in the gate must not become a lockout — the backend re-checks the
+      // same radius from the payload below, so failing open here is recoverable
+      // while failing closed leaves a crew stuck on site with no way in.
+      console.warn('[InstallerJob] Geofence check failed, allowing check-in:', err);
+      eligibility = null;
+    }
+
+    if (eligibility && !eligibility.allowed) {
+      // An Error, not a plain object: the logger only reads `.message` off an Error
+      // instance, so anything else would record the refusal with no reason attached.
+      log.jobStartFailed(job, new Error(eligibility.reason));
+      FlashMessage.error('Too far to check in', eligibility.reason);
+      setStartingId(null);
+      return;
+    }
+
+    // Where the tap happened, for the server's own check. Omitted when the gate let
+    // this through without a fix (job with no coordinates and no locatable office).
+    const checkInPayload: InstallerCheckInPayload | undefined = eligibility?.coords
+      ? {
+          address: job.fullAddress,
+          location: {
+            type: 'Point',
+            coordinates: [eligibility.coords.longitude, eligibility.coords.latitude],
+          },
+          radius: CHECK_IN_RADIUS_METERS,
+        }
+      : undefined;
+
+    // Check in FIRST — this tap is the check-in, so `PUT installer/v1/{id}/work`
+    // goes out before anything that can fail on its own. It answers with the
+    // full working job (contract, sold products, rep photos, packet), which is what the
+    // detail screen renders.
+    let checkedIn = true;
+    let checkInJob: InstallerJob | null = null;
+    try {
+      checkInJob = await InstallerService.startWork(job._id, checkInPayload);
+    } catch (err: any) {
+      // 409 — the job already holds an open work session:
+      //   { code: 409, message: "…already checked in by another crew member…",
+      //     data: { alreadyCheckedIn: true, workStartedBy: "<userId>" } }
+      const heldBy = err?.data?.workStartedBy;
+      const alreadyOpen = err?.code === 409 || err?.data?.alreadyCheckedIn === true;
+
+      if (alreadyOpen && heldBy && heldBy !== userId) {
+        // Someone else is on this job. Hard stop — two crews must not work one job,
+        // and the job must NOT be flipped to inProgress on their behalf. The server's
+        // own wording is shown, since it names the condition better than we can.
+        log.jobStartFailed(job, err);
+        FlashMessage.error(
+          'Already checked in',
+          err?.message ||
+            'This job is already checked in by another crew member. You can check in once they check out.'
+        );
+        setStartingId(null);
+        return;
+      }
+
+      // 403 — the server ran the geofence on the payload above and refused. It is the
+      // authority on this, so its verdict overrides the on-device check that just
+      // passed (a spoofed fix clears the client gate and nothing else). Hard stop,
+      // with the server's own wording.
+      if (err?.httpStatus === 403 || err?.code === 403) {
+        log.jobStartFailed(job, err);
+        FlashMessage.error(
+          'Too far to check in',
+          err?.message ||
+            `You must be within ${CHECK_IN_RADIUS_METERS} m of the job site or a company office.`
+        );
+        setStartingId(null);
+        return;
+      }
+
+      if (alreadyOpen) {
+        // OUR OWN session is still open — the app was killed, or the phone lost signal
+        // before the check-out landed. That is not a failure: carry on into the job and
+        // keep `checkedIn` so leaving still closes it. Blocking here would lock an
+        // installer out of their own job with no way back in.
+        console.warn('[InstallerJob] Work session was already open for this installer.');
+      } else {
+        // Anything else (offline, 5xx): the installer is on site regardless, so the
+        // job still opens — only the check-out on the way back is skipped.
+        checkedIn = false;
+        console.warn('[InstallerJob] Check-in failed:', err);
+      }
+    }
+
+    // What check-in gave us, layered over the list row it was opened from.
+    const afterCheckIn = checkInJob ? mergeInstallerJob(job, checkInJob) : job;
+
     try {
       const started = await updateStatus.mutateAsync({ jobId: job._id, status: 'inProgress' });
-      const merged = mergeInstallerJob(job, started);
+      // The transition endpoint isn't contracted to answer with the job, so anything it
+      // does send is layered on; the check-in payload is what the screen really runs on.
+      const merged = started ? mergeInstallerJob(afterCheckIn, started) : afterCheckIn;
       persistActiveInstallerJob(merged);
       log.jobStarted(merged);
-      navigation.navigate('InstallerJobDetail', { job: merged });
-    } catch (err) {
+      navigation.navigate('InstallerJobDetail', { job: merged, checkedIn });
+      return;
+    } catch (err: any) {
+      // Check-in already returned the working payload, so a failed status transition
+      // is not a dead end — the installer goes in on the check-in data rather than
+      // being held out of a job they are standing at. Only logged, no banner.
+      if (checkInJob) {
+        console.warn(
+          '[InstallerJob] Status transition failed; opening on the check-in payload:',
+          err
+        );
+        persistActiveInstallerJob(afterCheckIn);
+        log.jobStarted(afterCheckIn);
+        navigation.navigate('InstallerJobDetail', { job: afterCheckIn, checkedIn });
+        return;
+      }
+
+      // The axios interceptor rejects with the server's own body, so `err.message` is
+      // the API's wording — shown as-is, with the generic line only as a fallback for
+      // a transport failure that carries none. Logged too: the body says more than the
+      // banner has room for.
+      console.warn('[InstallerJob] Failed to start job:', err);
       log.jobStartFailed(job, err);
       FlashMessage.error(
         "Couldn't start this job",
-        'Check your connection and try again.'
+        err?.message || 'Check your connection and try again.'
       );
+      // The session opened a moment ago but the job never opened, so close it again
+      // rather than leaving the server believing this installer is still working.
+      if (checkedIn) {
+        InstallerService.endWork(job._id).catch((e) =>
+          console.warn('[InstallerJob] Check-out after failed start failed:', e)
+        );
+      }
     } finally {
       setStartingId(null);
     }

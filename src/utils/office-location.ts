@@ -38,6 +38,21 @@ const readOfficeCoords = (office: any): OfficeCoords | null => {
 };
 
 /**
+ * Every office the profile can locate.
+ *
+ * `getOfficeCoords` picks ONE office to frame a map on; the check-in geofence needs all
+ * of them, because a multi-office company must accept a crew staging at any of its
+ * depots. Offices without usable coordinates are dropped rather than defaulted.
+ */
+export const getAllOfficeCoords = (user: any): OfficeCoords[] => {
+  const raw = user?.office;
+  const offices: any[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return offices
+    .map(readOfficeCoords)
+    .filter((coords): coords is OfficeCoords => coords !== null);
+};
+
+/**
  * The office the map should open on. Prefers the rep's assigned office, then
  * falls back to the first office that has usable coordinates (web reads
  * `office[0]`; preferring `assigned` only matters for multi-office reps).

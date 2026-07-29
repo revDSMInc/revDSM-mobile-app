@@ -1,20 +1,17 @@
 /**
- * Body builders for `PATCH installer/v1/{jobId}`.
+ * `stepData` builders for `PATCH installer/v1/update/{jobId}`.
  *
  * One builder per timeline step, each returning `null` when the step has nothing to
- * send so a caller can skip the request entirely.
+ * send so a caller can skip the request entirely. Each returns the INNER object;
+ * `InstallerService.updateJob` wraps it in `{ stepData: … }`.
  *
- * The payload is **flat** — no `stepData` wrapper — and only the five keys the
- * server allows (`INSTALLER_PATCH_FIELDS`) may appear; anything else comes back as
- * `400 Unsupported patch fields`. That allow-list also settles which photos travel
- * how:
+ * Only the keys the server stores (`INSTALLER_PATCH_FIELDS`) may appear — anything
+ * else is stripped before sending.
  *
- *  - **Pickup and Return photos are not patchable.** They reach the server only
- *    through `installer/v1/{jobId}/images`, which appends them server-side. Return
- *    still PATCHes its `materialReturnNothingToReturn` flag, which has no other route.
- *  - **Pre- and Post-install photos are patchable**, so the matched set is sent as a
- *    whole. The upload already appended each shot; this restates the current set,
- *    which is what keeps a retaken shot from leaving a stale row behind.
+ *  - **Every photo array is sent whole**, not as an increment. The multipart upload
+ *    already appended each shot; restating the current set is what keeps a retaken or
+ *    deleted photo from leaving a stale row behind.
+ *  - A photo joins its array only once its upload returned an `s3url`.
  *  - **Pre-existing conditions** carry their photos nested per area — the only place
  *    the server learns which shot documents which condition.
  */
@@ -84,20 +81,54 @@ export const toPhotoRefs = (photos: CapturedPhoto[]): StepPhotoRef[] =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Pickup has nothing to PATCH.
+ * Whether an empty photo array is meaningful.
  *
- * `installerPickupPhotos` is not in the server's allow-list (the photos arrive via
- * the images endpoint), and there is no "had material on truck" flag to mirror
- * Return's `materialReturnNothingToReturn`. Kept as a named no-op so the step wiring
- * reads uniformly and there is one place to fill in if that flag is ever added.
+ * An untouched step and a step whose last photo was just deleted both hold zero
+ * photos, and they must not send the same thing: omitting the key leaves the server's
+ * copy alone (right for the first), sending `[]` clears it (right for the second). The
+ * builders can't tell the two apart, so the caller says — only a delete passes
+ * `includeEmptyPhotos`, which keeps an un-hydrated device from wiping a set it simply
+ * hasn't loaded yet.
  */
-export const buildPickupStepData = (_progress: InstallProgress): InstallerJobPatch | null =>
-  null;
+export interface StepDataOptions {
+  includeEmptyPhotos?: boolean;
+}
 
-/** Return's photos go up via the images endpoint; only the skip flag is patchable. */
-export const buildReturnStepData = (progress: InstallProgress): InstallerJobPatch | null => ({
-  materialReturnNothingToReturn: progress.return.skipped,
-});
+/**
+ * Pickup — the loaded-material shots, as the set currently stands.
+ *
+ * A photo joins the array only once its upload returned an `s3url`. "Had material on
+ * truck" (`skipped`) has no backend field, so a skipped pickup PATCHes nothing.
+ */
+export const buildPickupStepData = (
+  progress: InstallProgress,
+  options: StepDataOptions = {}
+): InstallerJobPatch | null => {
+  const photos = toPhotoRefs(progress.pickup.photos).map((ref) => ({
+    ...ref,
+    subcategory: 'pickup',
+  }));
+  return photos.length || options.includeEmptyPhotos
+    ? { installerPickupPhotos: photos }
+    : null;
+};
+
+/** Return — the "used all material" flag plus the returned-stock shots. */
+export const buildReturnStepData = (
+  progress: InstallProgress,
+  options: StepDataOptions = {}
+): InstallerJobPatch | null => {
+  const photos = toPhotoRefs(progress.return.photos).map((ref) => ({
+    ...ref,
+    subcategory: 'return',
+  }));
+  return {
+    materialReturnNothingToReturn: progress.return.skipped,
+    ...(photos.length || options.includeEmptyPhotos
+      ? { installerReturnPhotos: photos }
+      : {}),
+  };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 2 · Pre-Existing Conditions
@@ -169,18 +200,24 @@ const buildMatchedRefs = (
 
 export const buildPreInstallStepData = (
   progress: InstallProgress,
-  repPhotoIdByTag?: Map<string, string>
+  repPhotoIdByTag?: Map<string, string>,
+  options: StepDataOptions = {}
 ): InstallerJobPatch | null => {
   const photos = buildMatchedRefs(progress.preMatched, repPhotoIdByTag);
-  return photos.length ? { installerPreInstallPhotos: photos } : null;
+  return photos.length || options.includeEmptyPhotos
+    ? { installerPreInstallPhotos: photos }
+    : null;
 };
 
 export const buildPostInstallStepData = (
   progress: InstallProgress,
-  repPhotoIdByTag?: Map<string, string>
+  repPhotoIdByTag?: Map<string, string>,
+  options: StepDataOptions = {}
 ): InstallerJobPatch | null => {
   const photos = buildMatchedRefs(progress.postMatched, repPhotoIdByTag);
-  return photos.length ? { installerPostInstallPhotos: photos } : null;
+  return photos.length || options.includeEmptyPhotos
+    ? { installerPostInstallPhotos: photos }
+    : null;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,13 +321,9 @@ export const buildCocStepData = (): InstallerJobPatch | null => null;
  * Clears everything the job has recorded, as far as the API allows.
  *
  * Sets every patchable field back to its untouched value: conditions un-checked and
- * empty, both photo arrays emptied, every product back to PENDING, the return flag
- * off.
- *
- * ⚠️ `installerPickupPhotos` and `installerReturnPhotos` are NOT in the server's
- * allow-list, so pickup and return shots already uploaded cannot be cleared from
- * here — they need a server-side delete. Everything the installer sees on the device
- * is wiped regardless (`useInstallProgress.reset`).
+ * empty, all four photo arrays emptied, every product back to PENDING, the return
+ * flag off. Everything the installer sees on the device is wiped alongside it
+ * (`useInstallProgress.reset`).
  */
 export const buildResetPatch = (
   products: SoldProduct[],
@@ -305,8 +338,10 @@ export const buildResetPatch = (
 
   return {
     preExistingConditions,
+    installerPickupPhotos: [],
     installerPreInstallPhotos: [],
     installerPostInstallPhotos: [],
+    installerReturnPhotos: [],
     jobScopeVerification: {
       verificationStatus: 'IN_PROGRESS',
       scopeItems: products.map((product) => ({

@@ -4,6 +4,7 @@ import type {
   PhotoSection,
   PECArea,
   InstallerResultType,
+  JobResultStatus,
 } from '../config/types/installer';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,9 +207,20 @@ export const INSTALLER_RESULT_TYPES: InstallerResultType[] = [
   'Not Hit',
 ];
 
-// The result action IS the status: `PUT update-job-status` takes the button label
-// verbatim (`"Can't Do Work"` / `"Reset"` / `"Not Hit"`) plus the chosen reason, so
-// there is no mapping between the two.
+/**
+ * Button label → the status code the API takes.
+ *
+ * The two are NOT the same string: the installer reads "Can't Do Work", the wire
+ * carries `cantDoWork`. Reset has no entry — it is not a status transition at all, it
+ * goes to `PUT installer/v1/{id}/reset`.
+ */
+export const RESULT_STATUS_CODE: Record<
+  Exclude<InstallerResultType, 'Reset'>,
+  JobResultStatus
+> = {
+  "Can't Do Work": 'cantDoWork',
+  'Not Hit': 'notHit',
+};
 
 /** Accent per result action, matching the app's semantic colors. */
 export const RESULT_COLORS: Record<InstallerResultType, string> = {

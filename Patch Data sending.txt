@@ -1,107 +1,136 @@
-end point: PATCH {{base_url}}/installer/v1/:id
+end point: PATCH {{base_url}}/installer/v1/update/:id
+(replaces the older PATCH {{base_url}}/installer/v1/:id, which took these same
+ fields FLAT — no `stepData` wrapper)
+
+[STORED] = persisted by this request
+[REF]    = shown for completeness only; the photos travel as multipart to
+           /installer/v1/:id/images and are appended server-side
+
 {
-  "status": "completed",
+  // [STORED] optional — scheduled | inProgress | completed | onHold
+  "status": "completed",
 
-  "stepData": {
+  "stepData": {
 
-    // ── STEP 1 · Pickup ─────────────────────────────
-    // (photos actually travel as multipart → /installer/v1/:id/images, phase=pickup;
-    //  shown here as references for completeness)
-    "installerPickupPhotos": [
-      {
-        "s3url": "images/Installer/pickup-abc123.jpeg",
-        "bucketName": "np-revdsm-staging",
-        "subcategory": "pickup",
-        "timestampTaken": "2026-07-24T06:10:00.000Z",
-        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
-      }
-    ],
+    // ── STEP 1 · Pickup ─────────────────────────────
+    // [REF] photos travel as multipart → /installer/v1/:id/images?phase=pickup
+    "installerPickupPhotos": [
+      {
+        "s3url": "images/Installer/pickup-abc123.jpeg",
+        "bucketName": "np-revdsm-staging",
+        "subcategory": "pickup",
+        "timestampTaken": "2026-07-24T06:10:00.000Z",
+        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
+      }
+    ],
 
-    // ── STEP 2 · Pre-Existing Conditions ────────────
-    "preExistingConditions": {
-      "status": "CONDITIONS_PRESENT",          // NOT_CHECKED | NO_CONDITIONS_FOUND | CONDITIONS_PRESENT
-      "checkedBy": "6a62f459c35e85c26e70d288",  // set server-side if omitted
-      "checkedAt": "2026-07-24T06:12:00.000Z",  // set server-side if omitted
-      "conditions": [
-        {
-          "label": "Cracked driveway",
-          "isSelected": true,
-          "description": "Pre-existing crack near garage",
-          "photos": [
-            {
-              "s3url": "images/Installer/preexist-crack-1.jpeg",
-              "bucketName": "np-revdsm-staging",
-              "timestampTaken": "2026-07-24T06:12:30.000Z",
-              "coordinates": { "latitude": 31.43, "longitude": 74.2 }
-            }
-          ]
-        }
-      ]
-    },
+    // ── STEP 2 · Pre-Existing Conditions ────────────
+    // [STORED] replaces the object; checkedBy/checkedAt set server-side if omitted
+    "preExistingConditions": {
+      "status": "CONDITIONS_PRESENT",           // NOT_CHECKED | NO_CONDITIONS_FOUND | CONDITIONS_PRESENT
+      "checkedBy": "6a62f459c35e85c26e70d288",
+      "checkedAt": "2026-07-24T06:12:00.000Z",
+      "conditions": [
+        {
+          "label": "Cracked driveway",
+          "isSelected": true,
+          "description": "Pre-existing crack near garage",
+          "photos": [
+            {
+              "s3url": "images/Installer/preexist-crack-1.jpeg",
+              "bucketName": "np-revdsm-staging",
+              "timestampTaken": "2026-07-24T06:12:30.000Z",
+              "coordinates": { "latitude": 31.43, "longitude": 74.2 }
+            }
+          ]
+        }
+      ]
+    },
 
-    // ── STEP 3 · Pre-Install Photos ─────────────────
-    // (multipart → phase=pre; each linked to a rep's salesPhotos._id)
-    "installerPreInstallPhotos": [
-      {
-        "salesPhotoId": "6a62f6bbc35e85c26e70f760",
-        "s3url": "images/Installer/pre-back-left.jpeg",
-        "bucketName": "np-revdsm-staging",
-        "category": "Flooring — EXT",
-        "subcategory": "Back-Left",
-        "timestampTaken": "2026-07-24T06:20:00.000Z",
-        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
-      }
-    ],
+    // ── STEP 3 · Pre-Install Photos ─────────────────
+    // [REF] photos travel as multipart → phase=pre (linked to salesPhotos._id)
+    "installerPreInstallPhotos": [
+      {
+        "salesPhotoId": "6a62f6bbc35e85c26e70f760",
+        "s3url": "images/Installer/pre-back-left.jpeg",
+        "bucketName": "np-revdsm-staging",
+        "category": "Flooring — EXT",
+        "subcategory": "Back-Left",
+        "timestampTaken": "2026-07-24T06:20:00.000Z",
+        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
+      }
+    ],
 
-    // ── STEP 4 · Verify Job Scope ───────────────────
-    "jobScopeVerification": {
-      "verificationStatus": "COMPLETED",        // IN_PROGRESS | COMPLETED | DISCREPANCY_FOUND
-      "scopeItems": [
-        {
-          "scopeId": "scope_6a28fa6ed6700f1190253ad2",
-          "productId": "6a28fa6ed6700f1190253ad2",
-          "productName": "Gutter/Roofline",
-          "status": "CORRECT",                  // PENDING | CORRECT | DISCREPANCY
-          "discrepancy": null
-          // when status === "DISCREPANCY":
-          // "discrepancy": {
-          //   "category": "MEASUREMENT",       // MEASUREMENT|COLOR|WRONG_PRODUCT|MISSING_ITEM|OTHER
-          //   "details": "Sold 40ft, site is 55ft",
-          //   "referenceImages": [{ "id": "ref1", "s3url": "...", "bucketName": "np-revdsm-staging" }],
-          //   "reportedAt": "2026-07-24T06:30:00.000Z",
-          //   "reportedBy": "6a62f459c35e85c26e70d288"
-          // }
-        }
-      ]
-    },
+    // ── STEP 4 · Verify Job Scope ───────────────────
+    // [STORED] replaces the object
+    "jobScopeVerification": {
+      "verificationStatus": "COMPLETED",        // IN_PROGRESS | COMPLETED | DISCREPANCY_FOUND
+      "scopeItems": [
+        {
+          "scopeId": "scope_6a28fa6ed6700f1190253ad2",
+          "productId": "6a28fa6ed6700f1190253ad2",
+          "productName": "Gutter/Roofline",
+          "status": "CORRECT",                  // PENDING | CORRECT | DISCREPANCY
+          "discrepancy": null
+          // when status === "DISCREPANCY":
+          // "discrepancy": {
+          //   "category": "MEASUREMENT",       // MEASUREMENT|COLOR|WRONG_PRODUCT|MISSING_ITEM|OTHER
+          //   "details": "Sold 40ft, site is 55ft",
+          //   "referenceImages": [{ "id": "ref1", "s3url": "...", "bucketName": "np-revdsm-staging" }],
+          //   "reportedAt": "2026-07-24T06:30:00.000Z",
+          //   "reportedBy": "6a62f459c35e85c26e70d288"
+          // }
+        }
+      ]
+    },
 
-    // ── STEP 5 · Post-Install Photos ────────────────
-    // (multipart → phase=post; same salesPhotos._id slot grid)
-    "installerPostInstallPhotos": [
-      {
-        "salesPhotoId": "6a62f6bbc35e85c26e70f760",
-        "s3url": "images/Installer/post-back-left.jpeg",
-        "bucketName": "np-revdsm-staging",
-        "category": "Flooring — EXT",
-        "subcategory": "Back-Left",
-        "timestampTaken": "2026-07-24T07:40:00.000Z",
-        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
-      }
-    ],
+    // ── STEP 5 · Post-Install Photos ────────────────
+    // [REF] photos travel as multipart → phase=post (same salesPhotos._id slot grid)
+    "installerPostInstallPhotos": [
+      {
+        "salesPhotoId": "6a62f6bbc35e85c26e70f760",
+        "s3url": "images/Installer/post-back-left.jpeg",
+        "bucketName": "np-revdsm-staging",
+        "category": "Flooring — EXT",
+        "subcategory": "Back-Left",
+        "timestampTaken": "2026-07-24T07:40:00.000Z",
+        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
+      }
+    ],
 
-    // ── STEP 6 · CoC ────────────────────────────────
-    // :warning: No backend field and no capture UI exist. Nothing to send today.
+    // ── STEP 6 · CoC ────────────────────────────────
+    // ⚠️ No backend field / capture UI. Nothing to send.
 
-    // ── STEP 7 · Return ─────────────────────────────
-    "materialReturnNothingToReturn": false,
-    "installerReturnPhotos": [                  // multipart → phase=return
-      {
-        "s3url": "images/Installer/return-box-1.jpeg",
-        "bucketName": "np-revdsm-staging",
-        "subcategory": "return",
-        "timestampTaken": "2026-07-24T07:55:00.000Z",
-        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
-      }
-    ]
-  }
+    // ── STEP 7 · Return ─────────────────────────────
+    // [STORED] the flag
+    "materialReturnNothingToReturn": false,
+    // [REF] photos travel as multipart → phase=return (uploading return photos auto-sets the flag false)
+    "installerReturnPhotos": [
+      {
+        "s3url": "images/Installer/return-box-1.jpeg",
+        "bucketName": "np-revdsm-staging",
+        "subcategory": "return",
+        "timestampTaken": "2026-07-24T07:55:00.000Z",
+        "coordinates": { "latitude": 31.43, "longitude": 74.2 }
+      }
+    ]
+  }
 }
+
+─────────────────────────────────────────────────────────────────────────────
+What the mobile app actually sends (src/utils/installer-step-data.ts +
+InstallerService.updateJob):
+
+  leaving any of the 7 steps →  { "stepData": { …that step's keys… } }
+  "Job Completed?" → Yes      →  { "status": "completed",
+                                   "stepData": { …ALL 7 steps merged… } }
+
+Each step PATCHes on the way out so a second installer signing in sees what
+has already been done. Photo arrays are always sent as the step's CURRENT
+full set (never an increment) — the multipart upload appended each shot, and
+restating the set is what clears a retaken or deleted photo. A photo joins
+its array only once its upload returned an s3url.
+
+Not sent: nothing for Step 6 · CoC (no backend field exists), and no
+"had material on truck" flag for Step 1 (no backend field either — only
+Return has `materialReturnNothingToReturn`).

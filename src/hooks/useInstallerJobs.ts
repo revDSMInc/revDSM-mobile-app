@@ -44,17 +44,19 @@ export function useInstallerJob(jobId?: string) {
 }
 
 /**
- * Moves a job through the workflow — `PUT installer/v1/update-job-status/{id}`.
+ * Moves a job through the workflow — `PUT installer/v1/update/{id}` with `{ status }`.
  *
- * Resolves with the full job, so callers can navigate straight into the detail
- * screen with the payload the API just returned rather than refetching.
+ * PUT, not PATCH: same path, but the verb is what separates a transition from a step
+ * data write. May resolve with the job, but is not guaranteed to — the response payload
+ * is not part of the contract. The working payload (contract, sold products, rep
+ * photos) comes from check-in instead.
  */
 export function useUpdateJobStatus() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ jobId, status }: { jobId: string; status: JobStatus }) =>
-      InstallerService.updateJobStatus(jobId, status),
+      InstallerService.setJobStatus(jobId, status),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: installerKeys.all });
     },
@@ -62,19 +64,19 @@ export function useUpdateJobStatus() {
 }
 
 /**
- * Results a job — Can't Do Work / Reset / Not Hit.
+ * Results a job — Can't Do Work / Not Hit.
  *
- * Goes through `PUT installer/v1/update-job-status/{jobId}` with `{ status, reason }`
- * rather than the provisional `jobs/{id}/result` endpoint: the result actions ARE
- * status transitions (`cancel` / `update` / `pending`), and this is the endpoint the
- * backend actually serves.
+ * `PUT installer/v1/update/{jobId}` with `{ status, statusReason }`, rather than the
+ * provisional `jobs/{id}/result` endpoint: these two results ARE status transitions,
+ * and this is the endpoint the backend actually serves. Reset is not one of them — it
+ * has its own endpoint (`InstallerService.resetJob`).
  */
 export function useSubmitInstallerResult() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ jobId, status, reason }: InstallerResultSubmission) =>
-      InstallerService.updateJobStatus(jobId, status, reason),
+      InstallerService.setJobStatus(jobId, status, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: installerKeys.all });
     },
