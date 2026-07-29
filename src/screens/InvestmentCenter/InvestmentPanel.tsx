@@ -260,10 +260,11 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         ? oneYear?.planKey || defaultOneYearKey
         : defaultOneYearKey;
   const oneYearMonthly = useMemo(() => calcMonthly(plans, oneYearGrandTotal, oneYearKey), [plans, oneYearGrandTotal, oneYearKey]);
-  // Hide the 1-Year read-only monthly when a basic CK/CC/AMEX method is the active choice
-  // — the customer picked a cash/card method, so there's no monthly to show (mirrors the
-  // In-Home shortlist deselecting, and the web 1-Year monthly box deselecting on a badge).
-  const oneYearMonthlyShown = badgeSelection ? 0 : oneYearMonthly;
+  // The 1-Year monthly ALWAYS shows, regardless of the active CK/CC/AMEX/financing
+  // choice — the 1-Year Program is a standalone free-financing quote, so its monthly
+  // (from `oneYearKey`, which stays on a valid financing plan even when a basic
+  // cash/card badge is selected) is presented at all times.
+  const oneYearMonthlyShown = oneYearMonthly;
 
   // Dynamic per-product job-scope matrix (no footages/colors) — the corrected data.
   const jobScope = useMemo(
