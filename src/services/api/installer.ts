@@ -21,6 +21,7 @@ import type {
   InstallerStoredImage,
   InstallerStoredRecords,
   InstallerUploadFile,
+  StatusReasonPayload,
 } from '../../config/types/installer';
 import { MOCK_INSTALLER_JOBS, MOCK_INSTALLER_JOBS_TOMORROW } from './installer.mock';
 import { stripUnsupportedFields } from '../../utils/installer-step-data';
@@ -450,6 +451,7 @@ const PHASE_ARRAY_KEY: Record<InstallerImagePhase, string> = {
   post: 'installerPostInstallPhotos',
   return: 'installerReturnPhotos',
   coc: 'installerCocPhotos',
+  result: 'installerResultPhotos',
 };
 
 const toStoredImages = (raw: any): InstallerStoredImage[] =>
@@ -524,18 +526,19 @@ export const InstallerService = {
    * `status: completed`.
    *
    * `status` is a wire code (`cantDoWork`, `notHit`, `inProgress`), not a button label;
-   * `statusReason` is the reason the installer picked. Returns whatever job the response
-   * carried, or null — the payload is not part of the contract, so callers must not
-   * depend on it. Starting a job gets its working payload from check-in instead.
+   * `statusReason` is an object with `reason` + optional `images[]`. Returns whatever
+   * job the response carried, or null — the payload is not part of the contract, so
+   * callers must not depend on it. Starting a job gets its working payload from check-in
+   * instead.
    */
   setJobStatus: async (
     jobId: string,
     status: JobStatus,
     /**
-     * Why. An empty string is still sent; only `undefined` omits the field, so a
-     * transition with no reason menu (job start) doesn't carry an empty key.
+     * Why. `{ reason, images? }`. Only `undefined` omits the field, so a transition
+     * with no reason menu (job start) doesn't carry an empty key.
      */
-    statusReason?: string
+    statusReason?: StatusReasonPayload
   ): Promise<InstallerJob | null> => {
     const body = statusReason === undefined ? { status } : { status, statusReason };
     traceRequest('Job status', 'put', InstallerEndpoints.update(jobId), body);
@@ -553,9 +556,9 @@ export const InstallerService = {
    * returns to (`inProgress`) and answers with `{ previousStatus, status }` plus ids —
    * a summary, not the job — so nothing is normalized out of it.
    *
-   * The picked reason travels as `statusReason`, NOT `reason`.
+   * `statusReason` is an object with `reason` + optional `images[]`.
    */
-  resetJob: async (jobId: string, statusReason: string): Promise<void> => {
+  resetJob: async (jobId: string, statusReason: StatusReasonPayload): Promise<void> => {
     const body = { statusReason };
     traceRequest('Reset job', 'put', InstallerEndpoints.reset(jobId), body);
 

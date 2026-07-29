@@ -26,6 +26,7 @@ const emptyProgress = (jobId: string): InstallProgress => ({
   postExtras: {},
   scope: {},
   cocPages: [],
+  resultPhotos: [],
   completedSteps: {},
 });
 
@@ -72,6 +73,7 @@ const applyPhotoPatch = (
     pickup: { ...progress.pickup, photos: many(progress.pickup.photos) },
     return: { ...progress.return, photos: many(progress.return.photos) },
     cocPages: many(progress.cocPages),
+    resultPhotos: many(progress.resultPhotos ?? []),
     pecEntries: mapRecord(progress.pecEntries, (entry) => {
       const photos = many(entry.photos);
       return photos === entry.photos ? entry : { ...entry, photos };
@@ -326,6 +328,25 @@ export function useInstallProgress(
     [commit]
   );
 
+  // ── Result evidence ───────────────────────────────────────────────────────
+  // `?? []` throughout: progress persisted before this field existed rehydrates
+  // without it, and MMKV keeps that shape until the job is next written.
+
+  const addResultPhoto = useCallback(
+    (photo: CapturedPhoto) =>
+      commit((p) => ({ ...p, resultPhotos: [...(p.resultPhotos ?? []), photo] })),
+    [commit]
+  );
+
+  const removeResultPhoto = useCallback(
+    (photoId: string) =>
+      commit((p) => ({
+        ...p,
+        resultPhotos: (p.resultPhotos ?? []).filter((x) => x.id !== photoId),
+      })),
+    [commit]
+  );
+
   const completeStep = useCallback(
     (key: InstallStepKey) =>
       commit((p) => ({ ...p, completedSteps: { ...p.completedSteps, [key]: true } })),
@@ -383,6 +404,8 @@ export function useInstallProgress(
     setScopeStatus,
     addCocPage,
     removeCocPage,
+    addResultPhoto,
+    removeResultPhoto,
     completeStep,
     patchPhoto,
     hydrate,

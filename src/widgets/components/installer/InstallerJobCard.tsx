@@ -131,35 +131,15 @@ export function InstallerJobCard({
           onPress={onPress}
           disabled={inert}
           className="h-12 rounded-xl items-center justify-center flex-row"
-          // Web's disabled treatment is `alpha(color, 0.5)` — `+ '80'` here. The button
-          // still fires: tapping it explains why the job won't open (see `onPress`),
-          // which a truly inert button can't do.
-          style={{ backgroundColor: state.openable ? accent : accent + '80' }}
+          style={{ backgroundColor: accent }}
         >
           {loading ? (
             <ActivityIndicator size="small" color="white" />
           ) : (
-            <Ionicon
-              name={state.openable ? 'location-sharp' : 'lock-closed'}
-              size={20}
-              color="white"
-            />
+            <Ionicon name="location-sharp" size={20} color="white" />
           )}
           <Text className="text-white ml-2 text-base font-bold">{actionLabel}</Text>
         </TouchableOpacity>
-
-        {/*
-          Stated on the card rather than only on tap. An installer scanning their
-          schedule needs to see which jobs are dead before they drive to one.
-        */}
-        {!!state.blockedReason && (
-          <Text
-            className="text-xs font-semibold leading-4 mt-2 text-center"
-            style={{ color: accent }}
-          >
-            {state.blockedReason}
-          </Text>
-        )}
       </View>
     </TouchableOpacity>
   );

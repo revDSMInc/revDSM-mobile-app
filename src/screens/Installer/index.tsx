@@ -28,7 +28,6 @@ import {
   CHECK_IN_RADIUS_METERS,
   resolveCheckInEligibility,
 } from '../../utils/installer-geofence';
-import { resolveJobCardState } from '../../utils/installer-card-state';
 import type {
   InstallerCheckInPayload,
   InstallerJob,
@@ -113,16 +112,6 @@ export default function InstallerDashboard() {
    * refusal costs no request and never flips the job to `inProgress`.
    */
   const openJob = async (job: InstallerJob) => {
-    // `workflowState: 'expired'` — the arrival window passed unworked. Checked before
-    // anything else, including the read-only paths: an expired job must not open at
-    // all, and the card's button stays live purely so this message can be shown.
-    const state = resolveJobCardState(job, { isTomorrow: period === 'tomorrow' });
-    if (!state.openable) {
-      log.jobStartFailed(job, new Error(state.blockedReason ?? 'Job cannot be opened'));
-      FlashMessage.error('Appointment expired', state.blockedReason ?? '');
-      return;
-    }
-
     const readOnly = period === 'tomorrow' || !!job.resulted;
     // Bind the job to the log context first so every downstream installer event —
     // including the start call below — carries its jobId / leadId / customer.

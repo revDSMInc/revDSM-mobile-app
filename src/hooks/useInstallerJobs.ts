@@ -70,6 +70,8 @@ export function useUpdateJobStatus() {
  * provisional `jobs/{id}/result` endpoint: these two results ARE status transitions,
  * and this is the endpoint the backend actually serves. Reset is not one of them — it
  * has its own endpoint (`InstallerService.resetJob`).
+ *
+ * `reason` is a `StatusReasonPayload` (`{ reason: string, images?: StatusReasonImage[] }`).
  */
 export function useSubmitInstallerResult() {
   const queryClient = useQueryClient();

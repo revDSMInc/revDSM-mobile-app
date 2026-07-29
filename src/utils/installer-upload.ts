@@ -27,6 +27,7 @@ import type {
   PhotoSection,
   PhotoTag,
   PhotoPhase,
+  StatusReasonImage,
 } from '../config/types/installer';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,6 +177,23 @@ export const extraPhotoDescriptor = (
 ): InstallerImageDescriptor => ({
   category: section.categoryLabel ?? section.name,
   subcategory: 'Extras',
+  timestampTaken: photo.takenAt,
+  coordinates,
+});
+
+/**
+ * A result-evidence shot — Can't Do Work / Not Hit / Reset.
+ *
+ * Carries the reason label as `conditionLabel` and `'result'` as subcategory,
+ * so the IM can see what the photo was attached to.
+ */
+export const resultDescriptor = (
+  reasonLabel: string,
+  photo: CapturedPhoto,
+  coordinates: GeoCoordinates | null
+): InstallerImageDescriptor => ({
+  conditionLabel: `Result — ${reasonLabel}`,
+  subcategory: 'result',
   timestampTaken: photo.takenAt,
   coordinates,
 });

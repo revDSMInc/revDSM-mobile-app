@@ -84,6 +84,8 @@ import type {
   InstallerResultType,
   PECArea,
   PhotoPhase,
+  StatusReasonImage,
+  StatusReasonPayload,
 } from '../../config/types/installer';
 
 /**
@@ -149,6 +151,8 @@ export default function InstallerJobDetail() {
     setScopeStatus,
     addCocPage,
     removeCocPage,
+    addResultPhoto,
+    removeResultPhoto,
     completeStep,
     patchPhoto,
     hydrate,
@@ -564,6 +568,37 @@ export default function InstallerJobDetail() {
     [progressRef, setPecEntry, upload, deleteStoredImages, sendStepData]
   );
 
+  /**
+   * A result-evidence shot.
+   *
+   * Uploaded to S3 via the `result` phase so the s3url is available by the time
+   * the installer submits the result. The s3url + bucketName travel inside the
+   * `statusReason.images[]` payload.
+   */
+  const handleResultPhoto = useCallback(
+    (reason: string, photo: CapturedPhoto) => {
+      addResultPhoto(photo);
+      upload.uploadResult(reason, photo);
+    },
+    [addResultPhoto, upload]
+  );
+
+  /**
+   * Removing a result photo. Drains in-flight uploads first so the s3url can be
+   * read for the server-side DELETE, then drops the local copy.
+   */
+  const handleRemoveResultPhoto = useCallback(
+    async (photo: CapturedPhoto) => {
+      if (photo.uploadStatus === 'uploading') await upload.waitForUploads();
+      const stored = progressRef.current.resultPhotos.find((p) => p.id === photo.id) ?? photo;
+      removeResultPhoto(photo.id);
+      if (stored.s3url) {
+        await deleteStoredImages('result', [stored]);
+      }
+    },
+    [removeResultPhoto, upload, progressRef, deleteStoredImages]
+  );
+
   /** Removing a CoC page — identical to the material path now that pages are stored. */
   const handleRemoveCocPage = useCallback(
     async (pageId: string) => {
@@ -685,14 +720,29 @@ export default function InstallerJobDetail() {
    * Unlike the other two results this is its own endpoint, `PUT installer/v1/{id}/reset`
    * with `{ statusReason }`; the server puts the job back to `inProgress`. The visit's
    * work is wiped afterwards, so a failed reset leaves the recorded work alone. The
-   * reason comes from the picker inside the confirmation dialog — no second popup.
+   * reason comes from the picker inside the confirmation dialog.
+   *
+   * Images are optional for Reset — if result photos exist in progress (captured prior
+   * to the reset), they are uploaded and included in `statusReason.images`.
    */
   const handleConfirmReset = useCallback(
     async (reason?: string) => {
       if (!job?._id || resettingJob || !reason) return;
       setResettingJob(true);
+
+      // Drain any uploads and collect images if result photos exist.
+      await upload.waitForUploads();
+      const images: StatusReasonImage[] = progressRef.current.resultPhotos
+        .filter((p) => !!p.s3url)
+        .map((p) => ({ s3url: p.s3url!, bucketName: p.bucketName }));
+
+      const statusReason: StatusReasonPayload = {
+        reason,
+        ...(images.length > 0 ? { images } : {}),
+      };
+
       try {
-        await InstallerService.resetJob(job._id, reason);
+        await InstallerService.resetJob(job._id, statusReason);
         log.resultSubmitted('Reset', reason);
         await wipeJobData();
         queryClient.invalidateQueries({ queryKey: installerKeys.all });
@@ -707,7 +757,7 @@ export default function InstallerJobDetail() {
         setResettingJob(false);
       }
     },
-    [job, resettingJob, wipeJobData, log, queryClient, navigation]
+    [job, resettingJob, upload, progressRef, wipeJobData, log, queryClient, navigation]
   );
 
   /**
@@ -809,16 +859,32 @@ export default function InstallerJobDetail() {
    * The status is the wire CODE, not the button label the installer read
    * (`RESULT_STATUS_CODE`). Reset never reaches here; it has its own endpoint, via
    * `handleConfirmReset`.
+   *
+   * Drains in-flight photo uploads first, collects every uploaded photo's s3url
+   * into `statusReason.images`, then fires the status transition — so evidence is on
+   * the job before it closes. A failed evidence upload does NOT block the result: the
+   * installer needs to move on even if the network drops their last shot.
    */
-  const handleSubmitResult = (reason: string) => {
+  const handleSubmitResult = async (reason: string) => {
     const result = resultType!;
-    // Reset is routed to the confirmation dialog before this ever runs, so the only
-    // labels that arrive are the two with a code.
     const status = RESULT_STATUS_CODE[result as Exclude<InstallerResultType, 'Reset'>];
     if (!status) return;
 
+    // Drain uploads so every photo that has started uploading has its s3url.
+    await upload.waitForUploads();
+
+    // Collect images that have an s3url (uploaded successfully).
+    const images: StatusReasonImage[] = progressRef.current.resultPhotos
+      .filter((p) => !!p.s3url)
+      .map((p) => ({ s3url: p.s3url!, bucketName: p.bucketName }));
+
+    const statusReason: StatusReasonPayload = {
+      reason,
+      ...(images.length > 0 ? { images } : {}),
+    };
+
     submitResult.mutate(
-      { jobId: job._id, result, status, reason },
+      { jobId: job._id, result, status, reason: statusReason },
       {
         onSuccess: () => {
           log.resultSubmitted(result, reason);
@@ -1307,6 +1373,9 @@ export default function InstallerJobDetail() {
         visible={!!resultType}
         result={resultType}
         submitting={submitResult.isPending}
+        photos={progress.resultPhotos ?? []}
+        onPhotoCaptured={handleResultPhoto}
+        onRemovePhoto={handleRemoveResultPhoto}
         onClose={() => setResultType(null)}
         onConfirm={handleSubmitResult}
       />

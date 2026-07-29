@@ -8,6 +8,7 @@ import {
   materialDescriptor,
   matchedPhotoDescriptor,
   preExistingDescriptor,
+  resultDescriptor,
   uploadInstallerPhoto,
 } from '../utils/installer-upload';
 import {
@@ -178,6 +179,19 @@ export function useInstallerPhotoUpload(
     [run]
   );
 
+  /** A result-evidence shot (Can't Do Work / Reset / Not Hit). */
+  const uploadResult = useCallback(
+    (reasonLabel: string, photo: CapturedPhoto) =>
+      run(
+        'result',
+        photo,
+        (coords) => resultDescriptor(reasonLabel, photo, coords),
+        { step: 'coc', category: 'Result', subcategory: reasonLabel },
+        'the result photo'
+      ),
+    [run]
+  );
+
   /** A free shot with no rep counterpart. */
   const uploadExtra = useCallback(
     (phase: PhotoPhase, section: PhotoSection, photo: CapturedPhoto) =>
@@ -214,6 +228,7 @@ export function useInstallerPhotoUpload(
       uploadMatched,
       uploadCoc,
       uploadExtra,
+      uploadResult,
       waitForUploads,
       /** > 0 while any capture is still being sent. */
       uploadingCount,
@@ -224,6 +239,7 @@ export function useInstallerPhotoUpload(
       uploadMatched,
       uploadCoc,
       uploadExtra,
+      uploadResult,
       waitForUploads,
       uploadingCount,
     ]

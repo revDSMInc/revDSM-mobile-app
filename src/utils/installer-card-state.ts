@@ -25,14 +25,19 @@ export const JOB_CARD_COLORS = {
   OFFSITE: '#9e9e9e',
   /** Preview Appointment — not actionable yet (tomorrow's schedule). */
   UPCOMING: '#2196f3',
-  /** Resulted — the visit is over. */
+  /** Resulted — the visit is over. Web's neutral grey. */
   RESULTED: '#9e9e9e',
   /**
-   * Expired — the arrival window passed unworked. Red rather than web's neutral grey:
-   * this is the one state on the schedule that needs dispatch's attention, and grey
-   * reads as "finished, nothing to do" beside a resulted card.
+   * Expired — the arrival window passed, but the job still opens and works normally.
+   *
+   * A DARKER, cooler grey than `RESULTED` on purpose. Both states are grey, and at
+   * arm's length in sunlight two identical greys would make an expired job (still to be
+   * done) indistinguishable from a resulted one (finished) — the one comparison on this
+   * screen where being wrong costs a wasted drive. The rest of the card separates them
+   * too: resulted is washed out at 85 % opacity behind a RESULTED chip, expired is at
+   * full strength.
    */
-  EXPIRED: '#d32f2f',
+  EXPIRED: '#64748b',
 } as const;
 
 export type JobCardStateKey = keyof typeof JOB_CARD_COLORS;
@@ -49,23 +54,13 @@ export interface JobCardState {
    * as a real 6 px view — same look, and this flag says when.
    */
   accentBar: boolean;
-  /**
-   * Whether tapping may open the job at all.
-   *
-   * False for `expired`. The card stays tappable so the tap can EXPLAIN itself
-   * (`blockedReason`) — a dead card teaches an installer nothing, and "my phone won't
-   * open the job" is the kind of thing that turns into a phone call to dispatch.
-   */
-  openable: boolean;
-  /** Why it won't open, shown on the card and again if it's tapped. Set iff `!openable`. */
-  blockedReason?: string;
 }
 
 /**
  * `workflowState` → label + color.
  *
  * `installer/v1/my-jobs` sends three values today — **`start`, `resume`, `expired`** —
- * and only the first two may open the job. `review` and `preview` are kept because the
+ * and every one of them opens the job. `review` and `preview` are kept because the
  * sales side of the same backend uses them and the tomorrow tab renders `preview`;
  * neither is currently sent for an installer job.
  */
@@ -75,42 +70,34 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
     color: JOB_CARD_COLORS.ACTIVE,
     actionLabel: 'Start Appointment',
     accentBar: true,
-    openable: true,
   },
   resume: {
     key: 'PROGRESS',
     color: JOB_CARD_COLORS.PROGRESS,
     actionLabel: 'Resume Appointment',
     accentBar: true,
-    openable: true,
   },
   /**
-   * The arrival window has passed without the job being worked. Not openable: checking
-   * in now would stamp a work session against a slot the crew never attended, and the
-   * install has to be rescheduled by dispatch rather than picked up late from the phone.
+   * The arrival window has passed. The job still opens and works exactly like any
+   * other — the grey is a note that the slot is stale, not a lock.
    */
   expired: {
     key: 'EXPIRED',
     color: JOB_CARD_COLORS.EXPIRED,
     actionLabel: 'Appointment Expired',
     accentBar: false,
-    openable: false,
-    blockedReason:
-      'This appointment window has passed, so the job can no longer be opened. Contact your Install Manager to have it rescheduled.',
   },
   review: {
     key: 'OFFSITE',
     color: JOB_CARD_COLORS.OFFSITE,
     actionLabel: 'Review Appointment',
     accentBar: false,
-    openable: true,
   },
   preview: {
     key: 'UPCOMING',
     color: JOB_CARD_COLORS.UPCOMING,
     actionLabel: 'Preview Appointment',
     accentBar: false,
-    openable: true,
   },
 };
 
@@ -146,7 +133,6 @@ export const resolveJobCardState = (
       color: JOB_CARD_COLORS.RESULTED,
       actionLabel: 'Review Appointment',
       accentBar: false,
-      openable: true,
     };
   }
 
@@ -156,15 +142,12 @@ export const resolveJobCardState = (
       color: JOB_CARD_COLORS.UPCOMING,
       actionLabel: 'Preview Appointment',
       accentBar: false,
-      openable: true,
     };
   }
 
   const state = job.workflowState ? BY_WORKFLOW_STATE[job.workflowState] : undefined;
   // An unrecognised or missing value falls back to `start` rather than to `resume`:
   // offering to *start* a job already underway is a harmless extra check-in, while
-  // offering to *resume* one never begun would skip the start the crew expects. It
-  // must NOT fall back to `expired` either — an unknown state locking a crew out of a
-  // job they are standing at is the worst outcome of the three.
+  // offering to *resume* one never begun would skip the start the crew expects.
   return state ?? BY_WORKFLOW_STATE.start;
 };

@@ -366,14 +366,31 @@ export interface InstallerJobsResult {
 /** The button labels, as the installer reads them. Never sent to the API verbatim. */
 export type InstallerResultType = "Can't Do Work" | 'Reset' | 'Not Hit';
 
+/** One image attached to a result's `statusReason`. */
+export interface StatusReasonImage {
+  s3url: string;
+  bucketName?: string;
+}
+
+/**
+ * The new `statusReason` payload sent on result/reset actions.
+ *
+ * `reason` is mandatory; `images` is required only for "Can't Do Work"
+ * (enforced in the modal) and optional for Reset / Not Hit.
+ */
+export interface StatusReasonPayload {
+  reason: string;
+  images?: StatusReasonImage[];
+}
+
 export interface InstallerResultSubmission {
   jobId: string;
   /** The button the installer pressed — kept for logging and copy. */
   result: InstallerResultType;
   /** The wire code for that button (`RESULT_STATUS_CODE`), e.g. `notHit`. */
   status: JobResultStatus;
-  /** Travels as `statusReason`. */
-  reason: string;
+  /** Travels as `statusReason` — now an object with `reason` + optional `images`. */
+  reason: StatusReasonPayload;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -390,7 +407,8 @@ export type InstallerImagePhase =
   | 'pre'
   | 'post'
   | 'return'
-  | 'coc';
+  | 'coc'
+  | 'result';
 
 /**
  * `phase` of `DELETE installer/v1/{jobId}/images`.
@@ -599,6 +617,20 @@ export interface InstallProgress {
   /** productId -> verification state. */
   scope: Record<string, ScopeStatus>;
   cocPages: CapturedPhoto[];
+  /**
+   * Evidence attached to a Can't Do Work / Not Hit result.
+   *
+   * **On-device only.** There is no agreed wire contract for these yet — no `phase` on
+   * the image upload and no field on the step-data PATCH — so nothing is invented here:
+   * the shots are held in progress (and MMKV, so a crash mid-result doesn't lose them)
+   * and wait for the payload the backend defines. `handleSubmitResult` in
+   * `screens/Installer/JobDetail.tsx` is the single place to wire it up.
+   *
+   * Kept in `InstallProgress` rather than the modal's own state so that when it is
+   * wired, it already shares the upload queue (`waitForUploads`) and the `patchPhoto`
+   * write-back every other capture uses.
+   */
+  resultPhotos: CapturedPhoto[];
   /** Steps completed explicitly (photo/material steps derive from their own data). */
   completedSteps: Partial<Record<InstallStepKey, boolean>>;
   updatedAt?: string;
