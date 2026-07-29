@@ -185,10 +185,10 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
                           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 9, backgroundColor: isSel ? '#4CBB170D' : '#fff' }}
                         >
                           <View style={{ flex: 1, paddingRight: 12 }}>
+                            {/* The plan label already spells out the real APR (e.g.
+                                "Reduced rate 6.9% APR…"), so no separate APR line —
+                                the old one also printed the raw fraction (0.069%). */}
                             <Text style={{ fontSize: 11.5, fontWeight: '900', color: '#1C252E', lineHeight: 15 }}>{planLabelOf(plans, key)}</Text>
-                            {(plans[key]?.apr || 0) > 0 && (
-                              <Text style={{ fontSize: 9, color: '#94A3B8', marginTop: 2 }}>{plans[key]?.apr}% APR</Text>
-                            )}
                           </View>
                           <Text style={{ fontSize: 13, fontWeight: '900', color: '#60A5FA' }}>{m > 0 ? `${fmt(m)}/mo` : '—'}</Text>
                         </TouchableOpacity>
