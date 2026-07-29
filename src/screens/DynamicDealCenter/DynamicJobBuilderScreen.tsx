@@ -1030,6 +1030,9 @@ function DynamicJobBuilderInner({
         orderSheets: jobState?.orderSheets,
         leadId,
         isSale,
+        // Web parity: submit the signed agreement too (read from its local file://
+        // copy) so the lead-scoped outcome write below populates jobBuilderDocuments.
+        includeSystemGenerated: true,
       });
 
       // POST /lead/v1/{leadId}/job-builder REQUIRES top-level `leadData` AND
@@ -1127,20 +1130,34 @@ function DynamicJobBuilderInner({
             selectedAppointmentId: rd.selectedAppointmentId || leadId,
             jobBuilder: jobBuilderWrapper,
             ...(validLFCalculator && { LFCalculator: validLFCalculator }),
+            // Web parity (TabbedCalculator.js L1073-1074): attach the base64
+            // agreements / order sheets to the LEAD-scoped outcome. THIS is the write
+            // that upserts the LeadOutcomeDocument rows the backend projects into the
+            // sales-portal lead's `jobBuilderDocuments` — the source ContractDetails
+            // renders. The `/job-builder` POST above only writes the (display-invisible)
+            // JobBuilderDocument collection. Without this, jobBuilderDocuments comes
+            // back EMPTY and the agreement never appears in Contract Details. The
+            // backend upserts by file, so re-sending the already-signed agreement does
+            // not duplicate on the current backend.
+            ...(documentPayloads.agreements.length > 0 && { agreements: documentPayloads.agreements }),
+            ...(documentPayloads.orderSheets.length > 0 && { orderSheets: documentPayloads.orderSheets }),
           };
-          // Documents are deliberately NOT attached here. `agreementsPayload` /
-          // `orderSheetsPayload` were just READ BACK from this very endpoint via
-          // downloadOutcomeDocuments — they already exist as LeadOutcomeDocument
-          // rows, uploaded eagerly by handleUploadDocs when the agreement was
-          // signed. Re-sending them inserts a SECOND row for the same file, which
-          // is why the lead dashboard listed each agreement twice. They still go to
-          // the /job-builder POST above, which populates the separate
-          // JobBuilderDocument collection. This mirror carries FIELDS only.
+          // Elide the multi-MB base64 bodies from the log (heap + readability).
           console.log(
-            `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome/${calcId}\n` +
-              JSON.stringify(outcomePayload, null, 2)
+            `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
+              JSON.stringify(
+                {
+                  ...outcomePayload,
+                  agreements: (outcomePayload.agreements || []).map((d: any) => ({ ...d, file: `<base64 ${d.file?.length ?? 0} chars>` })),
+                  orderSheets: (outcomePayload.orderSheets || []).map((d: any) => ({ ...d, file: `<base64 ${d.file?.length ?? 0} chars>` })),
+                },
+                null,
+                2
+              )
           );
-          await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, outcomePayload);
+          // LEAD-scoped PUT /lead/v1/{leadId}/outcome (web `updateJobBuilder`) — NOT the
+          // calculator-scoped variant, which does not feed the jobBuilderDocuments projection.
+          await LeadService.updateLeadOutcome(leadId, outcomePayload);
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
         }

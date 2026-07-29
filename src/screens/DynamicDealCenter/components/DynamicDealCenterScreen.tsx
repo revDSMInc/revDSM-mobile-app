@@ -192,7 +192,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         { name: 'Leads' },
         {
           name: 'LeadCenter',
-          params: { lead, tab: 'job_docs' },
+          // `justCompleted` tells LeadCenter the lead was just resulted so it force-
+          // refetches (a few times, to beat backend replication lag) instead of
+          // showing the stale `lead` we pass here — previously the rep had to leave
+          // the lead and come back before the result status / docs updated.
+          params: { lead, tab: 'job_docs', justCompleted: true },
         },
       ],
     });

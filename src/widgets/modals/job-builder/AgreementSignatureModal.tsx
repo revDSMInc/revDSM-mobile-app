@@ -18,6 +18,7 @@ import FileViewer from 'react-native-file-viewer';
 import Pdf from 'react-native-pdf';
 import { FlashMessage } from '../../../config/message';
 import { LeadService } from '../../../services/api/leads';
+import { AgreementRemoteSignModal } from './AgreementRemoteSignModal';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -86,6 +87,14 @@ interface AgreementSignatureModalProps {
     width: number;
     height: number;
   };
+  /** Lead customer details (primary buyer + `coBuyers[]`) — enables "Send
+   *  Remotely" so the homeowner (and each co-buyer) can e-sign on their own
+   *  phone. When omitted, the remote button is hidden and only in-person
+   *  signing is available. */
+  customerDetails?: any;
+  /** Fired when a remote session finishes (all signers signed) so the parent can
+   *  refresh the outcome and close, same as an in-person `onSuccess`. */
+  onRemoteComplete?: () => void;
 }
 
 export const AgreementSignatureModal = ({
@@ -98,11 +107,16 @@ export const AgreementSignatureModal = ({
   payload,
   signatureFields,
   pdfDimensions,
+  customerDetails,
+  onRemoteComplete,
 }: AgreementSignatureModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const statusBarBg = isDark ? colors.background : '#101828';
+  const statusBarBg = isDark ? colors.background : '#0E2A1C';
   const [loading, setLoading] = useState(false);
+  // Remote-signing (homeowner e-signs on their own phone). Only offered when the
+  // caller supplies customer details to address the link(s) to.
+  const [remoteOpen, setRemoteOpen] = useState(false);
 
   // Initials state
   const [initialsPaths, setInitialsPaths] = useState<string[]>([]);
@@ -390,18 +404,34 @@ export const AgreementSignatureModal = ({
             <View style={{ flex: 1, backgroundColor: 'white' }}>
               {/* Header */}
               <View style={{ paddingHorizontal: 24, paddingVertical: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 10, fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 2 }}>
                     Digital Agreement
                   </Text>
                   <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>Sign to Finalize Order</Text>
                 </View>
-                <TouchableOpacity
-                  onPress={onClose}
-                  style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Icon name="close" size={20} color="#64748b" />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  {/* Send Remotely — homeowner (and each co-buyer) e-signs on their
+                      own phone. Hidden when the caller can't supply recipients. */}
+                  {!!customerDetails && (
+                    <TouchableOpacity
+                      onPress={() => setRemoteOpen(true)}
+                      disabled={loading}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, paddingHorizontal: 14, borderRadius: 20, backgroundColor: '#ECFDF5', borderWidth: 1.5, borderColor: '#4CBB17' }}
+                    >
+                      <Icon name="send-outline" size={16} color="#059669" />
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#059669', textTransform: 'uppercase', letterSpacing: 1 }}>
+                        Send Remotely
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={onClose}
+                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Icon name="close" size={20} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Main Content Area — overflow:hidden keeps zoom transforms inside this box,
@@ -713,6 +743,26 @@ export const AgreementSignatureModal = ({
                   </View>
                 </View>
               </View>
+            )}
+
+            {/* Remote signing — homeowner (and each co-buyer) e-signs on their own
+                phone. Self-contained: recipients → send → pending/resend → done. */}
+            {!!customerDetails && (
+              <AgreementRemoteSignModal
+                visible={remoteOpen}
+                onClose={() => setRemoteOpen(false)}
+                leadId={leadId}
+                agreementId={agreementId}
+                payload={payload}
+                signatureFields={signatureFields}
+                pdfDimensions={pdfDimensions}
+                customerDetails={customerDetails}
+                onComplete={() => {
+                  setRemoteOpen(false);
+                  onRemoteComplete?.();
+                  onClose();
+                }}
+              />
             )}
           </View>
         </SafeAreaProvider>

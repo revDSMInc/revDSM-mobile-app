@@ -44,6 +44,13 @@ export const LeadEndpoints = {
   agreement: {
     preview: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/preview`,
     sign: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/sign`,
+    // Remote signing (homeowner e-signs on their own phone). Backend is in
+    // progress — these paths match the spec handed to the backend team and are
+    // the single place to realign if the final URLs differ. The homeowner signs
+    // on the WEB app's public page; mobile only creates/monitors the session.
+    sendRemote: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/send-remote`,
+    remoteStatus: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/remote-status`,
+    resendRemote: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/resend-remote`,
   },
   leadDraft: {
     upsert: (leadId: string) => `lead/v1/${leadId}/drafts`,
@@ -359,6 +366,33 @@ export const LeadService = {
       headers: { 'Content-Type': 'multipart/form-data' },
       responseType: 'blob',
     }),
+
+  // --- Remote agreement signing (homeowner e-signs remotely) ------------------
+  // Backend in progress; contract mirrors the addendum job-builder-draft flow but
+  // for the AGREEMENT and multi-signer (primary buyer + co-buyers). The server
+  // creates one signer slot per party, dispatches an email+SMS link to each, and
+  // builds the final signed PDF once every required signer has signed.
+  //
+  // payload: {
+  //   agreementId, payload (the agreement build payload), signatureFields,
+  //   pdfDimensions,
+  //   signers: [{ role:'buyer'|'coBuyer', index, firstName, lastName, phone,
+  //               email, signsInitials }]   // signsInitials true only for buyer
+  // }
+  sendAgreementRemote: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.agreement.sendRemote(leadId), payload),
+  // Per-session, per-signer status for polling. Returns (normalized by caller):
+  // { sessionId, status, signedPdfUrl?, signers: [{ signerId, role, index, name,
+  //   phone, email, status:'sent'|'viewed'|'signed'|'declined', sentAt, viewedAt,
+  //   signedAt }] }. May 404 until the backend lands — caller treats that as "no
+  //   active session".
+  getAgreementRemoteStatus: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.agreement.remoteStatus(leadId)),
+  // Resend a signer's link, optionally updating their phone/email first (drives
+  // the "Resend" / "Edit phone" / "Edit email" workflows).
+  // payload: { sessionId, signerId, phone?, email? }
+  resendAgreementRemote: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.agreement.resendRemote(leadId), payload),
   generateWeatherReport: (leadId: string, pastYears: number): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.weather.generate(leadId), { pastYears }),
   getJobStatus: (jobId: string): Promise<AxiosResponse<any>> =>
