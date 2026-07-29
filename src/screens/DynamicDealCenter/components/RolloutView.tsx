@@ -1436,7 +1436,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   <Text style={{ fontSize: 13, fontWeight: '900', color: '#1C252E' }}>{fmt(oneYearGrandTotal)}</Text>
                 </View>
                 {/* 1-Year Program monthly payment — match In-Home or the rep's default,
-                    or override with any financing plan (may be "worse" than In-Home). */}
+                    or override with any financing plan (may be "worse" than In-Home).
+                    Intentionally editable even when the rollout is LOCKED: the 1-Year
+                    terms are presentational (they never re-price the deal — MSRP and the
+                    end price are unchanged), and the selection persists via
+                    `onOneYearMonthlyChange` so an edit made after confirming still flows
+                    through to the Investment Center. */}
                 <OneYearMonthlyPlan
                   plans={plans}
                   categories={pricing.categories}
@@ -1445,7 +1450,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   base={oneYearGrandTotal}
                   value={calculator.oneYearMonthlyPlan ?? null}
                   onChange={(v) => onOneYearMonthlyChange(calculator.id, v)}
-                  locked={isLocked}
+                  locked={false}
                 />
               </View>
 
@@ -1464,15 +1469,15 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                   </View>
 
                   {showDownInput ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, marginBottom: 10, height: 36 }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', marginRight: 4, lineHeight: 14 }}>$</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 8, marginBottom: 10, height: 36 }}>
+                      <Text style={{ fontSize: 9, fontWeight: '800', color: '#94A3B8', marginRight: 3, lineHeight: 12 }}>$</Text>
                       <TextInput
-                        style={{ flex: 1, fontSize: 11, fontWeight: '900', color: '#1C252E', padding: 0, margin: 0, height: '100%', lineHeight: 14, textAlignVertical: 'center' }}
+                        style={{ flex: 1, fontSize: 9, fontWeight: '800', color: '#1C252E', padding: 0, margin: 0, height: '100%', lineHeight: 12, textAlignVertical: 'center' }}
                         value={formatAmountInput(downText)}
                         onChangeText={(t) => setDownText(stripAmount(t))}
                         onEndEditing={commitDownPayment}
                         onBlur={commitDownPayment}
-                        placeholder="Down Payment"
+                        placeholder="Add Down Payment"
                         placeholderTextColor="#94A3B8"
                         keyboardType="numeric"
                       />
@@ -1483,9 +1488,11 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       )}
                     </View>
                   ) : (
-                    <TouchableOpacity onPress={() => setShowDownInput(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8, marginBottom: 10 }}>
+                    <TouchableOpacity onPress={() => setShowDownInput(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 8, marginBottom: 10 }}>
                       <Ionicons name="add" size={13} color="#2196F3" />
-                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{downPay > 0 ? `Down Payment: ${fmt(downPay)}` : 'Add Down Payment'}</Text>
+                      {/* flexShrink + shrink-to-fit so the label never spills past
+                          the dashed border in the narrow In-Home column. */}
+                      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={{ flexShrink: 1, fontSize: 10, fontWeight: '800', color: '#2196F3', textAlign: 'center' }}>{downPay > 0 ? `Down Payment: ${fmt(downPay)}` : 'Add Down Payment'}</Text>
                     </TouchableOpacity>
                   )}
                   {downPay > 0 && (

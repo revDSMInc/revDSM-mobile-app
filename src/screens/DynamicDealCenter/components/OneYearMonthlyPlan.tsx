@@ -114,12 +114,16 @@ export function OneYearMonthlyPlan({ plans, categories, inHomeMethod, defaultKey
         {segBtn('Default', mode === 'default', () => commit('default'))}
       </View>
 
-      {/* Monthly + APR + edit — mockup: "$200 /mo  9.99% / APR  [pencil]" */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Monthly + APR + edit — mockup: "$200 /mo  9.99% / APR  [pencil]".
+          `gap` keeps a guaranteed gutter before the edit button and `flexWrap`
+          lets the APR drop onto its own line (rather than hiding behind the
+          pencil) when the monthly is wide, e.g. a 3-digit "$134" in the narrow
+          1-Year column. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
         {financing && monthly > 0 ? (
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start' }}>
-            <Text style={{ fontSize: 22, fontWeight: '900', color: '#212B36' }}>{fmt(monthly)}</Text>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8', marginTop: 7 }}>/mo</Text>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <Text style={{ fontSize: 16, fontWeight: '900', color: '#212B36' }}>{fmt(monthly)}</Text>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8', marginTop: 6 }}>/mo</Text>
             <View style={{ marginLeft: 5, marginTop: 2 }}>
               <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', lineHeight: 11 }}>{`${Number(aprPercent(plans[resolvedKey]?.apr).toFixed(2))}%`}</Text>
               <Text style={{ fontSize: 9, fontWeight: '900', color: '#94A3B8', lineHeight: 11 }}>APR</Text>
