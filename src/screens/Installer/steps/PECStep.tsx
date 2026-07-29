@@ -4,8 +4,10 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
+import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { PEC_AREAS } from '../../../constants/installer';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
+import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import type { CapturedPhoto, PECArea, PECEntry } from '../../../config/types/installer';
 
 interface Props {
@@ -20,6 +22,17 @@ interface Props {
    * parent no way to tell which shot is new — hence the explicit callback.
    */
   onPhotoCaptured?: (area: PECArea, photo: CapturedPhoto) => void;
+  /**
+   * Fired when the installer taps a photo's ✕.
+   *
+   * The parent removes it from state as well as deleting it server-side — the same
+   * split as the material step, and it has to be that way round: the photo's `s3url`
+   * may still be arriving, and only the parent can drain the upload before reading it.
+   * Dropping it from `entries` here first would leave that upload nothing to write to.
+   * No handler → no ✕ is rendered. Resolves once the photo is gone from the server as
+   * well as from state — the confirm dialog holds its spinner on this promise.
+   */
+  onRemovePhoto?: (area: PECArea, photo: CapturedPhoto) => void | Promise<void>;
   onComplete: () => void;
   onBack: () => void;
 }
@@ -39,6 +52,7 @@ export function PECStep({
   onSetHasConditions,
   onSetEntry,
   onPhotoCaptured,
+  onRemovePhoto,
   onComplete,
   onBack,
 }: Props) {
@@ -80,6 +94,28 @@ export function PECStep({
     onSetEntry(area.id, { ...current, photos: [...current.photos, photo] });
     onPhotoCaptured?.(area, photo);
   };
+
+  /**
+   * The ✕ on a condition photo — opens a confirmation, then hands off. State and the
+   * server are the parent's job (see `onRemovePhoto`); this only reports it, and only
+   * once the removal has actually landed.
+   */
+  const del = usePhotoDeleteConfirm<{
+    area: PECArea;
+    photo: CapturedPhoto;
+    index: number;
+  }>(async ({ area, photo, index }) => {
+    await onRemovePhoto?.(area, photo);
+    log.photoRemoved({
+      step: 'pec',
+      category: 'Pre-Existing Conditions',
+      subcategory: `${area.label} #${index + 1}`,
+      timestamp: photo.takenAt,
+      coordinates: photo.coordinates,
+      s3url: photo.s3url,
+      bucketName: photo.bucketName,
+    });
+  });
 
   const setNote = (areaId: string, note: string) => {
     const current = entries[areaId] ?? { areaId, note: '', photos: [] };
@@ -269,13 +305,27 @@ export function PECStep({
                   <>
                     {count > 0 && (
                       <View className="flex-row flex-wrap mb-1.5" style={{ gap: 6 }}>
-                        {entry!.photos.map((p) => (
-                          <Image
-                            key={p.id}
-                            source={{ uri: p.uri }}
-                            className="rounded-lg"
-                            style={{ width: 52, height: 52, backgroundColor: '#26364a' }}
-                          />
+                        {entry!.photos.map((p, i) => (
+                          <View key={p.id}>
+                            <Image
+                              source={{ uri: p.uri }}
+                              className="rounded-lg"
+                              style={{ width: 52, height: 52, backgroundColor: '#26364a' }}
+                            />
+                            {!!onRemovePhoto && (
+                              <TouchableOpacity
+                                onPress={() => del.request({ area, photo: p, index: i })}
+                                // The tile is 52 px, so the ✕ is smaller than the
+                                // material step's and sits tight to the corner; the
+                                // hitSlop keeps it thumb-sized on a roof regardless.
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full items-center justify-center"
+                                style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+                              >
+                                <Icon name="close" size={11} color="#fff" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         ))}
                       </View>
                     )}
@@ -311,6 +361,22 @@ export function PECStep({
         </>
       )}
 
+      <ConfirmActionModal
+        visible={del.visible}
+        icon="image-remove"
+        tone="danger"
+        title="Delete this photo?"
+        description={
+          `This ${del.target?.area.label ?? 'condition'} photo will be removed from the ` +
+          'job and deleted from the server. Every flagged area needs at least one photo, ' +
+          "so you'll have to retake it before this step can close."
+        }
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        submitting={del.deleting}
+        onCancel={del.cancel}
+        onConfirm={del.confirm}
+      />
     </InstallerSubScreen>
   );
 }

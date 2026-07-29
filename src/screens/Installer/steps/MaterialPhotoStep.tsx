@@ -4,7 +4,9 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
+import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
+import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import type { CapturedPhoto, MaterialStepState } from '../../../config/types/installer';
 
 interface Props {
@@ -12,7 +14,11 @@ interface Props {
   mode: 'pickup' | 'return';
   state: MaterialStepState;
   onAddPhoto: (photo: CapturedPhoto) => void;
-  onRemovePhoto: (photoId: string) => void;
+  /**
+   * Resolves once the photo is gone from the server as well as from state — the
+   * confirm dialog holds its spinner on this promise.
+   */
+  onRemovePhoto: (photoId: string) => void | Promise<void>;
   onSkip: () => void;
   onBack: () => void;
 }
@@ -41,19 +47,22 @@ export function MaterialPhotoStep({
   const satisfied = state.photos.length > 0 || state.skipped;
 
   // The capture itself is logged by the upload hook, once S3 has answered with the
-  // s3url and byte size the portal's payload needs.
-  const handleRemove = (photo: CapturedPhoto, index: number) => {
-    onRemovePhoto(photo.id);
-    log.photoRemoved({
-      step: mode,
-      category: isPickup ? 'Material Pickup' : 'Material Return',
-      subcategory: `${mode} #${index + 1}`,
-      timestamp: photo.takenAt,
-      coordinates: photo.coordinates,
-      s3url: photo.s3url,
-      bucketName: photo.bucketName,
-    });
-  };
+  // s3url and byte size the portal's payload needs. The removal is logged here, and
+  // only AFTER it lands — logging on the tap would record deletions that never happened.
+  const del = usePhotoDeleteConfirm<{ photo: CapturedPhoto; index: number }>(
+    async ({ photo, index }) => {
+      await onRemovePhoto(photo.id);
+      log.photoRemoved({
+        step: mode,
+        category: isPickup ? 'Material Pickup' : 'Material Return',
+        subcategory: `${mode} #${index + 1}`,
+        timestamp: photo.takenAt,
+        coordinates: photo.coordinates,
+        s3url: photo.s3url,
+        bucketName: photo.bucketName,
+      });
+    }
+  );
 
   const handleSkip = () => {
     log.materialSkipped(mode);
@@ -134,7 +143,7 @@ export function MaterialPhotoStep({
                 <Text className="text-[10px] font-bold text-white">#{i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => handleRemove(photo, i)}
+                onPress={() => del.request({ photo, index: i })}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
@@ -179,6 +188,18 @@ export function MaterialPhotoStep({
         </>
       )}
 
+      <ConfirmActionModal
+        visible={del.visible}
+        icon="image-remove"
+        tone="danger"
+        title="Delete this photo?"
+        description={`Photo #${(del.target?.index ?? 0) + 1} will be removed from this job and deleted from the server. You'll have to retake it.`}
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        submitting={del.deleting}
+        onCancel={del.cancel}
+        onConfirm={del.confirm}
+      />
     </InstallerSubScreen>
   );
 }

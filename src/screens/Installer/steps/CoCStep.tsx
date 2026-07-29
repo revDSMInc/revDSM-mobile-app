@@ -4,14 +4,20 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
+import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
+import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import type { CapturedPhoto } from '../../../config/types/installer';
 
 interface Props {
   visible: boolean;
   pages: CapturedPhoto[];
   onAddPage: (page: CapturedPhoto) => void;
-  onRemovePage: (pageId: string) => void;
+  /**
+   * Resolves once the page is gone from the server as well as from state — the confirm
+   * dialog holds its spinner on this promise.
+   */
+  onRemovePage: (pageId: string) => void | Promise<void>;
   onBack: () => void;
 }
 
@@ -37,17 +43,14 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
           const page = {
             id: `${Date.now()}-${i}`,
             uri,
-            takenAt: new Date().toISOString(),
+            // Stamped per page, not per scan: `timestampTaken` is what orders the
+            // pages once they come back from the server, so two pages from the same
+            // pass must not share a timestamp.
+            takenAt: new Date(Date.now() + i).toISOString(),
           };
+          // The parent adds it to state and uploads it; the upload hook logs the page
+          // once S3 has answered with the s3url and byte size the portal needs.
           onAddPage(page);
-          // Logged here rather than from the upload hook: the contract has no field
-          // for the CoC, so these pages never go to S3 and carry no s3url.
-          log.photoAdded({
-            step: 'coc',
-            category: 'Certificate of Completion',
-            subcategory: `Page ${pages.length + i + 1}`,
-            timestamp: page.takenAt,
-          });
         });
       }
     } catch (error) {
@@ -59,15 +62,17 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
 
   const hasPages = pages.length > 0;
 
-  const handleRemovePage = (page: CapturedPhoto, index: number) => {
-    onRemovePage(page.id);
-    log.photoRemoved({
-      step: 'coc',
-      category: 'Certificate of Completion',
-      subcategory: `Page ${index + 1}`,
-      timestamp: page.takenAt,
-    });
-  };
+  const del = usePhotoDeleteConfirm<{ page: CapturedPhoto; index: number }>(
+    async ({ page, index }) => {
+      await onRemovePage(page.id);
+      log.photoRemoved({
+        step: 'coc',
+        category: 'Certificate of Completion',
+        subcategory: `Page ${index + 1}`,
+        timestamp: page.takenAt,
+      });
+    }
+  );
 
   const handleDone = () => {
     log.cocCompleted(pages.length);
@@ -137,7 +142,7 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
                 <Text className="text-white text-[10px] font-bold">Page {i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => handleRemovePage(page, i)}
+                onPress={() => del.request({ page, index: i })}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
@@ -158,6 +163,19 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
           {hasPages ? 'Scan Another Page' : 'Scan Signed CoC'}
         </Text>
       </TouchableOpacity>
+
+      <ConfirmActionModal
+        visible={del.visible}
+        icon="file-remove-outline"
+        tone="danger"
+        title="Delete this page?"
+        description={`Page ${(del.target?.index ?? 0) + 1} of the signed CoC will be removed from this job and deleted from the server. You'll have to rescan it — the homeowner's signature can't be recovered from the app.`}
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        submitting={del.deleting}
+        onCancel={del.cancel}
+        onConfirm={del.confirm}
+      />
     </InstallerSubScreen>
   );
 }

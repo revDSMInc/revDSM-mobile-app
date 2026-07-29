@@ -307,11 +307,28 @@ export const buildScopeStepData = (
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The contract has no field for the Certificate of Completion, so scanned pages stay
- * on the device. Kept as a named no-op so the step wiring reads uniformly and there
- * is one place to fill in when the backend adds it.
+ * CoC — the scanned pages of the signed Certificate of Completion.
+ *
+ * Same contract as the material arrays: whole set every time, and a page joins it only
+ * once its upload returned an `s3url`. `subcategory: 'coc'` matches what the upload
+ * descriptor stamped, so the two records agree.
+ *
+ * Page order rides on `timestampTaken` rather than an index, because the scanner can
+ * add several pages in one pass and a rescan has to slot back in at the right place —
+ * an index would renumber every page after it.
  */
-export const buildCocStepData = (): InstallerJobPatch | null => null;
+export const buildCocStepData = (
+  progress: InstallProgress,
+  options: StepDataOptions = {}
+): InstallerJobPatch | null => {
+  const photos = toPhotoRefs(progress.cocPages).map((ref) => ({
+    ...ref,
+    subcategory: 'coc',
+  }));
+  return photos.length || options.includeEmptyPhotos
+    ? { installerCocPhotos: photos }
+    : null;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reset
@@ -321,7 +338,7 @@ export const buildCocStepData = (): InstallerJobPatch | null => null;
  * Clears everything the job has recorded, as far as the API allows.
  *
  * Sets every patchable field back to its untouched value: conditions un-checked and
- * empty, all four photo arrays emptied, every product back to PENDING, the return
+ * empty, all five photo arrays emptied, every product back to PENDING, the return
  * flag off. Everything the installer sees on the device is wiped alongside it
  * (`useInstallProgress.reset`).
  */
@@ -341,6 +358,7 @@ export const buildResetPatch = (
     installerPickupPhotos: [],
     installerPreInstallPhotos: [],
     installerPostInstallPhotos: [],
+    installerCocPhotos: [],
     installerReturnPhotos: [],
     jobScopeVerification: {
       verificationStatus: 'IN_PROGRESS',

@@ -382,21 +382,23 @@ export interface InstallerResultSubmission {
 
 /**
  * `phase` form field. One per capture surface; the backend routes each to its own
- * array (`installerPickupPhotos`, `installerPreInstallPhotos`, …).
- *
- * There is no phase for CoC — the backend has no field for it yet.
+ * array (`installerPickupPhotos`, `installerCocPhotos`, …).
  */
-export type InstallerImagePhase = 'pickup' | 'preExisting' | 'pre' | 'post' | 'return';
+export type InstallerImagePhase =
+  | 'pickup'
+  | 'preExisting'
+  | 'pre'
+  | 'post'
+  | 'return'
+  | 'coc';
 
 /**
  * `phase` of `DELETE installer/v1/{jobId}/images`.
  *
- * A SUPERSET of the upload phases: the delete route also takes `scope` and `coc`,
- * which nothing uploads under today. Kept as its own union rather than widening
- * `InstallerImagePhase`, so a `coc` can never be passed to the multipart upload —
- * that endpoint has no array to append it to.
+ * A superset of the upload phases: the delete route also takes `scope`, which nothing
+ * uploads under. Kept as its own union so that stays true if the two lists diverge again.
  */
-export type InstallerDeletePhase = InstallerImagePhase | 'scope' | 'coc';
+export type InstallerDeletePhase = InstallerImagePhase | 'scope';
 
 /**
  * Body of `DELETE installer/v1/{jobId}/images`.
@@ -549,6 +551,8 @@ export interface InstallerJobPatch {
   jobScopeVerification?: JobScopeVerificationPayload;
   /** Step 5 · Post-Install. */
   installerPostInstallPhotos?: StepPhotoRef[];
+  /** Step 6 · CoC — the scanned pages of the signed Certificate of Completion. */
+  installerCocPhotos?: StepPhotoRef[];
   /** Step 7 · Return — the "used all material" flag and the returned-stock shots. */
   materialReturnNothingToReturn?: boolean;
   installerReturnPhotos?: StepPhotoRef[];
@@ -564,6 +568,7 @@ export const INSTALLER_PATCH_FIELDS: (keyof InstallerJobPatch)[] = [
   'installerPreInstallPhotos',
   'jobScopeVerification',
   'installerPostInstallPhotos',
+  'installerCocPhotos',
   'materialReturnNothingToReturn',
   'installerReturnPhotos',
 ];

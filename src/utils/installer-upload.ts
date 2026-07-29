@@ -151,6 +151,23 @@ export const matchedPhotoDescriptor = (
   coordinates,
 });
 
+/**
+ * A scanned page of the signed Certificate of Completion.
+ *
+ * `subcategory: 'coc'` matches the pickup/return convention — the phase name doubles
+ * as the subcategory where there is no finer grouping. Page ORDER is carried by
+ * `timestampTaken`, not by an index: the scanner stamps each page as it is produced
+ * and the hydrate sorts on it, so a rescanned page lands where it belongs.
+ */
+export const cocDescriptor = (
+  photo: CapturedPhoto,
+  coordinates: GeoCoordinates | null
+): InstallerImageDescriptor => ({
+  subcategory: 'coc',
+  timestampTaken: photo.takenAt,
+  coordinates,
+});
+
 /** A free shot with no rep counterpart — carries the section, no `salesPhotoId`. */
 export const extraPhotoDescriptor = (
   section: PhotoSection,

@@ -449,6 +449,7 @@ const PHASE_ARRAY_KEY: Record<InstallerImagePhase, string> = {
   pre: 'installerPreInstallPhotos',
   post: 'installerPostInstallPhotos',
   return: 'installerReturnPhotos',
+  coc: 'installerCocPhotos',
 };
 
 const toStoredImages = (raw: any): InstallerStoredImage[] =>

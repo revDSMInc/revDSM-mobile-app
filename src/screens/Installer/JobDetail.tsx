@@ -311,6 +311,23 @@ export default function InstallerJobDetail() {
     [upload]
   );
 
+  /**
+   * A scanned CoC page. Same shape as a material photo — into state first so the
+   * thumbnail appears, then up to S3.
+   *
+   * The scanner emits several pages in one pass and calls this once per page, so the
+   * index is read from `progressRef` (updated synchronously by `commit`) rather than
+   * from `progress`, which would still be pre-render and number every page "1".
+   */
+  const handleCocPage = useCallback(
+    (page: CapturedPhoto) => {
+      const index = progressRef.current.cocPages.length + 1;
+      addCocPage(page);
+      upload.uploadCoc(page, index);
+    },
+    [addCocPage, upload, progressRef]
+  );
+
   const handleMatchPhoto = useCallback(
     (phase: PhotoPhase, tagId: string, photo: CapturedPhoto) => {
       // Read before the mutation: a tag that already holds a shot makes this a
@@ -376,7 +393,7 @@ export default function InstallerJobDetail() {
         case 'post':
           return buildPostInstallStepData(current, repPhotoIdByTag, options);
         case 'coc':
-          return buildCocStepData();
+          return buildCocStepData(current, options);
         case 'return':
           return buildReturnStepData(current, options);
         default:
@@ -494,43 +511,74 @@ export default function InstallerJobDetail() {
    * be a deletion on the server before they walk away from signal.
    */
   const handleRemoveMaterialPhoto = useCallback(
-    (mode: 'pickup' | 'return', photoId: string) => {
+    async (mode: 'pickup' | 'return', photoId: string) => {
+      // An upload still in flight has no `s3url` yet, and dropping the photo from
+      // state first would leave the upload's `patchPhoto` nothing to write it onto —
+      // the object would land in S3 with nothing left pointing at it. So drain first
+      // and read the s3url afterwards; the confirm dialog's spinner covers the wait.
       const uploading =
         progressRef.current[mode].photos.find((p) => p.id === photoId)?.uploadStatus ===
         'uploading';
+      if (uploading) await upload.waitForUploads();
 
-      void (async () => {
-        // An upload still in flight has no `s3url` yet, and dropping the photo from
-        // state first would leave the upload's `patchPhoto` nothing to write it onto —
-        // the object would land in S3 with nothing left pointing at it. So drain first
-        // and read the s3url afterwards; the tile lingers a moment, which is honest.
-        if (uploading) await upload.waitForUploads();
+      const photo = progressRef.current[mode].photos.find((p) => p.id === photoId);
+      removeMaterialPhoto(mode, photoId);
 
-        const photo = progressRef.current[mode].photos.find((p) => p.id === photoId);
-        removeMaterialPhoto(mode, photoId);
-
-        await deleteStoredImages(mode, [photo]);
-        await sendStepData(mode, { includeEmptyPhotos: true });
-      })();
+      await deleteStoredImages(mode, [photo]);
+      await sendStepData(mode, { includeEmptyPhotos: true });
     },
     [progressRef, removeMaterialPhoto, upload, deleteStoredImages, sendStepData]
   );
 
   /**
-   * Removing a CoC page.
+   * Removing a pre-existing-condition photo.
    *
-   * The delete is issued for parity with every other phase, but is a no-op today: the
-   * scanner's pages are never uploaded (the job has no CoC field), so they carry no
-   * `s3url` and `deleteStoredImages` returns without a request. It starts working the
-   * moment CoC pages do get uploaded, with no change here.
+   * Unlike the material step, the whole ENTRY is the unit of state here, so the photo
+   * is filtered out of its area's entry rather than dropped from a flat array. The area
+   * stays flagged with its note intact — removing the shot is not un-flagging the
+   * condition, and removing the last one correctly re-blocks Confirm until another is
+   * taken.
+   *
+   * `buildPecStepData` restates every condition with its surviving photos nested, so
+   * the PATCH needs no `includeEmptyPhotos` equivalent — an emptied area travels as an
+   * empty `photos` array on its own.
    */
+  const handleRemovePecPhoto = useCallback(
+    async (area: PECArea, photo: CapturedPhoto) => {
+      // Same reason as the material step: an in-flight upload has no s3url yet, and
+      // it writes onto the copy in progress — not onto the snapshot PECStep handed us.
+      if (photo.uploadStatus === 'uploading') await upload.waitForUploads();
+
+      const entry = progressRef.current.pecEntries[area.id];
+      if (!entry) return;
+      const stored = entry.photos.find((p) => p.id === photo.id) ?? photo;
+
+      setPecEntry(area.id, {
+        ...entry,
+        photos: entry.photos.filter((p) => p.id !== photo.id),
+      });
+
+      await deleteStoredImages('preExisting', [stored]);
+      await sendStepData('pec');
+    },
+    [progressRef, setPecEntry, upload, deleteStoredImages, sendStepData]
+  );
+
+  /** Removing a CoC page — identical to the material path now that pages are stored. */
   const handleRemoveCocPage = useCallback(
-    (pageId: string) => {
+    async (pageId: string) => {
+      const uploading =
+        progressRef.current.cocPages.find((p) => p.id === pageId)?.uploadStatus ===
+        'uploading';
+      if (uploading) await upload.waitForUploads();
+
       const page = progressRef.current.cocPages.find((p) => p.id === pageId);
       removeCocPage(pageId);
-      void deleteStoredImages('coc', [page]);
+
+      await deleteStoredImages('coc', [page]);
+      await sendStepData('coc', { includeEmptyPhotos: true });
     },
-    [progressRef, removeCocPage, deleteStoredImages]
+    [progressRef, removeCocPage, upload, deleteStoredImages, sendStepData]
   );
 
   /** Marks the step done locally, logs it, then pushes its data to the server. */
@@ -1145,6 +1193,7 @@ export default function InstallerJobDetail() {
         onSetHasConditions={setPecHasConditions}
         onSetEntry={setPecEntry}
         onPhotoCaptured={handlePecPhoto}
+        onRemovePhoto={handleRemovePecPhoto}
         onComplete={() =>
           finishStep('pec', {
             areaCount: Object.keys(progress.pecEntries).length,
@@ -1200,7 +1249,7 @@ export default function InstallerJobDetail() {
       <CoCStep
         visible={openStep === 'coc'}
         pages={progress.cocPages}
-        onAddPage={addCocPage}
+        onAddPage={handleCocPage}
         onRemovePage={handleRemoveCocPage}
         onBack={handleCloseStep}
       />

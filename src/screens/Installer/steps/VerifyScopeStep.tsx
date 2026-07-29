@@ -47,8 +47,21 @@ export function VerifyScopeStep({
   const pending = products.filter((p) => scope[p.id]?.state === 'pending').length;
   const resolved = products.filter((p) => scope[p.id]?.state === 'resolved').length;
   const confirmed = products.filter((p) => scope[p.id]?.state === 'confirmed').length;
+
+  /**
+   * The job arrived with no sold products — its check-in response carried no
+   * `productDetails.products`, which means the rep's job build never reached this job.
+   *
+   * There is nothing to confirm, so the step closes on acknowledgement alone. Blocking
+   * it instead would be a dead end: `measure` gates Post-Install, CoC and Return, so
+   * the whole install would be uncompletable over missing paperwork the installer has
+   * no way to supply from site.
+   */
+  const nothingToVerify = products.length === 0;
+
   const allSettled =
-    products.length > 0 && products.every((p) => scope[p.id] && scope[p.id].state !== 'pending');
+    nothingToVerify ||
+    products.every((p) => scope[p.id] && scope[p.id].state !== 'pending');
 
   const handleConfirmProduct = (product: SoldProduct) => {
     log.scopeConfirmed(product);
@@ -115,12 +128,47 @@ export function VerifyScopeStep({
               className="text-base font-bold"
               style={{ color: allSettled ? '#fff' : colors.textSecondary }}
             >
-              Done — Scope Reviewed
+              {nothingToVerify ? 'Acknowledge — No Scope on File' : 'Done — Scope Reviewed'}
             </Text>
           </TouchableOpacity>
         </>
       }
     >
+      {nothingToVerify && (
+        <View
+          className="rounded-2xl p-4 border"
+          style={{
+            backgroundColor: colors.warning.main + '14',
+            borderColor: colors.warning.main,
+          }}
+        >
+          <View className="flex-row items-center mb-2">
+            <Icon name="package-variant-closed" size={18} color={colors.warning.dark} />
+            <Text
+              className="text-[15px] font-bold ml-2"
+              style={{ color: colors.warning.dark }}
+            >
+              No sold products on this job
+            </Text>
+          </View>
+          <Text
+            className="text-xs font-semibold leading-5 mb-2"
+            style={{ color: colors.text }}
+          >
+            Nothing was attached for you to verify — the job packet has no measurements,
+            colors or product list on it.
+          </Text>
+          <Text
+            className="text-xs font-semibold leading-5"
+            style={{ color: colors.textSecondary }}
+          >
+            Message your Install Manager before starting work. If you go ahead, there is
+            no sold scope on record to check the finished job against. Acknowledge below
+            to continue the install.
+          </Text>
+        </View>
+      )}
+
       {products.map((product, idx) => {
         const st = scope[product.id];
         const accent = productColor(idx, product.color);

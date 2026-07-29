@@ -198,7 +198,13 @@ export function useInstallProgress(
           if (progress.pecHasConditions !== true) return false;
           return !!progress.completedSteps.pec;
         case 'measure':
-          if (productIds.length === 0) return false;
+          // No sold products on the job — there is nothing to verify, so the step is
+          // done once the installer has acknowledged that. It must NOT be a hard
+          // `false`: `measure` gates Post-Install, CoC and Return, so a job whose
+          // check-in carried no `productDetails` could never be completed at all.
+          // Not auto-true either — the installer should see the step and confirm the
+          // scope really is empty rather than have it silently tick itself off.
+          if (productIds.length === 0) return !!progress.completedSteps.measure;
           // Every product must be settled — a pending discrepancy blocks the step.
           return productIds.every((id) => {
             const s = progress.scope[id];

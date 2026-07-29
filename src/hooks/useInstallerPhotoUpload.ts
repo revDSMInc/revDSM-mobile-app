@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { FlashMessage } from '../config/message';
 import { useAuth } from './useAuth';
 import {
+  cocDescriptor,
   extraPhotoDescriptor,
   imagePhaseOf,
   materialDescriptor,
@@ -160,6 +161,23 @@ export function useInstallerPhotoUpload(
     [run]
   );
 
+  /** A scanned CoC page. */
+  const uploadCoc = useCallback(
+    (photo: CapturedPhoto, index: number) =>
+      run(
+        'coc',
+        photo,
+        (coords) => cocDescriptor(photo, coords),
+        {
+          step: 'coc',
+          category: 'Certificate of Completion',
+          subcategory: `Page ${index}`,
+        },
+        `page ${index} of the CoC`
+      ),
+    [run]
+  );
+
   /** A free shot with no rep counterpart. */
   const uploadExtra = useCallback(
     (phase: PhotoPhase, section: PhotoSection, photo: CapturedPhoto) =>
@@ -194,6 +212,7 @@ export function useInstallerPhotoUpload(
       uploadMaterial,
       uploadPreExisting,
       uploadMatched,
+      uploadCoc,
       uploadExtra,
       waitForUploads,
       /** > 0 while any capture is still being sent. */
@@ -203,6 +222,7 @@ export function useInstallerPhotoUpload(
       uploadMaterial,
       uploadPreExisting,
       uploadMatched,
+      uploadCoc,
       uploadExtra,
       waitForUploads,
       uploadingCount,
