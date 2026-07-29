@@ -119,7 +119,7 @@ interface RolloutViewProps {
   onResultJob?: (calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   /** Persist the entered end price on the calculator so it survives back-to-calculator
    *  edits (spec: never delete the user's entered end prices) and snapshots its scope. */
-  onPriceCommit?: (id: string, price: number) => void;
+  onPriceCommit?: (id: string, price: number, pricemarkup?: string) => void;
   /** Dismiss the "Job Scope was changed" warning (re-baseline the scope snapshot). */
   onDismissScopeWarning?: (id: string) => void;
   /** Persist a calculator's payment plan (auto-saves like a field change). */
@@ -745,7 +745,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   scopeChanged?: boolean;
   /** dismiss the scope-changed warning (re-baselines the snapshot). */
   onDismissScopeWarning?: () => void;
-  onPriceChange: (id: string, price: number) => void;
+  onPriceChange: (id: string, price: number, pricemarkup?: string) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
   onDropChange: (id: string, drops: any[]) => void;
@@ -822,11 +822,21 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // price log the portal shows under CONFIRMED ROLLOUTS.
   const loggedPriceRef = useRef<number | null>(calculator.price ? Number(calculator.price) : null);
   const logEndPriceEntered = () => {
-    const uid = user?._id || user?.id;
     const p = parseFloat(endPrice) || 0;
-    if (!uid || p <= 0 || loggedPriceRef.current === p) return;
+    // Web `handleBlurPrice`: a focus-out with no change → do nothing.
+    if (loggedPriceRef.current === p) return;
+    // Web returns BEFORE saving/logging when the price is invalid (below cost, below a
+    // Wells-Fargo-High minimum, or under the plan minimum) — the inline error already
+    // shows it. Don't persist the markup and don't fire the log for an invalid price.
+    if (p > 0 && priceErr) return;
     const prev = loggedPriceRef.current;
     loggedPriceRef.current = p;
+    // Web parity: persist the pricemarkup alongside the price (handleBlurPrice's
+    // updateLfCalculator({ price, pricemarkup, isRolloutConfirmed:false })), so the
+    // calculator's stored markup tracks the entered end price — not only at confirm.
+    onPriceChange(calculator.id, p, p > 0 ? markupLabel(p, logTiers) : '');
+    const uid = user?._id || user?.id;
+    if (!uid || p <= 0) return;
     logRolloutChange({
       userId: uid,
       leadId,
@@ -849,6 +859,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     if (!uid || newKey === oldKey) return;
     const isConfirmed = !!(calculator as any).isRolloutConfirmed;
     const currentPrice = parseFloat(endPrice) || Number(calculator.price) || 0;
+    // Web parity: `fireRolloutLog` anchors this log on the calculator's CURRENT
+    // (pre-change) method — web reads the stale `calculator.paymentMethod` because the
+    // update hasn't re-rendered yet. `logTiers` (keyed on the current `method`) is
+    // exactly that OLD-plan tier set, so use it to match web. (Web logs the payment-
+    // method change against the price BEFORE the plan switched, NOT the new plan's
+    // fee — matching that here.)
     logRolloutChange({
       userId: uid,
       leadId,
@@ -883,6 +899,40 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         oldValue: '', newValue: pendingDrop,
         paymentPlanKey: planKey, paymentPlanLabel: planLabelOf(plans, planKey), dropPrice: pendingDrop,
         action: 'drop price plan selected',
+      },
+    }).catch(() => {});
+  };
+
+  // Numeric markup percent (web `calculateMarkupNumber`) — the integer % a price sits
+  // above its anchor tier. Used for the drop-unselect log's extra numeric fields.
+  const markupPercentOf = (price: number, t: { cost: number; par: number; retail: number }) => {
+    const cost = Math.round(t.cost) || 0;
+    const par = Math.round(t.par) || 0;
+    const retail = Math.round(t.retail) || 0;
+    const anchor = price >= retail ? retail : price >= par ? par : cost;
+    return anchor ? Math.round(((price - anchor) / anchor) * 100) : 0;
+  };
+
+  // Web `handleUnselectSecured` → `drop price unselected` rollout log. Un-securing a
+  // drop marks it declined (kept in the list) and logs it — mobile previously updated
+  // the drop status but fired no log, so the un-secure never reached the portal.
+  const logDropUnselected = (dropPrice: number, index: number) => {
+    const uid = user?._id || user?.id;
+    if (!uid) return;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      percentageOfRollout: markupLabel(dropPrice, logTiers),
+      change: {
+        fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: dropPrice, fieldCategory: 'drop',
+        oldValue: dropPrice, newValue: dropPrice,
+        isSecured: false, isDeclined: true, dropNumber: index + 1, dropPrice,
+        dropMarkupPercent: markupPercentOf(dropPrice, logTiers),
+        retailMarkupPercent: markupPercentOf(logTiers.retail, logTiers),
+        paymentPlanKey: method, paymentPlanLabel: planLabelOf(plans, method),
+        action: 'drop price unselected',
       },
     }).catch(() => {});
   };
@@ -1025,6 +1075,30 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
   };
 
+  // Web parity (ViewAllCalculators onDownPaymentChange → queueRolloutLog): a `down
+  // payment entered` rollout log, deduped on the same value so re-blurring doesn't
+  // re-log. Tiers/markup anchor on the calc's method (like web), and the markup is of
+  // the DOWN-PAYMENT amount (web `calculateMarkup(dp, calculator)`), not the end price.
+  const loggedDownRef = useRef<number | null>(calculator.downPayment ? Number(calculator.downPayment) : null);
+  const logDownPaymentEntered = (v: number) => {
+    const uid = user?._id || user?.id;
+    if (!uid || loggedDownRef.current === v) return;
+    const prev = loggedDownRef.current;
+    loggedDownRef.current = v;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      percentageOfRollout: markupLabel(v, logTiers),
+      change: {
+        fieldName: 'downPayment', fieldLabel: 'Down Payment', fieldValue: v, fieldCategory: 'rollout',
+        oldValue: prev ?? (Number(calculator.downPayment) || 0), newValue: v,
+        action: 'down payment entered',
+      },
+    }).catch(() => {});
+  };
+
   const commitDownPayment = () => {
     let v = parseFloat(downText) || 0;
     // Web parity (PremiumQuoteCard `validatedDownPaymentChange`): a down payment
@@ -1037,12 +1111,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       setDownText(String(v));
     }
     onDownPaymentChange(calculator.id, v);
+    logDownPaymentEntered(v);
   };
 
   const clearDownPayment = () => {
     setDownText('');
     setShowDownInput(false);
     onDownPaymentChange(calculator.id, 0);
+    logDownPaymentEntered(0);
   };
 
   // Validate the typed drop price (same checks as the regular rollout), then open
@@ -1087,6 +1163,28 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
   const resolveDropTargetIndex = () => pendingDropIndex;
 
+  // Product decision (diverges from web, which keeps the confirmed rollout price
+  // fixed): the ROLLOUT price follows the last SECURED drop. Capture the original
+  // confirmed price once — before any drop overwrites it — so unselecting/declining
+  // every drop reverts the rollout price back to the original quote.
+  const origRolloutRef = useRef<{ price: number; markup: string } | null>(null);
+  const captureOrigRollout = () => {
+    if (origRolloutRef.current === null && !drops.some((d) => d.status === 'accepted')) {
+      origRolloutRef.current = { price: Number(calculator.price) || 0, markup: calculator.pricemarkup || '' };
+    }
+  };
+  // Set the calculator's persisted rollout price/markup to the effective price: the
+  // last still-accepted drop, or the captured original when no drop is accepted.
+  const syncRolloutToDrops = (nextDrops: any[]) => {
+    const accepted = [...nextDrops].reverse().find((d) => d?.status === 'accepted');
+    if (accepted) {
+      const ap = Number(accepted.dropedPrice ?? accepted.price) || 0;
+      onPriceChange(calculator.id, ap, accepted.pricemarkup || (ap > 0 ? markupLabel(ap, logTiers) : ''));
+    } else if (origRolloutRef.current) {
+      onPriceChange(calculator.id, origRolloutRef.current.price, origRolloutRef.current.markup);
+    }
+  };
+
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
   // open the Result Lead outcome modal carrying the drop price.
@@ -1094,6 +1192,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
     // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
     const pricemarkup = markupLabel(pendingDrop, logTiers);
+    captureOrigRollout(); // remember the confirmed rollout price before this drop overwrites it
     const targetIndex = resolveDropTargetIndex();
     const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data };
     // Edit in place (preserving any existing `_id`, web `...item`) when targeting an
@@ -1119,7 +1218,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
           oldValue: lastDrop, newValue: pendingDrop,
           isSecured: true, isDeclined: false, dropNumber, dropPrice: pendingDrop,
-          paymentPlanKey: data.paymentMethod,
+          paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
           action: 'drop price secured',
         },
       }).catch(() => {});
@@ -1142,6 +1241,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         }).catch(() => {});
       }
     }
+    // Rollout price follows the last secured drop.
+    syncRolloutToDrops(next);
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1178,7 +1279,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
           fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
           oldValue: lastDrop, newValue: pendingDrop,
           isSecured: false, isDeclined: true, dropNumber, dropPrice: pendingDrop,
-          paymentPlanKey: data.paymentMethod,
+          paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
           action: 'drop price declined',
         },
       }).catch(() => {});
@@ -1565,7 +1666,10 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       // handleUnselectDrop ({ secured:false, declined:true }); here the
                       // dynamic drop model uses status='declined'. Was filtering the drop
                       // out entirely, losing the record.
-                      <TouchableOpacity onPress={() => onDropChange(calculator.id, drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2)))}>
+                      <TouchableOpacity onPress={() => {
+                        onDropChange(calculator.id, drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2)));
+                        logDropUnselected(dp, i);
+                      }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
                       </TouchableOpacity>
                     )}
@@ -1670,9 +1774,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               FlashMessage.warning(`Payment method updated - the rollout price $${priceNum.toLocaleString()} is already confirmed.`);
             }
           }
+          // Log FIRST (reads the still-current `method` as the old key), then apply
+          // the change and close. This was previously duplicated — onPaymentMethodChange
+          // / setShowPlanPicker were each called twice.
+          logPaymentMethodChanged(key);
           onPaymentMethodChange(calculator.id, key);
           setShowPlanPicker(false);
-          logPaymentMethodChanged(key); onPaymentMethodChange(calculator.id, key); setShowPlanPicker(false);
         }}
         onClose={() => setShowPlanPicker(false)}
       />
@@ -1778,10 +1885,30 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     // Anchor the persisted `pricemarkup` on the fee-adjusted, floored card tiers
     // (web `calculateMarkup`), NOT the raw stored `totals` — same fix as the logs.
     const tiers = computeLogTiers(calc.entries, verticals || [], pricingConfig, pricing.plans[method]?.fee || 0);
+    // Web parity (ViewAllCalculators.autoConfirmCalculator): fire the `rollout
+    // auto-confirmed (10 min inactivity)` rollout log. The manual Confirm bar logs
+    // `rollout confirmed` inline, but auto-confirm bypasses that path — so without this
+    // an auto-confirmed calculator produced NO confirmation log at all.
+    const uid = user?._id || user?.id;
+    if (uid) {
+      logRolloutChange({
+        userId: uid,
+        leadId,
+        calculator: { id: calc.id, title: calc.title, appointmentId: (calc as any).appointmentId || appointmentId },
+        tiers,
+        percentageOfRollout: markupLabel(enteredPrice, tiers),
+        change: {
+          fieldName: 'rolloutAutoConfirmed', fieldLabel: 'Rollout Auto-Confirmed',
+          fieldValue: enteredPrice, fieldCategory: 'rollout', oldValue: '', newValue: enteredPrice,
+          autoConfirmed: true, timeSinceLastChange: Math.round(elapsed / 1000),
+          action: 'rollout auto-confirmed (10 min inactivity)',
+        },
+      }).catch(() => {});
+    }
     onConfirmRolloutsRef.current?.([
       { id: calc.id, price: enteredPrice, pricemarkup: markupLabel(enteredPrice, tiers) },
     ]);
-  }, [prices, pricing, user, verticals, pricingConfig]);
+  }, [prices, pricing, user, verticals, pricingConfig, leadId, appointmentId]);
 
   // Check on mount and every 30 seconds (web parity: mount + polling interval).
   useEffect(() => {
@@ -1893,13 +2020,14 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               pricingConfig={pricingConfig}
               scopeChanged={scopeChangedOf(selectedCalc)}
               onDismissScopeWarning={() => onDismissScopeWarning?.(selectedCalc.id)}
-              onPriceChange={(id, price) => {
+              onPriceChange={(id, price, pricemarkup) => {
                 setPrices((p) => ({ ...p, [id]: price }));
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
                 // Persist the entered price on the tab so it survives a back-to-calculator
                 // edit (and snapshot the scope it was priced against). The hook debounces
-                // the save, so per-keystroke calls coalesce.
-                onPriceCommit?.(id, price);
+                // the save, so per-keystroke calls coalesce. `pricemarkup` is passed only
+                // on blur (web parity: persisted alongside the price by handleBlurPrice).
+                onPriceCommit?.(id, price, pricemarkup);
               }}
               onResult={(id, result, price, paymentMethod, downPayment) => onResultJob?.(id, result, price, paymentMethod, downPayment)}
               onPaymentMethodChange={(id, m) => {

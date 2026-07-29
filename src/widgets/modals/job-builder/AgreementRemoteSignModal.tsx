@@ -16,8 +16,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
-import { useAuth } from '../../../hooks/useAuth';
-import { logEvent } from '../../../services/api/LoggerService';
+// Audit (remote sends, viewing, signing, etc.) is recorded server-side per REVDSM-263,
+// so no client-side logEvent here — a client copy would carry worse data.
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -36,24 +36,30 @@ interface Signer {
   signsInitials: boolean;
 }
 
-/** Per-signer status returned by the backend session (`remote-status`). */
+/** Per-signer status returned by the backend (`remote-status`). */
 interface SignerStatus {
   signerId: string;
   role?: string;
-  index?: number;
+  /** null = primary buyer; 0,1,… = co-buyers (matches `customer.coBuyers`). */
+  coBuyerIndex?: number | null;
   name?: string;
   phone?: string;
   email?: string;
   status?: 'sent' | 'viewed' | 'signed' | 'declined' | string;
-  sentAt?: string;
+  lastSentAt?: string;
   viewedAt?: string;
   signedAt?: string;
+  declineReason?: string;
+  sendCount?: number;
 }
 
-interface RemoteSession {
-  sessionId: string;
+/** The remote agreement returned by `remote-status` / `send-remote` (REVDSM-263). */
+interface RemoteAgreement {
+  agreementId: string;
+  /** pending · completed · declined · cancelled · expired */
   status?: string;
-  signedPdfUrl?: string;
+  showInitials?: boolean;
+  signedPdfUrl?: string | null;
   signers: SignerStatus[];
 }
 
@@ -71,7 +77,8 @@ interface AgreementRemoteSignModalProps {
   onComplete?: () => void;
 }
 
-const POLL_MS = 6000;
+// There is no push — poll `remote-status` while pending (doc: every 10–15s).
+const POLL_MS = 12000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,11 +91,9 @@ const formatLocalPhone = (text: string): string => {
   return `(${digits.substring(0, 3)}) ${digits.substring(3, 6)}-${digits.substring(6)}`;
 };
 
-/** Normalize a display phone to Twilio E.164 (+1XXXXXXXXXX), or '' if empty. */
-const toE164 = (display: string): string => {
-  const digits = display.replace(/\D/g, '').replace(/^1/, '').slice(-10);
-  return digits ? `+1${digits}` : '';
-};
+/** Reduce a display phone to the bare 10 digits the API expects (e.g. "5551234567"). */
+const digitsOnly = (display: string): string =>
+  display.replace(/\D/g, '').replace(/^1/, '').slice(-10);
 
 const fullName = (s: { firstName?: string; lastName?: string }) =>
   `${s.firstName || ''} ${s.lastName || ''}`.trim();
@@ -132,21 +137,19 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
   visible,
   onClose,
   leadId,
-  agreementId,
-  payload,
-  signatureFields,
-  pdfDimensions,
+  // agreementId / payload / signatureFields / pdfDimensions are accepted for caller
+  // compatibility but the remote flow is driven entirely by leadId + the server's own
+  // agreement (its id comes back from send-remote / remote-status).
   customerDetails,
   onComplete,
 }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
 
-  // 'compose' — edit recipients & send; 'pending' — track/resend; 'done' — all signed.
+  // 'compose' — edit recipients & send; 'pending' — track/resend; 'done' — completed.
   const [phase, setPhase] = useState<'compose' | 'pending' | 'done'>('compose');
   const [signers, setSigners] = useState<Signer[]>([]);
-  const [session, setSession] = useState<RemoteSession | null>(null);
+  const [agreement, setAgreement] = useState<RemoteAgreement | null>(null);
   const [sending, setSending] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
 
@@ -157,44 +160,46 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const userId = user?._id || user?.id;
-
-  // ── Normalize a status response into a RemoteSession (or null when absent) ──
-  const normalizeSession = (raw: any): RemoteSession | null => {
+  // ── Normalize send-remote / remote-status into a RemoteAgreement (or null) ──
+  // `remote-status` wraps as `{ agreement: {...}|null }`; `send-remote` returns the
+  // agreement fields flat (`{ agreementId, status, results, signers }`).
+  const normalizeAgreement = (raw: any): RemoteAgreement | null => {
     const data = raw?.data?.data ?? raw?.data ?? raw;
-    if (!data || !data.sessionId) return null;
+    const ag = data && 'agreement' in data ? data.agreement : data?.agreementId ? data : null;
+    if (!ag || !ag.agreementId) return null;
     return {
-      sessionId: data.sessionId,
-      status: data.status,
-      signedPdfUrl: data.signedPdfUrl,
-      signers: Array.isArray(data.signers) ? data.signers : [],
+      agreementId: ag.agreementId,
+      status: ag.status,
+      showInitials: ag.showInitials,
+      signedPdfUrl: ag.signedPdfUrl,
+      signers: Array.isArray(ag.signers) ? ag.signers : [],
     };
   };
 
-  const allSigned = (s: RemoteSession | null): boolean =>
-    !!s &&
-    s.signers.length > 0 &&
-    s.signers.every((x) => String(x.status || '').toLowerCase() === 'signed');
+  // Agreement status → which panel. pending/declined → track; completed → done;
+  // cancelled/expired (or none) → compose so the rep can send afresh.
+  const phaseFor = (a: RemoteAgreement | null): 'compose' | 'pending' | 'done' => {
+    const s = String(a?.status || '').toLowerCase();
+    if (!a || s === 'cancelled' || s === 'expired') return 'compose';
+    if (s === 'completed') return 'done';
+    return 'pending';
+  };
 
-  // ── Fetch current session status ────────────────────────────────────────────
+  // ── Fetch current agreement status ──────────────────────────────────────────
   const refreshStatus = useCallback(
     async (opts: { showSpinner?: boolean } = {}) => {
       if (!leadId) return;
       if (opts.showSpinner) setLoadingStatus(true);
       try {
         const res = await LeadService.getAgreementRemoteStatus(leadId);
-        const next = normalizeSession(res);
-        if (next && next.signers.length > 0) {
-          setSession(next);
-          if (allSigned(next)) {
-            setPhase('done');
-          } else {
-            setPhase('pending');
-          }
+        const next = normalizeAgreement(res);
+        if (next) {
+          setAgreement(next);
+          setPhase(phaseFor(next));
         }
-        // No active session → stay on whatever phase we're in (compose on open).
+        // `{ agreement: null }` → nothing out for signature; stay on compose.
       } catch {
-        // 404 / not-yet-implemented backend → treat as "no active session".
+        // Network / not-found → treat as "no active agreement".
       } finally {
         if (opts.showSpinner) setLoadingStatus(false);
       }
@@ -213,7 +218,7 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     }
     setPhase('compose');
     setSigners(buildSigners(customerDetails));
-    setSession(null);
+    setAgreement(null);
     setEditing(null);
     refreshStatus({ showSpinner: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -241,10 +246,13 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     setSigners((prev) => prev.map((s) => (s.index === index ? { ...s, ...patch } : s)));
   };
 
-  const signerHasContact = (s: Signer) => toE164(s.phone).length > 0 || s.email.trim().length > 0;
+  const signerHasContact = (s: Signer) => digitsOnly(s.phone).length > 0 || s.email.trim().length > 0;
   const canSend = signers.length > 0 && signers.every(signerHasContact);
 
   // ── Send ─────────────────────────────────────────────────────────────────────
+  // `POST /agreement/:leadId/send-remote` with `{ signers: [{ coBuyerIndex, phone,
+  // email }] }` — `coBuyerIndex: null` is the primary buyer. The server contacts every
+  // signer and files the signed PDF once all have signed. Audit is server-side.
   const handleSend = async () => {
     if (!canSend) {
       Alert.alert('Missing contact', 'Each signer needs a phone number or an email address.');
@@ -253,80 +261,61 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     setSending(true);
     try {
       const body = {
-        agreementId,
-        payload,
-        signatureFields,
-        pdfDimensions,
         signers: signers.map((s) => ({
-          role: s.role,
-          index: s.index,
-          firstName: s.firstName,
-          lastName: s.lastName,
-          phone: toE164(s.phone),
+          coBuyerIndex: s.index === 0 ? null : s.index - 1,
+          phone: digitsOnly(s.phone),
           email: s.email.trim(),
-          signsInitials: s.signsInitials,
         })),
       };
       const res = await LeadService.sendAgreementRemote(leadId, body);
-      const next = normalizeSession(res);
+      const data = res?.data?.data ?? res?.data;
+      const next = normalizeAgreement(res);
 
-      if (userId) {
-        logEvent('add', {
-          user_id: userId,
-          created_by: userId,
-          module_type: 'agreement',
-          meta: {
-            leadId,
-            agreementId,
-            action: 'sent_agreement_remote',
-            fieldName: 'agreement',
-            fieldLabel: 'Agreement',
-            signerCount: signers.length,
-          },
-        });
-      }
-
-      // The response ideally returns the freshly-created session. If it doesn't,
-      // fall back to a status fetch so the pending list still populates.
-      if (next && next.signers.length > 0) {
-        setSession(next);
-        setPhase(allSigned(next) ? 'done' : 'pending');
+      if (next) {
+        setAgreement(next);
+        setPhase(phaseFor(next));
       } else {
         setPhase('pending');
         await refreshStatus({ showSpinner: true });
       }
-      Alert.alert('Sent', 'The agreement was sent for remote signature.');
+
+      // A PARTIAL failure still returns 200 — surface any signer we couldn't reach
+      // (delivered:false means every channel for that signer failed).
+      const results: any[] = Array.isArray(data?.results) ? data.results : [];
+      const undelivered = results.filter((r) => r?.delivered === false);
+      if (undelivered.length) {
+        const names = undelivered.map((r) => r?.name || 'a signer').join(', ');
+        Alert.alert('Sent — with issues', `Couldn't reach: ${names}. Fix their phone/email below and resend.`);
+      } else {
+        Alert.alert('Sent', 'The agreement was sent for remote signature.');
+      }
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Could not send the agreement. Please try again.');
+      // 409 = an agreement is already out. Load it so the rep can resend / edit /
+      // cancel instead of being stuck. 502 = nothing reached anyone (a real failure).
+      const code = err?.code || err?.response?.status || err?.status;
+      const msg = String(err?.message || err?.response?.data?.message || '');
+      if (code === 409 || /already/i.test(msg)) {
+        await refreshStatus({ showSpinner: true });
+        Alert.alert('Already sent', 'This agreement is already out for signature — resend, edit a recipient, or cancel it below.');
+      } else {
+        Alert.alert('Error', msg || 'Could not send the agreement. Please try again.');
+      }
     } finally {
       setSending(false);
     }
   };
 
   // ── Resend / edit contact (pending phase) ────────────────────────────────────
+  // Both rotate the signer's token, so the previously sent link stops working.
   const doResend = async (signer: SignerStatus, patch?: { phone?: string; email?: string }) => {
-    if (!session) return;
+    if (!agreement) return;
     setResendingId(signer.signerId);
     try {
-      await LeadService.resendAgreementRemote(leadId, {
-        sessionId: session.sessionId,
-        signerId: signer.signerId,
-        ...patch,
-      });
-      if (userId) {
-        logEvent('add', {
-          user_id: userId,
-          created_by: userId,
-          module_type: 'agreement',
-          meta: {
-            leadId,
-            agreementId,
-            action: patch ? 'edited_agreement_recipient' : 'resent_agreement_remote',
-            signerId: signer.signerId,
-            ...(patch?.phone ? { recipientPhone: patch.phone } : {}),
-            ...(patch?.email ? { recipientEmail: patch.email } : {}),
-          },
-        });
+      if (patch) {
+        // PATCH corrects the contact AND resends in one call.
+        await LeadService.updateAgreementRemoteSigner(agreement.agreementId, signer.signerId, patch);
+      } else {
+        await LeadService.resendAgreementRemoteSigner(agreement.agreementId, signer.signerId);
       }
       await refreshStatus();
       Alert.alert('Sent', patch ? 'Recipient updated and link resent.' : 'Link resent.');
@@ -346,12 +335,12 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
   };
 
   const saveEdit = async () => {
-    if (!editing || !session) return;
-    const signer = session.signers.find((s) => s.signerId === editing.signerId);
+    if (!editing || !agreement) return;
+    const signer = agreement.signers.find((s) => s.signerId === editing.signerId);
     if (!signer) return;
     const patch =
       editing.field === 'phone'
-        ? { phone: toE164(editing.value) }
+        ? { phone: digitsOnly(editing.value) }
         : { email: editing.value.trim() };
     if (editing.field === 'phone' && !patch.phone) {
       Alert.alert('Invalid phone', 'Enter a valid 10-digit phone number.');
@@ -370,24 +359,50 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     }
   };
 
-  const handleDone = () => {
-    onComplete?.();
-    onClose();
+  // Cancel the whole request (voids every outstanding link) → back to compose.
+  const handleCancel = () => {
+    if (!agreement) return;
+    Alert.alert('Cancel request?', 'This voids every outstanding signing link for this agreement.', [
+      { text: 'Keep', style: 'cancel' },
+      {
+        text: 'Cancel Request',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await LeadService.cancelAgreementRemote(agreement.agreementId);
+            setAgreement(null);
+            setSigners(buildSigners(customerDetails));
+            setPhase('compose');
+          } catch (err: any) {
+            Alert.alert('Error', err?.message || 'Could not cancel. Please try again.');
+          }
+        },
+      },
+    ]);
   };
 
-  // ── Derived: merge live status onto the seeded signer meta for display ──────
+  const handleDone = () => {
+    // Hand off to the parent, which closes THIS sheet then the agreement modal on a
+    // later frame (see AgreementSignatureModal.onComplete). Do NOT also call onClose
+    // here — a second same-frame dismissal is what caused the blank black screen.
+    if (onComplete) onComplete();
+    else onClose();
+  };
+
+  // ── Derived: signer rows for the pending panel (buyer first, then co-buyers) ──
   const pendingRows = useMemo(() => {
-    if (!session) return [];
-    return session.signers
+    if (!agreement) return [];
+    const idxOf = (st: SignerStatus) => (st.coBuyerIndex == null ? -1 : st.coBuyerIndex);
+    return agreement.signers
       .slice()
-      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      .sort((a, b) => idxOf(a) - idxOf(b))
       .map((st) => {
-        const roleLabel =
-          (st.role || '').toLowerCase() === 'buyer' || (st.index ?? 0) === 0 ? 'Buyer' : 'Co-Buyer';
-        const name = st.name || (roleLabel === 'Buyer' ? fullName(signers[0] || {}) : roleLabel);
+        const isBuyer = st.coBuyerIndex == null || (st.role || '').toLowerCase() === 'buyer';
+        const roleLabel = isBuyer ? 'Buyer' : 'Co-Buyer';
+        const name = st.name || (isBuyer ? fullName(signers[0] || {}) : roleLabel);
         return { st, roleLabel, name };
       });
-  }, [session, signers]);
+  }, [agreement, signers]);
 
   // ─── Render: shared shell ────────────────────────────────────────────────────
   const sheetBg = isDark ? colors.card : '#FFFFFF';
@@ -602,6 +617,10 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
 
       <TouchableOpacity onPress={onClose} style={[styles.primaryBtn, { backgroundColor: isDark ? '#FFFFFF14' : '#0F172A', marginTop: 8 }]}>
         <Text style={[styles.primaryBtnText, { color: 'white' }]}>Done</Text>
+      </TouchableOpacity>
+      {/* Cancel the whole request (voids every outstanding link) — e.g. wrong lead. */}
+      <TouchableOpacity onPress={handleCancel} style={{ alignItems: 'center', paddingVertical: 12, marginTop: 2 }}>
+        <Text style={{ color: '#EF4444', fontWeight: '800', fontSize: 12 }}>Cancel Request</Text>
       </TouchableOpacity>
     </>
   );

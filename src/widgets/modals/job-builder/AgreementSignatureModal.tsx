@@ -758,9 +758,15 @@ export const AgreementSignatureModal = ({
                 pdfDimensions={pdfDimensions}
                 customerDetails={customerDetails}
                 onComplete={() => {
+                  // Close the nested remote sheet FIRST, then tear down the agreement
+                  // modal/dialog on a later frame. Collapsing the stacked modals
+                  // (dialog → sign modal → remote sheet) in a single frame orphans a
+                  // modal backdrop and leaves a blank black screen — so sequence them.
                   setRemoteOpen(false);
-                  onRemoteComplete?.();
-                  onClose();
+                  setTimeout(() => {
+                    onRemoteComplete?.();
+                    onClose();
+                  }, 450);
                 }}
               />
             )}

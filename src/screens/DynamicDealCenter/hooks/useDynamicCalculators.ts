@@ -1018,11 +1018,20 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
    * A price of 0 clears the snapshot (nothing to warn about).
    */
   const handleSetPrice = useCallback(
-    (tabId: string, price: number) => {
+    (tabId: string, price: number, pricemarkup?: string) => {
       setTabs((prev) => {
         const next = prev.map((t) =>
           t.id === tabId
-            ? { ...t, price, priceScopeSig: price > 0 ? scopeSignature(t.entries) : '' }
+            ? {
+                ...t,
+                price,
+                priceScopeSig: price > 0 ? scopeSignature(t.entries) : '',
+                // Web parity (handleBlurPrice persists `pricemarkup` alongside `price`):
+                // keep the stored markup in step with the entered end price, not only at
+                // confirm. Only overwrite when the caller computed one (blur), so a
+                // per-keystroke price commit doesn't blank it.
+                ...(pricemarkup !== undefined && { pricemarkup }),
+              }
             : t
         );
         tabsRef.current = next;
