@@ -193,18 +193,21 @@ export function ProgramCard({
                     onPress={() => onSelectPlan?.(opt.key)}
                     disabled={readOnly}
                     activeOpacity={readOnly ? 1 : 0.9}
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', backgroundColor: isSel ? '#4CBB170D' : '#fff', marginBottom: 8 }}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: isSel ? 2 : 1, borderColor: isSel ? '#4CBB17' : '#E2E8F0', backgroundColor: isSel ? '#4CBB170D' : '#fff', marginBottom: 8 }}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '900', color: isSel ? '#15803D' : '#1C252E', flexShrink: 0 }}>
-                      {opt.monthly > 0 ? fmt(opt.monthly) : '—'}
-                      <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>/mo</Text>
-                    </Text>
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5, minWidth: 0 }}>
+                    {/* Amount on top, full plan label stacked below it — so a long
+                        label (e.g. "GS2521, 0% APR, 18M") shows in full instead of
+                        truncating with "…" beside the amount. */}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '900', color: isSel ? '#15803D' : '#1C252E' }}>
+                        {opt.monthly > 0 ? fmt(opt.monthly) : '—'}
+                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8' }}>/mo</Text>
+                      </Text>
                       {!!opt.terms && (
-                        <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8', flexShrink: 1 }}>{opt.terms}</Text>
+                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#94A3B8', marginTop: 2 }}>{opt.terms}</Text>
                       )}
-                      <Ionicons name={isSel ? 'checkmark-circle' : 'ellipse-outline'} size={17} color={isSel ? '#4CBB17' : '#CBD5E1'} />
                     </View>
+                    <Ionicons name={isSel ? 'checkmark-circle' : 'ellipse-outline'} size={17} color={isSel ? '#4CBB17' : '#CBD5E1'} />
                   </TouchableOpacity>
                 );
 
