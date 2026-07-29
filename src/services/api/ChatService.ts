@@ -548,7 +548,10 @@ class ChatService {
   }
 
   markSeen(chatId: string, messageIds: string[]): void {
-    SocketManager.emit('mark-message-seen', { chatId, messageIds });
+    // `mark-messageS-seen` (PLURAL) is the object-taking event. The singular
+    // `mark-message-seen` takes a bare messageId STRING and silently ignores an object,
+    // which is why unread counts never cleared — CHAT-MOBILE-API.md §3.1.
+    SocketManager.emit('mark-messages-seen', { chatId, messageIds });
   }
 
   async addParticipant(chatId: string, userId: string): Promise<void> {
@@ -642,6 +645,42 @@ class ChatService {
     if (isTyping && now - this.lastTypingTime < 1000) return;
     this.lastTypingTime = now;
     SocketManager.emit('channel-typing', { channelId, isTyping });
+  }
+
+  /**
+   * Resolves a lead's chat and makes sure `userId` is on its participant list.
+   *
+   * The backend seeds participants when the chat is first CREATED — rep, installer,
+   * crew, managers. Anyone added to the crew after that is missing, which is the normal
+   * case for an installer: the thread usually exists from the sales conversation long
+   * before a crew is assigned. A non-participant can still read and post, but gets
+   * **no unread badge, no chat-list refresh and no push notifications**
+   * (CHAT-MOBILE-API.md §2.1) — most of the value of the thread.
+   *
+   * Safe to call repeatedly: `getChatByLeadId` falls back to create (itself idempotent),
+   * and the POST only fires when the id is genuinely absent.
+   *
+   * Never throws. This runs behind a screen that has already opened, so a failure costs
+   * notifications, not the chat.
+   */
+  async ensureParticipant(leadId: string, userId: string): Promise<string | null> {
+    try {
+      const chatId = await this.getChatByLeadId(leadId);
+      if (!chatId || !userId) return chatId;
+
+      const participants = await this.getLeadParticipants(chatId, leadId);
+      // Participants come back as objects on some routes and bare ids on others.
+      const alreadyIn = participants.some((p: any) => {
+        const id = typeof p === 'string' ? p : p?._id || p?.id || p?.userId;
+        return String(id) === String(userId);
+      });
+      if (!alreadyIn) await this.addParticipant(chatId, userId);
+
+      return chatId;
+    } catch (err) {
+      console.warn('[ChatService] Could not confirm chat participation:', err);
+      return null;
+    }
   }
 
   async getLeadParticipants(chatId: string, leadId?: string): Promise<any[]> {

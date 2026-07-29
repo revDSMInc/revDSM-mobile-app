@@ -31,6 +31,7 @@ import { useInstallerPhotoUpload } from '../../hooks/useInstallerPhotoUpload';
 import { useAuth } from '../../hooks/useAuth';
 import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
 import { InstallerService } from '../../services/api/installer';
+import ChatService from '../../services/api/ChatService';
 import { LeadService } from '../../services/api/leads';
 import { ENV } from '../../config/env';
 import {
@@ -925,6 +926,52 @@ export default function InstallerJobDetail() {
     }
   };
 
+  /**
+   * Opens the job's chat — the shared LEAD thread, not an installer-only one.
+   *
+   * There is exactly one chat per lead and everybody is in it: the sales rep, ops and
+   * installer managers, the lead installer and the crew. That is the point — the crew
+   * can ask the rep a question and the office sees it. So this keys on **`job.leadId`,
+   * never `job._id`** (CHAT-MOBILE-API.md §0); opening by job id would mint a second
+   * thread for a lead that already has one.
+   *
+   * `chatId: ''` is the app's established "open by lead" form (LeadCenter and DealDetail
+   * both use it) — `useChatSession` resolves the id from `leadId`, creating the chat if
+   * the lead has none. Navigation is therefore instant rather than sitting behind a
+   * round trip.
+   *
+   * The participant check runs in the BACKGROUND, after navigating: it costs two
+   * requests and only affects badges and push, so making the installer watch a spinner
+   * for it would be the wrong trade.
+   */
+  // A plain function, not a `useCallback`: everything from here down sits after the
+  // `if (!job)` early return, so a hook here would be called conditionally.
+  const handleOpenChat = () => {
+    log.opsChatOpened();
+
+    if (!job.leadId) {
+      // A job with no lead behind it has no thread, and creating one would have nothing
+      // to key on.
+      FlashMessage.info(
+        'No chat for this job',
+        "This job isn't linked to a lead yet, so there's no conversation to open. Call your Install Manager instead."
+      );
+      return;
+    }
+
+    navigation.navigate('ChatDetail', {
+      leadId: job.leadId,
+      chatId: '',
+      customerName:
+        [job.customerName, job.leadDisplayId && `Lead ${job.leadDisplayId}`]
+          .filter(Boolean)
+          .join(' · ') || 'Job Chat',
+      chatType: 'lead',
+    });
+
+    if (userId) void ChatService.ensureParticipant(job.leadId, userId);
+  };
+
   const handleOpenResult = (type: InstallerResultType) => {
     log.resultOpened(type);
     // Reset has nothing to explain, so it takes a plain confirmation rather than the
@@ -1211,10 +1258,7 @@ export default function InstallerJobDetail() {
           </View>
 
           <TouchableOpacity
-            onPress={() => {
-              log.opsChatOpened();
-              FlashMessage.info('Ops chat', 'Wire to the existing chat module when available.');
-            }}
+            onPress={handleOpenChat}
             className="h-12 rounded-xl items-center justify-center flex-row"
             style={{ backgroundColor: colors.info.main }}
           >

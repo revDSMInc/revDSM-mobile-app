@@ -45,7 +45,10 @@ export const INSTALL_STEPS: InstallStep[] = [
     n: 5,
     title: 'Post-Install Photos',
     desc: 'Second ghost pass — finished work',
-    icon: 'camera-check-outline',
+    // `camera-check-outline` does not exist in the bundled MaterialCommunityIcons set,
+    // so it rendered as the fallback "?". `camera-retake-outline` does, and says the
+    // right thing for a second pass over the same shots.
+    icon: 'camera-retake-outline',
   },
   {
     key: 'coc',
