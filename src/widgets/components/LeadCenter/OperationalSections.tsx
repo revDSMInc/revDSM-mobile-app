@@ -165,8 +165,10 @@ export const ToolsSection = ({
         // while locked warns instead of opening.
         desc={isLeadSold ? 'View finalized proposal details' : (!allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
         statusText={allConfirmed ? (isLeadSold ? 'Sale finalized' : (consentReport ? 'Consent on file — present quote' : 'Ready to present')) : undefined}
-        // Green SIGNED tag once the customer consent form is on file (mockup parity).
-        badgeText={isLeadSold ? 'SOLD' : (allConfirmed && consentReport ? 'SIGNED' : undefined)}
+        // "SOLD" (green) once finalized, else an "Already Generated" pill — same
+        // violet design as the Customer Consent Form tag — once consent is on file.
+        badgeText={isLeadSold ? 'SOLD' : (allConfirmed && consentReport ? 'Already Generated' : undefined)}
+        badgeVariant={isLeadSold ? undefined : 'violet'}
         locked={!allConfirmed}
         icon="chart-line"
         onPress={() => {
@@ -487,7 +489,7 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 };
 
 
-const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, locked, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
+const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, badgeVariant, locked, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
   const { colors, isDark } = useTheme();
   const green = statusColor || '#16A34A';
   // A locked card stays tappable on purpose — the parent's onPress shows a toast
@@ -537,11 +539,21 @@ const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, ba
         {locked && !isLoading && (
             <Icon name="lock" size={12} color={'#919EAB'} style={{marginRight:8}} />
         )}
-        {/* Generic right-side pill (e.g. the green "SIGNED" tag once consent is on file). */}
+        {/* Right-side status pill. `badgeVariant: 'violet'` renders the exact same
+            "Already Generated" style as the isGenerated pill below; otherwise a
+            green tag (e.g. "SOLD"). */}
         {!!badgeText && !isLoading && (
-          <View className="px-3 py-1.5 rounded-xl mr-2" style={{ backgroundColor: badgeBg || '#EBF9E1' }}>
-            <Text className="text-[12px] font-black tracking-wide" style={{ color: badgeColor || '#16A34A' }}>{badgeText}</Text>
-          </View>
+          badgeVariant === 'violet' ? (
+            // `self-start` aligns the pill with the title line (the row is
+            // items-center, which would otherwise centre it against the 2-line block).
+            <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2 self-start" style={{ bottom: 2 }}>
+              <Text className="text-[12px] font-semibold text-violet-700">{badgeText}</Text>
+            </View>
+          ) : (
+            <View className="px-3 py-1.5 rounded-xl mr-2" style={{ backgroundColor: badgeBg || '#EBF9E1' }}>
+              <Text className="text-[12px] font-black tracking-wide" style={{ color: badgeColor || '#16A34A' }}>{badgeText}</Text>
+            </View>
+          )
         )}
         {isGenerated && !isLoading && (
           <View className="bg-violet-100 px-3 py-1.5 rounded-xl border border-violet-200 shadow-sm mr-2">
