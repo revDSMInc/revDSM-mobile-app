@@ -98,7 +98,19 @@ export interface CalcTab {
     apr?: number;
     monthlyPayment?: number;
     grandTotal?: number;
+    /** Which program card the rep opted into in the Investment Center ('inhome' or
+     *  'oneyear'), so the panel survives tab switches without losing the selection. */
+    optInProgram?: 'inhome' | 'oneyear' | null;
   } | null;
+  /**
+   * Backend-computed job-scope sentences for this calculator (web/backend parity:
+   * `lfcalculator.descriptions`) — e.g. `["Install Soffit", "Installation: Install
+   * J Channel …"]`. Read-only display data: the backend derives it from the agreement
+   * description schemas, so mobile never sends it in a save (web doesn't either). The
+   * Investment Center's "Includes the Following" list uses it verbatim (footages/colors
+   * stripped) instead of re-deriving the scope locally.
+   */
+  descriptions?: string[];
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
   /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
@@ -165,7 +177,7 @@ function tabSignature(tab: CalcTab): string {
   const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
   // In-Home Monthly shortlist: selected plan + the added-plan list.
   const ih = tab.inHome;
-  const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}` : '';
+  const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}:${ih.optInProgram ?? ''}` : '';
   return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${inHomeSig}#${tab.priceScopeSig ?? ''}`;
 }
 
@@ -591,6 +603,9 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
               oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
               inHome: c.inHome ?? c.in_home ?? null,
+              // Backend-computed job-scope sentences — surfaced verbatim in the
+              // Investment Center "Includes the Following" list (read-only, never re-sent).
+              descriptions: Array.isArray(c.descriptions) ? c.descriptions : [],
               persisted: true,
             };
           });

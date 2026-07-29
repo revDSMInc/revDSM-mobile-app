@@ -73,7 +73,8 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const [tabScrollOffset, setTabScrollOffset] = useState(0);
   const [tabScrollViewWidth, setTabScrollViewWidth] = useState(0);
   const [tabContentWidth, setTabContentWidth] = useState(0);
-  const consentSigned = localConsentSigned || hasSignedConsent(lead);
+  const isLeadSold = lead?.status === 'sale';
+  const consentSigned = localConsentSigned || hasSignedConsent(lead) || isLeadSold;
 
   const handleConsentSubmit = useCallback(
     async (data: any) => {
@@ -252,7 +253,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                style={{ flexGrow: 0 }}
+                style={{ flexGrow: 0,marginHorizontal:10 }}
                 contentContainerStyle={{ paddingHorizontal: 12 }}
                 onScroll={(e) => setTabScrollOffset(e.nativeEvent.contentOffset.x)}
                 onContentSizeChange={(w) => setTabContentWidth(w)}

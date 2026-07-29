@@ -92,6 +92,17 @@ export function buildInvestmentJobScope(params: InvestmentJobScopeParams): strin
     ? calculatorDescriptions.filter((d: any) => typeof d === 'string' && d.trim())
     : [];
 
+  // The backend already computed this calculator's job scope (`lfcalculator.descriptions`)
+  // by running the same agreement description-schema engine we port below — so when it's
+  // present it is AUTHORITATIVE. Use it verbatim (footages/colors stripped) and skip the
+  // local re-derivation, which was only ever a best-effort reconstruction of exactly this.
+  // (Previously these lines were merely PREPENDED to the re-derived ones, and since mobile
+  // never hydrated `descriptions` the list fell through to the product/category names —
+  // e.g. showing just "Soffit" instead of the real scope sentences.)
+  if (calcLines.length > 0) {
+    return cleanScopeLines(calcLines);
+  }
+
   if (!jobBuilderConfig || !Array.isArray(descriptionSchemas) || descriptionSchemas.length === 0) {
     return cleanScopeLines(calcLines);
   }

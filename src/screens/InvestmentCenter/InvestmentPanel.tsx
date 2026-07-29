@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
+import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Svg, { Path } from 'react-native-svg';
 import { resolveS3Url } from '../../utils/s3-utils';
@@ -51,13 +52,17 @@ interface Props {
   lead: any;
   onOptIn: (calculatorId: string, opts: { price: number; paymentMethod?: string; downPayment?: number }) => void;
   /** Persist the In-Home Monthly shortlist to `lfcalculator.in_home` (debounced). */
-  onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number }) => void;
+  onSetInHome?: (calculatorId: string, inHome: { planKey?: string; addedPlans?: string[]; apr?: number; monthlyPayment?: number; grandTotal?: number; optInProgram?: 'inhome' | 'oneyear' | null }) => void;
   /** Pull-to-refresh hook from the screen (refetch calculators / lead). */
   onRefresh?: () => void;
 }
 
 export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig, jobBuilderConfig, descriptionSchemas, lead, onOptIn, onSetInHome, onRefresh }: Props) {
-  const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(null);
+  const isLeadSold = lead?.status === 'sale';
+  const [selectedProgram, setSelectedProgram] = useState<'inhome' | 'oneyear' | null>(
+    calculator.inHome?.optInProgram ?? null,
+  );
+  const activeProgram = isLeadSold ? (selectedProgram || 'inhome') : selectedProgram;
   const [showConfirm, setShowConfirm] = useState(false);
   // Which render pair the before/after slider viewer is open on (null = closed).
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -84,13 +89,31 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const seedAdded: string[] = Array.isArray(savedInHome?.addedPlans) && savedInHome.addedPlans.length
     ? savedInHome.addedPlans
     : seedFinancingKey ? [seedFinancingKey] : [];
-  const seedSelected: string = savedInHome?.planKey || seedFinancingKey;
+  // The panel's DEFAULT payment selection = the method the rep actually chose in the Deal
+  // Center (web parity: `defaultPlanKey = calculator.paymentMethod && plans[...] ? ... : ''`).
+  // It stays EMPTY when the calculator has no saved method, so NOTHING is pre-selected on
+  // landing — a CK badge lights up only when the deal-center method IS `check`. NOTE: this
+  // deliberately does NOT use `method`'s `'check'` fallback (which was pre-selecting CK for
+  // everyone regardless of what the rep picked upstream).
+  const defaultChoice = (calculator.paymentMethod || lead?.paymentMethod) && plans[calculator.paymentMethod || lead?.paymentMethod] ? (calculator.paymentMethod || lead?.paymentMethod) : '';
+  const seedChoice = savedInHome?.planKey || defaultChoice;
   const [addedPlanKeys, setAddedPlanKeys] = useState<string[]>(seedAdded);
-  const [selectedPlanKey, setSelectedPlanKey] = useState<string>(seedSelected);
+  // Single "active payment choice" for the WHOLE panel — SHARED by BOTH program cards
+  // (web parity: one payment method per lead). It holds EITHER a financing plan key
+  // (→ a "Monthly" shortlist row is selected on In-Home; no basic badge) OR a basic method
+  // key (→ the SAME CK/CC/AMEX badge lights up on BOTH cards; no shortlist row). Because
+  // every badge/plan control writes this one value: (a) selecting a badge on one card
+  // selects it on both, and (b) badges and the monthly plan are mutually exclusive.
+  const [paymentChoice, setPaymentChoice] = useState<string>(seedChoice);
   const [showAddPlan, setShowAddPlan] = useState(false);
-  // The financing plan driving the In-Home monthly + opt-in: the rep's selection,
-  // else the calculator's own method (unchanged from before when nothing is picked).
-  const inHomePlanKey = selectedPlanKey || method;
+  const choiceIsFinancing = isFinancing(plans, paymentChoice);
+  // Shortlist highlight + monthly/opt-in driver: the choice when it's a financing plan
+  // (empty when a basic method is active — no monthly row is selected then).
+  const selectedPlanKey = choiceIsFinancing ? paymentChoice : '';
+  const inHomePlanKey = paymentChoice;
+  // Basic CK/CC/AMEX badge highlight — SHARED by both cards: the choice when it's a basic
+  // method; none when a financing plan is the active choice (a monthly row is selected).
+  const badgeSelection = choiceIsFinancing ? '' : paymentChoice;
 
   // Basic (non-financing) method badges shown next to each Grand Total — CK/CC/AMEX
   // for standard leads, ACH/CC for Lowe's (web parity: program-card.js `basicPlans`).
@@ -108,9 +131,6 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     });
     return out;
   }, [plans, isLowesLead]);
-  const [selectedBadge, setSelectedBadge] = useState('');
-  // Effective badge: the rep's pick, else the calc's method if it's a basic one, else the first.
-  const effectiveBadge = selectedBadge || basicBadges.find((b) => b.key === method)?.key || basicBadges[0]?.key || 'check';
 
   // An accepted drop is the negotiated current price — present that (else the
   // confirmed end price). Both flow through the SAME computeRolloutResult the rollout
@@ -179,7 +199,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // hook, so it coordinates with the same in-flight guard the other saves use — no
   // racing direct PUT). Fired on add / select / remove; the seed itself isn't pushed
   // until the rep first interacts (it mirrors the already-persisted paymentMethod).
-  const persistInHome = (added: string[], selected: string) => {
+  const persistInHome = (added: string[], selected: string, optInOverride?: 'inhome' | 'oneyear' | null) => {
     const planKey = selected && isFinancing(plans, selected) ? selected : '';
     onSetInHome?.(calculator.id, {
       planKey,
@@ -187,25 +207,31 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       apr: Number(plans[planKey]?.apr) || 0,
       monthlyPayment: calcMonthly(plans, inHomeMonthlyBase, planKey),
       grandTotal: inHomeGrandTotal,
+      optInProgram: optInOverride !== undefined ? optInOverride : (selectedProgram ?? calculator.inHome?.optInProgram ?? null),
     });
+  };
+  // The one write path for the shared choice — used by BOTH cards' CK/CC/AMEX badges AND
+  // the In-Home shortlist rows. Selecting any of them lights it up on both cards and
+  // deselects the other kind (badge ⇄ monthly), because they all read this single value.
+  const selectPaymentChoice = (key: string) => {
+    setPaymentChoice(key);
+    persistInHome(addedPlanKeys, key);
   };
   const handleAddPlan = (key: string) => {
     setShowAddPlan(false);
     const nextAdded = addedPlanKeys.includes(key) ? addedPlanKeys : [...addedPlanKeys, key];
     setAddedPlanKeys(nextAdded);
-    setSelectedPlanKey(key); // adding a plan also selects it (web parity)
+    setPaymentChoice(key); // adding a plan also selects it (web parity)
     persistInHome(nextAdded, key);
   };
   const handleRemovePlan = (key: string) => {
     const nextAdded = addedPlanKeys.filter((k) => k !== key);
-    const nextSel = selectedPlanKey === key ? '' : selectedPlanKey;
+    // If the removed plan was the active choice, revert to the deal-center default
+    // (empty when none) rather than leaving a dangling selection.
+    const nextChoice = paymentChoice === key ? defaultChoice : paymentChoice;
     setAddedPlanKeys(nextAdded);
-    setSelectedPlanKey(nextSel);
-    persistInHome(nextAdded, nextSel);
-  };
-  const handleSelectPlan = (key: string) => {
-    setSelectedPlanKey(key);
-    persistInHome(addedPlanKeys, key);
+    setPaymentChoice(nextChoice);
+    persistInHome(nextAdded, nextChoice);
   };
 
   const srVetDiscount = msrp * (seniorVetPct / 100);
@@ -217,8 +243,28 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     return fin.find((k) => Math.round((plans[k]?.apr || 0) * 100) / 100 === 9.99) || fin.find((k) => (plans[k]?.apr || 0) > 0) || fin[0] || method;
   }, [plans, method]);
   const oneYear = calculator.oneYearMonthlyPlan;
-  const oneYearKey = oneYear?.mode === 'match' ? method : oneYear?.mode === 'custom' ? (oneYear?.planKey || defaultOneYearKey) : defaultOneYearKey;
+  // Web parity (`investment-panel.js`: `const mode = saved?.mode || 'match'`): when the
+  // rep hasn't explicitly configured a 1-Year monthly plan, the 1-Year card MIRRORS the
+  // In-Home financing selection — the plan the rep actually picked — rather than snapping
+  // to the 9.99% default (which showed "GS… 9.99% APR" even after Wells Fargo was chosen).
+  // `'match'` resolves to a FINANCING key that stays stable while the rep toggles the
+  // shared basic badges: the live In-Home shortlist pick (`selectedPlanKey`), else the
+  // deal-center financing method (`seedFinancingKey`), else the 9.99% default — so the
+  // 1-Year monthly never blanks out when CK/CC/AMEX is selected. `'default'` keeps the
+  // 9.99% plan; `'custom'` pins the saved plan key.
+  const oneYearMode = oneYear?.mode || 'match';
+  const oneYearKey =
+    oneYearMode === 'match'
+      ? selectedPlanKey || seedFinancingKey || defaultOneYearKey
+      : oneYearMode === 'custom'
+        ? oneYear?.planKey || defaultOneYearKey
+        : defaultOneYearKey;
   const oneYearMonthly = useMemo(() => calcMonthly(plans, oneYearGrandTotal, oneYearKey), [plans, oneYearGrandTotal, oneYearKey]);
+  // The 1-Year monthly ALWAYS shows, regardless of the active CK/CC/AMEX/financing
+  // choice — the 1-Year Program is a standalone free-financing quote, so its monthly
+  // (from `oneYearKey`, which stays on a valid financing plan even when a basic
+  // cash/card badge is selected) is presented at all times.
+  const oneYearMonthlyShown = oneYearMonthly;
 
   // Dynamic per-product job-scope matrix (no footages/colors) — the corrected data.
   const jobScope = useMemo(
@@ -347,17 +393,36 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           placeholder="Add Down Payment"
           placeholderTextColor="#94A3B8"
           keyboardType="numeric"
+          editable={!isLeadSold}
         />
-        {dp > 0 && (
+        {dp > 0 && !isLeadSold && (
           <TouchableOpacity onPress={() => { setText(''); setShow(false); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="close-circle" size={15} color="#FF5630" />
           </TouchableOpacity>
         )}
       </View>
     ) : (
-      <TouchableOpacity onPress={() => setShow(true)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderStyle: 'dashed', borderColor: '#2196F3', backgroundColor: '#2196F30D', borderRadius: 10, paddingVertical: 8 }}>
-        <Ionicons name="add" size={13} color="#2196F3" />
-        <Text style={{ fontSize: 10, fontWeight: '800', color: '#2196F3' }}>{`Add Down Payment`}</Text>
+      <TouchableOpacity
+        onPress={isLeadSold ? undefined : () => setShow(true)}
+        disabled={isLeadSold}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          borderWidth: 1,
+          borderStyle: 'dashed',
+          borderColor: isLeadSold ? '#94A3B8' : '#2196F3',
+          backgroundColor: isLeadSold ? '#F1F5F9' : '#2196F30D',
+          borderRadius: 10,
+          paddingVertical: 8,
+          opacity: isLeadSold ? 0.8 : 1,
+        }}
+      >
+        <Ionicons name="add" size={13} color={isLeadSold ? '#94A3B8' : '#2196F3'} />
+        <Text style={{ fontSize: 10, fontWeight: '800', color: isLeadSold ? '#94A3B8' : '#2196F3' }}>
+          {`Add Down Payment`}
+        </Text>
       </TouchableOpacity>
     );
   };
@@ -376,6 +441,30 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     { label: `${seniorVetPct}% Sr + Vet`, value: `-${fmt(srVetDiscount)}`, green: true },
     { label: `${discountPct}% Discount`, value: `-${fmt(preOrderDiscountVal)}`, green: true },
   ];
+  const customer = lead?.customerDetails;
+  const preparedFor = customer ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim() : (lead?.jobBuilder?.scheduleTime?.customerName || 'N/A');
+  const address = customer?.address || lead?.fullAddress || 'N/A';
+
+  const formattedDate = useMemo(() => {
+    let displayDate = new Date();
+    const dateStr = lead?.updatedAt || lead?.leadDatetime || lead?.createdAt;
+    if (dateStr) {
+      const parsed = new Date(dateStr);
+      if (!isNaN(parsed.getTime())) {
+        displayDate = parsed;
+      }
+    }
+    try {
+      return format(displayDate, 'MM/dd/yyyy, hh:mm:ss a');
+    } catch (err) {
+      return displayDate.toLocaleString();
+    }
+  }, [lead]);
+
+  const repName = lead?.assignedRep || (lead?.assignedRepDetails ? `${lead.assignedRepDetails.firstName || ''} ${lead.assignedRepDetails.lastName || ''}`.trim() : '');
+  const regionID = lead?.assignedRepDetails?.region?.[0]?.regionID || '';
+  const repText = regionID ? `${repName} · ${regionID}` : (repName || 'N/A');
+
   const maxProgramRows = Math.max(oneYearRows.length, inHomeRows.length);
 
   return (
@@ -515,16 +604,24 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           reserveRows={maxProgramRows}
           grandTotal={oneYearGrandTotal}
           badges={basicBadges}
-          selectedBadgeKey={effectiveBadge}
-          onSelectBadge={setSelectedBadge}
+          selectedBadgeKey={badgeSelection}
+          onSelectBadge={selectPaymentChoice}
           downPaymentSlot={oneYearDownEditor}
-          monthly={oneYearMonthly}
-          planLabel={oneYearMonthly > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
+          monthly={oneYearMonthlyShown}
+          planLabel={oneYearMonthlyShown > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
           selected={selectedProgram === 'oneyear'}
           crossedOff={selectedProgram === 'inhome'}
           optInLabel="Opt In (1-Yr)"
-          onOptIn={() => setSelectedProgram(selectedProgram === 'oneyear' ? null : 'oneyear')}
-          onRevert={() => setSelectedProgram(null)}
+          onOptIn={() => {
+            const next = selectedProgram === 'oneyear' ? null : 'oneyear';
+            setSelectedProgram(next);
+            persistInHome(addedPlanKeys, paymentChoice, next);
+          }}
+          onRevert={() => {
+            setSelectedProgram(null);
+            persistInHome(addedPlanKeys, paymentChoice, null);
+          }}
+          readOnly={isLeadSold}
         />
         <ProgramCard
           title="IN-HOME PRE ORDER"
@@ -533,20 +630,29 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           reserveRows={maxProgramRows}
           grandTotal={inHomeGrandTotal}
           badges={basicBadges}
-          selectedBadgeKey={effectiveBadge}
-          onSelectBadge={setSelectedBadge}
+          selectedBadgeKey={badgeSelection}
+          onSelectBadge={isLeadSold ? undefined : selectPaymentChoice}
           planInteractive
           shortlistPlans={inHomeShortlist}
           selectedPlanKey={selectedPlanKey}
-          onSelectPlan={handleSelectPlan}
-          onRemovePlan={handleRemovePlan}
-          onAddPlan={() => setShowAddPlan(true)}
-          downPaymentSlot={inHomeDownEditor}
-          selected={selectedProgram === 'inhome'}
-          crossedOff={selectedProgram === 'oneyear'}
+          onSelectPlan={isLeadSold ? undefined : selectPaymentChoice}
+          onRemovePlan={isLeadSold ? undefined : handleRemovePlan}
+          onAddPlan={isLeadSold ? undefined : () => setShowAddPlan(true)}
+          downPaymentSlot={isLeadSold ? undefined : inHomeDownEditor}
+          downPayment={isLeadSold ? (calculator.downPayment || lead?.downPayment || 0) : downPay}
+          selected={activeProgram === 'inhome'}
+          crossedOff={activeProgram === 'oneyear'}
           optInLabel="Opt In"
-          onOptIn={() => { setSelectedProgram('inhome'); setShowConfirm(true); }}
-          onRevert={() => setSelectedProgram(null)}
+          onOptIn={() => {
+            setSelectedProgram('inhome');
+            setShowConfirm(true);
+            persistInHome(addedPlanKeys, paymentChoice, 'inhome');
+          }}
+          onRevert={() => {
+            setSelectedProgram(null);
+            persistInHome(addedPlanKeys, paymentChoice, null);
+          }}
+          readOnly={isLeadSold}
         />
       </View>
 
@@ -556,10 +662,10 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         monthly={inHomeMonthly}
         planLabel={inHomeMonthly > 0 ? compactPlanLabel(plans, inHomePlanKey) : undefined}
         downPayment={downPay}
-        method={effectiveBadge}
+        method={paymentChoice}
         isLowesLead={lead?.lowesLead === true}
         onConfirm={confirmInHome}
-        onClose={() => { setShowConfirm(false); setSelectedProgram(null); }}
+        onClose={() => { setShowConfirm(false); setSelectedProgram(null); persistInHome(addedPlanKeys, paymentChoice, null); }}
       />
 
       {/* "+ Add Plan" financing picker for the In-Home Monthly shortlist. Gates on
@@ -573,6 +679,35 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         onAdd={handleAddPlan}
         onClose={() => setShowAddPlan(false)}
       />
+
+      {/* Lead details footer shown when lead is sold */}
+      {isLeadSold && (
+        <View style={{
+          backgroundColor: '#F1F5F9',
+          borderRadius: 12,
+          padding: 16,
+          marginTop: 24,
+          borderWidth: 1,
+          borderColor: '#E2E8F0',
+        }}>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20, marginBottom: 6 }}>
+            <Text style={{ fontWeight: 'bold' }}>Prepared for: </Text>
+            {preparedFor}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20, marginBottom: 6 }}>
+            <Text style={{ fontWeight: 'bold' }}>Address: </Text>
+            {address}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20, marginBottom: 6 }}>
+            <Text style={{ fontWeight: 'bold' }}>Date: </Text>
+            {formattedDate}
+          </Text>
+          <Text style={{ fontSize: 13, color: '#475569', lineHeight: 20 }}>
+            <Text style={{ fontWeight: 'bold' }}>Rep: </Text>
+            {repText}
+          </Text>
+        </View>
+      )}
 
       {/* Before/After slider viewer — the SAME shared component the Tools/revRender
           flow uses (before/after compare slider, color chips, prev/next through every
