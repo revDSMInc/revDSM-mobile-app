@@ -191,7 +191,7 @@ export const logRolloutChange = async (opts: {
   change: Record<string, any>;
 }) => {
   if (!opts.userId) return;
-  const { fieldValue, oldValue, newValue, ...restChange } = opts.change;
+  const { fieldValue, oldValue, newValue, oldPercentageOfRollout, ...restChange } = opts.change;
   await logEvent('change', {
     user_id: opts.userId,
     created_by: opts.userId,
@@ -207,6 +207,10 @@ export const logRolloutChange = async (opts: {
       parPrice: Math.round(opts.tiers.par || 0),
       retailPrice: Math.round(opts.tiers.retail || 0),
       ...(opts.percentageOfRollout !== undefined && { percentageOfRollout: stripZeroMarkup(opts.percentageOfRollout) }),
+      // The transition (yellow "old → new" arrow) log's OLD-price markup — stripped of a
+      // whole "+ 0%" exactly like the new-price markup, so neither end of the arrow ever
+      // reads "PAR + 0%".
+      ...(oldPercentageOfRollout !== undefined && { oldPercentageOfRollout: stripZeroMarkup(oldPercentageOfRollout) }),
       ...(opts.leadId && { leadId: opts.leadId }),
       ...restChange,
     },

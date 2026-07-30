@@ -1243,6 +1243,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         change: {
           fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
           oldValue: lastDrop, newValue: pendingDrop,
+          // Old-price markup for the yellow "old → new" arrow (stripped in logRolloutChange).
+          oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
           isSecured: true, isDeclined: false, dropNumber, dropPrice: pendingDrop,
           paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
           action: 'drop price secured',
@@ -1308,6 +1310,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         change: {
           fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: pendingDrop, fieldCategory: 'drop',
           oldValue: lastDrop, newValue: pendingDrop,
+          // Old-price markup for the yellow "old → new" arrow (stripped in logRolloutChange).
+          oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
           isSecured: false, isDeclined: true, dropNumber, dropPrice: pendingDrop,
           paymentPlanKey: data.paymentMethod, paymentPlanLabel: planLabelOf(pricing.plans, data.paymentMethod),
           action: 'drop price declined',
