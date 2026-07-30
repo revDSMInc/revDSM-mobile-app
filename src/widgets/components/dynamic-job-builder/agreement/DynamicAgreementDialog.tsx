@@ -21,6 +21,9 @@ interface DynamicAgreementDialogProps {
    *  server-filed (lead-scoped) signed agreement back into the summary. The dialog
    *  still closes via `onClose`; this only refreshes the document list. */
   onRemoteComplete?: () => void;
+  /** Fired when the rep SENDS the agreement for remote signature (still pending). The
+   *  dialog closes and the caller marks the summary "Pending Customer Signature". */
+  onRemoteSent?: (agreementId?: string) => void;
   leadId?: string;
   jobId?: string;
   productKey?: string;
@@ -106,6 +109,7 @@ export function DynamicAgreementDialog({
   onClose,
   onAgreementGenerated,
   onRemoteComplete,
+  onRemoteSent,
   leadId,
   jobId,
   productKey,
@@ -424,6 +428,7 @@ export function DynamicAgreementDialog({
             // reads it back into the summary, and the modal still closes via onClose.
             customerDetails={leadData?.customerDetails}
             onRemoteComplete={onRemoteComplete}
+            onRemoteSent={onRemoteSent}
           />
         )}
       </SafeAreaView>

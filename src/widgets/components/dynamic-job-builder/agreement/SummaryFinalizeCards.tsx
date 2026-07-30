@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   View,
@@ -15,6 +15,8 @@ import RNFS from 'react-native-fs';
 import { AppointmentSchedulerModal } from '../../../modals/job-builder/AppointmentSchedulerModal';
 import { DocumentScannerModal } from '../../../modals/job-builder/DocumentScannerModal';
 import { DynamicAgreementDialog } from './DynamicAgreementDialog';
+import { AgreementRemoteSignModal } from '../../../modals/job-builder/AgreementRemoteSignModal';
+import { LeadService } from '../../../../services/api/leads';
 import { logEvent } from '../../../../services/api/LoggerService';
 import { useAuth } from '../../../../hooks/useAuth';
 import { convertJpegToPdf } from '../../../../utils/jpeg-to-pdf';
@@ -81,6 +83,44 @@ const dedupeDocs = (files: any[]): any[] => {
   });
 };
 
+// After signing, the SAME agreement can land in the list more than once with DIFFERENT
+// identities — the local `file://` system-generated PDF (from an in-person sign) plus
+// one or more server rows from the lead-scoped read (including a not-yet-resolved copy
+// whose URL is still a bare S3 `filePath`, so it won't open). `dedupeDocs` can't merge
+// them (uri vs serverId), so the card showed TWO agreements — one opening, one not.
+//
+// A system-generated (signed) agreement is UNIQUE per job, so collapse every
+// `isSystemGenerated` agreement copy into ONE: display the copy that will actually open
+// (a `file://` / `http` / `data:` src), but carry a durable `serverId`/`filePath` from
+// any copy so it still dedupes across sources and a later delete/reopen can resolve it.
+// Scanned / manually-added agreements (not system-generated) are left untouched.
+const collapseSignedAgreement = (files: any[]): any[] => {
+  const sysGen = files.filter((f) => f?.isSystemGenerated);
+  if (sysGen.length <= 1) return files;
+  const openable = (f: any) => {
+    const s = String(fileSrc(f) || '');
+    return s.startsWith('file://') || s.startsWith('http') || s.startsWith('data:');
+  };
+  const best = sysGen.find(openable) || sysGen[0];
+  const merged = {
+    ...best,
+    serverId: sysGen.map((f) => f?.serverId).find(Boolean) ?? best?.serverId ?? null,
+    filePath: sysGen.map((f) => f?.filePath).find(Boolean) ?? best?.filePath ?? null,
+    isSystemGenerated: true,
+  };
+  // Preserve order: the FIRST system-generated slot becomes the merged entry; the rest
+  // are dropped.
+  let placed = false;
+  return files.reduce<any[]>((acc, f) => {
+    if (!f?.isSystemGenerated) acc.push(f);
+    else if (!placed) {
+      placed = true;
+      acc.push(merged);
+    }
+    return acc;
+  }, []);
+};
+
 /**
  * Appointment + Agreement + Order-sheet cards for the dynamic Job Builder summary
  * tab. Mirrors the normal JB SummarySection finalize section, wired to the dynamic
@@ -117,6 +157,12 @@ export function SummaryFinalizeCards({
   const [isEditingAppt, setIsEditingAppt] = useState(false);
   const [scannerCategory, setScannerCategory] = useState<DocCategory | null>(null);
   const [agreementDialogVisible, setAgreementDialogVisible] = useState(false);
+  // A remote signature in progress: the lowercase `remote-status` (pending / sent /
+  // viewed / completed / …) or null when nothing is out for signature. Drives the
+  // "Pending Customer Signature" card. `remoteManageOpen` reopens the tracking sheet
+  // (resend / edit contact / cancel) without regenerating the agreement.
+  const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
+  const [remoteManageOpen, setRemoteManageOpen] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ uri: string; title?: string } | null>(null);
   const queryClient = useQueryClient();
@@ -141,7 +187,7 @@ export function SummaryFinalizeCards({
   // so a document that exists in both — the normal case once it has uploaded — is
   // listed once.
   const agreementFiles = useMemo(
-    () => dedupeDocs([...(resolvedDocuments?.agreements || []), ...toFlatFiles(agreements)]),
+    () => collapseSignedAgreement(dedupeDocs([...(resolvedDocuments?.agreements || []), ...toFlatFiles(agreements)])),
     [agreements, resolvedDocuments]
   );
   const orderSheetFiles = useMemo(
@@ -448,6 +494,91 @@ export function SummaryFinalizeCards({
     }
   };
 
+  // ── Remote signature tracking ────────────────────────────────────────────────
+  // The remote flow is mobile-only (REVDSM-263): the rep sends the agreement, the
+  // homeowner e-signs on their own device, and the server files the signed PDF when
+  // every signer is done. So there is a window where the agreement is OUT for
+  // signature with no document filed yet — we surface it as "Pending Customer
+  // Signature" and poll the signed PDF in once it exists.
+
+  // `remote-status` → the lowercase agreement status (or null when nothing is out).
+  // Mirrors AgreementRemoteSignModal.normalizeAgreement.
+  const normalizeRemoteStatus = (raw: any): string | null => {
+    const data = raw?.data?.data ?? raw?.data ?? raw;
+    const ag =
+      data && typeof data === 'object' && 'agreement' in data
+        ? data.agreement
+        : data?.agreementId
+          ? data
+          : null;
+    return ag?.status ? String(ag.status).toLowerCase() : null;
+  };
+
+  // An agreement is out for remote signature but not yet filed. `completed` is kept
+  // "active" for the brief window between the last signature and the server filing
+  // the PDF (the poll swaps in the document the moment it lands).
+  const isRemotePending =
+    agreementFiles.length === 0 &&
+    (remoteStatus === 'pending' ||
+      remoteStatus === 'sent' ||
+      remoteStatus === 'viewed' ||
+      remoteStatus === 'completed');
+
+  // Probe `remote-status` on open, then poll while pending. Only runs for a SALE with
+  // no filed agreement — once a document exists (`agreementFiles.length > 0`) there is
+  // nothing to track and this early-returns, which also stops any running poll.
+  useEffect(() => {
+    if (!leadId || !isSale || agreementFiles.length > 0) return;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const tick = async () => {
+      try {
+        const res = await LeadService.getAgreementRemoteStatus(leadId);
+        if (cancelled) return;
+        const status = normalizeRemoteStatus(res);
+        setRemoteStatus(status);
+        const active =
+          status === 'pending' ||
+          status === 'sent' ||
+          status === 'viewed' ||
+          status === 'completed';
+        if (status === 'completed') {
+          // Signed PDF is filed server-side — read it into the card. Once it commits,
+          // agreementFiles becomes non-empty and this effect re-runs → early return.
+          await handleRemoteAgreementComplete();
+        }
+        if (active) {
+          if (!intervalId) intervalId = setInterval(tick, 12000);
+        } else {
+          stop(); // none / cancelled / expired / declined
+        }
+      } catch {
+        // Network / not-found → treat as no active remote agreement.
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      stop();
+    };
+    // `remoteStatus` is a dep so the poll RESTARTS when it becomes active — e.g. the
+    // rep sends the agreement (handleRemoteSent → 'pending') after the initial probe
+    // already found nothing and stopped. A no-op tick sets the same value → no
+    // re-render → no churn; only a real status change re-runs the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadId, isSale, agreementFiles.length, remoteStatus]);
+
+  // The rep just sent the agreement for remote signature (the whole stack closed back
+  // to this summary). Reflect the pending state immediately; the poll keeps it in sync
+  // and swaps in the signed PDF once the customer signs.
+  const handleRemoteSent = () => setRemoteStatus('pending');
+
   const renderDocSection = (
     title: string,
     iconName: string,
@@ -484,6 +615,27 @@ export function SummaryFinalizeCards({
         </View>
         <View style={styles.sectionBody}>
           {isEmpty ? (
+            isAgreement && isRemotePending ? (
+              // Agreement is out for REMOTE signature — hide Generate / Add Document
+              // and show the pending status. The signed PDF appears here on its own
+              // once the customer signs (the poll reads it in). "Manage / Resend"
+              // reopens the tracking sheet without regenerating the agreement.
+              <View style={{ alignItems: 'center', paddingVertical: 24, borderStyle: 'dashed', borderColor: '#FDE68A', borderWidth: 2, borderRadius: 24, backgroundColor: '#FFFBEB' }}>
+                <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                  <Icon name="clock-outline" size={32} color="#D97706" />
+                </View>
+                <Text style={{ fontSize: 12, fontWeight: '900', color: '#B45309', marginBottom: 6 }}>Pending Customer Signature</Text>
+                <Text style={{ fontSize: 10, fontWeight: '600', color: '#92400E', textAlign: 'center', paddingHorizontal: 32, marginBottom: 20, lineHeight: 15 }}>
+                  The agreement was sent for remote signing. It will appear here automatically once the customer signs.
+                </Text>
+                <View style={{ width: '100%', paddingHorizontal: 48 }}>
+                  <TouchableOpacity onPress={() => setRemoteManageOpen(true)} style={styles.outlineActionBtn}>
+                    <Icon name="send-outline" size={16} color="#059669" style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#059669', fontWeight: '900', fontSize: 10 }}>Manage / Resend</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
             <View style={{ alignItems: 'center', paddingVertical: 24, borderStyle: 'dashed', borderColor: '#f1f5f9', borderRadius: 24, borderWidth: 2 }}>
               <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                 <Icon name={iconName} size={32} color="#CBD5E1" />
@@ -523,6 +675,7 @@ export function SummaryFinalizeCards({
                 </TouchableOpacity>
               </View>
             </View>
+            )
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {files.map((file, i) => {
@@ -666,6 +819,7 @@ export function SummaryFinalizeCards({
         onClose={() => setAgreementDialogVisible(false)}
         onAgreementGenerated={handleAgreementGenerated}
         onRemoteComplete={handleRemoteAgreementComplete}
+        onRemoteSent={handleRemoteSent}
         leadId={leadId}
         jobId={leadId}
         productKey={productKey}
@@ -674,6 +828,26 @@ export function SummaryFinalizeCards({
         customerDetails={{ name: customerName }}
         repDetails={repDetails}
         calculatorResultData={calculatorResultData}
+      />
+
+      {/* REMOTE-SIGNATURE TRACKING (Manage / Resend from the pending card). Opens the
+          remote sheet standalone — it drives itself from `leadId` (reads the existing
+          pending agreement), so this never regenerates the agreement or mints a new
+          signing link; it only lets the rep resend / edit a contact / cancel. */}
+      <AgreementRemoteSignModal
+        visible={remoteManageOpen}
+        onClose={() => setRemoteManageOpen(false)}
+        leadId={leadId || ''}
+        agreementId=""
+        payload={{}}
+        customerDetails={{ firstName: customerName }}
+        onSent={() => setRemoteManageOpen(false)}
+        onComplete={() => {
+          // Customer signed while the rep had the tracking sheet open — read the filed
+          // PDF straight into the card.
+          setRemoteManageOpen(false);
+          handleRemoteAgreementComplete();
+        }}
       />
 
       {/* IMAGE PREVIEW (local data-uri images) */}

@@ -47,6 +47,16 @@ const formatLeadTime = (leadTime: string) => {
   return leadTime;
 };
 
+// A prefilled (OCR / paper-fallback) Lead ID only OVERRIDES what's shown when the
+// paperwork actually carried one. An empty/whitespace scan must NOT blank the field:
+// it should keep the Lead ID already showing — the lead's own id, or 'N/A' for a
+// SelfGen lead that has no id. OCR used to return '' here, which won `??` and blanked
+// the field, so this normalizes a blank scan back to `undefined` so the fallback wins.
+const cleanLeadId = (v: any): string | undefined => {
+  const s = typeof v === 'string' ? v.trim() : v;
+  return s ? s : undefined;
+};
+
 const formatToMMDDYYYY = (dateStr: string) => {
   if (!dateStr) return '';
   let cleanStr = dateStr.trim().replace(/,/g, ' ').replace(/\s+/g, '/').replace(/-+/g, '/');
@@ -180,7 +190,7 @@ export const ConsentFormModal = ({
     lastName: prefilledData?.lastName ?? lead?.customerDetails?.lastName ?? '',
     phoneNumber: formatUSPhoneNumber(prefilledData?.phoneNumber ?? lead?.customerDetails?.phone ?? ''),
     email: prefilledData?.email ?? lead?.customerDetails?.email ?? '',
-    leadId: prefilledData?.leadId ?? lead?.leadId ?? 'N/A',
+    leadId: cleanLeadId(prefilledData?.leadId) ?? lead?.leadId ?? 'N/A',
     repName: getInitialRepName(),
     officeCode: getInitialOfficeCode(),
     time: getInitialTime(),
@@ -225,7 +235,7 @@ export const ConsentFormModal = ({
         lastName: prefilledData.lastName ?? prev.lastName,
         phoneNumber: formatUSPhoneNumber(prefilledData.phoneNumber ?? prev.phoneNumber),
         email: prefilledData.email ?? prev.email,
-        leadId: prefilledData.leadId ?? prev.leadId,
+        leadId: cleanLeadId(prefilledData.leadId) ?? prev.leadId,
         date: prefilledData.date ? formatToMMDDYYYY(prefilledData.date) : prev.date,
       }));
       setSubmissionType('paper');

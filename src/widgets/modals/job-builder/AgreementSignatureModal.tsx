@@ -95,6 +95,9 @@ interface AgreementSignatureModalProps {
   /** Fired when a remote session finishes (all signers signed) so the parent can
    *  refresh the outcome and close, same as an in-person `onSuccess`. */
   onRemoteComplete?: () => void;
+  /** Fired when the rep SENDS the agreement for remote signature (now pending). The
+   *  parent closes the whole stack and marks the summary "Pending Customer Signature". */
+  onRemoteSent?: (agreementId?: string) => void;
 }
 
 export const AgreementSignatureModal = ({
@@ -109,6 +112,7 @@ export const AgreementSignatureModal = ({
   pdfDimensions,
   customerDetails,
   onRemoteComplete,
+  onRemoteSent,
 }: AgreementSignatureModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -765,6 +769,16 @@ export const AgreementSignatureModal = ({
                   setRemoteOpen(false);
                   setTimeout(() => {
                     onRemoteComplete?.();
+                    onClose();
+                  }, 450);
+                }}
+                onSent={(id) => {
+                  // Agreement SENT for remote signature. Same staged teardown as
+                  // onComplete, but the summary marks "Pending Customer Signature"
+                  // (onRemoteSent) instead of reading a signed PDF that doesn't exist yet.
+                  setRemoteOpen(false);
+                  setTimeout(() => {
+                    onRemoteSent?.(id);
                     onClose();
                   }, 450);
                 }}

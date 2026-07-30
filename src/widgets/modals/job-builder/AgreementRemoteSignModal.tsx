@@ -75,6 +75,10 @@ interface AgreementRemoteSignModalProps {
   customerDetails?: any;
   /** Fired once every signer has signed (parent refreshes / closes). */
   onComplete?: () => void;
+  /** Fired once the rep has SENT the agreement for remote signature (it's now
+   *  pending). The parent closes the whole agreement stack and lands on the summary,
+   *  which shows "Pending Customer Signature" until the signed PDF is filed. */
+  onSent?: (agreementId?: string) => void;
 }
 
 // There is no push — poll `remote-status` while pending (doc: every 10–15s).
@@ -142,6 +146,7 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
   // agreement (its id comes back from send-remote / remote-status).
   customerDetails,
   onComplete,
+  onSent,
 }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -284,10 +289,22 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
       const results: any[] = Array.isArray(data?.results) ? data.results : [];
       const undelivered = results.filter((r) => r?.delivered === false);
       if (undelivered.length) {
+        // Stay on the pending panel so the rep can fix the bad phone/email and resend.
         const names = undelivered.map((r) => r?.name || 'a signer').join(', ');
         Alert.alert('Sent — with issues', `Couldn't reach: ${names}. Fix their phone/email below and resend.`);
       } else {
-        Alert.alert('Sent', 'The agreement was sent for remote signature.');
+        // Fully delivered — close the whole agreement stack and land on the summary,
+        // which now shows "Pending Customer Signature". (Inlines handleSent using the
+        // freshly-normalized `next` so it doesn't depend on the async `agreement` state.)
+        Alert.alert('Sent', 'The agreement was sent for remote signature.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (onSent) onSent(next?.agreementId);
+              else onClose();
+            },
+          },
+        ]);
       }
     } catch (err: any) {
       // 409 = an agreement is already out. Load it so the rep can resend / edit /
@@ -389,6 +406,24 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
     else onClose();
   };
 
+  // The rep has SENT the agreement for remote signature (it is now pending). Hand off
+  // to the parent to close the WHOLE agreement stack and land on the summary, which
+  // shows "Pending Customer Signature" and polls the signed PDF in once the homeowner
+  // signs. Same staged-teardown contract as `handleDone` — never also call onClose here.
+  const handleSent = () => {
+    if (onSent) onSent(agreement?.agreementId);
+    else onClose();
+  };
+
+  // The sheet's close (header ✕) routes by phase: compose → plain dismiss; pending
+  // (already sent) → hand off as "sent" so we return to the summary's pending state;
+  // done (all signed) → complete. Keeps every exit consistent with the primary button.
+  const closeSheet = () => {
+    if (phase === 'done') return handleDone();
+    if (phase === 'pending' && agreement) return handleSent();
+    return onClose();
+  };
+
   // ── Derived: signer rows for the pending panel (buyer first, then co-buyers) ──
   const pendingRows = useMemo(() => {
     if (!agreement) return [];
@@ -414,7 +449,7 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
         <Text style={[styles.sheetTitle, { color: titleColor }]}>{title}</Text>
         <Text style={styles.sheetSub}>{sub}</Text>
       </View>
-      <TouchableOpacity onPress={onClose} disabled={sending}>
+      <TouchableOpacity onPress={closeSheet} disabled={sending}>
         <Icon name="close" size={24} color="#637381" />
       </TouchableOpacity>
     </View>
@@ -615,7 +650,7 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
         );
       })}
 
-      <TouchableOpacity onPress={onClose} style={[styles.primaryBtn, { backgroundColor: isDark ? '#FFFFFF14' : '#0F172A', marginTop: 8 }]}>
+      <TouchableOpacity onPress={handleSent} style={[styles.primaryBtn, { backgroundColor: isDark ? '#FFFFFF14' : '#0F172A', marginTop: 8 }]}>
         <Text style={[styles.primaryBtnText, { color: 'white' }]}>Done</Text>
       </TouchableOpacity>
       {/* Cancel the whole request (voids every outstanding link) — e.g. wrong lead. */}

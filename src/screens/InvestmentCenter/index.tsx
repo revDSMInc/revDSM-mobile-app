@@ -15,7 +15,13 @@ import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallba
 import { InvestmentPanel } from './InvestmentPanel';
 import { queryClient } from '../../services/api/queryClient';
 import { useAuth } from '../../hooks/useAuth';
-import { logInvestmentCenterOpened, logInvestmentCalculatorViewed } from '../../utils/activity-log/investment-center-log';
+import {
+  logInvestmentCenterOpened,
+  logInvestmentCalculatorViewed,
+  logInvestmentConsentPortalOpened,
+  logInvestmentConsentFormSubmitted,
+  logInvestmentConsentFormCreated,
+} from '../../utils/activity-log/investment-center-log';
 
 /**
  * Investment Center (web parity: `src/sections/job/components/investment-center/`).
@@ -87,12 +93,37 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
     async (data: any) => {
       try {
         const res = await consentMutation.mutateAsync({ leadId: lead?._id, payload: data });
+        // Forever Record: consent SUBMIT — the SAME `{digital|paper}_consent_form_submitted`
+        // log the Lead Center fires on consent submission (LeadCenter/index.tsx), with the
+        // identical meta; only the module differs (`investment_center`) since it originated here.
+        if (logUserId) {
+          logInvestmentConsentFormSubmitted({
+            userId: logUserId,
+            formType: data.type,
+            customerName: data.fullName,
+            email: data.email,
+            phoneNumber: data.phoneNumber,
+            leadId: lead?._id || lead?.id || data.leadId,
+            repName: data.repName,
+          });
+        }
         // On a digital submission the mutation returns the generated PDF path; register
         // it as a consent report so the gate stays satisfied on reload (web parity).
         if (typeof res === 'string') {
           await finalizeMutation
             .mutateAsync({ leadId: lead?._id, pdfPath: res, reportType: 'consent_form' })
             .catch(() => {});
+          // Forever Record: consent PDF CREATE — mirror of the Lead Center `create` event
+          // that follows a successful finalize.
+          if (logUserId) {
+            logInvestmentConsentFormCreated({
+              userId: logUserId,
+              formType: data.type,
+              leadId: lead?._id || lead?.id || data.leadId,
+              formattedAddress: lead?.fullAddress || '',
+              filename: `consent-form-${data.leadId || lead?.leadId || lead?._id}.pdf`,
+            });
+          }
         }
         setLocalConsentSigned(true);
         setShowConsent(false);
@@ -101,7 +132,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
         // leave the gate up; the rep can retry
       }
     },
-    [consentMutation, finalizeMutation, lead?._id],
+    [consentMutation, finalizeMutation, lead, logUserId],
   );
 
   // OCR payload → consent form prefill (mirror of LeadCenter.parseOcrData).
@@ -199,7 +230,15 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
     if (isLoading || consentSigned || consentAutoOpenedRef.current) return;
     consentAutoOpenedRef.current = true;
     setShowConsent(true);
-  }, [isLoading, consentSigned]);
+    // Forever Record: opening the consent form here fires the SAME "consent portal
+    // opened" action the Lead Center consent tool fires (useLeadCenterModals.ts) — an
+    // unsigned Investment Center gates on the consent form, so entering it opens the
+    // consent portal. Logged under the `investment_center` module (NOT `consent_form`)
+    // so the event is attributed to the presentation, since it originated here.
+    if (logUserId) {
+      logInvestmentConsentPortalOpened({ userId: logUserId, leadId: logLeadId });
+    }
+  }, [isLoading, consentSigned, logUserId, logLeadId]);
 
   // ── Forever Record: entered the Investment Center (once per open, after load so
   //    the priced-calculator count is known). ──────────────────────────────────
