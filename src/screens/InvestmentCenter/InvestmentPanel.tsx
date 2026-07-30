@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
 import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -25,6 +25,14 @@ import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/forma
 import { ProgramCard } from './ProgramCard';
 import { OptInConfirmModal } from './OptInConfirmModal';
 import { AddPlanModal } from './AddPlanModal';
+import {
+  logInvestmentOptIn,
+  logInvestmentOptOut,
+  logInvestmentPlanAdded,
+  logInvestmentPlanRemoved,
+  logInvestmentPaymentMethodSelected,
+  logInvestmentDownPaymentChanged,
+} from '../../utils/activity-log/investment-center-log';
 
 /**
  * One calculator's Investment Center panel (web parity: `investment-panel.js`),
@@ -73,6 +81,16 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   const secureLogo = useSecureLogo();
   const { user } = useAuth();
   const companyName = user?.companyName;
+
+  // Forever Record (activity log) identity for this panel — every opt-in/out, plan
+  // add/remove, payment-method and down-payment event carries this calculator + lead.
+  const logUserId = user?._id || user?.id;
+  const logBase = {
+    userId: logUserId,
+    leadId: lead?._id || lead?.leadId || lead?.id,
+    calculatorId: calculator.id,
+    calculatorTitle: calculator.title,
+  };
 
   const plans = pricing.plans;
   const method = calculator.paymentMethod || pricing.defaultMethod || 'check';
@@ -210,22 +228,44 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       optInProgram: optInOverride !== undefined ? optInOverride : (selectedProgram ?? calculator.inHome?.optInProgram ?? null),
     });
   };
+  // Human label for a method/plan key — financing → compact plan label, basic → its
+  // CK/CC/AMEX/ACH badge (else the plan's own label). Used for the Forever Record.
+  const methodLabelOf = (key: string) =>
+    isFinancing(plans, key) ? compactPlanLabel(plans, key) : (NON_FINANCING_BADGE[key] || plans[key]?.label || key);
+
   // The one write path for the shared choice — used by BOTH cards' CK/CC/AMEX badges AND
   // the In-Home shortlist rows. Selecting any of them lights it up on both cards and
   // deselects the other kind (badge ⇄ monthly), because they all read this single value.
   const selectPaymentChoice = (key: string) => {
+    // Log the selection to the Forever Record only when it actually changes.
+    if (key && key !== paymentChoice) {
+      const fin = isFinancing(plans, key);
+      logInvestmentPaymentMethodSelected({
+        ...logBase,
+        method: key,
+        methodLabel: methodLabelOf(key),
+        isFinancing: fin,
+        // A financing plan carries its $/mo (parity with `investment_plan_added`);
+        // basic cash/card methods have none, so it's omitted for them.
+        monthly: fin ? calcMonthly(plans, inHomeMonthlyBase, key) : undefined,
+      });
+    }
     setPaymentChoice(key);
     persistInHome(addedPlanKeys, key);
   };
   const handleAddPlan = (key: string) => {
     setShowAddPlan(false);
     const nextAdded = addedPlanKeys.includes(key) ? addedPlanKeys : [...addedPlanKeys, key];
+    if (!addedPlanKeys.includes(key)) {
+      logInvestmentPlanAdded({ ...logBase, planKey: key, planLabel: compactPlanLabel(plans, key), monthly: calcMonthly(plans, inHomeMonthlyBase, key), isFinancing: isFinancing(plans, key) });
+    }
     setAddedPlanKeys(nextAdded);
     setPaymentChoice(key); // adding a plan also selects it (web parity)
     persistInHome(nextAdded, key);
   };
   const handleRemovePlan = (key: string) => {
     const nextAdded = addedPlanKeys.filter((k) => k !== key);
+    logInvestmentPlanRemoved({ ...logBase, planKey: key, planLabel: compactPlanLabel(plans, key) });
     // If the removed plan was the active choice, revert to the deal-center default
     // (empty when none) rather than leaving a dangling selection.
     const nextChoice = paymentChoice === key ? defaultChoice : paymentChoice;
@@ -355,7 +395,23 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
 
   const confirmInHome = () => {
     setShowConfirm(false);
+    // Forever Record: the In-Home opt-in is committed here (the card's Opt In only
+    // opens the confirmation modal — this is the actual acceptance).
+    logInvestmentOptIn({ ...logBase, program: 'inhome', price: inHomeGrandTotal, monthly: inHomeMonthly, planKey: inHomePlanKey, downPayment: downPay });
     onOptIn(calculator.id, { price: endPrice, paymentMethod: inHomePlanKey, downPayment: downPay });
+  };
+
+  // Opt-out via the ✕ on a crossed-off card. The ✕ renders on the OPPOSITE card from
+  // the selected plan (a plan is crossed off only while the OTHER plan is selected —
+  // the rep must opt out before switching), so pressing it cancels the CURRENTLY
+  // SELECTED program. The Forever Record therefore logs `selectedProgram` (the plan
+  // actually being opted out of), NOT the card the ✕ happens to sit on — otherwise a
+  // 1-Year opt-out was mis-recorded as `inhome` (and vice-versa). Both cards share this.
+  const revertSelectedProgram = () => {
+    const optingOutOf = selectedProgram;
+    setSelectedProgram(null);
+    persistInHome(addedPlanKeys, paymentChoice, null);
+    if (optingOutOf) logInvestmentOptOut({ ...logBase, program: optingOutOf });
   };
 
   const onPullRefresh = async () => {
@@ -367,6 +423,21 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     }
   };
 
+  // Forever Record: log a down-payment change once per distinct value per program
+  // (commit fires on both blur and end-editing, so dedupe against the last logged
+  // amount; seeded from the calculator's persisted down payment). The panel remounts
+  // per calculator (keyed by tab id), so these refs reset with it.
+  const lastLoggedDownRef = useRef<{ inhome: number; oneyear: number }>({
+    inhome: calculator.downPayment || 0,
+    oneyear: 0,
+  });
+  const logDownPaymentChange = (program: 'inhome' | 'oneyear', amount: number) => {
+    if (isLeadSold || !logUserId) return;
+    if (lastLoggedDownRef.current[program] === amount) return;
+    lastLoggedDownRef.current[program] = amount;
+    logInvestmentDownPaymentChanged({ ...logBase, program, amount });
+  };
+
   // Reusable editable down-payment control — In-Home and 1-Year each have their own
   // (web parity: "Down payment — shown on both cards, each independent").
   const renderDownEditor = (
@@ -375,10 +446,12 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     show: boolean,
     setShow: (v: boolean) => void,
     cap: number,
+    program: 'inhome' | 'oneyear',
   ) => {
     const commit = () => {
       let v = parseFloat(text) || 0;
       if (cap > 0 && v > cap) { v = cap; setText(String(v)); }
+      logDownPaymentChange(program, v);
     };
     const dp = parseFloat(text) || 0;
     return show ? (
@@ -396,7 +469,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
           editable={!isLeadSold}
         />
         {dp > 0 && !isLeadSold && (
-          <TouchableOpacity onPress={() => { setText(''); setShow(false); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity onPress={() => { setText(''); setShow(false); logDownPaymentChange(program, 0); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="close-circle" size={15} color="#FF5630" />
           </TouchableOpacity>
         )}
@@ -426,8 +499,8 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       </TouchableOpacity>
     );
   };
-  const inHomeDownEditor = renderDownEditor(downText, setDownText, showDownInput, setShowDownInput, endPrice);
-  const oneYearDownEditor = renderDownEditor(oneYearDownText, setOneYearDownText, showOneYearDown, setShowOneYearDown, oneYearGrandTotal);
+  const inHomeDownEditor = renderDownEditor(downText, setDownText, showDownInput, setShowDownInput, endPrice, 'inhome');
+  const oneYearDownEditor = renderDownEditor(oneYearDownText, setOneYearDownText, showOneYearDown, setShowOneYearDown, oneYearGrandTotal, 'oneyear');
 
   // Program breakdown rows. In-Home carries an extra "% Discount" row, so reserve
   // both cards' breakdown block to the taller count — this keeps the Grand Total /
@@ -616,11 +689,14 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
             const next = selectedProgram === 'oneyear' ? null : 'oneyear';
             setSelectedProgram(next);
             persistInHome(addedPlanKeys, paymentChoice, next);
+            // Forever Record: 1-Year Opt In is a direct toggle (no confirm modal).
+            if (next === 'oneyear') {
+              logInvestmentOptIn({ ...logBase, program: 'oneyear', price: oneYearGrandTotal, monthly: oneYearMonthlyShown, planKey: oneYearKey });
+            } else {
+              logInvestmentOptOut({ ...logBase, program: 'oneyear' });
+            }
           }}
-          onRevert={() => {
-            setSelectedProgram(null);
-            persistInHome(addedPlanKeys, paymentChoice, null);
-          }}
+          onRevert={revertSelectedProgram}
           readOnly={isLeadSold}
         />
         <ProgramCard
@@ -648,10 +724,7 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
             setShowConfirm(true);
             persistInHome(addedPlanKeys, paymentChoice, 'inhome');
           }}
-          onRevert={() => {
-            setSelectedProgram(null);
-            persistInHome(addedPlanKeys, paymentChoice, null);
-          }}
+          onRevert={revertSelectedProgram}
           readOnly={isLeadSold}
         />
       </View>
@@ -665,7 +738,14 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         method={paymentChoice}
         isLowesLead={lead?.lowesLead === true}
         onConfirm={confirmInHome}
-        onClose={() => { setShowConfirm(false); setSelectedProgram(null); persistInHome(addedPlanKeys, paymentChoice, null); }}
+        onClose={() => {
+          setShowConfirm(false);
+          setSelectedProgram(null);
+          persistInHome(addedPlanKeys, paymentChoice, null);
+          // Forever Record: pending In-Home opt-in dismissed at the confirmation
+          // step (never committed) — recorded as a cancelled opt-out.
+          logInvestmentOptOut({ ...logBase, program: 'inhome', cancelledBeforeConfirm: true });
+        }}
       />
 
       {/* "+ Add Plan" financing picker for the In-Home Monthly shortlist. Gates on

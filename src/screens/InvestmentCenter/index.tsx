@@ -14,6 +14,8 @@ import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormMo
 import { PaperFallbackModal } from '../../widgets/modals/lead-center/PaperFallbackModal';
 import { InvestmentPanel } from './InvestmentPanel';
 import { queryClient } from '../../services/api/queryClient';
+import { useAuth } from '../../hooks/useAuth';
+import { logInvestmentCenterOpened, logInvestmentCalculatorViewed } from '../../utils/activity-log/investment-center-log';
 
 /**
  * Investment Center (web parity: `src/sections/job/components/investment-center/`).
@@ -47,6 +49,11 @@ function hasSignedConsent(lead: any): boolean {
 
 export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const lead = route?.params?.lead;
+
+  // Forever Record (activity log) identity — who is presenting, on which lead.
+  const { user } = useAuth();
+  const logUserId = user?._id || user?.id;
+  const logLeadId = lead?._id || lead?.leadId || lead?.id;
 
   const { configuredSchemas, isLoading: schemaLoading, pricingConfig } = useCalculatorSchema();
   const verticals = configuredSchemas;
@@ -194,10 +201,34 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
     setShowConsent(true);
   }, [isLoading, consentSigned]);
 
+  // ── Forever Record: entered the Investment Center (once per open, after load so
+  //    the priced-calculator count is known). ──────────────────────────────────
+  const openLoggedRef = useRef(false);
+  useEffect(() => {
+    if (isLoading || openLoggedRef.current || !logUserId) return;
+    openLoggedRef.current = true;
+    logInvestmentCenterOpened({ userId: logUserId, leadId: logLeadId, calculatorCount: visible.length });
+  }, [isLoading, logUserId, logLeadId, visible.length]);
+
+  // ── Forever Record: each priced calculator's presentation, logged once when it
+  //    first becomes the active tab (only while the panel is actually shown). ────
+  const viewedCalcIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (isLoading || !consentSigned || !logUserId || !active?.id) return;
+    if (viewedCalcIdsRef.current.has(active.id)) return;
+    viewedCalcIdsRef.current.add(active.id);
+    logInvestmentCalculatorViewed({
+      userId: logUserId,
+      leadId: logLeadId,
+      calculatorId: active.id,
+      calculatorTitle: active.title,
+    });
+  }, [isLoading, consentSigned, logUserId, logLeadId, active?.id, active?.title]);
+
   const Header = (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#fff' }}>
       <TouchableOpacity
-        onPress={() => setShowExitConfirm(true)}
+        onPress={() => navigation?.goBack()}
         style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}
       >
         <Ionicons name="chevron-back" size={20} color="#334155" />

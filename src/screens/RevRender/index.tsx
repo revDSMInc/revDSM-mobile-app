@@ -19,6 +19,7 @@ import { RootStackParamList } from '../../navigation';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { PhotoPeekPressable } from '../../widgets/common/PhotoPeekPressable';
+import { ImageGalleryModal } from '../../widgets/modals/ImageGalleryModal';
 import { useInspectionSchema } from '../../hooks/useInspectionSchema';
 import {
   getTopTabs,
@@ -262,6 +263,9 @@ export default function RevRenderScreen() {
   // ── Status & State ─────────────────────────────────────────────────────────
   const [status, setStatus] = useState<'grid' | 'config' | 'queue'>('grid');
   const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
+  // Full-screen viewer for the Configure Render photo — pinch-zoom + iMessage
+  // swipe-down-to-dismiss (via the shared ImageGalleryModal).
+  const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
   const [renderQueue, setRenderQueue] = useState<any[]>([]);
 
   const [config, setConfig] = useState<any>(INITIAL_CONFIG);
@@ -301,6 +305,34 @@ export default function RevRenderScreen() {
     });
     return out;
   }, [sectionImages]);
+
+  // Warm the RN image cache for every RevRender photo shortly after mount, so that
+  // tapping into Configure (and the full-screen viewer) shows the full-res photo
+  // INSTANTLY from cache instead of downloading it on tap — the "image takes time
+  // to come" fix. There is no server-side thumbnail, so the display images are the
+  // full-res S3 photos; prefetching them ahead of need is the win. On success the
+  // uri is recorded in `loadedUris`, which makes HouseImage skip its spinner and
+  // render the cached image immediately. Deferred a beat so the visible grid
+  // thumbnails fetch first, then the rest warm in the background.
+  useEffect(() => {
+    const uris = Array.from(
+      new Set(
+        rawPhotos
+          .map((p: any) => p?.secureUrl || p?.uri || p?.s3url)
+          .filter((u: any): u is string => typeof u === 'string' && /^https?:\/\//.test(u))
+      )
+    );
+    if (!uris.length) return;
+    const t = setTimeout(() => {
+      uris.forEach((u) => {
+        if (loadedUris.has(u)) return;
+        Image.prefetch(u)
+          .then(() => loadedUris.add(u))
+          .catch(() => {});
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [rawPhotos]);
 
   const hasProductScopedPhotos = useMemo(
     () => rawPhotos.some((p) => String(p.category || '').includes(' — ')),
@@ -1099,6 +1131,11 @@ export default function RevRenderScreen() {
             <PhotoPeekPressable
               uri={selectedPhoto?.uri || selectedPhoto?.s3url}
               label={selectedPhoto?.label || selectedPhoto?.subcategory?.replace(/-/g, ' ') || 'Selected Photo'}
+              // Tap opens the full-screen viewer (pinch-zoom + swipe-to-dismiss);
+              // press-and-hold still peeks.
+              onPress={() => {
+                if (selectedPhoto?.uri || selectedPhoto?.s3url) setPhotoViewerOpen(true);
+              }}
             >
               <HouseImage uri={selectedPhoto?.uri || selectedPhoto?.s3url} height={220} />
             </PhotoPeekPressable>
@@ -1466,6 +1503,25 @@ export default function RevRenderScreen() {
               ? renderConfig()
               : renderQueueView()}
       </View>
+
+      {/* Full-screen viewer for the Configure Render photo: pinch/double-tap to
+          zoom, swipe down to dismiss (iMessage-style). Single image → no
+          filmstrip/arrows. */}
+      <ImageGalleryModal
+        visible={photoViewerOpen}
+        images={
+          selectedPhoto?.uri || selectedPhoto?.s3url
+            ? [{
+                uri: selectedPhoto.uri || selectedPhoto.s3url,
+                label:
+                  selectedPhoto?.label ||
+                  selectedPhoto?.subcategory?.replace(/-/g, ' ') ||
+                  'Selected Photo',
+              }]
+            : []
+        }
+        onClose={() => setPhotoViewerOpen(false)}
+      />
     </SafeAreaView>
   );
 }

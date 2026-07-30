@@ -787,13 +787,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
   // Tiers the rollout LOGS anchor markup on — the SAME fee-adjusted, $200-floored
-  // COST/PAR/RETAIL shown on the card (web `calculateMarkup`), NOT the calculator's
-  // raw stored totals, whose blank par/cost tiers (retail-only schema) came
-  // through as 0 and snapped the markup to the wrong tier ("PAR + 49%" vs web's
-  // "COST + 100%"). Identical by construction to the displayed `tiers` below.
+  // COST/PAR/RETAIL the markup anchors on. WEB PARITY (`calculateMarkup`): the
+  // anchors ALWAYS use the `check` method, so they are INDEPENDENT of the selected
+  // payment plan (unlike the displayed `tiers` below, which are fee-inflated by
+  // `method`). `computeCalculatorTiers` derivation still fixes retail-only schemas so
+  // the markup snaps to the right tier ("COST + 100%", not "PAR + 49%").
   const logTiers = useMemo(
-    () => computeLogTiers(calculator.entries, verticals, pricingConfig, plans[method]?.fee || 0),
-    [calculator.entries, verticals, pricingConfig, plans, method],
+    () => computeLogTiers(calculator.entries, verticals, pricingConfig),
+    [calculator.entries, verticals, pricingConfig],
   );
   // The "default" 1-Year monthly plan: the rep's default payment method if it's a
   // financing plan, else the standard ~9.99% APR financing plan, else the first
@@ -1145,8 +1146,33 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
+    // Client requirement: a drop must be SAVED THE INSTANT it is entered. The rep may
+    // leave the app before hitting Secure/Decline — so record it as `declined` right
+    // now (persisted via the calculator auto-save). When the rep returns it lists as a
+    // Declined drop with its Display button, ready to re-open and Secure. Secure/Decline
+    // then edit THIS entry in place (via `pendingDropIndex`), never appending a
+    // duplicate. Declining never demotes other drops (single-accepted is a Secure-only
+    // rule).
+    //
+    // NO activity log fires here — web parity: web only logs `drop price secured` /
+    // `drop price declined` on the EXPLICIT action, never on entering the price.
+    // Logging on entry produced BOTH a `declined` AND a `secured` log for one drop when
+    // the rep then secured it. The entry only PERSISTS the row; Secure/Decline log.
+    const pricemarkup = markupLabel(v, logTiers);
+    const declined = { price: v, dropedPrice: v, status: 'declined', pricemarkup };
+    const next = dedupeDrops([...drops, declined]);
+    // The row to edit later: the just-added one, or the identical existing row if
+    // dedupe collapsed it (same price/status/plan/down = the same negotiation round).
+    let newIndex = next.indexOf(declined);
+    if (newIndex < 0) {
+      newIndex = next.findIndex(
+        (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0)) === Math.round(v) && d?.status === 'declined'
+      );
+    }
+    if (newIndex < 0) newIndex = next.length - 1;
+    onDropChange(calculator.id, next);
     setPendingDrop(v);
-    setPendingDropIndex(-1); // brand-new drop
+    setPendingDropIndex(newIndex); // Secure/Decline edit this persisted row in place
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
@@ -1163,28 +1189,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
   const resolveDropTargetIndex = () => pendingDropIndex;
 
-  // Product decision (diverges from web, which keeps the confirmed rollout price
-  // fixed): the ROLLOUT price follows the last SECURED drop. Capture the original
-  // confirmed price once — before any drop overwrites it — so unselecting/declining
-  // every drop reverts the rollout price back to the original quote.
-  const origRolloutRef = useRef<{ price: number; markup: string } | null>(null);
-  const captureOrigRollout = () => {
-    if (origRolloutRef.current === null && !drops.some((d) => d.status === 'accepted')) {
-      origRolloutRef.current = { price: Number(calculator.price) || 0, markup: calculator.pricemarkup || '' };
-    }
-  };
-  // Set the calculator's persisted rollout price/markup to the effective price: the
-  // last still-accepted drop, or the captured original when no drop is accepted.
-  const syncRolloutToDrops = (nextDrops: any[]) => {
-    const accepted = [...nextDrops].reverse().find((d) => d?.status === 'accepted');
-    if (accepted) {
-      const ap = Number(accepted.dropedPrice ?? accepted.price) || 0;
-      onPriceChange(calculator.id, ap, accepted.pricemarkup || (ap > 0 ? markupLabel(ap, logTiers) : ''));
-    } else if (origRolloutRef.current) {
-      onPriceChange(calculator.id, origRolloutRef.current.price, origRolloutRef.current.markup);
-    }
-  };
-
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
   // open the Result Lead outcome modal carrying the drop price.
@@ -1192,7 +1196,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
     // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
     const pricemarkup = markupLabel(pendingDrop, logTiers);
-    captureOrigRollout(); // remember the confirmed rollout price before this drop overwrites it
     const targetIndex = resolveDropTargetIndex();
     const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data };
     // Edit in place (preserving any existing `_id`, web `...item`) when targeting an
@@ -1241,8 +1244,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         }).catch(() => {});
       }
     }
-    // Rollout price follows the last secured drop.
-    syncRolloutToDrops(next);
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1667,7 +1668,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       // dynamic drop model uses status='declined'. Was filtering the drop
                       // out entirely, losing the record.
                       <TouchableOpacity onPress={() => {
-                        onDropChange(calculator.id, drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2)));
+                        const nextDrops = drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2));
+                        onDropChange(calculator.id, nextDrops);
                         logDropUnselected(dp, i);
                       }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
@@ -1836,10 +1838,8 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   // markup on — matches the card tiles (web `calculateMarkup`), not the raw stored
   // `totals`. Used for the confirm-bar `rollout confirmed` log AND the persisted
   // `pricemarkup` (computed here because the hook lacks pricingConfig/plans).
-  const logTiersFor = (c: CalculatorTab) => {
-    const m = resolveMethod(c, user?.defaultPaymentMethod, pricing.defaultMethod);
-    return computeLogTiers(c.entries, verticals || [], pricingConfig, pricing.plans[m]?.fee || 0);
-  };
+  const logTiersFor = (c: CalculatorTab) =>
+    computeLogTiers(c.entries, verticals || [], pricingConfig);
   // A priced calculator whose job scope changed AFTER the price was entered (the live
   // scope no longer matches the snapshot taken at pricing time). Drives the per-calc
   // "Job Scope was changed. Please review the Rollout End Price." warning — the price
@@ -1882,9 +1882,9 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     const method = resolveMethod(calc, user?.defaultPaymentMethod, pricing.defaultMethod);
     const err = endPriceError(pricing.plans, enteredPrice, calc, method);
     if (err) return;
-    // Anchor the persisted `pricemarkup` on the fee-adjusted, floored card tiers
-    // (web `calculateMarkup`), NOT the raw stored `totals` — same fix as the logs.
-    const tiers = computeLogTiers(calc.entries, verticals || [], pricingConfig, pricing.plans[method]?.fee || 0);
+    // Anchor the persisted `pricemarkup` on the `check`-based, floored tiers
+    // (web `calculateMarkup`), NOT the raw stored `totals` — same as the logs.
+    const tiers = computeLogTiers(calc.entries, verticals || [], pricingConfig);
     // Web parity (ViewAllCalculators.autoConfirmCalculator): fire the `rollout
     // auto-confirmed (10 min inactivity)` rollout log. The manual Confirm bar logs
     // `rollout confirmed` inline, but auto-confirm bypasses that path — so without this

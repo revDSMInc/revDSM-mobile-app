@@ -91,3 +91,14 @@ export type InstallerStepModule =
 
 /** Auth / session events. Excluded from lead auto-attach. */
 export const SYSTEM_MODULE = 'system';
+
+/**
+ * Investment Center — the in-home presentation surface. A NEW grouped category for
+ * the Forever Record: entering the center, viewing each priced calculator, opting IN
+ * to / OUT of the In-Home Pre-Order vs 1-Year programs, financing-plan add/remove,
+ * payment-method selection, and down-payment edits. First introduced on mobile (no
+ * web counterpart yet), so all of its events share this one module so a portal filter
+ * reads as the presentation's own audit trail — see
+ * `src/utils/activity-log/investment-center-log.ts`.
+ */
+export const INVESTMENT_CENTER_MODULE = 'investment_center';
