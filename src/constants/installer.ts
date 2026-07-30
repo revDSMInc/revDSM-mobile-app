@@ -6,45 +6,64 @@ import type {
   InstallerResultType,
   JobResultStatus,
 } from '../config/types/installer';
+import type { TranslationKey } from '../i18n/translations';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Install timeline
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The 7 install steps.
+ *
+ * `title` / `desc` are the ENGLISH source strings and stay here so this file still reads
+ * as the definition of the timeline. `titleKey` / `descKey` are what the UI renders
+ * through `t()` — the English above is then the fallback the translator sees, not a
+ * second copy that can drift.
+ */
 export const INSTALL_STEPS: InstallStep[] = [
   {
     key: 'pickup',
     n: 1,
     title: 'Pickup',
+    titleKey: 'installer.stepPickup',
     desc: 'Photo the material loaded for this job',
+    descKey: 'installer.stepPickupDesc',
     icon: 'truck-outline',
   },
   {
     key: 'pec',
     n: 2,
     title: 'Pre-Existing Conditions',
+    titleKey: 'installer.stepPec',
     desc: 'Flag & photo site conditions before work',
+    descKey: 'installer.stepPecDesc',
     icon: 'clipboard-alert-outline',
   },
   {
     key: 'pre',
     n: 3,
     title: 'Pre-Install Photos',
+    titleKey: 'installer.stepPre',
     desc: "Ghost-match the rep's shots",
+    descKey: 'installer.stepPreDesc',
     icon: 'camera-outline',
   },
   {
     key: 'measure',
     n: 4,
     title: 'Verify Job Scope',
+    titleKey: 'installer.stepMeasure',
     desc: 'Confirm sold products, footage & colors',
+    descKey: 'installer.stepMeasureDesc',
     icon: 'ruler-square',
   },
   {
     key: 'post',
     n: 5,
     title: 'Post-Install Photos',
+    titleKey: 'installer.stepPost',
     desc: 'Second ghost pass — finished work',
+    descKey: 'installer.stepPostDesc',
     // `camera-check-outline` does not exist in the bundled MaterialCommunityIcons set,
     // so it rendered as the fallback "?". `camera-retake-outline` does, and says the
     // right thing for a second pass over the same shots.
@@ -54,14 +73,18 @@ export const INSTALL_STEPS: InstallStep[] = [
     key: 'coc',
     n: 6,
     title: 'CoC',
+    titleKey: 'installer.stepCoc',
     desc: 'Scan the signed Certificate of Completion',
+    descKey: 'installer.stepCocDesc',
     icon: 'file-document-edit-outline',
   },
   {
     key: 'return',
     n: 7,
     title: 'Return',
+    titleKey: 'installer.stepReturn',
     desc: 'Photo unused material coming back',
+    descKey: 'installer.stepReturnDesc',
     icon: 'truck-delivery-outline',
   },
 ];
@@ -164,16 +187,22 @@ export const REQUIRED_PHOTO_TAGS = PHOTO_SECTIONS.flatMap((s) =>
 // Pre-existing conditions
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * `label` is the ENGLISH string and stays authoritative: it is what travels to the server
+ * as a condition's `label`, and what `installer-hydrate.ts` matches on to map a stored
+ * condition back to its area. Translating it would break both. `labelKey` is what the UI
+ * renders.
+ */
 export const PEC_AREAS: PECArea[] = [
-  { id: 'front', label: 'Front Exterior' },
-  { id: 'left', label: 'Left Side' },
-  { id: 'right', label: 'Right Side' },
-  { id: 'back', label: 'Back Exterior' },
-  { id: 'roof', label: 'Roof' },
-  { id: 'siding', label: 'Siding / Paint' },
-  { id: 'drive', label: 'Driveway / Walkways' },
-  { id: 'yard', label: 'Landscaping / Yard' },
-  { id: 'other', label: 'Other' },
+  { id: 'front', label: 'Front Exterior', labelKey: 'installer.areaFront' },
+  { id: 'left', label: 'Left Side', labelKey: 'installer.areaLeft' },
+  { id: 'right', label: 'Right Side', labelKey: 'installer.areaRight' },
+  { id: 'back', label: 'Back Exterior', labelKey: 'installer.areaBack' },
+  { id: 'roof', label: 'Roof', labelKey: 'installer.areaRoof' },
+  { id: 'siding', label: 'Siding / Paint', labelKey: 'installer.areaSiding' },
+  { id: 'drive', label: 'Driveway / Walkways', labelKey: 'installer.areaDrive' },
+  { id: 'yard', label: 'Landscaping / Yard', labelKey: 'installer.areaYard' },
+  { id: 'other', label: 'Other', labelKey: 'installer.areaOther' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +252,20 @@ export const RESULT_STATUS_CODE: Record<
 > = {
   "Can't Do Work": 'cantDoWork',
   'Not Hit': 'notHit',
+};
+
+/**
+ * Button label per result type.
+ *
+ * `InstallerResultType` stays the ENGLISH string because it is also the identity the log
+ * and the code map key off — translating the union itself would make `RESULT_STATUS_CODE`
+ * lookups fail the moment someone switches language. So the type is the id and this is
+ * what the installer reads.
+ */
+export const RESULT_LABEL_KEY: Record<InstallerResultType, TranslationKey> = {
+  "Can't Do Work": 'installer.resultCantDoWork',
+  Reset: 'installer.resultReset',
+  'Not Hit': 'installer.resultNotHit',
 };
 
 /** Accent per result action, matching the app's semantic colors. */

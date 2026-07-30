@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { GhostSlider } from './GhostSlider';
 import { HouseGhost } from './HouseGhost';
 import type { CapturedPhoto } from '../../../config/types/installer';
@@ -55,6 +56,7 @@ export function InstallerCamera({
   onCapture,
 }: InstallerCameraProps) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice('back');
 
@@ -159,7 +161,7 @@ export function InstallerCamera({
             onPress={() => setCaptured(null)}
             className="flex-1 h-12 rounded-xl items-center justify-center bg-white/10"
           >
-            <Text className="text-white text-base font-bold">Retake</Text>
+            <Text className="text-white text-base font-bold">{t('installer.retake')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleUse}
@@ -167,7 +169,7 @@ export function InstallerCamera({
             style={{ backgroundColor: GREEN }}
           >
             <Text className="text-white text-base font-bold">
-              {compareLabels ? 'Confirm' : 'Use Photo'}
+              {compareLabels ? t('common.confirm') : t('installer.usePhoto')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -233,7 +235,9 @@ export function InstallerCamera({
       >
         {withGhost && (
           <View className="flex-row items-center mb-2">
-            <Text className="text-[#8b93a0] text-[11px] font-bold w-12">Ghost</Text>
+            <Text className="text-[#8b93a0] text-[11px] font-bold w-12">
+              {t('installer.ghost')}
+            </Text>
             <GhostSlider value={ghostOpacity} onChange={setGhostOpacity} />
           </View>
         )}

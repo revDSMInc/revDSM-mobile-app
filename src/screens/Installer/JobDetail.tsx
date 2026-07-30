@@ -18,6 +18,7 @@ import MaterialIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { format } from 'date-fns';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useTranslation } from '../../i18n/LanguageProvider';
 import { getRawPhoneNumber } from '../../utils/phone-util';
 import { FlashMessage } from '../../config/message';
 import { useInstallProgress } from '../../hooks/useInstallProgress';
@@ -70,6 +71,7 @@ import {
   INSTALLER_RESULT_TYPES,
   INSTALLER_RESULT_REASONS,
   RESULT_COLORS,
+  RESULT_LABEL_KEY,
   RESULT_STATUS_CODE,
   PHOTO_SECTIONS,
 } from '../../constants/installer';
@@ -109,6 +111,7 @@ export default function InstallerJobDetail() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { colors, isDark } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
   const job: InstallerJob = route.params?.job;
@@ -1027,7 +1030,7 @@ export default function InstallerJobDetail() {
             />
           </TouchableOpacity>
           <Text className="text-lg font-black" style={{ color: colors.text }}>
-            Lead Center
+            {t('installer.leadCenter')}
           </Text>
           {/* Photos are uploaded in the background — say so, so the installer knows
               there is still work in flight before they leave the job. */}
@@ -1052,7 +1055,7 @@ export default function InstallerJobDetail() {
           <View className="mb-2">
             <Text className="text-[15px] mb-2">
               <Text className="font-bold" style={{ color: colors.primary.main }}>
-                Lead ID:{' '}
+                {t('installer.leadId')}:{' '}
               </Text>
               <Text className="font-black" style={{ color: colors.text }}>
                 {job.leadDisplayId || job.jobNumber || job.leadId || 'N/A'}
@@ -1066,9 +1069,14 @@ export default function InstallerJobDetail() {
               </Text>
             </View>
 
-            <View className="flex-row items-center justify-between mb-2">
+            {/* Phone + email.
+                Both halves are left-aligned columns with the same gap as the date/time
+                row below, so all four icons line up down the card. The email used to be
+                `justify-end`, which pinned it to the right edge — with a short value like
+                "N/A" that left it floating in its own place, lining up with nothing. */}
+            <View className="flex-row items-center mb-2" style={{ gap: 24 }}>
               <TouchableOpacity
-                className="flex-row items-center flex-1"
+                className="flex-row items-center"
                 disabled={!phone}
                 onPress={() => setShowPhoneOptions(true)}
               >
@@ -1077,7 +1085,7 @@ export default function InstallerJobDetail() {
                   {phone || 'N/A'}
                 </Text>
               </TouchableOpacity>
-              <View className="flex-row items-center flex-1 justify-end">
+              <View className="flex-row items-center flex-1">
                 <Ionicon name="mail" size={15} color={colors.primary.main} />
                 <Text
                   numberOfLines={1}
@@ -1226,10 +1234,10 @@ export default function InstallerJobDetail() {
                 color={isJobComplete ? colors.textSecondary : '#fff'}
               />
               <Text
-                className="ml-2 text-base font-black tracking-wide"
+                className="ml-2 text-base font-black tracking-wide text-center"
                 style={{ color: isJobComplete ? colors.textSecondary : '#fff' }}
               >
-                Job Completed
+                {t('installer.jobCompleted')}
               </Text>
             </TouchableOpacity>
           )}
@@ -1252,14 +1260,16 @@ export default function InstallerJobDetail() {
             {(isJobComplete
               ? INSTALLER_RESULT_TYPES.filter((t) => t === 'Reset')
               : INSTALLER_RESULT_TYPES
-            ).map((t) => (
+            ).map((result) => (
               <TouchableOpacity
-                key={t}
-                onPress={() => handleOpenResult(t)}
+                key={result}
+                onPress={() => handleOpenResult(result)}
                 className="flex-1 h-12 rounded-xl items-center justify-center"
-                style={{ backgroundColor: RESULT_COLORS[t] }}
+                style={{ backgroundColor: RESULT_COLORS[result] }}
               >
-                <Text className="text-white text-[13px] font-bold text-center">{t}</Text>
+                <Text className="text-white text-[13px] font-bold text-center">
+                  {t(RESULT_LABEL_KEY[result])}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -1270,7 +1280,9 @@ export default function InstallerJobDetail() {
             style={{ backgroundColor: colors.info.main }}
           >
             <MaterialIcon name="message-text" size={16} color="#fff" />
-            <Text className="text-white ml-2 text-base font-black tracking-wide">Msg Ops/IM</Text>
+            <Text className="text-white ml-2 text-base font-black tracking-wide text-center">
+              {t('installer.msgOps')}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>

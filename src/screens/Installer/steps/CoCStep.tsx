@@ -3,6 +3,7 @@ import { View, Text, Image, TouchableOpacity, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
@@ -29,6 +30,7 @@ interface Props {
  */
 export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const log = useInstallerActivityLog();
 
   const startScan = async () => {
@@ -82,8 +84,8 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
   return (
     <InstallerSubScreen
       visible={visible}
-      title="Certificate of Completion"
-      subtitle="Scan the CoC signed by the homeowner"
+      title={t('installer.cocTitle')}
+      subtitle={t('installer.cocSub')}
       onBack={onBack}
       footer={
         hasPages ? (
@@ -92,8 +94,10 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
             className="h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: colors.primary.main }}
           >
-            <Text className="text-white text-base font-bold">
-              Done — {pages.length} Page{pages.length > 1 ? 's' : ''} Scanned
+            <Text className="text-white text-base font-bold text-center">
+              {pages.length === 1
+                ? t('installer.cocDoneOne', { count: pages.length })
+                : t('installer.cocDoneMany', { count: pages.length })}
             </Text>
           </TouchableOpacity>
         ) : undefined
@@ -111,13 +115,14 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
             <Icon name="check" size={14} color="#fff" />
           </View>
           <Text className="flex-1 text-xs font-bold" style={{ color: colors.primary.main }}>
-            {pages.length} page{pages.length > 1 ? 's' : ''} captured
+            {pages.length === 1
+              ? t('installer.cocCapturedOne', { count: pages.length })
+              : t('installer.cocCapturedMany', { count: pages.length })}
           </Text>
         </View>
       ) : (
         <Text className="text-xs font-semibold mb-3" style={{ color: colors.textSecondary }}>
-          Capture every signed page. Fit the document inside the frame — edges are detected
-          automatically.
+          {t('installer.cocIntro')}
         </Text>
       )}
 
@@ -139,7 +144,9 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
                 className="absolute bottom-0 left-0 right-0 py-0.5 items-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
-                <Text className="text-white text-[10px] font-bold">Page {i + 1}</Text>
+                <Text className="text-white text-[10px] font-bold">
+                  {t('installer.cocPage', { number: i + 1 })}
+                </Text>
               </View>
               <TouchableOpacity
                 onPress={() => del.request({ page, index: i })}
@@ -159,8 +166,8 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
         style={{ backgroundColor: colors.primary.main }}
       >
         <Icon name="file-document-outline" size={18} color="#fff" />
-        <Text className="text-white ml-2 text-base font-bold">
-          {hasPages ? 'Scan Another Page' : 'Scan Signed CoC'}
+        <Text className="text-white ml-2 text-base font-bold text-center">
+          {hasPages ? t('installer.cocScanAnother') : t('installer.cocScanFirst')}
         </Text>
       </TouchableOpacity>
 
@@ -168,10 +175,12 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
         visible={del.visible}
         icon="file-remove-outline"
         tone="danger"
-        title="Delete this page?"
-        description={`Page ${(del.target?.index ?? 0) + 1} of the signed CoC will be removed from this job and deleted from the server. You'll have to rescan it — the homeowner's signature can't be recovered from the app.`}
-        confirmLabel="Delete"
-        cancelLabel="Keep"
+        title={t('installer.cocDeleteTitle')}
+        description={t('installer.cocDeleteBody', {
+          number: (del.target?.index ?? 0) + 1,
+        })}
+        confirmLabel={t('installer.delete')}
+        cancelLabel={t('installer.keep')}
         submitting={del.deleting}
         onCancel={del.cancel}
         onConfirm={del.confirm}

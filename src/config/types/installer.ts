@@ -6,6 +6,8 @@
  * shapes aligned means the real endpoints drop in without a remapping layer.
  */
 
+import type { TranslationKey } from '../../i18n/translations';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Install timeline
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,8 +27,11 @@ export type InstallStepStatus = 'done' | 'active' | 'locked';
 export interface InstallStep {
   key: InstallStepKey;
   n: number;
+  /** English source string. The UI renders `titleKey` through `t()` instead. */
   title: string;
+  titleKey: TranslationKey;
   desc: string;
+  descKey: TranslationKey;
   /** MaterialCommunityIcons glyph name. */
   icon: string;
 }
@@ -189,7 +194,12 @@ export interface DiscrepancyReport {
 
 export interface PECArea {
   id: string;
+  /**
+   * English label. Authoritative — it travels to the server as the condition's `label`
+   * and is what hydration matches on. The UI renders `labelKey` instead.
+   */
   label: string;
+  labelKey: TranslationKey;
 }
 
 export interface PECEntry {

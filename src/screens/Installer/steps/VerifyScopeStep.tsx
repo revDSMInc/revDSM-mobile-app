@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import {
   DiscrepancyModal,
@@ -41,6 +42,7 @@ export function VerifyScopeStep({
   onBack,
 }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const log = useInstallerActivityLog();
   const [sheetFor, setSheetFor] = useState<SoldProduct | null>(null);
 
@@ -93,8 +95,8 @@ export function VerifyScopeStep({
   return (
     <InstallerSubScreen
       visible={visible}
-      title="Verify Job Scope"
-      subtitle="Sold products, footages & colors — confirm or flag"
+      title={t('installer.scopeTitle')}
+      subtitle={t('installer.scopeSub')}
       onBack={onBack}
       footer={
         <>
@@ -111,8 +113,9 @@ export function VerifyScopeStep({
                 className="flex-1 ml-2 text-xs font-bold"
                 style={{ color: colors.warning.dark }}
               >
-                {pending} discrepanc{pending > 1 ? 'ies' : 'y'} awaiting IM — scope review
-                can&apos;t close until resolved
+                {pending === 1
+                  ? t('installer.scopePendingOne', { count: pending })
+                  : t('installer.scopePendingMany', { count: pending })}
               </Text>
             </View>
           )}
@@ -125,10 +128,12 @@ export function VerifyScopeStep({
             }}
           >
             <Text
-              className="text-base font-bold"
+              className="text-base font-bold text-center"
               style={{ color: allSettled ? '#fff' : colors.textSecondary }}
             >
-              {nothingToVerify ? 'Acknowledge — No Scope on File' : 'Done — Scope Reviewed'}
+              {nothingToVerify
+                ? t('installer.scopeAcknowledge')
+                : t('installer.scopeDone')}
             </Text>
           </TouchableOpacity>
         </>
@@ -148,23 +153,20 @@ export function VerifyScopeStep({
               className="text-[15px] font-bold ml-2"
               style={{ color: colors.warning.dark }}
             >
-              No sold products on this job
+              {t('installer.scopeNoProducts')}
             </Text>
           </View>
           <Text
             className="text-xs font-semibold leading-5 mb-2"
             style={{ color: colors.text }}
           >
-            Nothing was attached for you to verify — the job packet has no measurements,
-            colors or product list on it.
+            {t('installer.scopeNoProductsBody')}
           </Text>
           <Text
             className="text-xs font-semibold leading-5"
             style={{ color: colors.textSecondary }}
           >
-            Message your Install Manager before starting work. If you go ahead, there is
-            no sold scope on record to check the finished job against. Acknowledge below
-            to continue the install.
+            {t('installer.scopeNoProductsAction')}
           </Text>
         </View>
       )}
@@ -206,7 +208,11 @@ export function VerifyScopeStep({
                   style={{ backgroundColor: colors.primary.main }}
                 >
                   <Icon name="check" size={13} color="#fff" />
-                  <Text className="text-white text-xs font-bold ml-1">Confirm Correct</Text>
+                  {/* `flex-1` + centred: "Confirmar correcto" is wider than its English
+                      original and wraps in this half-width button. */}
+                  <Text className="flex-1 text-white text-xs font-bold ml-1 text-center">
+                    {t('installer.scopeConfirmCorrect')}
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => handleOpenDiscrepancy(product)}
@@ -214,8 +220,11 @@ export function VerifyScopeStep({
                   style={{ borderColor: colors.warning.main, backgroundColor: colors.background }}
                 >
                   <Icon name="alert-outline" size={13} color={colors.warning.dark} />
-                  <Text className="text-xs font-bold ml-1" style={{ color: colors.warning.dark }}>
-                    Discrepancy
+                  <Text
+                    className="flex-1 text-xs font-bold ml-1 text-center"
+                    style={{ color: colors.warning.dark }}
+                  >
+                    {t('installer.scopeDiscrepancy')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -228,7 +237,7 @@ export function VerifyScopeStep({
                   <Icon name="check" size={11} color="#fff" />
                 </View>
                 <Text className="text-xs font-bold" style={{ color: colors.primary.main }}>
-                  Confirmed correct
+                  {t('installer.scopeConfirmed')}
                 </Text>
                 <TouchableOpacity
                   onPress={() => handleUndoProduct(product)}
@@ -238,7 +247,7 @@ export function VerifyScopeStep({
                     className="text-[11px] font-bold underline"
                     style={{ color: colors.textSecondary }}
                   >
-                    undo
+                    {t('installer.scopeUndo')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -253,16 +262,18 @@ export function VerifyScopeStep({
                     style={{ backgroundColor: colors.warning.main }}
                   >
                     <Text className="text-white text-[9px] font-black tracking-widest">
-                      PENDING
+                      {t('installer.scopePending')}
                     </Text>
                   </View>
                   <Text
                     className="flex-1 text-[11px] font-bold"
                     style={{ color: colors.warning.dark }}
                   >
-                    {st.issue} — awaiting IM resolution
+                    {t('installer.scopeAwaitingIm', { issue: st.issue ?? '' })}
                     {st.attachments?.length
-                      ? ` • ${st.attachments.length} photo${st.attachments.length > 1 ? 's' : ''}`
+                      ? st.attachments.length === 1
+                        ? t('installer.scopePhotoCountOne', { count: st.attachments.length })
+                        : t('installer.scopePhotoCountMany', { count: st.attachments.length })
                       : ''}
                   </Text>
                 </View>
@@ -300,7 +311,7 @@ export function VerifyScopeStep({
                   className="flex-1 text-[11px] font-bold"
                   style={{ color: colors.primary.main }}
                 >
-                  Resolved by IM — {st.issue}
+                  {t('installer.scopeResolvedBy', { issue: st.issue ?? '' })}
                 </Text>
               </View>
             )}
@@ -310,7 +321,10 @@ export function VerifyScopeStep({
 
       {resolved > 0 && (
         <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
-          {products.length - resolved} confirmed · {resolved} resolved by IM
+          {t('installer.scopeSummary', {
+            confirmed: products.length - resolved,
+            resolved,
+          })}
         </Text>
       )}
 
@@ -325,7 +339,10 @@ export function VerifyScopeStep({
           onReportDiscrepancy(sheetFor.id, issue, note, attachments);
           onSetStatus(sheetFor.id, { state: 'pending', issue, note, attachments });
           setSheetFor(null);
-          FlashMessage.success('Discrepancy sent', 'The IM and rep have been notified.');
+          FlashMessage.success(
+            t('installer.scopeDiscrepancySent'),
+            t('installer.scopeDiscrepancySentBody')
+          );
         }}
       />
     </InstallerSubScreen>

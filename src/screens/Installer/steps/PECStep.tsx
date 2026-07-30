@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Image } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
 import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
@@ -57,6 +58,7 @@ export function PECStep({
   onBack,
 }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const log = useInstallerActivityLog();
   const [cameraFor, setCameraFor] = useState<PECArea | null>(null);
 
@@ -144,14 +146,14 @@ export function PECStep({
   return (
     <InstallerSubScreen
       visible={visible}
-      title="Pre-Existing Conditions"
-      subtitle="Document site conditions before starting work"
+      title={t('installer.pecTitle')}
+      subtitle={t('installer.pecSub')}
       onBack={onBack}
       overlay={
         cameraFor ? (
           <InstallerCamera
-            label={`CONDITION • ${cameraFor.label}`}
-            hint="Photo the pre-existing damage or condition"
+            label={`${t('installer.pecTitle').toUpperCase()} • ${t(cameraFor.labelKey)}`}
+            hint={t('installer.pecCameraHint')}
             count={entries[cameraFor.id]?.photos.length ?? 0}
             onCancel={() => setCameraFor(null)}
             onCapture={(photo) => addPhoto(cameraFor, photo)}
@@ -169,10 +171,10 @@ export function PECStep({
             }}
           >
             <Text
-              className="text-base font-bold"
+              className="text-base font-bold text-center"
               style={{ color: canConfirm ? '#fff' : colors.textSecondary }}
             >
-              Confirm Pre-Existing Conditions
+              {t('installer.pecConfirm')}
             </Text>
           </TouchableOpacity>
           {hasConditions === true && flagged.length > 0 && !allDocumented && (
@@ -180,7 +182,7 @@ export function PECStep({
               className="text-center text-[11px] font-bold mt-1.5"
               style={{ color: colors.warning.dark }}
             >
-              Every flagged area needs at least one photo and a note
+              {t('installer.pecIncomplete')}
             </Text>
           )}
         </>
@@ -190,15 +192,17 @@ export function PECStep({
         className="text-xs font-semibold leading-5 mb-3"
         style={{ color: colors.textSecondary }}
       >
-        Review the work site before starting. Documented conditions protect you and the
-        company from liability for damage that existed before the crew arrived.
+        {t('installer.pecIntro')}
       </Text>
 
-      {/* Answer */}
+      {/* Answer.
+          `text-center` on the labels, not just `items-center` on the buttons: the flex
+          alignment centres the text BLOCK, while a label that wraps to two lines — which
+          Spanish does here — still ranges its own lines left inside that block. */}
       <View className="flex-row mb-4" style={{ gap: 8 }}>
         <TouchableOpacity
           onPress={() => handleSetHasConditions(false)}
-          className="flex-1 rounded-xl items-center justify-center border-2 py-3"
+          className="flex-1 rounded-xl items-center justify-center border-2 py-3 px-2"
           style={{
             backgroundColor:
               hasConditions === false ? colors.primary.main + '10' : colors.background,
@@ -206,15 +210,15 @@ export function PECStep({
           }}
         >
           <Text
-            className="text-[13px] font-bold"
+            className="text-[13px] font-bold text-center"
             style={{ color: hasConditions === false ? colors.primary.main : colors.text }}
           >
-            No Conditions Found
+            {t('installer.pecNone')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => handleSetHasConditions(true)}
-          className="flex-1 rounded-xl items-center justify-center border-2 py-3"
+          className="flex-1 rounded-xl items-center justify-center border-2 py-3 px-2"
           style={{
             backgroundColor:
               hasConditions === true ? colors.warning.main + '14' : colors.background,
@@ -222,10 +226,10 @@ export function PECStep({
           }}
         >
           <Text
-            className="text-[13px] font-bold"
+            className="text-[13px] font-bold text-center"
             style={{ color: hasConditions === true ? colors.warning.dark : colors.text }}
           >
-            Conditions Present
+            {t('installer.pecPresent')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -242,7 +246,7 @@ export function PECStep({
             <Icon name="check" size={12} color="#fff" />
           </View>
           <Text className="flex-1 text-xs font-semibold" style={{ color: colors.primary.main }}>
-            Site reviewed — no pre-existing conditions to report.
+            {t('installer.pecNoneConfirmed')}
           </Text>
         </View>
       )}
@@ -250,7 +254,7 @@ export function PECStep({
       {hasConditions === true && (
         <>
           <Text className="text-[13px] font-bold mb-2" style={{ color: colors.text }}>
-            Flag affected areas — each needs a photo and a note
+            {t('installer.pecFlagAreas')}
           </Text>
 
           {PEC_AREAS.map((area) => {
@@ -281,7 +285,7 @@ export function PECStep({
                       className="text-[13px] font-bold"
                       style={{ color: on ? colors.warning.dark : colors.text }}
                     >
-                      {area.label}
+                      {t(area.labelKey)}
                     </Text>
                   </TouchableOpacity>
 
@@ -295,7 +299,11 @@ export function PECStep({
                     >
                       <Icon name={count > 0 ? 'check' : 'camera'} size={12} color="#fff" />
                       <Text className="text-white text-[11px] font-bold ml-1">
-                        {count > 0 ? `${count} photo${count > 1 ? 's' : ''} · add` : 'Add Photo'}
+                        {count === 0
+                          ? t('installer.pecAddPhoto')
+                          : count === 1
+                          ? t('installer.pecPhotosAdd', { count })
+                          : t('installer.pecPhotosAddPlural', { count })}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -333,7 +341,7 @@ export function PECStep({
                       value={entry!.note}
                       onChangeText={(t) => setNote(area.id, t)}
                       onBlur={() => commitNote(area)}
-                      placeholder="Describe the condition — e.g. crack near garage, ~3 ft"
+                      placeholder={t('installer.pecNotePlaceholder')}
                       placeholderTextColor="#919EAB"
                       className="rounded-lg px-2.5 py-2 text-xs mb-2"
                       style={{
@@ -354,8 +362,15 @@ export function PECStep({
               className="text-[11px] font-semibold mt-1"
               style={{ color: colors.textSecondary }}
             >
-              {flagged.length} area{flagged.length > 1 ? 's' : ''} flagged · {totalPhotos} photo
-              {totalPhotos === 1 ? '' : 's'}
+              {flagged.length === 1
+                ? t('installer.pecSummaryOne', {
+                    areas: flagged.length,
+                    photos: totalPhotos,
+                  })
+                : t('installer.pecSummaryMany', {
+                    areas: flagged.length,
+                    photos: totalPhotos,
+                  })}
             </Text>
           )}
         </>
@@ -365,14 +380,12 @@ export function PECStep({
         visible={del.visible}
         icon="image-remove"
         tone="danger"
-        title="Delete this photo?"
-        description={
-          `This ${del.target?.area.label ?? 'condition'} photo will be removed from the ` +
-          'job and deleted from the server. Every flagged area needs at least one photo, ' +
-          "so you'll have to retake it before this step can close."
-        }
-        confirmLabel="Delete"
-        cancelLabel="Keep"
+        title={t('installer.deletePhotoTitle')}
+        description={t('installer.pecDeleteBody', {
+          area: del.target ? t(del.target.area.labelKey) : t('installer.pecTitle'),
+        })}
+        confirmLabel={t('installer.delete')}
+        cancelLabel={t('installer.keep')}
         submitting={del.deleting}
         onCancel={del.cancel}
         onConfirm={del.confirm}

@@ -14,6 +14,7 @@
  */
 
 import type { InstallerJob } from '../config/types/installer';
+import type { TranslationKey } from '../i18n/translations';
 
 /** Web `CARD_COLORS`, verbatim. */
 export const JOB_CARD_COLORS = {
@@ -46,8 +47,14 @@ export interface JobCardState {
   key: JobCardStateKey;
   /** Border, action button, and the 10 %-alpha card wash. */
   color: string;
-  /** Bottom action button text. */
-  actionLabel: string;
+  /**
+   * Translation key for the bottom action button — NOT the text.
+   *
+   * A pure function can't read the language context, and threading `t` through it would
+   * make every caller carry a hook's output into a helper that has no other reason to
+   * know about React. So the state machine names the string and the card renders it.
+   */
+  actionLabelKey: TranslationKey;
   /**
    * Web paints a 6 px bar down the left edge for the two live states
    * (`boxShadow: '-6px 0 0 0 color'`). RN has no such shadow, so the card renders it
@@ -68,13 +75,13 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
   start: {
     key: 'ACTIVE',
     color: JOB_CARD_COLORS.ACTIVE,
-    actionLabel: 'Start Appointment',
+    actionLabelKey: 'installer.startAppointment',
     accentBar: true,
   },
   resume: {
     key: 'PROGRESS',
     color: JOB_CARD_COLORS.PROGRESS,
-    actionLabel: 'Resume Appointment',
+    actionLabelKey: 'installer.resumeAppointment',
     accentBar: true,
   },
   /**
@@ -84,19 +91,19 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
   expired: {
     key: 'EXPIRED',
     color: JOB_CARD_COLORS.EXPIRED,
-    actionLabel: 'Appointment Expired',
+    actionLabelKey: 'installer.appointmentExpired',
     accentBar: false,
   },
   review: {
     key: 'OFFSITE',
     color: JOB_CARD_COLORS.OFFSITE,
-    actionLabel: 'Review Appointment',
+    actionLabelKey: 'installer.reviewAppointment',
     accentBar: false,
   },
   preview: {
     key: 'UPCOMING',
     color: JOB_CARD_COLORS.UPCOMING,
-    actionLabel: 'Preview Appointment',
+    actionLabelKey: 'installer.previewAppointment',
     accentBar: false,
   },
 };
@@ -128,7 +135,8 @@ export const resolveJobCardState = (
     const base = resolveJobCardState(job, { isUpcoming });
     return {
       ...base,
-      actionLabel: job.resulted || isUpcoming ? 'Loading…' : 'Starting Job…',
+      actionLabelKey:
+        job.resulted || isUpcoming ? 'common.loading' : 'installer.startingJob',
     };
   }
 
@@ -136,7 +144,7 @@ export const resolveJobCardState = (
     return {
       key: 'RESULTED',
       color: JOB_CARD_COLORS.RESULTED,
-      actionLabel: 'Review Appointment',
+      actionLabelKey: 'installer.reviewAppointment',
       accentBar: false,
     };
   }
@@ -145,7 +153,7 @@ export const resolveJobCardState = (
     return {
       key: 'UPCOMING',
       color: JOB_CARD_COLORS.UPCOMING,
-      actionLabel: 'Preview Appointment',
+      actionLabelKey: 'installer.previewAppointment',
       accentBar: false,
     };
   }

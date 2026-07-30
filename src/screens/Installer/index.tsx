@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MaterialDesignIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useTranslation } from '../../i18n/LanguageProvider';
 import { FlashMessage } from '../../config/message';
 import { useInstallerJobs, useUpdateJobStatus } from '../../hooks/useInstallerJobs';
 import { useAuth } from '../../hooks/useAuth';
@@ -42,6 +43,7 @@ import type {
 export default function InstallerDashboard() {
   const navigation = useNavigation<any>();
   const { colors, isDark } = useTheme();
+  const { t } = useTranslation();
   const { installerCompanyName } = useUserRole();
   const { user } = useAuth();
   const userId = user?._id || user?.id;
@@ -311,7 +313,7 @@ export default function InstallerDashboard() {
       <View className="px-4 pt-6 pb-3 flex-row items-center justify-between">
         <View className="flex-1">
           <Text className="text-lg font-black" style={{ color: colors.text }}>
-            My Installs
+            {t('installer.title')}
           </Text>
           {!!companyName && (
             <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
@@ -327,7 +329,7 @@ export default function InstallerDashboard() {
             {jobCount}
           </Text>
           <Text className="text-[10px] font-medium" style={{ color: colors.primary.main }}>
-            {jobCount === 1 ? 'Job' : 'Jobs'}
+            {jobCount === 1 ? t('installer.jobsOne') : t('installer.jobsMany')}
           </Text>
         </View>
       </View>
@@ -336,12 +338,12 @@ export default function InstallerDashboard() {
           "All" / "Upcoming", the request carries `all` / `future`. */}
       <View className="flex-row px-4 mb-3">
         <SubTab
-          label="All"
+          label={t('installer.tabAll')}
           active={period === 'all'}
           onPress={() => handlePeriodChange('all')}
         />
         <SubTab
-          label="Upcoming"
+          label={t('installer.tabUpcoming')}
           active={period === 'future'}
           onPress={() => handlePeriodChange('future')}
         />
@@ -387,10 +389,10 @@ export default function InstallerDashboard() {
               />
               <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
                 {isError
-                  ? "Couldn't load your installs. Pull down to retry."
+                  ? t('installer.emptyError')
                   : period === 'all'
-                  ? 'No installs scheduled.'
-                  : 'No upcoming installs.'}
+                  ? t('installer.emptyAll')
+                  : t('installer.emptyUpcoming')}
               </Text>
             </View>
           }
