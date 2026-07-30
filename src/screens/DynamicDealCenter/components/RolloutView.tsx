@@ -1179,15 +1179,32 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   };
 
   // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
-  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a
-  // fresh drop via "+ Nth Drop" (pendingDropIndex < 0) always APPENDS a new entry
-  // — "1st Dropped Price", "2nd Dropped Price", … — even at the same price, so the
-  // rep sees every round they ran. Re-negotiating an existing row via its Display
-  // button (pendingDropIndex >= 0) edits THAT row in place. (The old same-price
-  // dedup collapsed distinct rounds into one row; the multiple-payment-methods
-  // duplication it guarded against is now handled by storing all plans on a single
-  // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
-  const resolveDropTargetIndex = () => pendingDropIndex;
+  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a fresh
+  // drop via "+ Nth Drop" APPENDS a new entry — "1st Dropped Price", "2nd Dropped
+  // Price", … — even at the same price, so the rep sees every round. Re-negotiating an
+  // existing row via its Display button edits THAT row in place.
+  //
+  // DUPLICATION GUARD: `openDrop` now persists the pending drop as a `declined` twin the
+  // instant it's entered (client save-on-close). So Secure/Decline must convert THAT
+  // twin, never append a second row beside it. Trust `pendingDropIndex` when it still
+  // points to a row at the price being actioned; otherwise adopt the existing declined
+  // twin for this price (last one, i.e. the round just entered). Only when neither
+  // exists (no twin at all) do we return -1 to append — a genuinely new price.
+  const resolveDropTargetIndex = () => {
+    const priceOf = (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
+    const target = Math.round(Number(pendingDrop));
+    if (
+      pendingDropIndex >= 0 &&
+      pendingDropIndex < drops.length &&
+      priceOf(drops[pendingDropIndex]) === target
+    ) {
+      return pendingDropIndex;
+    }
+    for (let i = drops.length - 1; i >= 0; i--) {
+      if (priceOf(drops[i]) === target && drops[i]?.status === 'declined') return i;
+    }
+    return -1;
+  };
 
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
@@ -1209,7 +1226,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
     const uidS = user?._id || user?.id;
     if (uidS) {
-      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      // Web parity (handleSecurePrice `lastDroppedPrice`): the transition's OLD value is
+      // the price BEFORE this drop — the previous drop, or the rollout end price for the
+      // first — NOT the just-entered drop. `openDrop` already appended the pending drop
+      // (save-on-entry), so read the entry BEFORE `targetIndex`. The portal draws the
+      // yellow `old → new` arrow only when old ≠ new, which is what surfaces this log.
+      const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
+      const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
       logRolloutChange({
         userId: uidS,
@@ -1268,7 +1291,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
     const uidD = user?._id || user?.id;
     if (uidD) {
-      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      // Web parity (handleDeclinePrice `lastDroppedPrice`): OLD value is the price BEFORE
+      // this drop — the previous drop, or the rollout end price for the first — NOT the
+      // just-entered drop. `openDrop` appended the pending drop (save-on-entry), so read
+      // the entry BEFORE `targetIndex`; the portal draws the yellow arrow only when
+      // old ≠ new.
+      const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
+      const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
       logRolloutChange({
         userId: uidD,
