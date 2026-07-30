@@ -79,9 +79,8 @@ enforce the same geofence the app just applied:
 point, which proves nothing about who is on site. Omitted entirely when no fix could be
 produced and the gate allowed the check-in anyway, so a body-less PUT is still valid.
 
-⚠️ The on-device gate is currently **bypassed for testing** — `BYPASS_CHECK_IN_GEOFENCE`
-in `utils/installer-geofence.ts`. With it on, no fix is requested and no
-`location`/`radius` is sent.
+The radius comes from `CHECK_IN_RADIUS_METERS` (`utils/installer-geofence.ts`) — the one
+place it is defined, on-device and on the wire.
 
 **Response** is the full working job — `contractDetails`, `preInstallPhotos`,
 `productDetails`, `submissionPdf`, plus the install record (`installerPickupPhotos`,
@@ -414,7 +413,7 @@ src/utils/installer-step-data.ts     stepData builders, one per timeline step
 src/utils/installer-upload.ts        multipart descriptors + the upload itself
 src/utils/installer-packet.ts        packet key → signed URL
 src/utils/installer-hydrate.ts       server install record → local InstallProgress
-src/utils/installer-geofence.ts      check-in radius gate (currently BYPASSED)
+src/utils/installer-geofence.ts      check-in radius gate + distance maths
 src/utils/installer-card-state.ts    dashboard card label + colour per workflowState
 src/hooks/useInstallerJobs.ts        list / status / discrepancy queries
 src/hooks/useInstallerPhotoUpload.ts capture → S3, and waitForUploads()

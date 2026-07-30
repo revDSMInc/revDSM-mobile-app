@@ -66,6 +66,10 @@ export const en = {
     appointmentExpired: 'Appointment Expired',
     startingJob: 'Starting Job…',
 
+    notYetTitle: 'Not scheduled yet',
+    notYetBody: "This job is scheduled for {date}. You can open it on the day.",
+    notYetBodyNoDate: 'This job is scheduled for a later date. You can open it on the day.',
+
     leadCenter: 'Lead Center',
     timeline: 'Install Timeline',
     stepsDone: '{done} of {total} done',
@@ -276,6 +280,11 @@ export const es: TranslationTree = {
     previewAppointment: 'Vista previa de la cita',
     appointmentExpired: 'Cita vencida',
     startingJob: 'Iniciando trabajo…',
+
+    notYetTitle: 'Aún no programado',
+    notYetBody: 'Este trabajo está programado para el {date}. Podrás abrirlo ese día.',
+    notYetBodyNoDate:
+      'Este trabajo está programado para una fecha posterior. Podrás abrirlo ese día.',
 
     leadCenter: 'Centro de clientes',
     timeline: 'Cronograma de instalación',

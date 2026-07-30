@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MaterialDesignIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { format } from 'date-fns';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../i18n/LanguageProvider';
 import { FlashMessage } from '../../config/message';
@@ -29,6 +30,7 @@ import {
   CHECK_IN_RADIUS_METERS,
   resolveCheckInEligibility,
 } from '../../utils/installer-geofence';
+import { isFutureDatedJob } from '../../utils/installer-schedule';
 import type {
   InstallerCheckInPayload,
   InstallerJob,
@@ -105,26 +107,50 @@ export default function InstallerDashboard() {
    * pre-install photos), which exists nowhere else, so the card holds a spinner
    * until it lands and the detail screen opens with real data.
    *
-   * Upcoming previews and already-resulted jobs open read-only: no status change, and
-   * no geofence — nobody is claiming to be on site. They are still FETCHED, through the
-   * same `PUT installer/v1/{id}/work` (it is what answers with the full payload), because
-   * nothing on this screen is served from local storage: a job that opened without a
-   * request would open empty.
+   * Two gates, and they answer different questions:
    *
-   * A live job is **geofenced**: the installer has to be within
-   * `CHECK_IN_RADIUS_METERS` of the customer's address or of a company office before
-   * anything is sent (`utils/installer-geofence.ts`). The check runs first, so a
-   * refusal costs no request and never flips the job to `inProgress`.
+   *  - **WHEN** (`utils/installer-schedule.ts`) — today or any earlier date opens; a
+   *    future-dated job does not, it only says when the crew is due. Decided by the job's
+   *    OWN date, not by which tab it was tapped in, so an upcoming job is refused even if
+   *    "All" happens to list it.
+   *  - **WHERE** (`utils/installer-geofence.ts`) — within `CHECK_IN_RADIUS_METERS` of the
+   *    address or of a company office. Runs before anything is sent, so a refusal costs no
+   *    request and never flips the job to `inProgress`.
    *
-   * ⚠️ The gate is currently BYPASSED for testing — see `BYPASS_CHECK_IN_GEOFENCE`.
+   * An already-resulted job skips both: the visit is over, so it opens read-only for
+   * review with no status change and no geofence — nobody is claiming to be on site. It is
+   * still FETCHED, through the same `PUT installer/v1/{id}/work` (it is what answers with
+   * the full payload), because nothing on this screen is served from local storage.
    */
   const openJob = async (job: InstallerJob) => {
-    const readOnly = period === 'future' || !!job.resulted;
     // Bind the job to the log context first so every downstream installer event —
     // including the start call below — carries its jobId / leadId / customer.
     // The "opened" event itself is logged by the detail screen, as a check-in or a
     // resume; logging the tap here too would double it.
     persistActiveInstallerJob(job);
+
+    // Review comes first: a resulted job is readable whatever its date.
+    const readOnly = !!job.resulted;
+
+    // ── WHEN ──────────────────────────────────────────────────────────────────
+    // Not due yet. Refused outright rather than opened read-only: there is nothing to
+    // review on a visit that hasn't happened, and the message says when to come back.
+    if (!readOnly && isFutureDatedJob(job)) {
+      const scheduled = job.leadDate ? new Date(job.leadDate) : null;
+      const dateLabel =
+        scheduled && !Number.isNaN(scheduled.getTime())
+          ? format(scheduled, 'MM/dd/yyyy')
+          : null;
+
+      log.jobStartFailed(job, new Error('Job is scheduled for a future date'));
+      FlashMessage.info(
+        t('installer.notYetTitle'),
+        dateLabel
+          ? t('installer.notYetBody', { date: dateLabel })
+          : t('installer.notYetBodyNoDate')
+      );
+      return;
+    }
 
     if (readOnly) {
       if (startingId) return;
@@ -364,7 +390,10 @@ export default function InstallerDashboard() {
           renderItem={({ item }) => (
             <InstallerJobCard
               job={item}
-              isUpcoming={period === 'future'}
+              // The job's own date, not just the tab: "All" can list a future job, and
+              // it must read as a preview rather than offering "Start Appointment" for a
+              // tap that will be refused.
+              isUpcoming={period === 'future' || isFutureDatedJob(item)}
               loading={startingId === item._id}
               disabled={!!startingId && startingId !== item._id}
               onPress={() => openJob(item)}

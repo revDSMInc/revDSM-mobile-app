@@ -34,23 +34,6 @@ import { getAllOfficeCoords, type OfficeCoords } from './office-location';
  */
 export const CHECK_IN_RADIUS_METERS = 20;
 
-/**
- * ⚠️ TEMPORARY — TESTING ONLY. Set back to `false` before release.
- *
- * With this on, any job opens from anywhere: `resolveCheckInEligibility` returns
- * "allowed" without asking for a fix, and because it reports no coordinates the
- * check-in request goes up WITHOUT `location`/`radius`, so the server has nothing to
- * enforce the radius against either.
- *
- * Nothing else changes — the distance maths, the offices lookup, the refusal copy and
- * the 403 handling are all still here and still wired. Flipping this one constant back
- * restores the gate exactly as it was; there is no other edit to undo.
- *
- * If a check-in still comes back 403 with this on, the refusal is server-side and needs
- * the backend's own geofence relaxed for the test environment.
- */
-export const BYPASS_CHECK_IN_GEOFENCE = true;
-
 /** Where the installer was allowed to check in from. */
 export type CheckInMatch = 'customer' | 'office';
 
@@ -235,26 +218,6 @@ export const resolveCheckInEligibility = async (
   user: any,
   radiusMeters: number = CHECK_IN_RADIUS_METERS
 ): Promise<CheckInEligibility> => {
-  // ⚠️ Testing bypass — see `BYPASS_CHECK_IN_GEOFENCE`. Returns before the fix is even
-  // requested, so no permission prompt and no GPS wait, and `coords: null` keeps the
-  // location out of the check-in payload. Warns on EVERY call, not once: a bypass that
-  // quietly ships is the failure mode worth being noisy about.
-  if (BYPASS_CHECK_IN_GEOFENCE) {
-    console.warn(
-      '[InstallerGeofence] ⚠️ GEOFENCE BYPASSED (testing) — this job would normally ' +
-        'require the installer to be on site. Set BYPASS_CHECK_IN_GEOFENCE = false to restore.'
-    );
-    return {
-      allowed: true,
-      coords: null,
-      matched: null,
-      distanceMeters: null,
-      accuracyMeters: null,
-      title: '',
-      reason: '',
-    };
-  }
-
   const jobCoords = getJobCoords(job);
   const offices: OfficeCoords[] = getAllOfficeCoords(user);
 
