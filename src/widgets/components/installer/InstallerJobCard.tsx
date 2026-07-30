@@ -9,8 +9,8 @@ import type { InstallerJob } from '../../../config/types/installer';
 
 interface Props {
   job: InstallerJob;
-  /** Tomorrow's jobs are preview-only. */
-  isTomorrow?: boolean;
+  /** The Upcoming tab — those jobs are preview-only. */
+  isUpcoming?: boolean;
   /** Starting the job — the card waits on the API before the detail screen opens. */
   loading?: boolean;
   /** Another card is starting; this one stays tappable-looking but inert. */
@@ -28,7 +28,7 @@ interface Props {
  */
 export function InstallerJobCard({
   job,
-  isTomorrow = false,
+  isUpcoming = false,
   loading = false,
   disabled = false,
   onPress,
@@ -37,7 +37,7 @@ export function InstallerJobCard({
 
   const resulted = !!job.resulted;
   const inert = loading || disabled;
-  const state = resolveJobCardState(job, { isTomorrow, loading });
+  const state = resolveJobCardState(job, { isUpcoming, loading });
   const accent = state.color;
   const actionLabel = state.actionLabel;
 

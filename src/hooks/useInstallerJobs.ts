@@ -13,8 +13,8 @@ export const installerKeys = {
   job: (jobId: string) => ['installer', 'job', jobId] as const,
 };
 
-/** Installer's schedule for a given day — `GET installer/v1/my-jobs?period=…`. */
-export function useInstallerJobs(period: JobPeriod = 'today') {
+/** Installer's schedule — `GET installer/v1/my-jobs?period=all|future`. */
+export function useInstallerJobs(period: JobPeriod = 'all') {
   const { data, isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: installerKeys.jobs(period),
     queryFn: () => InstallerService.getJobs(period),

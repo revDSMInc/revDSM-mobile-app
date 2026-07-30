@@ -23,7 +23,7 @@ export const JOB_CARD_COLORS = {
   PROGRESS: '#6fcf97',
   /** Review Appointment — read-only revisit. */
   OFFSITE: '#9e9e9e',
-  /** Preview Appointment — not actionable yet (tomorrow's schedule). */
+  /** Preview Appointment — not actionable yet (the Upcoming tab). */
   UPCOMING: '#2196f3',
   /** Resulted — the visit is over. Web's neutral grey. */
   RESULTED: '#9e9e9e',
@@ -61,7 +61,7 @@ export interface JobCardState {
  *
  * `installer/v1/my-jobs` sends three values today — **`start`, `resume`, `expired`** —
  * and every one of them opens the job. `review` and `preview` are kept because the
- * sales side of the same backend uses them and the tomorrow tab renders `preview`;
+ * sales side of the same backend uses them and the Upcoming tab renders `preview`;
  * neither is currently sent for an installer job.
  */
 const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
@@ -102,8 +102,8 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
 };
 
 export interface JobCardStateOptions {
-  /** Tomorrow's tab — preview-only regardless of what the job's own state says. */
-  isTomorrow?: boolean;
+  /** The Upcoming tab — preview-only regardless of what the job's own state says. */
+  isUpcoming?: boolean;
   /** The card is waiting on the check-in request. */
   loading?: boolean;
 }
@@ -111,20 +111,25 @@ export interface JobCardStateOptions {
 /**
  * The card's presentation for one job.
  *
- * Precedence: **resulted → tomorrow → `workflowState`**. Resulted wins outright because
- * the visit is over whatever the workflow says, and the tomorrow tab is a preview of
+ * Precedence: **resulted → upcoming → `workflowState`**. Resulted wins outright because
+ * the visit is over whatever the workflow says, and the Upcoming tab is a preview of
  * jobs whose `workflowState` is still `start` — showing them as actionable would invite
- * a crew to open tomorrow's work today.
+ * a crew to open future work today.
  */
 export const resolveJobCardState = (
   job: InstallerJob,
-  { isTomorrow = false, loading = false }: JobCardStateOptions = {}
+  { isUpcoming = false, loading = false }: JobCardStateOptions = {}
 ): JobCardState => {
   if (loading) {
-    // Mid-check-in. Keep the card's own accent so it doesn't flash a different colour
-    // while the request is in flight; only the label changes.
-    const base = resolveJobCardState(job, { isTomorrow });
-    return { ...base, actionLabel: 'Starting Job…' };
+    // Mid-request. Keep the card's own accent so it doesn't flash a different colour
+    // while it is in flight; only the label changes. A resulted or upcoming card is
+    // FETCHING, not starting — those open read-only, and "Starting Job…" would claim
+    // a finished visit is being reopened.
+    const base = resolveJobCardState(job, { isUpcoming });
+    return {
+      ...base,
+      actionLabel: job.resulted || isUpcoming ? 'Loading…' : 'Starting Job…',
+    };
   }
 
   if (job.resulted) {
@@ -136,7 +141,7 @@ export const resolveJobCardState = (
     };
   }
 
-  if (isTomorrow) {
+  if (isUpcoming) {
     return {
       key: 'UPCOMING',
       color: JOB_CARD_COLORS.UPCOMING,

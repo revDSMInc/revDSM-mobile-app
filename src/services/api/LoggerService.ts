@@ -3,6 +3,8 @@ import { ENV } from '../../config/env';
 import { Storage } from '../../utils/storage';
 import Geolocation from 'react-native-geolocation-service';
 
+const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
+
 /**
  * Modules that are not scoped to a single lead/job, so the active `leadId` in
  * storage must NOT be auto-attached to their logs (it would link an auth event or
@@ -111,6 +113,24 @@ export const logEvent = async (eventType: string, details: any = {}) => {
     meta,
   };
 
+  /**
+   * Captured NOW, not inside the queued task below.
+   *
+   * The task runs a tick or more later — after everything ahead of it in the chain —
+   * and a log fired around a session change would then read the wrong thing. Logout is
+   * the case that actually broke: it logs while signing out, and by the time its POST
+   * ran, `clearSession()` had already removed the token, so the request went up
+   * unauthenticated and the event was lost.
+   */
+  const token = Storage.getItem('accessToken');
+
+  if (isDev) {
+    console.log(
+      `[Logger] → ${eventType} (${details.module_type ?? 'no module'})` +
+        `${userId ? '' : ' · public'}${token ? '' : ' · NO TOKEN'}`
+    );
+  }
+
   // Enqueue synchronously so the queue order == the order logEvent was called in.
   const run = logChain.then(async () => {
     try {
@@ -122,7 +142,6 @@ export const logEvent = async (eventType: string, details: any = {}) => {
         }
       }
       const baseUrl = ENV.API_URL.endsWith('/') ? ENV.API_URL.slice(0, -1) : ENV.API_URL;
-      const token = Storage.getItem('accessToken');
       const headers: any = {};
       if (token) {
         headers.Authorization = `Bearer ${token}`;
@@ -132,12 +151,19 @@ export const logEvent = async (eventType: string, details: any = {}) => {
         headers,
         timeout: 15000,
       });
-    } catch (err) {
+      if (isDev) console.log(`[Logger] ✓ ${eventType}`);
+    } catch (err: any) {
       // console.warn, NOT console.error: LogBox turns a console.error into a
       // full-screen red "Console Error" overlay, so a single 502 from the logging
       // service used to cover the screen the installer was working on. A dropped
       // analytics event is a diagnostic, never something the user must act on.
-      console.warn('[Logger] Failed to send log:', err);
+      //
+      // The event name and status are named because a silently missing log row is
+      // otherwise indistinguishable from one that was never fired.
+      console.warn(
+        `[Logger] ✗ ${eventType} — ${err?.response?.status ?? 'no response'}:`,
+        err?.response?.data ?? err?.message ?? err
+      );
     }
   });
 

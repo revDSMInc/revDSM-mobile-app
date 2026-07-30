@@ -6,7 +6,13 @@ import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { Platform } from 'react-native';
 import { commitAutofill } from '../utils/autofill';
-import { logEvent } from '../services/api/LoggerService';
+import {
+  logLoginAttempt,
+  logLoginFailed,
+  logLoginSuccess,
+  logTwoFactorFailed,
+  logTwoFactorRequired,
+} from '../utils/activity-log/auth-log';
 
 
 export const useLoginMutation = () => {
@@ -14,19 +20,25 @@ export const useLoginMutation = () => {
 
   return useMutation({
     mutationFn: async (data: LoginData) => {
+      const deviceId = data.deviceId || `mobile-${Platform.OS}-${data.email}`;
+
+      // Logged before the request, not after: an attempt that never comes back — the
+      // API unreachable, the app killed mid-request — is precisely the case a log for
+      // "did they even try" has to cover.
+      logLoginAttempt(data.email, { deviceId, platform: Platform.OS });
+
       // 1. Perform Login
-      const loginRes = await AuthService.login({
-        ...data,
-        deviceId: data.deviceId || `mobile-${Platform.OS}-${data.email}`,
-      });
+      const loginRes = await AuthService.login({ ...data, deviceId });
 
       const resData = loginRes.data?.data || loginRes.data;
 
       // Check if 2FA is required (New structure support)
       if (resData?.requires2FA || resData?.twoFactorRequired) {
-        return { 
-          twoFactorRequired: true, 
-          method: resData.twoFactorMethod || resData.method, 
+        const method = resData.twoFactorMethod || resData.method;
+        logTwoFactorRequired(data.email, method);
+        return {
+          twoFactorRequired: true,
+          method,
           email: data.email,
           lat: data.lat,
           long: data.long,
@@ -47,24 +59,18 @@ export const useLoginMutation = () => {
       // 4. Fetch Profile
       const meRes = await AuthService.getMe();
       const userData = meRes.data?.data;
+      if (!userData) {
+        // The token landed but the profile didn't. Nothing can be dispatched, so
+        // resolving here would leave the screen sitting silently on a sign-in that
+        // "worked" — throwing gives the user a reason and gives us a logged failure.
+        throw new Error('Signed in, but your profile could not be loaded. Please try again.');
+      }
 
       return { userData };
     },
     onSuccess: (res: any) => {
       if (res.userData) {
-        const userId = res.userData?._id || res.userData?.id;
-        if (userId) {
-          logEvent('login', {
-            user_id: userId,
-            created_by: userId,
-            module_type: 'system',
-            meta: {
-              email: res.userData?.email,
-              firstName: res.userData?.firstName,
-              lastName: res.userData?.lastName,
-            },
-          });
-        }
+        logLoginSuccess(res.userData, 'password');
         commitAutofill();
         if (Platform.OS === 'android') {
           setTimeout(() => {
@@ -74,6 +80,12 @@ export const useLoginMutation = () => {
           dispatch(loginAction({ user: res.userData }));
         }
       }
+    },
+    // Covers every way the sign-in can end badly — rejected credentials, an
+    // unreachable API, a profile that wouldn't load. The 2FA branch resolves rather
+    // than rejects, so it is logged in `mutationFn` instead.
+    onError: (err: any, variables) => {
+      logLoginFailed(variables?.email ?? '', err);
     },
   });
 };
@@ -113,23 +125,16 @@ export const useVerifyOtpMutation = () => {
 
       const meRes = await AuthService.getMe();
       const userData = meRes.data?.data;
+      if (!userData) {
+        throw new Error('Signed in, but your profile could not be loaded. Please try again.');
+      }
 
       return userData;
     },
     onSuccess: (userData) => {
-      const userId = userData?._id || userData?.id;
-      if (userId) {
-        logEvent('login', {
-          user_id: userId,
-          created_by: userId,
-          module_type: 'system',
-          meta: {
-            email: userData?.email,
-            firstName: userData?.firstName,
-            lastName: userData?.lastName,
-          },
-        });
-      }
+      // Same `login` event as the password path — the portal groups on the event name,
+      // and `via` is what tells the two apart.
+      logLoginSuccess(userData, '2fa');
       commitAutofill();
       if (Platform.OS === 'android') {
         setTimeout(() => {
@@ -138,6 +143,10 @@ export const useVerifyOtpMutation = () => {
       } else {
         dispatch(loginAction({ user: userData }));
       }
+    },
+    // A wrong or expired code, or a profile that wouldn't load after it verified.
+    onError: (err: any, variables) => {
+      logTwoFactorFailed(variables?.email ?? '', undefined, err);
     },
   });
 };

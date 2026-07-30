@@ -45,7 +45,7 @@ export default function InstallerDashboard() {
   const { installerCompanyName } = useUserRole();
   const { user } = useAuth();
   const userId = user?._id || user?.id;
-  const [period, setPeriod] = useState<JobPeriod>('today');
+  const [period, setPeriod] = useState<JobPeriod>('all');
   const [startingId, setStartingId] = useState<string | null>(null);
   const { jobs, summaryCounts, loading, isError, refreshing, refresh } =
     useInstallerJobs(period);
@@ -103,16 +103,21 @@ export default function InstallerDashboard() {
    * pre-install photos), which exists nowhere else, so the card holds a spinner
    * until it lands and the detail screen opens with real data.
    *
-   * Tomorrow's previews and already-resulted jobs open read-only: no status change
-   * and no check-in — nobody is on site for those.
+   * Upcoming previews and already-resulted jobs open read-only: no status change, and
+   * no geofence — nobody is claiming to be on site. They are still FETCHED, through the
+   * same `PUT installer/v1/{id}/work` (it is what answers with the full payload), because
+   * nothing on this screen is served from local storage: a job that opened without a
+   * request would open empty.
    *
    * A live job is **geofenced**: the installer has to be within
    * `CHECK_IN_RADIUS_METERS` of the customer's address or of a company office before
    * anything is sent (`utils/installer-geofence.ts`). The check runs first, so a
    * refusal costs no request and never flips the job to `inProgress`.
+   *
+   * ⚠️ The gate is currently BYPASSED for testing — see `BYPASS_CHECK_IN_GEOFENCE`.
    */
   const openJob = async (job: InstallerJob) => {
-    const readOnly = period === 'tomorrow' || !!job.resulted;
+    const readOnly = period === 'future' || !!job.resulted;
     // Bind the job to the log context first so every downstream installer event —
     // including the start call below — carries its jobId / leadId / customer.
     // The "opened" event itself is logged by the detail screen, as a check-in or a
@@ -120,7 +125,34 @@ export default function InstallerDashboard() {
     persistActiveInstallerJob(job);
 
     if (readOnly) {
-      navigation.navigate('InstallerJobDetail', { job });
+      if (startingId) return;
+      // Read-only still has to LOAD. The list row carries no contract, no sold products,
+      // no packet and no install record, and nothing on this screen is served from local
+      // storage — so a review that skipped the request would open empty.
+      //
+      // `{jobId}/work` is what answers with all of it. No geofence payload goes with it:
+      // this is a review, not a claim to be standing at the job, and the server should
+      // not be asked to validate a position nobody is reporting. The session it opens is
+      // closed again on the way out — `checkedIn` is what tells the detail screen to.
+      setStartingId(job._id);
+      try {
+        const full = await InstallerService.startWork(job._id);
+        const merged = full ? mergeInstallerJob(job, full) : job;
+        persistActiveInstallerJob(merged);
+        navigation.navigate('InstallerJobDetail', { job: merged, checkedIn: true });
+      } catch (err: any) {
+        // Including a 409 from a crew member who still holds the session. The review
+        // still opens — on the thin list row — because being unable to read a finished
+        // job because a colleague forgot to check out would be the worse outcome.
+        console.warn('[InstallerJob] Could not load the resulted job:', err);
+        FlashMessage.error(
+          "Couldn't load this job",
+          err?.message || 'Check your connection and try again.'
+        );
+        navigation.navigate('InstallerJobDetail', { job });
+      } finally {
+        setStartingId(null);
+      }
       return;
     }
     if (startingId) return;
@@ -145,7 +177,8 @@ export default function InstallerDashboard() {
       // An Error, not a plain object: the logger only reads `.message` off an Error
       // instance, so anything else would record the refusal with no reason attached.
       log.jobStartFailed(job, new Error(eligibility.reason));
-      FlashMessage.error('Too far to check in', eligibility.reason);
+      // The heading comes from the gate: location switched off is not "too far".
+      FlashMessage.error(eligibility.title || 'Cannot check in', eligibility.reason);
       setStartingId(null);
       return;
     }
@@ -200,8 +233,7 @@ export default function InstallerDashboard() {
         log.jobStartFailed(job, err);
         FlashMessage.error(
           'Too far to check in',
-          err?.message ||
-            `You must be within ${CHECK_IN_RADIUS_METERS} m of the job site or a company office.`
+          err?.message || 'Head to the job site to check in.'
         );
         setStartingId(null);
         return;
@@ -300,17 +332,18 @@ export default function InstallerDashboard() {
         </View>
       </View>
 
-      {/* Day tabs */}
+      {/* Schedule tabs. Labels and wire values differ on purpose — the installer reads
+          "All" / "Upcoming", the request carries `all` / `future`. */}
       <View className="flex-row px-4 mb-3">
         <SubTab
-          label="Today"
-          active={period === 'today'}
-          onPress={() => handlePeriodChange('today')}
+          label="All"
+          active={period === 'all'}
+          onPress={() => handlePeriodChange('all')}
         />
         <SubTab
-          label="Tomorrow"
-          active={period === 'tomorrow'}
-          onPress={() => handlePeriodChange('tomorrow')}
+          label="Upcoming"
+          active={period === 'future'}
+          onPress={() => handlePeriodChange('future')}
         />
       </View>
 
@@ -329,7 +362,7 @@ export default function InstallerDashboard() {
           renderItem={({ item }) => (
             <InstallerJobCard
               job={item}
-              isTomorrow={period === 'tomorrow'}
+              isUpcoming={period === 'future'}
               loading={startingId === item._id}
               disabled={!!startingId && startingId !== item._id}
               onPress={() => openJob(item)}
@@ -355,9 +388,9 @@ export default function InstallerDashboard() {
               <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
                 {isError
                   ? "Couldn't load your installs. Pull down to retry."
-                  : period === 'today'
-                  ? 'No installs scheduled for today.'
-                  : 'No installs scheduled for tomorrow.'}
+                  : period === 'all'
+                  ? 'No installs scheduled.'
+                  : 'No upcoming installs.'}
               </Text>
             </View>
           }

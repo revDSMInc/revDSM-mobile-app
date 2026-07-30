@@ -23,7 +23,9 @@ import type {
   InstallerUploadFile,
   StatusReasonPayload,
 } from '../../config/types/installer';
-import { MOCK_INSTALLER_JOBS, MOCK_INSTALLER_JOBS_TOMORROW } from './installer.mock';
+// No job payload is served from mocks any more — `getJob` fetches the real thing, so a
+// stand-in job can no longer reach the screen. The remaining `INSTALLER_USE_MOCKS`
+// branches are write no-ops (progress / result / discrepancy), which return nothing.
 import { stripUnsupportedFields } from '../../utils/installer-step-data';
 import { ENV } from '../../config/env';
 
@@ -125,7 +127,11 @@ export const INSTALLER_USE_MOCKS = true;
 const mockDelay = <T,>(data: T, ms = 350): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(data), ms));
 
-export type JobPeriod = 'today' | 'tomorrow';
+/**
+ * `?period=` on `my-jobs`. The wire values are NOT the tab labels: the installer reads
+ * "All" and "Upcoming", the request carries `all` and `future`.
+ */
+export type JobPeriod = 'all' | 'future';
 
 /**
  * Statuses the API uses for a job that is over — no more field work expected.
@@ -502,7 +508,7 @@ const unsupportedFieldsFrom = (err: any): string[] => {
 
 export const InstallerService = {
   /** Jobs assigned to the signed-in installer for a given day. */
-  getJobs: async (period: JobPeriod = 'today'): Promise<InstallerJobsResult> => {
+  getJobs: async (period: JobPeriod = 'all'): Promise<InstallerJobsResult> => {
     const res: AxiosResponse<any> = await api.get(InstallerEndpoints.myJobs, {
       params: { period },
     });
@@ -615,13 +621,25 @@ export const InstallerService = {
     await api.put(InstallerEndpoints.work(jobId), body);
   },
 
+  /**
+   * One job in full — `GET installer/v1/jobs/{jobId}`.
+   *
+   * NOT CALLED. Reviewing a resulted job reads it from `{jobId}/work` instead, which is
+   * the endpoint that actually answers with the working payload. Kept because a plain
+   * read that opens no work session is the shape this eventually wants — switch the
+   * read-only branch of `openJob` over the moment this route is confirmed to exist.
+   *
+   * Not mock-gated, deliberately: answering a real job id with a stand-in job would put
+   * someone else's contract on the screen, which is worse than showing nothing.
+   */
   getJob: async (jobId: string): Promise<InstallerJob | null> => {
-    if (INSTALLER_USE_MOCKS) {
-      const all = [...MOCK_INSTALLER_JOBS, ...MOCK_INSTALLER_JOBS_TOMORROW];
-      return mockDelay(all.find((j) => j._id === jobId) ?? null);
-    }
+    traceRequest('Job detail', 'get', InstallerEndpoints.job(jobId), undefined);
+
     const res: AxiosResponse<any> = await api.get(InstallerEndpoints.job(jobId));
-    return res.data?.data ?? res.data ?? null;
+    traceResponse('Job detail', res.data);
+
+    const data = res.data?.data ?? res.data;
+    return data?._id ? normalizeInstallerJob(data) : null;
   },
 
   /** Persists timeline progress. Local-only until the endpoint exists. */

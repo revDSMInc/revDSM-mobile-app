@@ -203,7 +203,7 @@ export default function InstallerJobDetail() {
    *
    * Hangs off unmount rather than the back button so every way out of the job counts:
    * the header back, the hardware back, the swipe gesture, and the `goBack()` that
-   * follows a result or a reset. Read-only opens — tomorrow's previews and resulted
+   * follows a result or a reset. Read-only opens — upcoming previews and resulted
    * jobs — never check in, so they must not check out either; the dashboard says which
    * is which via `checkedIn`. Mirrors the sales side's work / end-work pair in
    * `useLeadCenterData`.
@@ -1243,9 +1243,16 @@ export default function InstallerJobDetail() {
             packetLoading={resolvingPacket}
           />
 
-          {/* Result actions */}
+          {/* Result actions.
+              Once the job is done, Can't Do Work and Not Hit are gone — they would result
+              a job that already carries a result. Only Reset survives, and it takes the
+              full width. Nothing above this is touched: packet, contract, sold products
+              and the timeline all stay readable. */}
           <View className="flex-row mb-2.5" style={{ gap: 8 }}>
-            {INSTALLER_RESULT_TYPES.map((t) => (
+            {(isJobComplete
+              ? INSTALLER_RESULT_TYPES.filter((t) => t === 'Reset')
+              : INSTALLER_RESULT_TYPES
+            ).map((t) => (
               <TouchableOpacity
                 key={t}
                 onPress={() => handleOpenResult(t)}

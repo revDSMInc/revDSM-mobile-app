@@ -8,37 +8,42 @@ interceptor (`src/services/api/index.ts`).
 Paths are defined once in `InstallerEndpoints` (`src/services/api/installer.ts`) and
 called only through `InstallerService` — no screen builds a URL.
 
-Status reflects the repo as of **2026-07-29**.
+Status reflects the repo as of **2026-07-30**.
 
 ---
 
-## 1. Live endpoints
+## 1. Endpoints the installer tab calls
 
-These are the ones the app actually depends on in the field.
+Every one of these is wired and hit by the app. **Nothing is served from local storage** —
+every screen, including a read-only review, is filled from a response.
 
 | # | Method | Path | Called by |
 |---|---|---|---|
-| 1 | `GET` | `installer/v1/my-jobs?period=today\|tomorrow` | Dashboard list |
-| 2 | `PUT` | `installer/v1/{jobId}/work` | Check-in / check-out |
+| 1 | `GET` | `installer/v1/my-jobs?period=all\|future` | Dashboard list |
+| 2 | `PUT` | `installer/v1/{jobId}/work` | Check-in / check-out — **and** loading a resulted job for review |
 | 3 | `PUT` | `installer/v1/{jobId}/reset` | Reset — reopen a job |
-| 4 | `PUT` | `installer/v1/{jobId}/images` | Every photo capture (multipart) |
-| 5a | `PUT` | `installer/v1/update/{jobId}` | Status transitions — start, result |
-| 5b | `PATCH` | `installer/v1/update/{jobId}` | Step data + completion |
-| 6 | `POST` | `url/v1/secure/multiple` | Rep photos + job packet (shared endpoint) |
-| 7 | `POST` | `user-activity-log/v1/create` | Activity logging (shared endpoint) |
+| 4 | `PUT` | `installer/v1/{jobId}/images` | Photo capture (multipart) |
+| 5 | `DELETE` | `installer/v1/{jobId}/images` | Removing a captured photo |
+| 6a | `PUT` | `installer/v1/update/{jobId}` | Status transitions — start, Can't Do Work, Not Hit |
+| 6b | `PATCH` | `installer/v1/update/{jobId}` | Step data + completion sign-off |
+| 7 | `POST` | `url/v1/secure/multiple` | Rep photos + job packet (shared endpoint) |
+| 8 | `POST` | `user-activity-log/v1/create` | Activity logging (shared endpoint) |
 
-> **Retired:** `PUT installer/v1/update-job-status/{jobId}` is gone. Every transition —
-> start, result, reset, complete — is now a top-level `status` on #4.
+> **Retired:** `PUT installer/v1/update-job-status/{jobId}` is gone. Transitions are now
+> a `status` on #6a, and Reset has its own endpoint (#3).
 
 ---
 
 ### 1 · Job list
 
 ```
-GET installer/v1/my-jobs?period=today
+GET installer/v1/my-jobs?period=all
 ```
 
-The signed-in installer's schedule for a day. `period` is `today` or `tomorrow`.
+The signed-in installer's schedule. `period` is `all` or `future` — **wire values, not
+the tab labels**: the installer reads "All" and "Upcoming".
+
+The Upcoming tab is preview-only: those jobs open read-only, like a resulted one.
 
 **Response** `{ data: { jobs[], pagination, summaryCounts } }` — each row normalized by
 `normalizeInstallerJob`. The list row carries identity, address, arrival window and
@@ -51,19 +56,53 @@ status; it does **not** carry `contractDetails`, `preInstallPhotos` or `productD
 
 ---
 
-### 2 · Check-in / check-out (work session)
+### 2 · Work session — check-in, check-out, and review
 
 ```
-PUT installer/v1/{jobId}/work          ← check-in, NO body
-PUT installer/v1/{jobId}/work          ← check-out, { "workStartedBy": null }
+PUT installer/v1/{jobId}/work     ← check-in
+PUT installer/v1/{jobId}/work     ← check-out, { "workStartedBy": null }
 ```
 
-Mirrors the sales side's `lead/v1/{leadId}/work`. On check-in the server stamps
-`workStartedBy` from the bearer token, which is why the request carries no payload.
+Mirrors the sales side's `lead/v1/{leadId}/work`. The worker comes from the bearer token;
+what the check-in body carries is **where the installer was standing**, so the server can
+enforce the same geofence the app just applied:
 
-**Check-in response** is the full working job — `contractDetails`, `preInstallPhotos`,
-`productDetails`, `submissionPdf`. Since `update-job-status` was retired this is the
-**only** place that payload comes from, and the detail screen is rendered from it.
+```json
+{
+  "address": "Plot 161, Block F Phase 1 Johar Town, Lahore",
+  "location": { "type": "Point", "coordinates": [74.29039, 31.46666] },
+  "radius": 20
+}
+```
+
+`coordinates` is the DEVICE's fix, GeoJSON `[longitude, latitude]` — not the job's own
+point, which proves nothing about who is on site. Omitted entirely when no fix could be
+produced and the gate allowed the check-in anyway, so a body-less PUT is still valid.
+
+⚠️ The on-device gate is currently **bypassed for testing** — `BYPASS_CHECK_IN_GEOFENCE`
+in `utils/installer-geofence.ts`. With it on, no fix is requested and no
+`location`/`radius` is sent.
+
+**Response** is the full working job — `contractDetails`, `preInstallPhotos`,
+`productDetails`, `submissionPdf`, plus the install record (`installerPickupPhotos`,
+`preExistingConditions`, `jobScopeVerification`, …) that `installer-hydrate.ts` merges
+back into the timeline. This is the **only** place that payload comes from.
+
+**Reviewing a resulted job goes through here too.** A finished job — or tomorrow's
+preview — opens read-only, and this is the call that fills it. Two differences from a
+live check-in:
+
+- **No geofence payload.** A review is not a claim to be standing at the job, so no fix
+  is requested and no `location`/`radius` is sent.
+- **No status transition.** The job is not flipped to `inProgress` (§6a is skipped).
+
+The session it opens is closed again on the way out, like any other visit. If the call
+fails — including a 409 from a colleague who never checked out — the review still opens on
+the thin list row, because being locked out of *reading* a finished job would be the worse
+outcome.
+
+**403 — the server's own geofence refused.** It is the authority, so its verdict overrides
+the on-device check that just passed, and its wording is what the installer sees.
 
 **409 — already checked in**
 
@@ -82,10 +121,10 @@ Mirrors the sales side's `lead/v1/{leadId}/work`. On check-in the server stamps
 
 Check-in fires on the dashboard card tap; check-out fires when the detail screen
 unmounts — header back, hardware back, swipe gesture, and the `goBack()` after a
-result or reset all count.
+result, a reset or the completion sign-off all count.
 
-- Service: `InstallerService.startWork(jobId)` / `.endWork(jobId)`
-- Screens: `src/screens/Installer/index.tsx` (in), `JobDetail.tsx` (out)
+- Service: `InstallerService.startWork(jobId, checkIn?)` / `.endWork(jobId)`
+- Screens: `src/screens/Installer/index.tsx` (in + review), `JobDetail.tsx` (out)
 
 ---
 
@@ -93,11 +132,13 @@ result or reset all count.
 
 ```
 PUT installer/v1/{jobId}/reset
-{ "statusReason": "Manager reopened job for crew follow-up" }
+{ "statusReason": { "reason": "Manager reopened job for crew follow-up",
+                    "images": [{ "s3url": "…", "bucketName": "np-revdsm-staging" }] } }
 ```
 
-Reopens a job so the crew can come back to it. The reason travels as **`statusReason`**,
-not `reason` — this endpoint does not share the result actions' wording.
+Reopens a job so the crew can come back to it. The reason travels as **`statusReason`** —
+an object with `reason` plus optional `images[]`, not the bare string an earlier version
+of this contract used.
 
 **Response** is a summary, not the job:
 
@@ -111,12 +152,12 @@ not `reason` — this endpoint does not share the result actions' wording.
 ```
 
 The server decides what the job returns to (`inProgress`), so nothing is read back out
-of it. Once it succeeds the app wipes the visit's work — locally and, via §5's reset
+of it. Once it succeeds the app wipes the visit's work — locally and, via §6b's reset
 patch, on the server — and navigates back to the schedule. Ordering matters: a failed
 reset leaves the recorded work untouched.
 
 Reset is the one result action that is **not** a status transition; Can't Do Work and
-Not Hit go through §5.
+Not Hit go through §6a.
 
 - Service: `InstallerService.resetJob(jobId, statusReason)`
 - Screen: `JobDetail.tsx` → `handleConfirmReset`
@@ -133,7 +174,7 @@ Three form fields:
 
 | Field | Contents |
 |---|---|
-| `phase` | `pickup` \| `preExisting` \| `pre` \| `post` \| `return` |
+| `phase` | `pickup` \| `preExisting` \| `pre` \| `post` \| `return` \| `coc` \| `result` |
 | `files` | the binaries, one part per photo |
 | `images` | JSON array of descriptors, index-aligned with `files` |
 
@@ -161,7 +202,30 @@ as POST.
 
 ---
 
-### 5 · Step data, status transitions, completion
+### 5 · Photo delete
+
+```
+DELETE installer/v1/{jobId}/images
+{ "phase": "pickup", "s3urls": ["images/jobs/…/pickup-abc.jpeg"] }
+```
+
+Same path as the upload, different verb. `s3urls` are the bucket-relative keys the upload
+returned — **not** displayable URLs; a signed URL resolved for rendering will not match.
+Batched, so removing several shots is one request.
+
+`phase` here is a superset of the upload phases: it also accepts `scope`, which nothing
+uploads under.
+
+Removing a photo does two things, in this order: this DELETE drops the stored object, then
+the step-data PATCH (§6b) restates the set that is LEFT, dropping the reference. Neither
+waits for the step to close — a deletion the installer can see happen should be a deletion
+on the server before they walk away from signal.
+
+- Service: `InstallerService.deleteImages(jobId, phase, s3urls)`
+
+---
+
+### 6 · Step data, status transitions, completion
 
 ```
 PUT   installer/v1/update/{jobId}    ← a transition, nothing else
@@ -173,23 +237,28 @@ writes its data.** This is the only write route for a job — it replaced the ol
 `PATCH installer/v1/{jobId}` (same fields, **flat**) and
 `PUT installer/v1/update-job-status/{jobId}` (transitions).
 
-#### 5a · Transitions — `PUT`
+#### 6a · Transitions — `PUT`
 
 ```json
-{ "status": "inProgress" }                                    ← job start
-{ "status": "cantDoWork", "statusReason": "Site unsafe" }     ← result
-{ "status": "notHit", "statusReason": "Customer was not home" } ← result
+{ "status": "inProgress" }                            ← job start
+{ "status": "cantDoWork",
+  "statusReason": { "reason": "Site unsafe",
+                    "images": [{ "s3url": "…", "bucketName": "…" }] } }
+{ "status": "notHit",
+  "statusReason": { "reason": "Customer was not home" } }
 ```
 
 The status is a **wire code, not the button label**: the installer reads "Can't Do
-Work", the request carries `cantDoWork` (`RESULT_STATUS_CODE` maps them). The reason
-key is **`statusReason`**, matching Reset in §3.
+Work", the request carries `cantDoWork` (`RESULT_STATUS_CODE` maps them). The reason is
+**`statusReason`** — an object with `reason` + optional `images[]`, the same shape as
+Reset in §3. Images are mandatory for Can't Do Work (enforced in the modal), optional
+elsewhere.
 
 Workflow statuses: `scheduled | inProgress | completed | onHold`. Reset does **not**
 come through here — §3. Starting a job is **not blocking**: if this fails, the job
 still opens on the check-in payload from §2.
 
-#### 5b · Step data — `PATCH`
+#### 6b · Step data — `PATCH`
 
 Step fields sit inside `stepData`; only `status` joins them at the top level, and only
 for the completion sign-off.
@@ -231,9 +300,9 @@ Rules:
   been done. The completion PATCH restates everything, repairing any step whose save
   was dropped on a bad connection.
 - **Deleting a photo saves immediately**, without waiting for the step to close: the
-  PATCH carries the set that is LEFT (remove one of five → four are sent), which is what
-  performs the delete. Removing the *last* photo sends an empty array — the one case
-  where an empty array is deliberate rather than "this step is untouched".
+  PATCH carries the set that is LEFT (remove one of five → four are sent), which drops the
+  reference after §5 dropped the object. Removing the *last* photo sends an empty array —
+  the one case where an empty array is deliberate rather than "this step is untouched".
 
 Also used by **Reset** (`buildResetPatch`), *after* §3 succeeds: every patchable field
 back to its untouched value, including the four photo arrays emptied.
@@ -247,7 +316,7 @@ back to its untouched value, including the four photo arrays emptied.
 
 ---
 
-### 6 · Signed URLs (shared)
+### 7 · Signed URLs (shared)
 
 ```
 POST url/v1/secure/multiple
@@ -269,7 +338,7 @@ Service: `LeadService.getSecureUrls(filePaths)`
 
 ---
 
-### 7 · Activity log (shared)
+### 8 · Activity log (shared)
 
 ```
 POST user-activity-log/v1/create
@@ -286,19 +355,18 @@ shared wrapper.
 
 ---
 
-## 2. Provisional endpoints — defined but NOT live
+## 2. Defined but NOT called
 
-These paths exist in `InstallerEndpoints` so the shape was settled ahead of the backend,
-but they are gated behind `INSTALLER_USE_MOCKS = true` in
-`src/services/api/installer.ts`. **Confirm the final paths with the backend before
-flipping that flag** — nothing here has been verified against a running server.
+Paths that exist in `InstallerEndpoints` but nothing in the tab hits. The three write
+ones are still behind `INSTALLER_USE_MOCKS = true` — which now guards only no-ops, since
+no job payload is served from mocks any more.
 
 | Method | Path | Service | Reality today |
 |---|---|---|---|
-| `GET` | `installer/v1/jobs/{jobId}` | `getJob` | Returns mock data. `useInstallerJob` is not called by any screen — the detail screen takes its job from nav params. |
-| `PUT` | `installer/v1/jobs/{jobId}/progress` | `saveProgress` | No-op. Timeline progress lives in MMKV (`useInstallProgress`). |
-| `POST` | `installer/v1/jobs/{jobId}/result` | `submitResult` | Not called. Results go through the `status` + `reason` of §5 (or §3 for Reset) instead — the result actions *are* status transitions. |
-| `POST` | `installer/v1/jobs/{jobId}/discrepancy` | `reportDiscrepancy` | Mocked. Called from Verify Job Scope when a product is flagged; the discrepancy is also written into `jobScopeVerification` via §5, which is the path that actually persists. |
+| `GET` | `installer/v1/jobs/{jobId}` | `getJob` | Live and normalized, but not called: a review reads the job from §2 instead, which is the endpoint that actually answers with the working payload. Kept because a plain read that opens no work session is the shape this eventually wants. |
+| `PUT` | `installer/v1/jobs/{jobId}/progress` | `saveProgress` | No-op. Timeline progress lives in MMKV (`useInstallProgress`) and syncs through §6b. |
+| `POST` | `installer/v1/jobs/{jobId}/result` | `submitResult` | Not called. Results go through §6a (or §3 for Reset) — the result actions *are* status transitions. |
+| `POST` | `installer/v1/jobs/{jobId}/discrepancy` | `reportDiscrepancy` | Mocked. Called from Verify Job Scope when a product is flagged; the discrepancy is also written into `jobScopeVerification` via §6b, which is the path that actually persists. |
 
 ---
 
@@ -320,7 +388,7 @@ A 401 on any call triggers the global logout + "Session Expired" flash
 
 1. **Step 6 · CoC has no backend field.** Scanned Certificate-of-Completion pages stay
    on the device. The check-in response does show an `installerCocPhotos` array, so the
-   field may exist server-side — worth confirming, then wiring into §5.
+   field may exist server-side — worth confirming, then wiring into §6b.
 2. **Matched pre/post shots hydrate only via `salesPhotoId`.** The check-in record is
    merged back into local progress on open (`src/utils/installer-hydrate.ts`), which is
    what lets a second installer — or a reinstall — see work already done. Pickup, return,
@@ -341,17 +409,18 @@ A 401 on any call triggers the global logout + "Session Expired" flash
 
 ```
 src/services/api/installer.ts        InstallerEndpoints + InstallerService (+ mocks switch)
-src/services/api/installer.mock.ts   placeholder jobs for the provisional endpoints
 src/config/types/installer.ts        request/response types + INSTALLER_PATCH_FIELDS
 src/utils/installer-step-data.ts     stepData builders, one per timeline step
 src/utils/installer-upload.ts        multipart descriptors + the upload itself
 src/utils/installer-packet.ts        packet key → signed URL
 src/utils/installer-hydrate.ts       server install record → local InstallProgress
+src/utils/installer-geofence.ts      check-in radius gate (currently BYPASSED)
+src/utils/installer-card-state.ts    dashboard card label + colour per workflowState
 src/hooks/useInstallerJobs.ts        list / status / discrepancy queries
 src/hooks/useInstallerPhotoUpload.ts capture → S3, and waitForUploads()
 src/hooks/useInstallProgress.ts      local timeline state (MMKV)
-src/screens/Installer/index.tsx      dashboard — list, check-in, start
+src/screens/Installer/index.tsx      dashboard — list, check-in, review, start
 src/screens/Installer/JobDetail.tsx  timeline, step saves, completion, check-out
-revdsm-installer.postman_collection.json   collection (my-jobs + the provisional set)
-Patch Data sending.txt               §5 contract, verbatim
+revdsm-installer.postman_collection.json   collection
+Patch Data sending.txt               §6b contract, verbatim
 ```

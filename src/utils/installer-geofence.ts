@@ -34,6 +34,23 @@ import { getAllOfficeCoords, type OfficeCoords } from './office-location';
  */
 export const CHECK_IN_RADIUS_METERS = 20;
 
+/**
+ * ⚠️ TEMPORARY — TESTING ONLY. Set back to `false` before release.
+ *
+ * With this on, any job opens from anywhere: `resolveCheckInEligibility` returns
+ * "allowed" without asking for a fix, and because it reports no coordinates the
+ * check-in request goes up WITHOUT `location`/`radius`, so the server has nothing to
+ * enforce the radius against either.
+ *
+ * Nothing else changes — the distance maths, the offices lookup, the refusal copy and
+ * the 403 handling are all still here and still wired. Flipping this one constant back
+ * restores the gate exactly as it was; there is no other edit to undo.
+ *
+ * If a check-in still comes back 403 with this on, the refusal is server-side and needs
+ * the backend's own geofence relaxed for the test environment.
+ */
+export const BYPASS_CHECK_IN_GEOFENCE = true;
+
 /** Where the installer was allowed to check in from. */
 export type CheckInMatch = 'customer' | 'office';
 
@@ -47,6 +64,12 @@ export interface CheckInEligibility {
   distanceMeters: number | null;
   /** Reported horizontal accuracy of the fix, in metres, when the platform gives one. */
   accuracyMeters: number | null;
+  /**
+   * Heading for the refusal. Carried here rather than fixed at the call site because
+   * the two refusals are different problems — being far away and having location
+   * switched off — and "Too far to check in" is simply wrong for the second.
+   */
+  title: string;
   /** Installer-facing explanation. Empty when allowed. */
   reason: string;
 }
@@ -74,6 +97,30 @@ export const distanceMeters = (a: GeoCoordinates, b: GeoCoordinates): number => 
 /** Metres → the phrasing the installer sees ("18 m" / "1.4 km"). */
 export const formatDistance = (meters: number): string =>
   meters < 1000 ? `${Math.round(meters)} m` : `${(meters / 1000).toFixed(1)} km`;
+
+/**
+ * Past this, "move closer" is useless advice — the crew has to drive, and naming the
+ * radius would only be noise. Inside it, they are basically there and nudging them a few
+ * steps is the whole fix.
+ */
+const NEARBY_METERS = 500;
+
+/**
+ * The one-line refusal.
+ *
+ * Deliberately short and actionable, and it says only what is useful at that distance:
+ * 24 km away needs a destination, 45 m away needs a nudge. The earlier wording followed
+ * the distance with a restatement of the rule ("Check in within 20 m of the customer's
+ * address or a company office") — two sentences, two units, and a number the installer
+ * can do nothing with.
+ */
+const tooFarMessage = (meters: number, nearest: CheckInMatch): string => {
+  const away = `You're ${formatDistance(meters)} away.`;
+  if (meters < NEARBY_METERS) return `${away} Move a bit closer and try again.`;
+  return nearest === 'office'
+    ? `${away} Check in at the job site or a company office.`
+    : `${away} Head to the job site to check in.`;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reference points
@@ -188,6 +235,26 @@ export const resolveCheckInEligibility = async (
   user: any,
   radiusMeters: number = CHECK_IN_RADIUS_METERS
 ): Promise<CheckInEligibility> => {
+  // ⚠️ Testing bypass — see `BYPASS_CHECK_IN_GEOFENCE`. Returns before the fix is even
+  // requested, so no permission prompt and no GPS wait, and `coords: null` keeps the
+  // location out of the check-in payload. Warns on EVERY call, not once: a bypass that
+  // quietly ships is the failure mode worth being noisy about.
+  if (BYPASS_CHECK_IN_GEOFENCE) {
+    console.warn(
+      '[InstallerGeofence] ⚠️ GEOFENCE BYPASSED (testing) — this job would normally ' +
+        'require the installer to be on site. Set BYPASS_CHECK_IN_GEOFENCE = false to restore.'
+    );
+    return {
+      allowed: true,
+      coords: null,
+      matched: null,
+      distanceMeters: null,
+      accuracyMeters: null,
+      title: '',
+      reason: '',
+    };
+  }
+
   const jobCoords = getJobCoords(job);
   const offices: OfficeCoords[] = getAllOfficeCoords(user);
 
@@ -201,6 +268,7 @@ export const resolveCheckInEligibility = async (
       matched: null,
       distanceMeters: null,
       accuracyMeters: null,
+      title: '',
       reason: '',
     };
   }
@@ -213,8 +281,8 @@ export const resolveCheckInEligibility = async (
       matched: null,
       distanceMeters: null,
       accuracyMeters: null,
-      reason:
-        'Turn on location and allow revDSM to use it, then try again. You must be at the job site or a company office to check in.',
+      title: 'Location needed',
+      reason: 'Turn on location for revDSM, then try again.',
     };
   }
 
@@ -247,6 +315,7 @@ export const resolveCheckInEligibility = async (
       matched: within.kind,
       distanceMeters: Math.round(within.distance),
       accuracyMeters: fix.accuracy,
+      title: '',
       reason: '',
     };
   }
@@ -257,9 +326,7 @@ export const resolveCheckInEligibility = async (
     matched: null,
     distanceMeters: Math.round(nearest.distance),
     accuracyMeters: fix.accuracy,
-    reason:
-      `You're ${formatDistance(nearest.distance)} from the ` +
-      `${nearest.kind === 'customer' ? 'job site' : 'nearest office'}. ` +
-      `Check in within ${radiusMeters} m of the customer's address or a company office.`,
+    title: 'Too far to check in',
+    reason: tooFarMessage(nearest.distance, nearest.kind),
   };
 };

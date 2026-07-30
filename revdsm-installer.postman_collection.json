@@ -97,14 +97,14 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/installer/v1/my-jobs?period=today",
+              "raw": "{{base_url}}/installer/v1/my-jobs?period=all",
               "host": ["{{base_url}}"],
               "path": ["installer", "v1", "my-jobs"],
               "query": [
-                { "key": "period", "value": "today", "description": "today | tomorrow" }
+                { "key": "period", "value": "all", "description": "all | future" }
               ]
             },
-            "description": "Jobs assigned to the signed-in installer for the given day. Response: `{ data: { jobs[], pagination, summaryCounts } }`."
+            "description": "Jobs assigned to the signed-in installer. `period=all` backs the \"All\" tab, `period=future` backs \"Upcoming\" (preview-only — those jobs open read-only). Response: `{ data: { jobs[], pagination, summaryCounts } }`."
           }
         },
         {
