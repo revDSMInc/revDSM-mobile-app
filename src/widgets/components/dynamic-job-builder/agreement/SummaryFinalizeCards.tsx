@@ -19,6 +19,10 @@ import { logEvent } from '../../../../services/api/LoggerService';
 import { useAuth } from '../../../../hooks/useAuth';
 import { convertJpegToPdf } from '../../../../utils/jpeg-to-pdf';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
+import {
+  fetchLeadOutcomeDocumentRows,
+  resolveOutcomeDocRows,
+} from '../../../../screens/DynamicDealCenter/utils/outcome-documents';
 
 type DocCategory = 'agreement' | 'orderSheet';
 
@@ -400,6 +404,50 @@ export function SummaryFinalizeCards({
     setAgreementDialogVisible(false);
   };
 
+  // A REMOTELY-signed agreement is filed by the server the moment every signer signs
+  // (REVDSM-263) — there is NO local `file://` copy to hand back, so the in-person
+  // `handleSigned`/`handleAgreementGenerated` path can't be reused (it would commit an
+  // empty local reference). Instead we READ the stored agreement from the outcome and
+  // commit it like any server-filed document.
+  //
+  // The read MUST be LEAD-scoped (`fetchLeadOutcomeDocumentRows` → `getLeadOutcome`):
+  // agreements live on `leadOutcomeDocuments`, which the calculator-scoped outcome
+  // (`onRefreshDocs`) does not echo. Routing the resolved server rows through
+  // `commitUploaded` mirrors the in-person adopt path exactly — it writes BOTH the
+  // display list and the durable `jobState.agreements` copy (so a calc-scoped refetch
+  // can't wipe it) and marks the rows already-filed so finalize never double-sends.
+  //
+  // A short retry covers the race where "Done" is tapped in the instant between the
+  // final signature and the server finishing the PDF filing.
+  const handleRemoteAgreementComplete = async () => {
+    if (!leadId) return;
+    let resolvedAgreements: any[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const rows = await fetchLeadOutcomeDocumentRows(leadId);
+        const resolved = await resolveOutcomeDocRows(rows);
+        resolvedAgreements = resolved.agreements || [];
+      } catch (e) {
+        console.warn('[SummaryFinalizeCards] remote agreement read failed', e);
+      }
+      if (resolvedAgreements.length) break;
+      if (attempt < 2) await new Promise<void>((resolve) => setTimeout(() => resolve(), 1200));
+    }
+    if (resolvedAgreements.length) {
+      // `isSystemGenerated` marks these as already-filed (parity with the in-person
+      // adopt branch) so the legacy no-system-generated payload path skips them.
+      commitUploaded(
+        'agreement',
+        resolvedAgreements.map((d) => ({ ...d, isSystemGenerated: true }))
+      );
+    } else if (leadId) {
+      // Nothing readable yet — at least drop the caches so a reopen picks it up.
+      queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] });
+      queryClient.invalidateQueries({ queryKey: ['leadOutcomeDocs', leadId] });
+      queryClient.invalidateQueries({ queryKey: ['editOutcomeDocs', leadId] });
+    }
+  };
+
   const renderDocSection = (
     title: string,
     iconName: string,
@@ -617,6 +665,7 @@ export function SummaryFinalizeCards({
         visible={agreementDialogVisible}
         onClose={() => setAgreementDialogVisible(false)}
         onAgreementGenerated={handleAgreementGenerated}
+        onRemoteComplete={handleRemoteAgreementComplete}
         leadId={leadId}
         jobId={leadId}
         productKey={productKey}

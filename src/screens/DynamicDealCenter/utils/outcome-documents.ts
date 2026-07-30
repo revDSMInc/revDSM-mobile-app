@@ -137,27 +137,29 @@ export async function loadResolvedOutcomeDocuments(
   return resolveOutcomeDocRows(await fetchOutcomeDocumentRows(leadId, calculatorId));
 }
 
-// DISABLED — the LEAD-scoped outcome read (`GET /lead/v1/{leadId}/outcome`).
-//
-// This is what web calls (`api/leads.js#getJobBuilder`, used by
-// `DocumentUploadDialog.syncFromServer`), and it returns every document on the lead
-// regardless of calculator. The dynamic flow has its own calculator-scoped backend
-// contract, so mobile must read `/outcome/{calculatorId}` instead — kept here only to
-// document the alternative. Do not re-enable without confirming the backend intends
-// the dynamic flow to read lead-scoped documents.
-//
-// export async function fetchLeadOutcomeDocumentRows(
-//   leadId?: string
-// ): Promise<OutcomeDocRows | null> {
-//   if (!leadId) return null;
-//   try {
-//     const res = await LeadService.getLeadOutcome(leadId);
-//     const outcome = unwrapOutcome(res?.data);
-//     const docs = outcome?.leadOutcomeDocuments;
-//     if (!docs) return null;
-//     return { agreements: docs.agreements || [], orderSheets: docs.orderSheets || [] };
-//   } catch (e) {
-//     console.warn('[outcome-documents] lead-scoped document read failed:', e);
-//     return null;
-//   }
-// }
+/**
+ * The LEAD-scoped outcome document read (`GET /lead/v1/{leadId}/outcome`).
+ *
+ * This is what web calls (`api/leads.js#getJobBuilder`) and it returns every document
+ * on the lead regardless of calculator. It is REQUIRED for agreements: they are filed
+ * LEAD-scoped by the sign / remote-sign endpoints, and the calculator-scoped outcome
+ * (`fetchOutcomeDocumentRows`) does NOT echo them (see the comment in
+ * `SummaryFinalizeCards.handleAgreementGenerated` and the `agreement-docs-lead-scoped-
+ * not-calc` note). Used to surface a REMOTELY-signed agreement in the summary the
+ * moment it is filed — the calc-scoped read would come back empty.
+ */
+export async function fetchLeadOutcomeDocumentRows(
+  leadId?: string
+): Promise<OutcomeDocRows | null> {
+  if (!leadId) return null;
+  try {
+    const res = await LeadService.getLeadOutcome(leadId);
+    const outcome = unwrapOutcome(res?.data);
+    const docs = outcome?.leadOutcomeDocuments;
+    if (!docs) return null;
+    return { agreements: docs.agreements || [], orderSheets: docs.orderSheets || [] };
+  } catch (e) {
+    console.warn('[outcome-documents] lead-scoped document read failed:', e);
+    return null;
+  }
+}

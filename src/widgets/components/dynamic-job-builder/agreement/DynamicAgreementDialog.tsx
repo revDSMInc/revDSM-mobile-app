@@ -17,6 +17,10 @@ interface DynamicAgreementDialogProps {
   visible: boolean;
   onClose: () => void;
   onAgreementGenerated: (file: any) => void;
+  /** Fired after a REMOTE signing session completes so the caller can read the
+   *  server-filed (lead-scoped) signed agreement back into the summary. The dialog
+   *  still closes via `onClose`; this only refreshes the document list. */
+  onRemoteComplete?: () => void;
   leadId?: string;
   jobId?: string;
   productKey?: string;
@@ -101,6 +105,7 @@ export function DynamicAgreementDialog({
   visible,
   onClose,
   onAgreementGenerated,
+  onRemoteComplete,
   leadId,
   jobId,
   productKey,
@@ -124,6 +129,9 @@ export function DynamicAgreementDialog({
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agreementData, setAgreementData] = useState<any>(null);
+  // Controls the AgreementSignatureModal (level 2) SEPARATELY from this dialog
+  // (level 1) so the two never collapse in the same frame — see `handleSignClose`.
+  const [signVisible, setSignVisible] = useState(true);
   // Guards the one-shot preview request per open (effects can re-run as the lead
   // query settles; a second POST would mint a second agreement record).
   const requestedRef = useRef(false);
@@ -308,6 +316,8 @@ export function DynamicAgreementDialog({
       setAgreementData(null);
       setError(null);
       setIsGenerating(false);
+      // Re-arm the signature modal for the next open.
+      setSignVisible(true);
       return;
     }
     if (requestedRef.current) return;
@@ -320,6 +330,21 @@ export function DynamicAgreementDialog({
     requestedRef.current = true;
     generatePreview();
   };
+
+  // Staged teardown — the fix for the BLANK BLACK SCREEN on remote-sign "Done".
+  //
+  // The dynamic flow stacks THREE native modals: this dialog (level 1) →
+  // AgreementSignatureModal (level 2) → AgreementRemoteSignModal (level 3). The remote
+  // sheet already dismisses itself first; but then level 2 and level 1 were torn down
+  // in the SAME frame (AgreementSignatureModal.onClose === this dialog's onClose, and
+  // level 2 is level 1's child). Collapsing two native modals at once orphans a
+  // backdrop and leaves a blank black screen. So dismiss level 2 first (slide it out),
+  // then close level 1 a frame later. Used for EVERY close of the signature modal
+  // (in-person cancel / submit AND remote-complete), so the teardown is always safe.
+  const handleSignClose = useCallback(() => {
+    setSignVisible(false);
+    setTimeout(() => onClose(), 350);
+  }, [onClose]);
 
   // The signed PDF comes back from `.../sign` as a file on disk. The sign endpoint
   // has ALREADY persisted it as a LeadOutcomeDocument server-side (identical to the
@@ -360,7 +385,10 @@ export function DynamicAgreementDialog({
         {renderHeader()}
 
         <View style={styles.center}>
-          {error ? (
+          {/* Only the loading/error shell — hidden once the signature modal exists
+              (it covers this screen), so the brief reveal during the staged teardown
+              is a clean light background, not a stray "Preparing agreement…" spinner. */}
+          {agreementData ? null : error ? (
             <>
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity onPress={handleRetry} style={styles.retryBtn}>
@@ -379,8 +407,11 @@ export function DynamicAgreementDialog({
 
         {!!agreementData && (
           <AgreementSignatureModal
-            visible
-            onClose={onClose}
+            // `signVisible` (not a bare `visible`) so `handleSignClose` can slide this
+            // level-2 modal out a frame BEFORE this dialog (level 1) closes — the
+            // blank-black-screen fix. `onClose` routes through the staged teardown.
+            visible={signVisible}
+            onClose={handleSignClose}
             leadId={leadId || ''}
             agreementId={agreementData.agreementId}
             previewBase64={agreementData.previewBase64}
@@ -389,9 +420,10 @@ export function DynamicAgreementDialog({
             pdfDimensions={agreementData.pdfDimensions}
             onSuccess={handleSigned}
             // Enables "Send Remotely" (primary buyer + coBuyers[]). The signed
-            // agreement is persisted server-side; closing lets the summary refresh.
+            // agreement is persisted server-side (lead-scoped); `onRemoteComplete`
+            // reads it back into the summary, and the modal still closes via onClose.
             customerDetails={leadData?.customerDetails}
-            onRemoteComplete={onClose}
+            onRemoteComplete={onRemoteComplete}
           />
         )}
       </SafeAreaView>
