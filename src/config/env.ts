@@ -4,7 +4,7 @@
 // email or password" (the axios rejection carries an HTML body with no `message`).
 //
 //   np / staging : https://api.np.revdsm.com/   (also reachable as dev-api.revdsm.com)
-//   production   : https://api.revdsm.com/
+  // production   : https://api.revdsm.com/
 // const API_URL = 'https://api.np.revdsm.com/';
 const API_URL = 'https://dev-api.revdsm.com/';
 // const API_URL = 'http://192.168.30.29:4009/'; // local dev server

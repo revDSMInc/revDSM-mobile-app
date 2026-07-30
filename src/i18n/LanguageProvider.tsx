@@ -13,6 +13,7 @@
 
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { Storage } from '../utils/storage';
+import { useUserRole } from '../hooks/useUserRole';
 import {
   DICTIONARIES,
   type Language,
@@ -31,6 +32,11 @@ interface LanguageContextValue {
   toggleLanguage: () => void;
   t: (key: TranslationKey, values?: TranslationValues) => string;
   isSpanish: boolean;
+  /**
+   * Whether this user may switch language at all. False on the sales side — the account
+   * menu hides its language row when this is false.
+   */
+  canSwitchLanguage: boolean;
 }
 
 const readStoredLanguage = (): Language => {
@@ -61,10 +67,22 @@ const fill = (template: string, values?: TranslationValues): string => {
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(readStoredLanguage);
+  const [stored, setStoredLanguage] = useState<Language>(readStoredLanguage);
+  const { isInstaller } = useUserRole();
+
+  /**
+   * Spanish is an INSTALLER feature.
+   *
+   * Enforced here rather than only by hiding the toggle: the choice is persisted per
+   * DEVICE, so on a shared phone a sales rep signing in after an installer would have
+   * inherited Spanish with no row left to switch it back — locked into a language they
+   * never chose. Resolving it centrally means one rule instead of a hidden button and a
+   * trap behind it.
+   */
+  const language: Language = isInstaller ? stored : 'en';
 
   const setLanguage = useCallback((next: Language) => {
-    setLanguageState(next);
+    setStoredLanguage(next);
     try {
       Storage.setItem(STORAGE_KEY, next);
     } catch (err) {
@@ -88,8 +106,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       toggleLanguage: () => setLanguage(language === 'en' ? 'es' : 'en'),
       t,
       isSpanish: language === 'es',
+      canSwitchLanguage: isInstaller,
     };
-  }, [language, setLanguage]);
+  }, [language, setLanguage, isInstaller]);
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
 }
@@ -110,5 +129,6 @@ export function useTranslation(): LanguageContextValue {
     toggleLanguage: () => {},
     t: (key, values) => fill(lookup('en', key) ?? key, values),
     isSpanish: false,
+    canSwitchLanguage: false,
   };
 }

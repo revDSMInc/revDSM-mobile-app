@@ -361,7 +361,7 @@ export default function InstallerDashboard() {
       </View>
 
       {/* Schedule tabs. Labels and wire values differ on purpose — the installer reads
-          "All" / "Upcoming", the request carries `all` / `future`. */}
+          "Today" / "Tomorrow", the request carries `?period=all` / `?period=tomorrow`. */}
       <View className="flex-row px-4 mb-3">
         <SubTab
           label={t('installer.tabAll')}
@@ -370,8 +370,8 @@ export default function InstallerDashboard() {
         />
         <SubTab
           label={t('installer.tabUpcoming')}
-          active={period === 'future'}
-          onPress={() => handlePeriodChange('future')}
+          active={period === 'tomorrow'}
+          onPress={() => handlePeriodChange('tomorrow')}
         />
       </View>
 
@@ -393,7 +393,7 @@ export default function InstallerDashboard() {
               // The job's own date, not just the tab: "All" can list a future job, and
               // it must read as a preview rather than offering "Start Appointment" for a
               // tap that will be refused.
-              isUpcoming={period === 'future' || isFutureDatedJob(item)}
+              isUpcoming={period === 'tomorrow' || isFutureDatedJob(item)}
               loading={startingId === item._id}
               disabled={!!startingId && startingId !== item._id}
               onPress={() => openJob(item)}

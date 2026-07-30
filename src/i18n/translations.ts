@@ -1,6 +1,10 @@
 /**
  * English → Spanish strings.
  *
+ * **Spanish is an installer-only feature.** The sales side always renders English — see
+ * `canSwitchLanguage` in `LanguageProvider`, which resolves the language rather than just
+ * hiding the toggle.
+ *
  * Keys are dotted paths that name WHERE a string appears, not what it says
  * (`installer.tab.all`, not `all`), so a word that needs two different translations in
  * two places can have them. English is the source of truth: `en` is a plain object, `es`
@@ -38,7 +42,10 @@ export const en = {
     jobTracker: 'Job Tracker',
     myLearning: 'My Learning',
     logout: 'Logout',
-    /** The language row itself — always shown in the language it switches TO. */
+    /**
+     * The language row — installers only (`canSwitchLanguage`). Always shown in the
+     * language it switches TO.
+     */
     switchToSpanish: 'Español',
     switchToEnglish: 'English',
     languageLabel: 'Language',
@@ -48,10 +55,14 @@ export const en = {
     title: 'My Installs',
     jobsOne: 'Job',
     jobsMany: 'Jobs',
-    tabAll: 'All',
-    tabUpcoming: 'Upcoming',
-    emptyAll: 'No installs scheduled.',
-    emptyUpcoming: 'No upcoming installs.',
+    /**
+     * Tab labels. They do NOT match the `?period=` values behind them — the request
+     * carries `all` / `tomorrow`, the installer reads Today / Tomorrow.
+     */
+    tabAll: 'Today',
+    tabUpcoming: 'Tomorrow',
+    emptyAll: 'No installs scheduled for today.',
+    emptyUpcoming: 'No installs scheduled for tomorrow.',
     emptyError: "Couldn't load your installs. Pull down to retry.",
 
     leadId: 'Lead ID',
@@ -263,10 +274,10 @@ export const es: TranslationTree = {
     title: 'Mis instalaciones',
     jobsOne: 'Trabajo',
     jobsMany: 'Trabajos',
-    tabAll: 'Todos',
-    tabUpcoming: 'Próximos',
-    emptyAll: 'No hay instalaciones programadas.',
-    emptyUpcoming: 'No hay instalaciones próximas.',
+    tabAll: 'Hoy',
+    tabUpcoming: 'Mañana',
+    emptyAll: 'No hay instalaciones programadas para hoy.',
+    emptyUpcoming: 'No hay instalaciones programadas para mañana.',
     emptyError: 'No se pudieron cargar tus instalaciones. Desliza para reintentar.',
 
     leadId: 'ID de cliente potencial',

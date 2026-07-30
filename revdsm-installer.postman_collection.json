@@ -101,10 +101,10 @@
               "host": ["{{base_url}}"],
               "path": ["installer", "v1", "my-jobs"],
               "query": [
-                { "key": "period", "value": "all", "description": "all | future" }
+                { "key": "period", "value": "all", "description": "all | tomorrow" }
               ]
             },
-            "description": "Jobs assigned to the signed-in installer. `period=all` backs the \"All\" tab, `period=future` backs \"Upcoming\" (preview-only — those jobs open read-only). Response: `{ data: { jobs[], pagination, summaryCounts } }`."
+            "description": "Jobs assigned to the signed-in installer. `period=all` backs the \"Today\" tab, `period=tomorrow` backs \"Tomorrow\".\n\nWhether a job OPENS is decided by its own `leadDate`, not by the tab: today or earlier opens (subject to the geofence), a future date is refused. Response: `{ data: { jobs[], pagination, summaryCounts } }`."
           }
         },
         {

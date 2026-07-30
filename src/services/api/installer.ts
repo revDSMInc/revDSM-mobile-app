@@ -129,9 +129,9 @@ const mockDelay = <T,>(data: T, ms = 350): Promise<T> =>
 
 /**
  * `?period=` on `my-jobs`. The wire values are NOT the tab labels: the installer reads
- * "All" and "Upcoming", the request carries `all` and `future`.
+ * "Today" and "Tomorrow", the request carries `all` and `tomorrow`.
  */
-export type JobPeriod = 'all' | 'future';
+export type JobPeriod = 'all' | 'tomorrow';
 
 /**
  * Statuses the API uses for a job that is over — no more field work expected.

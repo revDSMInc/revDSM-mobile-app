@@ -19,7 +19,7 @@ every screen, including a read-only review, is filled from a response.
 
 | # | Method | Path | Called by |
 |---|---|---|---|
-| 1 | `GET` | `installer/v1/my-jobs?period=all\|future` | Dashboard list |
+| 1 | `GET` | `installer/v1/my-jobs?period=all\|tomorrow` | Dashboard list |
 | 2 | `PUT` | `installer/v1/{jobId}/work` | Check-in / check-out — **and** loading a resulted job for review |
 | 3 | `PUT` | `installer/v1/{jobId}/reset` | Reset — reopen a job |
 | 4 | `PUT` | `installer/v1/{jobId}/images` | Photo capture (multipart) |
@@ -40,10 +40,12 @@ every screen, including a read-only review, is filled from a response.
 GET installer/v1/my-jobs?period=all
 ```
 
-The signed-in installer's schedule. `period` is `all` or `future` — **wire values, not
-the tab labels**: the installer reads "All" and "Upcoming".
+The signed-in installer's schedule. `period` is `all` or `tomorrow` — **wire values, not
+the tab labels**: the installer reads "Today" and "Tomorrow".
 
-The Upcoming tab is preview-only: those jobs open read-only, like a resulted one.
+Which tab a job was tapped in does not decide whether it opens; its own `leadDate` does.
+Today or earlier opens (subject to the geofence); a future date is refused with a
+"not scheduled yet" message (`utils/installer-schedule.ts`).
 
 **Response** `{ data: { jobs[], pagination, summaryCounts } }` — each row normalized by
 `normalizeInstallerJob`. The list row carries identity, address, arrival window and
