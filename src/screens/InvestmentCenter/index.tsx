@@ -228,7 +228,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const Header = (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#fff' }}>
       <TouchableOpacity
-        onPress={() => setShowExitConfirm(true)}
+        onPress={() => navigation?.goBack()}
         style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}
       >
         <Ionicons name="chevron-back" size={20} color="#334155" />
