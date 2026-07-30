@@ -26,6 +26,26 @@ const axiosInstance: AxiosInstance = axios.create({
 });
 
 
+/**
+ * React Native DevTools' Network panel never shows a request body — its CDP bridge
+ * omits `postData`, so the Payload tab always reads "[Preview unavailable]". These
+ * dev-only interceptors print what was actually sent (and what came back) to the
+ * Console tab instead, which is the only place the body is visible.
+ */
+const logTraffic = (label: string, url?: string, body?: any) => {
+  if (!__DEV__) return;
+  let printable = body;
+  if (body instanceof FormData) printable = '[FormData]';
+  else if (typeof body === 'string') {
+    try {
+      printable = JSON.parse(body);
+    } catch {
+      // leave the raw string
+    }
+  }
+  console.log(`[API] ${label} ${url ?? ''}`, printable);
+};
+
 // Request Interceptor: Attach Auth Token
 axiosInstance.interceptors.request.use(
   (config) => {
@@ -33,6 +53,7 @@ axiosInstance.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    logTraffic(`→ ${config.method?.toUpperCase()}`, config.url, config.data);
     return config;
   },
   (error) => Promise.reject(error)
@@ -40,8 +61,16 @@ axiosInstance.interceptors.request.use(
 
 // Response Interceptor: Handle Global Errors (like 401 Expiry)
 axiosInstance.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    logTraffic(`← ${res.status} ${res.config.method?.toUpperCase()}`, res.config.url, res.data);
+    return res;
+  },
   async (error) => {
+    logTraffic(
+      `✗ ${error.response?.status ?? 'ERR'} ${error.config?.method?.toUpperCase()}`,
+      error.config?.url,
+      { sent: error.config?.data, received: error.response?.data }
+    );
     if (error.response?.status === 401) {
       const errorMsg = error.response.data?.message || error.response.data?.error || '';
       const isLoginRequest = error.config?.url?.includes('/company/login');
@@ -69,11 +98,46 @@ axiosInstance.interceptors.response.use(
         }
       }
     }
-    return Promise.reject(
-      error.response?.data || { message: error.message || 'Something went wrong' }
-    );
+    return Promise.reject(normalizeApiError(error));
   }
 );
+
+/**
+ * Turns any axios failure into an object with a readable `message`.
+ *
+ * The server's own JSON body is passed through untouched — callers read `err.message`
+ * and that is the API's wording. But a body is not always JSON: a route that doesn't
+ * exist, or a gateway that fell over, answers with an HTML page, and rejecting with
+ * that string left `err.message` UNDEFINED — the caller then showed a blank reason and
+ * the status code was lost with it, which makes a 404 indistinguishable from a dropped
+ * connection. So a non-object body is replaced with a real message, and the HTTP status
+ * is always attached as `httpStatus` (not `status`, which some payloads use themselves).
+ */
+const normalizeApiError = (error: any): Record<string, any> => {
+  const data = error?.response?.data;
+  const httpStatus: number | undefined = error?.response?.status;
+
+  const isJsonBody = !!data && typeof data === 'object' && !Array.isArray(data);
+  const rejection: Record<string, any> = isJsonBody
+    ? { ...data }
+    : // A plain-text body is worth showing; an HTML error page is not.
+      {
+        message:
+          typeof data === 'string' && data.trim() && !data.trim().startsWith('<')
+            ? data.trim()
+            : error?.message || 'Something went wrong',
+        ...(data !== undefined && !isJsonBody ? { body: data } : {}),
+      };
+
+  if (httpStatus !== undefined) rejection.httpStatus = httpStatus;
+  if (!rejection.message) {
+    rejection.message = httpStatus
+      ? `Request failed (${httpStatus})`
+      : error?.message || 'Something went wrong';
+  }
+
+  return rejection;
+};
 
 // Helper to clear session explicitly
 const clearSession = () => {

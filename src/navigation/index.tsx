@@ -122,7 +122,9 @@ export type RootStackParamList = {
   // Installer role — landing screen + per-job install timeline. Gated on the
   // `installer_dashboard` dashboard permission (see useUserRole).
   InstallerDashboard: undefined;
-  InstallerJobDetail: { job: any };
+  // `checkedIn` is set only when the dashboard opened a work session for this job —
+  // it is what tells the detail screen to check out again on the way back.
+  InstallerJobDetail: { job: any; checkedIn?: boolean };
   // Investment Center — the in-home presentation step opened from Lead Center tools.
   // Consent-gated; shows per-calculator renders + dynamic job scope + program cards.
   InvestmentCenter: { lead?: any };

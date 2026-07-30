@@ -30,6 +30,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from './src/redux/store';
 import { NavigationContainer } from '@react-navigation/native';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
+import { LanguageProvider } from './src/i18n/LanguageProvider';
 import RootNavigator, { navigationRef } from './src/navigation';
 import { useAppInitialization } from './src/hooks/useAppInitialization';
 import { useSocketManager } from './src/hooks/useSocketManager';
@@ -151,7 +152,11 @@ export default function App() {
           <ReduxProvider store={store}>
             <PersistGate loading={null} persistor={persistor}>
               <ThemeProvider>
-                <AppContent />
+                {/* Above everything that renders text, so switching language repaints
+                    the whole tree in one pass. */}
+                <LanguageProvider>
+                  <AppContent />
+                </LanguageProvider>
               </ThemeProvider>
             </PersistGate>
           </ReduxProvider>

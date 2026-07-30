@@ -3,15 +3,22 @@ import { View, Text, Image, TouchableOpacity, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
+import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
+import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import type { CapturedPhoto } from '../../../config/types/installer';
 
 interface Props {
   visible: boolean;
   pages: CapturedPhoto[];
   onAddPage: (page: CapturedPhoto) => void;
-  onRemovePage: (pageId: string) => void;
+  /**
+   * Resolves once the page is gone from the server as well as from state — the confirm
+   * dialog holds its spinner on this promise.
+   */
+  onRemovePage: (pageId: string) => void | Promise<void>;
   onBack: () => void;
 }
 
@@ -23,6 +30,7 @@ interface Props {
  */
 export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const log = useInstallerActivityLog();
 
   const startScan = async () => {
@@ -37,17 +45,14 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
           const page = {
             id: `${Date.now()}-${i}`,
             uri,
-            takenAt: new Date().toISOString(),
+            // Stamped per page, not per scan: `timestampTaken` is what orders the
+            // pages once they come back from the server, so two pages from the same
+            // pass must not share a timestamp.
+            takenAt: new Date(Date.now() + i).toISOString(),
           };
+          // The parent adds it to state and uploads it; the upload hook logs the page
+          // once S3 has answered with the s3url and byte size the portal needs.
           onAddPage(page);
-          // Logged here rather than from the upload hook: the contract has no field
-          // for the CoC, so these pages never go to S3 and carry no s3url.
-          log.photoAdded({
-            step: 'coc',
-            category: 'Certificate of Completion',
-            subcategory: `Page ${pages.length + i + 1}`,
-            timestamp: page.takenAt,
-          });
         });
       }
     } catch (error) {
@@ -59,15 +64,17 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
 
   const hasPages = pages.length > 0;
 
-  const handleRemovePage = (page: CapturedPhoto, index: number) => {
-    onRemovePage(page.id);
-    log.photoRemoved({
-      step: 'coc',
-      category: 'Certificate of Completion',
-      subcategory: `Page ${index + 1}`,
-      timestamp: page.takenAt,
-    });
-  };
+  const del = usePhotoDeleteConfirm<{ page: CapturedPhoto; index: number }>(
+    async ({ page, index }) => {
+      await onRemovePage(page.id);
+      log.photoRemoved({
+        step: 'coc',
+        category: 'Certificate of Completion',
+        subcategory: `Page ${index + 1}`,
+        timestamp: page.takenAt,
+      });
+    }
+  );
 
   const handleDone = () => {
     log.cocCompleted(pages.length);
@@ -77,8 +84,8 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
   return (
     <InstallerSubScreen
       visible={visible}
-      title="Certificate of Completion"
-      subtitle="Scan the CoC signed by the homeowner"
+      title={t('installer.cocTitle')}
+      subtitle={t('installer.cocSub')}
       onBack={onBack}
       footer={
         hasPages ? (
@@ -87,8 +94,10 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
             className="h-12 rounded-xl items-center justify-center"
             style={{ backgroundColor: colors.primary.main }}
           >
-            <Text className="text-white text-base font-bold">
-              Done — {pages.length} Page{pages.length > 1 ? 's' : ''} Scanned
+            <Text className="text-white text-base font-bold text-center">
+              {pages.length === 1
+                ? t('installer.cocDoneOne', { count: pages.length })
+                : t('installer.cocDoneMany', { count: pages.length })}
             </Text>
           </TouchableOpacity>
         ) : undefined
@@ -106,13 +115,14 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
             <Icon name="check" size={14} color="#fff" />
           </View>
           <Text className="flex-1 text-xs font-bold" style={{ color: colors.primary.main }}>
-            {pages.length} page{pages.length > 1 ? 's' : ''} captured
+            {pages.length === 1
+              ? t('installer.cocCapturedOne', { count: pages.length })
+              : t('installer.cocCapturedMany', { count: pages.length })}
           </Text>
         </View>
       ) : (
         <Text className="text-xs font-semibold mb-3" style={{ color: colors.textSecondary }}>
-          Capture every signed page. Fit the document inside the frame — edges are detected
-          automatically.
+          {t('installer.cocIntro')}
         </Text>
       )}
 
@@ -134,10 +144,12 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
                 className="absolute bottom-0 left-0 right-0 py-0.5 items-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
-                <Text className="text-white text-[10px] font-bold">Page {i + 1}</Text>
+                <Text className="text-white text-[10px] font-bold">
+                  {t('installer.cocPage', { number: i + 1 })}
+                </Text>
               </View>
               <TouchableOpacity
-                onPress={() => handleRemovePage(page, i)}
+                onPress={() => del.request({ page, index: i })}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
@@ -154,10 +166,25 @@ export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Pro
         style={{ backgroundColor: colors.primary.main }}
       >
         <Icon name="file-document-outline" size={18} color="#fff" />
-        <Text className="text-white ml-2 text-base font-bold">
-          {hasPages ? 'Scan Another Page' : 'Scan Signed CoC'}
+        <Text className="text-white ml-2 text-base font-bold text-center">
+          {hasPages ? t('installer.cocScanAnother') : t('installer.cocScanFirst')}
         </Text>
       </TouchableOpacity>
+
+      <ConfirmActionModal
+        visible={del.visible}
+        icon="file-remove-outline"
+        tone="danger"
+        title={t('installer.cocDeleteTitle')}
+        description={t('installer.cocDeleteBody', {
+          number: (del.target?.index ?? 0) + 1,
+        })}
+        confirmLabel={t('installer.delete')}
+        cancelLabel={t('installer.keep')}
+        submitting={del.deleting}
+        onCancel={del.cancel}
+        onConfirm={del.confirm}
+      />
     </InstallerSubScreen>
   );
 }

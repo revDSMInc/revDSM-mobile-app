@@ -27,6 +27,7 @@ import type {
   PhotoSection,
   PhotoTag,
   PhotoPhase,
+  StatusReasonImage,
 } from '../config/types/installer';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,6 +152,23 @@ export const matchedPhotoDescriptor = (
   coordinates,
 });
 
+/**
+ * A scanned page of the signed Certificate of Completion.
+ *
+ * `subcategory: 'coc'` matches the pickup/return convention — the phase name doubles
+ * as the subcategory where there is no finer grouping. Page ORDER is carried by
+ * `timestampTaken`, not by an index: the scanner stamps each page as it is produced
+ * and the hydrate sorts on it, so a rescanned page lands where it belongs.
+ */
+export const cocDescriptor = (
+  photo: CapturedPhoto,
+  coordinates: GeoCoordinates | null
+): InstallerImageDescriptor => ({
+  subcategory: 'coc',
+  timestampTaken: photo.takenAt,
+  coordinates,
+});
+
 /** A free shot with no rep counterpart — carries the section, no `salesPhotoId`. */
 export const extraPhotoDescriptor = (
   section: PhotoSection,
@@ -159,6 +177,23 @@ export const extraPhotoDescriptor = (
 ): InstallerImageDescriptor => ({
   category: section.categoryLabel ?? section.name,
   subcategory: 'Extras',
+  timestampTaken: photo.takenAt,
+  coordinates,
+});
+
+/**
+ * A result-evidence shot — Can't Do Work / Not Hit / Reset.
+ *
+ * Carries the reason label as `conditionLabel` and `'result'` as subcategory,
+ * so the IM can see what the photo was attached to.
+ */
+export const resultDescriptor = (
+  reasonLabel: string,
+  photo: CapturedPhoto,
+  coordinates: GeoCoordinates | null
+): InstallerImageDescriptor => ({
+  conditionLabel: `Result — ${reasonLabel}`,
+  subcategory: 'result',
   timestampTaken: photo.takenAt,
   coordinates,
 });

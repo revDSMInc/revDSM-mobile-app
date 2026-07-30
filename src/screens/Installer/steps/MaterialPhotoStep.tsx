@@ -2,9 +2,12 @@ import React, { useState } from 'react';
 import { View, Text, Image, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
+import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
+import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import type { CapturedPhoto, MaterialStepState } from '../../../config/types/installer';
 
 interface Props {
@@ -12,7 +15,11 @@ interface Props {
   mode: 'pickup' | 'return';
   state: MaterialStepState;
   onAddPhoto: (photo: CapturedPhoto) => void;
-  onRemovePhoto: (photoId: string) => void;
+  /**
+   * Resolves once the photo is gone from the server as well as from state — the
+   * confirm dialog holds its spinner on this promise.
+   */
+  onRemovePhoto: (photoId: string) => void | Promise<void>;
   onSkip: () => void;
   onBack: () => void;
 }
@@ -34,6 +41,7 @@ export function MaterialPhotoStep({
   onBack,
 }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const log = useInstallerActivityLog();
   const [cameraOpen, setCameraOpen] = useState(false);
 
@@ -41,19 +49,22 @@ export function MaterialPhotoStep({
   const satisfied = state.photos.length > 0 || state.skipped;
 
   // The capture itself is logged by the upload hook, once S3 has answered with the
-  // s3url and byte size the portal's payload needs.
-  const handleRemove = (photo: CapturedPhoto, index: number) => {
-    onRemovePhoto(photo.id);
-    log.photoRemoved({
-      step: mode,
-      category: isPickup ? 'Material Pickup' : 'Material Return',
-      subcategory: `${mode} #${index + 1}`,
-      timestamp: photo.takenAt,
-      coordinates: photo.coordinates,
-      s3url: photo.s3url,
-      bucketName: photo.bucketName,
-    });
-  };
+  // s3url and byte size the portal's payload needs. The removal is logged here, and
+  // only AFTER it lands — logging on the tap would record deletions that never happened.
+  const del = usePhotoDeleteConfirm<{ photo: CapturedPhoto; index: number }>(
+    async ({ photo, index }) => {
+      await onRemovePhoto(photo.id);
+      log.photoRemoved({
+        step: mode,
+        category: isPickup ? 'Material Pickup' : 'Material Return',
+        subcategory: `${mode} #${index + 1}`,
+        timestamp: photo.takenAt,
+        coordinates: photo.coordinates,
+        s3url: photo.s3url,
+        bucketName: photo.bucketName,
+      });
+    }
+  );
 
   const handleSkip = () => {
     log.materialSkipped(mode);
@@ -61,33 +72,40 @@ export function MaterialPhotoStep({
   };
 
   const skipLabel = isPickup
-    ? 'Had Material On Truck — Nothing Picked Up'
-    : 'Used All Material — Nothing to Return';
+    ? t('installer.materialSkipPickup')
+    : t('installer.materialSkipReturn');
 
+  // Built from whole sentences per branch rather than by splicing "Pickup"/"Return" into
+  // one template — Spanish agreement ("Recogida completa" vs "Devolución completa")
+  // doesn't survive that kind of assembly.
   const satisfiedLabel = state.skipped
     ? isPickup
-      ? 'Marked: had material on truck'
-      : 'Marked: used all material'
-    : `${isPickup ? 'Pickup' : 'Return'} satisfied — Inventory Center will reconcile`;
+      ? t('installer.materialSkippedPickup')
+      : t('installer.materialSkippedReturn')
+    : isPickup
+    ? t('installer.materialSatisfiedPickup')
+    : t('installer.materialSatisfiedReturn');
 
   return (
     <InstallerSubScreen
       visible={visible}
-      title={isPickup ? 'Material Pickup' : 'Material Return'}
+      title={isPickup ? t('installer.materialPickup') : t('installer.materialReturn')}
       subtitle={
-        isPickup
-          ? 'Photo the material loaded for this job'
-          : 'Photo the material coming back to the warehouse'
+        isPickup ? t('installer.materialPickupSub') : t('installer.materialReturnSub')
       }
       onBack={onBack}
       overlay={
         cameraOpen ? (
           <InstallerCamera
-            label={isPickup ? 'PICKUP • Loaded Material' : 'RETURN • Unused Material'}
+            label={
+              isPickup
+                ? t('installer.cameraPickupLabel')
+                : t('installer.cameraReturnLabel')
+            }
             hint={
               isPickup
-                ? 'Photo the material loaded for this job'
-                : 'Photo the material coming back'
+                ? t('installer.materialPickupSub')
+                : t('installer.cameraReturnHint')
             }
             count={state.photos.length}
             onCancel={() => setCameraOpen(false)}
@@ -116,7 +134,7 @@ export function MaterialPhotoStep({
         </View>
       ) : (
         <Text className="text-xs font-semibold mb-3" style={{ color: colors.textSecondary }}>
-          Inventory Center matches your photos against what was issued.
+          {t('installer.materialHint')}
         </Text>
       )}
 
@@ -134,7 +152,7 @@ export function MaterialPhotoStep({
                 <Text className="text-[10px] font-bold text-white">#{i + 1}</Text>
               </View>
               <TouchableOpacity
-                onPress={() => handleRemove(photo, i)}
+                onPress={() => del.request({ photo, index: i })}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
                 style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               >
@@ -152,8 +170,10 @@ export function MaterialPhotoStep({
           style={{ backgroundColor: colors.primary.main }}
         >
           <Icon name="camera" size={18} color="#fff" />
-          <Text className="text-white ml-2 text-base font-bold">
-            {state.photos.length === 0 ? 'Take Photo' : 'Take Another Photo'}
+          <Text className="text-white ml-2 text-base font-bold text-center">
+            {state.photos.length === 0
+              ? t('installer.takePhoto')
+              : t('installer.takeAnotherPhoto')}
           </Text>
         </TouchableOpacity>
       )}
@@ -163,7 +183,7 @@ export function MaterialPhotoStep({
           <View className="flex-row items-center my-3" style={{ gap: 12 }}>
             <View className="flex-1 h-px" style={{ backgroundColor: colors.border }} />
             <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
-              OR
+              {t('installer.or')}
             </Text>
             <View className="flex-1 h-px" style={{ backgroundColor: colors.border }} />
           </View>
@@ -172,13 +192,30 @@ export function MaterialPhotoStep({
             className="h-12 rounded-xl items-center justify-center border-2"
             style={{ borderColor: colors.warning.main, backgroundColor: colors.background }}
           >
-            <Text className="text-sm font-bold" style={{ color: colors.warning.dark }}>
+            <Text
+              className="text-sm font-bold text-center px-3"
+              style={{ color: colors.warning.dark }}
+            >
               {skipLabel}
             </Text>
           </TouchableOpacity>
         </>
       )}
 
+      <ConfirmActionModal
+        visible={del.visible}
+        icon="image-remove"
+        tone="danger"
+        title={t('installer.deletePhotoTitle')}
+        description={t('installer.deletePhotoBody', {
+          number: (del.target?.index ?? 0) + 1,
+        })}
+        confirmLabel={t('installer.delete')}
+        cancelLabel={t('installer.keep')}
+        submitting={del.deleting}
+        onCancel={del.cancel}
+        onConfirm={del.confirm}
+      />
     </InstallerSubScreen>
   );
 }

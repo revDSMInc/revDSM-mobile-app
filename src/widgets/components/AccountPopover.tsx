@@ -3,6 +3,7 @@ import { View, Text, Modal, TouchableOpacity, Pressable, StyleSheet } from 'reac
 import { useAuth } from '../../hooks/useAuth';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useTranslation } from '../../i18n/LanguageProvider';
 
 interface AccountPopoverProps {
   visible: boolean;
@@ -15,6 +16,7 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
   const { user } = useAuth();
   const { isInstaller } = useUserRole();
   const { colors, isDark } = useTheme();
+  const { t, toggleLanguage, isSpanish, canSwitchLanguage } = useTranslation();
 
   const hasLmsPermission = user?.permissions?.LMS?.includes('view_lms') || false;
 
@@ -63,7 +65,7 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
                 className="text-[13px] font-medium  tracking-widest"
                 style={{ color: colors.text }}
               >
-                Account Settings
+                {t('account.settings')}
               </Text>
             </TouchableOpacity>
 
@@ -80,7 +82,7 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
                   className="text-[13px] font-medium  tracking-widest"
                   style={{ color: colors.text }}
                 >
-                  Job Tracker
+                  {t('account.jobTracker')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -96,7 +98,7 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
                 className="text-[13px] font-medium tracking-widest"
                 style={{ color: colors.text }}
               >
-                My Learning
+                {t('account.myLearning')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -106,6 +108,42 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
             style={{ backgroundColor: isDark ? colors.border : '#E5E8EB' }}
           />
 
+          {/* Language — INSTALLERS ONLY, sitting directly above Logout.
+              Spanish is an installer feature; the sales side stays English, and
+              `canSwitchLanguage` is what says so (`LanguageProvider` enforces the same
+              rule on `t()`, so hiding this row can't leave anyone stranded in a language
+              they can no longer change).
+
+              The menu stays OPEN on tap: the row's own label switches with everything
+              else, which is the confirmation that the tap worked. Closing here would hide
+              the one thing that proves it. The label always names the language the tap
+              switches TO, written in that language — "Español" reads as an offer to a
+              Spanish speaker in a way "Spanish" does not. */}
+          {canSwitchLanguage && (
+            <TouchableOpacity
+              onPress={toggleLanguage}
+              className="flex-row items-center justify-between px-4 py-3 mx-2 my-1 rounded-2xl"
+              style={{ backgroundColor: isDark ? colors.background : '#F4F6F8' }}
+              accessibilityRole="button"
+              accessibilityLabel={`${t('account.languageLabel')}: ${
+                isSpanish ? t('account.switchToEnglish') : t('account.switchToSpanish')
+              }`}
+            >
+              <Text
+                className="text-[13px] font-medium tracking-widest"
+                style={{ color: colors.textSecondary }}
+              >
+                {t('account.languageLabel')}
+              </Text>
+              <Text
+                className="text-[13px] font-black tracking-widest"
+                style={{ color: colors.primary.main }}
+              >
+                {isSpanish ? t('account.switchToEnglish') : t('account.switchToSpanish')}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             onPress={onLogoutRequest}
             style={[styles.logoutBtn, { backgroundColor: '#FF563020' }]}
@@ -114,7 +152,7 @@ export function AccountPopover({ visible, onClose, onNavigate, onLogoutRequest }
               className="text-[13px] font-black  tracking-widest"
               style={{ color: '#FF5630' }}
             >
-              Logout
+              {t('account.logout')}
             </Text>
           </TouchableOpacity>
         </View>

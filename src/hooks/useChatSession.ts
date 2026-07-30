@@ -209,7 +209,9 @@ export const useChatSession = (
           userId: currentUserId,
         });
       } else {
-        SocketManager.emit('mark-message-seen', { chatId, messageIds: allIds });
+        // PLURAL — the singular event takes a bare string and drops an object on the
+        // floor (CHAT-MOBILE-API.md §3.1).
+        SocketManager.emit('mark-messages-seen', { chatId, messageIds: allIds });
         SocketManager.emit('mark-all-messages-as-read', { chatId, userId: currentUserId });
       }
     };
@@ -351,7 +353,7 @@ export const useChatSession = (
           userId: currentUserId,
         });
       } else {
-        SocketManager.emit('mark-message-seen', {
+        SocketManager.emit('mark-messages-seen', {
           chatId,
           messageIds: [normalized._id],
         });

@@ -140,8 +140,10 @@ class SocketManager {
    */
   leaveRoom(roomId: string): void {
     this.joinedRooms.delete(roomId);
-    // Optionally notify the server we're leaving (depends on server support)
-    // this.socket?.emit('leave-chat', roomId);
+    // The server does support this and takes a plain string (CHAT-MOBILE-API.md §3.1).
+    // Without it the socket stays in the room after the screen closes and keeps
+    // receiving every `new-message` for a chat nobody is looking at.
+    this.socket?.emit('leave-chat', roomId);
   }
 
   // ─── Event emitters ────────────────────────────────────────────────────────

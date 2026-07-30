@@ -26,6 +26,7 @@ const emptyProgress = (jobId: string): InstallProgress => ({
   postExtras: {},
   scope: {},
   cocPages: [],
+  resultPhotos: [],
   completedSteps: {},
 });
 
@@ -72,6 +73,7 @@ const applyPhotoPatch = (
     pickup: { ...progress.pickup, photos: many(progress.pickup.photos) },
     return: { ...progress.return, photos: many(progress.return.photos) },
     cocPages: many(progress.cocPages),
+    resultPhotos: many(progress.resultPhotos ?? []),
     pecEntries: mapRecord(progress.pecEntries, (entry) => {
       const photos = many(entry.photos);
       return photos === entry.photos ? entry : { ...entry, photos };
@@ -116,23 +118,26 @@ export function useInstallProgress(
   /**
    * Synchronous mirror of `progress`.
    *
-   * A step-completion handler runs in the same tick as the mutation that satisfied
-   * the step (skip the return, confirm the last product, …) and has to build its
-   * server payload from the *post*-mutation state — which `progress` won't hold
-   * until the next render. Every mutator goes through `commit` below, which updates
-   * this ref as it produces the next state, so `progressRef.current` is correct
-   * immediately. Assigning inside the updater is idempotent, so a StrictMode
-   * double-invoke is harmless.
+   * A handler often runs in the same tick as the mutation it depends on — a step
+   * completion right after the capture that satisfied it, or a step-data PATCH built
+   * the instant an upload wrote its `s3url` back — and has to see the *post*-mutation
+   * state, which `progress` won't hold until the next render.
+   *
+   * So `commit` derives the next state from the REF and assigns it before calling
+   * `setProgress`, rather than assigning inside a `setProgress` updater. React runs
+   * an updater during the render pass, i.e. a tick or more later: an upload that
+   * resolved and immediately handed control back to `sendStepData` would have found
+   * the ref still holding the pre-upload photo, with no `s3url` — so the step built
+   * an empty body and no PATCH went out at all. Reading and writing the ref here
+   * keeps it correct the moment the mutator returns.
    */
   const progressRef = useRef(progress);
 
   const commit = useCallback(
     (updater: (previous: InstallProgress) => InstallProgress) => {
-      setProgress((previous) => {
-        const next = updater(previous);
-        progressRef.current = next;
-        return next;
-      });
+      const next = updater(progressRef.current);
+      progressRef.current = next;
+      setProgress(next);
     },
     []
   );
@@ -195,7 +200,13 @@ export function useInstallProgress(
           if (progress.pecHasConditions !== true) return false;
           return !!progress.completedSteps.pec;
         case 'measure':
-          if (productIds.length === 0) return false;
+          // No sold products on the job — there is nothing to verify, so the step is
+          // done once the installer has acknowledged that. It must NOT be a hard
+          // `false`: `measure` gates Post-Install, CoC and Return, so a job whose
+          // check-in carried no `productDetails` could never be completed at all.
+          // Not auto-true either — the installer should see the step and confirm the
+          // scope really is empty rather than have it silently tick itself off.
+          if (productIds.length === 0) return !!progress.completedSteps.measure;
           // Every product must be settled — a pending discrepancy blocks the step.
           return productIds.every((id) => {
             const s = progress.scope[id];
@@ -317,9 +328,41 @@ export function useInstallProgress(
     [commit]
   );
 
+  // ── Result evidence ───────────────────────────────────────────────────────
+  // `?? []` throughout: progress persisted before this field existed rehydrates
+  // without it, and MMKV keeps that shape until the job is next written.
+
+  const addResultPhoto = useCallback(
+    (photo: CapturedPhoto) =>
+      commit((p) => ({ ...p, resultPhotos: [...(p.resultPhotos ?? []), photo] })),
+    [commit]
+  );
+
+  const removeResultPhoto = useCallback(
+    (photoId: string) =>
+      commit((p) => ({
+        ...p,
+        resultPhotos: (p.resultPhotos ?? []).filter((x) => x.id !== photoId),
+      })),
+    [commit]
+  );
+
   const completeStep = useCallback(
     (key: InstallStepKey) =>
       commit((p) => ({ ...p, completedSteps: { ...p.completedSteps, [key]: true } })),
+    [commit]
+  );
+
+  /**
+   * Folds server-held state into local progress (`installer-hydrate.ts`).
+   *
+   * Separate from `patch` because the merge has to read the current state to decide
+   * what is missing, and separate from the mutators because it must be able to no-op:
+   * returning the same object leaves React's state untouched and the persist effect
+   * idle, so a hydrate that finds nothing new costs nothing.
+   */
+  const hydrate = useCallback(
+    (merge: (previous: InstallProgress) => InstallProgress) => commit(merge),
     [commit]
   );
 
@@ -361,8 +404,11 @@ export function useInstallProgress(
     setScopeStatus,
     addCocPage,
     removeCocPage,
+    addResultPhoto,
+    removeResultPhoto,
     completeStep,
     patchPhoto,
+    hydrate,
     reset,
   };
 }

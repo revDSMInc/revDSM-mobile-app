@@ -97,18 +97,18 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/installer/v1/my-jobs?period=today",
+              "raw": "{{base_url}}/installer/v1/my-jobs?period=all",
               "host": ["{{base_url}}"],
               "path": ["installer", "v1", "my-jobs"],
               "query": [
-                { "key": "period", "value": "today", "description": "today | tomorrow" }
+                { "key": "period", "value": "all", "description": "all | tomorrow" }
               ]
             },
-            "description": "Jobs assigned to the signed-in installer for the given day. Response: `{ data: { jobs[], pagination, summaryCounts } }`."
+            "description": "Jobs assigned to the signed-in installer. `period=all` backs the \"Today\" tab, `period=tomorrow` backs \"Tomorrow\".\n\nWhether a job OPENS is decided by its own `leadDate`, not by the tab: today or earlier opens (subject to the geofence), a future date is refused. Response: `{ data: { jobs[], pagination, summaryCounts } }`."
           }
         },
         {
-          "name": "Update Job Status (start job)",
+          "name": "Update Job Status (start / result)",
           "request": {
             "method": "PUT",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -117,11 +117,28 @@
               "raw": "{\n  \"status\": \"inProgress\"\n}"
             },
             "url": {
-              "raw": "{{base_url}}/installer/v1/update-job-status/{{job_id}}",
+              "raw": "{{base_url}}/installer/v1/update/{{job_id}}",
               "host": ["{{base_url}}"],
-              "path": ["installer", "v1", "update-job-status", "{{job_id}}"]
+              "path": ["installer", "v1", "update", "{{job_id}}"]
             },
-            "description": "Moves a job through the workflow. Statuses: `scheduled` | `inProgress` | `completed` | `onHold`.\n\nStarting a job (`inProgress`) returns the full working payload — `contractDetails`, `preInstallPhotos`, and `productDetails` (sold products the installer verifies). This is the only place that data is returned."
+            "description": "Moves a job through the workflow. Replaces the retired `PUT /installer/v1/update-job-status/:id`.\n\nSAME PATH as the step-data save, DIFFERENT VERB: PUT is a transition and carries nothing but `status` (+ `statusReason`); PATCH carries `stepData`.\n\nWorkflow statuses: `scheduled` | `inProgress` | `completed` | `onHold`.\nResult statuses (wire codes, not the button labels):\n  { \"status\": \"cantDoWork\", \"statusReason\": \"Site unsafe\" }\n  { \"status\": \"notHit\", \"statusReason\": \"Customer was not home\" }\n\nReset is NOT a status — see `PUT /installer/v1/:id/reset`.\n\nThe full working payload — `contractDetails`, `preInstallPhotos`, `productDetails` — comes from the check-in call (`PUT /installer/v1/:id/work`), not from here."
+          }
+        },
+        {
+          "name": "Reset Job",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statusReason\": \"Manager reopened job for crew follow-up\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/installer/v1/{{job_id}}/reset",
+              "host": ["{{base_url}}"],
+              "path": ["installer", "v1", "{{job_id}}", "reset"]
+            },
+            "description": "Reopens a resulted job so the crew can come back to it. The reason travels as `statusReason` (NOT `reason`).\n\nResponds with a summary — `{ _id, leadId, jobNumber, previousStatus, status }` — not the job. The server decides what the job returns to (`inProgress`).\n\nThe app follows a successful reset with a PATCH to `/installer/v1/update/:id` that clears every step's data."
           }
         },
         {

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { productColor } from '../../../constants/installer';
 import { formatCurrency } from '../../../utils/currency';
 import type { ContractDetails, JobPacket, SoldProduct } from '../../../config/types/installer';
@@ -34,17 +35,26 @@ export function JobReferenceCards({
   packetLoading,
 }: Props) {
   const { colors, isDark } = useTheme();
+  const { t } = useTranslation();
   const surface = isDark ? colors.surface : '#F4F6F8';
 
+  // `id` is the stable React key — the label changes with the language, so keying on it
+  // would remount every row on a switch.
   const contractRows = [
-    { k: 'CONTRACT', v: currency(contract?.contractPrice) },
-    { k: 'DOWN PAYMENT', v: currency(contract?.downPayment), sub: contract?.downPaymentMethod },
+    { id: 'contract', k: t('installer.contract'), v: currency(contract?.contractPrice) },
     {
-      k: 'REMAINING BALANCE',
+      id: 'down',
+      k: t('installer.downPayment'),
+      v: currency(contract?.downPayment),
+      sub: contract?.downPaymentMethod,
+    },
+    {
+      id: 'balance',
+      k: t('installer.remainingBalance'),
       v: currency(contract?.remainingBalance),
       sub: contract?.balanceMethod,
     },
-    { k: 'LOAN AUTH', v: contract?.loanAuth || 'N/A', accent: true },
+    { id: 'loan', k: t('installer.loanAuth'), v: contract?.loanAuth || 'N/A', accent: true },
   ];
 
   return (
@@ -53,7 +63,7 @@ export function JobReferenceCards({
       {!!packet && (
         <View className="rounded-2xl p-3.5 mb-2.5" style={{ backgroundColor: surface }}>
           <Text className="text-base font-black mb-2" style={{ color: colors.text }}>
-            Job Packet
+            {t('installer.jobPacket')}
           </Text>
           <View
             className="flex-row items-center rounded-xl p-2.5 border"
@@ -75,7 +85,7 @@ export function JobReferenceCards({
               </Text>
               {!!packet.pages && (
                 <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
-                  {packet.pages} pages
+                  {t('installer.pages', { count: packet.pages })}
                 </Text>
               )}
             </View>
@@ -88,7 +98,7 @@ export function JobReferenceCards({
               {packetLoading ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Text className="text-white text-xs font-bold">View</Text>
+                <Text className="text-white text-xs font-bold">{t('installer.view')}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -99,11 +109,11 @@ export function JobReferenceCards({
       {!!contract && (
         <View className="rounded-2xl p-3.5 mb-2.5" style={{ backgroundColor: surface }}>
           <Text className="text-base font-black mb-1.5" style={{ color: colors.text }}>
-            Contract Details
+            {t('installer.contractDetails')}
           </Text>
           {contractRows.map((r, i) => (
             <View
-              key={r.k}
+              key={r.id}
               className="flex-row justify-between items-start py-2.5"
               style={{
                 borderBottomWidth: i < contractRows.length - 1 ? 1 : 0,
@@ -141,7 +151,7 @@ export function JobReferenceCards({
       {products.length > 0 && (
         <View className="rounded-2xl p-3.5 mb-2.5" style={{ backgroundColor: surface }}>
           <Text className="text-base font-black mb-2" style={{ color: colors.text }}>
-            Products
+            {t('installer.products')}
           </Text>
           {products.map((p, idx) => {
             const accent = productColor(idx, p.color);

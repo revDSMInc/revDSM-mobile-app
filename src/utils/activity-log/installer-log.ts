@@ -220,7 +220,7 @@ export const logInstallerJobsRefreshed = (user: any, period: string) =>
 // Job session — check in / pause / resume
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** `PUT update-job-status` → inProgress succeeded; the working payload is in hand. */
+/** Check-in + `status: inProgress` succeeded; the working payload is in hand. */
 export const logInstallerJobStarted = (user: any, job: InstallerJob) =>
   emit(
     user,

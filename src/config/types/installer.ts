@@ -6,6 +6,8 @@
  * shapes aligned means the real endpoints drop in without a remapping layer.
  */
 
+import type { TranslationKey } from '../../i18n/translations';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Install timeline
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,8 +27,11 @@ export type InstallStepStatus = 'done' | 'active' | 'locked';
 export interface InstallStep {
   key: InstallStepKey;
   n: number;
+  /** English source string. The UI renders `titleKey` through `t()` instead. */
   title: string;
+  titleKey: TranslationKey;
   desc: string;
+  descKey: TranslationKey;
   /** MaterialCommunityIcons glyph name. */
   icon: string;
 }
@@ -189,7 +194,12 @@ export interface DiscrepancyReport {
 
 export interface PECArea {
   id: string;
+  /**
+   * English label. Authoritative — it travels to the server as the condition's `label`
+   * and is what hydration matches on. The UI renders `labelKey` instead.
+   */
   label: string;
+  labelKey: TranslationKey;
 }
 
 export interface PECEntry {
@@ -239,15 +249,19 @@ export interface JobPacket {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Statuses accepted by `PUT installer/v1/update-job-status/{jobId}`.
+ * Statuses the API takes on `installer/v1/update/{jobId}`.
  *
- * The workflow statuses move a job through the schedule; the three result statuses
- * are the button labels verbatim — `"Can't Do Work"`, `"Reset"`, `"Not Hit"` — and
- * each must be sent with the reason the installer picked.
+ * These are wire codes, NOT the button labels the UI shows — `RESULT_STATUS_CODE`
+ * (`constants/installer.ts`) maps `"Can't Do Work"` → `cantDoWork` and `"Not Hit"` →
+ * `notHit`. `"Reset"` has no code here: reset is its own endpoint
+ * (`PUT installer/v1/{jobId}/reset`).
  */
 export type JobWorkflowStatus = 'scheduled' | 'inProgress' | 'completed' | 'onHold';
 
-export type JobStatus = JobWorkflowStatus | InstallerResultType;
+/** Result actions, as the API spells them. */
+export type JobResultStatus = 'cantDoWork' | 'notHit';
+
+export type JobStatus = JobWorkflowStatus | JobResultStatus;
 
 export interface InstallerJob {
   _id: string;
@@ -283,8 +297,54 @@ export interface InstallerJob {
   contract?: ContractDetails;
   products?: SoldProduct[];
   packet?: JobPacket;
-  /** Rep capture set. Only returned when the job is started (`update-job-status`). */
+  /** Rep capture set. Only returned by the check-in response (`{jobId}/work`). */
   preInstallPhotos?: PreInstallPhotos;
+  /**
+   * What the server already holds for this job's install — the other half of the
+   * timeline. Without it, a job opened on a second phone (or after a reinstall) shows
+   * an empty timeline while the work sits in the database.
+   */
+  stored?: InstallerStoredRecords;
+}
+
+/**
+ * Body of `PUT installer/v1/{jobId}/work` — the installer's check-in.
+ *
+ * Everything here describes WHERE the check-in was made, so the server can re-run the
+ * geofence the app applied in `utils/installer-geofence.ts` rather than trusting it.
+ * The endpoint also still accepts no body at all.
+ */
+export interface InstallerCheckInPayload {
+  /** The job address the check-in was matched against. */
+  address?: string;
+  /**
+   * The DEVICE's position at the moment of check-in, GeoJSON — `[longitude, latitude]`,
+   * in that order. Not the job's own coordinates.
+   */
+  location: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
+  /** Tolerance the app allowed, in metres (`CHECK_IN_RADIUS_METERS`). */
+  radius: number;
+}
+
+/**
+ * The install record as the API keeps it, straight off the check-in response.
+ *
+ * Kept raw rather than folded into `InstallProgress` here: hydrating needs signed URLs
+ * (the arrays carry bucket keys, not displayable URLs), which is a network call, so the
+ * merge happens in `installer-hydrate.ts` once those resolve.
+ */
+export interface InstallerStoredRecords {
+  pickupPhotos: InstallerStoredImage[];
+  returnPhotos: InstallerStoredImage[];
+  cocPhotos: InstallerStoredImage[];
+  preInstallPhotos: InstallerStoredImage[];
+  postInstallPhotos: InstallerStoredImage[];
+  preExistingConditions?: PreExistingConditionsPayload;
+  jobScopeVerification?: JobScopeVerificationPayload;
+  materialReturnNothingToReturn?: boolean;
 }
 
 export interface JobPagination {
@@ -313,15 +373,34 @@ export interface InstallerJobsResult {
 // Result
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** The button labels, as the installer reads them. Never sent to the API verbatim. */
 export type InstallerResultType = "Can't Do Work" | 'Reset' | 'Not Hit';
+
+/** One image attached to a result's `statusReason`. */
+export interface StatusReasonImage {
+  s3url: string;
+  bucketName?: string;
+}
+
+/**
+ * The new `statusReason` payload sent on result/reset actions.
+ *
+ * `reason` is mandatory; `images` is required only for "Can't Do Work"
+ * (enforced in the modal) and optional for Reset / Not Hit.
+ */
+export interface StatusReasonPayload {
+  reason: string;
+  images?: StatusReasonImage[];
+}
 
 export interface InstallerResultSubmission {
   jobId: string;
   /** The button the installer pressed — kept for logging and copy. */
   result: InstallerResultType;
-  /** Sent as `status` — the same string as `result`, which is what the API takes. */
-  status: JobStatus;
-  reason: string;
+  /** The wire code for that button (`RESULT_STATUS_CODE`), e.g. `notHit`. */
+  status: JobResultStatus;
+  /** Travels as `statusReason` — now an object with `reason` + optional `images`. */
+  reason: StatusReasonPayload;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,11 +409,36 @@ export interface InstallerResultSubmission {
 
 /**
  * `phase` form field. One per capture surface; the backend routes each to its own
- * array (`installerPickupPhotos`, `installerPreInstallPhotos`, …).
- *
- * There is no phase for CoC — the backend has no field for it yet.
+ * array (`installerPickupPhotos`, `installerCocPhotos`, …).
  */
-export type InstallerImagePhase = 'pickup' | 'preExisting' | 'pre' | 'post' | 'return';
+export type InstallerImagePhase =
+  | 'pickup'
+  | 'preExisting'
+  | 'pre'
+  | 'post'
+  | 'return'
+  | 'coc'
+  | 'result';
+
+/**
+ * `phase` of `DELETE installer/v1/{jobId}/images`.
+ *
+ * A superset of the upload phases: the delete route also takes `scope`, which nothing
+ * uploads under. Kept as its own union so that stays true if the two lists diverge again.
+ */
+export type InstallerDeletePhase = InstallerImagePhase | 'scope';
+
+/**
+ * Body of `DELETE installer/v1/{jobId}/images`.
+ *
+ * `s3urls` are the bucket-relative keys the upload returned (`InstallerStoredImage.
+ * s3url`), NOT displayable URLs — a signed URL resolved for rendering will not match.
+ * Batched, so removing several shots at once is one request.
+ */
+export interface InstallerImageDeletePayload {
+  phase: InstallerDeletePhase;
+  s3urls: string[];
+}
 
 /**
  * One entry of the `images` form field (sent as a JSON array alongside `files`).
@@ -384,7 +488,7 @@ export interface InstallerUploadFile {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step data — `PATCH installer/v1/{jobId}`
+// Step data — `PATCH installer/v1/update/{jobId}`
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type PreExistingConditionsStatus =
@@ -449,35 +553,52 @@ export interface JobScopeVerificationPayload {
 }
 
 /**
- * Body of `PATCH installer/v1/{jobId}`.
+ * The `stepData` object of `PATCH installer/v1/update/{jobId}`.
  *
- * **Flat — there is no `stepData` wrapper.** The server rejects anything outside its
- * allow-list with `400 Unsupported patch fields`, and that list is exactly the five
- * keys below (see `INSTALLER_PATCH_FIELDS`). Notably absent, and therefore *not*
- * patchable: `installerPickupPhotos` and `installerReturnPhotos` — those reach the
- * server only through the multipart images endpoint — and `status`, which moves
- * through `PUT installer/v1/update-job-status/{jobId}`.
+ * The request body wraps these keys — `{ stepData: { … } }` — with only `status`
+ * allowed alongside it at the top level; `InstallerService.updateJob` adds the
+ * wrapper, so builders return the inner object. (The predecessor route,
+ * `PATCH installer/v1/{jobId}`, took the same keys FLAT.)
+ *
+ * Every photo array is sent as the step's CURRENT full set, not as an increment: the
+ * multipart upload already appended each shot, and restating the whole set is what
+ * keeps a retaken or deleted photo from leaving a stale row behind. That relies on the
+ * server treating these arrays as a replace, the same way it replaces
+ * `preExistingConditions` and `jobScopeVerification`.
  *
  * Every key is optional: one step's worth of data per request.
  */
 export interface InstallerJobPatch {
+  /** Step 1 · Pickup. */
+  installerPickupPhotos?: StepPhotoRef[];
+  /** Step 2 · Pre-Existing Conditions. */
   preExistingConditions?: PreExistingConditionsPayload;
+  /** Step 3 · Pre-Install. */
   installerPreInstallPhotos?: StepPhotoRef[];
-  installerPostInstallPhotos?: StepPhotoRef[];
+  /** Step 4 · Verify Job Scope. */
   jobScopeVerification?: JobScopeVerificationPayload;
+  /** Step 5 · Post-Install. */
+  installerPostInstallPhotos?: StepPhotoRef[];
+  /** Step 6 · CoC — the scanned pages of the signed Certificate of Completion. */
+  installerCocPhotos?: StepPhotoRef[];
+  /** Step 7 · Return — the "used all material" flag and the returned-stock shots. */
   materialReturnNothingToReturn?: boolean;
+  installerReturnPhotos?: StepPhotoRef[];
 }
 
 /**
- * The server's allow-list, verbatim from its 400 message. Used to strip unknown keys
- * before sending, so one stray field can't fail a whole step's save.
+ * The keys the server stores from `stepData`. Used to strip unknown ones before
+ * sending, so one stray field can't fail a whole step's save.
  */
 export const INSTALLER_PATCH_FIELDS: (keyof InstallerJobPatch)[] = [
+  'installerPickupPhotos',
   'preExistingConditions',
   'installerPreInstallPhotos',
-  'installerPostInstallPhotos',
   'jobScopeVerification',
+  'installerPostInstallPhotos',
+  'installerCocPhotos',
   'materialReturnNothingToReturn',
+  'installerReturnPhotos',
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,6 +627,20 @@ export interface InstallProgress {
   /** productId -> verification state. */
   scope: Record<string, ScopeStatus>;
   cocPages: CapturedPhoto[];
+  /**
+   * Evidence attached to a Can't Do Work / Not Hit result.
+   *
+   * **On-device only.** There is no agreed wire contract for these yet — no `phase` on
+   * the image upload and no field on the step-data PATCH — so nothing is invented here:
+   * the shots are held in progress (and MMKV, so a crash mid-result doesn't lose them)
+   * and wait for the payload the backend defines. `handleSubmitResult` in
+   * `screens/Installer/JobDetail.tsx` is the single place to wire it up.
+   *
+   * Kept in `InstallProgress` rather than the modal's own state so that when it is
+   * wired, it already shares the upload queue (`waitForUploads`) and the `patchPhoto`
+   * write-back every other capture uses.
+   */
+  resultPhotos: CapturedPhoto[];
   /** Steps completed explicitly (photo/material steps derive from their own data). */
   completedSteps: Partial<Record<InstallStepKey, boolean>>;
   updatedAt?: string;

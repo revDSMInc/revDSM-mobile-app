@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
 import { HouseGhost, tagTint } from '../../../widgets/components/installer/HouseGhost';
 import {
@@ -75,6 +76,7 @@ export function PhotoMatchStep({
   onBack,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   const log = useInstallerActivityLog();
 
   // Data-driven from the rep's real capture set when provided; static mock otherwise.
@@ -187,8 +189,11 @@ export function PhotoMatchStep({
             <Icon name="arrow-left" size={22} color={T_TEXT} />
           </TouchableOpacity>
           <Text className="text-xs font-black tracking-widest" style={{ color: T_DIM }}>
-            {phase === 'pre' ? 'PRE-INSTALL' : 'POST-INSTALL'} • {matchedTotal}/
-            {requiredTags.length} MATCHED
+            {phase === 'pre' ? t('installer.phasePre') : t('installer.phasePost')} •{' '}
+            {t('installer.matchedCount', {
+              done: matchedTotal,
+              total: requiredTags.length,
+            })}
           </Text>
         </View>
 
@@ -252,7 +257,7 @@ export function PhotoMatchStep({
           <View className="absolute top-2.5 left-0 right-0 items-center">
             <View className="rounded-2xl px-3 py-1.5" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}>
               <Text className="text-white text-xs font-bold">
-                {phase === 'pre' ? 'REP PHOTO' : 'PRE-INSTALL PHOTO'} •{' '}
+                {phase === 'pre' ? t('installer.repPhoto') : t('installer.preInstallPhoto')} •{' '}
                 {selected ? selected.label : '—'}
               </Text>
             </View>
@@ -265,17 +270,17 @@ export function PhotoMatchStep({
                 style={{ backgroundColor: 'rgba(125,219,70,0.15)', borderColor: T_GREEN }}
               >
                 <Text className="text-xs font-bold" style={{ color: T_GREEN }}>
-                  ✓ MATCHED — tap to review
+                  {t('installer.matchedTapReview')}
                 </Text>
               </View>
             ) : (
               <View className="rounded-2xl px-3.5 py-1.5" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}>
                 <Text className="text-xs font-bold text-white/85">
                   {referenceUnavailable
-                    ? 'NO REP PHOTO FOR THIS TAG — TAP TO SHOOT'
+                    ? t('installer.noRepPhoto')
                     : awaitingReference
-                    ? 'LOADING REP PHOTO…'
-                    : 'TAP PHOTO TO MATCH WITH GHOST'}
+                    ? t('installer.loadingRepPhoto')
+                    : t('installer.tapToMatch')}
                 </Text>
               </View>
             )}
@@ -293,7 +298,9 @@ export function PhotoMatchStep({
         >
           <View className="px-3 pt-2.5 pb-1.5">
             <Text className="text-[10px] font-black tracking-widest" style={{ color: T_DIM }}>
-              SELECT TAG TO VIEW {phase === 'pre' ? 'REP' : 'PRE-INSTALL'} PHOTO
+              {phase === 'pre'
+                ? t('installer.selectTagRep')
+                : t('installer.selectTagPre')}
             </Text>
           </View>
 
@@ -303,7 +310,9 @@ export function PhotoMatchStep({
               className="mx-3 mb-2 rounded-xl items-center justify-center py-2.5"
               style={{ backgroundColor: T_GREEN }}
             >
-              <Text className="text-[#0e1c16] text-sm font-black">Done — All Shots Matched</Text>
+              <Text className="text-[#0e1c16] text-sm font-black">
+                {t('installer.allShotsMatched')}
+              </Text>
             </TouchableOpacity>
           )}
 
@@ -405,8 +414,8 @@ export function PhotoMatchStep({
           withGhost
           ghostUri={referenceUri(cameraTag)}
           compareLabels={{
-            left: phase === 'pre' ? 'REP (SALE)' : 'PRE-INSTALL',
-            right: phase === 'pre' ? 'PRE-INSTALL' : 'POST-INSTALL',
+            left: phase === 'pre' ? t('installer.repSale') : t('installer.phasePre'),
+            right: phase === 'pre' ? t('installer.phasePre') : t('installer.phasePost'),
           }}
           onCancel={() => setCameraTag(null)}
           onCapture={(photo) => handleGhostCapture(cameraTag, photo)}
@@ -417,7 +426,7 @@ export function PhotoMatchStep({
       {extraCamera && (
         <InstallerCamera
           label={`EXTRA • ${section.name}`}
-          hint="Free shot — no ghost. Document anything the rep didn't."
+          hint={t('installer.extraShotHint')}
           count={extras[sectionId]?.length ?? 0}
           onCancel={() => setExtraCamera(false)}
           onCapture={handleExtraCapture}
@@ -444,6 +453,7 @@ function ReviewPair({
   onRetake: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
 
   return (
     <View
@@ -453,7 +463,9 @@ function ReviewPair({
       ]}
     >
       <View className="flex-row items-center justify-between px-3.5 mb-2">
-        <Text className="text-white text-base font-bold">{tag.label} — Matched</Text>
+        <Text className="text-white text-base font-bold">
+          {t('installer.tagMatched', { tag: tag.label })}
+        </Text>
         <TouchableOpacity onPress={onClose} className="p-1">
           <Icon name="close" size={22} color="#8b93a0" />
         </TouchableOpacity>
@@ -462,7 +474,7 @@ function ReviewPair({
       <View className="flex-1 flex-row px-3.5" style={{ gap: 10 }}>
         <View className="flex-1">
           <Text className="text-[11px] font-black tracking-widest mb-1.5" style={{ color: T_GREEN }}>
-            {phase === 'pre' ? 'REP (SALE)' : 'PRE-INSTALL'}
+            {phase === 'pre' ? t('installer.repSale') : t('installer.phasePre')}
           </Text>
           <View
             className="flex-1 rounded-xl overflow-hidden"
@@ -481,7 +493,7 @@ function ReviewPair({
         </View>
         <View className="flex-1">
           <Text className="text-[11px] font-black tracking-widest mb-1.5 text-white">
-            {phase === 'pre' ? 'PRE-INSTALL' : 'POST-INSTALL'}
+            {phase === 'pre' ? t('installer.phasePre') : t('installer.phasePost')}
           </Text>
           <View className="flex-1 rounded-xl overflow-hidden" style={{ backgroundColor: '#26364a' }}>
             {shot && <TaggerImage uri={shot.uri} tint="#26364a" />}
@@ -497,14 +509,16 @@ function ReviewPair({
           onPress={onRetake}
           className="flex-1 h-12 rounded-xl items-center justify-center bg-white/10"
         >
-          <Text className="text-white text-base font-bold">Retake</Text>
+          <Text className="text-white text-base font-bold">{t('installer.retake')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={onClose}
           className="flex-1 h-12 rounded-xl items-center justify-center"
           style={{ backgroundColor: T_GREEN }}
         >
-          <Text className="text-[#0e1c16] text-base font-bold">Looks Good</Text>
+          <Text className="text-[#0e1c16] text-base font-bold">
+            {t('installer.looksGood')}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>

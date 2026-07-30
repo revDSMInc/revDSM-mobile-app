@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useTranslation } from '../../../i18n/LanguageProvider';
 import { INSTALL_STEPS } from '../../../constants/installer';
 import type { InstallStepKey, InstallStepStatus } from '../../../config/types/installer';
 
@@ -28,16 +29,17 @@ export function InstallTimeline({
   onOpen,
 }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const green = colors.primary.main;
 
   return (
     <View className="mb-2">
       <View className="flex-row items-center justify-between mb-3">
         <Text className="text-lg font-black" style={{ color: colors.text }}>
-          Install Timeline
+          {t('installer.timeline')}
         </Text>
         <Text className="text-xs font-bold" style={{ color: colors.textSecondary }}>
-          {completedCount} of {totalSteps} done
+          {t('installer.stepsDone', { done: completedCount, total: totalSteps })}
         </Text>
       </View>
 
@@ -125,17 +127,17 @@ export function InstallTimeline({
                     style={{ color: colors.text }}
                     numberOfLines={1}
                   >
-                    {step.title}
+                    {t(step.titleKey)}
                   </Text>
                 </View>
                 {active && (
                   <Text className="text-[11px] font-black ml-2" style={{ color: green }}>
-                    START
+                    {t('installer.badgeStart')}
                   </Text>
                 )}
                 {done && (
                   <Text className="text-[11px] font-black ml-2" style={{ color: green }}>
-                    DONE
+                    {t('installer.badgeDone')}
                   </Text>
                 )}
                 {locked && (
@@ -146,7 +148,7 @@ export function InstallTimeline({
                 className="text-xs font-semibold mt-1"
                 style={{ color: colors.textSecondary }}
               >
-                {notes[step.key] || step.desc}
+                {notes[step.key] || t(step.descKey)}
               </Text>
             </TouchableOpacity>
           </View>
