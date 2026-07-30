@@ -8,6 +8,8 @@ import { logEvent } from '../../services/api/LoggerService';
  * timeline shows every in-home-presentation action under ONE heading rather than
  * scattered across the calculator/rollout modules:
  *   - entering the center                         → logInvestmentCenterOpened
+ *   - the consent portal opening (unsigned gate)  → logInvestmentConsentPortalOpened
+ *   - submitting / finalizing the consent form    → logInvestmentConsentForm{Submitted,Created}
  *   - a priced calculator becoming active         → logInvestmentCalculatorViewed
  *   - opting IN to In-Home / 1-Year               → logInvestmentOptIn
  *   - cancelling / opting OUT of a program        → logInvestmentOptOut
@@ -65,6 +67,84 @@ export const logInvestmentCalculatorViewed = async (o: Base) => {
     created_by: o.userId,
     module_type: MODULE,
     meta: baseMeta(o, { action: 'investment_calculator_viewed' }),
+  });
+};
+
+/**
+ * The consent portal opened because the rep entered an UNSIGNED Investment Center (it
+ * gates on a signed customer consent form). Uses the SAME `"consent portal opened"`
+ * action the Lead Center consent tool fires (`useLeadCenterModals.ts`) so the portal
+ * renders it identically — but under the `investment_center` module, so the event is
+ * attributed to the presentation's audit trail rather than the Lead Center's. No
+ * calculator is active yet at the gate, so only the lead is carried.
+ */
+export const logInvestmentConsentPortalOpened = async (o: Base) => {
+  if (!o.userId) return;
+  await logEvent('view', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: baseMeta(o, { action: 'consent portal opened' }),
+  });
+};
+
+/**
+ * The customer consent form was SUBMITTED from the Investment Center gate. Fires the
+ * SAME `{digital|paper}_consent_form_submitted` event the Lead Center consent flow fires
+ * (`LeadCenter/index.tsx`) with the IDENTICAL meta — the only difference is the module
+ * (`investment_center`), so the event is attributed to the presentation rather than the
+ * Lead Center. Meta fields mirror Lead Center 1:1 (formType/customerName/email/phone/
+ * leadId/repName + the digital-vs-paper action). Fire-and-forget.
+ */
+export const logInvestmentConsentFormSubmitted = async (o: {
+  userId: string;
+  formType?: string;
+  customerName?: string;
+  email?: string;
+  phoneNumber?: string;
+  leadId?: string;
+  repName?: string;
+}) => {
+  if (!o.userId) return;
+  await logEvent('submit', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: {
+      formType: o.formType,
+      customerName: o.customerName,
+      email: o.email,
+      phoneNumber: o.phoneNumber,
+      leadId: o.leadId,
+      repName: o.repName,
+      action: o.formType === 'digital' ? 'digital_consent_form_submitted' : 'paper_consent_form_submitted',
+    },
+  });
+};
+
+/**
+ * The consent PDF was CREATED (finalized) after a successful submit — mirror of the
+ * Lead Center `create` event that follows the consent finalize, with the same meta
+ * (formType/leadId/formattedAddress/filename), under the `investment_center` module.
+ */
+export const logInvestmentConsentFormCreated = async (o: {
+  userId: string;
+  formType?: string;
+  leadId?: string;
+  formattedAddress?: string;
+  filename?: string;
+}) => {
+  if (!o.userId) return;
+  await logEvent('create', {
+    user_id: o.userId,
+    created_by: o.userId,
+    module_type: MODULE,
+    meta: {
+      formType: o.formType,
+      leadId: o.leadId,
+      formattedAddress: o.formattedAddress || '',
+      filename: o.filename,
+    },
   });
 };
 
