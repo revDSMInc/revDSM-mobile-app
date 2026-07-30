@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   PermissionsAndroid,
   StatusBar,
+  StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -21,6 +22,10 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  runOnJS,
+  interpolate,
+  Extrapolation,
+  type SharedValue,
 } from 'react-native-reanimated';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -48,14 +53,23 @@ const getNativeModules = () => {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// ─── Pinch/double-tap/pan-zoomable image ────────────────────────────────────
-// Same zoom behaviour as ImageGalleryModal's ZoomablePage, but standalone (no
-// pager to coordinate with, since the media viewer shows a single item).
+// Drag-down-to-dismiss tuning (shared by image + video), mirroring
+// ImageGalleryModal so both viewers feel identical.
+const DISMISS_DISTANCE = 120; // px dragged before release dismisses
+const DISMISS_VELOCITY = 900; // or a fast enough downward fling
+
+// ─── Pinch/double-tap/pan-zoomable image (+ drag-down-to-dismiss) ────────────
+// Same zoom behaviour as ImageGalleryModal's ZoomablePage. Pinch or double-tap
+// to zoom; pan (only while zoomed) to move around; while NOT zoomed, a downward
+// drag follows the finger and dismisses past a threshold (iMessage-style).
 const ZoomableImage = React.memo(
   ({
     uri,
     width,
     height,
+    dragX,
+    dragY,
+    onRequestClose,
     onLoadStart,
     onLoadEnd,
     onError,
@@ -63,6 +77,11 @@ const ZoomableImage = React.memo(
     uri: string;
     width: number;
     height: number;
+    // Shared drag offsets owned by the parent so the backdrop + chrome fade off
+    // the same value the image follows.
+    dragX: SharedValue<number>;
+    dragY: SharedValue<number>;
+    onRequestClose: () => void;
     onLoadStart?: () => void;
     onLoadEnd?: () => void;
     onError?: () => void;
@@ -75,6 +94,8 @@ const ZoomableImage = React.memo(
     const savedTy = useSharedValue(0);
     // Fades the image in once it decodes, for a smooth arrival.
     const opacity = useSharedValue(0);
+    // Drives which of pan (zoomed) vs dismiss-pan (not zoomed) is live.
+    const [zoomed, setZoomed] = useState(false);
 
     const pinch = Gesture.Pinch()
       .onUpdate((e) => {
@@ -88,8 +109,10 @@ const ZoomableImage = React.memo(
           ty.value = withTiming(0);
           savedTx.value = 0;
           savedTy.value = 0;
+          runOnJS(setZoomed)(false);
         } else {
           savedScale.value = scale.value;
+          runOnJS(setZoomed)(true);
         }
       });
 
@@ -104,16 +127,19 @@ const ZoomableImage = React.memo(
           ty.value = withTiming(0);
           savedTx.value = 0;
           savedTy.value = 0;
+          runOnJS(setZoomed)(false);
         } else {
           scale.value = withTiming(2.5);
           savedScale.value = 2.5;
+          runOnJS(setZoomed)(true);
         }
       });
 
+    // Pan the zoomed image within its own bounds; disabled at 1× so the
+    // dismiss-drag below takes over.
     const pan = Gesture.Pan()
+      .enabled(zoomed)
       .onUpdate((e) => {
-        // Only pans once zoomed in; keep the image within its own bounds.
-        if (scale.value <= 1) return;
         const maxX = (width * (scale.value - 1)) / 2;
         const maxY = (height * (scale.value - 1)) / 2;
         tx.value = Math.min(Math.max(savedTx.value + e.translationX, -maxX), maxX);
@@ -124,16 +150,39 @@ const ZoomableImage = React.memo(
         savedTy.value = ty.value;
       });
 
-    const composed = Gesture.Simultaneous(pan, pinch, doubleTap);
+    // iMessage-style drag-DOWN-to-dismiss (only while NOT zoomed). Activates on a
+    // downward drag and fails on horizontal movement.
+    const dismissPan = Gesture.Pan()
+      .enabled(!zoomed)
+      .activeOffsetY(14)
+      .failOffsetX([-28, 28])
+      .onUpdate((e) => {
+        dragY.value = Math.max(0, e.translationY);
+        dragX.value = e.translationX;
+      })
+      .onEnd((e) => {
+        if (dragY.value > DISMISS_DISTANCE || e.velocityY > DISMISS_VELOCITY) {
+          runOnJS(onRequestClose)();
+        } else {
+          dragX.value = withTiming(0, { duration: 180 });
+          dragY.value = withTiming(0, { duration: 180 });
+        }
+      });
 
-    const imgStyle = useAnimatedStyle(() => ({
-      opacity: opacity.value,
-      transform: [
-        { translateX: tx.value },
-        { translateY: ty.value },
-        { scale: scale.value },
-      ],
-    }));
+    const composed = Gesture.Simultaneous(pan, pinch, doubleTap, dismissPan);
+
+    const imgStyle = useAnimatedStyle(() => {
+      // Shrink toward the finger as it drags down (matches iMessage's peel-away).
+      const dismissScale = interpolate(dragY.value, [0, 400], [1, 0.82], Extrapolation.CLAMP);
+      return {
+        opacity: opacity.value,
+        transform: [
+          { translateX: tx.value + dragX.value },
+          { translateY: ty.value + dragY.value },
+          { scale: scale.value * dismissScale },
+        ],
+      };
+    });
 
     return (
       <GestureDetector gesture={composed}>
@@ -165,6 +214,57 @@ const ZoomableImage = React.memo(
   }
 );
 
+// ─── Drag-down-to-dismiss wrapper for the video ──────────────────────────────
+// The video has no zoom (nothing to zoom into), so it only needs the iMessage
+// swipe. `activeOffsetY(14)` + `failOffsetX` keeps the native player controls
+// (tap play/pause, horizontal scrub) working — only a clear downward drag
+// dismisses. The video follows the finger and shrinks slightly.
+const DismissibleVideo = ({
+  dragX,
+  dragY,
+  onRequestClose,
+  children,
+}: {
+  dragX: SharedValue<number>;
+  dragY: SharedValue<number>;
+  onRequestClose: () => void;
+  children: React.ReactNode;
+}) => {
+  const dismissPan = Gesture.Pan()
+    .activeOffsetY(14)
+    .failOffsetX([-28, 28])
+    .onUpdate((e) => {
+      dragY.value = Math.max(0, e.translationY);
+      dragX.value = e.translationX;
+    })
+    .onEnd((e) => {
+      if (dragY.value > DISMISS_DISTANCE || e.velocityY > DISMISS_VELOCITY) {
+        runOnJS(onRequestClose)();
+      } else {
+        dragX.value = withTiming(0, { duration: 180 });
+        dragY.value = withTiming(0, { duration: 180 });
+      }
+    });
+
+  const style = useAnimatedStyle(() => {
+    const dismissScale = interpolate(dragY.value, [0, 400], [1, 0.9], Extrapolation.CLAMP);
+    return {
+      flex: 1,
+      transform: [
+        { translateX: dragX.value },
+        { translateY: dragY.value },
+        { scale: dismissScale },
+      ],
+    };
+  });
+
+  return (
+    <GestureDetector gesture={dismissPan}>
+      <Animated.View style={style}>{children}</Animated.View>
+    </GestureDetector>
+  );
+};
+
 interface MediaViewerModalProps {
   isVisible: boolean;
   onClose: () => void;
@@ -174,10 +274,10 @@ interface MediaViewerModalProps {
 }
 
 // Single-media viewer (one image or video from a chat bubble). Shares the
-// ImageGalleryModal look — black flex-column layout, a header whose close button
-// clears the status bar, and the media laid out between the header and the
-// bottom safe area — but with NO left/right arrows and NO thumbnail filmstrip
-// (there is only one item). Images are pinch/double-tap/pan zoomable.
+// ImageGalleryModal look and gestures — pinch/double-tap/pan zoom on images and
+// an iMessage-style drag-DOWN-to-dismiss on both images and videos: the black
+// backdrop fades to reveal the chat behind, the header chrome fades quickly, and
+// the media follows the finger, dismissing past a threshold or springing back.
 export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   isVisible,
   onClose,
@@ -195,6 +295,18 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   // sized to exactly this so it never overlaps the chrome.
   const [mediaH, setMediaH] = useState(Math.max(1, SCREEN_HEIGHT - 220));
 
+  // Drag-to-dismiss offsets, shared with the zoomable image / video wrapper. The
+  // black backdrop fades over a long drag; the header chrome fades quickly so
+  // only the media (following the finger) is left, like iMessage.
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dragY.value, [0, SCREEN_HEIGHT * 0.5], [1, 0], Extrapolation.CLAMP),
+  }));
+  const chromeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dragY.value, [0, 100], [1, 0], Extrapolation.CLAMP),
+  }));
+
   // A Modal can report insets.top === 0 on Android even though the status bar is
   // physically there — floor so the close button never lands in the status bar.
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? 0 : 0, 12);
@@ -203,7 +315,12 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   useEffect(() => {
     if (isVisible) {
       setImageLoading(true);
+      // Reset any leftover drag from a previous dismiss so it opens fully-shown.
+      dragX.value = 0;
+      dragY.value = 0;
     }
+    // dragX/dragY are stable useSharedValue refs — not real deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVisible, mediaUri]);
 
   // ─── Permissions ────────────────────────────────────────────────────────────
@@ -295,18 +412,25 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
         <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       )}
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={{ flex: 1, backgroundColor: '#000', paddingTop: topInset + 10, paddingBottom: bottomInset + 10 }}>
-          {/* Header — takes real space so the media sits below it */}
-          <View
-            style={{
-              paddingTop: topInset,
+        <View style={{ flex: 1, paddingTop: topInset + 10, paddingBottom: bottomInset + 10 }}>
+          {/* Black backdrop that fades out as the media is dragged down, revealing
+              the chat behind (the Modal is transparent). Separate from the media so
+              the media stays fully opaque while it follows the finger. */}
+          <Animated.View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, backdropStyle]}
+          />
+
+          {/* Header — fades with the drag so only the media remains while dismissing. */}
+          <Animated.View
+            style={[{
+              paddingTop: 10,
               paddingBottom: 10,
               paddingHorizontal: 8,
-              backgroundColor: '#000',
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
-            }}
+            }, chromeStyle]}
           >
             <TouchableOpacity onPress={onClose} className="p-2">
               <Icon name="close" size={26} color="#fff" />
@@ -322,7 +446,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
               )}
               <Text className="text-white text-[10px] ml-1.5 font-bold">SAVE</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
 
           {/* Middle band — the media fits exactly here, between header & bottom */}
           <View
@@ -340,6 +464,9 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                     uri={mediaUri}
                     width={SCREEN_WIDTH}
                     height={mediaH}
+                    dragX={dragX}
+                    dragY={dragY}
+                    onRequestClose={onClose}
                     onLoadStart={() => setImageLoading(true)}
                     onLoadEnd={() => setImageLoading(false)}
                     onError={() => setImageLoading(false)}
@@ -352,7 +479,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                 )}
               </View>
             ) : (
-              <View style={{ flex: 1 }}>
+              <DismissibleVideo dragX={dragX} dragY={dragY} onRequestClose={onClose}>
                 {Video ? (
                   <Video
                     ref={videoRef}
@@ -368,7 +495,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                     <Text className="text-white opacity-40">Video Unavailable</Text>
                   </View>
                 )}
-              </View>
+              </DismissibleVideo>
             )}
           </View>
         </View>

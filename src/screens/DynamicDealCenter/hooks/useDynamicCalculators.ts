@@ -4,7 +4,7 @@ import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
-import { normalizeSingleAcceptedDrop, dedupeDrops } from '../utils/drop-prices';
+import { normalizeSingleAcceptedDrop, dedupeDrops, collapseDropsByPrice } from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 
@@ -444,7 +444,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       paymentMethod: tab.paymentMethod,
       // Web parity (`ViewAllCalculators.js:1116-1123`): normalize to at most one
     // accepted drop at SAVE time, so no path can ever persist two SECURED rows.
-    dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(tab.dropPrice)),
+    // `collapseDropsByPrice` additionally guarantees at most one row PER PRICE, so a
+    // declined twin + its accepted version (or a backend-re-created no-`_id` copy) can
+    // never be persisted as two rows.
+    dropPrice: normalizeSingleAcceptedDrop(collapseDropsByPrice(dedupeDrops(tab.dropPrice))),
       downPayment: tab.downPayment,
       discountPercentage: tab.discountPercentage,
       // Web parity: the renders bound to this job build + the 1-Year monthly plan
@@ -597,7 +600,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               paymentMethod: c.paymentMethod || undefined,
               // Repair records already corrupted by the pre-fix save race, which
               // otherwise render two SECURED rows on every reopen forever.
-              dropPrice: normalizeSingleAcceptedDrop(dedupeDrops(c.dropPrice)),
+              // `collapseDropsByPrice` also heals records the backend accumulated into
+              // two rows at the same price (declined twin + accepted, or a no-`_id`
+              // re-created copy) so a reopened calculator shows each price once.
+              dropPrice: normalizeSingleAcceptedDrop(collapseDropsByPrice(dedupeDrops(c.dropPrice))),
               downPayment: c.downPayment || 0,
               discountPercentage: Number(c.discountPercentage) || undefined,
               selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
@@ -925,8 +931,12 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   /** Replace a calculator's drop-price list (persisted on the next debounced save). */
   const handleSetDrops = useCallback(
     (tabId: string, drops: any[]) => {
+      // Collapse to one row per price on EVERY update so the live list never shows a
+      // price twice — the declined twin `openDrop` persists on entry merges with its
+      // accepted version on Secure, and any same-price re-add is absorbed.
+      const collapsed = collapseDropsByPrice(drops);
       setTabs((prev) => {
-        const next = prev.map((t) => (t.id === tabId ? { ...t, dropPrice: drops } : t));
+        const next = prev.map((t) => (t.id === tabId ? { ...t, dropPrice: collapsed } : t));
         tabsRef.current = next;
         markDirty(tabId);
         return next;

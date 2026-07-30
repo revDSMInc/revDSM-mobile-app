@@ -281,34 +281,30 @@ export function computeCalculatorTiers(
 }
 
 /**
- * The COST/PAR/RETAIL a rollout LOG (`percentageOfRollout` / `pricemarkup`) must
- * anchor its markup on — the SAME fee-adjusted, $200-floored tiers the rep sees on
- * the rollout card. Web `calculateMarkup` (ViewAllCalculators.js:128) anchors on
- * `getCalculationResult(calc, tier, method)` — its own comment: "Anchor against the
- * SAME fee-adjusted tiers shown on the card … entering the displayed cost reads as
- * COST (0%)". That means pricing-config DERIVATION + the selected plan's bank FEE +
- * the $200 FLOOR — NOT the raw stored `totals`, whose blank par/cost tiers (a
- * retail-only schema) come through as 0 and snap the markup to the wrong tier (the
- * mobile bug: "PAR + 49%" where web shows "COST + 100%").
+ * The COST/PAR/RETAIL a rollout LOG (`percentageOfRollout` / `pricemarkup`) anchors
+ * its markup on. WEB PARITY with `calculateMarkup` (ViewAllCalculators.js:83-116),
+ * which computes the anchors as `Math.round(getCalculationResult(calc, '50'|'65'|'100',
+ * 'check'))` — its comment: "ALWAYS use 'check' for anchors to standardize rollout
+ * calculation". So the anchors are INDEPENDENT of the selected payment plan: pricing-
+ * config DERIVATION + static company fee + the $200 FLOOR, but NO plan bank-fee
+ * gross-up (`check` has fee 0). The `computeCalculatorTiers` derivation still fixes
+ * blank par/cost tiers (retail-only schema) so the markup snaps to the right tier
+ * (the old mobile bug: "PAR + 49%" where web shows "COST + 100%").
  *
- * Mirrors the card tile math exactly (RolloutView `tiers`): `computeCalculatorTiers`
- * (derivation-aware pure sum) → `applyFeesToTier` (static company fee) → plan
- * bank-fee gross-up → `floorTier`. `planFee` is the selected plan's `fee` (0 for
- * cash/check), passed as a plain number so this stays free of the two different
- * `withPlanFee` helpers (the gross-up here is identical to both: `v / (1 - fee)`).
+ * Earlier this grossed up by the SELECTED plan's fee — a divergence: it made the
+ * markup shift when the rep changed plans, which web never does. Removed for parity.
  */
 export function computeLogTiers(
   entries: Record<string, any> = {},
   verticals: any[] = [],
   pricingConfig?: PricingConfig | null,
-  planFee = 0,
 ): { cost: number; par: number; retail: number } {
   const live = computeCalculatorTiers(entries, verticals, pricingConfig);
   const hasItems = live.retail > 0;
-  const grossUp = (v: number) => (planFee >= 1 ? v : v / (1 - planFee));
+  // `check`-anchored (web parity): static company fee + $200 floor, NO plan fee.
   const tierValue = (key: 'cost' | 'par' | 'retail') =>
     floorTier(
-      grossUp(applyFeesToTier(live[key], key, pricingConfig, { hasLineItems: live[key] > 0 })),
+      applyFeesToTier(live[key], key, pricingConfig, { hasLineItems: live[key] > 0 }),
       hasItems,
     );
   return { cost: tierValue('cost'), par: tierValue('par'), retail: tierValue('retail') };

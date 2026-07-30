@@ -787,13 +787,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const method = resolveMethod(calculator, user?.defaultPaymentMethod, pricing.defaultMethod);
   const isDefaultMethod = !!user?.defaultPaymentMethod && user.defaultPaymentMethod === method;
   // Tiers the rollout LOGS anchor markup on — the SAME fee-adjusted, $200-floored
-  // COST/PAR/RETAIL shown on the card (web `calculateMarkup`), NOT the calculator's
-  // raw stored totals, whose blank par/cost tiers (retail-only schema) came
-  // through as 0 and snapped the markup to the wrong tier ("PAR + 49%" vs web's
-  // "COST + 100%"). Identical by construction to the displayed `tiers` below.
+  // COST/PAR/RETAIL the markup anchors on. WEB PARITY (`calculateMarkup`): the
+  // anchors ALWAYS use the `check` method, so they are INDEPENDENT of the selected
+  // payment plan (unlike the displayed `tiers` below, which are fee-inflated by
+  // `method`). `computeCalculatorTiers` derivation still fixes retail-only schemas so
+  // the markup snaps to the right tier ("COST + 100%", not "PAR + 49%").
   const logTiers = useMemo(
-    () => computeLogTiers(calculator.entries, verticals, pricingConfig, plans[method]?.fee || 0),
-    [calculator.entries, verticals, pricingConfig, plans, method],
+    () => computeLogTiers(calculator.entries, verticals, pricingConfig),
+    [calculator.entries, verticals, pricingConfig],
   );
   // The "default" 1-Year monthly plan: the rep's default payment method if it's a
   // financing plan, else the standard ~9.99% APR financing plan, else the first
@@ -849,42 +850,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         action: 'end price entered',
       },
     }).catch(() => {});
-  };
-
-  // Portal parity: the ROLLOUT section shows the LATEST `end price entered` log as the
-  // green "Rollout Price" (older ones struck through — `isLatestOfType` in the portal's
-  // rollout-and-drop-logs.js). The deal's effective rollout price becomes the SECURED
-  // drop, so fire a fresh `end price entered` at that price and the portal's Rollout
-  // Price follows it. Shares `loggedPriceRef` with the input above so an unchanged
-  // effective price never re-logs. Product decision — web keeps the rollout price fixed.
-  const logRolloutPriceUpdate = (price: number, markup: string) => {
-    const uid = user?._id || user?.id;
-    if (!uid || price <= 0 || loggedPriceRef.current === price) return;
-    loggedPriceRef.current = price;
-    logRolloutChange({
-      userId: uid,
-      leadId,
-      calculator: logCalculator,
-      tiers: logTiers,
-      percentageOfRollout: markup,
-      change: {
-        fieldName: 'endPrice', fieldLabel: 'End Price', fieldValue: price, fieldCategory: 'rollout',
-        oldValue: '', newValue: price,
-        action: 'end price entered',
-      },
-    }).catch(() => {});
-  };
-  // After any drop change, log the effective Rollout Price: the last still-accepted
-  // drop, or the original confirmed price (calculator.price) when none is accepted.
-  const syncRolloutPriceLog = (nextDrops: any[]) => {
-    const accepted = [...nextDrops].reverse().find((d) => d?.status === 'accepted');
-    if (accepted) {
-      const ap = Number(accepted.dropedPrice ?? accepted.price) || 0;
-      logRolloutPriceUpdate(ap, accepted.pricemarkup || (ap > 0 ? markupLabel(ap, logTiers) : ''));
-    } else {
-      const op = Number(calculator.price) || 0;
-      logRolloutPriceUpdate(op, op > 0 ? markupLabel(op, logTiers) : '');
-    }
   };
 
   // Web `handlePaymentMethodChange` → `payment method changed` (or, once the rollout
@@ -1181,23 +1146,65 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
+    // Client requirement: a drop must be SAVED THE INSTANT it is entered. The rep may
+    // leave the app before hitting Secure/Decline — so record it as `declined` right
+    // now (persisted via the calculator auto-save). When the rep returns it lists as a
+    // Declined drop with its Display button, ready to re-open and Secure. Secure/Decline
+    // then edit THIS entry in place (via `pendingDropIndex`), never appending a
+    // duplicate. Declining never demotes other drops (single-accepted is a Secure-only
+    // rule).
+    //
+    // NO activity log fires here — web parity: web only logs `drop price secured` /
+    // `drop price declined` on the EXPLICIT action, never on entering the price.
+    // Logging on entry produced BOTH a `declined` AND a `secured` log for one drop when
+    // the rep then secured it. The entry only PERSISTS the row; Secure/Decline log.
+    const pricemarkup = markupLabel(v, logTiers);
+    const declined = { price: v, dropedPrice: v, status: 'declined', pricemarkup };
+    const next = dedupeDrops([...drops, declined]);
+    // The row to edit later: the just-added one, or the identical existing row if
+    // dedupe collapsed it (same price/status/plan/down = the same negotiation round).
+    let newIndex = next.indexOf(declined);
+    if (newIndex < 0) {
+      newIndex = next.findIndex(
+        (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0)) === Math.round(v) && d?.status === 'declined'
+      );
+    }
+    if (newIndex < 0) newIndex = next.length - 1;
+    onDropChange(calculator.id, next);
     setPendingDrop(v);
-    setPendingDropIndex(-1); // brand-new drop
+    setPendingDropIndex(newIndex); // Secure/Decline edit this persisted row in place
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
   };
 
   // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
-  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a
-  // fresh drop via "+ Nth Drop" (pendingDropIndex < 0) always APPENDS a new entry
-  // — "1st Dropped Price", "2nd Dropped Price", … — even at the same price, so the
-  // rep sees every round they ran. Re-negotiating an existing row via its Display
-  // button (pendingDropIndex >= 0) edits THAT row in place. (The old same-price
-  // dedup collapsed distinct rounds into one row; the multiple-payment-methods
-  // duplication it guarded against is now handled by storing all plans on a single
-  // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
-  const resolveDropTargetIndex = () => pendingDropIndex;
+  // NEW one). Each drop ACTION is its own numbered negotiation round: opening a fresh
+  // drop via "+ Nth Drop" APPENDS a new entry — "1st Dropped Price", "2nd Dropped
+  // Price", … — even at the same price, so the rep sees every round. Re-negotiating an
+  // existing row via its Display button edits THAT row in place.
+  //
+  // DUPLICATION GUARD: `openDrop` now persists the pending drop as a `declined` twin the
+  // instant it's entered (client save-on-close). So Secure/Decline must convert THAT
+  // twin, never append a second row beside it. Trust `pendingDropIndex` when it still
+  // points to a row at the price being actioned; otherwise adopt the existing declined
+  // twin for this price (last one, i.e. the round just entered). Only when neither
+  // exists (no twin at all) do we return -1 to append — a genuinely new price.
+  const resolveDropTargetIndex = () => {
+    const priceOf = (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
+    const target = Math.round(Number(pendingDrop));
+    if (
+      pendingDropIndex >= 0 &&
+      pendingDropIndex < drops.length &&
+      priceOf(drops[pendingDropIndex]) === target
+    ) {
+      return pendingDropIndex;
+    }
+    for (let i = drops.length - 1; i >= 0; i--) {
+      if (priceOf(drops[i]) === target && drops[i]?.status === 'declined') return i;
+    }
+    return -1;
+  };
 
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
@@ -1219,7 +1226,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
     const uidS = user?._id || user?.id;
     if (uidS) {
-      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      // Web parity (handleSecurePrice `lastDroppedPrice`): the transition's OLD value is
+      // the price BEFORE this drop — the previous drop, or the rollout end price for the
+      // first — NOT the just-entered drop. `openDrop` already appended the pending drop
+      // (save-on-entry), so read the entry BEFORE `targetIndex`. The portal draws the
+      // yellow `old → new` arrow only when old ≠ new, which is what surfaces this log.
+      const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
+      const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
       logRolloutChange({
         userId: uidS,
@@ -1254,8 +1267,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         }).catch(() => {});
       }
     }
-    // Portal: the Rollout Price now follows this secured drop.
-    syncRolloutPriceLog(next);
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1280,7 +1291,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
     const uidD = user?._id || user?.id;
     if (uidD) {
-      const lastDrop = drops.length ? (drops[drops.length - 1].dropedPrice ?? drops[drops.length - 1].price) : calculator.price;
+      // Web parity (handleDeclinePrice `lastDroppedPrice`): OLD value is the price BEFORE
+      // this drop — the previous drop, or the rollout end price for the first — NOT the
+      // just-entered drop. `openDrop` appended the pending drop (save-on-entry), so read
+      // the entry BEFORE `targetIndex`; the portal draws the yellow arrow only when
+      // old ≠ new.
+      const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
+      const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
       logRolloutChange({
         userId: uidD,
@@ -1297,9 +1314,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         },
       }).catch(() => {});
     }
-    // Portal: declining a drop reverts the Rollout Price to the last still-accepted
-    // drop, or the original confirmed price when none remains accepted.
-    syncRolloutPriceLog(next);
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1686,9 +1700,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                         const nextDrops = drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2));
                         onDropChange(calculator.id, nextDrops);
                         logDropUnselected(dp, i);
-                        // Portal: un-securing reverts the Rollout Price to the remaining
-                        // accepted drop, or the original confirmed price when none remains.
-                        syncRolloutPriceLog(nextDrops);
                       }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
                       </TouchableOpacity>
@@ -1856,10 +1867,8 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   // markup on — matches the card tiles (web `calculateMarkup`), not the raw stored
   // `totals`. Used for the confirm-bar `rollout confirmed` log AND the persisted
   // `pricemarkup` (computed here because the hook lacks pricingConfig/plans).
-  const logTiersFor = (c: CalculatorTab) => {
-    const m = resolveMethod(c, user?.defaultPaymentMethod, pricing.defaultMethod);
-    return computeLogTiers(c.entries, verticals || [], pricingConfig, pricing.plans[m]?.fee || 0);
-  };
+  const logTiersFor = (c: CalculatorTab) =>
+    computeLogTiers(c.entries, verticals || [], pricingConfig);
   // A priced calculator whose job scope changed AFTER the price was entered (the live
   // scope no longer matches the snapshot taken at pricing time). Drives the per-calc
   // "Job Scope was changed. Please review the Rollout End Price." warning — the price
@@ -1902,9 +1911,9 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     const method = resolveMethod(calc, user?.defaultPaymentMethod, pricing.defaultMethod);
     const err = endPriceError(pricing.plans, enteredPrice, calc, method);
     if (err) return;
-    // Anchor the persisted `pricemarkup` on the fee-adjusted, floored card tiers
-    // (web `calculateMarkup`), NOT the raw stored `totals` — same fix as the logs.
-    const tiers = computeLogTiers(calc.entries, verticals || [], pricingConfig, pricing.plans[method]?.fee || 0);
+    // Anchor the persisted `pricemarkup` on the `check`-based, floored tiers
+    // (web `calculateMarkup`), NOT the raw stored `totals` — same as the logs.
+    const tiers = computeLogTiers(calc.entries, verticals || [], pricingConfig);
     // Web parity (ViewAllCalculators.autoConfirmCalculator): fire the `rollout
     // auto-confirmed (10 min inactivity)` rollout log. The manual Confirm bar logs
     // `rollout confirmed` inline, but auto-confirm bypasses that path — so without this
