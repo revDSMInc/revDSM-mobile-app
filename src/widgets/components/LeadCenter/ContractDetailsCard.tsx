@@ -14,16 +14,16 @@ interface ContractDetailsCardProps {
   leadDraft: any;
   isDark: boolean;
   colors: any;
-  resolvedDocuments: { agreements: any[]; orderSheets: any[] };
-  expandedDocs: { agreements: boolean; orderSheets: boolean };
-  setExpandedDocs: React.Dispatch<React.SetStateAction<{ agreements: boolean; orderSheets: boolean }>>;
+  resolvedDocuments: { agreements: any[]; orderSheets: any[]; downPaymentReceipts: any[] };
+  expandedDocs: { agreements: boolean; orderSheets: boolean; downPaymentReceipts: boolean };
+  setExpandedDocs: React.Dispatch<React.SetStateAction<{ agreements: boolean; orderSheets: boolean; downPaymentReceipts: boolean }>>;
   setShowEditModal: (show: boolean) => void;
   onOpenPdf?: (url: string, title?: string) => void;
   onImagePreview: (uri: string) => void;
   getStatusLabel: () => string;
   hasContract: boolean;
   isResulted: boolean;
-  onAddDocument: (type: 'agreement' | 'orderSheet') => void;
+  onAddDocument: (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => void;
 }
 
 const cleanNumber = (val: any): number => {
@@ -253,6 +253,46 @@ export const ContractDetailsCard = ({
             </View>
           )}
         </View>
+
+        {/* Down Payment Receipt(s) Section — Sale-only (web parity: contract-details.js) */}
+        {!isDemo && (
+          <View className="mt-6">
+            <TouchableOpacity
+              onPress={() => setExpandedDocs(prev => ({ ...prev, downPaymentReceipts: !prev.downPaymentReceipts }))}
+              className="flex-row items-center justify-between mb-4"
+            >
+              <Text className="text-sm font-bold text-[#1C252E]" style={{ color: colors.text }}>Down Payment Receipt(s)</Text>
+              <View className="flex-row items-center gap-2">
+                <View className="bg-[#1C252E] px-2 py-0.5 rounded-md">
+                  <Text className="text-[10px] font-black text-white">{resolvedDocuments.downPaymentReceipts.length} Files</Text>
+                </View>
+                <Icon name={expandedDocs.downPaymentReceipts ? "chevron-up" : "chevron-down"} size={20} color="#637381" />
+              </View>
+            </TouchableOpacity>
+
+            {expandedDocs.downPaymentReceipts && (
+              <View className="gap-3">
+                {resolvedDocuments.downPaymentReceipts.map((doc, idx) => (
+                  <DocumentItem
+                    key={idx}
+                    doc={doc}
+                    isDark={isDark}
+                    colors={colors}
+                    onOpen={onOpenPdf}
+                    onImagePreview={(uri: string) => onImagePreview(uri)}
+                  />
+                ))}
+                <TouchableOpacity
+                  onPress={() => onAddDocument('downPaymentReceipt')}
+                  className="border-2 border-dashed border-gray-200 rounded-xl py-4 items-center justify-center flex-row gap-2"
+                >
+                  <Icon name="plus" size={20} color="#637381" />
+                  <Text className="text-sm font-bold text-[#637381]">Add Document</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
       </View>
     </View>
   );

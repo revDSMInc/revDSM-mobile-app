@@ -388,6 +388,10 @@ export function DynamicAgreementDialog({
             signatureFields={agreementData.signatureFields}
             pdfDimensions={agreementData.pdfDimensions}
             onSuccess={handleSigned}
+            // Enables "Send Remotely" (primary buyer + coBuyers[]). The signed
+            // agreement is persisted server-side; closing lets the summary refresh.
+            customerDetails={leadData?.customerDetails}
+            onRemoteComplete={onClose}
           />
         )}
       </SafeAreaView>

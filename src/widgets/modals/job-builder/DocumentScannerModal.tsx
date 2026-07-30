@@ -26,7 +26,7 @@ interface DocumentScannerModalProps {
   onChange?: (images: any[]) => void;
   title: string;
   leadId: string;
-  category: 'agreement' | 'orderSheet';
+  category: 'agreement' | 'orderSheet' | 'downPaymentReceipt';
   initialFiles?: any[];
 }
 
@@ -42,7 +42,7 @@ export const DocumentScannerModal = ({
 }: DocumentScannerModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const statusBarBg = isDark ? colors.background : '#101828';
+  const statusBarBg = isDark ? colors.background : '#0E2A1C';
   const { width } = useWindowDimensions();
   const [files, setFiles] = useState<any[]>([]);
   const [removedServerIds, setRemovedServerIds] = useState<string[]>([]);

@@ -53,7 +53,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const pricing = useDealPricing(lead);
   const { config: jobBuilderConfig, isLoading: jbLoading } = useDynamicCalculatorSchemas();
   const { schemas: descriptionSchemas } = useGetDescriptionSchemas();
-  const { tabs, activeTabId, setActiveTabId, loading: calcLoading } = useDynamicCalculators(lead, verticals);
+  const { tabs, activeTabId, setActiveTabId, loading: calcLoading, handleSetInHome } = useDynamicCalculators(lead, verticals);
 
   // ── Consent gate ────────────────────────────────────────────────────────────
   const consentMutation = useSubmitDigitalConsentMutation();
@@ -68,7 +68,13 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   // Back button raises a confirm before leaving (the presentation shouldn't close on
   // a stray tap); only "Exit" actually navigates back.
   const [showExitConfirm, setShowExitConfirm] = useState(false);
-  const consentSigned = localConsentSigned || hasSignedConsent(lead);
+  // Calculator-tab scroll metrics — drive the left/right blur-fade edges (Deal Center
+  // parity) that signal a long tab name / more tabs are scrolled off-screen.
+  const [tabScrollOffset, setTabScrollOffset] = useState(0);
+  const [tabScrollViewWidth, setTabScrollViewWidth] = useState(0);
+  const [tabContentWidth, setTabContentWidth] = useState(0);
+  const isLeadSold = lead?.status === 'sale';
+  const consentSigned = localConsentSigned || hasSignedConsent(lead) || isLeadSold;
 
   const handleConsentSubmit = useCallback(
     async (data: any) => {
@@ -240,23 +246,59 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
         </View>
       ) : (
         <>
-          {/* Calculator tabs */}
+          {/* Calculator tabs — with left/right blur-fade edges (Deal Center parity)
+              that show a long tab name / more tabs continue off-screen. */}
           {visible.length > 1 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }} contentContainerStyle={{ paddingHorizontal: 12 }}>
-              {visible.map((t) => {
-                const isActive = t.id === active?.id;
-                return (
-                  <TouchableOpacity
-                    key={t.id}
-                    onPress={() => setActiveTabId(t.id)}
-                    style={{ paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent', flexDirection: 'row', alignItems: 'center', gap: 6 }}
-                  >
-                    <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#1C252E' : '#94A3B8',paddingBottom:4 }}>{t.title}</Text>
-                    <Ionicons name="checkmark" size={14} color={isActive ? '#16A34A' : '#CBD5E1'} />
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            <View style={{ position: 'relative', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ flexGrow: 0,marginHorizontal:10 }}
+                contentContainerStyle={{ paddingHorizontal: 12 }}
+                onScroll={(e) => setTabScrollOffset(e.nativeEvent.contentOffset.x)}
+                onContentSizeChange={(w) => setTabContentWidth(w)}
+                onLayout={(e) => setTabScrollViewWidth(e.nativeEvent.layout.width)}
+                scrollEventThrottle={16}
+              >
+                {visible.map((t) => {
+                  const isActive = t.id === active?.id;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      onPress={() => setActiveTabId(t.id)}
+                      style={{ paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent', flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                    >
+                      <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#1C252E' : '#94A3B8',paddingBottom:4 }}>{t.title}</Text>
+                      <Ionicons name="checkmark" size={14} color={isActive ? '#16A34A' : '#CBD5E1'} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Left fade — shown once the row is scrolled away from the start. */}
+              {tabScrollOffset > 5 && (
+                <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                  {[1.0, 0.8, 0.6, 0.4, 0.2, 0.08].map((opacity, idx) => (
+                    <View key={`tab-left-fade-${idx}`} style={{ width: 4, height: '100%', opacity, overflow: 'hidden' }}>
+                      <BlurView style={{ position: 'absolute', left: -idx * 4, top: 0, bottom: 0, width: 24 }} blurType="light" blurAmount={10} reducedTransparencyFallbackColor="rgba(255,255,255,1)" />
+                      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.45)' }]} />
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Right fade — shown while more content continues past the edge. */}
+              {tabScrollOffset + tabScrollViewWidth < tabContentWidth - 5 && (
+                <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, flexDirection: 'row' }} pointerEvents="none">
+                  {[0.08, 0.2, 0.4, 0.6, 0.8, 1.0].map((opacity, idx) => (
+                    <View key={`tab-right-fade-${idx}`} style={{ width: 4, height: '100%', opacity, overflow: 'hidden' }}>
+                      <BlurView style={{ position: 'absolute', left: -idx * 4, top: 0, bottom: 0, width: 24 }} blurType="light" blurAmount={10} reducedTransparencyFallbackColor="rgba(255,255,255,1)" />
+                      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.45)' }]} />
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
           )}
 
           {active && (
@@ -270,6 +312,7 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
               descriptionSchemas={descriptionSchemas}
               lead={lead}
               onOptIn={handleOptIn}
+              onSetInHome={handleSetInHome}
               onRefresh={() => {
                 const lid = lead?._id || lead?.leadId || lead?.id;
                 if (lid) {

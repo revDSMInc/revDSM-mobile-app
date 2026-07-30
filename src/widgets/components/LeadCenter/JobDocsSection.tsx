@@ -68,6 +68,7 @@ import {
 } from '../lead-center/dynamic-inspection-schema-utils';
 import { ImageSlideshowModal } from './ImageSlideshowModal';
 import { uploadQueueManager, UploadQueueItem } from '../../../utils/uploadQueue';
+import { resolveS3Url } from '../../../utils/s3-utils';
 
 interface SectionImage {
   uri: string;
@@ -143,7 +144,7 @@ export const JobDocsSection = ({
 
   // Scanner states for direct upload
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet'>('agreement');
+  const [scannerType, setScannerType] = useState<'agreement' | 'orderSheet' | 'downPaymentReceipt'>('agreement');
   const [isGenerating, setIsGenerating] = useState(false);
 
   // Slideshow preview states
@@ -219,13 +220,15 @@ export const JobDocsSection = ({
   const [selectedAnnotationPhotos, setSelectedAnnotationPhotos] = useState<SectionImage[]>([]);
 
   // Contract outcome states
-  const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[] }>({
+  const [resolvedDocuments, setResolvedDocuments] = useState<{ agreements: any[]; orderSheets: any[]; downPaymentReceipts: any[] }>({
     agreements: [],
     orderSheets: [],
+    downPaymentReceipts: [],
   });
-  const [expandedDocs, setExpandedDocs] = useState<{ agreements: boolean; orderSheets: boolean }>({
+  const [expandedDocs, setExpandedDocs] = useState<{ agreements: boolean; orderSheets: boolean; downPaymentReceipts: boolean }>({
     agreements: true,
     orderSheets: true,
+    downPaymentReceipts: true,
   });
   const [leadDraft, setLeadDraft] = useState<any>(null);
 
@@ -522,7 +525,7 @@ export const JobDocsSection = ({
     }
   };
 
-  const handleAddDocument = (type: 'agreement' | 'orderSheet') => {
+  const handleAddDocument = (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => {
     setScannerType(type);
     setScannerOpen(true);
   };
@@ -574,8 +577,14 @@ export const JobDocsSection = ({
   };
 
   const handleSaveScannedDocument = async (pages: any[]) => {
-    const scannerCategory = scannerType === 'agreement' ? 'agreement' : 'orderSheet';
-    const stateField = scannerCategory === 'agreement' ? 'agreements' : 'orderSheets';
+    // Backend job-builder document category (matches web `submitJobBuilder`):
+    // agreement / orderSheet / downPaymentReceipt. The state (submit) field mirrors
+    // web too — agreements / orderSheets / downPaymentReceipt.
+    const scannerCategory = scannerType;
+    const stateField =
+      scannerCategory === 'agreement' ? 'agreements'
+      : scannerCategory === 'orderSheet' ? 'orderSheets'
+      : 'downPaymentReceipt';
     const leadId = lead?._id;
 
     if (!leadId) {
@@ -602,7 +611,8 @@ export const JobDocsSection = ({
         const dataObj = response.data?.data || response.data || {};
         preFetchedAppendedDocs = [
           ...(dataObj.agreements || []),
-          ...(dataObj.orderSheets || [])
+          ...(dataObj.orderSheets || []),
+          ...(dataObj.downPaymentReceipt || [])
         ];
       } catch (err) {
         console.warn('[JobDocsSection] Failed to pre-fetch outcome documents', err);
@@ -612,7 +622,7 @@ export const JobDocsSection = ({
       for (let i = 0; i < pages.length; i++) {
         const p = pages[i];
         const docNum = i + 1;
-        const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : 'Order_Sheet';
+        const cleanCategoryName = scannerCategory === 'agreement' ? 'Agreement' : scannerCategory === 'orderSheet' ? 'Order_Sheet' : 'Down_Payment_Receipt';
         const defaultName = `${cleanCategoryName}_${docNum}.pdf`;
         const documentName = p.name ? p.name.replace(/\.[a-z]+$/i, '.pdf') : defaultName;
 
@@ -1185,54 +1195,138 @@ export const JobDocsSection = ({
   }, [lead?._id, refetch]);
 
   useEffect(() => {
-    const resolveDocs = async () => {
-      const docs = lead?.jobBuilderDocuments;
-      if (docs) {
-        const { agreements = [], orderSheets = [] } = docs;
-        const allDocs = [
-          ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
-          ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
-        ];
+    let cancelled = false;
 
-        const allPaths = allDocs.map((doc: any) => ({
+    // Map each doc, preferring a signed URL when available, else a directly
+    // resolvable S3 URL. `urls` may be null on the first (instant) pass.
+    const mapWith = (allDocs: any[], urls: any[] | null) =>
+      allDocs.map((doc: any) => {
+        const urlObj = urls?.find((u: any) => u.filePath === doc.filePath);
+        const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
+        const finalType = doc.documentType || doc._sourceGroup;
+        return {
+          uri: urlObj?.secureUrl || urlObj?.url || resolveS3Url(doc.filePath),
+          name: finalType === 'agreement' ? 'Agreement' : finalType === 'orderSheet' ? 'Order Sheet' : 'Down Payment Receipt',
+          serverId: doc._id,
+          size,
+          documentType: finalType,
+        };
+      });
+
+    const split = (mappedAll: any[]) => ({
+      agreements: mappedAll.filter((d: any) => d.documentType === 'agreement'),
+      orderSheets: mappedAll.filter((d: any) => d.documentType === 'orderSheet'),
+      downPaymentReceipts: mappedAll.filter((d: any) => d.documentType === 'downPaymentReceipt'),
+    });
+
+    // Flatten a `{ agreements, orderSheets, downPaymentReceipt }` bag into a tagged
+    // list. Web parity (contract-details.js): receipts live under `downPaymentReceipt`.
+    const flatten = (bag: any) => [
+      ...(bag?.agreements || []).map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
+      ...(bag?.orderSheets || []).map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
+      ...(bag?.downPaymentReceipt || []).map((d: any) => ({ ...d, _sourceGroup: 'downPaymentReceipt' })),
+    ];
+
+    const keyOf = (d: any) => d.filePath || d._id || '';
+    // Secondary identity: same type + same byte size. Collapses the same PDF stored
+    // under two different filePaths — e.g. the eagerly-signed agreement (sign endpoint)
+    // and the copy re-sent by the lead-scoped outcome write on Complete Job — so a
+    // re-send can never show as a duplicate card.
+    const contentKeyOf = (d: any) => {
+      const size = d.fileData?.size ?? d.size ?? d.fileSize ?? d.length ?? d.contentLength;
+      const type = d.documentType || d._sourceGroup || '';
+      return size ? `${type}:${size}` : '';
+    };
+
+    const resolveDocs = async () => {
+      const leadId = lead?._id;
+      // Source A — the lead's `jobBuilderDocuments` (scanned/uploaded docs land here).
+      const jbAllDocs = flatten(lead?.jobBuilderDocuments);
+
+      // Phase 1 — render instantly with best-effort S3 URLs (no network wait), so a
+      // just-uploaded doc appears the moment the lead refetches.
+      if (!cancelled) setResolvedDocuments(split(mapWith(jbAllDocs, null)));
+
+      // Source B — the OUTCOME documents. A SIGNED / generated agreement is filed by
+      // the sign endpoint as a LeadOutcomeDocument and is NOT re-sent to the
+      // JobBuilderDocument collection on Complete Job (that would duplicate it) — and
+      // the backend returns `jobBuilderDocuments` EMPTY for this flow, so it never
+      // appears there. It lives in the outcome instead: a signed agreement is filed
+      // LEAD-scoped (`GET /lead/{id}/outcome` → `leadOutcomeDocuments.agreements[]`,
+      // each with filePath + bucketName), while an uploaded doc may be CALCULATOR-scoped
+      // (`GET /lead/{id}/outcome/{calcId}`). Read BOTH and merge whatever they hold —
+      // deduped by filePath/_id — so the agreement surfaces regardless of scope.
+      // Display-only, no write change → zero duplicate-row risk.
+      // Collapse duplicates across ALL sources by filePath/_id AND by type+size, so a
+      // re-sent or eagerly-filed agreement (and any duplicate the backend may store)
+      // can never render twice. jobBuilderDocuments entries win priority (listed first).
+      const dedupeDocs = (docs: any[]) => {
+        const seen = new Set<string>();
+        const seenContent = new Set<string>();
+        const out: any[] = [];
+        for (const d of docs) {
+          const k = keyOf(d);
+          const ck = contentKeyOf(d);
+          if ((k && seen.has(k)) || (ck && seenContent.has(ck))) continue;
+          if (k) seen.add(k);
+          if (ck) seenContent.add(ck);
+          out.push(d);
+        }
+        return out;
+      };
+
+      let mergedAllDocs = dedupeDocs(jbAllDocs);
+      if (leadId) {
+        try {
+          const calcId = lead?.selectedCalculatorId;
+          const [leadRes, calcRes] = await Promise.all([
+            LeadService.getLeadOutcome(leadId).catch(() => null),
+            calcId
+              ? LeadService.getLeadOutcomeByCalculator(leadId, calcId).catch(() => null)
+              : Promise.resolve(null),
+          ]);
+          const docsFrom = (res: any) => {
+            const body: any = res?.data;
+            const outcome = body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
+            return flatten(outcome?.leadOutcomeDocuments);
+          };
+          const ocAllDocs = [...docsFrom(leadRes), ...docsFrom(calcRes)];
+          mergedAllDocs = dedupeDocs([...jbAllDocs, ...ocAllDocs]);
+        } catch (e) {
+          console.warn('[JobDocsSection] outcome document merge failed', e);
+        }
+      }
+
+      if (mergedAllDocs.length === 0) {
+        if (!cancelled) setResolvedDocuments({ agreements: [], orderSheets: [], downPaymentReceipts: [] });
+        return;
+      }
+
+      // Re-render with the merged set (still best-effort URLs, instant).
+      if (!cancelled) setResolvedDocuments(split(mapWith(mergedAllDocs, null)));
+
+      // Phase 2 — swap in signed URLs for actual opening. On failure the best-effort
+      // docs stay visible (the old code left the list EMPTY here, which is why an
+      // uploaded doc could "never show" when this call was slow or errored).
+      try {
+        const allPaths = mergedAllDocs.map((doc: any) => ({
           filePath: doc.filePath,
           bucketName: doc.bucketName,
         }));
-
-        if (allPaths.length > 0) {
-          try {
-            const res = await LeadService.getSecureUrls(allPaths);
-            const urls = res.data?.data || res.data;
-
-            const mappedAll = allDocs.map((doc: any) => {
-              const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
-              const size = doc.fileData?.size || doc.size || doc.fileSize || doc.length || doc.contentLength;
-              const finalType = doc.documentType || doc._sourceGroup;
-              return {
-                uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-                name: finalType === 'agreement' ? 'Agreement' : 'Order Sheet',
-                serverId: doc._id,
-                size,
-                documentType: finalType,
-              };
-            });
-
-            setResolvedDocuments({
-              agreements: mappedAll.filter((d: any) => d.documentType === 'agreement'),
-              orderSheets: mappedAll.filter((d: any) => d.documentType === 'orderSheet'),
-            });
-          } catch (error) {
-            console.error('Failed to resolve secure URLs', error);
-          }
-        } else {
-          setResolvedDocuments({ agreements: [], orderSheets: [] });
-        }
-      } else {
-        setResolvedDocuments({ agreements: [], orderSheets: [] });
+        const res = await LeadService.getSecureUrls(allPaths);
+        const urls = res.data?.data || res.data;
+        if (!cancelled && Array.isArray(urls)) setResolvedDocuments(split(mapWith(mergedAllDocs, urls)));
+      } catch (error) {
+        console.error('Failed to resolve secure URLs', error);
       }
     };
     resolveDocs();
-  }, [lead?.jobBuilderDocuments]);
+    return () => {
+      cancelled = true;
+    };
+    // Re-run when the lead's own doc bag changes or the lead id changes; the outcome
+    // merge is refetched alongside so a newly-signed agreement surfaces on refresh.
+  }, [lead?.jobBuilderDocuments, lead?._id]);
 
 
 
@@ -1508,11 +1602,11 @@ export const JobDocsSection = ({
       <DocumentScannerModal
         visible={scannerOpen}
         onClose={() => setScannerOpen(false)}
-        title={scannerType === 'agreement' ? 'Scan Agreement' : 'Scan Order Sheet'}
+        title={scannerType === 'agreement' ? 'Scan Agreement' : scannerType === 'orderSheet' ? 'Scan Order Sheet' : 'Scan Down Payment Receipt'}
         leadId={lead?._id || ''}
         category={scannerType}
         initialFiles={
-          resolvedDocuments[scannerType === 'agreement' ? 'agreements' : 'orderSheets'] || []
+          resolvedDocuments[scannerType === 'agreement' ? 'agreements' : scannerType === 'orderSheet' ? 'orderSheets' : 'downPaymentReceipts'] || []
         }
         onSave={handleSaveScannedDocument}
       />

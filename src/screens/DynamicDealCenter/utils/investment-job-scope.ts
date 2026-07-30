@@ -38,6 +38,8 @@ export interface InvestmentJobScopeParams {
   lead?: any;
   /** Persisted dynamicJobState for a BUILT calculator (from getLeadOutcomeByCalculator). */
   savedJobState?: any;
+  /** Static description lines stored directly on the calculator entity. */
+  calculatorDescriptions?: string[];
 }
 
 /**
@@ -63,10 +65,46 @@ export function stripScopeLine(raw: string): string {
 }
 
 /** Returns the ordered, footage/color-stripped job-scope lines for a calculator. */
+/** Strip footages/colors, drop empties/too-short lines, dedupe (first-seen order). */
+function cleanScopeLines(lines: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const line of lines) {
+    const cleaned = stripScopeLine(line);
+    if (cleaned.length < 3) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
+}
+
 export function buildInvestmentJobScope(params: InvestmentJobScopeParams): string[] {
-  const { entries, calculatorSchemas, jobBuilderConfig, descriptionSchemas, lead, savedJobState } = params;
+  const { entries, calculatorSchemas, jobBuilderConfig, descriptionSchemas, lead, savedJobState, calculatorDescriptions } = params;
+
+  // The calculator's own saved descriptions (e.g. ["Install gutters"]) are
+  // authoritative and self-contained — surface them even when the job-builder
+  // config / description schemas aren't configured. Previously the guard below
+  // returned [] first, so a configured calculator still showed the "no products
+  // configured" empty state despite having descriptions.
+  const calcLines: string[] = Array.isArray(calculatorDescriptions)
+    ? calculatorDescriptions.filter((d: any) => typeof d === 'string' && d.trim())
+    : [];
+
+  // The backend already computed this calculator's job scope (`lfcalculator.descriptions`)
+  // by running the same agreement description-schema engine we port below — so when it's
+  // present it is AUTHORITATIVE. Use it verbatim (footages/colors stripped) and skip the
+  // local re-derivation, which was only ever a best-effort reconstruction of exactly this.
+  // (Previously these lines were merely PREPENDED to the re-derived ones, and since mobile
+  // never hydrated `descriptions` the list fell through to the product/category names —
+  // e.g. showing just "Soffit" instead of the real scope sentences.)
+  if (calcLines.length > 0) {
+    return cleanScopeLines(calcLines);
+  }
+
   if (!jobBuilderConfig || !Array.isArray(descriptionSchemas) || descriptionSchemas.length === 0) {
-    return [];
+    return cleanScopeLines(calcLines);
   }
 
   // 1. Resolve the job-builder verticalState.
@@ -88,14 +126,24 @@ export function buildInvestmentJobScope(params: InvestmentJobScopeParams): strin
       });
       verticalState = buildInitialJobState(jobBuilderConfig, dealCenterData);
     } catch {
-      return [];
+      return cleanScopeLines(calcLines);
     }
   }
-  if (!verticalState) return [];
+  if (!verticalState) return cleanScopeLines(calcLines);
 
-  // 2. Evaluate every description schema against that state and collect the lines.
-  const lines: string[] = [];
+  // 2. Collect lines from the calculator's own descriptions + every description schema.
+  const lines: string[] = [...calcLines];
   for (const schema of descriptionSchemas) {
+    // 2a. Plain string → use directly.
+    if (typeof schema === 'string') {
+      if (schema.trim()) lines.push(schema.trim());
+      continue;
+    }
+    // 2b. Static descriptions array on the schema object (no evaluation needed).
+    if (Array.isArray(schema?.descriptions)) {
+      lines.push(...schema.descriptions.filter((d: any) => typeof d === 'string' && d.trim()));
+    }
+    // 2c. Evaluated primaryMappings / conditionalDescriptions.
     try {
       const out = evaluateDescriptionSchema(schema, {}, verticalState);
       if (Array.isArray(out)) lines.push(...out);
@@ -105,15 +153,5 @@ export function buildInvestmentJobScope(params: InvestmentJobScopeParams): strin
   }
 
   // 3. Strip footages/colors, drop empties, dedupe (preserve first-seen order).
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const line of lines) {
-    const cleaned = stripScopeLine(line);
-    if (cleaned.length < 3) continue;
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(cleaned);
-  }
-  return result;
+  return cleanScopeLines(lines);
 }

@@ -144,21 +144,36 @@ export async function buildDocumentPayloads({
   orderSheets,
   leadId,
   isSale,
+  includeSystemGenerated = false,
 }: {
   agreements?: any[];
   orderSheets?: any[];
   leadId?: string;
   isSale: boolean;
+  /**
+   * Include a system-generated (signed) agreement in the payload. Web parity:
+   * web's `action === 'complete'` converts EVERY agreement file — including the
+   * signed one — to base64 and submits it to BOTH `POST /job-builder` and the
+   * lead-scoped `PUT /outcome` (`updateJobBuilder`), which is what populates
+   * `jobBuilderDocuments` (the ContractDetails source). The backend upserts by
+   * file, so re-sending the already-filed agreement does not duplicate on the
+   * current backend. Default false preserves any other caller's behaviour.
+   */
+  includeSystemGenerated?: boolean;
 }): Promise<DocumentPayloads> {
   // A system-generated agreement was already filed by the sign endpoint
-  // (`pdf-reports/v1/agreement/{leadId}/sign`), so it is deliberately never uploaded
-  // — and it must not be re-sent here either. Including it produced a SECOND stored
-  // copy of the same PDF: two identical 67 KB "Agreement" cards on the lead.
+  // (`pdf-reports/v1/agreement/{leadId}/sign`). When `includeSystemGenerated` is
+  // false it is skipped (legacy behaviour); the finalize flow now passes true so
+  // it is submitted like web does — read back from its local `file://` copy.
   const alreadyFiled = (f: any) => f?.isSystemGenerated === true;
   const allAgreements = toFlatFiles(agreements);
   const allOrderSheets = toFlatFiles(orderSheets);
-  const agreementFiles = allAgreements.filter((f) => !alreadyFiled(f));
-  const orderSheetFiles = allOrderSheets.filter((f) => !alreadyFiled(f));
+  const agreementFiles = includeSystemGenerated
+    ? allAgreements
+    : allAgreements.filter((f) => !alreadyFiled(f));
+  const orderSheetFiles = includeSystemGenerated
+    ? allOrderSheets
+    : allOrderSheets.filter((f) => !alreadyFiled(f));
   const out: DocumentPayloads = { agreements: [], orderSheets: [] };
 
   // THE STORED DOCUMENTS ARE THE SOURCE OF TRUTH — this is where mobile has to

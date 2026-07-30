@@ -190,7 +190,6 @@ export function ProductDropdown({
           <Text style={{ color: GREEN, fontWeight: '800', fontSize: 14 }} numberOfLines={1}>
             {selected?.name || 'Select product'}
           </Text>
-          <Icon name="arrow-drop-down" size={20} color={GREEN} />
         </TouchableOpacity>
       </View>
 

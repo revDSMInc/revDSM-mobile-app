@@ -1,9 +1,10 @@
 import React from 'react';
-import { Modal, View, TouchableOpacity, StatusBar, Platform } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StatusBar, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Header } from '../common/MainHeader';
+import { MapToggleSwitch } from '../common/MapToggleSwitch';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
 import { useZoneCanvasser } from '../../hooks/useZoneCanvasser';
 import { MapCanvas } from '../components/ZoneCanvasser/MapCanvas';
@@ -91,9 +92,9 @@ export default function ZoneCanvasserMap({
         className="flex-1"
         style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
       >
-        <StatusBar barStyle="light-content" backgroundColor={isDark ? colors.background : '#101828'} translucent />
+        <StatusBar barStyle="light-content" backgroundColor={isDark ? colors.background : '#0E2A1C'} translucent />
         {(Platform.OS === 'ios' || Platform.OS === 'android') && (
-          <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#101828' }} />
+          <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#0E2A1C' }} />
         )}
         <Header
           onFilterPress={() => z.setSearchModalVisible(true)}
@@ -151,6 +152,7 @@ export default function ZoneCanvasserMap({
             onTouchMove={z.handleTouchMove}
             onTouchEnd={z.handleTouchEnd}
             onRegionChangeComplete={z.handleMapRegionChange}
+            leadPinsEnabled={visible && z.showLeadPins}
           />
 
           <MapDrawTools
@@ -178,6 +180,22 @@ export default function ZoneCanvasserMap({
             onZoomIn={() => z.handleZoom(true)}
             onZoomOut={() => z.handleZoom(false)}
           />
+
+          {/* Sales Map pins show/hide toggle — the only control for the pins overlay
+              (no filter set, just visibility). Hidden while drawing a zone. */}
+          {!z.isDrawingMode && (
+            <View className="absolute right-4 items-center" style={{ top: '60%', zIndex: 15 }}>
+              <View className="bg-black/55 rounded-full px-2 py-[3px] mb-1.5">
+                <Text className="text-white text-[9px] font-black tracking-wider">PINS</Text>
+              </View>
+              <MapToggleSwitch
+                value={z.showLeadPins}
+                onValueChange={z.setShowLeadPins}
+                activeLabel="ON"
+                inactiveLabel="OFF"
+              />
+            </View>
+          )}
 
           {z.isDrawingMode && (
             <DrawingToolbar

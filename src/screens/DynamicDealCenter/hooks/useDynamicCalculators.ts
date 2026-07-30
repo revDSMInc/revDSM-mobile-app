@@ -6,7 +6,6 @@ import { computeDerivedTitles } from '../utils/tab-naming';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
 import { normalizeSingleAcceptedDrop, dedupeDrops } from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
-import { calculateMarkupLabel } from '../../../utils/activity-log/rollout-log-meta';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 
 /**
@@ -86,6 +85,32 @@ export interface CalcTab {
     grandTotal?: number;
     isDefault?: boolean;
   } | null;
+  /**
+   * The In-Home Pre-Order "Monthly" shortlist the rep builds in the Investment
+   * Center (persisted as `lfcalculator.inHome`): the financing plans added for the
+   * customer to compare (`addedPlans`) and which one is selected (`planKey`), plus
+   * the resolved values so the read side can show them without recomputing. Persisted
+   * on the next debounced save; hydrated back on reopen so the shortlist survives.
+   */
+  inHome?: {
+    planKey?: string;
+    addedPlans?: string[];
+    apr?: number;
+    monthlyPayment?: number;
+    grandTotal?: number;
+    /** Which program card the rep opted into in the Investment Center ('inhome' or
+     *  'oneyear'), so the panel survives tab switches without losing the selection. */
+    optInProgram?: 'inhome' | 'oneyear' | null;
+  } | null;
+  /**
+   * Backend-computed job-scope sentences for this calculator (web/backend parity:
+   * `lfcalculator.descriptions`) — e.g. `["Install Soffit", "Installation: Install
+   * J Channel …"]`. Read-only display data: the backend derives it from the agreement
+   * description schemas, so mobile never sends it in a save (web doesn't either). The
+   * Investment Center's "Includes the Following" list uses it verbatim (footages/colors
+   * stripped) instead of re-deriving the scope locally.
+   */
+  descriptions?: string[];
   /** a manual (session) rename — wins over the derived title */
   manualTitle?: string;
   /** Markup percentage string (e.g. "COST + 25%", "PAR") — web parity. */
@@ -150,7 +175,10 @@ function tabSignature(tab: CalcTab): string {
   // 1-Year monthly plan: mode + resolved plan key + default flag.
   const oy = tab.oneYearMonthlyPlan;
   const oneYearSig = oy ? `${oy.mode ?? ''}:${oy.planKey ?? ''}:${oy.isDefault ? 1 : 0}` : '';
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${tab.priceScopeSig ?? ''}`;
+  // In-Home Monthly shortlist: selected plan + the added-plan list.
+  const ih = tab.inHome;
+  const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}:${ih.optInProgram ?? ''}` : '';
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${inHomeSig}#${tab.priceScopeSig ?? ''}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -187,6 +215,9 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
   const leadDate = lead?.leadDate || lead?.lead_date;
   if (!leadIdHuman && !selfGenLeadId) return null;
 
+  // Step 1: try to find an existing appointment for this lead on its date. A failure
+  // here (network / date filter) is non-fatal — we fall through to create, which
+  // itself surfaces an already-existing appointment via 409 (Step 2).
   try {
     const res = await LeadService.getAppointments(leadDate ? { lead_date: leadDate } : undefined);
     const appts = res.data?.data || res.data || [];
@@ -196,8 +227,17 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
         (a.selfGenLeadId && a.selfGenLeadId !== 'N/A' && String(a.selfGenLeadId) === String(selfGenLeadId))
     );
     if (found) return String(found._id || found.id);
+  } catch {
+    // ignore — proceed to create
+  }
 
-    // No appointment on this lead's date → create one (web parity).
+  // Step 2: create one (web parity). If the backend already has an appointment for
+  // this lead it responds 409 "This lead already has an appointment" and returns the
+  // existing `appointmentId` — adopt it instead of failing. This is the key fix: the
+  // lead_date-filtered GET above can MISS the existing appointment (it may sit under a
+  // different date — e.g. a UTC/local off-by-one on `lead_date`), so without honoring
+  // the 409 the flow would keep trying to create and drop into local mode.
+  try {
     const createRes = await LeadService.createAppointment({
       title: customerTitleOf(lead),
       address: lead?.fullAddress || lead?.address || '',
@@ -206,7 +246,21 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
     });
     const created = createRes.data?.data || createRes.data;
     return created ? String(created._id || created.id) : null;
-  } catch {
+  } catch (createErr: any) {
+    // The axios interceptor rejects with the response BODY, so a 409 arrives as
+    // `{ code: 409, message, data: { appointmentId } }`. Cover the full-error shape too.
+    const body = createErr?.response?.data ?? createErr;
+    const existingId =
+      body?.data?.appointmentId ||
+      body?.appointmentId ||
+      createErr?.response?.data?.data?.appointmentId ||
+      null;
+    const is409 =
+      body?.code === 409 ||
+      createErr?.response?.status === 409 ||
+      createErr?.status === 409 ||
+      /already has an appointment/i.test(String(body?.message || createErr?.message || ''));
+    if (is409 && existingId) return String(existingId);
     return null;
   }
 }
@@ -397,6 +451,8 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       // selection both persist on the calculator so the Investment Center reads them.
       selectedRenders: tab.selectedRenders || [],
       oneYearMonthlyPlan: tab.oneYearMonthlyPlan ?? null,
+      // Investment Center In-Home Monthly shortlist (added plans + selection).
+      inHome: tab.inHome ?? null,
       schemaSnapshotId: snapshotId(),
       leadId,
       enteredBy,
@@ -546,6 +602,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               discountPercentage: Number(c.discountPercentage) || undefined,
               selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
               oneYearMonthlyPlan: c.oneYearMonthlyPlan || null,
+              inHome: c.inHome ?? c.in_home ?? null,
+              // Backend-computed job-scope sentences — surfaced verbatim in the
+              // Investment Center "Includes the Following" list (read-only, never re-sent).
+              descriptions: Array.isArray(c.descriptions) ? c.descriptions : [],
               persisted: true,
             };
           });
@@ -932,6 +992,24 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   );
 
   /**
+   * Set the In-Home Monthly shortlist (added plans + selection) from the Investment
+   * Center. Persisted as `in_home` on the next debounced save (web keeps this local;
+   * mobile persists it so the shortlist survives reopen). A no-op merge with the same
+   * value leaves the signature unchanged, so it won't trigger a redundant save.
+   */
+  const handleSetInHome = useCallback(
+    (tabId: string, inHome: CalcTab['inHome']) => {
+      setTabs((prev) => {
+        const next = prev.map((t) => (t.id === tabId ? { ...t, inHome } : t));
+        tabsRef.current = next;
+        markDirty(tabId);
+        return next;
+      });
+    },
+    [markDirty]
+  );
+
+  /**
    * Persist the entered Rollout End Price on the calculator (debounced save), and
    * snapshot the job scope it was priced against so a later calculator edit can
    * surface the "review the end price" warning. Previously the typed price lived only
@@ -940,11 +1018,20 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
    * A price of 0 clears the snapshot (nothing to warn about).
    */
   const handleSetPrice = useCallback(
-    (tabId: string, price: number) => {
+    (tabId: string, price: number, pricemarkup?: string) => {
       setTabs((prev) => {
         const next = prev.map((t) =>
           t.id === tabId
-            ? { ...t, price, priceScopeSig: price > 0 ? scopeSignature(t.entries) : '' }
+            ? {
+                ...t,
+                price,
+                priceScopeSig: price > 0 ? scopeSignature(t.entries) : '',
+                // Web parity (handleBlurPrice persists `pricemarkup` alongside `price`):
+                // keep the stored markup in step with the entered end price, not only at
+                // confirm. Only overwrite when the caller computed one (blur), so a
+                // per-keystroke price commit doesn't blank it.
+                ...(pricemarkup !== undefined && { pricemarkup }),
+              }
             : t
         );
         tabsRef.current = next;
@@ -1024,18 +1111,19 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   );
 
   const handleConfirmRollouts = useCallback(
-    (confirmed: Array<{ id: string; price: number }>) => {
+    (confirmed: Array<{ id: string; price: number; pricemarkup?: string }>) => {
       const priceById = new Map(confirmed.map((c) => [c.id, c.price]));
+      const markupById = new Map(confirmed.map((c) => [c.id, c.pricemarkup]));
       setTabs((prev) => {
         const next = prev.map((t) => {
           if (!priceById.has(t.id)) return t;
           const endPrice = priceById.get(t.id) || 0;
-          // Web parity (ViewAllCalculators.calculateMarkup): compute the markup
-          // string (e.g. "COST + 25%") using the raw schema totals as anchors.
-          const cost = Math.round(t.totals?.cost || 0);
-          const par = Math.round(t.totals?.par || 0);
-          const retail = Math.round(t.totals?.retail || 0);
-          const pricemarkup = endPrice > 0 ? calculateMarkupLabel(endPrice, cost, par, retail) : undefined;
+          // Markup label ("COST + 25%") is computed by RolloutView, which has the
+          // pricing config + payment plans to anchor on the fee-adjusted, $200-floored
+          // tiers shown on the card (web `calculateMarkup`). The old inline recompute
+          // used the raw stored `totals`, whose blank par/cost tiers (retail-only
+          // schema) came through as 0 → the markup snapped to the wrong tier.
+          const pricemarkup = endPrice > 0 ? markupById.get(t.id) : undefined;
           // Re-baseline the scope snapshot to the confirmed scope, so a calc confirmed
           // via auto-confirm (which never went through handleSetPrice) still warns if
           // its scope later changes.
@@ -1077,6 +1165,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     handleSetDownPayment,
     handleSetRenders,
     handleSetOneYearMonthly,
+    handleSetInHome,
     handleSetPrice,
     handleAckScopeWarning,
   };

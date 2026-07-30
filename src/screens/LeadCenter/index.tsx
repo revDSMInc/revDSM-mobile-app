@@ -120,7 +120,7 @@ export default function LeadCenterPage() {
   const [isWaiverGenerating, setIsWaiverGenerating] = useState(false);
   const [isInspectionGenerating, setIsInspectionGenerating] = useState(false);
 
-  const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted } =
+  const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted, justCompleted } =
     route.params || {};
 
   // Custom Hooks for Data, Reports, and Modals
@@ -360,6 +360,23 @@ export default function LeadCenterPage() {
       }
     }, [lead?._id, queryClient, refetch])
   );
+
+  // Just returned from finishing a job (Complete Job) — the route param `lead` is the
+  // pre-result snapshot, so force fresh refetches. A couple of delayed passes beat the
+  // backend replication lag that otherwise required the rep to leave and re-open the
+  // lead before the result status (and contract docs) updated.
+  useEffect(() => {
+    if (!justCompleted || !lead?._id) return;
+    refetch();
+    const t1 = setTimeout(() => refetch(), 1500);
+    const t2 = setTimeout(() => refetch(), 3500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+    // Run once on arrival from Complete Job (leadId is stable for this mount).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [justCompleted, lead?._id]);
 
   // Auto-open Job Builder logic
   useEffect(() => {

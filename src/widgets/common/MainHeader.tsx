@@ -86,12 +86,12 @@ export function Header({
 
   return (
     <View
-      style={{ backgroundColor: isDark ? colors.background : '#101828' }}
+      style={{ backgroundColor: isDark ? colors.background : '#0E2A1C' }}
     >
       <View
         className="py-3 flex-row items-center justify-between px-5 border-b"
         style={{
-          backgroundColor: isDark ? colors.background : '#101828',
+          backgroundColor: isDark ? colors.background : '#0E2A1C',
           borderBottomColor: isDark ? colors.border : '#F4F6F8',
         }}
       >

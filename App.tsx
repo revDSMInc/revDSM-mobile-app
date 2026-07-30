@@ -1,6 +1,6 @@
 import './global.css';
 import React, { useState } from 'react';
-import { Text, TextInput, View, StyleSheet, StatusBar, Platform } from 'react-native';
+import { Text, TextInput, View, StyleSheet, StatusBar, Platform, Animated } from 'react-native';
 
 // Professional Global Font Injection for RN 0.84+
 // This ensures Public Sans is the baseline for EVERYTHING.
@@ -67,9 +67,26 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, [animationDone]);
 
+  // Splash dismissal is a FADE, not an instant cut: keep the overlay mounted
+  // (`splashMounted`) and, once it's ready to go away (animation done + bootstrap
+  // resolved, i.e. `showSplash` flips false), animate its opacity to 0 so the
+  // home screen behind it is revealed smoothly, then unmount.
+  const [splashMounted, setSplashMounted] = useState(true);
+  const splashOpacity = React.useRef(new Animated.Value(1)).current;
+  React.useEffect(() => {
+    if (showSplash || !splashMounted) return;
+    Animated.timing(splashOpacity, {
+      toValue: 0,
+      duration: 450,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setSplashMounted(false);
+    });
+  }, [showSplash, splashMounted, splashOpacity]);
+
   const [currentRouteName, setCurrentRouteName] = useState<string | null>(null);
 
-  const statusBarBg = isDark ? colors.background : '#101828';
+  const statusBarBg = isDark ? colors.background : '#0E2A1C';
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -113,7 +130,15 @@ function AppContent() {
         <RootNavigator currentRouteName={currentRouteName} />
       </NavigationContainer>
       <FlashMessage position="top" />
-      {showSplash && <SplashScreen onFinish={() => setAnimationDone(true)} />}
+      {splashMounted && (
+        <Animated.View
+          // Once fading (showSplash false), let touches through to the app below.
+          pointerEvents={showSplash ? 'auto' : 'none'}
+          style={[StyleSheet.absoluteFill, { zIndex: 10000, opacity: splashOpacity }]}
+        >
+          <SplashScreen onFinish={() => setAnimationDone(true)} />
+        </Animated.View>
+      )}
     </QueryClientProvider>
   );
 }

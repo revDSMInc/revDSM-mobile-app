@@ -26,6 +26,7 @@ import {
 } from './dynamic-discount';
 import {
   resolveFieldTierPrice,
+  applyFeesToTier,
   type PricingConfig,
 } from './pricing-config-util';
 
@@ -277,6 +278,40 @@ export function computeCalculatorTiers(
   });
 
   return sum;
+}
+
+/**
+ * The COST/PAR/RETAIL a rollout LOG (`percentageOfRollout` / `pricemarkup`) must
+ * anchor its markup on — the SAME fee-adjusted, $200-floored tiers the rep sees on
+ * the rollout card. Web `calculateMarkup` (ViewAllCalculators.js:128) anchors on
+ * `getCalculationResult(calc, tier, method)` — its own comment: "Anchor against the
+ * SAME fee-adjusted tiers shown on the card … entering the displayed cost reads as
+ * COST (0%)". That means pricing-config DERIVATION + the selected plan's bank FEE +
+ * the $200 FLOOR — NOT the raw stored `totals`, whose blank par/cost tiers (a
+ * retail-only schema) come through as 0 and snap the markup to the wrong tier (the
+ * mobile bug: "PAR + 49%" where web shows "COST + 100%").
+ *
+ * Mirrors the card tile math exactly (RolloutView `tiers`): `computeCalculatorTiers`
+ * (derivation-aware pure sum) → `applyFeesToTier` (static company fee) → plan
+ * bank-fee gross-up → `floorTier`. `planFee` is the selected plan's `fee` (0 for
+ * cash/check), passed as a plain number so this stays free of the two different
+ * `withPlanFee` helpers (the gross-up here is identical to both: `v / (1 - fee)`).
+ */
+export function computeLogTiers(
+  entries: Record<string, any> = {},
+  verticals: any[] = [],
+  pricingConfig?: PricingConfig | null,
+  planFee = 0,
+): { cost: number; par: number; retail: number } {
+  const live = computeCalculatorTiers(entries, verticals, pricingConfig);
+  const hasItems = live.retail > 0;
+  const grossUp = (v: number) => (planFee >= 1 ? v : v / (1 - planFee));
+  const tierValue = (key: 'cost' | 'par' | 'retail') =>
+    floorTier(
+      grossUp(applyFeesToTier(live[key], key, pricingConfig, { hasLineItems: live[key] > 0 })),
+      hasItems,
+    );
+  return { cost: tierValue('cost'), par: tierValue('par'), retail: tierValue('retail') };
 }
 
 /** Matches the screens field/entry the same way web does — by `name`, with a
