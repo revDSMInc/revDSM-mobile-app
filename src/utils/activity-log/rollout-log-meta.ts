@@ -3,6 +3,14 @@ import { paymentPlans } from '../calculator/payment-plans';
 import { getCalculationResult } from '../calculator/calculator-calculation';
 import { sanitizeCalculatorLogTitle } from './job-builder-auto-log';
 
+// A zero markup is shown as just the tier — "PAR", not "PAR + 0%". Fresh computes
+// already omit it (see `calculateMarkupLabel` below), but a STORED/legacy `pricemarkup`
+// reused for a log can still carry "+ 0%". Strip a trailing "+ 0%" / "- 0%" so every
+// rollout log records the tier alone at creation; a real premium ("PAR + 10%",
+// "RETAIL + 100%") is left untouched — only a whole-number ZERO percent is removed.
+export const stripZeroMarkup = (val?: number | string): number | string | undefined =>
+  typeof val === 'string' ? val.replace(/\s*[+-]\s*0+\s*%\s*$/, '').trim() : val;
+
 export const calculateMarkupLabel = (
   endPrice: number,
   price50: number,
@@ -82,11 +90,8 @@ export const fireRolloutLog = async (
     isLowesLead
   );
   const fieldValue = changeRest.newValue ?? changeRest.fieldValue;
-  const percentageOfRollout = calculateMarkupLabel(
-    Number(fieldValue) || 0,
-    costPrice,
-    parPrice,
-    retailPrice
+  const percentageOfRollout = stripZeroMarkup(
+    calculateMarkupLabel(Number(fieldValue) || 0, costPrice, parPrice, retailPrice)
   );
 
   await logEvent('change', {
@@ -201,7 +206,7 @@ export const logRolloutChange = async (opts: {
       costPrice: Math.round(opts.tiers.cost || 0),
       parPrice: Math.round(opts.tiers.par || 0),
       retailPrice: Math.round(opts.tiers.retail || 0),
-      ...(opts.percentageOfRollout !== undefined && { percentageOfRollout: opts.percentageOfRollout }),
+      ...(opts.percentageOfRollout !== undefined && { percentageOfRollout: stripZeroMarkup(opts.percentageOfRollout) }),
       ...(opts.leadId && { leadId: opts.leadId }),
       ...restChange,
     },
