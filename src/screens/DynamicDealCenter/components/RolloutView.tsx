@@ -851,6 +851,42 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }).catch(() => {});
   };
 
+  // Portal parity: the ROLLOUT section shows the LATEST `end price entered` log as the
+  // green "Rollout Price" (older ones struck through — `isLatestOfType` in the portal's
+  // rollout-and-drop-logs.js). The deal's effective rollout price becomes the SECURED
+  // drop, so fire a fresh `end price entered` at that price and the portal's Rollout
+  // Price follows it. Shares `loggedPriceRef` with the input above so an unchanged
+  // effective price never re-logs. Product decision — web keeps the rollout price fixed.
+  const logRolloutPriceUpdate = (price: number, markup: string) => {
+    const uid = user?._id || user?.id;
+    if (!uid || price <= 0 || loggedPriceRef.current === price) return;
+    loggedPriceRef.current = price;
+    logRolloutChange({
+      userId: uid,
+      leadId,
+      calculator: logCalculator,
+      tiers: logTiers,
+      percentageOfRollout: markup,
+      change: {
+        fieldName: 'endPrice', fieldLabel: 'End Price', fieldValue: price, fieldCategory: 'rollout',
+        oldValue: '', newValue: price,
+        action: 'end price entered',
+      },
+    }).catch(() => {});
+  };
+  // After any drop change, log the effective Rollout Price: the last still-accepted
+  // drop, or the original confirmed price (calculator.price) when none is accepted.
+  const syncRolloutPriceLog = (nextDrops: any[]) => {
+    const accepted = [...nextDrops].reverse().find((d) => d?.status === 'accepted');
+    if (accepted) {
+      const ap = Number(accepted.dropedPrice ?? accepted.price) || 0;
+      logRolloutPriceUpdate(ap, accepted.pricemarkup || (ap > 0 ? markupLabel(ap, logTiers) : ''));
+    } else {
+      const op = Number(calculator.price) || 0;
+      logRolloutPriceUpdate(op, op > 0 ? markupLabel(op, logTiers) : '');
+    }
+  };
+
   // Web `handlePaymentMethodChange` → `payment method changed` (or, once the rollout
   // is confirmed, `payment method changed for drop`). Portal reads `newPaymentMethodLabel`.
   const logPaymentMethodChanged = (newKey: string) => {
@@ -1163,28 +1199,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // entry, so the dedup is no longer needed and was hiding legitimate extra drops.)
   const resolveDropTargetIndex = () => pendingDropIndex;
 
-  // Product decision (diverges from web, which keeps the confirmed rollout price
-  // fixed): the ROLLOUT price follows the last SECURED drop. Capture the original
-  // confirmed price once — before any drop overwrites it — so unselecting/declining
-  // every drop reverts the rollout price back to the original quote.
-  const origRolloutRef = useRef<{ price: number; markup: string } | null>(null);
-  const captureOrigRollout = () => {
-    if (origRolloutRef.current === null && !drops.some((d) => d.status === 'accepted')) {
-      origRolloutRef.current = { price: Number(calculator.price) || 0, markup: calculator.pricemarkup || '' };
-    }
-  };
-  // Set the calculator's persisted rollout price/markup to the effective price: the
-  // last still-accepted drop, or the captured original when no drop is accepted.
-  const syncRolloutToDrops = (nextDrops: any[]) => {
-    const accepted = [...nextDrops].reverse().find((d) => d?.status === 'accepted');
-    if (accepted) {
-      const ap = Number(accepted.dropedPrice ?? accepted.price) || 0;
-      onPriceChange(calculator.id, ap, accepted.pricemarkup || (ap > 0 ? markupLabel(ap, logTiers) : ''));
-    } else if (origRolloutRef.current) {
-      onPriceChange(calculator.id, origRolloutRef.current.price, origRolloutRef.current.markup);
-    }
-  };
-
   // Secure the pending drop → record it accepted (single-accepted: demote any
   // previously-accepted drop to declined, matching web `handleSecurePrice`), then
   // open the Result Lead outcome modal carrying the drop price.
@@ -1192,7 +1206,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // Web drop shape (ViewAllCalculators.js:797) carries `dropedPrice`, `status`,
     // `paymentMethod`, `pricemarkup` (the markup label), `downPayment`, `balance`.
     const pricemarkup = markupLabel(pendingDrop, logTiers);
-    captureOrigRollout(); // remember the confirmed rollout price before this drop overwrites it
     const targetIndex = resolveDropTargetIndex();
     const accepted = { price: pendingDrop, dropedPrice: pendingDrop, status: 'accepted', pricemarkup, ...data };
     // Edit in place (preserving any existing `_id`, web `...item`) when targeting an
@@ -1241,8 +1254,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         }).catch(() => {});
       }
     }
-    // Rollout price follows the last secured drop.
-    syncRolloutToDrops(next);
+    // Portal: the Rollout Price now follows this secured drop.
+    syncRolloutPriceLog(next);
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1284,6 +1297,9 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         },
       }).catch(() => {});
     }
+    // Portal: declining a drop reverts the Rollout Price to the last still-accepted
+    // drop, or the original confirmed price when none remains accepted.
+    syncRolloutPriceLog(next);
     setShowDropModal(false);
     setShowDropInput(false);
     setPendingDropIndex(-1);
@@ -1667,8 +1683,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
                       // dynamic drop model uses status='declined'. Was filtering the drop
                       // out entirely, losing the record.
                       <TouchableOpacity onPress={() => {
-                        onDropChange(calculator.id, drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2)));
+                        const nextDrops = drops.map((d2, idx) => (idx === i ? { ...d2, status: 'declined' } : d2));
+                        onDropChange(calculator.id, nextDrops);
                         logDropUnselected(dp, i);
+                        // Portal: un-securing reverts the Rollout Price to the remaining
+                        // accepted drop, or the original confirmed price when none remains.
+                        syncRolloutPriceLog(nextDrops);
                       }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#F97316' }}>Unselect</Text>
                       </TouchableOpacity>
