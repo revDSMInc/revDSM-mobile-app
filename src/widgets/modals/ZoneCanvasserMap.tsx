@@ -92,9 +92,9 @@ export default function ZoneCanvasserMap({
         className="flex-1"
         style={{ flex: 1, backgroundColor: isDark ? colors.background : '#F8FAFC' }}
       >
-        <StatusBar barStyle="light-content" backgroundColor={isDark ? colors.background : '#101828'} translucent />
+        <StatusBar barStyle="light-content" backgroundColor={isDark ? colors.background : '#0E2A1C'} translucent />
         {(Platform.OS === 'ios' || Platform.OS === 'android') && (
-          <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#101828' }} />
+          <View style={{ height: insets.top, backgroundColor: isDark ? colors.background : '#0E2A1C' }} />
         )}
         <Header
           onFilterPress={() => z.setSearchModalVisible(true)}

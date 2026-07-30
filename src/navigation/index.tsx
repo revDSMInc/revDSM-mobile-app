@@ -181,7 +181,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
 
   return (
     <HeaderContext.Provider value={contextValue}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#101828' }} edges={showHeader ? ['top'] : []}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#0E2A1C' }} edges={showHeader ? ['top'] : []}>
         {showHeader && <Header />}
         <View style={{ flex: 1, backgroundColor: colors.background }}>
           <Stack.Navigator screenOptions={{ headerShown: false, screenOrientation: 'portrait' } as any}>

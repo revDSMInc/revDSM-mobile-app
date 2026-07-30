@@ -24,6 +24,7 @@ import { PdfPreviewModal } from '../../modals/PdfPreviewModal';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { useLeadQuery } from '../../../hooks/useLeadQuery';
+import { resolveS3Url } from '../../../utils/s3-utils';
 import {
   logAppointmentScheduled,
   logAgreementGenerated,
@@ -143,59 +144,71 @@ export const SummarySection = ({
 
   // Resolve secure URLs for leadOutcomeDocuments
   React.useEffect(() => {
+    let cancelled = false;
     const resolveDocs = async () => {
       // Use outcomeData from API as primary source, fallback to leadData
       const docs = outcomeData?.leadOutcomeDocuments || leadData?.leadOutcomeDocuments;
-      if (docs) {
-        const { agreements = [], orderSheets = [] } = docs;
+      if (!docs) {
+        setResolvedDocuments({ agreements: [], orderSheets: [] });
+        return;
+      }
+      const { agreements = [], orderSheets = [] } = docs;
 
-        // Preserve original group source in case documentType is missing
-        const allDocs = [
-          ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
-          ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
-        ];
+      // Preserve original group source in case documentType is missing
+      const allDocs = [
+        ...agreements.map((d: any) => ({ ...d, _sourceGroup: 'agreement' })),
+        ...orderSheets.map((d: any) => ({ ...d, _sourceGroup: 'orderSheet' })),
+      ];
 
+      if (allDocs.length === 0) {
+        setResolvedDocuments({ agreements: [], orderSheets: [] });
+        return;
+      }
+
+      // Prefer a signed URL when available, else a directly resolvable S3 URL.
+      // `urls` is null on the first (instant) pass.
+      const mapWith = (urls: any[] | null) =>
+        allDocs.map((doc: any) => {
+          const urlObj = urls?.find((u: any) => u.filePath === doc.filePath);
+          const isPdf = doc.filePath?.toLowerCase().includes('.pdf') || doc.name?.toLowerCase().includes('.pdf');
+          const finalType = doc.documentType || doc._sourceGroup;
+          return {
+            uri: urlObj?.secureUrl || urlObj?.url || resolveS3Url(doc.filePath),
+            name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
+            serverId: doc._id,
+            isNew: false,
+            isSystemGenerated: finalType === 'agreement' && isPdf,
+            documentType: finalType,
+          };
+        });
+
+      const split = (mappedAll: any[]) => ({
+        agreements: mappedAll.filter((d) => d.documentType === 'agreement'),
+        orderSheets: mappedAll.filter((d) => d.documentType === 'orderSheet'),
+      });
+
+      // Phase 1 — render instantly with best-effort S3 URLs (no network wait) so a
+      // just-generated/scanned agreement shows immediately.
+      if (!cancelled) setResolvedDocuments(split(mapWith(null)));
+
+      // Phase 2 — swap in signed URLs for opening; on failure phase-1 docs stay
+      // visible (previously the list was left empty here on any error).
+      try {
         const allPaths = allDocs.map((doc: any) => ({
           filePath: doc.filePath,
           bucketName: doc.bucketName,
         }));
-
-        if (allPaths.length > 0) {
-          try {
-            const response = await LeadService.getSecureUrls(allPaths);
-            const urls = response.data?.data || response.data;
-
-            const mappedAll = allDocs.map((doc: any) => {
-              const urlObj = urls.find((u: any) => u.filePath === doc.filePath);
-              const isPdf = doc.filePath?.toLowerCase().includes('.pdf') || doc.name?.toLowerCase().includes('.pdf');
-              const finalType = doc.documentType || doc._sourceGroup;
-              return {
-                uri: urlObj?.secureUrl || urlObj?.url || doc.filePath,
-                name: doc.name || (finalType === 'agreement' ? 'Agreement' : 'Order Sheet'),
-                serverId: doc._id,
-                isNew: false,
-                isSystemGenerated: finalType === 'agreement' && isPdf,
-                documentType: finalType,
-              };
-            });
-
-            const resolved = {
-              agreements: mappedAll.filter((d) => d.documentType === 'agreement'),
-              orderSheets: mappedAll.filter((d) => d.documentType === 'orderSheet'),
-            };
-
-            setResolvedDocuments(resolved);
-          } catch (error) {
-            console.error('[Summary] Failed to resolve secure URLs:', error);
-          }
-        } else {
-          setResolvedDocuments({ agreements: [], orderSheets: [] });
-        }
-      } else {
-        setResolvedDocuments({ agreements: [], orderSheets: [] });
+        const response = await LeadService.getSecureUrls(allPaths);
+        const urls = response.data?.data || response.data;
+        if (!cancelled && Array.isArray(urls)) setResolvedDocuments(split(mapWith(urls)));
+      } catch (error) {
+        console.error('[Summary] Failed to resolve secure URLs:', error);
       }
     };
     resolveDocs();
+    return () => {
+      cancelled = true;
+    };
   }, [outcomeData?.leadOutcomeDocuments, leadData?.leadOutcomeDocuments]);
 
   const hasValue = (val: any): boolean => {
@@ -1927,6 +1940,10 @@ export const SummarySection = ({
             // Refresh outcome to pull S3 version once processed
             fetchOutcome();
           }}
+          // Enables "Send Remotely" (primary buyer + coBuyers[]). Refresh the
+          // outcome when the remote session completes so the signed agreement shows.
+          customerDetails={leadData?.customerDetails}
+          onRemoteComplete={fetchOutcome}
         />
       )}
 

@@ -86,7 +86,7 @@ function AppContent() {
 
   const [currentRouteName, setCurrentRouteName] = useState<string | null>(null);
 
-  const statusBarBg = isDark ? colors.background : '#101828';
+  const statusBarBg = isDark ? colors.background : '#0E2A1C';
 
   return (
     <QueryClientProvider client={queryClient}>

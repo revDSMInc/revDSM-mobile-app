@@ -32,7 +32,7 @@ interface PdfPreviewModalProps {
 export const PdfPreviewModal = ({ visible, onClose, uri, title }: PdfPreviewModalProps) => {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
-  const statusBarBg = isDark ? colors.background : '#101828';
+  const statusBarBg = isDark ? colors.background : '#0E2A1C';
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);

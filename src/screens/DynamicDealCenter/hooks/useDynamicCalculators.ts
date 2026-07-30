@@ -215,6 +215,9 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
   const leadDate = lead?.leadDate || lead?.lead_date;
   if (!leadIdHuman && !selfGenLeadId) return null;
 
+  // Step 1: try to find an existing appointment for this lead on its date. A failure
+  // here (network / date filter) is non-fatal — we fall through to create, which
+  // itself surfaces an already-existing appointment via 409 (Step 2).
   try {
     const res = await LeadService.getAppointments(leadDate ? { lead_date: leadDate } : undefined);
     const appts = res.data?.data || res.data || [];
@@ -224,8 +227,17 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
         (a.selfGenLeadId && a.selfGenLeadId !== 'N/A' && String(a.selfGenLeadId) === String(selfGenLeadId))
     );
     if (found) return String(found._id || found.id);
+  } catch {
+    // ignore — proceed to create
+  }
 
-    // No appointment on this lead's date → create one (web parity).
+  // Step 2: create one (web parity). If the backend already has an appointment for
+  // this lead it responds 409 "This lead already has an appointment" and returns the
+  // existing `appointmentId` — adopt it instead of failing. This is the key fix: the
+  // lead_date-filtered GET above can MISS the existing appointment (it may sit under a
+  // different date — e.g. a UTC/local off-by-one on `lead_date`), so without honoring
+  // the 409 the flow would keep trying to create and drop into local mode.
+  try {
     const createRes = await LeadService.createAppointment({
       title: customerTitleOf(lead),
       address: lead?.fullAddress || lead?.address || '',
@@ -234,7 +246,21 @@ async function resolveAppointmentId(lead: any): Promise<string | null> {
     });
     const created = createRes.data?.data || createRes.data;
     return created ? String(created._id || created.id) : null;
-  } catch {
+  } catch (createErr: any) {
+    // The axios interceptor rejects with the response BODY, so a 409 arrives as
+    // `{ code: 409, message, data: { appointmentId } }`. Cover the full-error shape too.
+    const body = createErr?.response?.data ?? createErr;
+    const existingId =
+      body?.data?.appointmentId ||
+      body?.appointmentId ||
+      createErr?.response?.data?.data?.appointmentId ||
+      null;
+    const is409 =
+      body?.code === 409 ||
+      createErr?.response?.status === 409 ||
+      createErr?.status === 409 ||
+      /already has an appointment/i.test(String(body?.message || createErr?.message || ''));
+    if (is409 && existingId) return String(existingId);
     return null;
   }
 }
@@ -992,11 +1018,20 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
    * A price of 0 clears the snapshot (nothing to warn about).
    */
   const handleSetPrice = useCallback(
-    (tabId: string, price: number) => {
+    (tabId: string, price: number, pricemarkup?: string) => {
       setTabs((prev) => {
         const next = prev.map((t) =>
           t.id === tabId
-            ? { ...t, price, priceScopeSig: price > 0 ? scopeSignature(t.entries) : '' }
+            ? {
+                ...t,
+                price,
+                priceScopeSig: price > 0 ? scopeSignature(t.entries) : '',
+                // Web parity (handleBlurPrice persists `pricemarkup` alongside `price`):
+                // keep the stored markup in step with the entered end price, not only at
+                // confirm. Only overwrite when the caller computed one (blur), so a
+                // per-keystroke price commit doesn't blank it.
+                ...(pricemarkup !== undefined && { pricemarkup }),
+              }
             : t
         );
         tabsRef.current = next;

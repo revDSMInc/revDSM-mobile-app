@@ -44,6 +44,17 @@ export const LeadEndpoints = {
   agreement: {
     preview: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/preview`,
     sign: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/sign`,
+    // Remote signing (homeowner e-signs on their own phone). Paths match the shipped
+    // backend (REVDSM-263). The homeowner signs on the WEB signing page; mobile
+    // creates the session, polls status, and manages resend / edit-contact / cancel.
+    sendRemote: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/send-remote`,
+    remoteStatus: (leadId: string) => `pdf-reports/v1/agreement/${leadId}/remote-status`,
+    // Per-signer rep actions are keyed by AGREEMENT id + SIGNER id (not leadId).
+    remoteSignerResend: (agreementId: string, signerId: string) =>
+      `pdf-reports/v1/agreement/remote/${agreementId}/signer/${signerId}/resend`,
+    remoteSigner: (agreementId: string, signerId: string) =>
+      `pdf-reports/v1/agreement/remote/${agreementId}/signer/${signerId}`,
+    remoteCancel: (agreementId: string) => `pdf-reports/v1/agreement/remote/${agreementId}/cancel`,
   },
   leadDraft: {
     upsert: (leadId: string) => `lead/v1/${leadId}/drafts`,
@@ -359,6 +370,40 @@ export const LeadService = {
       headers: { 'Content-Type': 'multipart/form-data' },
       responseType: 'blob',
     }),
+
+  // --- Remote agreement signing (homeowner e-signs remotely, REVDSM-263) -------
+  // The server contacts the primary buyer + EVERY co-buyer (each their own link),
+  // and builds the final signed PDF only once every signer has signed.
+  //
+  // Send. payload `{ signers?: [{ coBuyerIndex, phone, email }] }` — signers is
+  // OPTIONAL (omit → use the contact details on the lead); `coBuyerIndex: null`
+  // is the primary buyer, `0,1,…` are co-buyers. Response `data`:
+  // `{ agreementId, status, results: [{ signerId, delivered, channels }], signers }`.
+  // 400 = a signer has no contact; 409 = an agreement is already out (cancel first);
+  // 502 = nothing reached anybody.
+  sendAgreementRemote: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.agreement.sendRemote(leadId), payload),
+  // Poll while pending. Response `data`: `{ agreement: null }` (none yet) or
+  // `{ agreement: { agreementId, status, showInitials, signedPdfUrl, signers: [
+  //   { signerId, role, coBuyerIndex, name, phone, email, status, viewedAt,
+  //     signedAt, sendCount, ... } ] } }`. There is no push — poll every 10–15s.
+  getAgreementRemoteStatus: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.agreement.remoteStatus(leadId)),
+  // Resend a signer's link (rotates their token — the old link dies).
+  resendAgreementRemoteSigner: (agreementId: string, signerId: string): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.agreement.remoteSignerResend(agreementId, signerId)),
+  // Correct a signer's phone/email AND resend in one call (drives "Edit phone" /
+  // "Edit email"). payload `{ phone?, email? }` — at least one required.
+  updateAgreementRemoteSigner: (
+    agreementId: string,
+    signerId: string,
+    payload: { phone?: string; email?: string }
+  ): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.agreement.remoteSigner(agreementId, signerId), payload),
+  // Cancel the whole agreement (kills every outstanding link) — used to clear the
+  // 409 that blocks a fresh send.
+  cancelAgreementRemote: (agreementId: string): Promise<AxiosResponse<any>> =>
+    api.post(LeadEndpoints.agreement.remoteCancel(agreementId)),
   generateWeatherReport: (leadId: string, pastYears: number): Promise<AxiosResponse<any>> =>
     api.post(LeadEndpoints.weather.generate(leadId), { pastYears }),
   getJobStatus: (jobId: string): Promise<AxiosResponse<any>> =>
