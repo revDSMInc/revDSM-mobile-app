@@ -11,6 +11,9 @@ import type { ContractDetails, JobPacket, SoldProduct } from '../../../config/ty
 // engine shipping Intl data — see `utils/currency`.
 const currency = (n?: number) => formatCurrency(n);
 
+/** Line height of a product spec line — also the height of its bullet's centring box. */
+const LINE_HEIGHT = 20;
+
 interface Props {
   packet?: JobPacket;
   contract?: ContractDetails;
@@ -169,13 +172,20 @@ export function JobReferenceCards({
                 </View>
                 {p.lines.map((line, lineIdx) => (
                   <View key={`${p.id}-${lineIdx}`} className="flex-row items-start mb-1">
+                    {/* Same one-line-tall centring box as Verify Job Scope — keeps the dot on
+                        the middle of the first line instead of drifting with the font size. */}
                     <View
-                      className="rounded-full mt-1.5 mr-2"
-                      style={{ width: 6, height: 6, backgroundColor: accent }}
-                    />
+                      className="items-center justify-center mr-2"
+                      style={{ width: 6, height: LINE_HEIGHT }}
+                    >
+                      <View
+                        className="rounded-full"
+                        style={{ width: 6, height: 6, backgroundColor: accent }}
+                      />
+                    </View>
                     <Text
-                      className="flex-1 text-xs font-semibold leading-5"
-                      style={{ color: colors.text }}
+                      className="flex-1 text-xs font-semibold"
+                      style={{ color: colors.text, lineHeight: LINE_HEIGHT }}
                     >
                       {line}
                     </Text>

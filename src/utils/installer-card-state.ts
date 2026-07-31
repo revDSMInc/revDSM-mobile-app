@@ -141,10 +141,13 @@ export const resolveJobCardState = (
   }
 
   if (job.resulted) {
+    // "Completed", not "Review Appointment": the card already reads RESULTED, and an
+    // action-shaped label invited the crew to treat a finished visit as outstanding
+    // work. The tap still opens the job read-only — the label reports its state.
     return {
       key: 'RESULTED',
       color: JOB_CARD_COLORS.RESULTED,
-      actionLabelKey: 'installer.reviewAppointment',
+      actionLabelKey: 'installer.completedAppointment',
       accentBar: false,
     };
   }

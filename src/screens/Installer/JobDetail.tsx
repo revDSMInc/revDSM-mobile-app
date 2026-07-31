@@ -1419,10 +1419,8 @@ export default function InstallerJobDetail() {
         icon="alert"
         tone="danger"
         title="Reset Lead Result?"
-        description={
-          'Are you sure you want to reset this lead result? This will clear the ' +
-          'current result and allow you to re-enter the lead.'
-        }
+        // No description: the title asks the question and the reason list below answers
+        // it, so the blurb only pushed the reasons further down the sheet.
         // The API requires a reason on every result, Reset included, so the picker
         // lives in this dialog rather than behind a second popup.
         reasons={INSTALLER_RESULT_REASONS.Reset}
