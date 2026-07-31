@@ -104,6 +104,40 @@ interface DynamicJobBuilderScreenProps {
   onEditBack?: () => void;
 }
 
+/**
+ * Normalize `scheduleTime` for the SUBMIT payload — web parity with
+ * `appointment-scheduler.js`, which emits the raw calendar `Date` (→ ISO on the wire)
+ * and never attaches a `reason` to a dated slot:
+ *   - a dated appointment's `date` is kept in the display form (`M/d/yyyy`) on the
+ *     in-memory state for the summary UI, but the payload sends it as an ISO datetime;
+ *   - its `reason` (always null for a dated slot — that field is TBD-only) is dropped;
+ *   - a `TBD` appointment is passed through unchanged (it legitimately carries a reason).
+ * The calendar day is preserved: a bare `M/d/yyyy` is rebuilt at LOCAL noon (like web's
+ * local `Date`), so `toISOString()` round-trips to the same day in the rep's timezone
+ * instead of rolling back a day the way UTC-midnight would in negative-offset (US) zones.
+ */
+function normalizeScheduleTimeForSubmit(scheduleTime: any): any {
+  if (!scheduleTime || typeof scheduleTime !== 'object') return scheduleTime;
+  const { date } = scheduleTime;
+  if (!date || date === 'TBD') return scheduleTime;
+
+  const str = String(date);
+  let iso = str;
+  const mdy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const [, mm, dd, yyyy] = mdy;
+    // Local noon → a ±12h margin so the UTC date-part stays on the picked day.
+    iso = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0).toISOString();
+  } else {
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) iso = parsed.toISOString();
+  }
+
+  // Drop the (null) `reason` on a dated slot; keep customerName/timeWindow/etc.
+  const { reason: _reason, ...rest } = scheduleTime;
+  return { ...rest, date: iso };
+}
+
 function DynamicJobBuilderInner({
   navigation,
   initialConfig,
@@ -985,6 +1019,12 @@ function DynamicJobBuilderInner({
         initialConfig,
         dealCenterData
       );
+      // Send the appointment as an ISO datetime and without the dated-slot `reason:null`
+      // (web parity). Reassigns a NEW object on the serialized copy only — the in-memory
+      // `jobState.scheduleTime` keeps its display form for the summary UI.
+      if (dynamicJobState?.scheduleTime) {
+        dynamicJobState.scheduleTime = normalizeScheduleTimeForSubmit(dynamicJobState.scheduleTime);
+      }
       const configId = (initialConfig as any)?.id || null;
       const jobBuilderWrapper = {
         dynamicJobState,
