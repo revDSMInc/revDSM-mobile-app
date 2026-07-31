@@ -800,6 +800,9 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         onClose={() => setViewerIndex(null)}
         onDeleteSuccess={onRefresh}
         showDelete={false}
+        // Opened from the Investment Center → attribute the gallery's activity logs to
+        // the presentation, not the RevRender tool (web/Lead Center parity).
+        moduleType="investment_center"
       />
     </ScrollView>
   );

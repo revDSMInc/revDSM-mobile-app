@@ -28,6 +28,14 @@ interface UseDynamicJobBuilderActivityLogArgs {
   flushSave?: () => void | Promise<void>;
   configId?: any;
   verticals?: any[];
+  /**
+   * Deal-EDIT (My Deals addendum) mode. When true the wizard's events log under
+   * `module_type: 'my_deal'` (web `use-deal-edit-activity-log.js`) with an
+   * `isDealEdit`/`editSource` stamp, and the events web's deal-edit hook deliberately
+   * omits — `job_builder_opened`, `auto-populated`, `job_builder_completed` — are
+   * suppressed (the wrapper `DynamicDealEditScreen` fires `addendum_submitted` instead).
+   */
+  isDealEdit?: boolean;
 }
 
 /**
@@ -52,8 +60,23 @@ export function useDynamicJobBuilderActivityLog({
   flushSave,
   configId = null,
   verticals = [],
+  isDealEdit = false,
 }: UseDynamicJobBuilderActivityLogArgs) {
   const { user } = useAuth();
+
+  // Deal-edit (My Deals) events log under `my_deal` with the web DEAL_EDIT_META stamp;
+  // the regular build logs under `job_builder`. Memoized so the derived values stay
+  // stable across renders (they feed the callbacks' dependency arrays below).
+  const { moduleType, dealEditStamp } = useMemo(
+    () => ({
+      moduleType: isDealEdit ? 'my_deal' : 'job_builder',
+      dealEditStamp: isDealEdit
+        ? { isDealEdit: true, editSource: 'deal_addendum', isDynamic: true }
+        : {},
+    }),
+    [isDealEdit]
+  );
+
   const openedRef = useRef(false);
   const initDoneRef = useRef(false);
   const fieldLogTimerRef = useRef<any>(null);
@@ -75,7 +98,9 @@ export function useDynamicJobBuilderActivityLog({
   }, [enabled]);
 
   const logOpened = useCallback(() => {
-    if (!enabled || !user?._id || !leadId || openedRef.current) return;
+    // Web's deal-edit hook deliberately emits NO "opened" event (the first
+    // `step_viewed` marks the session start), so skip it in edit mode.
+    if (!enabled || !user?._id || !leadId || openedRef.current || isDealEdit) return;
     openedRef.current = true;
 
     logEvent('view', {
@@ -95,7 +120,7 @@ export function useDynamicJobBuilderActivityLog({
         configId,
       },
     });
-  }, [enabled, user?._id, leadId, jobId, calculatorType, result, calculatorId, configId]);
+  }, [enabled, user?._id, leadId, jobId, calculatorType, result, calculatorId, configId, isDealEdit]);
 
   const logStepViewed = useCallback(
     ({ verticalId, tab, stepNumber }: any) => {
@@ -107,7 +132,7 @@ export function useDynamicJobBuilderActivityLog({
       logEvent('view', {
         user_id: user._id,
         created_by: user._id,
-        module_type: 'job_builder',
+        module_type: moduleType,
         meta: {
           draft: true,
           leadId,
@@ -119,10 +144,11 @@ export function useDynamicJobBuilderActivityLog({
           stepCategory: tab.id,
           action: 'step_viewed',
           ...tabMeta,
+          ...dealEditStamp,
         },
       });
     },
-    [enabled, user?._id, leadId, jobId, calculatorId, calculatorType, result, configId, verticals]
+    [enabled, user?._id, leadId, jobId, calculatorId, calculatorType, result, configId, verticals, moduleType, dealEditStamp]
   );
 
   const logNavigate = useCallback(
@@ -135,7 +161,7 @@ export function useDynamicJobBuilderActivityLog({
       logEvent('navigate', {
         user_id: user._id,
         created_by: user._id,
-        module_type: 'job_builder',
+        module_type: moduleType,
         meta: {
           draft: true,
           leadId,
@@ -148,15 +174,20 @@ export function useDynamicJobBuilderActivityLog({
           direction,
           action: 'step_navigation',
           ...toTabMeta,
+          ...dealEditStamp,
         },
       });
     },
-    [enabled, user?._id, leadId, jobId, calculatorId, configId, verticals]
+    [enabled, user?._id, leadId, jobId, calculatorId, configId, verticals, moduleType, dealEditStamp]
   );
 
   const logAutoPopulatedForTab = useCallback(
     async ({ verticalId, tab, isTabLogged }: any) => {
       if (!enabled || !user?._id || !leadId || !tab || !verticalId) return false;
+      // Web's deal-edit hook has no auto-populate pass — nothing is auto-populated when
+      // editing an already-built job, so it would only re-log the original build's
+      // locked fields. Skip it in edit mode.
+      if (isDealEdit) return false;
       if (!initDoneRef.current) return false;
 
       const tabKey = buildDynamicTabLogKey(verticalId, tab.id);
@@ -204,7 +235,7 @@ export function useDynamicJobBuilderActivityLog({
         return false;
       }
     },
-    [enabled, user?._id, leadId, jobId, calculatorId, markAutoFieldsLoggedTab, flushSave, configId, verticals]
+    [enabled, user?._id, leadId, jobId, calculatorId, markAutoFieldsLoggedTab, flushSave, configId, verticals, isDealEdit]
   );
 
   const queueFieldChangeLog = useCallback(
@@ -231,17 +262,18 @@ export function useDynamicJobBuilderActivityLog({
         logEvent('change', {
           user_id: user._id,
           created_by: user._id,
-          module_type: 'job_builder',
+          module_type: moduleType,
           meta: {
             leadId,
             jobBuilderId: jobId || leadId,
             calculatorId,
             ...fieldMeta,
+            ...dealEditStamp,
           },
         });
       }, FIELD_LOG_DEBOUNCE_MS);
     },
-    [enabled, user?._id, leadId, jobId, calculatorId, configId]
+    [enabled, user?._id, leadId, jobId, calculatorId, configId, moduleType, dealEditStamp]
   );
 
   const trackTabStateChanges = useCallback(
@@ -294,7 +326,11 @@ export function useDynamicJobBuilderActivityLog({
 
   const logSubmit = useCallback(
     (jobState: any) => {
-      if (!enabled || !user?._id || !leadId) return;
+      // In edit mode the embedded builder's "complete" is only the Job-Build step
+      // saving its products — NOT the addendum submission. Web's deal-edit hook emits
+      // no `job_builder_completed`; the wrapper fires `addendum_submitted` when the
+      // draft is actually sent. Suppress it here.
+      if (!enabled || !user?._id || !leadId || isDealEdit) return;
 
       const verticalSummaries: Record<string, any> = {};
       Object.entries(jobState || {}).forEach(([verticalId, verticalState]: any) => {
@@ -327,7 +363,7 @@ export function useDynamicJobBuilderActivityLog({
         },
       });
     },
-    [enabled, user?._id, leadId, jobId, calculatorId, calculatorType, result, configId]
+    [enabled, user?._id, leadId, jobId, calculatorId, calculatorType, result, configId, isDealEdit]
   );
 
   const handleTabActivated = useCallback(

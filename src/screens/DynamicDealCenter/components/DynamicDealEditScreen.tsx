@@ -45,6 +45,8 @@ import {
 import { computeDynamicBuildChanges } from '../utils/dynamic-deal-diff';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
+import { useAuth } from '../../../hooks/useAuth';
+import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-log';
 
 /**
  * 4-step DYNAMIC deal-edit wizard. Faithful port of web
@@ -89,6 +91,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const lead = useMemo(() => route?.params?.lead || {}, [route?.params?.lead]);
   const calculatorResultData = route?.params?.calculatorResultData;
   const leadId = lead?._id || lead?.leadId || lead?.id;
+  const { user } = useAuth();
 
   const {
     config: jobBuilderConfig,
@@ -589,6 +592,28 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         }
       }
 
+      // Log the addendum submission under `my_deal` (web `logAddendumSubmitted`). This
+      // is the deal-edit completion event — the embedded builder's job_builder_completed
+      // is suppressed in edit mode, so this is the single "addendum sent" marker.
+      const logUserId = user?._id || user?.id;
+      if (logUserId) {
+        logDealAddendumSubmitted({
+          userId: logUserId,
+          leadId,
+          calculatorId: editCalculatorId || undefined,
+          result: lead?.result || 'Sale',
+          summary: {
+            ...(draftId ? { draftId } : {}),
+            contractPrice: Number(contractPrice) || 0,
+            downPayment: Number(downPayment) || 0,
+            buildChanged,
+            scheduleChanged,
+            priceChanged,
+            noteChanged,
+          },
+        });
+      }
+
       FlashMessage.success('Addendum Submitted', 'The customer has been notified to sign');
       navigation?.goBack();
     } catch (err: any) {
@@ -617,6 +642,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     customerPhone,
     note,
     navigation,
+    user,
+    editCalculatorId,
+    buildChanged,
+    scheduleChanged,
+    priceChanged,
+    noteChanged,
   ]);
 
   const goBack = () => setStep((s) => Math.max(0, s - 1));

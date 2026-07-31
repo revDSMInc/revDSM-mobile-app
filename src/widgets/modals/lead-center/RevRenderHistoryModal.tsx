@@ -156,6 +156,13 @@ interface RevRenderHistoryModalProps {
   leadId?: string;
   onDeleteSuccess?: () => void;
   showDelete?: boolean;
+  /**
+   * Activity-log module this gallery's events belong to. Defaults to `rev_render`
+   * (the Lead Center RevRender tool). When the modal is opened from the Investment
+   * Center it is passed `investment_center`, so those views/navigations/deletes are
+   * attributed to the presentation's audit trail rather than the RevRender module.
+   */
+  moduleType?: string;
 }
 
 export const RevRenderHistoryModal = ({
@@ -166,6 +173,7 @@ export const RevRenderHistoryModal = ({
   leadId,
   onDeleteSuccess,
   showDelete = true,
+  moduleType = 'rev_render',
 }: RevRenderHistoryModalProps) => {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -307,7 +315,7 @@ export const RevRenderHistoryModal = ({
     if (!run) return;
     logEvent('view', {
       user_id: userId,
-      module_type: 'rev_render',
+      module_type: moduleType,
       created_by: userId,
       meta: {
         action: 'render_viewed',
@@ -356,7 +364,7 @@ export const RevRenderHistoryModal = ({
         );
         logEvent('delete', {
           user_id: userId,
-          module_type: 'rev_render',
+          module_type: moduleType,
           created_by: userId,
           meta: {
             action: 'render_deleted',
@@ -418,7 +426,7 @@ export const RevRenderHistoryModal = ({
       if (userId && newScale !== 1) {
         runOnJS(logEvent)('pinch', {
           user_id: userId,
-          module_type: 'rev_render',
+          module_type: moduleType,
           created_by: userId,
           meta: {
             leadId,
@@ -498,7 +506,7 @@ export const RevRenderHistoryModal = ({
       if (userId) {
         logEvent('navigate', {
           user_id: userId,
-          module_type: 'rev_render',
+          module_type: moduleType,
           created_by: userId,
           meta: {
             action: 'gallery_next',

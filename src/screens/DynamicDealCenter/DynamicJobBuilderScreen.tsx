@@ -399,6 +399,9 @@ function DynamicJobBuilderInner({
     dealCenterData,
     configId,
     verticals: verticalList,
+    // Edit mode is reached only from My Deals (Deal Detail → Edit), so its wizard
+    // events log under `module_type: 'my_deal'` (web deal-edit parity), not job_builder.
+    isDealEdit: isEdit,
     markAutoFieldsLoggedTab: (tabKey: string) => {
       loggedAutoFieldTabsRef.current.add(tabKey);
     },
@@ -927,13 +930,17 @@ function DynamicJobBuilderInner({
       isCompletingRef.current = true;
       setIsSaving(true);
 
+      // In edit mode both of these are job_builder-module events that would land in the
+      // middle of a `my_deal` addendum edit. `logSubmit` is already suppressed in the
+      // hook when editing, and the rollout/drop summary is skipped here — web's deal-edit
+      // flow fires neither; the wrapper fires `addendum_submitted` instead.
       activityLog.logSubmit(jobState);
 
       // Web parity (TabbedCalculator.js:923 logRolloutDropSummaryOnSubmit): emit the
       // aggregate rollout/drop summary on the dynamic submit too — previously only the
       // regular JobBuilder fired it, so the dynamic flow logged job_builder_completed
       // without its companion rollout_and_drop_summary event.
-      try {
+      if (!isEdit) try {
         const rdForSummary = (calculatorResultData || {}) as any;
         const rawCalc = rdForSummary.LFCalculator && Object.keys(rdForSummary.LFCalculator).length
           ? rdForSummary.LFCalculator

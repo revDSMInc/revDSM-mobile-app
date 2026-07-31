@@ -994,8 +994,8 @@ export default function LeadCenterPage() {
           contentContainerStyle={{ paddingBottom: 20 }}
         >
           <View className="px-4">
-            <View className="flex-row gap-[10%] mb-4">
-              <View className="flex-col gap-4">
+            <View className="flex-row gap-4 mb-4">
+              <View className="flex-1 flex-col gap-4">
                 <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
                   Lead ID:
                   <Text className="font-semibold" style={{ color: colors.text }}>
@@ -1008,7 +1008,7 @@ export default function LeadCenterPage() {
                     size={14}
                     color="#72BD00"
                   />
-                  <Text className="ml-1 text-base font-semibold text-text-primary">
+                  <Text className="ml-1 shrink text-base font-semibold text-text-primary">
                     {lead.customerDetails?.firstName} {lead.customerDetails?.lastName}
                   </Text>
                   <TouchableOpacity
@@ -1048,7 +1048,7 @@ export default function LeadCenterPage() {
                 </View>
               </View>
 
-              <View className="flex-col gap-4">
+              <View className="flex-1 flex-col gap-4">
                 <Text className="text-base font-semibold" style={{ color: '#72BD00' }}>
                   Lead Code:{' '}
                   <Text className="font-semibold" style={{ color: colors.text }}>

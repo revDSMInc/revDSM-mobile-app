@@ -11,8 +11,10 @@ const SPLASH_BG = '#0E2A1C';
 // reveals the home screen is driven from App.tsx (see the splash overlay).
 const SPLASH_HOLD_MS = 1800;
 
-// One full build cycle. Matches the Figma export's `1.4s ... infinite` loop.
-const LOOP_MS = 1400;
+// Duration of the one-shot build-in (bottom → middle → top chevron → chimney stub).
+// Matches the Figma export's per-cycle `1.4s` timing, but played ONCE (see below) so the
+// splash holds on the completed mark instead of replaying the sequence.
+const BUILD_MS = 1400;
 
 // ── The revDSM "load-in" mark, ported from src/assets/svgs/Load In Animation.svg ──
 // That file is a CSS-@keyframes animation (from Figma). react-native-svg's <SvgXml>
@@ -53,19 +55,22 @@ export default function SplashScreen({ onFinish }: Props) {
   }, [onFinish]);
 
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(progress, {
-        toValue: 1,
-        duration: LOOP_MS,
-        easing: Easing.linear,
-        // strokeDashoffset / SVG opacity+scale aren't native-driver props.
-        useNativeDriver: false,
-      }),
-    );
-    loop.start();
+    // Play the build-in sequence ONCE (per ticket). Previously this was wrapped in
+    // `Animated.loop`, so with BUILD_MS (1400) < SPLASH_HOLD_MS (1800) the loop
+    // restarted mid-hold and the chevrons (esp. the bottom one, which draws first)
+    // redrew a second time. A single timing run leaves `progress` at 1, holding the
+    // fully-built mark until `finish` fires.
+    const anim = Animated.timing(progress, {
+      toValue: 1,
+      duration: BUILD_MS,
+      easing: Easing.linear,
+      // strokeDashoffset / SVG opacity+scale aren't native-driver props.
+      useNativeDriver: false,
+    });
+    anim.start();
     const timer = setTimeout(finish, SPLASH_HOLD_MS);
     return () => {
-      loop.stop();
+      anim.stop();
       clearTimeout(timer);
     };
   }, [finish, progress]);
