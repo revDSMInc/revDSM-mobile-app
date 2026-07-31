@@ -5,6 +5,7 @@ import {
   Image,
   TouchableOpacity,
   ActivityIndicator,
+  ScrollView,
   StyleSheet,
   Platform,
 } from 'react-native';
@@ -125,20 +126,36 @@ export function InstallerCamera({
         )}
 
         {compareLabels ? (
-          <View className="flex-1 flex-row px-4" style={{ gap: 12 }}>
-            <View className="flex-1">
+          /* Stacked, not side by side — same as the Matched review in `PhotoMatchStep`.
+             Two half-width columns left each photo barely wider than a thumb and portrait-
+             tall, so `cover` cropped away most of the frame the installer is meant to be
+             judging. Full width each, scrolling as a pair, keeps the framing comparable. */
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4, gap: 12 }}
+            showsVerticalScrollIndicator={false}
+          >
+            <View>
               <Text className="text-xs font-bold mb-2 tracking-widest" style={{ color: GREEN }}>
                 {compareLabels.left}
               </Text>
-              <View className="flex-1 rounded-2xl overflow-hidden bg-[#1a2432]">
+              {/* A fixed 4:3 frame, not `flex-1`: a flex child inside a ScrollView has no
+                  height to fill, so both photos would collapse to nothing. */}
+              <View
+                className="rounded-2xl overflow-hidden bg-[#1a2432]"
+                style={styles.comparePane}
+              >
                 {renderGhost(0.9)}
               </View>
             </View>
-            <View className="flex-1">
+            <View>
               <Text className="text-xs font-bold mb-2 tracking-widest text-white">
                 {compareLabels.right}
               </Text>
-              <View className="flex-1 rounded-2xl overflow-hidden bg-[#26364a]">
+              <View
+                className="rounded-2xl overflow-hidden bg-[#26364a]"
+                style={styles.comparePane}
+              >
                 <Image
                   source={{ uri: captured }}
                   resizeMode="cover"
@@ -146,7 +163,7 @@ export function InstallerCamera({
                 />
               </View>
             </View>
-          </View>
+          </ScrollView>
         ) : (
           <View className="flex-1 mx-4 rounded-2xl overflow-hidden bg-[#26364a]">
             <Image source={{ uri: captured }} resizeMode="cover" style={StyleSheet.absoluteFill} />
@@ -272,6 +289,8 @@ export function InstallerCamera({
 
 const styles = StyleSheet.create({
   root: { backgroundColor: '#0c1118', zIndex: 9999 },
+  /** One photo in the stacked compare view — see the `compareLabels` branch. */
+  comparePane: { aspectRatio: 4 / 3 },
   viewfinder: { flex: 1, overflow: 'hidden', backgroundColor: '#1a2432' },
   noCamera: { alignItems: 'center', justifyContent: 'center' },
   topChip: {

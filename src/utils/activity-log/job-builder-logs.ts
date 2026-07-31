@@ -58,6 +58,30 @@ export const logAgreementUploaded = async (
   });
 };
 
+/**
+ * Agreement SIGNED — the portal's Forever Record "Agreement" milestone renders a
+ * "Signed" row only for `action: 'agreement_signed'` on a `module_type: 'job_builder'`
+ * log (LeadLifecycleTimeline / log-item routing). `signMethod` distinguishes an
+ * in-person signature from a remotely (web-link) signed one for anyone reading meta.
+ */
+export const logAgreementSigned = async (
+  userId: string,
+  leadId: string,
+  signMethod: 'in_person' | 'remote' = 'in_person',
+) => {
+  await logEvent('add', {
+    user_id: userId,
+    created_by: userId,
+    module_type: 'job_builder',
+    meta: {
+      draft: true,
+      leadId,
+      signMethod,
+      action: 'agreement_signed',
+    },
+  });
+};
+
 export const logOrderSheetUploaded = async (
   userId: string,
   leadId: string,
