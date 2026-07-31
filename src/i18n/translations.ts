@@ -73,6 +73,8 @@ export const en = {
     startAppointment: 'Start Appointment',
     resumeAppointment: 'Resume Appointment',
     reviewAppointment: 'Review Appointment',
+    /** A resulted job — the visit is over, so the button reports state, not an action. */
+    completedAppointment: 'Completed Appointment',
     previewAppointment: 'Preview Appointment',
     appointmentExpired: 'Appointment Expired',
     startingJob: 'Starting Job…',
@@ -228,7 +230,7 @@ export const en = {
     keep: 'Keep',
 
     jobPacket: 'Job Packet',
-    contractDetails: 'Contract Details',
+    contractDetails: 'Contract Details*',
     products: 'Products',
     view: 'View',
     pages: '{count} pages',
@@ -288,6 +290,7 @@ export const es: TranslationTree = {
     startAppointment: 'Iniciar cita',
     resumeAppointment: 'Reanudar cita',
     reviewAppointment: 'Revisar cita',
+    completedAppointment: 'Cita completada',
     previewAppointment: 'Vista previa de la cita',
     appointmentExpired: 'Cita vencida',
     startingJob: 'Iniciando trabajo…',
