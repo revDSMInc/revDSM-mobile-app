@@ -291,11 +291,18 @@ export function DynamicAgreementDialog({
       // Audit log (parity with the previous local generator + the normal JB's
       // logAgreementGenerated): the agreement document now exists server-side.
       if (user?._id) {
+        // `module_type: 'job_builder'` (NOT 'agreement') — the portal's Forever Record
+        // renders agreement rows ONLY from job_builder logs (log-item.js routes
+        // `moduleType === 'job_builder'` + action includes 'agreement' → AgreementLog;
+        // the milestone "Generated" row matches action `agreement_generated`). This is
+        // exactly what the regular Job Builder logs (`logAgreementGenerated`), so the
+        // dynamic flow's agreement now shows in the docs/forever record like it used to.
         logEvent('add', {
           user_id: user._id,
           created_by: user._id,
-          module_type: 'agreement',
+          module_type: 'job_builder',
           meta: {
+            draft: true,
             leadId,
             fieldName: 'agreement',
             fieldLabel: 'Agreement',

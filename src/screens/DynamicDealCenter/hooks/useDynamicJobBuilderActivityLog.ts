@@ -56,7 +56,13 @@ export function useDynamicJobBuilderActivityLog({
   const { user } = useAuth();
   const openedRef = useRef(false);
   const initDoneRef = useRef(false);
-  const fieldLogTimerRef = useRef<any>(null);
+  // One debounce timer PER field state-key (web parity). A single SHARED timer let a
+  // later field change clear an earlier one still pending, so only the LAST key of a
+  // multi-field diff survived — e.g. adding a combination and filling several fields
+  // (or editing two fields within 1 s) logged only the last one and silently DROPPED
+  // the rest, so previous-combination values were "cut" from the logs. Per-key timers
+  // debounce each field independently so no change clobbers another.
+  const fieldLogTimersRef = useRef<Map<string, any>>(new Map());
   const prevTabValuesRef = useRef<Record<string, any>>({});
   const prevTabKeyRef = useRef('');
   const dealCenterDataRef = useRef(dealCenterData);
@@ -65,14 +71,25 @@ export function useDynamicJobBuilderActivityLog({
     dealCenterDataRef.current = dealCenterData;
   }, [dealCenterData]);
 
+  // Clear every pending per-field debounce timer (web parity `clearPendingFieldLogs`).
+  const clearPendingFieldLogs = useCallback(() => {
+    fieldLogTimersRef.current.forEach((timerId) => clearTimeout(timerId));
+    fieldLogTimersRef.current.clear();
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       openedRef.current = false;
       initDoneRef.current = false;
       prevTabValuesRef.current = {};
       prevTabKeyRef.current = '';
+      clearPendingFieldLogs();
     }
-  }, [enabled]);
+  }, [enabled, clearPendingFieldLogs]);
+
+  // Drop any still-pending field-log timers on unmount so they don't fire after the
+  // screen is gone (and so nothing leaks across a remount).
+  useEffect(() => () => clearPendingFieldLogs(), [clearPendingFieldLogs]);
 
   const logOpened = useCallback(() => {
     if (!enabled || !user?._id || !leadId || openedRef.current) return;
@@ -212,11 +229,17 @@ export function useDynamicJobBuilderActivityLog({
       if (!enabled || !user?._id || !leadId || !stateKey || !context || context.skip) return;
       if (serializeValue(oldValue) === serializeValue(newValue)) return;
 
-      if (fieldLogTimerRef.current) {
-        clearTimeout(fieldLogTimerRef.current);
-      }
+      // Debounce ONLY the same stateKey — a later change to THIS field re-arms this
+      // field's own timer; changes to OTHER fields keep their independent timers, so a
+      // multi-field diff (adding a combination, or editing several fields within 1 s)
+      // logs EVERY field instead of only the last (web parity — the single-timer version
+      // dropped the rest).
+      const timers = fieldLogTimersRef.current;
+      const pending = timers.get(stateKey);
+      if (pending) clearTimeout(pending);
 
-      fieldLogTimerRef.current = setTimeout(() => {
+      const timerId = setTimeout(() => {
+        timers.delete(stateKey);
         const fieldMeta = buildFieldChangeLogMeta({
           context,
           tab,
@@ -240,6 +263,8 @@ export function useDynamicJobBuilderActivityLog({
           },
         });
       }, FIELD_LOG_DEBOUNCE_MS);
+
+      timers.set(stateKey, timerId);
     },
     [enabled, user?._id, leadId, jobId, calculatorId, configId]
   );
