@@ -202,29 +202,32 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
                   const plan = plans[key];
                   if (!plan) return null;
                   const min = plan.minPrice || 0;
-                  // Rollout context (web `PaymentPlanSelect`): a min-price plan is
-                  // LOCKED until an end price at or above the minimum is entered, so
-                  // price 0 (not entered yet) counts as below-min — the plan greys out
-                  // with a red "Requires $X+ — enter end price first" hint. Mobile's
-                  // shared `planBelowMin` only flags an ENTERED price below the min
-                  // (price > 0), which is why the note was missing before any end price.
-                  const belowMin = min > 0 && (price <= 0 || price < min);
+                  // A min-price plan (e.g. Wells Fargo "jobs over $7,500") is ALWAYS
+                  // selectable — including BEFORE any end price is entered — matching the
+                  // regular rollout picker (`CalculatorSummary`) and web. The shared
+                  // `planBelowMin` only flags an ENTERED price below the minimum
+                  // (price > 0 && price < min), so at price 0 nothing is locked: the rep
+                  // picks the plan first, THEN types the end price. (The earlier build
+                  // wrongly treated price 0 as below-min and DISABLED these rows — the
+                  // "enter end price first" lock the ticket is about.)
+                  const belowMin = planBelowMin(plans, key, price);
                   const isSel = key === selected;
                   return (
                     <TouchableOpacity
                       key={key}
-                      // DISABLED until the entered end price meets this plan's minimum
-                      // (web parity). With no end price the Lowe's financing plans stay
-                      // locked and non-selectable; only the basics (ACH/CC, no minimum)
-                      // are pickable. The row un-locks the moment a qualifying price is
-                      // typed into "Rollout End Price".
-                      disabled={belowMin}
-                      onPress={() => onSelect(key)}
+                      onPress={() => {
+                        // Below-min = a price IS entered and it's under the plan minimum:
+                        // warn instead of selecting (regular-rollout + Add-Plan parity). At
+                        // price 0 belowMin is false, so every plan selects freely; a later
+                        // below-min end price is caught by the end-price validation.
+                        if (belowMin) { FlashMessage.warning('Payment plan', belowMinMsg(plans, key, price)); return; }
+                        onSelect(key);
+                      }}
                       style={{
                         padding: 14, borderRadius: 12, borderWidth: 1.5, marginBottom: 8,
-                        // Disabled (below-min) rows read as GREY/muted so they're clearly
-                        // distinct from the white, selectable active options.
-                        borderColor: isSel ? '#4CBB17' : belowMin ? '#E2E8F0' : '#E2E8F0',
+                        // Below-min rows read as GREY/muted so they're clearly distinct from
+                        // the white, selectable active options.
+                        borderColor: isSel ? '#4CBB17' : '#E2E8F0',
                         backgroundColor: isSel ? '#4CBB170D' : belowMin ? '#F1F5F9' : '#fff',
                         opacity: belowMin ? 0.6 : 1,
                       }}
@@ -233,13 +236,12 @@ function PaymentPlanModal({ visible, selected, price, plans, categories, onSelec
                         <Text style={{ flex: 1, paddingRight: 10, fontSize: 12.5, fontWeight: '800', color: isSel ? '#15803D' : belowMin ? '#94A3B8' : '#1C252E' }}>{plan.label}</Text>
                         {isSel && <Ionicons name="checkmark-circle" size={20} color="#4CBB17" />}
                       </View>
-                      {/* Web parity: red min-price hint (with "enter end price first"
-                          before any price, "(current: $X)" once one is entered), or the
-                          plan's own grey minPriceNote when it's not below the minimum. */}
+                      {/* Min-price hint: red "Requires $X+ (current: $Y)" ONLY when a price
+                          is entered below the minimum; otherwise the plan's own grey note.
+                          No "enter end price first" lock — the plan is selectable at $0. */}
                       {belowMin ? (
                         <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 4 }}>
-                          Requires ${min.toLocaleString()}+
-                          {price > 0 ? ` (current: $${Number(price).toLocaleString()})` : ' — enter end price first'}
+                          Requires ${min.toLocaleString()}+ (current: ${Number(price).toLocaleString()})
                         </Text>
                       ) : plan.minPriceNote && plan.minPriceNote !== '0' ? (
                         <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 4 }}>{plan.minPriceNote}</Text>
