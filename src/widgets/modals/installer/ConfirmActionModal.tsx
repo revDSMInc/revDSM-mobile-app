@@ -10,7 +10,8 @@ interface Props {
   /** MaterialCommunityIcons glyph shown in the tinted circle. */
   icon: string;
   title: string;
-  description: string;
+  /** Optional — omit for dialogs where the title plus the reason list say it all. */
+  description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   /** `danger` paints the confirm button red — for actions that destroy work. */
@@ -84,15 +85,22 @@ export function ConfirmActionModal({
             <Icon name={icon} size={30} color={accent} />
           </View>
 
-          <Text className="text-xl font-black mb-2 text-center" style={{ color: colors.text }}>
+          {/* With no description the title carries the full gap itself, so dropping the
+              blurb doesn't leave the next block crowding the heading. */}
+          <Text
+            className={`text-xl font-black text-center ${description ? 'mb-2' : 'mb-6'}`}
+            style={{ color: colors.text }}
+          >
             {title}
           </Text>
-          <Text
-            className="text-sm font-semibold text-center leading-5 mb-6"
-            style={{ color: colors.textSecondary }}
-          >
-            {description}
-          </Text>
+          {!!description && (
+            <Text
+              className="text-sm font-semibold text-center leading-5 mb-6"
+              style={{ color: colors.textSecondary }}
+            >
+              {description}
+            </Text>
+          )}
 
           {needsReason && (
             <View className="w-full mb-5">

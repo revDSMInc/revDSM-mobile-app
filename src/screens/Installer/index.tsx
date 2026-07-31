@@ -36,6 +36,29 @@ import type {
   InstallerJob,
 } from '../../config/types/installer';
 
+/** Shown when the session belongs to someone else and the server sent no wording. */
+const HELD_BY_OTHER_MESSAGE =
+  'This job is already checked in by another crew member. You can check in once they check out.';
+
+/**
+ * True when `PUT installer/v1/{id}/work` was refused because ANOTHER crew member
+ * holds the job's open work session:
+ *
+ *   { code: 409, message: "…already checked in by another crew member…",
+ *     data: { alreadyCheckedIn: true, workStartedBy: "<userId>" } }
+ *
+ * `workStartedBy` has to be someone else. The same endpoint 409s when OUR OWN session
+ * is still open — the app was killed, or signal dropped before the check-out landed —
+ * and treating that as a lock would strand an installer outside their own job with no
+ * way back in.
+ */
+const isHeldByAnotherCrew = (err: any, userId?: string): boolean => {
+  const heldBy = err?.data?.workStartedBy;
+  const conflict =
+    err?.code === 409 || err?.httpStatus === 409 || err?.data?.alreadyCheckedIn === true;
+  return !!(conflict && heldBy && heldBy !== userId);
+};
+
 /**
  * Installer dashboard — the signed-in installer's schedule.
  *
@@ -169,9 +192,18 @@ export default function InstallerDashboard() {
         persistActiveInstallerJob(merged);
         navigation.navigate('InstallerJobDetail', { job: merged, checkedIn: true });
       } catch (err: any) {
-        // Including a 409 from a crew member who still holds the session. The review
-        // still opens — on the thin list row — because being unable to read a finished
-        // job because a colleague forgot to check out would be the worse outcome.
+        // Held by another crew member — refused here exactly as a live check-in is.
+        // A review opens a real work session on the server (that is what this call
+        // does), so letting it through would put two people in one job's session and
+        // the second one's exit would check the first one out.
+        if (isHeldByAnotherCrew(err, userId)) {
+          log.jobStartFailed(job, err);
+          FlashMessage.error('Already checked in', err?.message || HELD_BY_OTHER_MESSAGE);
+          return;
+        }
+
+        // Anything else (offline, 5xx) still opens on the thin list row — being unable
+        // to read a finished job over a dropped connection would be the worse outcome.
         console.warn('[InstallerJob] Could not load the resulted job:', err);
         FlashMessage.error(
           "Couldn't load this job",
@@ -236,19 +268,15 @@ export default function InstallerDashboard() {
       // 409 — the job already holds an open work session:
       //   { code: 409, message: "…already checked in by another crew member…",
       //     data: { alreadyCheckedIn: true, workStartedBy: "<userId>" } }
-      const heldBy = err?.data?.workStartedBy;
-      const alreadyOpen = err?.code === 409 || err?.data?.alreadyCheckedIn === true;
+      const alreadyOpen =
+        err?.code === 409 || err?.httpStatus === 409 || err?.data?.alreadyCheckedIn === true;
 
-      if (alreadyOpen && heldBy && heldBy !== userId) {
+      if (isHeldByAnotherCrew(err, userId)) {
         // Someone else is on this job. Hard stop — two crews must not work one job,
         // and the job must NOT be flipped to inProgress on their behalf. The server's
         // own wording is shown, since it names the condition better than we can.
         log.jobStartFailed(job, err);
-        FlashMessage.error(
-          'Already checked in',
-          err?.message ||
-            'This job is already checked in by another crew member. You can check in once they check out.'
-        );
+        FlashMessage.error('Already checked in', err?.message || HELD_BY_OTHER_MESSAGE);
         setStartingId(null);
         return;
       }

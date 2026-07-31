@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -86,15 +86,41 @@ export function PhotoMatchStep({
     [sections]
   );
 
+  /**
+   * Tags are tracked by ID, never by holding the object.
+   *
+   * `useRepPhotoSections` resolves the rep photos' signed URLs asynchronously and rebuilds
+   * every tag when they land, so a `PhotoTag` captured in state is a SNAPSHOT — it keeps
+   * whatever `repPhotoUrl` it had at the moment it was stored (often none), and a later
+   * re-sign never reaches it. That is what left the review pane's reference frame blank
+   * while the same photo showed in the viewfinder: two copies of one tag, resolved at
+   * different times. Looking each one up on every render means there is only ever the
+   * current tag.
+   */
   const [sectionId, setSectionId] = useState(() => sections[0]?.id ?? '');
-  const [selected, setSelected] = useState<PhotoTag>(
-    () => requiredTags.find((t) => !matched[t.id]) ?? requiredTags[0] ?? sections[0]?.tags[0]
+  const [selectedId, setSelectedId] = useState<string>(
+    () =>
+      (requiredTags.find((t) => !matched[t.id]) ?? requiredTags[0] ?? sections[0]?.tags[0])
+        ?.id ?? ''
   );
-  const [cameraTag, setCameraTag] = useState<PhotoTag | null>(null);
+  const [cameraTagId, setCameraTagId] = useState<string | null>(null);
   const [extraCamera, setExtraCamera] = useState(false);
-  const [reviewTag, setReviewTag] = useState<PhotoTag | null>(null);
+  const [reviewTagId, setReviewTagId] = useState<string | null>(null);
 
   const section = sections.find((s) => s.id === sectionId) ?? sections[0];
+
+  /** Current object for a tracked id — always the freshest copy `sections` holds. */
+  const tagById = useCallback(
+    (id?: string | null): PhotoTag | undefined =>
+      id ? sections.flatMap((s) => s.tags).find((t) => t.id === id) : undefined,
+    [sections]
+  );
+
+  const selected = tagById(selectedId);
+  const cameraTag = tagById(cameraTagId);
+  const reviewTag = tagById(reviewTagId);
+
+  const setSelected = (tag: PhotoTag) => setSelectedId(tag.id);
   const matchedTotal = requiredTags.filter((t) => matched[t.id]).length;
   const allDone = requiredTags.length > 0 && matchedTotal === requiredTags.length;
 
@@ -128,7 +154,7 @@ export function PhotoMatchStep({
     return [...(section?.tags ?? [])].sort((a, b) => rank(a) - rank(b));
   }, [section, matched]);
 
-  const isSelectedMatched = !!matched[selected?.id];
+  const isSelectedMatched = !!(selected && matched[selected.id]);
   const selectedRef = selected ? referenceUri(selected) : undefined;
 
   /**
@@ -155,7 +181,7 @@ export function PhotoMatchStep({
   // that knows the s3url, bucket and byte size the portal's payload carries.
   const handleGhostCapture = (tag: PhotoTag, photo: CapturedPhoto) => {
     onMatch(tag.id, photo);
-    setCameraTag(null);
+    setCameraTagId(null);
     advance(tag.id);
   };
 
@@ -182,7 +208,25 @@ export function PhotoMatchStep({
       onRequestClose={onBack}
     >
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/*
+        The BOTTOM inset belongs here, on the root — not only on the scroll content
+        inside. The tag picker is sized as a percentage of its parent, so a root that
+        runs under the navigation bar hands it a share of that hidden strip too: the
+        last row of tags and the "Tag as Extra" button render into space the system bar
+        covers. Ending the layout above the bar means every child is measured inside the
+        usable screen. Left/right are applied for cutouts and landscape.
+      */}
+      <View
+        style={[
+          styles.root,
+          {
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+          },
+        ]}
+      >
         {/* Top bar */}
         <View className="flex-row items-center justify-between px-3.5 pt-2 pb-2">
           <TouchableOpacity onPress={onBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -239,8 +283,8 @@ export function PhotoMatchStep({
           disabled={!selected?.hasRep}
           onPress={() => {
             if (!selected?.hasRep) return;
-            if (matched[selected.id]) setReviewTag(selected);
-            else setCameraTag(selected);
+            if (matched[selected.id]) setReviewTagId(selected.id);
+            else setCameraTagId(selected.id);
           }}
           className="flex-1 overflow-hidden"
           style={{ backgroundColor: selected ? tagTint(selected.id) : T_CARD }}
@@ -320,7 +364,9 @@ export function PhotoMatchStep({
             className="flex-1"
             contentContainerStyle={{
               paddingHorizontal: 12,
-              paddingBottom: Math.max(insets.bottom, 12) + 8,
+              // The root already clears the system bar, so this is only breathing room
+              // under the last row.
+              paddingBottom: 16,
             }}
           >
             <View className="flex-row flex-wrap" style={{ gap: 8 }}>
@@ -399,10 +445,10 @@ export function PhotoMatchStep({
           phase={phase}
           referenceUri={referenceUri(reviewTag)}
           shot={matched[reviewTag.id]}
-          onClose={() => setReviewTag(null)}
+          onClose={() => setReviewTagId(null)}
           onRetake={() => {
-            setCameraTag(reviewTag);
-            setReviewTag(null);
+            setCameraTagId(reviewTag.id);
+            setReviewTagId(null);
           }}
         />
       )}
@@ -417,7 +463,7 @@ export function PhotoMatchStep({
             left: phase === 'pre' ? t('installer.repSale') : t('installer.phasePre'),
             right: phase === 'pre' ? t('installer.phasePre') : t('installer.phasePost'),
           }}
-          onCancel={() => setCameraTag(null)}
+          onCancel={() => setCameraTagId(null)}
           onCapture={(photo) => handleGhostCapture(cameraTag, photo)}
         />
       )}
@@ -471,14 +517,25 @@ function ReviewPair({
         </TouchableOpacity>
       </View>
 
-      <View className="flex-1 flex-row px-3.5" style={{ gap: 10 }}>
-        <View className="flex-1">
+      {/* Stacked, not side by side.
+          Two half-width columns gave each photo a sliver barely wider than a thumb, and
+          `cover` then cropped most of the frame away — which defeats the point of a
+          comparison. Stacking gives each the full screen width; the pair scrolls, so a
+          short screen shortens the scroll rather than squeezing both photos into it. */}
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 4, gap: 12 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View>
           <Text className="text-[11px] font-black tracking-widest mb-1.5" style={{ color: T_GREEN }}>
             {phase === 'pre' ? t('installer.repSale') : t('installer.phasePre')}
           </Text>
+          {/* A fixed 4:3 frame rather than `flex-1`: inside a ScrollView a flex child has
+              no height to fill, so both photos would collapse to nothing. */}
           <View
-            className="flex-1 rounded-xl overflow-hidden"
-            style={{ backgroundColor: tagTint(tag.id) }}
+            className="rounded-xl overflow-hidden"
+            style={{ aspectRatio: 4 / 3, backgroundColor: tagTint(tag.id) }}
           >
             {referenceUri ? (
               <TaggerImage uri={referenceUri} tint={tagTint(tag.id)} />
@@ -491,15 +548,18 @@ function ReviewPair({
             )}
           </View>
         </View>
-        <View className="flex-1">
+        <View>
           <Text className="text-[11px] font-black tracking-widest mb-1.5 text-white">
             {phase === 'pre' ? t('installer.phasePre') : t('installer.phasePost')}
           </Text>
-          <View className="flex-1 rounded-xl overflow-hidden" style={{ backgroundColor: '#26364a' }}>
+          <View
+            className="rounded-xl overflow-hidden"
+            style={{ aspectRatio: 4 / 3, backgroundColor: '#26364a' }}
+          >
             {shot && <TaggerImage uri={shot.uri} tint="#26364a" />}
           </View>
         </View>
-      </View>
+      </ScrollView>
 
       <View
         className="flex-row px-3.5 pt-3"

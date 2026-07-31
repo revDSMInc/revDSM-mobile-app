@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   View,
@@ -18,6 +18,7 @@ import { DynamicAgreementDialog } from './DynamicAgreementDialog';
 import { AgreementRemoteSignModal } from '../../../modals/job-builder/AgreementRemoteSignModal';
 import { LeadService } from '../../../../services/api/leads';
 import { logEvent } from '../../../../services/api/LoggerService';
+import { logAgreementSigned } from '../../../../utils/activity-log/job-builder-logs';
 import { useAuth } from '../../../../hooks/useAuth';
 import { convertJpegToPdf } from '../../../../utils/jpeg-to-pdf';
 import { PdfPreviewModal } from '../../../modals/PdfPreviewModal';
@@ -94,29 +95,47 @@ const dedupeDocs = (files: any[]): any[] => {
 // (a `file://` / `http` / `data:` src), but carry a durable `serverId`/`filePath` from
 // any copy so it still dedupes across sources and a later delete/reopen can resolve it.
 // Scanned / manually-added agreements (not system-generated) are left untouched.
+const isOpenableDoc = (f: any): boolean => {
+  const s = String(fileSrc(f) || '');
+  return s.startsWith('file://') || s.startsWith('http') || s.startsWith('data:');
+};
 const collapseSignedAgreement = (files: any[]): any[] => {
   const sysGen = files.filter((f) => f?.isSystemGenerated);
-  if (sysGen.length <= 1) return files;
-  const openable = (f: any) => {
-    const s = String(fileSrc(f) || '');
-    return s.startsWith('file://') || s.startsWith('http') || s.startsWith('data:');
-  };
-  const best = sysGen.find(openable) || sysGen[0];
+  if (!sysGen.length) return files;
+  const best = sysGen.find(isOpenableDoc) || sysGen[0];
   const merged = {
     ...best,
     serverId: sysGen.map((f) => f?.serverId).find(Boolean) ?? best?.serverId ?? null,
     filePath: sysGen.map((f) => f?.filePath).find(Boolean) ?? best?.filePath ?? null,
     isSystemGenerated: true,
   };
+  // The signed agreement can ALSO arrive UNFLAGGED — a copy read from the calculator-
+  // scoped outcome query (which doesn't mark `isSystemGenerated`) whose S3 URL often
+  // hasn't resolved, so it's a bare `filePath` that won't open. That's the "second
+  // agreement, one can't be opened" from the REMOTE (web-signed) flow. Drop a
+  // NON-system-generated agreement copy when a signed one exists AND it is either the
+  // SAME document (shares serverId/filePath/name) or simply not openable (unresolved).
+  // A genuinely-distinct, openable scanned agreement is kept.
+  const mergedKeys = new Set(
+    [merged.serverId, merged.filePath, merged.name].filter(Boolean).map(String)
+  );
+  const isDupOfSigned = (f: any) => {
+    const keys = [f?.serverId, f?.filePath, f?.name].filter(Boolean).map(String);
+    return keys.some((k) => mergedKeys.has(k)) || !isOpenableDoc(f);
+  };
   // Preserve order: the FIRST system-generated slot becomes the merged entry; the rest
-  // are dropped.
+  // (and any unflagged duplicate/broken copy) are dropped.
   let placed = false;
   return files.reduce<any[]>((acc, f) => {
-    if (!f?.isSystemGenerated) acc.push(f);
-    else if (!placed) {
-      placed = true;
-      acc.push(merged);
+    if (f?.isSystemGenerated) {
+      if (!placed) {
+        placed = true;
+        acc.push(merged);
+      }
+      return acc;
     }
+    if (isDupOfSigned(f)) return acc;
+    acc.push(f);
     return acc;
   }, []);
 };
@@ -163,6 +182,12 @@ export function SummaryFinalizeCards({
   // (resend / edit contact / cancel) without regenerating the agreement.
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [remoteManageOpen, setRemoteManageOpen] = useState(false);
+  // For the "signed remotely" activity log: the last status the poll observed (to detect
+  // the active→completed transition) + a once-guard so a reopened, already-signed
+  // agreement isn't re-logged (the server audits completion; the client only logs the
+  // transition it actually witnesses).
+  const lastRemoteStatusRef = useRef<string | null>(null);
+  const remoteSignedLoggedRef = useRef(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ uri: string; title?: string } | null>(null);
   const queryClient = useQueryClient();
@@ -373,11 +398,15 @@ export function SummaryFinalizeCards({
       // Audit log: a scanned/presigned agreement was uploaded (web parity — the
       // generated path is logged in DynamicAgreementDialog as agreement_generated).
       if (cat === 'agreement' && user?._id) {
+        // `module_type: 'job_builder'` so the portal's Forever Record renders it (it
+        // only routes agreement rows from job_builder logs — matches the regular JB's
+        // `logAgreementUploaded`).
         logEvent('add', {
           user_id: user._id,
           created_by: user._id,
-          module_type: 'agreement',
+          module_type: 'job_builder',
           meta: {
+            draft: true,
             leadId,
             fieldName: 'agreement',
             // Web parity (document-summary-cards.js): the UPLOADED path labels the
@@ -438,6 +467,11 @@ export function SummaryFinalizeCards({
           ? serverDocs!.map((d) => ({ ...d, isSystemGenerated: true }))
           : [...toFlatFiles(agreements), localRef]
       );
+      // Portal Forever Record "Signed" row — a system-generated agreement is one the
+      // rep signed in-person (the `/sign` endpoint filed it).
+      if (user?._id && leadId) {
+        logAgreementSigned(user._id, leadId, 'in_person').catch(() => {});
+      }
       setAgreementDialogVisible(false);
       return;
     }
@@ -542,6 +576,8 @@ export function SummaryFinalizeCards({
         const res = await LeadService.getAgreementRemoteStatus(leadId);
         if (cancelled) return;
         const status = normalizeRemoteStatus(res);
+        const prevStatus = lastRemoteStatusRef.current;
+        lastRemoteStatusRef.current = status;
         setRemoteStatus(status);
         const active =
           status === 'pending' ||
@@ -549,6 +585,19 @@ export function SummaryFinalizeCards({
           status === 'viewed' ||
           status === 'completed';
         if (status === 'completed') {
+          // Portal timeline: log the completion ONCE, and only when we WITNESS the
+          // transition from an active (pending/sent/viewed) state this session — not on
+          // reopen of an already-signed agreement (that would mis-timestamp and duplicate;
+          // the backend audits the actual completion time).
+          const wasActive =
+            prevStatus === 'pending' || prevStatus === 'sent' || prevStatus === 'viewed';
+          if (wasActive && user?._id && !remoteSignedLoggedRef.current) {
+            remoteSignedLoggedRef.current = true;
+            // `agreement_signed` on `module_type: 'job_builder'` — the action the portal's
+            // Forever Record renders as the "Signed" row (signMethod: 'remote' keeps the
+            // web-link distinction in meta).
+            logAgreementSigned(user._id, leadId, 'remote').catch(() => {});
+          }
           // Signed PDF is filed server-side — read it into the card. Once it commits,
           // agreementFiles becomes non-empty and this effect re-runs → early return.
           await handleRemoteAgreementComplete();

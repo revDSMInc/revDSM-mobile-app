@@ -7,6 +7,7 @@ import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries
 import { normalizeSingleAcceptedDrop, dedupeDrops, collapseDropsByPrice } from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
+import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-label';
 
 /**
  * Persistence hook for the Dynamic Deal Center calculators — the schema-driven
@@ -720,7 +721,10 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
               calculatorId: (active as any).calculatorId || active.id,
               appointmentId: (active as any).appointmentId,
               calculatorTitle: active.title,
-              fieldLabel: e?.label,
+              // Web parity (DealCenterContext): suffix the label with the field's story
+              // ("6\" Micro Mesh 1st Story") so a Story-2 entry doesn't collide with /
+              // overwrite the Story-1 log (both stories reuse the same field label).
+              fieldLabel: buildFieldLogLabel(e?.label || fieldId, findFieldStoryLabel(fieldId, schemasRef.current)),
               fieldValue: e?.inputValue,
               fieldCategory: categoryNameOf(e?.categoryId),
               oldValue: oldEntry?.inputValue ?? '',

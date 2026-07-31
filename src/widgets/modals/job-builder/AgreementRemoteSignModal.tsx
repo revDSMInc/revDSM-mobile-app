@@ -16,8 +16,17 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
-// Audit (remote sends, viewing, signing, etc.) is recorded server-side per REVDSM-263,
-// so no client-side logEvent here — a client copy would carry worse data.
+import { useAuth } from '../../../hooks/useAuth';
+// The backend records a server-side audit of the remote session (REVDSM-263), but the
+// portal timeline renders `user-activity-log` rows — so we ALSO fire client logs for the
+// rep's remote-signing actions (send / resend / recipient edit / cancel) so they show up
+// in the portal next to the in-person agreement events.
+import {
+  logAgreementSentRemote,
+  logAgreementRemoteResent,
+  logAgreementRemoteRecipientUpdated,
+  logAgreementRemoteCancelled,
+} from '../../../utils/activity-log/remote-agreement-log';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -150,6 +159,8 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
 }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const uid = user?._id || user?.id;
 
   // 'compose' — edit recipients & send; 'pending' — track/resend; 'done' — completed.
   const [phase, setPhase] = useState<'compose' | 'pending' | 'done'>('compose');
@@ -284,6 +295,23 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
         await refreshStatus({ showSpinner: true });
       }
 
+      // Portal timeline: the agreement was sent for remote signature. Fired on a
+      // successful POST (whether every signer was reached or only some — the partial
+      // case is surfaced to the rep below).
+      if (uid) {
+        logAgreementSentRemote({
+          userId: uid,
+          leadId,
+          agreementId: next?.agreementId,
+          signers: signers.map((s) => ({
+            role: s.role === 'buyer' ? 'Buyer' : 'Co-Buyer',
+            name: fullName(s) || (s.role === 'buyer' ? 'Primary Buyer' : `Co-Buyer ${s.index}`),
+            phone: digitsOnly(s.phone),
+            email: s.email.trim(),
+          })),
+        }).catch(() => {});
+      }
+
       // A PARTIAL failure still returns 200 — surface any signer we couldn't reach
       // (delivered:false means every channel for that signer failed).
       const results: any[] = Array.isArray(data?.results) ? data.results : [];
@@ -335,6 +363,36 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
         await LeadService.resendAgreementRemoteSigner(agreement.agreementId, signer.signerId);
       }
       await refreshStatus();
+      // Portal timeline: a recipient edit (phone/email correction) vs a plain resend.
+      if (uid) {
+        const info = {
+          role:
+            signer.coBuyerIndex == null || (signer.role || '').toLowerCase() === 'buyer'
+              ? 'Buyer'
+              : 'Co-Buyer',
+          name: signer.name || '',
+          phone: patch?.phone ?? signer.phone ?? '',
+          email: patch?.email ?? signer.email ?? '',
+        };
+        if (patch) {
+          const field = patch.phone !== undefined ? 'phone' : 'email';
+          logAgreementRemoteRecipientUpdated({
+            userId: uid,
+            leadId,
+            agreementId: agreement.agreementId,
+            signer: info,
+            field,
+            newValue: String(patch.phone ?? patch.email ?? ''),
+          }).catch(() => {});
+        } else {
+          logAgreementRemoteResent({
+            userId: uid,
+            leadId,
+            agreementId: agreement.agreementId,
+            signer: info,
+          }).catch(() => {});
+        }
+      }
       Alert.alert('Sent', patch ? 'Recipient updated and link resent.' : 'Link resent.');
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Could not resend. Please try again.');
@@ -386,7 +444,12 @@ export const AgreementRemoteSignModal: React.FC<AgreementRemoteSignModalProps> =
         style: 'destructive',
         onPress: async () => {
           try {
-            await LeadService.cancelAgreementRemote(agreement.agreementId);
+            const cancelledId = agreement.agreementId;
+            await LeadService.cancelAgreementRemote(cancelledId);
+            // Portal timeline: the remote request was voided.
+            if (uid) {
+              logAgreementRemoteCancelled({ userId: uid, leadId, agreementId: cancelledId }).catch(() => {});
+            }
             setAgreement(null);
             setSigners(buildSigners(customerDetails));
             setPhase('compose');

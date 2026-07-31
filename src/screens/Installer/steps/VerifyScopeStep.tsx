@@ -13,6 +13,9 @@ import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog'
 import { FlashMessage } from '../../../config/message';
 import type { ScopeStatus, SoldProduct } from '../../../config/types/installer';
 
+/** Line height of a spec line — also the height of its bullet's centring box. */
+const LINE_HEIGHT = 20;
+
 interface Props {
   visible: boolean;
   products: SoldProduct[];
@@ -186,13 +189,21 @@ export function VerifyScopeStep({
             </Text>
             {product.lines.map((line, lineIdx) => (
               <View key={`${product.id}-${lineIdx}`} className="flex-row items-start mb-1">
+                {/* The dot sits in a box exactly one line tall and centres itself in it, so it
+                    lines up with the middle of the first line however the text wraps or scales —
+                    a bare `mt` guess drifts as soon as the font size does. */}
                 <View
-                  className="rounded-full mt-1.5 mr-2"
-                  style={{ width: 6, height: 6, backgroundColor: accent }}
-                />
+                  className="items-center justify-center mr-2"
+                  style={{ width: 6, height: LINE_HEIGHT }}
+                >
+                  <View
+                    className="rounded-full"
+                    style={{ width: 6, height: 6, backgroundColor: accent }}
+                  />
+                </View>
                 <Text
-                  className="flex-1 text-xs font-semibold leading-5"
-                  style={{ color: colors.text }}
+                  className="flex-1 text-xs font-semibold"
+                  style={{ color: colors.text, lineHeight: LINE_HEIGHT }}
                 >
                   {line}
                 </Text>
@@ -208,9 +219,11 @@ export function VerifyScopeStep({
                   style={{ backgroundColor: colors.primary.main }}
                 >
                   <Icon name="check" size={13} color="#fff" />
-                  {/* `flex-1` + centred: "Confirmar correcto" is wider than its English
-                      original and wraps in this half-width button. */}
-                  <Text className="flex-1 text-white text-xs font-bold ml-1 text-center">
+                  {/* `shrink`, NOT `flex-1`: a flex-1 label would eat the whole row and centre
+                      itself inside the leftover space, leaving the icon pinned to the far left.
+                      Shrinking keeps icon+label centred as one unit while still letting the
+                      wider Spanish "Confirmar correcto" wrap in this half-width button. */}
+                  <Text className="shrink text-white text-xs font-bold ml-1 text-center">
                     {t('installer.scopeConfirmCorrect')}
                   </Text>
                 </TouchableOpacity>
@@ -221,7 +234,7 @@ export function VerifyScopeStep({
                 >
                   <Icon name="alert-outline" size={13} color={colors.warning.dark} />
                   <Text
-                    className="flex-1 text-xs font-bold ml-1 text-center"
+                    className="shrink text-xs font-bold ml-1 text-center"
                     style={{ color: colors.warning.dark }}
                   >
                     {t('installer.scopeDiscrepancy')}

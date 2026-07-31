@@ -331,14 +331,41 @@ export const logInstallerOpsChatOpened = (user: any) =>
 // Timeline steps
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Prose `meta.action` for a step's open / close, replacing the generic `step_opened`
+ * and `step_closed` codes.
+ *
+ * The portal renders `meta.action` straight into the activity feed, so a step listed
+ * here reads as a sentence instead of a code. Only listed steps are overridden —
+ * anything absent keeps the generic code, which is what every other step still sends.
+ * `action_type` (`view` / `close`) and `module_type` are untouched, so existing
+ * filters on those keep working.
+ */
+const STEP_ACTION_LABELS: Partial<
+  Record<InstallStepKey, { opened?: string; closed?: string }>
+> = {
+  pickup: {
+    opened: 'Opened the Warehouse Pickup',
+    closed: 'Completed the Warehouse Pickup',
+  },
+};
+
 export const logInstallStepOpened = (
   user: any,
   step: InstallStepKey,
   status?: InstallStepStatus
-) => emit(user, LOG_ACTIONS.VIEW, stepModule(step), { step, status, action: 'step_opened' });
+) =>
+  emit(user, LOG_ACTIONS.VIEW, stepModule(step), {
+    step,
+    status,
+    action: STEP_ACTION_LABELS[step]?.opened ?? 'step_opened',
+  });
 
 export const logInstallStepClosed = (user: any, step: InstallStepKey) =>
-  emit(user, LOG_ACTIONS.CLOSE, stepModule(step), { step, action: 'step_closed' });
+  emit(user, LOG_ACTIONS.CLOSE, stepModule(step), {
+    step,
+    action: STEP_ACTION_LABELS[step]?.closed ?? 'step_closed',
+  });
 
 export const logInstallStepCompleted = (
   user: any,
