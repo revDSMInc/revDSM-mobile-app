@@ -1,9 +1,5 @@
 # ─── Environment Variables ────────────────────────────────────────────────────
-.env
-.env.local
 .env.*.local
-.env.staging
-.env.production
 
 # ─── macOS ────────────────────────────────────────────────────────────────────
 .DS_Store
@@ -74,3 +70,4 @@ yarn.lock
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
+config.bat
