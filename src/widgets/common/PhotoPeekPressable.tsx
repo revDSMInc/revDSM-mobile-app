@@ -107,6 +107,13 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
         onLongPress={canPeek ? openPeek : undefined}
         onPressOut={closePeek}
         delayLongPress={minDurationMs}
+        // While peeking, the finger slides around over the enlarged preview.
+        // By default RN cancels the press (firing onPressOut) as soon as the
+        // finger leaves the thumbnail's small bounds, which would dismiss the
+        // peek mid-hold. A screen-sized retention offset keeps the press alive
+        // no matter how far the finger moves, so the peek only closes on a
+        // real finger-lift ("hold off").
+        pressRetentionOffset={{ top: SH, bottom: SH, left: SW, right: SW }}
         style={style}
         className={className}
       >

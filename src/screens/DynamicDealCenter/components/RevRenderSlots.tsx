@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { resolveS3Url } from '../../../utils/s3-utils';
+import { PhotoPeekPressable } from '../../../widgets/common/PhotoPeekPressable';
 
 /**
  * "Add Renders" field on the rollout quote card (web parity:
@@ -32,6 +33,14 @@ const keyOf = (p: any) => String(p?.runId || p?._id || p?.generatedUrl || '');
 const imgOf = (p: any) =>
   p?.generatedUrl || (p?.s3UrlGenerated ? resolveS3Url(p.s3UrlGenerated) : '') || '';
 const labelOf = (p: any) => p?.viewLabel || p?.subcategory || p?.category || 'Render';
+// The S3 object path (last two segments, minus any `?signature` query) — stable across
+// re-fetches even as the pre-signed query string rotates, so it can match a stale saved
+// render to its freshly-signed counterpart.
+const pathKey = (url?: string): string => {
+  if (!url) return '';
+  const noQuery = String(url).split('?')[0];
+  return noQuery.split('/').slice(-2).join('/');
+};
 
 /** Normalize raw rev-render runs into deduped before/after pairs (web `buildRevRenderPairs`). */
 export function buildRenderPairs(runs: any[]): RenderPair[] {
@@ -84,6 +93,31 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
   const selectedKeys = useMemo(() => new Set(selectedList.map(keyOf)), [selectedList]);
   const [modalVisible, setModalVisible] = useState(false);
 
+  // A persisted `selectedRenders[]` keeps the pre-signed S3 URL it was saved with,
+  // which EXPIRES — so a returning rep sees blank thumbnails. Re-resolve each selected
+  // pair against the freshly-fetched runs so the thumbnail always uses a live URL. Match
+  // by key first, then by the S3 object PATH (stable even as the `?signature` rotates),
+  // and only fall back to the persisted url when the run is no longer present.
+  const freshIndex = useMemo(() => {
+    const byKey = new Map<string, RenderPair>();
+    const byPath = new Map<string, RenderPair>();
+    pairs.forEach((p) => {
+      byKey.set(keyOf(p), p);
+      const pk = pathKey(imgOf(p)) || pathKey(p.s3UrlGenerated);
+      if (pk) byPath.set(pk, p);
+    });
+    return { byKey, byPath };
+  }, [pairs]);
+  const resolveImg = useCallback(
+    (pair: any) => {
+      const fresh =
+        freshIndex.byKey.get(keyOf(pair)) ||
+        freshIndex.byPath.get(pathKey(imgOf(pair)) || pathKey(pair?.s3UrlGenerated));
+      return imgOf(fresh || pair) || imgOf(pair);
+    },
+    [freshIndex],
+  );
+
   const toggle = (pair: RenderPair) => {
     const k = keyOf(pair);
     if (selectedKeys.has(k)) onChange(selectedList.filter((s) => keyOf(s) !== k));
@@ -114,9 +148,14 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
             {selectedList.map((pair) => (
               <View key={keyOf(pair)} style={{ width: 96, alignItems: 'center' }}>
-                <View style={{ width: 96, height: 88, borderRadius: 12, borderWidth: 2, borderColor: GREEN, overflow: 'hidden', backgroundColor: '#E2E8F0' }}>
-                  <Image source={{ uri: imgOf(pair) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                </View>
+                {/* Hold to peek the render full-screen (shared PhotoPeekPressable rule). */}
+                <PhotoPeekPressable
+                  uri={resolveImg(pair)}
+                  label={labelOf(pair)}
+                  style={{ width: 96, height: 88, borderRadius: 12, borderWidth: 2, borderColor: GREEN, overflow: 'hidden', backgroundColor: '#E2E8F0' }}
+                >
+                  <Image source={{ uri: resolveImg(pair) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                </PhotoPeekPressable>
                 <TouchableOpacity
                   onPress={() => remove(pair)}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -190,22 +229,24 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
                   {pairs.map((pair) => {
                     const isSel = selectedKeys.has(keyOf(pair));
                     return (
-                      <TouchableOpacity
+                      // Tap toggles selection; hold peeks the render full-screen.
+                      <PhotoPeekPressable
                         key={keyOf(pair)}
-                        activeOpacity={0.85}
+                        uri={resolveImg(pair)}
+                        label={labelOf(pair)}
                         onPress={() => toggle(pair)}
                         style={{ width: 150, borderRadius: 12, borderWidth: 2, borderColor: isSel ? GREEN : '#E2E8F0', backgroundColor: '#fff', overflow: 'hidden' }}
                       >
                         <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '900', color: '#1C252E', paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6 }}>{labelOf(pair)}</Text>
                         <View style={{ position: 'relative' }}>
-                          <Image source={{ uri: imgOf(pair) }} style={{ width: '100%', height: 120, backgroundColor: '#E2E8F0' }} resizeMode="cover" />
+                          <Image source={{ uri: resolveImg(pair) }} style={{ width: '100%', height: 120, backgroundColor: '#E2E8F0' }} resizeMode="cover" />
                           {isSel && (
                             <View style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' }}>
                               <Ionicons name="checkmark" size={15} color="#fff" />
                             </View>
                           )}
                         </View>
-                      </TouchableOpacity>
+                      </PhotoPeekPressable>
                     );
                   })}
                 </View>

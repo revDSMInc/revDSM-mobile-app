@@ -306,12 +306,10 @@ export const ConsentFormModal = ({
       FlashMessage.error('Validation Error', 'First name is required.');
       return;
     }
-    if (!formData.phoneNumber || !formData.phoneNumber.replace(/\D/g, '')) {
+    // Phone number is required; email is optional.
+    const hasPhone = !!formData.phoneNumber && !!formData.phoneNumber.replace(/\D/g, '');
+    if (!hasPhone) {
       FlashMessage.error('Validation Error', 'Phone number is required.');
-      return;
-    }
-    if (!formData.email || !formData.email.includes('@')) {
-      FlashMessage.error('Validation Error', 'A valid email address is required.');
       return;
     }
     if (savedPaths.length === 0) {
@@ -500,7 +498,7 @@ export const ConsentFormModal = ({
             {/* Form Fields */}
             {renderField('First Name*', formData.firstName, 'firstName', undefined, true)}
             {renderField('Phone Number*', formData.phoneNumber, 'phoneNumber', undefined, true)}
-            {renderField('Email Address*', formData.email, 'email', undefined, true)}
+            {renderField('Email Address', formData.email, 'email', undefined, true)}
             {renderField('Lead ID*', formData.leadId, 'leadId')}
             {renderField('Rep Name*', formData.repName, 'repName')}
             {renderField('Office Code*', formData.officeCode, 'officeCode')}
