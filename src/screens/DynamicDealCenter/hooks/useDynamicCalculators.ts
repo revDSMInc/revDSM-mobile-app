@@ -3,6 +3,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { LeadService } from '../../../services/api/leads';
 import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../types/calculator';
 import { computeDerivedTitles } from '../utils/tab-naming';
+import { computeTitleSaveOrder, getUniquePersistableTitles, TEMP_TITLE_PREFIX } from '../utils/title-save-order';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
 import { normalizeSingleAcceptedDrop, dedupeDrops, collapseDropsByPrice } from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
@@ -428,11 +429,26 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     return categoryId;
   }, []);
 
+  // The title we may SAFELY persist for a calculator (web `DealCenterContext.resolveTitle`).
+  // The backend enforces a unique title per appointment, so a shared "⚠️" duplicate-price
+  // title (which `computeDerivedTitles` produces when two calcs match on name AND price)
+  // must NOT be written — we keep the last-saved title until the calc earns a distinct
+  // SM/MD/LG size. Reads only refs, so it is stable ([] deps).
+  const resolveSafeTitle = useCallback((tab: CalcTab): string => {
+    const derived = computeDerivedTitles(
+      tabsRef.current.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
+      schemasRef.current || [],
+    );
+    const persistable = getUniquePersistableTitles(derived);
+    return persistable[tab.id] || lastSavedTitle.current[tab.id] || tab.title || '1';
+  }, []);
+
   // Latest payload builder in a ref so the unmount flush (a [] effect) always
   // uses current leadId/enteredBy/schema instead of the mount-time closure.
   const buildPayload = useCallback(
     (tab: CalcTab) => ({
-      title: tab.title,
+      // Never PUT a colliding/shared title (unique-title 409); see resolveSafeTitle.
+      title: resolveSafeTitle(tab),
       entries: Object.values(tab.entries),
       totals: tab.totals,
       isRolloutConfirmed: tab.isRolloutConfirmed,
@@ -462,7 +478,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       enteredBy,
       enteredAt: new Date().toISOString(),
     }),
-    [leadId, enteredBy]
+    [leadId, enteredBy, resolveSafeTitle]
   );
   const buildPayloadRef = useRef(buildPayload);
   buildPayloadRef.current = buildPayload;
@@ -498,6 +514,58 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
     saveTimers.current[tabId] = setTimeout(() => flushSaveRef.current?.(tabId), SAVE_DEBOUNCE_MS);
   }, []);
 
+  // Web parity (DealCenterContext.saveDisplacedSiblings). When the changed calc's derived
+  // title shifts (its SM/MD/LG size), a SIBLING may still hold that title in the DB, so
+  // saving the changed calc first would collide (backend unique-title → 409). Re-title the
+  // displaced siblings FIRST, in the collision-free order from `computeTitleSaveOrder`
+  // (temp-title swap breaks A↔B cycles), so the changed calc's own PUT never conflicts.
+  // Failures here are non-fatal — a sibling rename must not block the changed calc's save.
+  const saveDisplacedSiblings = useCallback(async (changedTabId: string) => {
+    const all = tabsRef.current;
+    if (all.length <= 1) return;
+
+    const derived = computeDerivedTitles(
+      all.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
+      schemasRef.current || [],
+    );
+    const persistable = getUniquePersistableTitles(derived);
+    const order = computeTitleSaveOrder({
+      allCalcs: all.map((t) => ({ id: t.id, dbTitle: lastSavedTitle.current[t.id] ?? t.title })),
+      changedCalcId: changedTabId,
+      newTitles: derived,
+    });
+
+    // The LAST step is the changed calc itself (flushSave saves it next); re-title only
+    // the displaced siblings here.
+    const displaced = order.slice(0, -1);
+    for (const step of displaced) {
+      const st = all.find((t) => t.id === step.calculatorId);
+      if (!st || !st.persisted || !isBackendId(st.id)) continue;
+      const isTemp = step.newTitle.startsWith(TEMP_TITLE_PREFIX);
+      // Only write a REAL title that is unique (web parity); temp-title steps always run.
+      if (!isTemp && persistable[step.calculatorId] !== step.newTitle) continue;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await LeadService.updateCalculator(step.calculatorId, { ...buildPayloadRef.current(st), title: step.newTitle });
+        if (!isTemp) {
+          const prev = lastSavedTitle.current[step.calculatorId];
+          if (enteredBy && prev !== undefined && prev !== step.newTitle) {
+            logCalculatorAutoRenamed({
+              userId: enteredBy,
+              calculatorId: (st as any).calculatorId || st.id,
+              appointmentId: (st as any).appointmentId || appointmentId,
+              calculatorTitle: step.newTitle,
+              leadId: leadId || undefined,
+            }).catch(() => {});
+          }
+          lastSavedTitle.current[step.calculatorId] = step.newTitle;
+        }
+      } catch {
+        // non-fatal — a sibling rename must not block the changed calc's own save
+      }
+    }
+  }, [enteredBy, appointmentId, leadId]);
+
   const flushSave = useCallback(
     async (tabId: string) => {
       const tab = tabsRef.current.find((t) => t.id === tabId);
@@ -514,8 +582,13 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       saveInFlight.current[tabId] = true;
       setIsSaving(true);
 
-      const savedTitle = tab.title;
+      // The title we will actually persist (unique-safe; may keep the last-saved title
+      // when the derived one is a shared "⚠️"). Used below for the auto-rename log and the
+      // lastSavedTitle bookkeeping so both reflect what really went to the server.
+      const savedTitle = resolveSafeTitle(tab);
       try {
+        // Free up any sibling still holding this calc's new title before we save it.
+        await saveDisplacedSiblings(tabId);
         await LeadService.updateCalculator(tabId, buildPayloadRef.current(tab));
         setLastUpdated(
           new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -550,7 +623,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
         }
       }
     },
-    [scheduleSave, enteredBy, appointmentId, leadId]
+    [scheduleSave, enteredBy, appointmentId, leadId, saveDisplacedSiblings, resolveSafeTitle]
   );
   flushSaveRef.current = flushSave;
 

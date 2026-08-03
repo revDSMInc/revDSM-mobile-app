@@ -150,14 +150,13 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
     return out;
   }, [plans, isLowesLead]);
 
-  // An accepted drop is the negotiated current price — present that (else the
-  // confirmed end price). Both flow through the SAME computeRolloutResult the rollout
-  // uses, so the card values stay consistent with what the rep locked.
-  const drops: any[] = Array.isArray(calculator.dropPrice) ? calculator.dropPrice : [];
-  const acceptedDrop = drops.find((d) => d?.status === 'accepted');
+  // The Investment Center ALWAYS presents the CONFIRMED rollout price. A price the rep
+  // dropped/negotiated in the deal center (an "accepted" dropPrice entry) must NOT change
+  // any Investment Center figure — MSRP, the two program grand totals and the monthly all
+  // stay based on the rollout-confirmed price. (Product decision: "don't ever change it on
+  // drops.") Drops remain recorded on the calculator; they're just not reflected here.
   const confirmedPrice = Number(calculator.price) || 0;
-  const endPrice = Number(acceptedDrop?.price) || confirmedPrice;
-  const hasDrop = !!acceptedDrop && Number(acceptedDrop?.price) > 0 && Number(acceptedDrop.price) !== confirmedPrice;
+  const endPrice = confirmedPrice;
 
   // Live-adjustable during the presentation.
   const [downText, setDownText] = useState(calculator.downPayment ? String(calculator.downPayment) : '');
@@ -643,12 +642,6 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         </View>
         <View style={{ backgroundColor: '#fff', paddingVertical: 22, alignItems: 'center' }}>
           <Text style={{ fontSize: 34, fontWeight: '900', color: '#15803D' }}>{fmt(msrp)}</Text>
-          {hasDrop && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, backgroundColor: '#FEF3C7', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
-              <Ionicons name="pricetag" size={11} color="#B45309" />
-              <Text style={{ fontSize: 10, fontWeight: '900', color: '#B45309' }}>Negotiated {fmt(endPrice)} · was {fmt(confirmedPrice)}</Text>
-            </View>
-          )}
         </View>
       </View>
 
