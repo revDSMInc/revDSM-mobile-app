@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform } from 'react-native';
+import { View, Text, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Platform, Pressable, Dimensions } from 'react-native';
 import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Svg, { Path } from 'react-native-svg';
@@ -25,6 +25,8 @@ import { formatAmountInput, stripAmount } from '../DynamicDealCenter/utils/forma
 import { ProgramCard } from './ProgramCard';
 import { OptInConfirmModal } from './OptInConfirmModal';
 import { AddPlanModal } from './AddPlanModal';
+import { SpotlightOverlay, SpotlightState, SpotlightRect } from './SpotlightOverlay';
+import { triggerHaptic } from '../../utils/haptics';
 import {
   logInvestmentOptIn,
   logInvestmentOptOut,
@@ -49,6 +51,23 @@ const fmt = (n: number) => `$${Math.round(n || 0).toLocaleString()}`;
 
 /** Compact badge label for a non-financing (cash/card) method (web parity). */
 const NON_FINANCING_BADGE: Record<string, string> = { check: 'CK', mcVisaDscvr: 'CC', lowes_ach: 'ACH', lowes_cc: 'CC' };
+
+// ── Spotlight zoom: the three cards a tap can lift off the page, in step order. ─
+const { width: SPOT_SW, height: SPOT_SH } = Dimensions.get('window');
+type SpotlightSectionId = 'total' | 'oneyear' | 'inhome';
+const SPOTLIGHT_ORDER: SpotlightSectionId[] = ['total', 'oneyear', 'inhome'];
+const SPOTLIGHT_TITLE: Record<SpotlightSectionId, string> = {
+  total: 'TOTAL INVESTMENT',
+  oneyear: '1 YEAR PROGRAM',
+  inhome: 'IN-HOME PRE ORDER',
+};
+// Target zoom per section. The near-full-width Total card can only enlarge a touch
+// (it would overflow otherwise); the half-width program cards zoom in properly.
+const SPOTLIGHT_BASE_SCALE: Record<SpotlightSectionId, number> = {
+  total: 1.14,
+  oneyear: 1.62,
+  inhome: 1.62,
+};
 
 interface Props {
   calculator: any;
@@ -75,6 +94,37 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
   // Which render pair the before/after slider viewer is open on (null = closed).
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ── Spotlight zoom state ─────────────────────────────────────────────────────
+  // Tapping a card (Total Investment / 1-Year / In-Home) lifts it to screen center,
+  // dims the rest, and lets the rep step between the three sections. Each section is
+  // wrapped in a measurable anchor so the enlarged copy can fly out from — and back
+  // into — its real place.
+  const totalRef = useRef<View>(null);
+  const oneYearRef = useRef<View>(null);
+  const inHomeRef = useRef<View>(null);
+  const refOfSection = (id: SpotlightSectionId) =>
+    id === 'total' ? totalRef : id === 'oneyear' ? oneYearRef : inHomeRef;
+  const [spotlight, setSpotlight] = useState<(SpotlightState & { id: SpotlightSectionId }) | null>(null);
+  const openSpotlight = (id: SpotlightSectionId) => {
+    const node = refOfSection(id).current;
+    if (!node) return;
+    node.measureInWindow((x: number, y: number, w: number, h: number) => {
+      if (!w || !h) return;
+      const rect: SpotlightRect = { x, y, w, h };
+      const finalScale = Math.max(
+        1.02,
+        Math.min(SPOTLIGHT_BASE_SCALE[id], (SPOT_SW * 0.94) / w, (SPOT_SH * 0.72) / h),
+      );
+      triggerHaptic('light');
+      setSpotlight({ id, rect, finalScale });
+    });
+  };
+  const stepSpotlight = (dir: 1 | -1) => {
+    if (!spotlight) return;
+    const i = SPOTLIGHT_ORDER.indexOf(spotlight.id);
+    openSpotlight(SPOTLIGHT_ORDER[(i + dir + SPOTLIGHT_ORDER.length) % SPOTLIGHT_ORDER.length]);
+  };
 
   // Company branding (web parity: investment-panel.js) — the tenant's dynamic logo +
   // company name from the authed user, same source the agreement generator uses.
@@ -539,6 +589,96 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
 
   const maxProgramRows = Math.max(oneYearRows.length, inHomeRows.length);
 
+  // The three spotlight-able cards, built once so the SAME element renders both in
+  // place (inside its measurable anchor) and enlarged inside the SpotlightOverlay.
+  // They're prop-driven/stateless, so rendering an element in two places is safe.
+  const totalCardEl = (
+    <View style={{ borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#fff' }}>
+      <View style={{ backgroundColor: '#1E293B', paddingVertical: 12, alignItems: 'center' }}>
+        <Text style={{ fontSize: 13, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>TOTAL INVESTMENT</Text>
+      </View>
+      <View style={{ backgroundColor: '#fff', paddingVertical: 22, alignItems: 'center' }}>
+        <Text style={{ fontSize: 34, fontWeight: '900', color: '#15803D' }}>{fmt(msrp)}</Text>
+      </View>
+    </View>
+  );
+  const oneYearCardEl = (
+    <ProgramCard
+      title="1 YEAR PROGRAM"
+      priceLock
+      rows={oneYearRows}
+      reserveRows={maxProgramRows}
+      grandTotal={oneYearGrandTotal}
+      badges={basicBadges}
+      selectedBadgeKey={badgeSelection}
+      onSelectBadge={selectPaymentChoice}
+      downPaymentSlot={oneYearDownEditor}
+      monthly={oneYearMonthlyShown}
+      planLabel={oneYearMonthlyShown > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
+      selected={selectedProgram === 'oneyear'}
+      crossedOff={selectedProgram === 'inhome'}
+      optInLabel="Opt In (1-Yr)"
+      onOptIn={() => {
+        const next = selectedProgram === 'oneyear' ? null : 'oneyear';
+        setSelectedProgram(next);
+        persistInHome(addedPlanKeys, paymentChoice, next);
+        // Forever Record: 1-Year Opt In is a direct toggle (no confirm modal).
+        if (next === 'oneyear') {
+          logInvestmentOptIn({ ...logBase, program: 'oneyear', price: oneYearGrandTotal, monthly: oneYearMonthlyShown, planKey: oneYearKey });
+        } else {
+          logInvestmentOptOut({ ...logBase, program: 'oneyear' });
+        }
+      }}
+      onRevert={revertSelectedProgram}
+      readOnly={isLeadSold}
+    />
+  );
+  const inHomeCardEl = (
+    <ProgramCard
+      title="IN-HOME PRE ORDER"
+      highlighted
+      rows={inHomeRows}
+      reserveRows={maxProgramRows}
+      grandTotal={inHomeGrandTotal}
+      badges={basicBadges}
+      selectedBadgeKey={badgeSelection}
+      onSelectBadge={isLeadSold ? undefined : selectPaymentChoice}
+      planInteractive
+      shortlistPlans={inHomeShortlist}
+      selectedPlanKey={selectedPlanKey}
+      onSelectPlan={isLeadSold ? undefined : selectPaymentChoice}
+      onRemovePlan={isLeadSold ? undefined : handleRemovePlan}
+      // Opening a nested modal from the enlarged card: collapse the spotlight first so
+      // the picker/confirm isn't stacked behind the spotlight Modal.
+      onAddPlan={isLeadSold ? undefined : () => { setSpotlight(null); setShowAddPlan(true); }}
+      downPaymentSlot={isLeadSold ? undefined : inHomeDownEditor}
+      downPayment={isLeadSold ? (calculator.downPayment || lead?.downPayment || 0) : downPay}
+      selected={activeProgram === 'inhome'}
+      crossedOff={activeProgram === 'oneyear'}
+      optInLabel="Opt In"
+      onOptIn={() => {
+        setSpotlight(null);
+        setSelectedProgram('inhome');
+        setShowConfirm(true);
+        persistInHome(addedPlanKeys, paymentChoice, 'inhome');
+      }}
+      onRevert={revertSelectedProgram}
+      readOnly={isLeadSold}
+    />
+  );
+  // The program cards' root is `flex: 1` — in place that fills width inside a ROW.
+  // The overlay stacks content in a column, where `flex: 1` would collapse the card
+  // to zero height, so wrap them in a row here (the Total card is a plain block and
+  // needs no wrapper).
+  const spotlightCardEl =
+    spotlight?.id === 'total'
+      ? totalCardEl
+      : spotlight?.id === 'oneyear'
+        ? <View style={{ flexDirection: 'row' }}>{oneYearCardEl}</View>
+        : spotlight?.id === 'inhome'
+          ? <View style={{ flexDirection: 'row' }}>{inHomeCardEl}</View>
+          : null;
+
   return (
     <ScrollView
       contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
@@ -635,15 +775,10 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         )}
       </View>
 
-      {/* Total Investment (MSRP) */}
-      <View style={{ borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
-        <View style={{ backgroundColor: '#1E293B', paddingVertical: 12, alignItems: 'center' }}>
-          <Text style={{ fontSize: 13, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>TOTAL INVESTMENT</Text>
-        </View>
-        <View style={{ backgroundColor: '#fff', paddingVertical: 22, alignItems: 'center' }}>
-          <Text style={{ fontSize: 34, fontWeight: '900', color: '#15803D' }}>{fmt(msrp)}</Text>
-        </View>
-      </View>
+      {/* Total Investment (MSRP) — tap to spotlight-zoom it. */}
+      <Pressable ref={totalRef} collapsable={false} onPress={() => openSpotlight('total')}>
+        {totalCardEl}
+      </Pressable>
 
       {/* Branch connector — MSRP branching DOWN into the two program cards with an
           arrowhead pointing into each (web parity: investment-panel.js SVG). */}
@@ -661,65 +796,16 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
       </View>
 
       {/* Program branches — extra top padding leaves room for the floating PRICE
-          LOCK badge that sits above the 1-Year card. */}
+          LOCK badge that sits above the 1-Year card. Each card is a measurable
+          spotlight anchor (a tap on the card body zooms it; the inner buttons —
+          badges / opt-in / down-payment — are deeper touchables and still fire). */}
       <View style={{ flexDirection: 'row', gap: 12, paddingTop: 14 }}>
-        <ProgramCard
-          title="1 YEAR PROGRAM"
-          priceLock
-          rows={oneYearRows}
-          reserveRows={maxProgramRows}
-          grandTotal={oneYearGrandTotal}
-          badges={basicBadges}
-          selectedBadgeKey={badgeSelection}
-          onSelectBadge={selectPaymentChoice}
-          downPaymentSlot={oneYearDownEditor}
-          monthly={oneYearMonthlyShown}
-          planLabel={oneYearMonthlyShown > 0 ? compactPlanLabel(plans, oneYearKey) : undefined}
-          selected={selectedProgram === 'oneyear'}
-          crossedOff={selectedProgram === 'inhome'}
-          optInLabel="Opt In (1-Yr)"
-          onOptIn={() => {
-            const next = selectedProgram === 'oneyear' ? null : 'oneyear';
-            setSelectedProgram(next);
-            persistInHome(addedPlanKeys, paymentChoice, next);
-            // Forever Record: 1-Year Opt In is a direct toggle (no confirm modal).
-            if (next === 'oneyear') {
-              logInvestmentOptIn({ ...logBase, program: 'oneyear', price: oneYearGrandTotal, monthly: oneYearMonthlyShown, planKey: oneYearKey });
-            } else {
-              logInvestmentOptOut({ ...logBase, program: 'oneyear' });
-            }
-          }}
-          onRevert={revertSelectedProgram}
-          readOnly={isLeadSold}
-        />
-        <ProgramCard
-          title="IN-HOME PRE ORDER"
-          highlighted
-          rows={inHomeRows}
-          reserveRows={maxProgramRows}
-          grandTotal={inHomeGrandTotal}
-          badges={basicBadges}
-          selectedBadgeKey={badgeSelection}
-          onSelectBadge={isLeadSold ? undefined : selectPaymentChoice}
-          planInteractive
-          shortlistPlans={inHomeShortlist}
-          selectedPlanKey={selectedPlanKey}
-          onSelectPlan={isLeadSold ? undefined : selectPaymentChoice}
-          onRemovePlan={isLeadSold ? undefined : handleRemovePlan}
-          onAddPlan={isLeadSold ? undefined : () => setShowAddPlan(true)}
-          downPaymentSlot={isLeadSold ? undefined : inHomeDownEditor}
-          downPayment={isLeadSold ? (calculator.downPayment || lead?.downPayment || 0) : downPay}
-          selected={activeProgram === 'inhome'}
-          crossedOff={activeProgram === 'oneyear'}
-          optInLabel="Opt In"
-          onOptIn={() => {
-            setSelectedProgram('inhome');
-            setShowConfirm(true);
-            persistInHome(addedPlanKeys, paymentChoice, 'inhome');
-          }}
-          onRevert={revertSelectedProgram}
-          readOnly={isLeadSold}
-        />
+        <Pressable ref={oneYearRef} collapsable={false} onPress={() => openSpotlight('oneyear')} style={{ flex: 1 }}>
+          {oneYearCardEl}
+        </Pressable>
+        <Pressable ref={inHomeRef} collapsable={false} onPress={() => openSpotlight('inhome')} style={{ flex: 1 }}>
+          {inHomeCardEl}
+        </Pressable>
       </View>
 
       <OptInConfirmModal
@@ -797,6 +883,18 @@ export function InvestmentPanel({ calculator, pricing, verticals, pricingConfig,
         // the presentation, not the RevRender tool (web/Lead Center parity).
         moduleType="investment_center"
       />
+
+      {/* Spotlight zoom — the tapped card flies from its place to screen-center,
+          dims the rest, and the bottom pill steps through all three sections. */}
+      <SpotlightOverlay
+        spotlight={spotlight}
+        title={spotlight ? SPOTLIGHT_TITLE[spotlight.id] : ''}
+        onClosed={() => setSpotlight(null)}
+        onPrev={() => stepSpotlight(-1)}
+        onNext={() => stepSpotlight(1)}
+      >
+        {spotlightCardEl}
+      </SpotlightOverlay>
     </ScrollView>
   );
 }
