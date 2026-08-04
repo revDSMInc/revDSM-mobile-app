@@ -137,6 +137,11 @@ interface LeadMapProps {
   // instead of drifting to their GPS position. Used by the full Map screen; the
   // Lead Center map leaves this off so it still opens on the lead.
   focusOfficeOnOpen?: boolean;
+  // Open the map framed on the rep's CURRENT GPS location. Used by the full Map
+  // screen. Robust to the GPS-fix-before-style-ready race: it re-asserts the
+  // camera once BOTH the map is ready and a fix is in. A searched location /
+  // focused lead still wins.
+  focusUserLocationOnOpen?: boolean;
 }
 
 export const LeadMap = ({
@@ -159,6 +164,7 @@ export const LeadMap = ({
   showRoute: showRouteProp = false,
   updatedJob,
   focusOfficeOnOpen = false,
+  focusUserLocationOnOpen = false,
 }: LeadMapProps) => {
 
   const navigation = useNavigation<any>();
@@ -490,6 +496,13 @@ export const LeadMap = ({
   }, [user, focusOfficeOnOpen]);
 
   const hasExplicitTarget = !!(currentLead || focusLead);
+  // A REAL opening search target (saved / searched location, or a jumped-to lead)
+  // that should own the opening camera — as opposed to the operational lead, which
+  // has an `_id`. A bare `{ latitude, longitude }` center (no `_id`) is a search.
+  const hasSearchCenter = !!(
+    focusLead ||
+    (currentLead?.latitude != null && currentLead?.longitude != null && !currentLead?._id)
+  );
   const didFrameOfficeRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   // Read from inside startTracking's async callbacks, which capture their
@@ -500,9 +513,14 @@ export const LeadMap = ({
 
   useEffect(() => {
     officeCoordsRef.current = officeCoords;
+    // Don't let the first GPS fix steal the opening camera when an explicit target
+    // owns it: the office (Map screen), OR — on the full Map screen that opens on the
+    // rep — a saved/searched location. With no such target, the GPS recenter runs so
+    // a plain open lands on the rep. The 🎯 button (forceAnimate) always overrides.
     suppressInitialRecenterRef.current =
-      focusOfficeOnOpen && !!officeCoords && !hasExplicitTarget;
-  }, [focusOfficeOnOpen, officeCoords, hasExplicitTarget]);
+      (focusOfficeOnOpen && !!officeCoords && !hasExplicitTarget) ||
+      (focusUserLocationOnOpen && hasSearchCenter);
+  }, [focusOfficeOnOpen, focusUserLocationOnOpen, officeCoords, hasExplicitTarget, hasSearchCenter]);
 
   // Mapbox reads `defaultSettings` once, at mount — when the office is already
   // known by then the very first paint lands on it, with no Tampa→office jump.
@@ -551,6 +569,36 @@ export const LeadMap = ({
       setSelectedLead(focusLead);
     }
   }, [focusLead]);
+
+  // ─── Opening view: the rep's CURRENT GPS location (full Map screen) ─────────
+  // `startTracking` flies to the first GPS fix on open, but that `setCamera` is
+  // dropped on the floor if the fix lands before the style has loaded — leaving the
+  // map on its default frame. So re-assert the camera once BOTH the map is ready and
+  // a fix is in (one-shot). A searched location / focused lead still wins, and an
+  // out-of-region fix is ignored (it would clamp to the map-bounds edge / open ocean).
+  const didFocusUserRef = useRef(false);
+  useEffect(() => {
+    if (!focusUserLocationOnOpen || didFocusUserRef.current) return;
+    if (!mapReady || !userLocation) return;
+    // Only a REAL search target should override "open on my location". A saved /
+    // searched location arrives as a bare `{ latitude, longitude }` center (no
+    // `_id`); the operational lead itself may also carry top-level lat/lng but
+    // has an `_id` — that is NOT a search and must not suppress the GPS focus,
+    // otherwise a plain lead open (no saved location filter) never lands on the rep.
+    const isSearchCenter =
+      currentLead?.latitude != null && currentLead?.longitude != null && !currentLead?._id;
+    const hasSearchTarget = !!(focusLead || isSearchCenter);
+    if (hasSearchTarget) return;
+    if (!isWithinMapBounds(userLocation.longitude, userLocation.latitude)) return;
+    didFocusUserRef.current = true;
+    cameraRef.current?.setCamera({
+      centerCoordinate: [userLocation.longitude, userLocation.latitude],
+      zoomLevel: 13,
+      animationMode: 'moveTo',
+      animationDuration: 400,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUserLocationOnOpen, mapReady, userLocation, focusLead, currentLead?._id, currentLead?.latitude, currentLead?.longitude]);
 
   const startTracking = (forceAnimate = false) => {
     const successCallback = (position: any) => {

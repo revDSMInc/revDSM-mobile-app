@@ -25,7 +25,7 @@ import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
 import { LeadMap } from '../../widgets/components/LeadCenter/LeadMap';
 import { RootStackParamList } from '../../navigation';
 import { Header, useHeader } from '../../widgets/common/MainHeader';
-import { MapFiltersModal, FilterState, countAppliedMapFilters } from '../../widgets/modals/MapFiltersModal';
+import { MapFiltersModal, FilterState, countAppliedMapFilters, savedFiltersToFilterState } from '../../widgets/modals/MapFiltersModal';
 import { MapGalleryModal } from '../../widgets/components/LeadCenter/MapGalleryModal';
 import { ReferralModal } from '../../widgets/modals/ReferralModal';
 import { BeforeAfterModal } from '../../widgets/modals/BeforeAfterModal';
@@ -95,6 +95,25 @@ const getRegionDeltaForRadiusMiles = (latitude: number, radiusMiles: number) => 
   };
 };
 
+// The cleared filter state — the base every reset returns to (and the seed the
+// initial state layers a lead's saved filters on top of).
+const DEFAULT_MAP_FILTERS: FilterState = {
+  jobNumber: '',
+  sortOrder: 'date-desc',
+  radius: 0,
+  minPrice: '',
+  maxPrice: '',
+  startDate: null,
+  endDate: null,
+  myJobsOnly: false,
+  isFavoriteOnly: false,
+  isReferralOnly: false,
+  isHeatMap: false,
+  showRoute: false,
+  showProduct: true,
+  centerCoords: undefined,
+};
+
 export default function MapDetailScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -124,21 +143,12 @@ export default function MapDetailScreen() {
   // Satellite / street map-view toggle (web parity: `isSatelliteView`).
   const [isSatelliteView, setIsSatelliteView] = useState(false);
 
-  const [filters, setFilters] = useState<FilterState>({
-    jobNumber: '',
-    sortOrder: 'date-desc',
-    radius: 0,
-    minPrice: '',
-    maxPrice: '',
-    startDate: null,
-    endDate: null,
-    myJobsOnly: false,
-    isFavoriteOnly: false,
-    isReferralOnly: false,
-    isHeatMap: false,
-    showRoute: false,
-    showProduct: true,
-  });
+  // Hydrate the filter state from the lead's persisted `savedFilters` on first mount
+  // (web parity), so the rep returns to exactly the filters they last applied here.
+  const [filters, setFilters] = useState<FilterState>(() => ({
+    ...DEFAULT_MAP_FILTERS,
+    ...savedFiltersToFilterState((currentLead as any)?.savedFilters),
+  }));
 
   // Badge on the header's filter icon — how many filters are currently applied.
   // Reads the applied `filters` (only written by the modal's Search/Reset), so
@@ -258,6 +268,43 @@ export default function MapDetailScreen() {
   const fetchLeads = async () => {
     refetchQuery();
   };
+
+  // Keep the lead object we were handed (same reference the parent LeadCenter holds in
+  // its `useLeadCenterData` state) fresh after a save/reset, so re-opening the map
+  // re-hydrates from the just-persisted `savedFilters` instead of a stale set. Mobile
+  // has no global lead store, so we sync the shared reference + the ['lead', id] cache
+  // (web does this via `setCurrentLead`). Without this, a reset only "sticks" after an
+  // app reload.
+  const persistSavedFiltersOnLead = React.useCallback(
+    (savedFilters: any) => {
+      if (currentLead && typeof currentLead === 'object') {
+        (currentLead as any).savedFilters = savedFilters;
+      }
+      const leadId = (currentLead as any)?._id || (currentLead as any)?.id;
+      if (leadId) {
+        queryClient.setQueryData(['lead', leadId], (old: any) =>
+          old && typeof old === 'object' ? { ...old, savedFilters } : old,
+        );
+      }
+    },
+    [currentLead, queryClient],
+  );
+
+  // Reset → clear all filters and return the map to the full, unfiltered list.
+  // Web parity: reset POSTs `find` with an empty `{}` payload. We call it explicitly
+  // (and seed the react-query cache) so the request fires every time, regardless of
+  // the map-jobs cache/staleTime (a key-change alone can be served from cache).
+  const handleResetFilters = React.useCallback(async () => {
+    setFilters(DEFAULT_MAP_FILTERS);
+    try {
+      const res = await LeadService.findJobs({});
+      const all = res.data?.data || [];
+      setLeads(all);
+      queryClient.setQueryData(['mapJobs', 'all'], all);
+    } catch (err) {
+      console.warn('[MapDetail] Reset find failed:', err);
+    }
+  }, [queryClient]);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('OFFLINE_UPLOAD_SUCCESS', (data) => {
@@ -437,10 +484,11 @@ export default function MapDetailScreen() {
           currentLead={centerCoords ?? currentLead}
           focusLead={jumpLead}
           fullScreen
-          // Open on the rep's office (`/company` → `user.office[]`) rather than
-          // their GPS position. Ignored when the screen was opened with a lead
-          // or a searched location to focus.
-          focusOfficeOnOpen
+          // Open framed on the rep's CURRENT GPS location (not the office). LeadMap
+          // re-asserts the camera on the user once the map + first GPS fix are both
+          // ready (robust to the fix-before-style-ready race). A searched location
+          // still wins; `currentLead` stays for the route line + selection.
+          focusUserLocationOnOpen
           leads={baseFilteredLeads}
           isFavoriteFilter={filters.isFavoriteOnly}
           isReferralFilter={filters.isReferralOnly}
@@ -739,23 +787,10 @@ export default function MapDetailScreen() {
         visible={showFiltersModal}
         onClose={() => setShowFiltersModal(false)}
         filters={filters}
+        lead={currentLead}
         onApply={(f) => setFilters(f)}
-        onReset={() => setFilters({
-          jobNumber: '',
-          sortOrder: 'date-desc',
-          radius: 0,
-          minPrice: '',
-          maxPrice: '',
-          startDate: null,
-          endDate: null,
-          myJobsOnly: false,
-          isFavoriteOnly: false,
-          isReferralOnly: false,
-          isHeatMap: false,
-          showRoute: false,
-          centerCoords: undefined,
-          showProduct: true,
-        })}
+        onReset={handleResetFilters}
+        onFiltersPersisted={persistSavedFiltersOnLead}
       />
 
       <MapGalleryModal

@@ -489,9 +489,8 @@ export const ConsentFormModal = ({
                 Customer Consent to Receive Updates
               </Text>
               <Text className="text-xs" style={{ color: '#637381' }}>
-                By signing below, I agree to receive text and/or email updates from Leaf Home and
-                its representatives about my inspection, estimate, photos, and project details. I
-                understand I can opt out at any time.
+                {/* Company name is dynamic — the signed-in company, not a hardcoded "Leaf Home". */}
+                {`By signing below, I agree to receive text and/or email updates from ${user?.companyName || 'Leaf Home'} and its representatives about my inspection, estimate, photos, and project details. I understand I can opt out at any time.`}
               </Text>
             </View>
 

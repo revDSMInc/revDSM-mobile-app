@@ -19,6 +19,9 @@ export const LeadEndpoints = {
   favourite: 'job/v1/favorite',
   archive: (id: string) => `lead/v1/archive/${id}`,
   delete: (id: string) => `lead/v1/delete/${id}`,
+  // Persist the map filters a rep applied against a lead (web parity:
+  // `endpoints.leads.saveFilters`), so they re-hydrate next visit.
+  saveFilters: (leadId: string) => `lead/v1/${leadId}/saved-filters`,
   // Production documentation additions
   images: (leadId: string) => `demo/v1/leads/${leadId}/images`,
   updateImagePosition: (leadId: string) => `demo/v1/leads/${leadId}/images/position`,
@@ -219,6 +222,10 @@ export const LeadService = {
   archiveLead: (id: string, isArchive: boolean): Promise<AxiosResponse<any>> =>
     api.patch(LeadEndpoints.archive(id), { isArchive }),
   deleteLead: (id: string): Promise<AxiosResponse<any>> => api.delete(LeadEndpoints.delete(id)),
+  // Save (or clear, with `{ savedFilters: {} }`) the map filters a rep applied
+  // against a lead. Body mirrors web's `saveLeadFilters` — `{ savedFilters: {...} }`.
+  saveLeadFilters: (leadId: string, payload: { savedFilters: any }): Promise<AxiosResponse<any>> =>
+    api.patch(LeadEndpoints.saveFilters(leadId), payload),
   getSecureUrls: (
     filePaths: { bucketName: string; filePath: string }[]
   ): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.secureUrls, { filePaths }),

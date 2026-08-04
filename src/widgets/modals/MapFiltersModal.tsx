@@ -8,6 +8,13 @@ import axios from 'axios';
 import { CustomDatePicker } from '../../screens/JobTracker/components/CustomDatePicker';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
+import { LeadService } from '../../services/api/leads';
+
+// Dedicated, interceptor-free client for the Google Places/Geocode web-service calls,
+// with a finite timeout so a hung request fails fast instead of surfacing a bare
+// "Network Error". It's fully isolated from the app's authed API instance
+// (`services/api/index.ts`, which is its own `axios.create`) and from the global axios.
+const googleHttp = axios.create({ timeout: 15000 });
 
 export interface FilterState {
   jobNumber: string;
@@ -24,7 +31,51 @@ export interface FilterState {
   showRoute: boolean;
   showProduct: boolean;
   centerCoords?: { latitude: number; longitude: number };
+  // Persisted so a re-hydrated (saved) filter set restores the search mode and the
+  // date-range label (web `savedFilters.searchType` / `savedFilters.rangeType`).
+  searchType?: 'location' | 'job';
+  rangeType?: string;
 }
+
+// Date-range option ↔ web `rangeType` value (web parity: header-filter.js menu items).
+export const RANGE_TYPE_TO_LABEL: Record<string, string> = {
+  last30days: 'Past 30 Days',
+  lastYear: 'Past Year',
+  last5Years: 'Past 5 Years',
+  custom: 'Custom',
+};
+export const LABEL_TO_RANGE_TYPE: Record<string, string> = {
+  'Past 30 Days': 'last30days',
+  'Past Year': 'lastYear',
+  'Past 5 Years': 'last5Years',
+  Custom: 'custom',
+};
+
+/**
+ * Map a lead's persisted `savedFilters` (web shape) back onto the mobile
+ * `FilterState`, so re-opening the map screen restores what the rep last applied
+ * (web parity: header-filter.js "Populate filters from savedFilters"). Returns a
+ * partial to spread over the default filter state.
+ */
+export const savedFiltersToFilterState = (sf: any): Partial<FilterState> => {
+  if (!sf || typeof sf !== 'object') return {};
+  const out: Partial<FilterState> = {};
+  const isJob = sf.searchType === 'jobNumber';
+  const text = isJob ? sf.jobNumber : sf.formattedAddress;
+  if (text) out.jobNumber = String(text);
+  out.searchType = isJob ? 'job' : 'location';
+  if (!isJob && sf.lat != null && sf.lng != null) {
+    out.centerCoords = { latitude: Number(sf.lat), longitude: Number(sf.lng) };
+  }
+  if (sf.radius) out.radius = Number(sf.radius) || 0;
+  if (sf.min !== undefined && sf.min !== '') out.minPrice = String(sf.min);
+  if (sf.max !== undefined && sf.max !== '') out.maxPrice = String(sf.max);
+  if (sf.startDate) out.startDate = sf.startDate;
+  if (sf.endDate) out.endDate = sf.endDate;
+  if (sf.rangeType && RANGE_TYPE_TO_LABEL[sf.rangeType]) out.rangeType = sf.rangeType;
+  if (sf.favoriteJobs) out.isFavoriteOnly = true;
+  return out;
+};
 
 /**
  * How many filters are actually applied — drives the badge on the header's
@@ -56,6 +107,12 @@ interface MapFiltersModalProps {
   filters: FilterState;
   onApply: (newFilters: FilterState) => void;
   onReset: () => void;
+  /** The lead the map is scoped to — filters are saved/cleared against it. */
+  lead?: any;
+  /** Called with the persisted `savedFilters` after a save/reset, so the parent can
+   *  keep the (shared) lead object fresh — mobile has no global lead store, so this is
+   *  how a reset/apply survives a back-and-return without an app reload. */
+  onFiltersPersisted?: (savedFilters: any) => void;
 }
 
 const FilterInput = ({ icon, children, isGreen = true, primaryColor }: any) => (
@@ -76,6 +133,8 @@ export const MapFiltersModal = ({
   filters,
   onApply,
   onReset,
+  lead,
+  onFiltersPersisted,
 }: MapFiltersModalProps) => {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -97,6 +156,14 @@ export const MapFiltersModal = ({
   useEffect(() => {
     setLocalFilters(filters);
     setSearchText(filters.jobNumber || '');
+    // Restore the search mode + date-range label from the (possibly saved) filters
+    // so a re-hydrated set shows the way the rep left it (web parity).
+    setSearchType(filters.searchType || 'location');
+    setDateRangeLabel(
+      filters.rangeType && RANGE_TYPE_TO_LABEL[filters.rangeType]
+        ? RANGE_TYPE_TO_LABEL[filters.rangeType]
+        : 'Select Date Range',
+    );
   }, [filters, visible]);
 
   // Keyboard listener to hide results
@@ -128,21 +195,69 @@ export const MapFiltersModal = ({
         input
       )}&key=${ENV.GOOGLE_MAPS_API_KEY}&components=country:us`;
 
-      const res = await axios.get(url);
-      if (res.data?.predictions) {
-        setSearchResults(res.data.predictions);
+      const res = await googleHttp.get(url);
+      // Google always answers 200 — a bad key / quota shows up as a `status` field
+      // (REQUEST_DENIED / OVER_QUERY_LIMIT), which is the actionable case to flag.
+      if (res.data?.status && res.data.status !== 'OK' && res.data.status !== 'ZERO_RESULTS') {
+        console.error('[MapFilters] Places API rejected:', res.data.status, res.data.error_message || '');
+        setSearchResults([]);
+      } else {
+        setSearchResults(res.data?.predictions || []);
       }
-    } catch (error) {
-      console.error('[MapFilters] Places API Error:', error);
+    } catch (error: any) {
+      // A transient "Network Error" (the Google request never reached a response —
+      // connectivity blip) is expected mid-typing and must NOT throw a red LogBox
+      // overlay; autocomplete just yields no suggestions for this keystroke. Only a
+      // real HTTP failure with a response is worth an error.
+      if (error?.response) {
+        console.error('[MapFilters] Places API error:', error.response.status, error.response.data);
+      } else {
+        console.warn('[MapFilters] Places lookup skipped (network):', error?.message || error);
+      }
+      setSearchResults([]);
     } finally {
       setIsSearching(false);
     }
   };
 
   const handleApply = () => {
-    onApply({ ...localFilters, jobNumber: searchText });
+    const rangeType = LABEL_TO_RANGE_TYPE[dateRangeLabel];
+    onApply({ ...localFilters, jobNumber: searchText, searchType, rangeType });
     setSearchResults([]);
     onClose();
+
+    // Persist the applied filters against the lead (web parity: `saveLeadFilters`) so
+    // they re-hydrate on the next visit. Only set fields go in the payload, exactly
+    // like web's `payload` build; wrapped in `{ savedFilters }` to match the endpoint.
+    const leadId = lead?._id || lead?.id;
+    if (leadId) {
+      const text = searchText?.trim();
+      const payload: Record<string, any> = {};
+      if (searchType === 'job') payload.searchType = 'jobNumber';
+      if (localFilters.minPrice?.trim()) payload.min = localFilters.minPrice.trim();
+      if (localFilters.maxPrice?.trim()) payload.max = localFilters.maxPrice.trim();
+      if (localFilters.radius) payload.radius = localFilters.radius;
+      if (searchType === 'location' && text) {
+        payload.formattedAddress = text;
+        if (localFilters.centerCoords) {
+          payload.lat = localFilters.centerCoords.latitude;
+          payload.lng = localFilters.centerCoords.longitude;
+        }
+      }
+      if (searchType === 'job' && text) payload.jobNumber = text;
+      if (rangeType) payload.rangeType = rangeType;
+      if (localFilters.startDate) payload.startDate = localFilters.startDate;
+      if (localFilters.endDate) payload.endDate = localFilters.endDate;
+      if (localFilters.isFavoriteOnly) payload.favoriteJobs = true;
+      if (Object.keys(payload).length > 0) {
+        LeadService.saveLeadFilters(leadId, { savedFilters: payload }).catch((error) =>
+          console.error('[MapFilters] Error saving filters:', error),
+        );
+        // Sync the (shared) lead object so re-opening the map re-hydrates these filters
+        // rather than a stale set — mobile has no global lead store (web: setCurrentLead).
+        onFiltersPersisted?.(payload);
+      }
+    }
 
     const uid = user?._id || user?.id;
     if (!uid) return;
@@ -240,6 +355,14 @@ export const MapFiltersModal = ({
     setSearchType('location');
     setDateRangeLabel('Select Date Range');
     onReset();
+    // Clear the persisted filters too (web parity: `saveLeadFilters(leadId, { savedFilters: {} })`).
+    const leadId = lead?._id || lead?.id;
+    if (leadId) {
+      LeadService.saveLeadFilters(leadId, { savedFilters: {} }).catch(() => {});
+    }
+    // Clear the shared lead object's saved filters so a back-and-return shows the reset
+    // state (not a stale filter set) without an app reload.
+    onFiltersPersisted?.({});
     const uid = user?._id || user?.id;
     if (uid) {
       logEvent('apply', {
@@ -403,7 +526,7 @@ export const MapFiltersModal = ({
                             // Geocode to get coordinates for map navigation
                             try {
                               const url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.place_id}&key=${ENV.GOOGLE_MAPS_API_KEY}`;
-                              const res = await axios.get(url);
+                              const res = await googleHttp.get(url);
                               if (res.data?.results?.[0]?.geometry?.location) {
                                 const { lat, lng } = res.data.results[0].geometry.location;
                                 setLocalFilters({
