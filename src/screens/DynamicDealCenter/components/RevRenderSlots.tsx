@@ -1,10 +1,12 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, Image, ScrollView, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { PhotoPeekPressable } from '../../../widgets/common/PhotoPeekPressable';
+import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widgets/common/PhotoPeekScrollLock';
+import { LoadingImage } from '../../../widgets/common/LoadingImage';
 
 /**
  * "Add Renders" field on the rollout quote card (web parity:
@@ -86,6 +88,7 @@ function IconBox() {
   );
 }
 
+
 export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
   const { data: runs, isLoading } = useRevRenderRunsQuery(leadId || '');
   const pairs = useMemo(() => buildRenderPairs(runs || []), [runs]);
@@ -154,7 +157,7 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
                   label={labelOf(pair)}
                   style={{ width: 96, height: 88, borderRadius: 12, borderWidth: 2, borderColor: GREEN, overflow: 'hidden', backgroundColor: '#E2E8F0' }}
                 >
-                  <Image source={{ uri: resolveImg(pair) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                  <LoadingImage uri={resolveImg(pair)} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                 </PhotoPeekPressable>
                 <TouchableOpacity
                   onPress={() => remove(pair)}
@@ -197,6 +200,9 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
         {/* A RN Modal renders outside the root SafeAreaProvider, so its own provider
             is needed for SafeAreaView insets to resolve inside the modal. */}
         <SafeAreaProvider>
+        {/* Own scroll lock so holding a grid thumbnail to peek freezes THIS modal's
+            grid scroll (finger movement can't scroll-steal + dismiss the peek). */}
+        <PhotoPeekScrollLockProvider>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['top', 'bottom']}>
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#EEF2F6' }}>
@@ -209,7 +215,7 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
             </View>
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <PeekAwareScrollView contentContainerStyle={{ padding: 16 }}>
             <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16 }}>
               <Text style={{ fontSize: 12, fontWeight: '900', color: '#637381', letterSpacing: 1, marginBottom: 14 }}>JOB PHOTOS</Text>
               {isLoading ? (
@@ -239,7 +245,7 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
                       >
                         <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '900', color: '#1C252E', paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6 }}>{labelOf(pair)}</Text>
                         <View style={{ position: 'relative' }}>
-                          <Image source={{ uri: resolveImg(pair) }} style={{ width: '100%', height: 120, backgroundColor: '#E2E8F0' }} resizeMode="cover" />
+                          <LoadingImage uri={resolveImg(pair)} containerStyle={{ width: '100%', height: 120 }} style={{ width: '100%', height: '100%', backgroundColor: '#E2E8F0' }} resizeMode="cover" />
                           {isSel && (
                             <View style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' }}>
                               <Ionicons name="checkmark" size={15} color="#fff" />
@@ -252,7 +258,7 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
                 </View>
               )}
             </View>
-          </ScrollView>
+          </PeekAwareScrollView>
 
           {/* Footer — Done (SafeAreaView's bottom edge already clears the home indicator) */}
           <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, backgroundColor: '#F8FAFC' }}>
@@ -261,6 +267,7 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
             </TouchableOpacity>
           </View>
         </SafeAreaView>
+        </PhotoPeekScrollLockProvider>
         </SafeAreaProvider>
       </Modal>
     </View>

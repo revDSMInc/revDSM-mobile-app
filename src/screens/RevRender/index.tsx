@@ -19,6 +19,7 @@ import { RootStackParamList } from '../../navigation';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { PhotoPeekPressable } from '../../widgets/common/PhotoPeekPressable';
+import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../widgets/common/PhotoPeekScrollLock';
 import { ImageGalleryModal } from '../../widgets/modals/ImageGalleryModal';
 import { useInspectionSchema } from '../../hooks/useInspectionSchema';
 import {
@@ -607,7 +608,7 @@ export default function RevRenderScreen() {
     };
 
     return (
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <PeekAwareScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         <View className="px-4 py-4">
           <View className="flex-row items-center mb-6">
             <TouchableOpacity
@@ -748,7 +749,7 @@ export default function RevRenderScreen() {
             </View>
           </TouchableOpacity>
         </Modal>
-      </ScrollView>
+      </PeekAwareScrollView>
     );
   };
 
@@ -939,7 +940,7 @@ export default function RevRenderScreen() {
     const discoveredGroups = renderGroups.filter((g) => g.discoveredViews.length > 0);
 
     return (
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <PeekAwareScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         <View className="px-4 py-4">
           <View className="flex-row items-center mb-8">
             <TouchableOpacity
@@ -1020,7 +1021,7 @@ export default function RevRenderScreen() {
             ))}
           </View>
         </View>
-      </ScrollView>
+      </PeekAwareScrollView>
     );
   };
 
@@ -1105,7 +1106,7 @@ export default function RevRenderScreen() {
     };
 
     return (
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <PeekAwareScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
         <View className="px-4 py-4">
           <View className="flex-row items-center mb-8">
             <TouchableOpacity
@@ -1375,7 +1376,7 @@ export default function RevRenderScreen() {
             <Text className="text-white font-black text-base">+ Add Render Combo</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </PeekAwareScrollView>
     );
   };
 
@@ -1494,15 +1495,19 @@ export default function RevRenderScreen() {
     <SafeAreaView className="flex-1" style={{ backgroundColor: isDark ? colors.background : '#fff' }}>
 
 
-      <View className="flex-1" style={{ zIndex: 1 }}>
-        {!hasPhotos
-          ? renderEmptyState()
-          : status === 'grid'
-            ? renderGrid()
-            : status === 'config'
-              ? renderConfig()
-              : renderQueueView()}
-      </View>
+      {/* Scroll lock so holding a photo thumbnail to peek freezes the surrounding
+          scroll — finger movement can't scroll-steal + dismiss the peek mid-hold. */}
+      <PhotoPeekScrollLockProvider>
+        <View className="flex-1" style={{ zIndex: 1 }}>
+          {!hasPhotos
+            ? renderEmptyState()
+            : status === 'grid'
+              ? renderGrid()
+              : status === 'config'
+                ? renderConfig()
+                : renderQueueView()}
+        </View>
+      </PhotoPeekScrollLockProvider>
 
       {/* Full-screen viewer for the Configure Render photo: pinch/double-tap to
           zoom, swipe down to dismiss (iMessage-style). Single image → no

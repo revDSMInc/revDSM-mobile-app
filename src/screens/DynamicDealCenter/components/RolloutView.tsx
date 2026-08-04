@@ -44,6 +44,7 @@ import { applyFeesToTier, type PricingConfig } from '../utils/pricing-config-uti
 import { logRolloutChange } from '../../../utils/activity-log/rollout-log-meta';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { RevRenderSlots, type RenderPair } from './RevRenderSlots';
+import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widgets/common/PhotoPeekScrollLock';
 import { OneYearMonthlyPlan, type OneYearMonthlyValue } from './OneYearMonthlyPlan';
 import { scopeSignature } from '../utils/scope-signature';
 
@@ -1977,6 +1978,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
   const summaryTabsScrollViewRef = useRef<ScrollView>(null);
 
   return (
+    <PhotoPeekScrollLockProvider>
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: '#fff' }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
@@ -2041,7 +2043,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         </View>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+      <PeekAwareScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
         <View style={{ maxWidth: 600, alignSelf: 'center', width: '100%' }}>
           {selectedCalc ? (
             <PremiumQuoteCard key={selectedCalc.id} calculator={selectedCalc}
@@ -2082,7 +2084,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
             </View>
           )}
         </View>
-      </ScrollView>
+      </PeekAwareScrollView>
 
       {visibleCalculators.length > 0 && !allConfirmed && (
         <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16 }}>
@@ -2167,5 +2169,6 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         </View>
       )}
     </KeyboardAvoidingView>
+    </PhotoPeekScrollLockProvider>
   );
 }

@@ -21,7 +21,6 @@ import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   Image,
   ActivityIndicator,
   Modal,
@@ -45,6 +44,8 @@ import { CategoryTabStrip, ProductDropdown } from './DynamicInspectionRenderer';
 import { useDynamicInspectionCapture, type CapturedPhoto } from './useDynamicInspectionCapture';
 import { DynamicMovePhotoModal, type MoveState } from './DynamicMovePhotoModal';
 import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
+import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../common/PhotoPeekScrollLock';
+import { LoadingImage } from '../../common/LoadingImage';
 import { useSecureUrls } from '../../../hooks/useSecureUrls';
 import { resolveS3Url } from '../../../utils/s3-utils';
 
@@ -414,7 +415,7 @@ export function DynamicManagePhotosView({
             style={{ width: '100%', aspectRatio: 1.6, alignItems: 'center', justifyContent: 'center' }}
           >
             {uri ? (
-              <Image source={{ uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              <LoadingImage uri={uri} style={{ width: '100%', height: '100%' }} resizeMode="cover" spinnerColor="#fff" />
             ) : (
               <Icon name="image-outline" size={24} color="#C4CDD5" />
             )}
@@ -527,6 +528,9 @@ export function DynamicManagePhotosView({
   };
 
   return (
+    // Scroll lock so holding a photo to peek freezes the grid scroll — finger movement
+    // can't scroll-steal + dismiss the peek mid-hold.
+    <PhotoPeekScrollLockProvider>
     <View style={{ flex: 1, backgroundColor: '#0D1F1A' }}>
       {/* Header — close + title with the live photo count */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#0D1F1A', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.12)' }}>
@@ -598,7 +602,7 @@ export function DynamicManagePhotosView({
           <ActivityIndicator size="large" color={GREEN} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: H_PADDING, paddingBottom: 48 }}>
+        <PeekAwareScrollView contentContainerStyle={{ padding: H_PADDING, paddingBottom: 48 }}>
           {isEmpty ? (
             <View
               style={{
@@ -697,7 +701,7 @@ export function DynamicManagePhotosView({
               )}
             </>
           )}
-        </ScrollView>
+        </PeekAwareScrollView>
       )}
 
       {/* Move photo — reuses the capture grid so re-filing looks like tagging */}
@@ -735,7 +739,14 @@ export function DynamicManagePhotosView({
             </TouchableOpacity>
           </View>
           {!!preview && (
-            <Image source={{ uri: preview.uri }} style={{ flex: 1 }} resizeMode="contain" />
+            <LoadingImage
+              uri={preview.uri}
+              containerStyle={{ flex: 1 }}
+              style={{ flex: 1 }}
+              resizeMode="contain"
+              spinnerColor="#fff"
+              spinnerSize="large"
+            />
           )}
         </View>
       </Modal>
@@ -789,5 +800,6 @@ export function DynamicManagePhotosView({
         </View>
       </Modal>
     </View>
+    </PhotoPeekScrollLockProvider>
   );
 }

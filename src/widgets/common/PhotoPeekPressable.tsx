@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -7,6 +7,7 @@ import {
   Dimensions,
   Platform,
   StatusBar,
+  ActivityIndicator,
   StyleProp,
   ViewStyle,
 } from 'react-native';
@@ -20,6 +21,7 @@ import Animated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../../utils/haptics';
+import { usePhotoPeekScrollLock } from './PhotoPeekScrollLock';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const PREVIEW_W = SW * 0.86;
@@ -64,25 +66,52 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
   children,
 }) => {
   const [visible, setVisible] = useState(false);
+  // The enlarged preview can take a moment to fetch — show a spinner over the dark
+  // card until the image finishes loading (reset to `true` each time the peek opens).
+  const [previewLoading, setPreviewLoading] = useState(true);
   const progress = useSharedValue(0);
   const peekedRef = useRef(false);
+
+  // Freeze the surrounding scroll while peeking so finger movement can't turn into a
+  // scroll — a scroll steals the touch, terminates this Pressable, and would dismiss
+  // the peek mid-hold. No-op when there's no PhotoPeekScrollLockProvider above us.
+  const scrollLock = usePhotoPeekScrollLock();
+  const lockedByThisRef = useRef(false);
+  const releaseScrollLock = useCallback(() => {
+    if (lockedByThisRef.current) {
+      lockedByThisRef.current = false;
+      scrollLock?.unlock();
+    }
+  }, [scrollLock]);
+  // Safety net: if this thumbnail unmounts mid-peek, drop its lock. Runs ONLY on real
+  // unmount (empty deps) via a ref — a deps array would re-run every time the lock
+  // toggles the provider and prematurely release the lock mid-peek.
+  const releaseRef = useRef(releaseScrollLock);
+  releaseRef.current = releaseScrollLock;
+  useEffect(() => () => releaseRef.current(), []);
 
   const canPeek = !!uri && !disabled && !peekDisabled;
 
   const openPeek = useCallback(() => {
     peekedRef.current = true;
+    setPreviewLoading(true);
+    if (scrollLock && !lockedByThisRef.current) {
+      lockedByThisRef.current = true;
+      scrollLock.lock();
+    }
     triggerHaptic('threshold');
     setVisible(true);
     progress.value = withSpring(1, { damping: 18, stiffness: 220, mass: 0.6 });
-  }, [progress]);
+  }, [progress, scrollLock]);
 
   const closePeek = useCallback(() => {
+    releaseScrollLock();
     if (!peekedRef.current) return;
     peekedRef.current = false;
     progress.value = withTiming(0, { duration: 160 }, (finished) => {
       if (finished) runOnJS(setVisible)(false);
     });
-  }, [progress]);
+  }, [progress, releaseScrollLock]);
 
   const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
   const imgStyle = useAnimatedStyle(() => ({
@@ -165,7 +194,25 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
                 source={{ uri, cache: 'force-cache' }}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
+                onLoadStart={() => setPreviewLoading(true)}
+                onLoadEnd={() => setPreviewLoading(false)}
               />
+            )}
+            {/* Spinner over the dark card until the enlarged image is ready. */}
+            {previewLoading && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <ActivityIndicator size="large" color="#fff" />
+              </View>
             )}
           </Animated.View>
           {!!label && (
