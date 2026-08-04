@@ -776,7 +776,7 @@ export default function LeadCreateModal({
                             opacity: form.leadType === type ? 1 : 0.4,
                           }}
                         >
-                          {type === 'selfGen' ? 'SELF GEN' : 'ISSUE LEAD'}
+                          {type === 'selfGen' ? 'SELF GEN' : 'ISSUED LEAD'}
                         </Text>
                       </TouchableOpacity>
                     ))}
