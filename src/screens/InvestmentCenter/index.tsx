@@ -66,7 +66,15 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   const pricing = useDealPricing(lead);
   const { config: jobBuilderConfig, isLoading: jbLoading } = useDynamicCalculatorSchemas();
   const { schemas: descriptionSchemas } = useGetDescriptionSchemas();
-  const { tabs, activeTabId, setActiveTabId, loading: calcLoading, handleSetInHome } = useDynamicCalculators(lead, verticals);
+  // Suppress the hook's Deal-Center `calculator viewed` (module `calculator`) log
+  // here — the Investment Center logs its OWN presentation view under the
+  // `investment_center` module (logInvestmentCalculatorViewed), and while the
+  // consent gate is up the only event should be "consent portal opened".
+  const { tabs, activeTabId, setActiveTabId, loading: calcLoading, handleSetInHome } = useDynamicCalculators(
+    lead,
+    verticals,
+    { logCalculatorView: false },
+  );
 
   // ── Consent gate ────────────────────────────────────────────────────────────
   const consentMutation = useSubmitDigitalConsentMutation();
@@ -241,21 +249,26 @@ export default function InvestmentCenterScreen({ navigation, route }: Props) {
   }, [isLoading, consentSigned, logUserId, logLeadId]);
 
   // ── Forever Record: entered the Investment Center (once per open, after load so
-  //    the priced-calculator count is known). ──────────────────────────────────
+  //    the priced-calculator count is known). Gated on a SIGNED consent — while the
+  //    consent gate is up the only event is "consent portal opened"; the "opened"
+  //    event fires once consent is on file (either already signed on entry, or right
+  //    after the rep submits the consent form from this screen). ─────────────────
   const openLoggedRef = useRef(false);
   useEffect(() => {
-    if (isLoading || openLoggedRef.current || !logUserId) return;
+    if (isLoading || !consentSigned || openLoggedRef.current || !logUserId) return;
     openLoggedRef.current = true;
     logInvestmentCenterOpened({ userId: logUserId, leadId: logLeadId, calculatorCount: visible.length });
-  }, [isLoading, logUserId, logLeadId, visible.length]);
+  }, [isLoading, consentSigned, logUserId, logLeadId, visible.length]);
 
-  // ── Forever Record: each priced calculator's presentation, logged once when it
-  //    first becomes the active tab (only while the panel is actually shown). ────
-  const viewedCalcIdsRef = useRef<Set<string>>(new Set());
+  // ── Forever Record: each priced calculator's presentation, logged EVERY time it
+  //    becomes the active tab (only while the panel is actually shown). Tracks the
+  //    LAST viewed tab id (not a viewed-once set) so re-opening a tab logs again,
+  //    while a re-render that leaves the same tab active does not re-fire. ───────
+  const lastViewedCalcIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (isLoading || !consentSigned || !logUserId || !active?.id) return;
-    if (viewedCalcIdsRef.current.has(active.id)) return;
-    viewedCalcIdsRef.current.add(active.id);
+    if (lastViewedCalcIdRef.current === active.id) return;
+    lastViewedCalcIdRef.current = active.id;
     logInvestmentCalculatorViewed({
       userId: logUserId,
       leadId: logLeadId,

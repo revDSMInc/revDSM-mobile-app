@@ -336,7 +336,23 @@ async function createRemoteTab(
   }
 }
 
-export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = []) {
+interface UseDynamicCalculatorsOptions {
+  /**
+   * Fire the web-parity `calculator viewed` (module `calculator`) log when a tab
+   * first becomes active. Defaults to `true` for the Deal Center. The Investment
+   * Center passes `false`: it logs its OWN presentation view under the
+   * `investment_center` module (`logInvestmentCalculatorViewed`), and while its
+   * consent gate is up nothing should be logged but "consent portal opened".
+   */
+  logCalculatorView?: boolean;
+}
+
+export function useDynamicCalculators(
+  lead: any,
+  schemas: CalculatorSchema[] = [],
+  options: UseDynamicCalculatorsOptions = {},
+) {
+  const { logCalculatorView = true } = options;
   const { user } = useAuth();
 
   // Web parity (tab-action-utils.js:48-60): a newly-created/duplicated calculator
@@ -392,7 +408,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
   // calculator, when it first becomes the active tab. Only persisted (backend)
   // calculators are logged — a placeholder local tab has no real calculatorId yet.
   useEffect(() => {
-    if (!enteredBy || !activeTabId) return;
+    if (!logCalculatorView || !enteredBy || !activeTabId) return;
     const active = tabs.find((t) => t.id === activeTabId);
     if (!active) return;
     const calcId = (active as any).calculatorId || active.id;
@@ -406,7 +422,7 @@ export function useDynamicCalculators(lead: any, schemas: CalculatorSchema[] = [
       leadId: leadId || undefined,
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, tabs, enteredBy]);
+  }, [activeTabId, tabs, enteredBy, logCalculatorView]);
 
   // Keep the latest schemas available to the (stable) retitle/save callbacks
   // without churning their identities.
