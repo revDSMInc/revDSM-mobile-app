@@ -434,6 +434,17 @@ export const LeadCard = React.memo(
 
   const isResulted = leadState.status === 'RESULTED';
 
+  /**
+   * Reset is offered on a SALE and nothing else.
+   *
+   * Every other result — Demo, No Demo, Not Home, Cancelled, Rescheduled — is an
+   * outcome the rep recorded and moved on from; there is no sold work to undo, so a
+   * reset alongside them only invites a lead to be reopened by mistake. A sale is the
+   * one result with something behind it worth taking back.
+   */
+  const isSaleResult =
+    isResulted && String(lead.status ?? '').trim().toLowerCase() === 'sale';
+
   const handlePreviewPress = () => {
 
     const scheduledTime = getScheduledDateTime(lead);
@@ -673,27 +684,33 @@ export const LeadCard = React.memo(
         {/* ── Action Button ─────────────────────────────────────────────── */}
         <View>
           {isResulted ? (
-            // Resulted: two-button bar (review + reset) — web parity ResultedActionBar
+            // Resulted: review button, plus reset ONLY on a sale (web parity
+            // ResultedActionBar). Without a reset the review button takes the full
+            // width rather than leaving a gap where the icon used to be.
             <View className="flex-row gap-2">
               <TouchableOpacity
                 onPress={onActionPress}
-                className="flex-[3] h-12 rounded-xl bg-[#94a3b8] items-center justify-center"
+                className={`${
+                  isSaleResult ? 'flex-[3]' : 'flex-1'
+                } h-12 rounded-xl bg-[#94a3b8] items-center justify-center`}
               >
                 <Text className="text-white font-bold text-base tracking-tight">
                   {leadState.action}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleReset}
-                disabled={resetMutation.isPending}
-                className="flex-1 h-12 rounded-xl bg-[#94a3b8] items-center justify-center"
-              >
-                {resetMutation.isPending ? (
-                  <ActivityIndicator size="small" color="white" />
-                ) : (
-                  <Ionicon name="refresh" size={22} color="white" />
-                )}
-              </TouchableOpacity>
+              {isSaleResult && (
+                <TouchableOpacity
+                  onPress={handleReset}
+                  disabled={resetMutation.isPending}
+                  className="flex-1 h-12 rounded-xl bg-[#94a3b8] items-center justify-center"
+                >
+                  {resetMutation.isPending ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Ionicon name="refresh" size={22} color="white" />
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           ) : (
             // Normal: single animated action button

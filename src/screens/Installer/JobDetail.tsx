@@ -184,6 +184,14 @@ export default function InstallerJobDetail() {
   const [completingJob, setCompletingJob] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resettingJob, setResettingJob] = useState(false);
+  /**
+   * True from the moment Submit is tapped until the photo uploads have drained.
+   *
+   * `submitResult.isPending` only covers the request itself, which starts AFTER the
+   * drain — so on a slow connection the sheet sat inert for the whole upload with no
+   * spinner and no message, looking like the tap had been missed.
+   */
+  const [drainingUploads, setDrainingUploads] = useState(false);
   /** Set once the sign-off succeeds, so the button stays inert without a refetch. */
   const [justCompleted, setJustCompleted] = useState(false);
 
@@ -931,14 +939,33 @@ export default function InstallerJobDetail() {
     const result = resultType!;
     const status = RESULT_STATUS_CODE[result as Exclude<InstallerResultType, 'Reset'>];
     if (!status) return;
+    if (drainingUploads || submitResult.isPending) return;
 
-    // Drain uploads so every photo that has started uploading has its s3url.
-    await upload.waitForUploads();
+    // Drain uploads so every photo that has started uploading has its s3url. The flag
+    // is what puts the sheet's button into its loading state for the duration — this
+    // is the slow half on a bad connection, not the request below.
+    setDrainingUploads(true);
+    try {
+      await upload.waitForUploads();
+    } finally {
+      setDrainingUploads(false);
+    }
 
     // Collect images that have an s3url (uploaded successfully).
     const images: StatusReasonImage[] = progressRef.current.resultPhotos
       .filter((p) => !!p.s3url)
       .map((p) => ({ s3url: p.s3url!, bucketName: p.bucketName }));
+
+    // Every attached photo failed to reach S3. Submitting now would file a Can't Do
+    // Work with no evidence behind it — the thing the modal makes mandatory — so say so
+    // and let the installer retake rather than silently dropping the requirement.
+    if (progressRef.current.resultPhotos.length > 0 && images.length === 0) {
+      FlashMessage.error(
+        "Photos didn't upload",
+        'Remove and retake them once you have signal, then submit.'
+      );
+      return;
+    }
 
     const statusReason: StatusReasonPayload = {
       reason,
@@ -1515,8 +1542,11 @@ export default function InstallerJobDetail() {
       <ResultJobModal
         visible={!!resultType}
         result={resultType}
-        submitting={submitResult.isPending}
+        // Covers BOTH waits — the photo drain and the result request — so the button
+        // never falls back to "Submit Result" in the gap between them.
+        submitting={drainingUploads || submitResult.isPending}
         photos={progress.resultPhotos ?? []}
+        uploadingCount={upload.uploadingCount}
         onPhotoCaptured={handleResultPhoto}
         onRemovePhoto={handleRemoveResultPhoto}
         onClose={() => setResultType(null)}

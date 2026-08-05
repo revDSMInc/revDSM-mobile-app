@@ -120,43 +120,67 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
   },
 };
 
-/** `cantDoWork` → `CantDoWork`. First letter only — the API's own casing is kept. */
-const titleCase = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);
+/**
+ * A wire status → the words an installer reads.
+ *
+ *   `cantDoWork` → `Cant Do Work`
+ *   `notHit`     → `Not Hit`
+ *   `reset`      → `Reset`
+ *
+ * Derived rather than looked up in a table: the backend's own naming already carries the
+ * word boundaries, so splitting on them means a result action added server-side reads
+ * correctly with no mobile release. Handles camelCase, PascalCase (`CantDoWork`, if the
+ * API ever capitalises it), and snake/kebab separators.
+ */
+export const humanizeStatus = (value: string): string =>
+  value
+    .trim()
+    // `tDo` → `t Do`
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    // `HOAIssue` → `HOA Issue`, so an acronym doesn't get split letter by letter.
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 
 /**
- * The outcome of a resulted job, as the API spells it: **`status` + `|` + `workflowState`**
- * — `CantDoWork|Resulted`, `NotHit|Resulted`, `Completed|Resulted`.
+ * The outcome of a resulted job: **`Resulted - {status}`** — `Resulted - Cant Do Work`,
+ * `Resulted - Not Hit`, `Resulted - Reset`.
  *
- * A resulted card used to read "Completed Appointment" whatever the outcome was, which is
- * wrong the moment the outcome is anything but completion: a job the crew could NOT do
- * reported itself as finished work. The two API fields say exactly what happened, and
- * they are the only thing that does, so they are shown verbatim rather than mapped to a
- * fixed phrase — a new result action on the backend then needs no mobile release.
+ * Same shape as the sales LeadCard's resulted bar (`Resulted — Sale`), so a resulted job
+ * reads the same on both cards. The status is derived from the wire value by
+ * `humanizeStatus` rather than mapped to a fixed phrase, so a new result action on the
+ * backend needs no mobile release; `workflowState` is not appended, because on a resulted
+ * job it only ever says `resulted` — which is exactly what the prefix already says.
  *
- * Returns null when neither field is present; the caller falls back to the phrase book.
+ * A resulted card used to read "Completed Appointment" whatever the outcome was, which
+ * is wrong the moment the outcome is anything but completion: a job the crew could NOT
+ * do reported itself as finished work.
+ *
+ * Returns null when there is nothing to name; the caller falls back to the phrase book.
  */
 export const resultedActionLabel = (job: InstallerJob): string | null => {
-  // A job that WAS completed is the one case the phrase book already says better than
-  // the raw fields do: "Completed Appointment" reads as finished work, `Completed|Resulted`
-  // reads as a status dump — and it is the only outcome where the plain wording is
-  // accurate. Returning null hands it back to `installer.completedAppointment`, which
-  // also keeps it translated.
+  // A job that WAS completed is the one case the phrase book says better than the raw
+  // status does: "Completed Appointment" reads as finished work, "Resulted - Completed"
+  // reads as a status dump. Returning null hands it back to
+  // `installer.completedAppointment`, which also keeps it translated.
   if (typeof job.status === 'string' && job.status.trim().toLowerCase() === 'completed') {
     return null;
   }
 
-  const parts = [job.status, job.workflowState]
+  // `status` is the outcome; `workflowState` is the fallback for a job that carries only
+  // that. Whichever answers, it is the thing the prefix is qualifying.
+  const raw = [job.status, job.workflowState]
     .map((part) => (typeof part === 'string' ? part.trim() : ''))
-    .filter(Boolean)
-    .map(titleCase);
+    .find(Boolean);
 
-  // `status: 'resulted'` alongside `workflowState: 'resulted'` would otherwise read
-  // "Resulted|Resulted".
-  const unique = parts.filter(
-    (part, i) => parts.findIndex((p) => p.toLowerCase() === part.toLowerCase()) === i
-  );
+  if (!raw) return null;
 
-  return unique.length ? unique.join('|') : null;
+  const outcome = humanizeStatus(raw);
+  // Nothing to qualify — "Resulted - Resulted" is noise, so the prefix stands alone.
+  return outcome.toLowerCase() === 'resulted' ? 'Resulted' : `Resulted - ${outcome}`;
 };
 
 export interface JobCardStateOptions {

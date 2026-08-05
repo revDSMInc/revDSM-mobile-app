@@ -49,8 +49,33 @@ export function InstallerJobCard({
   const state = resolveJobCardState(job, { isUpcoming, loading, offSite });
   const accent = state.color;
   // A literal label wins over the phrase book — a resulted job reports the API's own
-  // outcome string (`CantDoWork|Resulted`), which has no translation key.
+  // outcome string (`Resulted - Cant Do Work`), which has no translation key.
   const actionLabel = state.actionLabel ?? t(state.actionLabelKey);
+
+  /**
+   * Preview is styled DOWN, deliberately — it sits in the card's OWN colour rather than
+   * shouting in it.
+   *
+   * A saturated blue button reads as the thing to press, and preview is the one state
+   * where pressing does nothing useful: the job is not due yet, or the crew is not at
+   * the address. It has to look secondary to the Start / Resume cards beside it, so a
+   * rep scanning the list is drawn to the job they can actually work.
+   *
+   * The tint is the SAME hue as the card, one step deeper — the wash is `accent + '1A'`
+   * (10 %) and the button `+ '33'` (20 %), so it reads as a slightly raised area of the
+   * card instead of a separate control laid on top of it. A neutral grey was tried first
+   * and looked like a foreign element dropped onto a blue card.
+   *
+   * The label takes the accent itself, which is already how this card tints its arrival
+   * time over the same wash — so the two agree instead of introducing a third colour.
+   *
+   * It stays TAPPABLE — `disabled` is not set. The tap is what explains WHY it isn't
+   * open ("This opens on 08/12/2026", "You're 1.4 km away"), and a truly dead button
+   * would leave the rep with a card that answers nothing.
+   */
+  const isPreview = state.key === 'UPCOMING';
+  const actionBg = isPreview ? accent + '33' : accent;
+  const actionFg = isPreview ? accent : '#fff';
 
   const name =
     job.customerName ||
@@ -139,20 +164,34 @@ export function InstallerJobCard({
           </Text>
         </View>
 
-        {/* Action */}
+        {/* Action.
+
+            A resulted card drops the location pin and matches the sales LeadCard's
+            resulted bar — centred bold text on its own. The pin belongs to an action
+            that takes the installer somewhere; an outcome report doesn't go anywhere,
+            and the icon only crowded a label that is already as long as the API's two
+            status fields make it. */}
         <TouchableOpacity
           onPress={onPress}
           disabled={inert}
           className="h-12 rounded-xl items-center justify-center flex-row"
-          style={{ backgroundColor: accent }}
+          style={{ backgroundColor: actionBg }}
         >
           {loading ? (
-            <ActivityIndicator size="small" color="white" />
+            <ActivityIndicator size="small" color={actionFg} />
           ) : (
-            <Ionicon name="location-sharp" size={20} color="white" />
+            !resulted && <Ionicon name="location-sharp" size={20} color={actionFg} />
           )}
-          {/* One line: an outcome label is as long as the API's two fields make it. */}
-          <Text className="text-white ml-2 text-base font-bold" numberOfLines={1}>
+          {/* `font-medium`, not bold: at 16 px on a filled button, a bold weight reads
+              as a heavy slab rather than a label. One line — an outcome label is as
+              long as the API's status makes it. */}
+          <Text
+            className={`text-base font-medium ${
+              resulted && !loading ? 'tracking-tight' : 'ml-2'
+            }`}
+            style={{ color: actionFg }}
+            numberOfLines={1}
+          >
             {actionLabel}
           </Text>
         </TouchableOpacity>

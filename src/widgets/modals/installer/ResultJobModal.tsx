@@ -27,6 +27,14 @@ interface Props {
    * shot still uploading when Submit is pressed is drained rather than dropped.
    */
   photos?: CapturedPhoto[];
+  /**
+   * How many captures are still being sent to S3.
+   *
+   * Submitting drains these before the result goes out, so without this the sheet sat
+   * silent after the tap for as long as the upload took — no spinner, no message,
+   * nothing to say the app was doing anything.
+   */
+  uploadingCount?: number;
   /** A shot was taken — the parent stores it and starts the upload. */
   onPhotoCaptured?: (reason: string, photo: CapturedPhoto) => void;
   /** Resolves once the photo is gone from the server too; the ✕ spinner waits on it. */
@@ -57,6 +65,7 @@ export function ResultJobModal({
   result,
   submitting,
   photos = [],
+  uploadingCount = 0,
   onPhotoCaptured,
   onRemovePhoto,
   onClose,
@@ -90,6 +99,9 @@ export function ResultJobModal({
   const photosRequired = result === "Can't Do Work" && !!onPhotoCaptured;
   const needsPhoto = photosRequired && photos.length === 0;
   const canSubmit = !!reason && !needsPhoto && !submitting;
+
+  const isUploading = uploadingCount > 0;
+  const photoWord = `photo${uploadingCount === 1 ? '' : 's'}`;
 
   // The camera takes the whole sheet rather than stacking another modal on top of it —
   // a viewfinder inside a 85 %-height bottom sheet is unusable.
@@ -215,27 +227,64 @@ export function ResultJobModal({
                 </View>
 
                 {photos.length > 0 ? (
-                  <View className="flex-row flex-wrap" style={{ gap: 6 }}>
-                    {photos.map((p, i) => (
-                      <View key={p.id}>
-                        <Image
-                          source={{ uri: p.uri }}
-                          className="rounded-lg"
-                          style={{ width: 52, height: 52, backgroundColor: '#26364a' }}
-                        />
-                        {!!onRemovePhoto && (
-                          <TouchableOpacity
-                            onPress={() => del.request({ photo: p, index: i })}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full items-center justify-center"
-                            style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-                          >
-                            <MaterialIcon name="close" size={11} color="#fff" />
-                          </TouchableOpacity>
-                        )}
+                  <>
+                    <View className="flex-row flex-wrap" style={{ gap: 6 }}>
+                      {photos.map((p, i) => (
+                        <View key={p.id}>
+                          <Image
+                            source={{ uri: p.uri }}
+                            className="rounded-lg"
+                            style={{ width: 52, height: 52, backgroundColor: '#26364a' }}
+                          />
+                          {/* Per-tile state. The strip used to look identical whether a
+                              shot was safely in S3 or had failed to get there, which is
+                              the difference that decides whether the result carries any
+                              evidence at all. */}
+                          {p.uploadStatus === 'uploading' && (
+                            <View
+                              className="absolute inset-0 rounded-lg items-center justify-center"
+                              style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+                            >
+                              <ActivityIndicator size="small" color="#fff" />
+                            </View>
+                          )}
+                          {p.uploadStatus === 'failed' && (
+                            <View
+                              className="absolute inset-0 rounded-lg items-center justify-center"
+                              style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+                            >
+                              <MaterialIcon name="alert-circle" size={18} color="#FF5630" />
+                            </View>
+                          )}
+                          {!!onRemovePhoto && (
+                            <TouchableOpacity
+                              onPress={() => del.request({ photo: p, index: i })}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full items-center justify-center"
+                              style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+                            >
+                              <MaterialIcon name="close" size={11} color="#fff" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Said BEFORE the tap, so the wait that follows is expected rather
+                        than a sheet that appears to have frozen. */}
+                    {isUploading && !submitting && (
+                      <View className="flex-row items-center mt-2">
+                        <ActivityIndicator size="small" color={colors.textSecondary} />
+                        <Text
+                          className="text-xs font-semibold ml-2"
+                          style={{ color: colors.textSecondary }}
+                        >
+                          Uploading {uploadingCount} {photoWord}… submitting will wait for
+                          {uploadingCount === 1 ? ' it' : ' them'}.
+                        </Text>
                       </View>
-                    ))}
-                  </View>
+                    )}
+                  </>
                 ) : (
                   <Text
                     className="text-xs font-semibold"
@@ -259,7 +308,15 @@ export function ResultJobModal({
             }}
           >
             {submitting ? (
-              <ActivityIndicator color="#fff" />
+              // A bare spinner didn't say WHICH wait this is. Draining a photo upload on
+              // a bad connection is much longer than the result request itself, and
+              // "Uploading…" is what stops that looking like a hang.
+              <View className="flex-row items-center">
+                <ActivityIndicator color="#fff" />
+                <Text className="text-white text-base font-bold ml-2">
+                  {isUploading ? `Uploading ${uploadingCount} ${photoWord}…` : 'Submitting…'}
+                </Text>
+              </View>
             ) : (
               <Text
                 className="text-base font-bold"
