@@ -261,7 +261,18 @@ export type JobWorkflowStatus = 'scheduled' | 'inProgress' | 'completed' | 'onHo
 /** Result actions, as the API spells them. */
 export type JobResultStatus = 'cantDoWork' | 'notHit';
 
-export type JobStatus = JobWorkflowStatus | JobResultStatus;
+/**
+ * Resetting a job that is still IN PROGRESS — sent as `status` on
+ * `PUT installer/v1/update/{id}`, the same route the other two results take.
+ *
+ * Lower-case `reset`, matching the rest of the wire vocabulary. It is the API's value,
+ * not the button label (`Reset`) — do not swap one for the other. Resetting a job that
+ * already carries a result goes to the dedicated `{id}/reset` endpoint instead and
+ * sends no status at all.
+ */
+export type JobResetStatus = 'reset';
+
+export type JobStatus = JobWorkflowStatus | JobResultStatus | JobResetStatus;
 
 export interface InstallerJob {
   _id: string;
@@ -397,8 +408,14 @@ export interface InstallerResultSubmission {
   jobId: string;
   /** The button the installer pressed — kept for logging and copy. */
   result: InstallerResultType;
-  /** The wire code for that button (`RESULT_STATUS_CODE`), e.g. `notHit`. */
-  status: JobResultStatus;
+  /**
+   * The wire code for that button (`RESULT_STATUS_CODE`), e.g. `notHit`.
+   *
+   * Wider than `JobResultStatus` because Reset on a job that is still in progress goes
+   * through this same transition carrying `reset` (`RESET_IN_PROGRESS_STATUS`) — only a
+   * completed job uses the dedicated reset endpoint.
+   */
+  status: JobStatus;
   /** Travels as `statusReason` — now an object with `reason` + optional `images`. */
   reason: StatusReasonPayload;
 }

@@ -1,4 +1,4 @@
-import api from './index';
+import api, { hasSession } from './index';
 import { AxiosResponse } from 'axios';
 import type {
   ContractDetails,
@@ -614,8 +614,19 @@ export const InstallerService = {
   /**
    * Check-out — the installer has left the job. Clearing `workStartedBy` is what
    * closes the session, mirroring `LeadService.endWorkLead` on the sales side.
+   *
+   * Skipped outright when there is no auth token, because the commonest way to leave a
+   * job is to LOG OUT: that clears the token, the navigator swaps screen sets, the
+   * detail screen unmounts, and its check-out cleanup fires into a session that no
+   * longer exists — `401 Authorization header is missing`. Nothing is lost by not
+   * sending it; the server ties the work session to the bearer token, so signing out
+   * ends it server-side anyway.
    */
   endWork: async (jobId: string): Promise<void> => {
+    if (!hasSession()) {
+      console.warn('[Installer] Skipping check-out — no session to check out of.');
+      return;
+    }
     const body = { workStartedBy: null };
     traceRequest('Check out', 'put', InstallerEndpoints.work(jobId), body);
     await api.put(InstallerEndpoints.work(jobId), body);

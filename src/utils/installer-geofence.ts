@@ -129,6 +129,77 @@ export const getJobCoords = (job?: InstallerJob | null): GeoCoordinates | null =
   return { latitude, longitude };
 };
 
+/** One reference point measured against the device fix. */
+interface Candidate {
+  kind: CheckInMatch;
+  distance: number;
+}
+
+/**
+ * Every accepted place, measured from `fix`. Empty when the job was never geocoded AND
+ * the profile carries no locatable office — the "nothing to compare against" case both
+ * callers below have to treat as open rather than as a refusal.
+ *
+ * Job site first, so a tie names the job rather than an office that happens to sit
+ * next door.
+ */
+const buildCandidates = (
+  fix: GeoCoordinates,
+  jobCoords: GeoCoordinates | null,
+  offices: OfficeCoords[]
+): Candidate[] => {
+  const candidates: Candidate[] = [];
+  if (jobCoords) {
+    candidates.push({ kind: 'customer', distance: distanceMeters(fix, jobCoords) });
+  }
+  offices.forEach((office) => {
+    candidates.push({ kind: 'office', distance: distanceMeters(fix, office) });
+  });
+  return candidates;
+};
+
+/**
+ * Is this device fix at the job site, or at one of the company's offices?
+ *
+ * The synchronous, no-side-effects half of the gate below: it asks for no permission and
+ * requests no fix, so it is safe to run on every render for every visible card. The
+ * dashboard uses it to decide what the action button should SAY (see
+ * `hooks/useInstallerProximity.ts`); `resolveCheckInEligibility` is what decides whether
+ * the tap is actually allowed to check in.
+ *
+ * `inRange` is deliberately three-valued — `null` means there was nothing to compare
+ * against, which must not be presented as "you're too far away".
+ */
+export interface Proximity {
+  /** `true` in range, `false` out of range, `null` when there are no reference points. */
+  inRange: boolean | null;
+  /** Which reference point cleared the radius, when one did. */
+  matched: CheckInMatch | null;
+  /** Distance to the nearest reference point in metres, or null when there are none. */
+  nearestMeters: number | null;
+}
+
+export const resolveProximity = (
+  fix: GeoCoordinates,
+  job: InstallerJob,
+  user: any,
+  radiusMeters: number = CHECK_IN_RADIUS_METERS
+): Proximity => {
+  const candidates = buildCandidates(fix, getJobCoords(job), getAllOfficeCoords(user));
+  if (!candidates.length) {
+    return { inRange: null, matched: null, nearestMeters: null };
+  }
+
+  const within = candidates.find((c) => c.distance <= radiusMeters);
+  const nearest = candidates.reduce((a, b) => (b.distance < a.distance ? b : a));
+
+  return {
+    inRange: !!within,
+    matched: within?.kind ?? null,
+    nearestMeters: Math.round(nearest.distance),
+  };
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Device fix
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,7 +210,7 @@ export interface DeviceFix {
   accuracy: number | null;
 }
 
-const ensureLocationPermission = async (): Promise<boolean> => {
+export const ensureLocationPermission = async (): Promise<boolean> => {
   if (Platform.OS === 'ios') {
     const status = await Geolocation.requestAuthorization('whenInUse');
     return status === 'granted';
@@ -249,13 +320,7 @@ export const resolveCheckInEligibility = async (
     };
   }
 
-  const candidates: { kind: CheckInMatch; distance: number }[] = [];
-  if (jobCoords) {
-    candidates.push({ kind: 'customer', distance: distanceMeters(fix.coords, jobCoords) });
-  }
-  offices.forEach((office) => {
-    candidates.push({ kind: 'office', distance: distanceMeters(fix.coords, office) });
-  });
+  const candidates = buildCandidates(fix.coords, jobCoords, offices);
 
   const within = candidates.find((c) => c.distance <= radiusMeters);
   const nearest = candidates.reduce((a, b) => (b.distance < a.distance ? b : a));

@@ -7,6 +7,7 @@ import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { queryClient } from '../services/api/queryClient';
 import { logLogout } from '../utils/activity-log/auth-log';
+import { clearPendingLogs } from '../services/api/LoggerService';
 import { clearActiveInstallerJob } from '../utils/activity-log/installer-log';
 
 
@@ -40,6 +41,11 @@ export const useAuth = () => {
       // 6. Drop the installer job bound to the activity log, so the next session
       //    can't attach this user's job/lead context to its events.
       clearActiveInstallerJob();
+
+      // 7. Drop anything the logger is holding for a session that never opened, for
+      //    the same reason — the next person to sign in on this device must not
+      //    inherit it.
+      clearPendingLogs();
     } catch (err) {
       console.error('Logout failed', err);
     }

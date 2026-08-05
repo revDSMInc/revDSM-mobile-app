@@ -43,6 +43,11 @@ const identityOf = (user: any) => ({
  * "everyone's password is failing" and "the API is unreachable" need different fixes.
  */
 const failureReason = (err: any): string => {
+  // Its own reason, not "other": correct credentials refused for lack of a mobile
+  // dashboard permission is an access-configuration problem, and the person it happens
+  // to needs a role change rather than a password reset.
+  if (err?.isMobileAccessDenied === true) return 'no_mobile_access';
+
   const message = String(err?.message ?? '').toLowerCase();
   if (!message) return 'no_response';
   if (message.includes('password') || message.includes('credential')) return 'bad_credentials';

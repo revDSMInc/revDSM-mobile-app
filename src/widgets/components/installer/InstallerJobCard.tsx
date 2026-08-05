@@ -16,6 +16,12 @@ interface Props {
   loading?: boolean;
   /** Another card is starting; this one stays tappable-looking but inert. */
   disabled?: boolean;
+  /**
+   * The device fix matches neither this job's coordinates nor a company office, so the
+   * action reads "Preview Appointment" instead of offering a check-in that would be
+   * refused. False while the position is still unknown.
+   */
+  offSite?: boolean;
   onPress: () => void;
 }
 
@@ -32,6 +38,7 @@ export function InstallerJobCard({
   isUpcoming = false,
   loading = false,
   disabled = false,
+  offSite = false,
   onPress,
 }: Props) {
   const { colors, isDark } = useTheme();
@@ -39,9 +46,11 @@ export function InstallerJobCard({
 
   const resulted = !!job.resulted;
   const inert = loading || disabled;
-  const state = resolveJobCardState(job, { isUpcoming, loading });
+  const state = resolveJobCardState(job, { isUpcoming, loading, offSite });
   const accent = state.color;
-  const actionLabel = t(state.actionLabelKey);
+  // A literal label wins over the phrase book — a resulted job reports the API's own
+  // outcome string (`CantDoWork|Resulted`), which has no translation key.
+  const actionLabel = state.actionLabel ?? t(state.actionLabelKey);
 
   const name =
     job.customerName ||
@@ -142,7 +151,10 @@ export function InstallerJobCard({
           ) : (
             <Ionicon name="location-sharp" size={20} color="white" />
           )}
-          <Text className="text-white ml-2 text-base font-bold">{actionLabel}</Text>
+          {/* One line: an outcome label is as long as the API's two fields make it. */}
+          <Text className="text-white ml-2 text-base font-bold" numberOfLines={1}>
+            {actionLabel}
+          </Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>

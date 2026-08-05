@@ -142,7 +142,7 @@ export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 export default function RootNavigator({ currentRouteName }: { currentRouteName: string | null }) {
   const { isAuthenticated, loading, isInitialized } = useAuth();
-  const { isInstaller } = useUserRole();
+  const { isInstaller, isSales } = useUserRole();
   const { colors, isDark } = useTheme();
 
   const [headerActions, setHeaderActions] = useState<{
@@ -187,7 +187,12 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
         {showHeader && <Header />}
         <View style={{ flex: 1, backgroundColor: colors.background }}>
           <Stack.Navigator screenOptions={{ headerShown: false, screenOrientation: 'portrait' } as any}>
-            {!isAuthenticated ? (
+            {/* Sign-in is gated on `permissions.DASHBOARD` (see
+                `utils/auth/dashboard-access.ts`), so an authenticated user is always
+                exactly one of installer / sales. The auth set is therefore also the
+                fallback for `!isSales`: an account that somehow reaches this point with
+                neither permission gets the login screen, never the sales app. */}
+            {!isAuthenticated || (!isInstaller && !isSales) ? (
               <>
                 <Stack.Screen name="Login" component={LoginPage} />
                 <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />

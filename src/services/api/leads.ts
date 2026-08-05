@@ -1,4 +1,4 @@
-import api from './index';
+import api, { hasSession } from './index';
 import { AxiosResponse } from 'axios';
 import { ENV } from '../../config/env';
 
@@ -138,8 +138,15 @@ export const LeadService = {
   },
   workLead: (leadId: string, userId: string): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.work(leadId), { userId, workStartedBy: userId }),
-  endWorkLead: (leadId: string): Promise<AxiosResponse<any>> =>
-    api.put(LeadEndpoints.work(leadId), { workStartedBy: null }),
+  /**
+   * Closes the lead's work session. Skipped with no token for the same reason as
+   * `InstallerService.endWork`: this fires from an unmount cleanup, and logging out is
+   * one of the ways the screen unmounts — the request would go out bare and 401.
+   */
+  endWorkLead: (leadId: string): Promise<AxiosResponse<any> | void> =>
+    hasSession()
+      ? api.put(LeadEndpoints.work(leadId), { workStartedBy: null })
+      : Promise.resolve(),
   getJobBuilder: (leadId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.outcome(leadId)),
   getLeadOutcome: (leadId: string): Promise<AxiosResponse<any>> =>

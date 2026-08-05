@@ -29,7 +29,9 @@ import {
 import {
   CHECK_IN_RADIUS_METERS,
   resolveCheckInEligibility,
+  resolveProximity,
 } from '../../utils/installer-geofence';
+import { useInstallerProximity } from '../../hooks/useInstallerProximity';
 import { isFutureDatedJob } from '../../utils/installer-schedule';
 import type {
   InstallerCheckInPayload,
@@ -78,6 +80,33 @@ export default function InstallerDashboard() {
     useInstallerJobs(period);
   const updateStatus = useUpdateJobStatus();
   const log = useInstallerActivityLog();
+
+  // Live device position, watched while this screen is focused. It decides what each
+  // card's button SAYS; the tap itself is still gated by `resolveCheckInEligibility`,
+  // which takes its own fresh fix.
+  const { coords: deviceCoords } = useInstallerProximity();
+
+  /**
+   * True when the installer is demonstrably somewhere else — a fix exists and it is
+   * outside `CHECK_IN_RADIUS_METERS` of both the job's own coordinates and every company
+   * office on the profile.
+   *
+   * Two cases deliberately return false rather than true, because neither is evidence of
+   * being away from the job, and both would otherwise label a card the crew is standing
+   * in front of as a preview:
+   *  - **no fix yet** — permission still pending, location off, or the first fix hasn't
+   *    landed. Unknown is not "elsewhere".
+   *  - **nothing to compare against** (`inRange === null`) — the job was never geocoded
+   *    and the profile carries no locatable office. The check-in gate lets that through
+   *    for the same reason, so the button must not contradict it.
+   */
+  const isOffSite = useCallback(
+    (job: InstallerJob): boolean => {
+      if (!deviceCoords) return false;
+      return resolveProximity(deviceCoords, job, user).inRange === false;
+    },
+    [deviceCoords, user]
+  );
 
   // Header count prefers the API's own total (paginated lists can be shorter).
   const jobCount = summaryCounts?.total ?? jobs.length;
@@ -411,6 +440,10 @@ export default function InstallerDashboard() {
         <FlatList
           data={jobs}
           keyExtractor={(item) => item._id}
+          // The rows depend on something outside `data`: a new fix has to re-run
+          // `isOffSite` for every visible card, or the labels would only catch up the
+          // next time the schedule itself changed.
+          extraData={deviceCoords}
           windowSize={15}
           initialNumToRender={8}
           maxToRenderPerBatch={10}
@@ -424,6 +457,9 @@ export default function InstallerDashboard() {
               isUpcoming={period === 'tomorrow' || isFutureDatedJob(item)}
               loading={startingId === item._id}
               disabled={!!startingId && startingId !== item._id}
+              // Runtime location check — the button reads "Preview Appointment" until
+              // the crew is at the address or at a company office.
+              offSite={isOffSite(item)}
               onPress={() => openJob(item)}
             />
           )}

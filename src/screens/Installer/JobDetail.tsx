@@ -73,6 +73,7 @@ import {
   RESULT_COLORS,
   RESULT_LABEL_KEY,
   RESULT_STATUS_CODE,
+  RESET_IN_PROGRESS_STATUS,
   PHOTO_SECTIONS,
 } from '../../constants/installer';
 import { requiredTagIdsFromSections } from '../../utils/installer-photo-sections';
@@ -157,6 +158,7 @@ export default function InstallerJobDetail() {
     removeCocPage,
     addResultPhoto,
     removeResultPhoto,
+    clearResultPhotos,
     completeStep,
     patchPhoto,
     hydrate,
@@ -603,6 +605,28 @@ export default function InstallerJobDetail() {
     [removeResultPhoto, upload, progressRef, deleteStoredImages]
   );
 
+  /**
+   * Throws away result evidence that was never submitted.
+   *
+   * Shots taken under one result are not evidence for another, so switching from
+   * Can't Do Work to Not Hit must not carry them over. Anything already in S3 is
+   * deleted there too — it is referenced by no `statusReason`, so leaving it would
+   * orphan the object. Photos belonging to a result the server ACCEPTED never reach
+   * here: those are cleared locally on success, without a delete, because the job now
+   * points at them.
+   */
+  const discardResultPhotos = useCallback(async () => {
+    const pending = progressRef.current.resultPhotos ?? [];
+    if (!pending.length) return;
+
+    // Drain first, or an upload resolving after the wipe would put an s3url back on a
+    // photo that no longer exists — and that object would never be deleted.
+    await upload.waitForUploads();
+    const uploaded = (progressRef.current.resultPhotos ?? []).filter((p) => !!p.s3url);
+    clearResultPhotos();
+    if (uploaded.length) await deleteStoredImages('result', uploaded);
+  }, [progressRef, upload, clearResultPhotos, deleteStoredImages]);
+
   /** Removing a CoC page — identical to the material path now that pages are stored. */
   const handleRemoveCocPage = useCallback(
     async (pageId: string) => {
@@ -719,12 +743,19 @@ export default function InstallerJobDetail() {
   }, [job, upload, resetProgress, userId, log]);
 
   /**
-   * Reset — reopens the job so it can be re-entered.
+   * Reset — clears this visit so the job can be re-entered.
    *
-   * Unlike the other two results this is its own endpoint, `PUT installer/v1/{id}/reset`
-   * with `{ statusReason }`; the server puts the job back to `inProgress`. The visit's
-   * work is wiped afterwards, so a failed reset leaves the recorded work alone. The
-   * reason comes from the picker inside the confirmation dialog.
+   * **Two routes, decided by the job's own state** (see `RESET_IN_PROGRESS_STATUS`):
+   *
+   *  - **completed / resulted** → `PUT installer/v1/{id}/reset` with `{ statusReason }`.
+   *    There is a result to undo, and that endpoint is what reopens a closed job.
+   *  - **still in progress** → the SAME path Can't Do Work and Not Hit take,
+   *    `PUT installer/v1/update/{id}` with `{ status: 'reset', statusReason }`.
+   *    Nothing has closed the job, so there is no result to reopen — asking the reset
+   *    endpoint to undo one that was never recorded is what this fixes.
+   *
+   * The visit's work is wiped only AFTER the server accepts, so a failed reset leaves
+   * the recorded work alone. The reason comes from the picker inside the confirmation.
    *
    * Images are optional for Reset — if result photos exist in progress (captured prior
    * to the reset), they are uploaded and included in `statusReason.images`.
@@ -746,22 +777,49 @@ export default function InstallerJobDetail() {
       };
 
       try {
-        await InstallerService.resetJob(job._id, statusReason);
+        if (isJobComplete) {
+          // A result exists — reopen it through the dedicated endpoint.
+          await InstallerService.resetJob(job._id, statusReason);
+        } else {
+          // Nothing to reopen. Same mutation as the other two results, so it shares
+          // their query invalidation and their error shape.
+          await submitResult.mutateAsync({
+            jobId: job._id,
+            result: 'Reset',
+            status: RESET_IN_PROGRESS_STATUS,
+            reason: statusReason,
+          });
+        }
+
         log.resultSubmitted('Reset', reason);
         await wipeJobData();
         queryClient.invalidateQueries({ queryKey: installerKeys.all });
         setShowResetConfirm(false);
         FlashMessage.success('Lead result reset', 'The job can be re-entered.');
         navigation.goBack();
-      } catch (err) {
+      } catch (err: any) {
         console.warn('[InstallerJob] Failed to reset lead result:', err);
         log.resultFailed('Reset', reason);
-        FlashMessage.error('Could not reset this lead', 'Please try again.');
+        FlashMessage.error(
+          'Could not reset this lead',
+          err?.message || 'Please try again.'
+        );
       } finally {
         setResettingJob(false);
       }
     },
-    [job, resettingJob, upload, progressRef, wipeJobData, log, queryClient, navigation]
+    [
+      job,
+      resettingJob,
+      isJobComplete,
+      submitResult,
+      upload,
+      progressRef,
+      wipeJobData,
+      log,
+      queryClient,
+      navigation,
+    ]
   );
 
   /**
@@ -892,6 +950,11 @@ export default function InstallerJobDetail() {
       {
         onSuccess: () => {
           log.resultSubmitted(result, reason);
+          // The s3urls are on the job's `statusReason` now, so the server holds the
+          // record and these local copies are duplicates. Cleared WITHOUT a server
+          // delete — the result references them. Leaving them behind is what made
+          // Can't Do Work's photos reappear under Not Hit on the next open.
+          clearResultPhotos();
           FlashMessage.success('Job resulted', `${result} — ${reason}`);
           setResultType(null);
           navigation.goBack();
@@ -977,10 +1040,24 @@ export default function InstallerJobDetail() {
 
   const handleOpenResult = (type: InstallerResultType) => {
     log.resultOpened(type);
+
     // Reset has nothing to explain, so it takes a plain confirmation rather than the
     // reason picker the other two results use.
-    if (type === 'Reset') setShowResetConfirm(true);
-    else setResultType(type);
+    if (type === 'Reset') {
+      // Deliberately NOT discarded here: Reset has no camera of its own, and
+      // `handleConfirmReset` documents that photos taken before the decision to reset
+      // travel with it as `statusReason.images`. Whatever it takes, `wipeJobData`
+      // clears straight afterwards.
+      setShowResetConfirm(true);
+      return;
+    }
+
+    // Evidence never crosses between the two capturing results: opening Not Hit with
+    // shots taken for Can't Do Work still on hand would offer them as justification for
+    // a result they have nothing to do with. Fire-and-forget — the modal opens now, and
+    // the S3 cleanup behind it has nothing the installer needs to wait for.
+    void discardResultPhotos();
+    setResultType(type);
   };
 
   const phone = job.customerDetails?.phone;
@@ -1418,6 +1495,11 @@ export default function InstallerJobDetail() {
         visible={showResetConfirm}
         icon="alert"
         tone="danger"
+        // A job still IN PROGRESS resets from a bottom sheet: the crew is mid-work, the
+        // reason list is the substance of it, and a sheet keeps the job behind it in
+        // view. A job already COMPLETED keeps the centred dialog — undoing a signed-off
+        // result is the heavier decision and should interrupt.
+        presentation={isJobComplete ? 'dialog' : 'sheet'}
         title="Reset Lead Result?"
         // No description: the title asks the question and the reason list below answers
         // it, so the blurb only pushed the reasons further down the sheet.

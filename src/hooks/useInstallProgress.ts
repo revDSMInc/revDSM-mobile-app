@@ -87,11 +87,35 @@ const applyPhotoPatch = (
   return hit ? next : progress;
 };
 
+/**
+ * Result evidence is SESSION-ONLY — it is never written to the device and never read
+ * back from it.
+ *
+ * The rest of `InstallProgress` is deliberately cached: an installer can lose signal on
+ * a roof, and their step captures have to survive leaving a sub-screen or the app.
+ * Result photos are the opposite case. They belong to ONE result attempt: they are
+ * uploaded to S3 and then referenced by that result's `statusReason.images`, after
+ * which the server copy is the record and the device copy is nothing but a stale
+ * duplicate. Keeping them produced exactly the reported bug — shots taken for Can't Do
+ * Work reappeared under Not Hit, because both results read the same cached array.
+ *
+ * Stripped at BOTH ends on purpose: not writing them means nothing lingers on the
+ * device after the app closes, and not reading them means an entry written by an older
+ * build still can't resurface.
+ */
+const withoutResultPhotos = (progress: InstallProgress): InstallProgress => ({
+  ...progress,
+  resultPhotos: [],
+});
+
 const readStored = (jobId: string): InstallProgress => {
   try {
     const raw = Storage.getItem(storageKey(jobId));
     if (!raw) return emptyProgress(jobId);
-    return { ...emptyProgress(jobId), ...(JSON.parse(raw) as InstallProgress) };
+    return withoutResultPhotos({
+      ...emptyProgress(jobId),
+      ...(JSON.parse(raw) as InstallProgress),
+    });
   } catch {
     return emptyProgress(jobId);
   }
@@ -151,14 +175,17 @@ export function useInstallProgress(
 
   // Persist locally on every change; debounce the server mirror.
   useEffect(() => {
+    // Result evidence is excluded from both — see `withoutResultPhotos`. It reaches the
+    // server as `statusReason.images` on the result itself, not as install progress.
+    const persisted = withoutResultPhotos(progress);
     try {
-      Storage.setItem(storageKey(jobId), JSON.stringify(progress));
+      Storage.setItem(storageKey(jobId), JSON.stringify(persisted));
     } catch {
       // A serialization failure must not take the screen down.
     }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      InstallerService.saveProgress(jobId, progress).catch(() => {});
+      InstallerService.saveProgress(jobId, persisted).catch(() => {});
     }, 1500);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -347,6 +374,19 @@ export function useInstallProgress(
     [commit]
   );
 
+  /**
+   * Drops every result photo from local state.
+   *
+   * Called once a result has been accepted by the server — the s3urls are on the job
+   * now, so the local copies are duplicates that would otherwise be offered as evidence
+   * for the NEXT result — and when the installer switches to a different result type,
+   * where they were never evidence in the first place.
+   */
+  const clearResultPhotos = useCallback(
+    () => commit((p) => (p.resultPhotos?.length ? { ...p, resultPhotos: [] } : p)),
+    [commit]
+  );
+
   const completeStep = useCallback(
     (key: InstallStepKey) =>
       commit((p) => ({ ...p, completedSteps: { ...p.completedSteps, [key]: true } })),
@@ -406,6 +446,7 @@ export function useInstallProgress(
     removeCocPage,
     addResultPhoto,
     removeResultPhoto,
+    clearResultPhotos,
     completeStep,
     patchPhoto,
     hydrate,

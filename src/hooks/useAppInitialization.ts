@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useStore } from 'react-redux';
 import { Platform, PermissionsAndroid } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import Geolocation from 'react-native-geolocation-service';
@@ -10,9 +10,17 @@ import { setSessionHeader } from '../services/api';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
+import { FlashMessage } from '../config/message';
+import {
+  NO_MOBILE_ACCESS_MESSAGE,
+  resolveMobileDashboard,
+} from '../utils/auth/dashboard-access';
+import { isNetworkError } from '../utils/network-error';
+import { flushPendingLogs } from '../services/api/LoggerService';
 
 export function useAppInitialization() {
   const dispatch = useDispatch();
+  const store = useStore();
 
   const initialize = useCallback(async () => {
     try {
@@ -92,16 +100,48 @@ export function useAppInitialization() {
         SocketManager.connect(accessToken);
 
         const res = await AuthService.getMe();
-        dispatch(setInitial({ user: res.data?.data }));
+        const userData = res.data?.data;
+
+        // The dashboard permission is re-checked on every launch rather than trusted
+        // from persisted Redux: a permission revoked on the backend (or a session left
+        // over from a build that predates this gate) must not survive into the app.
+        if (userData && !resolveMobileDashboard(userData)) {
+          SocketManager.disconnect();
+          setSessionHeader(null);
+          dispatch(setInitial({ user: null }));
+          FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
+          return;
+        }
+
+        // Anything the logger held while the token was still being restored can go up
+        // now — this is the cold-start equivalent of the flush after sign-in.
+        flushPendingLogs(userData);
+        dispatch(setInitial({ user: userData }));
       } else {
         setSessionHeader(null);
         dispatch(setInitial({ user: null }));
       }
-    } catch {
+    } catch (err: any) {
+      // A launch with no connectivity is not a rejected session. Signing the user out
+      // here would strand a rep in the field behind a login screen they cannot pass,
+      // so a persisted profile is kept (the token is still valid) and the failure is
+      // reported instead. Anything the server actually rejected still signs out.
+      const persistedUser = (store.getState() as any)?.auth?.user;
+      // Still gated: an offline launch may only restore a profile that was already
+      // entitled to one of the two mobile dashboards.
+      if (isNetworkError(err) && persistedUser && resolveMobileDashboard(persistedUser)) {
+        dispatch(setInitial({ user: persistedUser }));
+        FlashMessage.warning(
+          'Offline',
+          'Could not reach revDSM. Showing your last synced data.'
+        );
+        return;
+      }
+
       setSessionHeader(null);
       dispatch(setInitial({ user: null }));
     }
-  }, [dispatch]);
+  }, [dispatch, store]);
 
   useEffect(() => {
     initialize();

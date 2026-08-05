@@ -76,6 +76,129 @@ const getCachedLocation = (): Promise<{ lat: number; long: number } | null> =>
 // the call order; errors are swallowed so one failed POST never breaks the chain.
 let logChain: Promise<unknown> = Promise.resolve();
 
+/** One queued POST. Split out so a buffered log replays through the same path. */
+const sendLog = (
+  eventType: string,
+  payload: any,
+  meta: any,
+  attachLocation: boolean,
+  token: string | null
+) => {
+  // Enqueue synchronously so the queue order == the order logEvent was called in.
+  const run = logChain.then(async () => {
+    try {
+      if (attachLocation) {
+        const loc = await getCachedLocation();
+        if (loc) {
+          meta.lat = loc.lat;
+          meta.long = loc.long;
+        }
+      }
+      const baseUrl = ENV.API_URL.endsWith('/') ? ENV.API_URL.slice(0, -1) : ENV.API_URL;
+      const headers: any = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      // Cap the request so a single stuck POST can't freeze the whole log queue.
+      await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, {
+        headers,
+        timeout: 15000,
+      });
+      if (isDev) console.log(`[Logger] ✓ ${eventType}`);
+    } catch (err: any) {
+      // console.warn, NOT console.error: LogBox turns a console.error into a
+      // full-screen red "Console Error" overlay, so a single 502 from the logging
+      // service used to cover the screen the installer was working on. A dropped
+      // analytics event is a diagnostic, never something the user must act on.
+      //
+      // The event name and status are named because a silently missing log row is
+      // otherwise indistinguishable from one that was never fired.
+      console.warn(
+        `[Logger] ✗ ${eventType} — ${err?.response?.status ?? 'no response'}:`,
+        err?.response?.data ?? err?.message ?? err
+      );
+    }
+  });
+
+  // Keep the chain alive regardless of this log's outcome; callers that await get this
+  // log's own completion (which already waits for its predecessors, preserving order).
+  logChain = run.catch(() => {});
+  return run;
+};
+
+// ---------------------------------------------------------------------------
+// Pre-auth buffer
+// ---------------------------------------------------------------------------
+// `user-activity-log/v1/create` REJECTS an unauthenticated body — it answers
+// `{"error":"Failed to create activity log"}`. That is a problem for the sign-in events
+// (`login_attempt`, `login_failed`, `login_2fa_required`, `login_2fa_failed`), which by
+// definition fire before a token exists: every one of them went up bare, failed, and
+// left a red line in the network log before the user had even signed in.
+//
+// So a log with no token is HELD rather than sent, and replayed by `flushPendingLogs`
+// the moment a session exists. The sign-in history still reaches the portal — one
+// request later, and authenticated, which is the only way this endpoint accepts it.
+//
+// In memory only, deliberately: these carry the typed email, and an attempt that never
+// led to a session is not worth writing to disk to survive an app restart.
+interface PendingLog {
+  eventType: string;
+  payload: any;
+  meta: any;
+  attachLocation: boolean;
+}
+
+/** A stuck login screen must not grow this without bound; oldest is dropped first. */
+const MAX_PENDING_LOGS = 20;
+const pendingLogs: PendingLog[] = [];
+
+/**
+ * Replays everything buffered while signed out, now that there is a token.
+ *
+ * Call it as soon as the session is established and BEFORE logging the sign-in itself,
+ * so the portal shows attempt → 2FA → login in the order they happened (the backend
+ * stamps `createdAt` on receipt, so arrival order is the only order there is).
+ *
+ * Events buffered with no `user_id` — every pre-auth one, since there was no user yet —
+ * are attributed to whoever just signed in, but ONLY when `meta.email` says the event
+ * was about them. One device can see several accounts: a rep mistypes an address, fails,
+ * and a colleague signs in on the same phone. Stamping that colleague's id onto the
+ * first rep's failed attempt would file it under the wrong person, so an event naming a
+ * different email is dropped instead. It was never sendable — the endpoint refuses rows
+ * with no user — and a missing log beats a misattributed one.
+ */
+export const flushPendingLogs = (user?: any) => {
+  if (!pendingLogs.length) return;
+
+  const token = Storage.getItem('accessToken');
+  if (!token) return;
+
+  const queued = pendingLogs.splice(0, pendingLogs.length);
+  const userId = user?._id || user?.id;
+  const email = String(user?.email ?? '').trim().toLowerCase();
+
+  if (isDev) console.log(`[Logger] flushing ${queued.length} pre-auth log(s)`);
+
+  queued.forEach(({ eventType, payload, meta, attachLocation }) => {
+    if (!payload.user_id) {
+      const about = String(meta?.email ?? '').trim().toLowerCase();
+      if (about && email && about !== email) {
+        if (isDev) console.log(`[Logger] dropping held ${eventType} — different account`);
+        return;
+      }
+      if (!userId) return;
+      payload.user_id = userId;
+      payload.created_by = payload.created_by || userId;
+    }
+    sendLog(eventType, payload, meta, attachLocation, token);
+  });
+};
+
+/** Drops anything held from a session that never happened. */
+export const clearPendingLogs = () => {
+  pendingLogs.length = 0;
+};
+
 export const logEvent = async (eventType: string, details: any = {}) => {
   const userId = details.user_id;
   const isPublic = details.isPublic || false;
@@ -127,48 +250,17 @@ export const logEvent = async (eventType: string, details: any = {}) => {
   if (isDev) {
     console.log(
       `[Logger] → ${eventType} (${details.module_type ?? 'no module'})` +
-        `${userId ? '' : ' · public'}${token ? '' : ' · NO TOKEN'}`
+        `${userId ? '' : ' · public'}${token ? '' : ' · HELD (no session)'}`
     );
   }
 
-  // Enqueue synchronously so the queue order == the order logEvent was called in.
-  const run = logChain.then(async () => {
-    try {
-      if (attachLocation) {
-        const loc = await getCachedLocation();
-        if (loc) {
-          meta.lat = loc.lat;
-          meta.long = loc.long;
-        }
-      }
-      const baseUrl = ENV.API_URL.endsWith('/') ? ENV.API_URL.slice(0, -1) : ENV.API_URL;
-      const headers: any = {};
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-      // Cap the request so a single stuck POST can't freeze the whole log queue.
-      await axios.post(`${baseUrl}/user-activity-log/v1/create`, payload, {
-        headers,
-        timeout: 15000,
-      });
-      if (isDev) console.log(`[Logger] ✓ ${eventType}`);
-    } catch (err: any) {
-      // console.warn, NOT console.error: LogBox turns a console.error into a
-      // full-screen red "Console Error" overlay, so a single 502 from the logging
-      // service used to cover the screen the installer was working on. A dropped
-      // analytics event is a diagnostic, never something the user must act on.
-      //
-      // The event name and status are named because a silently missing log row is
-      // otherwise indistinguishable from one that was never fired.
-      console.warn(
-        `[Logger] ✗ ${eventType} — ${err?.response?.status ?? 'no response'}:`,
-        err?.response?.data ?? err?.message ?? err
-      );
-    }
-  });
+  // No session yet — hold it. The endpoint refuses unauthenticated rows, so sending it
+  // now would only produce an error; `flushPendingLogs` replays it after sign-in.
+  if (!token) {
+    if (pendingLogs.length >= MAX_PENDING_LOGS) pendingLogs.shift();
+    pendingLogs.push({ eventType, payload, meta, attachLocation });
+    return;
+  }
 
-  // Keep the chain alive regardless of this log's outcome; callers that await get this
-  // log's own completion (which already waits for its predecessors, preserving order).
-  logChain = run.catch(() => {});
-  return run;
+  return sendLog(eventType, payload, meta, attachLocation, token);
 };

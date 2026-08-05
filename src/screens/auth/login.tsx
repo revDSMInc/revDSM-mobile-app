@@ -23,6 +23,11 @@ import { RootStackParamList } from '../../navigation';
 import { TouchableOpacity, Platform, PermissionsAndroid, Keyboard } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import { commitAutofill, cancelAutofill } from '../../utils/autofill';
+import {
+  isMobileAccessDenied,
+  NO_MOBILE_ACCESS_MESSAGE,
+} from '../../utils/auth/dashboard-access';
+import { isNetworkError, isTimeoutError } from '../../utils/network-error';
 
 
 export default function LoginScreen() {
@@ -129,6 +134,14 @@ export default function LoginScreen() {
       // Keep the raw cause visible — the messages below are deliberately vague.
       console.warn('[login] failed', err);
 
+      // The credentials were fine; the account simply has no mobile dashboard
+      // permission. Shown verbatim and BEFORE the wording below, which would
+      // otherwise reduce a permission problem to "incorrect email or password".
+      if (isMobileAccessDenied(err)) {
+        FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
+        return;
+      }
+
       const backendMsg =
         (typeof err?.message === 'string' && err.message) ||
         err?.response?.data?.message ||
@@ -137,7 +150,16 @@ export default function LoginScreen() {
       // misconfigured API_URL answering 405/HTML, or the request never landing.
       // Blaming the password there sends people hunting the wrong problem.
       let cleanMsg = 'Could not reach revDSM. Check your connection and try again.';
-      if (backendMsg) {
+      if (isNetworkError(err)) {
+        // Nothing reached the server (airplane mode, dead wifi, DNS, timeout).
+        // `err.message` here is axios' untranslated "Network Error" / "timeout of
+        // 0ms exceeded", which tells a rep nothing actionable.
+        cleanMsg = isTimeoutError(err)
+          ? 'The request timed out. Check your connection and try again.'
+          : 'No internet connection. Check your network and try again.';
+      } else if (err?.httpStatus >= 500) {
+        cleanMsg = 'revDSM is temporarily unavailable. Please try again in a moment.';
+      } else if (backendMsg) {
         const lowerMsg = backendMsg.toLowerCase();
         if (
           lowerMsg.includes('password') ||

@@ -74,9 +74,15 @@ axiosInstance.interceptors.response.use(
     if (error.response?.status === 401) {
       const errorMsg = error.response.data?.message || error.response.data?.error || '';
       const isLoginRequest = error.config?.url?.includes('/company/login');
+      // Already signed out. A 401 here is a request that was in flight when the session
+      // was cleared, or one fired from a teardown path afterwards — NOT an expired
+      // session. Announcing "Your session has expired… please log in again" to someone
+      // who just pressed Log Out is both wrong and alarming, so the global handler stays
+      // out of it and the rejection is passed to the caller unchanged.
+      const alreadySignedOut = !store.getState().auth?.isAuthenticated;
 
       // Do NOT trigger global logout logic for login failures
-      if (!isLoginRequest) {
+      if (!isLoginRequest && !alreadySignedOut) {
         const isUserNotFound =
           errorMsg.toLowerCase().includes('user not found') ||
           errorMsg.toLowerCase().includes('no user found') ||
@@ -159,6 +165,17 @@ export const api = {
   delete: <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> =>
     axiosInstance.delete(url, config),
 };
+
+/**
+ * Is there a session to authenticate with right now?
+ *
+ * For calls that only make sense while signed in and that fire from teardown paths —
+ * an unmount cleanup, a `finally`, a queued retry. Those can run AFTER a logout has
+ * already cleared the token, and without a check they go out bare and come back
+ * `401 Authorization header is missing`, which the response interceptor then reports to
+ * the user as an expired session they never had.
+ */
+export const hasSession = (): boolean => !!Storage.getItem('accessToken');
 
 export const setSessionHeader = (token: string | null) => {
   if (token) {

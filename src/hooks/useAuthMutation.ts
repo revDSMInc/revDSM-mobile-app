@@ -6,6 +6,11 @@ import { setSessionHeader } from '../services/api';
 import SocketManager from '../services/SocketManager';
 import { Platform } from 'react-native';
 import { commitAutofill } from '../utils/autofill';
+import { flushPendingLogs } from '../services/api/LoggerService';
+import {
+  MobileAccessDeniedError,
+  resolveMobileDashboard,
+} from '../utils/auth/dashboard-access';
 import {
   logLoginAttempt,
   logLoginFailed,
@@ -13,6 +18,22 @@ import {
   logTwoFactorFailed,
   logTwoFactorRequired,
 } from '../utils/activity-log/auth-log';
+
+/**
+ * Rejects a profile that carries no mobile dashboard permission, and tears the
+ * half-open session down first.
+ *
+ * Order matters: the token is already in MMKV and on the axios instance by this point,
+ * so clearing it here is what stops the next cold start from silently restoring a
+ * session the user was just refused. The socket is dropped for the same reason.
+ */
+const assertMobileAccess = (userData: any) => {
+  if (resolveMobileDashboard(userData)) return;
+
+  SocketManager.disconnect();
+  setSessionHeader(null);
+  throw new MobileAccessDeniedError();
+};
 
 
 export const useLoginMutation = () => {
@@ -66,10 +87,17 @@ export const useLoginMutation = () => {
         throw new Error('Signed in, but your profile could not be loaded. Please try again.');
       }
 
+      // 5. Gate on the dashboard permission — installer or sales only.
+      assertMobileAccess(userData);
+
       return { userData };
     },
     onSuccess: (res: any) => {
       if (res.userData) {
+        // Everything held while signed out — the attempt, any 2FA challenge — goes up
+        // FIRST, so the portal reads attempt → login in the order it happened. The
+        // endpoint refuses unauthenticated rows, so this is the earliest they can land.
+        flushPendingLogs(res.userData);
         logLoginSuccess(res.userData, 'password');
         commitAutofill();
         if (Platform.OS === 'android') {
@@ -129,9 +157,15 @@ export const useVerifyOtpMutation = () => {
         throw new Error('Signed in, but your profile could not be loaded. Please try again.');
       }
 
+      // Same gate as the password path — 2FA is just the second half of a sign-in.
+      assertMobileAccess(userData);
+
       return userData;
     },
     onSuccess: (userData) => {
+      // The attempt and the 2FA challenge were both held pre-session; they lead the
+      // flush so the sign-in story arrives in order.
+      flushPendingLogs(userData);
       // Same `login` event as the password path — the portal groups on the event name,
       // and `via` is what tells the two apart.
       logLoginSuccess(userData, '2fa');

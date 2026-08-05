@@ -24,7 +24,10 @@ export const JOB_CARD_COLORS = {
   PROGRESS: '#6fcf97',
   /** Review Appointment — read-only revisit. */
   OFFSITE: '#9e9e9e',
-  /** Preview Appointment — not actionable yet (the Upcoming tab). */
+  /**
+   * Preview Appointment — readable but not actionable from here. Two ways in: the
+   * Upcoming tab (not due yet) and an off-site device fix (not there yet).
+   */
   UPCOMING: '#2196f3',
   /** Resulted — the visit is over. Web's neutral grey. */
   RESULTED: '#9e9e9e',
@@ -55,6 +58,15 @@ export interface JobCardState {
    * know about React. So the state machine names the string and the card renders it.
    */
   actionLabelKey: TranslationKey;
+  /**
+   * Literal button text, when the label comes from the API rather than from the phrase
+   * book — a resulted job reports its own outcome (`CantDoWork|Resulted`), and those
+   * values are open-ended, so there is no translation key to name.
+   *
+   * Wins over `actionLabelKey` when set. `actionLabelKey` is still filled in as the
+   * fallback for a job whose outcome fields are missing.
+   */
+  actionLabel?: string;
   /**
    * Web paints a 6 px bar down the left edge for the two live states
    * (`boxShadow: '-6px 0 0 0 color'`). RN has no such shadow, so the card renders it
@@ -108,45 +120,97 @@ const BY_WORKFLOW_STATE: Record<string, JobCardState> = {
   },
 };
 
+/** `cantDoWork` → `CantDoWork`. First letter only — the API's own casing is kept. */
+const titleCase = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);
+
+/**
+ * The outcome of a resulted job, as the API spells it: **`status` + `|` + `workflowState`**
+ * — `CantDoWork|Resulted`, `NotHit|Resulted`, `Completed|Resulted`.
+ *
+ * A resulted card used to read "Completed Appointment" whatever the outcome was, which is
+ * wrong the moment the outcome is anything but completion: a job the crew could NOT do
+ * reported itself as finished work. The two API fields say exactly what happened, and
+ * they are the only thing that does, so they are shown verbatim rather than mapped to a
+ * fixed phrase — a new result action on the backend then needs no mobile release.
+ *
+ * Returns null when neither field is present; the caller falls back to the phrase book.
+ */
+export const resultedActionLabel = (job: InstallerJob): string | null => {
+  // A job that WAS completed is the one case the phrase book already says better than
+  // the raw fields do: "Completed Appointment" reads as finished work, `Completed|Resulted`
+  // reads as a status dump — and it is the only outcome where the plain wording is
+  // accurate. Returning null hands it back to `installer.completedAppointment`, which
+  // also keeps it translated.
+  if (typeof job.status === 'string' && job.status.trim().toLowerCase() === 'completed') {
+    return null;
+  }
+
+  const parts = [job.status, job.workflowState]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter(Boolean)
+    .map(titleCase);
+
+  // `status: 'resulted'` alongside `workflowState: 'resulted'` would otherwise read
+  // "Resulted|Resulted".
+  const unique = parts.filter(
+    (part, i) => parts.findIndex((p) => p.toLowerCase() === part.toLowerCase()) === i
+  );
+
+  return unique.length ? unique.join('|') : null;
+};
+
 export interface JobCardStateOptions {
   /** The Upcoming tab — preview-only regardless of what the job's own state says. */
   isUpcoming?: boolean;
   /** The card is waiting on the check-in request. */
   loading?: boolean;
+  /**
+   * A device fix exists and it matches NEITHER the job's coordinates NOR any company
+   * office. The card then renders as the light-blue UPCOMING preview.
+   *
+   * Must be false while the position is unknown (no fix yet, permission refused), not
+   * true: an unresolved location is not evidence of being somewhere else.
+   */
+  offSite?: boolean;
 }
 
 /**
  * The card's presentation for one job.
  *
- * Precedence: **resulted → upcoming → `workflowState`**. Resulted wins outright because
- * the visit is over whatever the workflow says, and the Upcoming tab is a preview of
- * jobs whose `workflowState` is still `start` — showing them as actionable would invite
- * a crew to open future work today.
+ * Precedence: **resulted → upcoming → off-site → `workflowState`**. Resulted wins
+ * outright because the visit is over whatever the workflow says, and the Upcoming tab is
+ * a preview of jobs whose `workflowState` is still `start` — showing them as actionable
+ * would invite a crew to open future work today.
  */
 export const resolveJobCardState = (
   job: InstallerJob,
-  { isUpcoming = false, loading = false }: JobCardStateOptions = {}
+  { isUpcoming = false, loading = false, offSite = false }: JobCardStateOptions = {}
 ): JobCardState => {
   if (loading) {
     // Mid-request. Keep the card's own accent so it doesn't flash a different colour
     // while it is in flight; only the label changes. A resulted or upcoming card is
     // FETCHING, not starting — those open read-only, and "Starting Job…" would claim
     // a finished visit is being reopened.
-    const base = resolveJobCardState(job, { isUpcoming });
+    const base = resolveJobCardState(job, { isUpcoming, offSite });
     return {
       ...base,
+      // Cleared, not just overridden: a literal `actionLabel` outranks the key, so
+      // leaving a resulted job's outcome text in place would hide the spinner label.
+      actionLabel: undefined,
       actionLabelKey:
         job.resulted || isUpcoming ? 'common.loading' : 'installer.startingJob',
     };
   }
 
   if (job.resulted) {
-    // "Completed", not "Review Appointment": the card already reads RESULTED, and an
-    // action-shaped label invited the crew to treat a finished visit as outstanding
-    // work. The tap still opens the job read-only — the label reports its state.
+    // Not an action-shaped label: the visit is over, and inviting the crew to treat it
+    // as outstanding work was the original bug here. What it reports is the OUTCOME —
+    // `CantDoWork|Resulted` — because "Completed Appointment" is a lie on a job that
+    // could not be done. The tap still opens the job read-only.
     return {
       key: 'RESULTED',
       color: JOB_CARD_COLORS.RESULTED,
+      actionLabel: resultedActionLabel(job) ?? undefined,
       actionLabelKey: 'installer.completedAppointment',
       accentBar: false,
     };
@@ -165,5 +229,24 @@ export const resolveJobCardState = (
   // An unrecognised or missing value falls back to `start` rather than to `resume`:
   // offering to *start* a job already underway is a harmless extra check-in, while
   // offering to *resume* one never begun would skip the start the crew expects.
-  return state ?? BY_WORKFLOW_STATE.start;
+  const resolved = state ?? BY_WORKFLOW_STATE.start;
+
+  if (offSite) {
+    // The installer is not at the address and not at an office, so the check-in at the
+    // end of this tap would be refused — the card must not promise to start a visit it
+    // cannot start.
+    //
+    // Presented exactly like the Upcoming tab's preview: the same light blue, the same
+    // label, no accent bar. Both say the same thing — this job is readable but not
+    // actionable from here — so they should not look like two different states. It
+    // reverts to the workflow colour the moment the crew arrives.
+    return {
+      key: 'UPCOMING',
+      color: JOB_CARD_COLORS.UPCOMING,
+      actionLabelKey: 'installer.previewAppointment',
+      accentBar: false,
+    };
+  }
+
+  return resolved;
 };

@@ -18,6 +18,11 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation';
 import { useVerifyOtpMutation } from '../../hooks/useAuthMutation';
+import {
+  isMobileAccessDenied,
+  NO_MOBILE_ACCESS_MESSAGE,
+} from '../../utils/auth/dashboard-access';
+import { isNetworkError, isTimeoutError } from '../../utils/network-error';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 export default function AuthenticatorOTPScreen() {
@@ -70,6 +75,21 @@ export default function AuthenticatorOTPScreen() {
       });
       FlashMessage.success('Verified', 'Authenticator PIN verified');
     } catch (err: any) {
+      // Correct PIN, but the account has no mobile dashboard permission.
+      if (isMobileAccessDenied(err)) {
+        FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
+        navigation.navigate('Login');
+        return;
+      }
+      if (isNetworkError(err)) {
+        FlashMessage.error(
+          'Verification Failed',
+          isTimeoutError(err)
+            ? 'The request timed out. Check your connection and try again.'
+            : 'No internet connection. Check your network and try again.'
+        );
+        return;
+      }
       FlashMessage.error('Verification Failed', err?.message || 'Invalid PIN');
     }
   };

@@ -1,33 +1,44 @@
 import { useMemo } from 'react';
 import { useAuth } from './useAuth';
+import {
+  getDashboardPermissions,
+  resolveMobileDashboard,
+  INSTALLER_DASHBOARD_PERMISSION,
+  SALES_DASHBOARD_PERMISSION,
+  type MobileDashboard,
+} from '../utils/auth/dashboard-access';
 
 /**
  * Role / dashboard-permission detection.
  *
- * The Installer signal is `permissions.DASHBOARD` containing `installer_dashboard`.
- * That is preferred over the role name because `permissions` is the field the app
- * already relies on elsewhere (see AccountPopover's `permissions.LMS` check), so it
- * is known to survive `GET /company`. `roleName` / `role` are checked as a fallback
- * in case a deployment sends one but not the other.
+ * The dashboard is decided ONLY by `permissions.DASHBOARD` on the signed-in profile —
+ * `installer_dashboard` → Installer, `sales_representative_dashboard` → Sales, anything
+ * else → no mobile access (the sign-in never gets this far; see
+ * `utils/auth/dashboard-access.ts`). `roleName` is still surfaced for display/logging
+ * but is deliberately NOT part of the decision, so the app and the backend can never
+ * disagree about which experience an account gets.
  */
-export const INSTALLER_DASHBOARD_PERMISSION = 'installer_dashboard';
+export { INSTALLER_DASHBOARD_PERMISSION, SALES_DASHBOARD_PERMISSION };
 
 export function useUserRole() {
   const { user, isAuthenticated } = useAuth();
 
   return useMemo(() => {
-    const dashboards: string[] = user?.permissions?.DASHBOARD ?? [];
+    const dashboards = getDashboardPermissions(user);
     const roleName: string | undefined = user?.roleName ?? user?.role;
-
-    const isInstaller =
-      dashboards.includes(INSTALLER_DASHBOARD_PERMISSION) ||
-      roleName?.toLowerCase() === 'installer';
+    const dashboard: MobileDashboard | null = isAuthenticated
+      ? resolveMobileDashboard(user)
+      : null;
 
     return {
       roleName,
       dashboards,
+      /** Which mobile experience this account is entitled to (`null` = none). */
+      dashboard,
       /** True when the signed-in user should see the Installer experience. */
-      isInstaller: isAuthenticated && !!isInstaller,
+      isInstaller: dashboard === 'installer',
+      /** True when the signed-in user should see the Sales experience. */
+      isSales: dashboard === 'sales',
       /** Installer's own company, shown in the job list header. */
       installerCompanyName: user?.installerCompanyName as string | undefined,
     };

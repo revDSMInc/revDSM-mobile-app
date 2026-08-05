@@ -5,6 +5,7 @@ import type {
   PECArea,
   InstallerResultType,
   JobResultStatus,
+  JobStatus,
 } from '../config/types/installer';
 import type { TranslationKey } from '../i18n/translations';
 
@@ -243,8 +244,8 @@ export const INSTALLER_RESULT_TYPES: InstallerResultType[] = [
  * Button label → the status code the API takes.
  *
  * The two are NOT the same string: the installer reads "Can't Do Work", the wire
- * carries `cantDoWork`. Reset has no entry — it is not a status transition at all, it
- * goes to `PUT installer/v1/{id}/reset`.
+ * carries `cantDoWork`. Reset has no entry because it has no fixed code — which of the
+ * two routes it takes depends on the job (see `RESET_IN_PROGRESS_STATUS`).
  */
 export const RESULT_STATUS_CODE: Record<
   Exclude<InstallerResultType, 'Reset'>,
@@ -253,6 +254,23 @@ export const RESULT_STATUS_CODE: Record<
   "Can't Do Work": 'cantDoWork',
   'Not Hit': 'notHit',
 };
+
+/**
+ * Reset takes ONE OF TWO routes, decided by the job's own state:
+ *
+ *  - **completed / resulted** → `PUT installer/v1/{id}/reset`. There is a result to undo,
+ *    and that endpoint is what reopens a closed job; the server decides what it returns
+ *    to and answers with `{ previousStatus, status }`.
+ *  - **still in progress** → `PUT installer/v1/update/{id}` with this status and the
+ *    `statusReason`, i.e. exactly what Can't Do Work and Not Hit do. Nothing has closed
+ *    the job, so there is nothing to reopen — sending it to the reset endpoint asks the
+ *    server to undo a result that was never recorded. What the crew means here is "wipe
+ *    this visit and start over", which is a transition with a reason, not a reopen.
+ *
+ * ⚠️ Lower-case `reset` — the wire value, not the `Reset` button label. The two differ
+ * by one character and only one of them is accepted.
+ */
+export const RESET_IN_PROGRESS_STATUS: JobStatus = 'reset';
 
 /**
  * Button label per result type.

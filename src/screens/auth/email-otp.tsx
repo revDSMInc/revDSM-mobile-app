@@ -18,6 +18,11 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation';
 import { useVerifyOtpMutation } from '../../hooks/useAuthMutation';
+import {
+  isMobileAccessDenied,
+  NO_MOBILE_ACCESS_MESSAGE,
+} from '../../utils/auth/dashboard-access';
+import { isNetworkError, isTimeoutError } from '../../utils/network-error';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 export default function EmailOTPScreen() {
@@ -93,6 +98,23 @@ export default function EmailOTPScreen() {
 
       FlashMessage.success('Verified', 'Email verified successfully');
     } catch (err: any) {
+      // The code was right — the account just isn't allowed on mobile. Reported as
+      // an access problem, not a failed verification, so the rep doesn't re-enter
+      // a code that will never work.
+      if (isMobileAccessDenied(err)) {
+        FlashMessage.error('Access Denied', NO_MOBILE_ACCESS_MESSAGE);
+        navigation.navigate('Login');
+        return;
+      }
+      if (isNetworkError(err)) {
+        FlashMessage.error(
+          'Verification Failed',
+          isTimeoutError(err)
+            ? 'The request timed out. Check your connection and try again.'
+            : 'No internet connection. Check your network and try again.'
+        );
+        return;
+      }
       FlashMessage.error('Verification Failed', err?.message || 'Invalid code');
     }
   };

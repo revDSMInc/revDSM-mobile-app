@@ -1,6 +1,7 @@
 import { Platform, DeviceEventEmitter } from 'react-native';
 import RNFS from 'react-native-fs';
 import { storage } from '../../utils/storage';
+import { hasSession } from './index';
 import { LeadService } from './leads';
 
 export interface OfflineUploadFile {
@@ -150,6 +151,13 @@ export async function processUploadQueue(onItemProcessed?: (itemId: string, succ
   if (isSyncing) return;
   const queue = getUploadQueue();
   if (queue.length === 0) return;
+
+  // The timer runs for the whole app lifetime, including while signed out. Uploading
+  // then would send every queued item up with no bearer token, spend its retries on
+  // 401s, and — before the response interceptor learned to ignore post-logout 401s —
+  // put a "Session Expired" banner on the login screen. The queue is durable, so
+  // waiting for the next sign-in costs nothing.
+  if (!hasSession()) return;
 
   const isOnline = await checkOnlineStatus();
   if (!isOnline) {
