@@ -89,6 +89,12 @@ interface JobDocsSectionProps {
   onOpenPdf?: (url: string, title?: string) => void;
   secureUrls?: Record<string, string>;
   isRefreshing?: boolean;
+  /**
+   * Override for the Contract Details pencil. Supplied when the Lead Center is opened
+   * from My Deals, where the pencil must launch the dynamic deal-edit wizard instead of
+   * the inline Edit Contract Details modal. Omitted on the normal lead path.
+   */
+  onEditContract?: () => void;
 }
 
 const MANAGE_TABS = [
@@ -124,6 +130,7 @@ export const JobDocsSection = ({
   onOpenPdf,
   secureUrls: _secureUrls = {},
   isRefreshing = false,
+  onEditContract,
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -1443,7 +1450,9 @@ export const JobDocsSection = ({
         resolvedDocuments={resolvedDocuments}
         expandedDocs={expandedDocs}
         setExpandedDocs={setExpandedDocs}
-        setShowEditModal={setShowEditModal}
+        // From My Deals the pencil launches the deal-edit wizard; everywhere else it
+        // opens the inline Edit Contract Details modal (unchanged).
+        setShowEditModal={onEditContract ? () => onEditContract() : setShowEditModal}
         onOpenPdf={onOpenPdf}
         onImagePreview={(uri) => handleOpenPreviewSingle(uri)}
         getStatusLabel={getStatusLabel}

@@ -95,8 +95,88 @@ Legend: ✅ full · 🟡 partial/in-progress · ⛔ stub. "Web ref" points into 
 | Profile / settings (+2FA mgmt) | ✅ | `src/screens/Profile/index.tsx` | `src/sections/account/`, `src/api/profile.js` |
 | Appointments / scheduler | 🟡 in-flow only, no standalone screen | `src/widgets/modals/job-builder/AppointmentSchedulerModal.tsx` | `src/sections/calculator-appointment/` |
 | Deal details / drafts | 🟡 outcome modals only, no drafts browser | `src/widgets/modals/DealCenter/OutcomeModal.tsx` | `src/sections/deal/`, `src/pages/deal-drafts.js` |
+| My Deals (deal list → detail) | ✅ detail **reuses Lead Center** (see below) | `src/screens/MyDeals/index.tsx` → `LeadCenter` w/ `fromMyDeals` | `src/sections/deal/view/deal-details-view.js` |
 | My Learning (LMS) | ⛔ 34-line stub | `src/screens/Learning/index.tsx` | external LMS redirect |
 | User management (other users) | ⛔ not implemented (own profile only) | — | `src/sections/user/` |
+
+### My Deals detail IS the Lead Center screen (ticket: "My deals should match resulted lead page")
+
+Tapping a deal in **My Deals** no longer opens a separate deal screen — it opens the **same
+Lead Center screen a sold lead opens**, so the two entry points are pixel-identical (lead info
+block, **Job docs / Map / Tools**, the green `SALE - LEAD RESULTED` `ContractDetailsCard` with
+its price rows + Agreement / Order Sheets / Down Payment Receipt sections and **Add Document**,
+and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons are involved.
+
+- **Entry point**: `MyDeals.openDeal` navigates to **`LeadCenter` with `{ lead, fromMyDeals: true }`**
+  (was `DealDetail`). `fromMyDeals?: boolean` was added to the `LeadCenter` params in
+  `RootStackParamList` (`src/navigation/index.tsx`).
+- **The pencil keeps the My Deals flow.** On the normal lead path the Contract Details pencil
+  opens the inline `EditContractDetailsModal`; from My Deals it must still launch the **4-step
+  dynamic deal-edit wizard** (Install Date → Job Build → Job Price → Review & Submit). So
+  `JobDocsSection` gained an optional **`onEditContract?: () => void`** prop that overrides
+  `ContractDetailsCard`'s `setShowEditModal`; `LeadCenter` passes
+  `onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}`. `handleEditDealFromMyDeals`
+  (in `LeadCenter/index.tsx`) is the port of the old `DealDetail.onEdit`: legacy (non-dynamic) deal →
+  "Edit on web" flash; dynamic deal → `navigate('DynamicDealCenter', { lead, mode:'edit',
+  calculatorResultData: { calculatorId, appointmentId } })` with the same multi-shape id resolution.
+  **Undefined on the normal lead path, so Lead Center is unchanged there.**
+- **Header title is entry-aware**: `{fromMyDeals ? 'Deal' : 'Lead Center'}` (`LeadCenter/index.tsx`).
+- **My Deals shows the global `MainHeader`** (added to the `showHeader` list in
+  `navigation/index.tsx`) so its frame matches the screen it navigates into. Because the
+  navigator's outer `SafeAreaView` already applies the **top** inset when the header shows,
+  `MyDeals`' own `SafeAreaView` was switched to **`edges={['bottom','left','right']}`** — matching
+  Lead Center. Leaving it on the default (all edges) double-pads the title bar.
+- **`src/screens/DealDetail/` is now UNREACHABLE** (nothing navigates to it) but is still
+  registered in the stack. Its **Addendums list** (tap an approved addendum → signed PDF via
+  `getDraftAmendmentPdf`, plus the `DraftComparison` diff) has **no equivalent on the Lead Center
+  screen** — Lead Center only shows the pending-signature banner (from its own `leadDraft` fetch).
+  Re-add that list under the contract card if reps need it.
+
+### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
+
+`DynamicDealEditScreen.tsx` (the 4-step wizard the Deal pencil opens) previously dropped the rep
+**straight onto the calendar** with a compact "Current" pill. It now mirrors web
+`dynamic-deal-edit-modal.js` step 0, whose `dateStep` has **four** sub-views instead of two:
+
+- **`intro`** (new landing view) — a centred white card: **"Edit Job Build"** / "Install Date", a
+  grey bordered **Current Install Date** block (date `M/d/yy` stacked over its time window, or
+  `TBD`), then full-width stacked actions **Modify Install Date** (green) / **No Change — Skip**
+  (outlined) / **Cancel Job** (red filled). Web's `showCalendar === false` state.
+- **`calendar`** — **"‹ Back"** (green) + centred **"Select Install Date"** title, the existing
+  `InstallDateCalendar` in its own bordered box, a **"Sundays unavailable"** caption, then
+  **TBD** (outlined) + **Use \<Mmm d, yy\>** (green, disabled → "Select a Date" until a day is
+  picked). **Tapping a day now only SELECTS it** (web `handleDatePick`); the confirm-time card
+  opens on **Use \<date\>** (`handleUseSelectedDate`) — previously a tap jumped straight to it.
+- **`time`** — **"Confirm Time Window"** (`ProposedTimeCard`, rebuilt to match web's `showProposal`
+  card): the long date (`EEEE, MMMM d, yyyy`), a **green-outlined block** naming the offered window
+  — `MORNING` / `AFTERNOON` over the big green time range over "Arrival window" — then
+  **"Work for the customer?"** and **Doesn't Work** (outlined) / **Confirm** (green). The old
+  design (a "Proposed Install Date" eyebrow, a small pill, Yes/No, and a "← Back to calendar"
+  link) is gone; web has no back link, so the prop and `handleBackToCalendar` were removed.
+- **`success`** — the confirmation card (web `showSuccess`), reached from **both** TBD and
+  Confirm: a 72px circular badge (**blue `#00B8D9` + `?`** for TBD, **green + check** otherwise),
+  the title **"Install Date Set to TBD"** / **"Install Date Updated"**, then either
+  "Will be scheduled at a later time" or the committed long date + time window, and a full-width
+  green **"Done — Next →"** (`handleFinishInstallDate`) that advances to Job Build and resets
+  `dateStep` to `intro`. NOTE: `handleAcceptProposedTime` and `handleSelectTbd` no longer call
+  `setStep(1)` themselves — they land on this card, and **only "Done — Next →" advances the step**.
+
+**One window is offered at a time, and declining both returns to the calendar.**
+`INSTALL_WINDOWS` is the 2-slot list (web `TIME_SLOTS`) and its `period` values are now
+**`Morning` / `Afternoon`** (were `AM` / `PM`), rendered uppercase. `handleProposeNextSlot`
+(web `handleProposalNo`) advances to the second window, then on the next decline resets the slot
+index and sends the rep back to **`calendar`**. It previously **rolled forward to the next
+non-Sunday day**, silently moving the date the rep had picked. `proposedDate` is deliberately
+kept on that return, so the calendar reopens with the date still selected.
+
+Also: `handleSelectTbd` (new) sets `scheduleDate='TBD'` and clears the window. `proposedDate`
+doubles as web's `selectedDate` (the calendar highlights `proposedDate || parsedScheduleDate`) and
+is deliberately **kept** through Confirm so the success card can echo the committed date —
+`handleFinishInstallDate` clears it. Styling moved into a **`StyleSheet`** at the bottom of the
+file (`styles.dateCard`, `currentInstallBox`, `primaryBtn`, `calendarHeader`, `useDateBtn`,
+`windowBox`, `successIcon`, …) — the first non-inline styles in this file.
+
+The whole of step 0 is now a 1:1 port of web's step 0; nothing is intentionally left out.
 
 ---
 
