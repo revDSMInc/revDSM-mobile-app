@@ -31,7 +31,7 @@ const hashString = (s: string): string => {
 };
 
 // Helper to resolve clean cache path for a pre-signed S3 URL.
-const getLocalCachePath = (url: string) => {
+export const getLocalCachePath = (url: string) => {
   if (!url) return null;
   const cleanUrl = url.split('?')[0]; // drop the signature so re-signs still hit cache
   const filename = cleanUrl.split('/').pop();

@@ -1,12 +1,14 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { resolveS3Url } from '../../../utils/s3-utils';
 import { PhotoPeekPressable } from '../../../widgets/common/PhotoPeekPressable';
 import { PhotoPeekScrollLockProvider, PeekAwareScrollView } from '../../../widgets/common/PhotoPeekScrollLock';
 import { LoadingImage } from '../../../widgets/common/LoadingImage';
+import { prefetchToLocalCache, getLocalCachePath } from '../../../widgets/modals/lead-center/RevRenderHistoryModal';
 
 /**
  * "Add Renders" field on the rollout quote card (web parity:
@@ -121,6 +123,54 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
     [freshIndex],
   );
 
+  // Download every hold-to-peekable render to a LOCAL file so the enlarged preview opens
+  // instantly from disk instead of blanking for a few seconds while it re-fetches the S3
+  // image. (Pre-signed S3 URLs carry no cache headers, so the OS image cache misses when
+  // the peek decodes the full image at a larger size — even though the thumbnail already
+  // loaded — and re-downloads it.) The thumbnail keeps using the network URL it already
+  // loaded; only the peek switches to the cached file once ready. Selected thumbnails are
+  // always peekable on the rollout card; the full grid is peekable only while the picker
+  // modal is open.
+  const warmedRef = useRef<Set<string>>(new Set());
+  const [localUris, setLocalUris] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const warm = async (list: any[]) => {
+      for (const p of list) {
+        const uri = resolveImg(p);
+        if (!uri || warmedRef.current.has(uri)) continue;
+        warmedRef.current.add(uri);
+        const path = getLocalCachePath(uri);
+        if (!path) continue;
+        try {
+          await prefetchToLocalCache(uri);
+          if (cancelled) return;
+          const exists = await ReactNativeBlobUtil.fs.exists(path);
+          if (!cancelled && exists) {
+            setLocalUris((prev) => (prev[uri] ? prev : { ...prev, [uri]: `file://${path}` }));
+          }
+        } catch {
+          warmedRef.current.delete(uri); // allow a retry on a later run
+        }
+      }
+    };
+    warm(selectedList);
+    if (modalVisible) warm(pairs);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedList, pairs, modalVisible, resolveImg]);
+
+  // The URL to hand the hold-to-peek preview: the cached local file when it's ready
+  // (instant), else the network URL (the thumbnail already has it on screen either way).
+  const peekUri = useCallback(
+    (pair: any) => {
+      const remote = resolveImg(pair);
+      return localUris[remote] || remote;
+    },
+    [localUris, resolveImg],
+  );
+
   const toggle = (pair: RenderPair) => {
     const k = keyOf(pair);
     if (selectedKeys.has(k)) onChange(selectedList.filter((s) => keyOf(s) !== k));
@@ -151,9 +201,10 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
             {selectedList.map((pair) => (
               <View key={keyOf(pair)} style={{ width: 96, alignItems: 'center' }}>
-                {/* Hold to peek the render full-screen (shared PhotoPeekPressable rule). */}
+                {/* Hold to peek the render full-screen (shared PhotoPeekPressable rule).
+                    Peek uses the cached local file when ready so it opens instantly. */}
                 <PhotoPeekPressable
-                  uri={resolveImg(pair)}
+                  uri={peekUri(pair)}
                   label={labelOf(pair)}
                   style={{ width: 96, height: 88, borderRadius: 12, borderWidth: 2, borderColor: GREEN, overflow: 'hidden', backgroundColor: '#E2E8F0' }}
                 >
@@ -238,7 +289,7 @@ export function RevRenderSlots({ leadId, selected = [], onChange }: Props) {
                       // Tap toggles selection; hold peeks the render full-screen.
                       <PhotoPeekPressable
                         key={keyOf(pair)}
-                        uri={resolveImg(pair)}
+                        uri={peekUri(pair)}
                         label={labelOf(pair)}
                         onPress={() => toggle(pair)}
                         style={{ width: 150, borderRadius: 12, borderWidth: 2, borderColor: isSel ? GREEN : '#E2E8F0', backgroundColor: '#fff', overflow: 'hidden' }}
