@@ -7,7 +7,6 @@ import {
   Dimensions,
   Platform,
   StatusBar,
-  ActivityIndicator,
   StyleProp,
   ViewStyle,
 } from 'react-native';
@@ -66,9 +65,6 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
   children,
 }) => {
   const [visible, setVisible] = useState(false);
-  // The enlarged preview can take a moment to fetch — show a spinner over the dark
-  // card until the image finishes loading (reset to `true` each time the peek opens).
-  const [previewLoading, setPreviewLoading] = useState(true);
   const progress = useSharedValue(0);
   const peekedRef = useRef(false);
 
@@ -94,7 +90,6 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
 
   const openPeek = useCallback(() => {
     peekedRef.current = true;
-    setPreviewLoading(true);
     if (scrollLock && !lockedByThisRef.current) {
       lockedByThisRef.current = true;
       scrollLock.lock();
@@ -194,25 +189,7 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
                 source={{ uri, cache: 'force-cache' }}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
-                onLoadStart={() => setPreviewLoading(true)}
-                onLoadEnd={() => setPreviewLoading(false)}
               />
-            )}
-            {/* Spinner over the dark card until the enlarged image is ready. */}
-            {previewLoading && (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <ActivityIndicator size="large" color="#fff" />
-              </View>
             )}
           </Animated.View>
           {!!label && (
