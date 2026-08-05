@@ -9,12 +9,14 @@ const SPLASH_BG = '#0E2A1C';
 // How long the mark holds before we signal the app to continue. The app may hold
 // the splash a little longer while auth bootstrap resolves; the fade-out that
 // reveals the home screen is driven from App.tsx (see the splash overlay).
-const SPLASH_HOLD_MS = 1800;
+// Trimmed from 1800 per client feedback ("needs to be slightly faster").
+const SPLASH_HOLD_MS = 1450;
 
 // Duration of the one-shot build-in (bottom → middle → top chevron → chimney stub).
-// Matches the Figma export's per-cycle `1.4s` timing, but played ONCE (see below) so the
-// splash holds on the completed mark instead of replaying the sequence.
-const BUILD_MS = 1400;
+// The Figma export loops at `1.4s`; we play it ONCE (see below) and a touch faster
+// (1100) per client feedback, so the splash holds on the completed mark instead of
+// replaying the sequence.
+const BUILD_MS = 1100;
 
 // ── The revDSM "load-in" mark, ported from src/assets/svgs/Load In Animation.svg ──
 // That file is a CSS-@keyframes animation (from Figma). react-native-svg's <SvgXml>
@@ -29,10 +31,12 @@ const CHEVRON_LEN = 88;
 const CHEVRON_D =
   'M0 24.2826L29.0627 2.48562C33.4815 -0.828541 37.9004 -0.828541 42.3193 2.48562L71.382 24.2826';
 const CHIM_D = 'M0 18.1004V0';
+// The chimney is a straight vertical line of length 18.1004; +margin so the
+// stroke-draw fully completes (same trick as CHEVRON_LEN).
+const CHIM_LEN = 19;
 const STROKE_W = 12.2369;
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
-const AnimatedG = Animated.createAnimatedComponent(G);
 
 type Props = {
   /** Called once the mark has held long enough; the app then continues (and
@@ -86,10 +90,12 @@ export default function SplashScreen({ onFinish }: Props) {
   const rTopOffset = progress.interpolate({ inputRange: [0, 0.45, 0.72, 1], outputRange: [CHEVRON_LEN, CHEVRON_LEN, 0, 0] });
   const rTopOpacity = progress.interpolate({ inputRange: [0, 0.45, 0.49, 1], outputRange: [0, 0, 1, 1] });
 
-  // Chimney stub: fades + scales in with a slight overshoot (0.4 → 1.1 → 1.0),
-  // scaling about its own centre (origin below).
-  const chimOpacity = progress.interpolate({ inputRange: [0, 0.72, 0.9, 1], outputRange: [0, 0, 1, 1] });
-  const chimScale = progress.interpolate({ inputRange: [0, 0.72, 0.9, 1], outputRange: [0.4, 0.4, 1.1, 1.0] });
+  // Chimney stub: DRAWS from bottom → top. Its path starts at the bottom (y=18.1004)
+  // and ends at the top (y=0), so sweeping strokeDashoffset CHIM_LEN → 0 reveals the
+  // stroke from the bottom endpoint upward — the vertical line rises up out from behind
+  // the top chevron. Opacity snaps on as the draw starts so the whole sweep is visible.
+  const chimOffset = progress.interpolate({ inputRange: [0, 0.72, 0.96, 1], outputRange: [CHIM_LEN, CHIM_LEN, 0, 0] });
+  const chimOpacity = progress.interpolate({ inputRange: [0, 0.72, 0.74, 1], outputRange: [0, 0, 1, 1] });
 
   return (
     <View style={styles.root}>
@@ -137,6 +143,23 @@ export default function SplashScreen({ onFinish }: Props) {
             gradients are userSpaceOnUse, so each chevron sits in its own translated G
             to keep the unified gradient continuous across the stacked chevrons. */}
         <G transform="translate(171 304)">
+          {/* The little "chimney" stub — rendered FIRST so it sits BEHIND the
+              chevrons (matches the SVG's paint order, where #chim is drawn first).
+              It DRAWS bottom → top via strokeDashoffset (same technique as the
+              chevrons), so the vertical line rises up out from behind the top
+              chevron instead of scaling/popping in. */}
+          <G x={69.8524} y={11.8543}>
+            <AnimatedPath
+              d={CHIM_D}
+              fill="none"
+              stroke="url(#paint1)"
+              strokeWidth={STROKE_W}
+              strokeLinecap="round"
+              strokeDasharray={[CHIM_LEN, CHIM_LEN]}
+              strokeDashoffset={chimOffset}
+              opacity={chimOpacity}
+            />
+          </G>
           {/* bottom chevron — draws first */}
           <G transform="translate(13.7665 70.6806)">
             <AnimatedPath
@@ -179,12 +202,6 @@ export default function SplashScreen({ onFinish }: Props) {
               opacity={rTopOpacity}
             />
           </G>
-          {/* the little "chimney" stub — pops in last, scaling about its centre */}
-          <AnimatedG opacity={chimOpacity} scale={chimScale} originX={69.8524} originY={20.9045}>
-            <G x={69.8524} y={11.8543}>
-              <Path d={CHIM_D} fill="none" stroke="url(#paint1)" strokeWidth={STROKE_W} strokeLinecap="round" />
-            </G>
-          </AnimatedG>
         </G>
       </Svg>
     </View>
