@@ -275,11 +275,17 @@ styles rather than NativeWind classes. Also **added the between-group rule** mob
 `groupIndex < section.combinationSections.length - 1`) — that is the line above
 **"Downspout & Accessories"** in the web screenshot.
 
-**Divider spacing is 16px on BOTH sides**, matching web (`Divider sx={{ mt: 2 }}` inside the item +
-`Stack spacing={2}` between items) — `mb-4 pb-4` on `CombinationSummaryItem`, `mt-4` on the group
-rule. It was first shipped at 12px/8px, which left the next "Combination #N" chip sitting almost on
-the line and read as cramped. Note the combination gap is a plain margin on the item itself (not the
-parent's `space-y-4`), so it does not depend on NativeWind's `space-y-*` behaviour.
+**Divider spacing lives in `style`, not NativeWind margin classes**, and is deliberately **asymmetric**:
+`CombinationSummaryItem` uses `paddingBottom: 16` / `marginBottom: 22`, and the group rule
+`marginTop: 16` / `marginBottom: 6` (the latter stacking on the parent's `space-y-4`).
+
+Web's own 16/16 (`Divider sx={{ mt: 2 }}` + `Stack spacing={2}`) does NOT translate 1:1 here, which
+is why this was re-tuned twice — first 12/8, then an even 16/16, and QA still reported the rule
+"touching the Combination text". Two optical reasons: above the rule the last field row contributes
+its own row spacing, so 16px reads as ~24px; below it the next **"Combination #N" chip is a tight
+pill** (`py-0.5`) whose text sits flush against its top edge, so an equal 16px reads as touching.
+22px below balances them. Keep the spacing in `style` — the View already carries a `style` prop for
+the border, and mixing margin classes with it made it ambiguous which applied.
 
 ### Deal-edit summary listed every document twice
 

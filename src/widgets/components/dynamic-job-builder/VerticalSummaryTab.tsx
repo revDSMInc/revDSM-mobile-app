@@ -139,12 +139,26 @@ function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; ac
   // its right; the per-field rows below keep the same label/value column split so
   // labels align under the chip — matching the web summary reference layout.
   return (
-    // Web breathes 16px on BOTH sides of the rule (`Divider sx={{ mt: 2 }}` inside
-    // the item + `Stack spacing={2}` between items). At 12px the next
-    // "Combination #N" chip sat almost on the line, which read as cramped.
+    // Spacing around the rule is set HERE in `style`, not via NativeWind margin
+    // classes, so there is no ambiguity about which wins when a `style` prop is also
+    // present on the same View.
+    //
+    // The two sides are deliberately NOT equal. Above the rule the last field row
+    // already contributes its own row spacing, so 16px of padding reads as ~24px.
+    // Below it the next "Combination #N" chip is a tight pill (`py-0.5`) whose text
+    // sits flush against its top edge, so an equal 16px read as the line touching the
+    // chip. 22px below balances the two optically.
     <View
-      className={isLast ? '' : 'mb-4 pb-4'}
-      style={isLast ? undefined : { borderBottomWidth: 1, borderBottomColor: DIVIDER_STRONG }}
+      style={
+        isLast
+          ? undefined
+          : {
+              borderBottomWidth: 1,
+              borderBottomColor: DIVIDER_STRONG,
+              paddingBottom: 16,
+              marginBottom: 22,
+            }
+      }
     >
       <View className="flex-row items-start">
         <View style={{ width: '40%', paddingRight: 8 }}>
@@ -279,7 +293,17 @@ export function VerticalSummaryTab({
                         {/* Web parity: a rule closes every combination group except the
                             last — e.g. the line above "Downspout & Accessories". */}
                         {groupIdx < section.combinationSections.length - 1 && (
-                          <View className="mt-4" style={{ borderTopWidth: 1, borderTopColor: DIVIDER_STRONG }} />
+                          <View
+                            // `marginBottom` here is ON TOP of the parent's `space-y-4`,
+                            // so the next group's bold heading clears the rule by about
+                            // the same 22px the combination chips get above.
+                            style={{
+                              borderTopWidth: 1,
+                              borderTopColor: DIVIDER_STRONG,
+                              marginTop: 16,
+                              marginBottom: 6,
+                            }}
+                          />
                         )}
                       </View>
                     ))}
