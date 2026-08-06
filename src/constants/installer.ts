@@ -91,19 +91,24 @@ export const INSTALL_STEPS: InstallStep[] = [
 ];
 
 /**
- * Step gating. A step unlocks once every dependency is satisfied.
- * Pickup first → PEC / Pre-Install / Verify Scope in any order →
- * Post-Install needs all three → CoC → Return.
+ * Step gating — **strictly sequential**. A step unlocks only once EVERY step above it
+ * on the rail is done, so the timeline opens one step at a time: Pickup → PEC →
+ * Pre-Install → Verify Scope → Post-Install → CoC → Return.
+ *
+ * Derived from `INSTALL_STEPS` rather than hand-written, so the numbered rail the
+ * installer reads and the order the app enforces cannot drift apart — reordering the
+ * list above reorders the gate with it.
+ *
+ * It used to branch (PEC / Pre-Install / Verify Scope unlocked together off Pickup).
+ * That is what made a rebuilt timeline look random: after an app-data wipe the local
+ * progress is gone and the rail is rebuilt from whatever the server holds, where some
+ * steps saved and some didn't — so an install could open with step 4 done, step 3 not,
+ * and three different steps offering "START". A visit happens in one order, so the
+ * rail now enforces that order regardless of which step-data PATCHes happened to land.
  */
-export const STEP_DEPENDENCIES: Record<InstallStepKey, InstallStepKey[]> = {
-  pickup: [],
-  pec: ['pickup'],
-  pre: ['pickup'],
-  measure: ['pickup'],
-  post: ['pec', 'pre', 'measure'],
-  coc: ['post'],
-  return: ['coc'],
-};
+export const STEP_DEPENDENCIES = Object.fromEntries(
+  INSTALL_STEPS.map((step, i) => [step.key, INSTALL_STEPS.slice(0, i).map((s) => s.key)])
+) as Record<InstallStepKey, InstallStepKey[]>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Photo match sections — mirrors the rep's ARC tagger

@@ -36,6 +36,8 @@ interface Props {
   onRemovePhoto?: (area: PECArea, photo: CapturedPhoto) => void | Promise<void>;
   onComplete: () => void;
   onBack: () => void;
+  /** Topmost layer — the parent's step-exit upload guard. */
+  guard?: React.ReactNode;
 }
 
 /**
@@ -56,6 +58,7 @@ export function PECStep({
   onRemovePhoto,
   onComplete,
   onBack,
+  guard,
 }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -149,6 +152,7 @@ export function PECStep({
       title={t('installer.pecTitle')}
       subtitle={t('installer.pecSub')}
       onBack={onBack}
+      guard={guard}
       overlay={
         cameraFor ? (
           <InstallerCamera

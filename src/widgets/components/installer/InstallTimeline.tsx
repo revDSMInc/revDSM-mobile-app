@@ -18,8 +18,14 @@ interface Props {
 /**
  * Vertical step rail for the install flow.
  *
- * Locked steps are non-interactive — gating is computed in `useInstallProgress`
- * from each step's dependencies, so the rail only renders what it's told.
+ * Gating is computed in `useInstallProgress` from each step's dependencies (strictly
+ * sequential — one step opens at a time), so the rail only renders what it's told.
+ *
+ * A locked step stays TAPPABLE while still reading as locked: dimmed, padlocked, and
+ * refused by `onOpen` with the step that has to come first. A card that silently does
+ * nothing is indistinguishable from a broken screen — especially here, where a locked
+ * step can be showing a summary line ("3/16 shots matched") from work the server
+ * already holds.
  */
 export function InstallTimeline({
   status,
@@ -105,7 +111,6 @@ export function InstallTimeline({
 
             {/* Card */}
             <TouchableOpacity
-              disabled={locked}
               onPress={() => onOpen(step.key)}
               activeOpacity={0.85}
               className="flex-1 rounded-2xl mb-2.5 p-3 border-2"

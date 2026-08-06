@@ -212,16 +212,32 @@ export function useInstallProgress(
           return progress.return.photos.length > 0 || progress.return.skipped;
         case 'coc':
           return progress.cocPages.length > 0;
+        // Pre-Install / Post-Install. Two different jobs behind one step, decided by
+        // whether the rep actually sent a capture set:
+        //
+        //  - GUIDED (`requiredPhotoTagIds` non-empty) — the rep shot N reference views
+        //    and the installer ghost-matches all N. Derived from the shots themselves,
+        //    so the step cannot read done with a match missing.
+        //  - FREE (no rep photos on the job) — there is nothing to ghost against and no
+        //    N to reach, so demanding the full static tag list made the installer shoot
+        //    all 16 stand-in views for a job that asked for none of them. They now shoot
+        //    whichever views the job needs — one, three, all — and CONFIRM the step
+        //    themselves. At least one photo is still required: this is the photo step,
+        //    and finishing it with no evidence records nothing.
         case 'pre':
-          return (
-            requiredPhotoTagIds.length > 0 &&
-            requiredPhotoTagIds.every((id) => !!progress.preMatched[id])
-          );
-        case 'post':
-          return (
-            requiredPhotoTagIds.length > 0 &&
-            requiredPhotoTagIds.every((id) => !!progress.postMatched[id])
-          );
+        case 'post': {
+          const matchedIn = key === 'pre' ? progress.preMatched : progress.postMatched;
+          if (requiredPhotoTagIds.length > 0) {
+            return requiredPhotoTagIds.every((id) => !!matchedIn[id]);
+          }
+          const extrasIn = key === 'pre' ? progress.preExtras : progress.postExtras;
+          const captured =
+            Object.keys(matchedIn).length +
+            Object.values(extrasIn).reduce((n, list) => n + (list?.length ?? 0), 0);
+          // Both halves, so deleting the last photo after confirming reopens the step
+          // rather than leaving it ticked with nothing behind it.
+          return captured > 0 && !!progress.completedSteps[key];
+        }
         case 'pec':
           if (progress.pecHasConditions === false) return true;
           if (progress.pecHasConditions !== true) return false;
@@ -246,21 +262,46 @@ export function useInstallProgress(
     [progress, productIds, requiredPhotoTagIds]
   );
 
+  /**
+   * The rail's state, walked top to bottom.
+   *
+   * Two rules, and the second is the one that matters: a step's own evidence is NOT
+   * enough to mark it done — every step above it has to be done first. So a step whose
+   * data came back from the server (or survived on this device) while an earlier step
+   * did not still reads `locked`, and the installer works the visit in order instead of
+   * being dropped into a rail with holes in it.
+   *
+   * `map[dep] === 'done'`, not `isStepDone(dep)`: the downgrade has to PROPAGATE. If
+   * step 2 is unfinished, step 3 is locked, and step 4 must then be locked as well even
+   * though its own evidence is complete. Reading the map is safe because
+   * `STEP_DEPENDENCIES` only ever names steps ABOVE this one, which this loop has
+   * already resolved.
+   */
   const stepStatus = useMemo(() => {
     const map: Record<InstallStepKey, InstallStepStatus> = {} as any;
     for (const step of INSTALL_STEPS) {
-      if (isStepDone(step.key)) map[step.key] = 'done';
-      else {
-        map[step.key] = STEP_DEPENDENCIES[step.key].every((dep) => isStepDone(dep))
-          ? 'active'
-          : 'locked';
-      }
+      const unlocked = STEP_DEPENDENCIES[step.key].every((dep) => map[dep] === 'done');
+      if (!unlocked) map[step.key] = 'locked';
+      else map[step.key] = isStepDone(step.key) ? 'done' : 'active';
     }
     return map;
   }, [isStepDone]);
 
+  /**
+   * How far down the rail the installer has actually got.
+   *
+   * Because a step can only be `done` once everything above it is, this is the length
+   * of the completed run from the top — never a tally of scattered ticks. That is what
+   * makes "4 of 7 done" mean "steps 1–4", which is what the progress bar draws.
+   */
   const completedCount = useMemo(
     () => INSTALL_STEPS.filter((s) => stepStatus[s.key] === 'done').length,
+    [stepStatus]
+  );
+
+  /** The step the installer is being asked for right now, if any are left. */
+  const activeStep = useMemo(
+    () => INSTALL_STEPS.find((s) => stepStatus[s.key] === 'active')?.key ?? null,
     [stepStatus]
   );
 
@@ -432,6 +473,8 @@ export function useInstallProgress(
     patch,
     stepStatus,
     isStepDone,
+    /** The one step currently open for work — everything below it is locked. */
+    activeStep,
     completedCount,
     totalSteps: INSTALL_STEPS.length,
     addMaterialPhoto,

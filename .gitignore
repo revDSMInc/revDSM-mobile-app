@@ -59,6 +59,16 @@ android/*.iml
 # ─── Testing ──────────────────────────────────────────────────────────────────
 /coverage
 
+# Test files stay local — they are not pushed with the app.
+# `__tests__/` has no leading slash on purpose, so it also catches the suite nested
+# under src/ (src/screens/DynamicDealCenter/__tests__/), not only the root folder.
+# The loose patterns cover a test written beside the file it exercises.
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
 # ─── Yarn Berry (not used, but safe to include) ───────────────────────────────
 .yarn/*
 !.yarn/patches

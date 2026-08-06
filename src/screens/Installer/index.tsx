@@ -32,7 +32,7 @@ import {
   resolveProximity,
 } from '../../utils/installer-geofence';
 import { useInstallerProximity } from '../../hooks/useInstallerProximity';
-import { isFutureDatedJob } from '../../utils/installer-schedule';
+import { arrivalWindowMessage, isFutureDatedJob } from '../../utils/installer-schedule';
 import type {
   InstallerCheckInPayload,
   InstallerJob,
@@ -311,14 +311,19 @@ export default function InstallerDashboard() {
       }
 
       // 403 — the server ran the geofence on the payload above and refused. It is the
-      // authority on this, so its verdict overrides the on-device check that just
-      // passed (a spoofed fix clears the client gate and nothing else). Hard stop,
-      // with the server's own wording.
+      // authority on WHETHER, so its verdict overrides the on-device check that just
+      // passed (a spoofed fix clears the client gate and nothing else). Hard stop.
+      //
+      // The WORDING is ours, though, so this refusal reads the same as the on-device one
+      // — the arrival window, not a distance. The server's own message is the fallback for
+      // a job carrying no `leadTime`.
       if (err?.httpStatus === 403 || err?.code === 403) {
         log.jobStartFailed(job, err);
         FlashMessage.error(
           'Too far to check in',
-          err?.message || 'Head to the job site to check in.'
+          arrivalWindowMessage(job) ||
+            err?.message ||
+            'Head to the job site to check in.'
         );
         setStartingId(null);
         return;

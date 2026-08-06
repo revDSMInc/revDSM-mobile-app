@@ -18,6 +18,14 @@ interface Props {
    * insets rather than being trapped inside scroll content.
    */
   overlay?: React.ReactNode;
+  /**
+   * Topmost layer — above `overlay`, so it also covers the camera.
+   *
+   * Its one caller is the step-exit upload guard (`StepUploadGuard`), which has to sit
+   * over everything the step can show: an installer who backs out from the camera is
+   * leaving the step just as surely as one who backs out from the list.
+   */
+  guard?: React.ReactNode;
 }
 
 /**
@@ -35,6 +43,7 @@ export function InstallerSubScreen({
   children,
   footer,
   overlay,
+  guard,
 }: Props) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -119,6 +128,7 @@ export function InstallerSubScreen({
         )}
         </View>
         {overlay}
+        {guard}
       </View>
     </Modal>
   );
