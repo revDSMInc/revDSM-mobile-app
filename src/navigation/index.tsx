@@ -38,6 +38,11 @@ export type RootStackParamList = {
     fromZoneCanvasser?: boolean;
     appointmentStarted?: boolean;
     tab?: string;
+    // Opened from My Deals: the screen is identical to the sold-lead Lead Center,
+    // except the header reads "Deal" and the Contract Details pencil keeps the My
+    // Deals edit flow (the 4-step dynamic deal-edit wizard) instead of the inline
+    // Edit Contract Details modal.
+    fromMyDeals?: boolean;
   };
   Profile: undefined;
   AppointmentDetails: { leadId: string };
@@ -163,6 +168,7 @@ export default function RootNavigator({ currentRouteName }: { currentRouteName: 
     'Profile',
     'JobTracker',
     'MyLearning',
+    'MyDeals',
     'LeadCenter',
     'DealCenter',
     'DynamicDealCenter',

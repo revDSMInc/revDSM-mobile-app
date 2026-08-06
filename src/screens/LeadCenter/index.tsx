@@ -120,7 +120,7 @@ export default function LeadCenterPage() {
   const [isWaiverGenerating, setIsWaiverGenerating] = useState(false);
   const [isInspectionGenerating, setIsInspectionGenerating] = useState(false);
 
-  const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted, justCompleted } =
+  const { lead: initialLead, initialTool, fromZoneCanvasser, appointmentStarted, justCompleted, fromMyDeals } =
     route.params || {};
 
   // Custom Hooks for Data, Reports, and Modals
@@ -137,6 +137,52 @@ export default function LeadCenterPage() {
     sectionImages,
     setSectionImages,
   } = useLeadCenterData(initialLead, user, { appointmentStarted });
+
+  // ── My Deals: Contract Details pencil keeps the deal-edit flow ──────────────
+  // Opened from My Deals, this screen is the same sold-lead Lead Center, but the
+  // Contract Details pencil must still launch the 4-step dynamic deal-edit wizard
+  // (Install Date → Job Build → Job Price → Review & Submit) instead of the inline
+  // Edit Contract Details modal. Undefined on the normal lead path, so Lead Center
+  // behaves exactly as before there.
+  const handleEditDealFromMyDeals = useCallback(() => {
+    const leadId = lead?._id || lead?.id || lead?.leadId;
+    if (!leadId) return;
+    // Mobile ships only the dynamic editor; a legacy deal can't be edited on device.
+    const isDynamicDeal = Boolean(
+      lead?.jobBuilder?.isDynamic || lead?.jobBuilder?.dynamicJobState || lead?.isDynamic
+    );
+    if (!isDynamicDeal) {
+      FlashMessage.show(
+        'Edit on web',
+        'This deal uses the legacy job builder. Please edit it from the web app.',
+        'info'
+      );
+      return;
+    }
+    navigation.navigate('DynamicDealCenter', {
+      lead,
+      mode: 'edit',
+      calculatorResultData: {
+        // The outcome doc exposes the calculator under several shapes depending on
+        // where the lead came from, so check them all — the edit screen needs the
+        // calculator-scoped outcome rather than the lead-wide one.
+        calculatorId:
+          lead?.selectedCalculatorId ||
+          lead?.calculatorId ||
+          lead?.jobBuilder?.calculatorId ||
+          lead?.outcome?.selectedCalculatorId ||
+          lead?.leadData?.selectedCalculatorId ||
+          lead?.LFCalculator?._id ||
+          null,
+        appointmentId:
+          lead?.selectedAppointmentId ||
+          lead?.jobBuilder?.appointmentId ||
+          lead?.outcome?.selectedAppointmentId ||
+          lead?.leadData?.selectedAppointmentId ||
+          null,
+      },
+    });
+  }, [navigation, lead]);
 
   const hasLoggedPauseRef = useRef(false);
   const userRef = useRef(user);
@@ -980,8 +1026,9 @@ export default function LeadCenterPage() {
                 />
               </TouchableOpacity>
               <View>
+                {/* Same screen, two entry points: from My Deals it IS a deal. */}
                 <Text className="text-lg font-black" style={{ color: colors.text }}>
-                  Lead Center
+                  {fromMyDeals ? 'Deal' : 'Lead Center'}
                 </Text>
               </View>
             </View>
@@ -1136,6 +1183,7 @@ export default function LeadCenterPage() {
                 onOpenPdf={handleOpenPdf}
                 secureUrls={secureUrls}
                 isRefreshing={isRefreshing}
+                onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
               />
             )}
             {activeTab === 'tools' && (

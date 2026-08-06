@@ -226,7 +226,11 @@ export default function MyDeals({ navigation }: MyDealsProps) {
     (lead: any) => {
       const leadId = lead?._id || lead?.id || lead?.leadId;
       if (!leadId) return;
-      navigation?.navigate('DealDetail', { lead, leadId });
+      // A deal opens the SAME Lead Center screen a sold lead opens (lead info +
+      // Job docs / Map / Tools + the resulted Contract Details card), rather than a
+      // separate deal screen. `fromMyDeals` retitles the header "Deal" and keeps the
+      // Contract Details pencil on the My Deals edit flow (the deal-edit wizard).
+      navigation?.navigate('LeadCenter', { lead, fromMyDeals: true });
     },
     [navigation]
   );
@@ -247,7 +251,10 @@ export default function MyDeals({ navigation }: MyDealsProps) {
   const showInitialLoader = loading && !refreshing && leads.length === 0;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+    // The global revDSM header (MainHeader) sits above this screen and already consumes
+    // the top inset — same as Lead Center — so only the remaining edges are applied here,
+    // otherwise the title bar would get double top padding.
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['bottom', 'left', 'right']}>
       {/* Header */}
       <View
         style={{

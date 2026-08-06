@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Modal,
+  StyleSheet,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -16,7 +17,6 @@ import {
   endOfMonth,
   eachDayOfInterval,
   getDay,
-  addDays,
   subMonths,
   addMonths,
   isSameDay,
@@ -68,10 +68,11 @@ const STEP_LABELS = ['Install Date', 'Job Build', 'Job Price', 'Review & Submit'
 
 const fmtMoney = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString()}`;
 
-// Install time windows for the inline "propose a time" step (web parity).
+// The two install windows offered on the confirm-time step, in order (web parity:
+// `TIME_SLOTS`). "Doesn't Work" walks this list, then returns to the calendar.
 const INSTALL_WINDOWS = [
-  { period: 'AM', value: '8:00 AM - 12:00 PM' },
-  { period: 'PM', value: '12:00 PM - 4:00 PM' },
+  { period: 'Morning', value: '8:00 AM - 12:00 PM' },
+  { period: 'Afternoon', value: '12:00 PM - 4:00 PM' },
 ];
 
 interface DynamicDealEditScreenProps {
@@ -109,10 +110,17 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
   const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [scheduleTimeWindow, setScheduleTimeWindow] = useState('');
-  // Inline install-date rescheduler (web parity): the Step-0 calendar and the
-  // "propose a time" card both live in the step itself, not a modal. `dateStep`
-  // toggles between them; picking a calendar date proposes a time for it.
-  const [dateStep, setDateStep] = useState<'calendar' | 'time'>('calendar');
+  // Inline install-date rescheduler (web parity: `dynamic-deal-edit-modal.js`
+  // `showCalendar`/`showProposal`/`showSuccess`). Step 0 has four sub-views that all
+  // live in the step itself, not a modal:
+  //   intro    — the "Edit Job Build / Install Date" card with the current install
+  //              date and the Modify / Skip / Cancel actions (the landing view).
+  //   calendar — "Select Install Date": pick a date, then confirm with "Use <date>"
+  //              (or set TBD). Tapping a day only SELECTS it, matching web.
+  //   time     — "Confirm Time Window" for the selected date, one window at a time.
+  //   success  — the confirmation card ("Install Date Updated" / "Set to TBD") whose
+  //              "Done — Next →" advances to Job Build.
+  const [dateStep, setDateStep] = useState<'intro' | 'calendar' | 'time' | 'success'>('intro');
   const [proposedDate, setProposedDate] = useState<Date | null>(null);
   const [proposedSlotIdx, setProposedSlotIdx] = useState(0);
 
@@ -330,6 +338,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const balanceMethodKey = balanceMethod ? coerceToPlanKey(balanceMethod, '') : '';
   const downPaymentMethodKey = downPaymentMethod ? coerceToPlanKey(downPaymentMethod, '') : '';
 
+  // Plan key → human label for the Review rows, e.g. `2511` → "2511 (6 Months 0%
+  // Interest No Payments…) (Bank Fee: 4%)". Web parity: `resolvePlanLabel`. Falls
+  // back to the raw key when the catalog has no entry (a plan retired since the
+  // deal was sold still has to render), and to an em dash when nothing is set.
+  const resolvePlanLabel = useCallback(
+    (stored: any, fallbackKey = '') => {
+      const key = coerceToPlanKey(stored, fallbackKey);
+      if (!key) return '—';
+      return paymentOptions.find((o) => o.key === key)?.label || key;
+    },
+    [coerceToPlanKey, paymentOptions]
+  );
+
   // ── tiers (web computeEditedTiers) ──────────────────────────────────────────
   const tierResult = useMemo(
     () =>
@@ -365,12 +386,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     const d = new Date(scheduleDate);
     return isNaN(d.getTime()) ? null : d;
   }, [scheduleDate]);
-  const currentInstallLabel = useMemo(() => {
+  // The intro card stacks the date over its time window (web `formatScheduleDate`
+  // renders M/D/YY, with the window — or "TBD" — underneath).
+  const currentInstallDateText = useMemo(() => {
     if (!scheduleDate) return 'Not Scheduled';
-    if (scheduleDate === 'TBD') return `TBD${scheduleTimeWindow ? ` · ${scheduleTimeWindow}` : ''}`;
-    const dateStr = parsedScheduleDate ? format(parsedScheduleDate, 'M/d/yyyy') : scheduleDate;
-    return `${dateStr}${scheduleTimeWindow ? ` · ${scheduleTimeWindow}` : ''}`;
-  }, [scheduleDate, scheduleTimeWindow, parsedScheduleDate]);
+    if (scheduleDate === 'TBD') return 'TBD';
+    return parsedScheduleDate ? format(parsedScheduleDate, 'M/d/yy') : String(scheduleDate);
+  }, [scheduleDate, parsedScheduleDate]);
+  const currentInstallTimeText = scheduleTimeWindow || 'TBD';
 
   // ── change detection + diff ─────────────────────────────────────────────────
   const buildChangeGroups = useMemo(
@@ -392,51 +415,82 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // A note edit is itself an addendum change, so the rep can send a note-only
   // addendum (baseline is the lead's existing note).
   const noteChanged = String(lead?.note ?? '') !== note;
+  const downPaymentChanged = parsePrice(lead?.downPayment) !== Number(downPayment);
+  // Only count a method as changed once the rep has actually PICKED one — a blank
+  // "Select payment method" (the default) must not read as a change. (Web coerces
+  // with a 'check' fallback so its key is never blank; mobile leaves the picker
+  // genuinely unselected, hence the extra guard.)
+  const downPaymentMethodChanged =
+    !!downPaymentMethodKey && coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey;
+  const balanceMethodChanged =
+    !!balanceMethodKey && coerceToPlanKey(lead?.balancePaymentMethod, '') !== balanceMethodKey;
 
+  // These were previously inlined here, so the Submit button enabled on a payment
+  // change but the Review list had no row for it — the rep saw "no changes" for an
+  // edit that was really being submitted. Named so the review step can render them.
   const hasAnyChange =
     buildChanged ||
     scheduleChanged ||
     priceChanged ||
     noteChanged ||
-    parsePrice(lead?.downPayment) !== Number(downPayment) ||
-    // Only count a method as changed once the rep has actually PICKED one — a blank
-    // "Select payment method" (the default) must not read as a change.
-    (!!downPaymentMethodKey && coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey) ||
-    (!!balanceMethodKey && coerceToPlanKey(lead?.balancePaymentMethod, '') !== balanceMethodKey);
+    downPaymentChanged ||
+    downPaymentMethodChanged ||
+    balanceMethodChanged;
 
   // ── handlers ────────────────────────────────────────────────────────────────
-  // Tap a calendar date → propose the first time window for it (web parity).
+  // Tapping a calendar day only SELECTS it (web `handleDatePick`) — the rep then
+  // confirms with "Use <date>", which opens the confirm-time card.
   const handleInlineDateSelect = useCallback((day: Date) => {
     setProposedDate(day);
     setProposedSlotIdx(0);
-    setDateStep('time');
   }, []);
 
-  // "No" on the proposed time → next window, or roll to the next non-Sunday day.
+  // "Use <date>" → offer the first time window for the selected day.
+  const handleUseSelectedDate = useCallback(() => {
+    if (!proposedDate) return;
+    setDateStep('time');
+  }, [proposedDate]);
+
+  // "TBD" → clear the scheduled date/window, then show the confirmation card
+  // (web `handleSelectTbd` → `showSuccess`). "Done — Next →" moves on to Job Build.
+  const handleSelectTbd = useCallback(() => {
+    setScheduleDate('TBD');
+    setScheduleTimeWindow('');
+    setProposedDate(null);
+    setProposedSlotIdx(0);
+    setDateStep('success');
+  }, []);
+
+  // "Doesn't Work" → offer the next window for the SAME day; once both windows have
+  // been declined, send the rep back to the calendar to pick another date (web
+  // `handleProposalNo`). It used to roll forward to the next non-Sunday day instead,
+  // which silently moved the date the rep had chosen.
   const handleProposeNextSlot = useCallback(() => {
     if (proposedSlotIdx < INSTALL_WINDOWS.length - 1) {
       setProposedSlotIdx(proposedSlotIdx + 1);
-    } else {
-      let next = addDays(proposedDate || new Date(), 1);
-      while (getDay(next) === 0) next = addDays(next, 1);
-      setProposedDate(next);
-      setProposedSlotIdx(0);
+      return;
     }
-  }, [proposedSlotIdx, proposedDate]);
+    setProposedSlotIdx(0);
+    setDateStep('calendar');
+  }, [proposedSlotIdx]);
 
-  // "Yes" → commit the proposed schedule and advance to the Job Build step.
+  // "Confirm" → commit the proposed schedule, then show the confirmation card (web
+  // `handleProposalYes` → `showSuccess`). `proposedDate` is intentionally kept so the
+  // card can echo the committed date; `handleFinishInstallDate` clears it.
   const handleAcceptProposedTime = useCallback(() => {
     if (!proposedDate) return;
     setScheduleDate(format(proposedDate, 'M/d/yyyy'));
     setScheduleTimeWindow(INSTALL_WINDOWS[proposedSlotIdx].value);
-    setDateStep('calendar');
-    setProposedDate(null);
-    setStep(1);
+    setDateStep('success');
   }, [proposedDate, proposedSlotIdx]);
 
-  const handleBackToCalendar = useCallback(() => {
-    setDateStep('calendar');
+  // "Done — Next →" on the confirmation card → Job Build. Resets Step 0 back to its
+  // landing card so stepping back to Install Date shows the intro, not the success card.
+  const handleFinishInstallDate = useCallback(() => {
+    setDateStep('intro');
     setProposedDate(null);
+    setProposedSlotIdx(0);
+    setStep(1);
   }, []);
 
   const handleAutoAdjust = useCallback(() => {
@@ -747,50 +801,108 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         {/* STEP 0 — Install Date */}
         {step === 0 && (
           <ScrollView contentContainerStyle={{ padding: 16 }}>
-            {/* Compact "Current" pill (web parity): label left, value inline right. */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 12 }}>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#94A3B8' }}>Current</Text>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A', flexShrink: 1, textAlign: 'right', marginLeft: 12 }}>
-                {currentInstallLabel}
-              </Text>
-            </View>
+            {dateStep === 'intro' ? (
+              /* Landing card (web parity: `dynamic-deal-edit-modal.js` step 0) —
+                 the current install date, then Modify / Skip / Cancel. */
+              <View style={styles.dateCard}>
+                <Text style={styles.dateCardTitle}>Edit Job Build</Text>
+                <Text style={styles.dateCardSubtitle}>Install Date</Text>
 
-            {dateStep === 'calendar' ? (
-              <>
-                {/* Inline calendar (web parity: the edit step opens directly on
-                    the calendar). Tapping a date proposes a time for it below. */}
-                <InstallDateCalendar selectedDate={parsedScheduleDate} onSelect={handleInlineDateSelect} />
+                <View style={styles.currentInstallBox}>
+                  <Text style={styles.currentInstallLabel}>Current Install Date</Text>
+                  <Text style={styles.currentInstallDate}>{currentInstallDateText}</Text>
+                  <Text style={styles.currentInstallTime}>{currentInstallTimeText}</Text>
+                </View>
 
-                {/* Hint above two side-by-side actions (web parity). */}
-                <Text style={{ fontSize: 11, color: '#94A3B8', textAlign: 'center', marginTop: 4, marginBottom: 14, lineHeight: 16 }}>
-                  Sundays unavailable · Pick a date to propose a time, or Skip to keep the current one.
-                </Text>
+                <TouchableOpacity onPress={() => setDateStep('calendar')} style={styles.primaryBtn}>
+                  <Text style={styles.primaryBtnText}>Modify Install Date</Text>
+                </TouchableOpacity>
 
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <TouchableOpacity
-                    onPress={() => setStep(1)}
-                    style={{ flex: 1, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
-                  >
-                    <Text style={{ color: '#334155', fontWeight: '800', fontSize: 14 }}>No Change — Skip</Text>
+                <TouchableOpacity onPress={() => setStep(1)} style={styles.outlineBtn}>
+                  <Text style={styles.outlineBtnText}>No Change — Skip</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setShowCancelConfirm(true)} style={styles.dangerBtn}>
+                  <Text style={styles.dangerBtnText}>Cancel Job</Text>
+                </TouchableOpacity>
+              </View>
+            ) : dateStep === 'calendar' ? (
+              /* "Select Install Date": tapping a day selects it; the rep confirms
+                 with "Use <date>", or sets TBD. */
+              <View style={styles.dateCard}>
+                <View style={styles.calendarHeader}>
+                  <TouchableOpacity onPress={() => setDateStep('intro')} hitSlop={8} style={styles.calendarBackBtn}>
+                    <Text style={styles.calendarBackText}>‹ Back</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.calendarTitle}>Select Install Date</Text>
+                  {/* Balances the Back button so the title stays centred. */}
+                  <View style={styles.calendarBackBtn} />
+                </View>
+
+                <InstallDateCalendar
+                  selectedDate={proposedDate || parsedScheduleDate}
+                  onSelect={handleInlineDateSelect}
+                />
+
+                <Text style={styles.calendarHint}>Sundays unavailable</Text>
+
+                <View style={styles.calendarActions}>
+                  <TouchableOpacity onPress={handleSelectTbd} style={styles.tbdBtn}>
+                    <Text style={styles.tbdBtnText}>TBD</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setShowCancelConfirm(true)}
-                    style={{ flex: 1, borderWidth: 1, borderColor: '#FDBA74', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+                    onPress={handleUseSelectedDate}
+                    disabled={!proposedDate}
+                    style={[styles.useDateBtn, !proposedDate && styles.useDateBtnDisabled]}
                   >
-                    <Text style={{ color: '#EA580C', fontWeight: '800', fontSize: 14 }}>Cancel Job</Text>
+                    <Text style={[styles.useDateBtnText, !proposedDate && styles.useDateBtnTextDisabled]}>
+                      {proposedDate ? `Use ${format(proposedDate, 'MMM d, yy')}` : 'Select a Date'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
-              </>
-            ) : (
-              /* Propose-a-time card shown after a calendar date is tapped. */
+              </View>
+            ) : dateStep === 'time' ? (
+              /* Confirm-time card, reached from "Use <date>". Declining both windows
+                 walks the rep back to the calendar (see `handleProposeNextSlot`). */
               <ProposedTimeCard
                 date={proposedDate}
                 slot={INSTALL_WINDOWS[proposedSlotIdx]}
                 onNo={handleProposeNextSlot}
                 onYes={handleAcceptProposedTime}
-                onBack={handleBackToCalendar}
               />
+            ) : (
+              /* Confirmation card (web `showSuccess`) — TBD gets a blue "?" badge,
+                 a committed date gets a green check plus the date + window it saved. */
+              <View style={styles.dateCard}>
+                <View
+                  style={[
+                    styles.successIcon,
+                    scheduleDate === 'TBD' ? styles.successIconTbd : styles.successIconDone,
+                  ]}
+                >
+                  <Icon name={scheduleDate === 'TBD' ? 'help' : 'check'} size={34} color="#fff" />
+                </View>
+
+                <Text style={styles.dateCardTitle}>
+                  {scheduleDate === 'TBD' ? 'Install Date Set to TBD' : 'Install Date Updated'}
+                </Text>
+
+                {scheduleDate === 'TBD' ? (
+                  <Text style={styles.successCaption}>Will be scheduled at a later time</Text>
+                ) : (
+                  <>
+                    <Text style={styles.successDate}>
+                      {proposedDate ? format(proposedDate, 'EEEE, MMMM d, yyyy') : currentInstallDateText}
+                    </Text>
+                    <Text style={styles.successCaption}>{scheduleTimeWindow}</Text>
+                  </>
+                )}
+
+                <TouchableOpacity onPress={handleFinishInstallDate} style={styles.primaryBtn}>
+                  <Text style={styles.primaryBtnText}>Done — Next →</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </ScrollView>
         )}
@@ -802,6 +914,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             embedded
             mode="edit"
             initialConfig={jobBuilderConfig ?? undefined}
+            // System A calculator schemas — the Job Builder Summary resolves each
+            // card's header colour from the matching schema CATEGORY's colour (web
+            // parity: `resolveTabAccentColor` → `findTabCategoryColorFromSchemas`).
+            // They are NOT on `initialConfig` (that is the System B job-builder
+            // config), so without this every tab fell through to the single
+            // `vertical.color` and every card rendered the same purple. The new-deal
+            // path (`DynamicDealCenterScreen`) passes this same array as `verticals`.
+            calculatorSchemas={configuredSchemas}
             initialJobState={initialState}
             dealCenterData={dealCenterData}
             calculatorResultData={{
@@ -974,8 +1094,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 {priceChanged && (
                   <ReviewRow label="Contract Price" from={fmtMoney(parsePrice(lead?.originalContractPrice))} to={fmtMoney(contractPrice)} />
                 )}
-                {parsePrice(lead?.downPayment) !== Number(downPayment) && (
+                {downPaymentChanged && (
                   <ReviewRow label="Down Payment" from={fmtMoney(parsePrice(lead?.downPayment))} to={fmtMoney(downPayment)} />
+                )}
+                {downPaymentMethodChanged && (
+                  <ReviewRow
+                    label="Down Pmt Method"
+                    from={resolvePlanLabel(lead?.paymentMethod, '')}
+                    to={resolvePlanLabel(downPaymentMethodKey, '')}
+                  />
+                )}
+                {balanceMethodChanged && (
+                  <ReviewRow
+                    label="Balance Method"
+                    from={resolvePlanLabel(lead?.balancePaymentMethod, '')}
+                    to={resolvePlanLabel(balanceMethodKey, '')}
+                  />
                 )}
               </View>
             )}
@@ -1148,49 +1282,45 @@ function InstallDateCalendar({
 }
 
 /**
- * "Propose a time" card shown after a calendar date is tapped (web parity):
- * full date, an AM/PM window pill, Yes/No, and a "Back to calendar" link. "No"
- * cycles to the next window/day; "Yes" commits the schedule.
+ * "Confirm Time Window" card, shown after the rep confirms a date with "Use <date>"
+ * (web parity: the `showProposal` card). It offers ONE window at a time — the long
+ * date, a green-outlined block naming the window (Morning / Afternoon), then
+ * "Doesn't Work" / "Confirm". "Doesn't Work" walks to the other window and, once both
+ * are declined, returns to the calendar (handled by the caller).
  */
 function ProposedTimeCard({
   date,
   slot,
   onNo,
   onYes,
-  onBack,
 }: {
   date: Date | null;
   slot: { period: string; value: string };
   onNo: () => void;
   onYes: () => void;
-  onBack: () => void;
 }) {
   if (!date) return null;
   return (
-    <View style={{ backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', padding: 24, alignItems: 'center' }}>
-      <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 8 }}>Proposed Install Date</Text>
-      <Text style={{ fontSize: 20, fontWeight: '900', color: '#1E293B', marginBottom: 14, textAlign: 'center' }}>
-        {format(date, 'EEEE, MMMM d, yyyy')}
-      </Text>
+    <View style={styles.dateCard}>
+      <Text style={styles.dateCardTitle}>Confirm Time Window</Text>
+      <Text style={styles.confirmDate}>{format(date, 'EEEE, MMMM d, yyyy')}</Text>
 
-      <View style={{ backgroundColor: '#DCFCE7', borderRadius: 999, paddingHorizontal: 18, paddingVertical: 8, marginBottom: 20 }}>
-        <Text style={{ fontSize: 15, fontWeight: '900', color: '#15803D' }}>{`${slot.period} · ${slot.value}`}</Text>
+      <View style={styles.windowBox}>
+        <Text style={styles.windowLabel}>{slot.period.toUpperCase()}</Text>
+        <Text style={styles.windowValue}>{slot.value}</Text>
+        <Text style={styles.windowCaption}>Arrival window</Text>
       </View>
 
-      <Text style={{ fontSize: 15, fontWeight: '700', color: '#475569', marginBottom: 20 }}>Does this time work?</Text>
+      <Text style={styles.confirmPrompt}>Work for the customer?</Text>
 
-      <View style={{ flexDirection: 'row', gap: 12, width: '100%', marginBottom: 16 }}>
-        <TouchableOpacity onPress={onNo} style={{ flex: 1, height: 52, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
-          <Text style={{ color: '#475569', fontWeight: '900', fontSize: 14 }}>No</Text>
+      <View style={styles.calendarActions}>
+        <TouchableOpacity onPress={onNo} style={styles.tbdBtn}>
+          <Text style={styles.tbdBtnText}>Doesn&apos;t Work</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={onYes} style={{ flex: 1, height: 52, borderRadius: 12, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>Yes</Text>
+        <TouchableOpacity onPress={onYes} style={styles.useDateBtn}>
+          <Text style={styles.useDateBtnText}>Confirm</Text>
         </TouchableOpacity>
       </View>
-
-      <TouchableOpacity onPress={onBack} style={{ paddingVertical: 4 }}>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: '#94A3B8' }}>← Back to calendar</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -1383,14 +1513,210 @@ function MethodPicker({
 function ReviewRow({ label, from, to }: { label: string; from: string; to: string }) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-      <View style={{ flex: 1, paddingRight: 12 }}>
+      <View style={{ flex: 1, flexShrink: 1, paddingRight: 12 }}>
         <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>{label}</Text>
         <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
+      {/* Payment-plan labels are long sentences ("2511 (6 Months 0% Interest No
+          Payments…)"), so the value column must SHRINK and wrap — RN defaults a
+          View to flexShrink: 0, which would push it off-screen. Web wraps it the
+          same way, right-aligned. */}
+      <View style={{ alignItems: 'flex-end', flexShrink: 1, maxWidth: '55%' }}>
         <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8' }}>NEW</Text>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D' }}>{to}</Text>
+        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D', textAlign: 'right' }}>{to}</Text>
       </View>
     </View>
   );
 }
+
+// ── Step 0 (Install Date) card styling — mirrors the web edit modal's centred
+// card: a white rounded panel with a hairline border, a soft shadow, and
+// full-width stacked actions.
+const styles = StyleSheet.create({
+  dateCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 20,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  dateCardTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  dateCardSubtitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  // Current install date block (grey, bordered, centred).
+  currentInstallBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  currentInstallLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+    marginBottom: 6,
+  },
+  currentInstallDate: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  currentInstallTime: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  primaryBtn: {
+    backgroundColor: '#22C55E',
+    borderRadius: 10,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  primaryBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  outlineBtn: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  outlineBtnText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
+  dangerBtn: {
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  dangerBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  // "‹ Back  Select Install Date" header — the spacer view opposite Back keeps
+  // the title optically centred.
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  calendarBackBtn: { width: 56 },
+  calendarBackText: { color: '#22C55E', fontSize: 14, fontWeight: '800' },
+  calendarTitle: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  calendarHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginTop: 12,
+    marginBottom: 14,
+  },
+  // ── Confirmation ("success") card ──
+  // Circular badge: blue + "?" for TBD, green + check for a committed date.
+  successIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  successIconTbd: { backgroundColor: '#00B8D9' },
+  successIconDone: { backgroundColor: '#22C55E' },
+  successDate: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  successCaption: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  // ── Confirm Time Window card ──
+  confirmDate: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  // Green-outlined block naming the offered window.
+  windowBox: {
+    borderWidth: 2,
+    borderColor: '#22C55E',
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  windowLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803D',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  windowValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#22C55E',
+    marginBottom: 6,
+  },
+  windowCaption: { fontSize: 12, color: '#15803D' },
+  confirmPrompt: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  calendarActions: { flexDirection: 'row', gap: 12 },
+  tbdBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  tbdBtnText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
+  useDateBtn: {
+    flex: 1,
+    backgroundColor: '#22C55E',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  useDateBtnDisabled: { backgroundColor: '#E2E8F0' },
+  useDateBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  useDateBtnTextDisabled: { color: '#94A3B8' },
+});

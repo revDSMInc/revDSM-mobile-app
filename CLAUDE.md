@@ -95,8 +95,191 @@ Legend: ✅ full · 🟡 partial/in-progress · ⛔ stub. "Web ref" points into 
 | Profile / settings (+2FA mgmt) | ✅ | `src/screens/Profile/index.tsx` | `src/sections/account/`, `src/api/profile.js` |
 | Appointments / scheduler | 🟡 in-flow only, no standalone screen | `src/widgets/modals/job-builder/AppointmentSchedulerModal.tsx` | `src/sections/calculator-appointment/` |
 | Deal details / drafts | 🟡 outcome modals only, no drafts browser | `src/widgets/modals/DealCenter/OutcomeModal.tsx` | `src/sections/deal/`, `src/pages/deal-drafts.js` |
+| My Deals (deal list → detail) | ✅ detail **reuses Lead Center** (see below) | `src/screens/MyDeals/index.tsx` → `LeadCenter` w/ `fromMyDeals` | `src/sections/deal/view/deal-details-view.js` |
 | My Learning (LMS) | ⛔ 34-line stub | `src/screens/Learning/index.tsx` | external LMS redirect |
 | User management (other users) | ⛔ not implemented (own profile only) | — | `src/sections/user/` |
+
+### My Deals detail IS the Lead Center screen (ticket: "My deals should match resulted lead page")
+
+Tapping a deal in **My Deals** no longer opens a separate deal screen — it opens the **same
+Lead Center screen a sold lead opens**, so the two entry points are pixel-identical (lead info
+block, **Job docs / Map / Tools**, the green `SALE - LEAD RESULTED` `ContractDetailsCard` with
+its price rows + Agreement / Order Sheets / Down Payment Receipt sections and **Add Document**,
+and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons are involved.
+
+- **Entry point**: `MyDeals.openDeal` navigates to **`LeadCenter` with `{ lead, fromMyDeals: true }`**
+  (was `DealDetail`). `fromMyDeals?: boolean` was added to the `LeadCenter` params in
+  `RootStackParamList` (`src/navigation/index.tsx`).
+- **The pencil keeps the My Deals flow.** On the normal lead path the Contract Details pencil
+  opens the inline `EditContractDetailsModal`; from My Deals it must still launch the **4-step
+  dynamic deal-edit wizard** (Install Date → Job Build → Job Price → Review & Submit). So
+  `JobDocsSection` gained an optional **`onEditContract?: () => void`** prop that overrides
+  `ContractDetailsCard`'s `setShowEditModal`; `LeadCenter` passes
+  `onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}`. `handleEditDealFromMyDeals`
+  (in `LeadCenter/index.tsx`) is the port of the old `DealDetail.onEdit`: legacy (non-dynamic) deal →
+  "Edit on web" flash; dynamic deal → `navigate('DynamicDealCenter', { lead, mode:'edit',
+  calculatorResultData: { calculatorId, appointmentId } })` with the same multi-shape id resolution.
+  **Undefined on the normal lead path, so Lead Center is unchanged there.**
+- **Header title is entry-aware**: `{fromMyDeals ? 'Deal' : 'Lead Center'}` (`LeadCenter/index.tsx`).
+- **My Deals shows the global `MainHeader`** (added to the `showHeader` list in
+  `navigation/index.tsx`) so its frame matches the screen it navigates into. Because the
+  navigator's outer `SafeAreaView` already applies the **top** inset when the header shows,
+  `MyDeals`' own `SafeAreaView` was switched to **`edges={['bottom','left','right']}`** — matching
+  Lead Center. Leaving it on the default (all edges) double-pads the title bar.
+- **`src/screens/DealDetail/` is now UNREACHABLE** (nothing navigates to it) but is still
+  registered in the stack. Its **Addendums list** (tap an approved addendum → signed PDF via
+  `getDraftAmendmentPdf`, plus the `DraftComparison` diff) has **no equivalent on the Lead Center
+  screen** — Lead Center only shows the pending-signature banner (from its own `leadDraft` fetch).
+  Re-add that list under the contract card if reps need it.
+
+### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
+
+`DynamicDealEditScreen.tsx` (the 4-step wizard the Deal pencil opens) previously dropped the rep
+**straight onto the calendar** with a compact "Current" pill. It now mirrors web
+`dynamic-deal-edit-modal.js` step 0, whose `dateStep` has **four** sub-views instead of two:
+
+- **`intro`** (new landing view) — a centred white card: **"Edit Job Build"** / "Install Date", a
+  grey bordered **Current Install Date** block (date `M/d/yy` stacked over its time window, or
+  `TBD`), then full-width stacked actions **Modify Install Date** (green) / **No Change — Skip**
+  (outlined) / **Cancel Job** (red filled). Web's `showCalendar === false` state.
+- **`calendar`** — **"‹ Back"** (green) + centred **"Select Install Date"** title, the existing
+  `InstallDateCalendar` in its own bordered box, a **"Sundays unavailable"** caption, then
+  **TBD** (outlined) + **Use \<Mmm d, yy\>** (green, disabled → "Select a Date" until a day is
+  picked). **Tapping a day now only SELECTS it** (web `handleDatePick`); the confirm-time card
+  opens on **Use \<date\>** (`handleUseSelectedDate`) — previously a tap jumped straight to it.
+- **`time`** — **"Confirm Time Window"** (`ProposedTimeCard`, rebuilt to match web's `showProposal`
+  card): the long date (`EEEE, MMMM d, yyyy`), a **green-outlined block** naming the offered window
+  — `MORNING` / `AFTERNOON` over the big green time range over "Arrival window" — then
+  **"Work for the customer?"** and **Doesn't Work** (outlined) / **Confirm** (green). The old
+  design (a "Proposed Install Date" eyebrow, a small pill, Yes/No, and a "← Back to calendar"
+  link) is gone; web has no back link, so the prop and `handleBackToCalendar` were removed.
+- **`success`** — the confirmation card (web `showSuccess`), reached from **both** TBD and
+  Confirm: a 72px circular badge (**blue `#00B8D9` + `?`** for TBD, **green + check** otherwise),
+  the title **"Install Date Set to TBD"** / **"Install Date Updated"**, then either
+  "Will be scheduled at a later time" or the committed long date + time window, and a full-width
+  green **"Done — Next →"** (`handleFinishInstallDate`) that advances to Job Build and resets
+  `dateStep` to `intro`. NOTE: `handleAcceptProposedTime` and `handleSelectTbd` no longer call
+  `setStep(1)` themselves — they land on this card, and **only "Done — Next →" advances the step**.
+
+**One window is offered at a time, and declining both returns to the calendar.**
+`INSTALL_WINDOWS` is the 2-slot list (web `TIME_SLOTS`) and its `period` values are now
+**`Morning` / `Afternoon`** (were `AM` / `PM`), rendered uppercase. `handleProposeNextSlot`
+(web `handleProposalNo`) advances to the second window, then on the next decline resets the slot
+index and sends the rep back to **`calendar`**. It previously **rolled forward to the next
+non-Sunday day**, silently moving the date the rep had picked. `proposedDate` is deliberately
+kept on that return, so the calendar reopens with the date still selected.
+
+Also: `handleSelectTbd` (new) sets `scheduleDate='TBD'` and clears the window. `proposedDate`
+doubles as web's `selectedDate` (the calendar highlights `proposedDate || parsedScheduleDate`) and
+is deliberately **kept** through Confirm so the success card can echo the committed date —
+`handleFinishInstallDate` clears it. Styling moved into a **`StyleSheet`** at the bottom of the
+file (`styles.dateCard`, `currentInstallBox`, `primaryBtn`, `calendarHeader`, `useDateBtn`,
+`windowBox`, `successIcon`, …) — the first non-inline styles in this file.
+
+The whole of step 0 is now a 1:1 port of web's step 0; nothing is intentionally left out.
+
+### Deal-edit Review step names rows after the SECTION, not the tab
+
+Ticket: *"My deals - review screen - I added porch ceiling soffit not regular soffit like it's
+saying."* The wizard's step-4 review listed **`Soffit · Location / Footage / Type / Color`** for a
+rep who had actually filled in the **Porch Ceiling SqFT** section. A **tab groups several sections
+that reuse the same field ids** — the Soffit tab holds both *Vinyl Soffit* and *Porch Ceiling SqFT*,
+each with `location`/`footage`/`type`/`color` — so labelling by tab tells the rep they changed the
+wrong product.
+
+`src/screens/DynamicDealCenter/utils/dynamic-deal-diff.ts` was an **incomplete port** of web
+`src/sections/deal/components/dynamic-deal-diff.js`; three pieces were missing and are now in:
+
+- **`sectionLabel` is captured.** `buildFieldLabelMap`'s `collect()` gained `sectionLabel` +
+  `parentLabel` params, and the section loop now passes `s.label` —
+  `collect(s.fields, s.id, t.label, v.label, s.label || '')`. It was previously dropped entirely, so
+  the label map had no way to name the section.
+- **New `formatChangeFieldLabel(meta)`** (web parity) replaces the inline
+  `meta.tab ? \`${meta.tab} · ${meta.label}\` : meta.label` in `computeDynamicBuildChanges`. Prefix is
+  **`meta.sectionLabel || meta.tab`** — section wins, tab is the fallback for tab-level fields (which
+  have no section, e.g. `Lighting · Watts`).
+- **New `resolveFieldLabel(field, parentLabel)` + `COLOR_FIELD_TYPES`.** A field with no label
+  inherits its container's (`isContainerFieldType` → `stack`/`accordion`, imported from
+  `utils/dynamic-job-builder/constants/field-types`), else falls back to **`'Color'`** for
+  `swatch`/`colorSelection`/`customColor` — which are authored unlabelled because the swatch *is* the
+  label. Previously such a field fell through to its raw **`f.id`**.
+- **`SCOPE_SEP` fixed to `'\u0000'` (NUL)** (was a plain space `' '`). Scope keys are
+  `` `${scopeId}${SCOPE_SEP}${fieldId}` ``, so with a space `"a b" + "c"` and `"a" + "b c"` collide;
+  NUL can never occur in an authored id. ⚠️ Write it as the **escape sequence**, never a raw NUL byte
+  — a literal `\0` in the source makes grep treat the file as binary.
+
+Verified against the config shape in the ticket: section-not-tab naming, sibling sections with
+shared field ids staying separate, unlabelled swatch → `Color`, and the tab-level fallback still
+reading `Lighting · Watts`. Confirmed failing on the pre-fix code and passing after.
+
+### Deal-edit Review step shows payment-method changes
+
+Ticket: *"My deals - review screen - I changed payment plan - not showing changes."* The step-4
+review listed build / Install Date / Contract Price / Down Payment but had **no row for either
+payment method**, so switching the balance plan (e.g. `4091` → `2511`) reviewed as though nothing
+had happened. Web shows **Down Pmt Method** and **Balance Method** rows.
+
+The change flags already existed on mobile — but were **inlined inside `hasAnyChange`**, so a
+payment-plan edit *enabled Submit* while rendering no row: the rep saw an empty review for an
+addendum that really was being submitted. In `DynamicDealEditScreen.tsx`:
+
+- **Flags extracted and named** (web parity): `downPaymentChanged`, `downPaymentMethodChanged`,
+  `balanceMethodChanged`. `hasAnyChange` now composes those named flags instead of re-deriving them,
+  so the button and the list can never disagree again.
+- **New `resolvePlanLabel(stored, fallbackKey)`** (web `resolvePlanLabel`) — runs `coerceToPlanKey`
+  then maps the key to its catalog label, so a row reads
+  `2511 (6 Months 0% Interest No Payments…) (Bank Fee: 4%)` rather than a bare id. Falls back to the
+  raw key when the catalog has no entry, and to **`—`** when nothing is set. Note an *unrecognized*
+  stored method fuzzy-resolves via `resolveTierPaymentMethod` (amex / visa-mc-dscvr, else **check**),
+  so it renders a real label — same as web.
+- **Two `ReviewRow`s added**: `Down Pmt Method` and `Balance Method`, each gated on its flag.
+- ⚠️ **Mobile keeps its `!!key &&` guard** on both method flags. Web coerces with a `'check'`
+  fallback so its key is never blank; mobile leaves the picker genuinely unselected, so without the
+  guard a blank "Select payment method" would read as a change. This divergence is deliberate.
+- **`ReviewRow`'s value column now shrinks and wraps** (`flexShrink: 1`, `maxWidth: '55%'`,
+  `textAlign: 'right'`). Plan labels are long sentences and RN defaults a `View` to `flexShrink: 0`,
+  which would have pushed the value off-screen — web wraps it the same way.
+
+Verified: label resolution (incl. legacy saves that stored the label instead of the key, and the
+fuzzy fallback), the ticket's `4091 → 2511` switch, unchanged/blank-picker non-changes, and that
+every flag feeding `hasAnyChange` has a row able to render it.
+
+### Deal-edit Job Summary: per-card colours + combination dividers
+
+Ticket: *"My deals - job summary - LeafFilter - make it more distinct between combinations, add
+horizontal line between like web; also the card colors are purple, it should also be like web."*
+Two unrelated causes.
+
+**1. Every card was purple — a missing prop, not a styling bug.** Each summary card's header colour
+comes from the matching **calculator-schema CATEGORY** (`resolveTabAccentColor` →
+`findTabCategoryColorFromSchemas`), which needs the **System A** schemas. Those are NOT on
+`initialConfig` (that is the System B job-builder config), so they arrive via the separate
+**`calculatorSchemas`** prop. `DynamicDealCenterScreen` (new-deal path) passes it as
+`calculatorSchemas={verticals}`; **`DynamicDealEditScreen` passed nothing**, so `schemas` was `[]`,
+the category branch returned null, and every tab fell through to the single `vertical.color`.
+Fixed by passing `calculatorSchemas={configuredSchemas}` — literally the same array (in
+`DynamicDealCenterScreen`, `verticals = configuredSchemas`).
+
+> Confirmed by calling the real `resolveTabAccentColor` for three tabs of one vertical:
+> `schemas: []` → `['#8b5cf6','#8b5cf6','#8b5cf6']` (**`#8b5cf6` is exactly the reported purple**);
+> with schemas → `['#00B8D9','#22c55e','#4CBB17']`. So any *other* screen that embeds
+> `DynamicJobBuilderScreen` must pass `calculatorSchemas` or its summary will go monochrome too.
+
+**2. Combinations ran together — the dividers existed but were invisible.** Web draws them at two
+weights via `alpha(theme.palette.divider, …)`: **0.4** (a visible rule) between combinations and
+between combination groups, **0.12** (a hairline) between field rows in a simple section. Mobile
+used `border-slate-100` / `border-slate-50` for all of them — near-white on a white card. Now in
+`VerticalSummaryTab.tsx` as two named constants, **`DIVIDER_STRONG = '#CBD5E1'`** (≈ 0.4) and
+**`DIVIDER_HAIRLINE = '#F1F5F9'`** (≈ 0.12), applied as explicit `borderTopWidth`/`borderBottomWidth`
+styles rather than NativeWind classes. Also **added the between-group rule** mobile never had (web
+`groupIndex < section.combinationSections.length - 1`) — that is the line above
+**"Downspout & Accessories"** in the web screenshot.
+
+**Divider spacing is 16px on BOTH sides**, matching web (`Divider sx={{ mt: 2 }}` inside the item +
+`Stack spacing={2}` between items) — `mb-4 pb-4` on `CombinationSummaryItem`, `mt-4` on the group
+rule. It was first shipped at 12px/8px, which left the next "Combination #N" chip sitting almost on
+the line and read as cramped. Note the combination gap is a plain margin on the item itself (not the
+parent's `space-y-4`), so it does not depend on NativeWind's `space-y-*` behaviour.
 
 ---
 
@@ -483,9 +666,49 @@ Still pending (deferred — advanced features):
 - **Two map stacks** — keep `react-native-maps` (Google, lead/job maps) vs `@rnmapbox/maps` (Zone Canvasser) straight.
 - **Hardcoded demo API URL** in `src/config/env.ts` (§3).
 - **Dynamic Job Builder engine runs on the JS thread** — web offloads the same compute to web workers; watch performance on large schemas.
+- **`Image.prefetch` does NOT work on our photo URLs.** They are pre-signed S3 links with no cache
+  headers, so the OS image cache refuses to store them: a thumbnail can be on screen and a
+  full-size decode of the *same* url still misses and re-downloads. Anything that needs an image to
+  appear instantly must go through the local-FILE cache (`src/utils/imageFileCache.ts`) and render
+  `file://…`. See "Hold-to-peek previews" below.
 - **Largest files** (respect when editing): `src/widgets/components/dealcenter/CalculatorSummary.tsx` (~2,298),
   `src/widgets/components/job-builder/SummarySection.tsx` (~1,993), `src/screens/JobBuilder/index.tsx` (~1,730).
 - Web is the **source of truth** for feature behavior; when unsure how a flow should work, check the web ref path in §4.
+
+### Hold-to-peek previews warm through a shared local-file cache
+
+Ticket: *"Render hold-preview takes 2–3s blank"* — first reported on the RevRender rollout slots,
+then again by QA on **Manage Photos**, **revRender ▸ Select a photo** and **Configure Render**.
+
+Cause is the `Image.prefetch` gotcha above: holding a thumbnail opens an enlarged preview, whose
+full-size decode misses the OS cache and re-downloads the S3 object, so the peek sits blank.
+
+- **`src/utils/imageFileCache.ts` (new)** — the cache primitives (`getLocalCachePath`,
+  `downloadImage`, `prefetchToLocalCache`) **moved here** from
+  `widgets/modals/lead-center/RevRenderHistoryModal.tsx`, which now imports and **re-exports**
+  `getLocalCachePath` / `prefetchToLocalCache` so its existing callers (`RevRenderSlots`,
+  `OperationalSections`) are unaffected. The move exists so a leaf widget can warm images without
+  importing a heavy modal screen. Added: **`isRemoteImageUrl`** (only http(s) is worth caching) and
+  **`warmToLocalCache(url)`** → resolves the `file://` uri, or `null` so callers fall back to the
+  network url.
+- **Concurrency is capped at 3** (`MAX_CONCURRENT_WARMS` + a small semaphore). A photo grid can
+  mount 20+ thumbnails at once (Manage Photos ▸ Roofline is 0/22); warming them all in parallel
+  would saturate the connection and make the *visible* thumbnails slower — the opposite of the goal.
+- **Warming lives in `PhotoPeekPressable` itself** (`usePeekCachedUri`), NOT in each screen, so every
+  consumer gets it and no new one can forget it — that is what fixes all three screens QA reported
+  at once. The preview renders `cachedUri || uri`, so it is never worse than before, and the
+  `Animated.Image` is **keyed on the uri** so swapping network→file remounts instead of leaving the
+  stale decode up.
+- `RevRenderSlots.tsx` keeps its own bespoke warm block. It is now **redundant** (the download layer
+  dedupes by cache path, so there is no double fetch) but harmless — it warms slightly earlier, at
+  list mount rather than thumbnail mount. `RevRender/index.tsx`'s `Image.prefetch` block is left
+  alone too: it targets the `HouseImage` thumbnails, not the peek.
+
+Verified with `react-native-blob-util` mocked: signature-stripping, the **basename-collision**
+guard, the cached-hit path making **zero** network calls, failure → `null`, non-remote skip,
+concurrent callers **sharing one GET**, and the **≤3 in-flight** cap. (The repo has **no global
+mock** for `react-native-blob-util` — that is why the two `DynamicDealCenter` suites which import it
+fail under jest; anything testing this module must mock it locally.)
 
 ---
 

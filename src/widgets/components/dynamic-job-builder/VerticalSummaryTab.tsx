@@ -125,13 +125,27 @@ function ExtrasList({ label, items }: { label?: string; items: any[] }) {
   );
 }
 
+// Web draws its summary dividers at two weights (`alpha(theme.palette.divider, …)`):
+// 0.4 — a clearly visible rule — BETWEEN combinations and between combination
+// groups, and 0.12 — a hairline — between the field rows inside a simple section.
+// Mobile previously used `slate-100`/`slate-50` for all of them, which is so close
+// to white that combinations ran together with no visible separation.
+const DIVIDER_STRONG = '#CBD5E1'; // ≈ alpha(divider, 0.4)
+const DIVIDER_HAIRLINE = '#F1F5F9'; // ≈ alpha(divider, 0.12)
+
 function CombinationSummaryItem({ entry, accentColor, isLast }: { entry: any; accentColor: string; isLast: boolean }) {
   // Web parity (`CombinationSummaryItem` Grid: label md={4} + body md={8}): the
   // "Combination #N" chip sits in a left column with the combo's summary line to
   // its right; the per-field rows below keep the same label/value column split so
   // labels align under the chip — matching the web summary reference layout.
   return (
-    <View className={isLast ? '' : 'mb-3 pb-3 border-b border-slate-100'}>
+    // Web breathes 16px on BOTH sides of the rule (`Divider sx={{ mt: 2 }}` inside
+    // the item + `Stack spacing={2}` between items). At 12px the next
+    // "Combination #N" chip sat almost on the line, which read as cramped.
+    <View
+      className={isLast ? '' : 'mb-4 pb-4'}
+      style={isLast ? undefined : { borderBottomWidth: 1, borderBottomColor: DIVIDER_STRONG }}
+    >
       <View className="flex-row items-start">
         <View style={{ width: '40%', paddingRight: 8 }}>
           <View className="self-start px-2 py-0.5 rounded" style={{ backgroundColor: `${accentColor}1A` }}>
@@ -248,7 +262,7 @@ export function VerticalSummaryTab({
                   <Text className="text-xs text-slate-400 italic">No data entered</Text>
                 ) : (
                   <View className="space-y-4">
-                    {hasCombinations && section.combinationSections.map((group: any) => (
+                    {hasCombinations && section.combinationSections.map((group: any, groupIdx: number) => (
                       <View key={group.sectionId}>
                         {group.sectionLabel && (
                           <Text className="text-xs font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
@@ -262,11 +276,20 @@ export function VerticalSummaryTab({
                           />
                         ))}
                         <ExtrasList label={group.extrasLabel} items={group.extras} />
+                        {/* Web parity: a rule closes every combination group except the
+                            last — e.g. the line above "Downspout & Accessories". */}
+                        {groupIdx < section.combinationSections.length - 1 && (
+                          <View className="mt-4" style={{ borderTopWidth: 1, borderTopColor: DIVIDER_STRONG }} />
+                        )}
                       </View>
                     ))}
 
                     {hasSimple && section.simpleSections.map((group: any) => (
-                      <View key={group.sectionId} className="pt-2 border-t border-slate-50">
+                      <View
+                        key={group.sectionId}
+                        className="pt-2"
+                        style={{ borderTopWidth: 1, borderTopColor: DIVIDER_HAIRLINE }}
+                      >
                         {group.sectionLabel && (
                           <Text className="text-xs font-bold text-slate-700 mb-2">{group.sectionLabel}</Text>
                         )}
@@ -279,7 +302,10 @@ export function VerticalSummaryTab({
                     ))}
 
                     {hasTabFields && (
-                      <View className="pt-2 border-t border-slate-50 space-y-2">
+                      <View
+                        className="pt-2 space-y-2"
+                        style={{ borderTopWidth: 1, borderTopColor: DIVIDER_HAIRLINE }}
+                      >
                         {section.tabFields.map((field: any, idx: number) => (
                           <SummaryFieldRow key={idx} label={field.label} text={field.text} variant={field.variant} />
                         ))}
