@@ -287,6 +287,55 @@ pill** (`py-0.5`) whose text sits flush against its top edge, so an equal 16px r
 22px below balances them. Keep the spacing in `style` — the View already carries a `style` prop for
 the border, and mixing margin classes with it made it ambiguous which applied.
 
+### Deal-edit "Send Addendum To" phone is dash-formatted, always +1
+
+Ticket: *"My deals - phone number show the dashes, like this: 443-878-4937, always use +1 as we are
+using app in usa."* The field took raw keystrokes, so a rep saw `0948320498`.
+
+Two new helpers in **`src/utils/phone-util.ts`** (that file's existing `formatUSPhoneNumber` emits
+`+1 (XXX) XXX-XXXX` — parens, and its OWN `+1` — so it is wrong for a field that renders a static
+`+1` beside the input):
+- **`formatLocalUSPhone(text)`** → the local 10 digits as `XXX-XXX-XXXX`, no country code.
+- **`toE164USPhone(text)`** → `+1XXXXXXXXXX` for the API.
+
+Both take the **LAST 10 digits** when given more, rather than stripping a leading `1`. That handles
+`+1…` / `1…` / already-formatted input, and never mangles a partially-typed number mid-entry.
+
+In `DynamicDealEditScreen.tsx`: the input formats on change (`maxLength={12}` = 10 digits + 2
+dashes, placeholder `443-878-4937`), and the **seed** from `lead.customerDetails.phone` is formatted
+too — it may be stored raw or E.164.
+
+⚠️ **The submit payload stays E.164.** The old code passed the value through untouched whenever it
+merely *started with* `+`, so a display string like `+1 443-878-4937` would have reached the SMS
+provider with spaces and dashes once the field became formatted; and a stored `14438784937` became
+`+114438784937`. `toE164USPhone` fixes both.
+
+Verified: progressive typing (`4` → `443-8` → `443-878-4937`), every stored shape (raw / E.164 /
+`1`-prefixed / parens / already-dashed) normalizing to the same display and the same `+14438784937`
+payload, idempotence, and the 10-digit cap.
+
+### Deal-edit wizard: keyboard covered the Notes / Phone / Price inputs
+
+Ticket: *"My deals - final page - not letting me see 'notes' or 'phone number', keypad in way."*
+`DynamicDealEditScreen`'s three step `ScrollView`s had only `keyboardShouldPersistTaps` — no keyboard
+avoidance at all — so on the Review & Submit step the keyboard sat over **Additional Notes** and
+**Send Addendum To ▸ Phone Number**, which are the last things on the page.
+
+Fixed with the pattern the rest of this flow already uses (`VerticalSummaryTab`,
+`DynamicTabRenderer`, `InvestmentPanel`): **`automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}`
++ `keyboardDismissMode="interactive"`**, relying on Android's `adjustResize` (already set in
+`AndroidManifest.xml`). `contentContainerStyle` also gained `paddingBottom: 48` so the last field
+clears the sticky Back / Submit footer.
+
+⚠️ **Do NOT "fix" this with a padding `KeyboardAvoidingView`.** That only shrinks the ScrollView to
+the space above the keyboard, leaving a low field below the fold and still hidden — it is the very
+bug the comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. Note this
+differs from `RolloutView` / `CalculatorView` / `ResultJobModal`, which DO use `KeyboardAvoidingView`;
+those wrap a non-scrolling root, so the trade-off is not the same.
+
+Applied to **step 2 (Job Price)** as well as step 3 — its Contract Price / Down Payment inputs sit
+just as low once the payment pickers expand. Step 0 has no text inputs and was left alone.
+
 ### Deal-edit summary listed every document twice
 
 Ticket: *"My deals - summary page - why is it showing two order sheets and two agreements? I haven't
