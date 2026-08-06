@@ -146,8 +146,8 @@ export const humanizeStatus = (value: string): string =>
     .join(' ');
 
 /**
- * The outcome of a resulted job: **`Resulted - {status}`** — `Resulted - Cant Do Work`,
- * `Resulted - Not Hit`, `Resulted - Reset`.
+ * The outcome of a resulted job: **`Resulted - {status}!`** — `Resulted - Cant Do Work!`,
+ * `Resulted - Not Hit!`, `Resulted - Reset!`.
  *
  * Same shape as the sales LeadCard's resulted bar (`Resulted — Sale`), so a resulted job
  * reads the same on both cards. The status is derived from the wire value by
@@ -180,7 +180,8 @@ export const resultedActionLabel = (job: InstallerJob): string | null => {
 
   const outcome = humanizeStatus(raw);
   // Nothing to qualify — "Resulted - Resulted" is noise, so the prefix stands alone.
-  return outcome.toLowerCase() === 'resulted' ? 'Resulted' : `Resulted - ${outcome}`;
+  // The trailing `!` is requested copy, not punctuation the status carries.
+  return outcome.toLowerCase() === 'resulted' ? 'Resulted!' : `Resulted - ${outcome}!`;
 };
 
 export interface JobCardStateOptions {

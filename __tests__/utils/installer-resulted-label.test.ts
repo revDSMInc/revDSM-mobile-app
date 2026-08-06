@@ -38,20 +38,20 @@ describe('humanizeStatus', () => {
 describe('resultedActionLabel', () => {
   it('prefixes the status with "Resulted - "', () => {
     expect(resultedActionLabel(resultedJob('cantDoWork', 'resulted'))).toBe(
-      'Resulted - Cant Do Work'
+      'Resulted - Cant Do Work!'
     );
   });
 
   it('reads the same when the API sends it capitalised', () => {
     expect(resultedActionLabel(resultedJob('CantDoWork', 'Resulted'))).toBe(
-      'Resulted - Cant Do Work'
+      'Resulted - Cant Do Work!'
     );
   });
 
   it.each([
-    ['notHit', 'Resulted - Not Hit'],
-    ['reset', 'Resulted - Reset'],
-    ['onHold', 'Resulted - On Hold'],
+    ['notHit', 'Resulted - Not Hit!'],
+    ['reset', 'Resulted - Reset!'],
+    ['onHold', 'Resulted - On Hold!'],
   ])('renders status %p as %p', (status, expected) => {
     expect(resultedActionLabel(resultedJob(status, 'resulted'))).toBe(expected);
   });
@@ -69,14 +69,14 @@ describe('resultedActionLabel', () => {
 
   it('drops the qualifier when the status IS "resulted"', () => {
     // "Resulted - Resulted" is noise.
-    expect(resultedActionLabel(resultedJob('resulted', 'Resulted'))).toBe('Resulted');
+    expect(resultedActionLabel(resultedJob('resulted', 'Resulted'))).toBe('Resulted!');
   });
 
   it('falls back to workflowState when there is no status', () => {
     expect(resultedActionLabel(resultedJob(undefined, 'cantDoWork'))).toBe(
-      'Resulted - Cant Do Work'
+      'Resulted - Cant Do Work!'
     );
-    expect(resultedActionLabel(resultedJob(undefined, 'resulted'))).toBe('Resulted');
+    expect(resultedActionLabel(resultedJob(undefined, 'resulted'))).toBe('Resulted!');
   });
 
   it('returns null when neither field is usable', () => {
@@ -88,7 +88,7 @@ describe('resultedActionLabel', () => {
 describe('resolveJobCardState — resulted card', () => {
   it('shows the outcome instead of "Completed Appointment"', () => {
     const state = resolveJobCardState(resultedJob('cantDoWork', 'resulted'));
-    expect(state.actionLabel).toBe('Resulted - Cant Do Work');
+    expect(state.actionLabel).toBe('Resulted - Cant Do Work!');
     expect(state.key).toBe('RESULTED');
     expect(state.color).toBe(JOB_CARD_COLORS.RESULTED);
   });
