@@ -338,6 +338,19 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const balanceMethodKey = balanceMethod ? coerceToPlanKey(balanceMethod, '') : '';
   const downPaymentMethodKey = downPaymentMethod ? coerceToPlanKey(downPaymentMethod, '') : '';
 
+  // Plan key → human label for the Review rows, e.g. `2511` → "2511 (6 Months 0%
+  // Interest No Payments…) (Bank Fee: 4%)". Web parity: `resolvePlanLabel`. Falls
+  // back to the raw key when the catalog has no entry (a plan retired since the
+  // deal was sold still has to render), and to an em dash when nothing is set.
+  const resolvePlanLabel = useCallback(
+    (stored: any, fallbackKey = '') => {
+      const key = coerceToPlanKey(stored, fallbackKey);
+      if (!key) return '—';
+      return paymentOptions.find((o) => o.key === key)?.label || key;
+    },
+    [coerceToPlanKey, paymentOptions]
+  );
+
   // ── tiers (web computeEditedTiers) ──────────────────────────────────────────
   const tierResult = useMemo(
     () =>
@@ -402,17 +415,27 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // A note edit is itself an addendum change, so the rep can send a note-only
   // addendum (baseline is the lead's existing note).
   const noteChanged = String(lead?.note ?? '') !== note;
+  const downPaymentChanged = parsePrice(lead?.downPayment) !== Number(downPayment);
+  // Only count a method as changed once the rep has actually PICKED one — a blank
+  // "Select payment method" (the default) must not read as a change. (Web coerces
+  // with a 'check' fallback so its key is never blank; mobile leaves the picker
+  // genuinely unselected, hence the extra guard.)
+  const downPaymentMethodChanged =
+    !!downPaymentMethodKey && coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey;
+  const balanceMethodChanged =
+    !!balanceMethodKey && coerceToPlanKey(lead?.balancePaymentMethod, '') !== balanceMethodKey;
 
+  // These were previously inlined here, so the Submit button enabled on a payment
+  // change but the Review list had no row for it — the rep saw "no changes" for an
+  // edit that was really being submitted. Named so the review step can render them.
   const hasAnyChange =
     buildChanged ||
     scheduleChanged ||
     priceChanged ||
     noteChanged ||
-    parsePrice(lead?.downPayment) !== Number(downPayment) ||
-    // Only count a method as changed once the rep has actually PICKED one — a blank
-    // "Select payment method" (the default) must not read as a change.
-    (!!downPaymentMethodKey && coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey) ||
-    (!!balanceMethodKey && coerceToPlanKey(lead?.balancePaymentMethod, '') !== balanceMethodKey);
+    downPaymentChanged ||
+    downPaymentMethodChanged ||
+    balanceMethodChanged;
 
   // ── handlers ────────────────────────────────────────────────────────────────
   // Tapping a calendar day only SELECTS it (web `handleDatePick`) — the rep then
@@ -1063,8 +1086,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 {priceChanged && (
                   <ReviewRow label="Contract Price" from={fmtMoney(parsePrice(lead?.originalContractPrice))} to={fmtMoney(contractPrice)} />
                 )}
-                {parsePrice(lead?.downPayment) !== Number(downPayment) && (
+                {downPaymentChanged && (
                   <ReviewRow label="Down Payment" from={fmtMoney(parsePrice(lead?.downPayment))} to={fmtMoney(downPayment)} />
+                )}
+                {downPaymentMethodChanged && (
+                  <ReviewRow
+                    label="Down Pmt Method"
+                    from={resolvePlanLabel(lead?.paymentMethod, '')}
+                    to={resolvePlanLabel(downPaymentMethodKey, '')}
+                  />
+                )}
+                {balanceMethodChanged && (
+                  <ReviewRow
+                    label="Balance Method"
+                    from={resolvePlanLabel(lead?.balancePaymentMethod, '')}
+                    to={resolvePlanLabel(balanceMethodKey, '')}
+                  />
                 )}
               </View>
             )}
@@ -1468,13 +1505,17 @@ function MethodPicker({
 function ReviewRow({ label, from, to }: { label: string; from: string; to: string }) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-      <View style={{ flex: 1, paddingRight: 12 }}>
+      <View style={{ flex: 1, flexShrink: 1, paddingRight: 12 }}>
         <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>{label}</Text>
         <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
+      {/* Payment-plan labels are long sentences ("2511 (6 Months 0% Interest No
+          Payments…)"), so the value column must SHRINK and wrap — RN defaults a
+          View to flexShrink: 0, which would push it off-screen. Web wraps it the
+          same way, right-aligned. */}
+      <View style={{ alignItems: 'flex-end', flexShrink: 1, maxWidth: '55%' }}>
         <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8' }}>NEW</Text>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D' }}>{to}</Text>
+        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D', textAlign: 'right' }}>{to}</Text>
       </View>
     </View>
   );

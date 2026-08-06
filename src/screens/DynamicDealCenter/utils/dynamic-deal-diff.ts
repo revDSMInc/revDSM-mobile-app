@@ -5,40 +5,75 @@
 // Pure functions — no RN/web dependencies. Used by the 4-step deal-edit wizard's
 // "Review & Submit" step to show the rep exactly what changed.
 
+import { isContainerFieldType } from '../../../utils/dynamic-job-builder/constants/field-types';
+
 const STRUCTURAL_STATE_KEYS = new Set(['_storageVersion', 'scheduleTime', 'agreements', 'orderSheets']);
 
 const SKIP_LEAF_KEYS = new Set(['colorValues', '_combinationNumber', '_storageVersion']);
+
+const COLOR_FIELD_TYPES = new Set(['swatch', 'colorSelection', 'customColor']);
 
 // Field ids are reused across sections in authored configs (e.g. the Soffit
 // "Vinyl Soffit" and "Porch Ceiling" sections share the same field ids). The
 // runtime job state keeps them apart by section, so every flatten/label key must
 // be qualified by its section (or tab) scope — otherwise an edit in one section
 // is masked by another section's unchanged same-id value.
-const SCOPE_SEP = ' ';
+//
+// NUL is the separator (matching web) precisely because it can never occur in an
+// authored id — a plain space could let `"a b" + "c"` collide with `"a" + "b c"`.
+const SCOPE_SEP = '\u0000';
 const qualify = (scopeId: string, fieldId: string) => `${scopeId}${SCOPE_SEP}${fieldId}`;
 
 interface FieldLabelMeta {
   label: string;
   tab?: string;
+  sectionLabel?: string;
   vertical?: string;
 }
 
-/** Build `{ "<scopeId> <fieldId>": { label, tab, vertical } }` from the config. */
+/**
+ * A field's own label, else the enclosing container's (a `stack`/`accordion`
+ * wrapper names its unlabelled children), else "Color" for swatch-style fields
+ * — which are authored without a label because the swatch itself is the label.
+ */
+function resolveFieldLabel(field: any, parentLabel = ''): string {
+  const own = (field?.label || field?.title || field?.name || '').trim();
+  if (own) return own;
+  if (parentLabel) return parentLabel;
+  if (COLOR_FIELD_TYPES.has(field?.type)) return 'Color';
+  return field?.id || '';
+}
+
+/** Build `{ "<scopeId>\0<fieldId>": { label, tab, sectionLabel, vertical } }` from the config. */
 export function buildFieldLabelMap(config: any): Record<string, FieldLabelMeta> {
   const map: Record<string, FieldLabelMeta> = {};
-  const collect = (fields: any[], scopeId: string, tabLabel?: string, verticalLabel?: string) => {
+  const collect = (
+    fields: any[],
+    scopeId: string,
+    tabLabel?: string,
+    verticalLabel?: string,
+    sectionLabel = '',
+    parentLabel = ''
+  ) => {
     (fields || []).forEach((f) => {
+      const isContainer = isContainerFieldType(f?.type);
+      const containerLabel = (f?.label || f?.title || f?.name || '').trim();
+      const nextParent = isContainer && containerLabel ? containerLabel : parentLabel;
+
       if (f?.id) {
         const qk = qualify(scopeId, f.id);
         if (!map[qk]) {
           map[qk] = {
-            label: f.label || f.title || f.name || f.id,
+            label: isContainer ? containerLabel || f.id : resolveFieldLabel(f, parentLabel),
             tab: tabLabel,
+            sectionLabel: sectionLabel || '',
             vertical: verticalLabel,
           };
         }
       }
-      if (Array.isArray(f?.fields)) collect(f.fields, scopeId, tabLabel, verticalLabel);
+      if (Array.isArray(f?.fields)) {
+        collect(f.fields, scopeId, tabLabel, verticalLabel, sectionLabel, nextParent);
+      }
     });
   };
   (config?.verticals || []).forEach((v: any) => {
@@ -46,7 +81,10 @@ export function buildFieldLabelMap(config: any): Record<string, FieldLabelMeta> 
       // Tab-level fields live directly on the tab state → scope by tab id.
       collect(t.fields, t.id, t.label, v.label);
       // Section fields (simple + combination) live under section id → scope by it.
-      (t.sections || []).forEach((s: any) => collect(s.fields, s.id, t.label, v.label));
+      // The section's own label is carried so the Review row names the SECTION the
+      // rep actually filled in ("Porch Ceiling SqFT"), not the tab it sits under
+      // ("Soffit") — a tab holds several sections that share field ids.
+      (t.sections || []).forEach((s: any) => collect(s.fields, s.id, t.label, v.label, s.label || ''));
       if (t.combinations?.fields) collect(t.combinations.fields, t.id, t.label, v.label);
     });
   });
@@ -71,7 +109,7 @@ function displayValue(v: any): string {
   return String(v);
 }
 
-/** Flatten a runtime job state to `{ "<scopeId> <fieldId>": displayString }`. */
+/** Flatten a runtime job state to `{ "<scopeId>\0<fieldId>": displayString }`. */
 export function flattenStateValues(jobState: any): Record<string, string> {
   const out: Record<string, string> = {};
   const ingest = (scopeId: string, obj: any) => {
@@ -113,6 +151,21 @@ export interface BuildChangeGroup {
 }
 
 /**
+ * "<section> · <field>" — the SECTION wins over the tab, because a tab groups
+ * several sections that reuse the same field ids ("Soffit" holds both "Vinyl
+ * Soffit" and "Porch Ceiling SqFT", each with Location/Footage/Type/Color).
+ * Naming the row after the tab would tell the rep they changed regular Soffit
+ * when they actually filled in Porch Ceiling. Falls back to the tab for
+ * tab-level fields, which have no section.
+ */
+function formatChangeFieldLabel(meta: FieldLabelMeta): string {
+  const prefix = (meta.sectionLabel || meta.tab || '').trim();
+  const suffix = (meta.label || '').trim();
+  if (prefix && suffix) return `${prefix} · ${suffix}`;
+  return prefix || suffix;
+}
+
+/**
  * Compare two dynamic job states and return labelled changes grouped by
  * vertical: `[{ vertical, changes: [{ field, from, to }] }]`.
  */
@@ -138,7 +191,7 @@ export function computeDynamicBuildChanges(
     const verticalKey = meta.vertical || 'Job Build';
     if (!byVertical[verticalKey]) byVertical[verticalKey] = [];
     byVertical[verticalKey].push({
-      field: meta.tab ? `${meta.tab} · ${meta.label}` : meta.label,
+      field: formatChangeFieldLabel(meta),
       from: from || '—',
       to: to || '—',
     });

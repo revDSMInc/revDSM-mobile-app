@@ -21,6 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../../utils/haptics';
 import { usePhotoPeekScrollLock } from './PhotoPeekScrollLock';
+import { isRemoteImageUrl, warmToLocalCache } from '../../utils/imageFileCache';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const PREVIEW_W = SW * 0.86;
@@ -43,6 +44,40 @@ interface PhotoPeekPressableProps {
   /** NativeWind class string forwarded to the wrapper (auto-interop'd View). */
   className?: string;
   children: React.ReactNode;
+}
+
+/**
+ * Resolve the uri the enlarged preview should render: a local `file://` copy once
+ * it has been downloaded, else the original url.
+ *
+ * Our photo urls are pre-signed S3 links with no cache headers, so the OS image
+ * cache refuses to store them. The thumbnail being on screen therefore does NOT
+ * mean the peek is free — the full-size decode misses and re-downloads, leaving
+ * the preview blank for 2–3 seconds. Warming a real file in CacheDir and handing
+ * the peek `file://…` makes it open instantly.
+ *
+ * Warming lives HERE rather than in each screen so every consumer gets it (and no
+ * new one can forget it). It is capped to a few concurrent downloads inside
+ * `imageFileCache`, so a 20+ thumbnail grid doesn't starve the visible images.
+ */
+function usePeekCachedUri(uri?: string | null): string | null {
+  const [localUri, setLocalUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalUri(null);
+    if (!isRemoteImageUrl(uri)) return undefined;
+    let cancelled = false;
+    warmToLocalCache(uri)
+      .then((file) => {
+        if (!cancelled && file) setLocalUri(file);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  return localUri;
 }
 
 // iMessage-style "peek": hold a photo to pop up an enlarged preview with haptic
@@ -87,6 +122,11 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
   useEffect(() => () => releaseRef.current(), []);
 
   const canPeek = !!uri && !disabled && !peekDisabled;
+
+  // The enlarged preview reads the cached file the moment it's ready; until then
+  // it falls back to the network url, so the peek is never worse than before.
+  const cachedUri = usePeekCachedUri(canPeek ? uri : null);
+  const peekUri = cachedUri || uri;
 
   const openPeek = useCallback(() => {
     peekedRef.current = true;
@@ -184,9 +224,12 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
               imgStyle,
             ]}
           >
-            {!!uri && (
+            {!!peekUri && (
               <Animated.Image
-                source={{ uri, cache: 'force-cache' }}
+                // Keyed on the uri so swapping the network url for the cached
+                // file remounts the image instead of leaving the old decode up.
+                key={peekUri}
+                source={{ uri: peekUri, cache: 'force-cache' }}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="contain"
               />

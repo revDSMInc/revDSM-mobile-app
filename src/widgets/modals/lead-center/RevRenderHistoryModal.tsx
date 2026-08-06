@@ -19,72 +19,13 @@ import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logEvent } from '../../../services/api/LoggerService';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import { downloadImage, getLocalCachePath, prefetchToLocalCache } from '../../../utils/imageFileCache';
 
-// Global Map to track active download promises and prevent duplicate parallel writes/corruption
-const activeDownloads = new Map<string, Promise<boolean>>();
+// The local-file image cache used to live here. It moved to `utils/imageFileCache`
+// so leaf widgets (PhotoPeekPressable) can warm images without importing this
+// modal; these re-exports keep the existing import sites working.
+export { getLocalCachePath, prefetchToLocalCache };
 
-// Stable short hash (djb2) of a string — used to make the cache filename unique.
-const hashString = (s: string): string => {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-};
-
-// Helper to resolve clean cache path for a pre-signed S3 URL.
-export const getLocalCachePath = (url: string) => {
-  if (!url) return null;
-  const cleanUrl = url.split('?')[0]; // drop the signature so re-signs still hit cache
-  const filename = cleanUrl.split('/').pop();
-  if (!filename) return null;
-  // Key on the FULL object path, not just the basename: different renders routinely
-  // share a filename (e.g. ".../<runIdA>/generated.png" vs ".../<runIdB>/generated.png"),
-  // and keying on the basename alone made them collide in the cache — so a cached render
-  // showed in place of another ("white overtook both", wrong image when navigating). The
-  // hash disambiguates while the readable suffix keeps the file recognisable.
-  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-  return `${ReactNativeBlobUtil.fs.dirs.CacheDir}/revrender_${hashString(cleanUrl)}_${safeName}`;
-};
-
-// Unified download helper ensuring only one download occurs per cache path
-const downloadImage = (url: string, path: string): Promise<boolean> => {
-  const existingTask = activeDownloads.get(path);
-  if (existingTask) {
-    return existingTask;
-  }
-
-  const promise = (async () => {
-    const tempPath = `${path}.tmp`;
-    try {
-      const exists = await ReactNativeBlobUtil.fs.exists(path);
-      if (exists) return true;
-
-      const res = await ReactNativeBlobUtil.config({ path: tempPath }).fetch('GET', url);
-      const status = res.info().status;
-      if (status === 200) {
-        await ReactNativeBlobUtil.fs.mv(tempPath, path);
-        return true;
-      } else {
-        await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => { });
-        return false;
-      }
-    } catch (err) {
-      await ReactNativeBlobUtil.fs.unlink(tempPath).catch(() => { });
-      return false;
-    } finally {
-      activeDownloads.delete(path);
-    }
-  })();
-
-  activeDownloads.set(path, promise);
-  return promise;
-};
-
-// Prefetch function using local filesystem caching (atomic write)
-export const prefetchToLocalCache = async (url: string) => {
-  const path = getLocalCachePath(url);
-  if (!path) return;
-  await downloadImage(url, path);
-};
 
 // High-performance CachedImage component targeting pre-signed S3 URLs (atomic write)
 const CachedImage = ({ uri, style, resizeMode, onLoad, onError }: any) => {

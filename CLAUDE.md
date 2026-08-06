@@ -178,6 +178,73 @@ file (`styles.dateCard`, `currentInstallBox`, `primaryBtn`, `calendarHeader`, `u
 
 The whole of step 0 is now a 1:1 port of web's step 0; nothing is intentionally left out.
 
+### Deal-edit Review step names rows after the SECTION, not the tab
+
+Ticket: *"My deals - review screen - I added porch ceiling soffit not regular soffit like it's
+saying."* The wizard's step-4 review listed **`Soffit · Location / Footage / Type / Color`** for a
+rep who had actually filled in the **Porch Ceiling SqFT** section. A **tab groups several sections
+that reuse the same field ids** — the Soffit tab holds both *Vinyl Soffit* and *Porch Ceiling SqFT*,
+each with `location`/`footage`/`type`/`color` — so labelling by tab tells the rep they changed the
+wrong product.
+
+`src/screens/DynamicDealCenter/utils/dynamic-deal-diff.ts` was an **incomplete port** of web
+`src/sections/deal/components/dynamic-deal-diff.js`; three pieces were missing and are now in:
+
+- **`sectionLabel` is captured.** `buildFieldLabelMap`'s `collect()` gained `sectionLabel` +
+  `parentLabel` params, and the section loop now passes `s.label` —
+  `collect(s.fields, s.id, t.label, v.label, s.label || '')`. It was previously dropped entirely, so
+  the label map had no way to name the section.
+- **New `formatChangeFieldLabel(meta)`** (web parity) replaces the inline
+  `meta.tab ? \`${meta.tab} · ${meta.label}\` : meta.label` in `computeDynamicBuildChanges`. Prefix is
+  **`meta.sectionLabel || meta.tab`** — section wins, tab is the fallback for tab-level fields (which
+  have no section, e.g. `Lighting · Watts`).
+- **New `resolveFieldLabel(field, parentLabel)` + `COLOR_FIELD_TYPES`.** A field with no label
+  inherits its container's (`isContainerFieldType` → `stack`/`accordion`, imported from
+  `utils/dynamic-job-builder/constants/field-types`), else falls back to **`'Color'`** for
+  `swatch`/`colorSelection`/`customColor` — which are authored unlabelled because the swatch *is* the
+  label. Previously such a field fell through to its raw **`f.id`**.
+- **`SCOPE_SEP` fixed to `'\u0000'` (NUL)** (was a plain space `' '`). Scope keys are
+  `` `${scopeId}${SCOPE_SEP}${fieldId}` ``, so with a space `"a b" + "c"` and `"a" + "b c"` collide;
+  NUL can never occur in an authored id. ⚠️ Write it as the **escape sequence**, never a raw NUL byte
+  — a literal `\0` in the source makes grep treat the file as binary.
+
+Regression test: **`__tests__/utils/dynamic-deal-diff.test.ts`** (4 cases — section-not-tab naming,
+sibling sections with shared field ids staying separate, unlabelled swatch → `Color`, tab-level
+fallback). Verified failing on the pre-fix code and passing after.
+
+### Deal-edit Review step shows payment-method changes
+
+Ticket: *"My deals - review screen - I changed payment plan - not showing changes."* The step-4
+review listed build / Install Date / Contract Price / Down Payment but had **no row for either
+payment method**, so switching the balance plan (e.g. `4091` → `2511`) reviewed as though nothing
+had happened. Web shows **Down Pmt Method** and **Balance Method** rows.
+
+The change flags already existed on mobile — but were **inlined inside `hasAnyChange`**, so a
+payment-plan edit *enabled Submit* while rendering no row: the rep saw an empty review for an
+addendum that really was being submitted. In `DynamicDealEditScreen.tsx`:
+
+- **Flags extracted and named** (web parity): `downPaymentChanged`, `downPaymentMethodChanged`,
+  `balanceMethodChanged`. `hasAnyChange` now composes those named flags instead of re-deriving them,
+  so the button and the list can never disagree again.
+- **New `resolvePlanLabel(stored, fallbackKey)`** (web `resolvePlanLabel`) — runs `coerceToPlanKey`
+  then maps the key to its catalog label, so a row reads
+  `2511 (6 Months 0% Interest No Payments…) (Bank Fee: 4%)` rather than a bare id. Falls back to the
+  raw key when the catalog has no entry, and to **`—`** when nothing is set. Note an *unrecognized*
+  stored method fuzzy-resolves via `resolveTierPaymentMethod` (amex / visa-mc-dscvr, else **check**),
+  so it renders a real label — same as web.
+- **Two `ReviewRow`s added**: `Down Pmt Method` and `Balance Method`, each gated on its flag.
+- ⚠️ **Mobile keeps its `!!key &&` guard** on both method flags. Web coerces with a `'check'`
+  fallback so its key is never blank; mobile leaves the picker genuinely unselected, so without the
+  guard a blank "Select payment method" would read as a change. This divergence is deliberate.
+- **`ReviewRow`'s value column now shrinks and wraps** (`flexShrink: 1`, `maxWidth: '55%'`,
+  `textAlign: 'right'`). Plan labels are long sentences and RN defaults a `View` to `flexShrink: 0`,
+  which would have pushed the value off-screen — web wraps it the same way.
+
+Regression test: **`__tests__/screens/DynamicDealCenter/deal-edit-review-rows.test.ts`** (10 cases —
+label resolution incl. legacy stored labels and the fuzzy fallback, the ticket's `4091 → 2511`
+switch, unchanged/blank-picker non-changes, and a guard that every flag feeding `hasAnyChange` has a
+row that can render it).
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
@@ -563,9 +630,49 @@ Still pending (deferred — advanced features):
 - **Two map stacks** — keep `react-native-maps` (Google, lead/job maps) vs `@rnmapbox/maps` (Zone Canvasser) straight.
 - **Hardcoded demo API URL** in `src/config/env.ts` (§3).
 - **Dynamic Job Builder engine runs on the JS thread** — web offloads the same compute to web workers; watch performance on large schemas.
+- **`Image.prefetch` does NOT work on our photo URLs.** They are pre-signed S3 links with no cache
+  headers, so the OS image cache refuses to store them: a thumbnail can be on screen and a
+  full-size decode of the *same* url still misses and re-downloads. Anything that needs an image to
+  appear instantly must go through the local-FILE cache (`src/utils/imageFileCache.ts`) and render
+  `file://…`. See "Hold-to-peek previews" below.
 - **Largest files** (respect when editing): `src/widgets/components/dealcenter/CalculatorSummary.tsx` (~2,298),
   `src/widgets/components/job-builder/SummarySection.tsx` (~1,993), `src/screens/JobBuilder/index.tsx` (~1,730).
 - Web is the **source of truth** for feature behavior; when unsure how a flow should work, check the web ref path in §4.
+
+### Hold-to-peek previews warm through a shared local-file cache
+
+Ticket: *"Render hold-preview takes 2–3s blank"* — first reported on the RevRender rollout slots,
+then again by QA on **Manage Photos**, **revRender ▸ Select a photo** and **Configure Render**.
+
+Cause is the `Image.prefetch` gotcha above: holding a thumbnail opens an enlarged preview, whose
+full-size decode misses the OS cache and re-downloads the S3 object, so the peek sits blank.
+
+- **`src/utils/imageFileCache.ts` (new)** — the cache primitives (`getLocalCachePath`,
+  `downloadImage`, `prefetchToLocalCache`) **moved here** from
+  `widgets/modals/lead-center/RevRenderHistoryModal.tsx`, which now imports and **re-exports**
+  `getLocalCachePath` / `prefetchToLocalCache` so its existing callers (`RevRenderSlots`,
+  `OperationalSections`) are unaffected. The move exists so a leaf widget can warm images without
+  importing a heavy modal screen. Added: **`isRemoteImageUrl`** (only http(s) is worth caching) and
+  **`warmToLocalCache(url)`** → resolves the `file://` uri, or `null` so callers fall back to the
+  network url.
+- **Concurrency is capped at 3** (`MAX_CONCURRENT_WARMS` + a small semaphore). A photo grid can
+  mount 20+ thumbnails at once (Manage Photos ▸ Roofline is 0/22); warming them all in parallel
+  would saturate the connection and make the *visible* thumbnails slower — the opposite of the goal.
+- **Warming lives in `PhotoPeekPressable` itself** (`usePeekCachedUri`), NOT in each screen, so every
+  consumer gets it and no new one can forget it — that is what fixes all three screens QA reported
+  at once. The preview renders `cachedUri || uri`, so it is never worse than before, and the
+  `Animated.Image` is **keyed on the uri** so swapping network→file remounts instead of leaving the
+  stale decode up.
+- `RevRenderSlots.tsx` keeps its own bespoke warm block. It is now **redundant** (the download layer
+  dedupes by cache path, so there is no double fetch) but harmless — it warms slightly earlier, at
+  list mount rather than thumbnail mount. `RevRender/index.tsx`'s `Image.prefetch` block is left
+  alone too: it targets the `HouseImage` thumbnails, not the peek.
+
+Regression test: **`__tests__/utils/image-file-cache.test.ts`** (10 cases, `react-native-blob-util`
+mocked — note the repo has no global mock for it, which is why the two `DynamicDealCenter` suites
+that import it fail in jest). Covers signature-stripping, the **basename-collision** guard, the
+cached-hit path making **zero** network calls, failure → `null`, non-remote skip, concurrent
+callers **sharing one GET**, and the **≤3 in-flight** cap.
 
 ---
 
