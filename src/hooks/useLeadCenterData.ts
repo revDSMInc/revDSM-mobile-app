@@ -10,6 +10,11 @@ import {
   persistActiveLeadId,
 } from '../utils/lead-activity-log';
 
+// Frozen module-level singletons so the hook's return identity is stable across
+// renders — these are only ever read as fallbacks, never written.
+const EMPTY_OUTCOME_FORM = Object.freeze({});
+const EMPTY_CALCULATOR_DATA = Object.freeze({});
+
 export const useLeadCenterData = (
   initialLead: any,
   user: any,
@@ -25,8 +30,12 @@ export const useLeadCenterData = (
     }
   }, [initialLead]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [outcomeForm, setOutcomeForm] = useState<any>({});
-  const [calculatorData, setCalculatorData] = useState<any>({});
+  // Kept as empty defaults, not state: nothing writes them since the mount-time
+  // outcome fetch was removed (see the effect below). The two Job Builder launch
+  // paths that consume them now read the real values off their own outcome response
+  // and only fall back to these.
+  const outcomeForm: any = EMPTY_OUTCOME_FORM;
+  const calculatorData: any = EMPTY_CALCULATOR_DATA;
   const [isOutcomeLoading, setIsOutcomeLoading] = useState(true);
   const [jobState, setJobState] = useState<any>({
     gutter: {
@@ -78,40 +87,25 @@ export const useLeadCenterData = (
     }
   }, [user?._id, lead?._id, lead?.assignedRepId]);
 
+  // NO outcome fetch on mount — web parity.
+  //
+  // This hook used to `GET /lead/v1/{leadId}/outcome` for every resulted lead just to
+  // prefill `jobState` / `calculatorData` / `outcomeForm`. Nothing renders from those:
+  // the screen's documents and contract figures come from the lead record itself (the
+  // sales-portal payload), exactly as web's deal route does — web makes no outcome
+  // request on this screen at all.
+  //
+  // Their only consumers are the two Job Builder launch paths in `LeadCenter`
+  // (`openJobBuilder` auto-open and `handleShowJobBuilder`), and BOTH already issue
+  // their own `getLeadOutcome` at the moment of launch — they now also read
+  // `LFCalculator` / the outcome form off that response instead of this prefetch. So
+  // opening a Deal costs one request fewer and the Job Builder gets fresher data.
+  //
+  // `isOutcomeLoading` stays in the API (it gates the auto-open effect) but is simply
+  // never true now; the values below remain as the defaults those paths fall back to.
   useEffect(() => {
-    if (!lead?._id) return;
-
-    // Only fetch outcome data if the lead has been resulted (Sale or Demo)
-    const result = String(lead?.result || lead?.status || '').toLowerCase();
-    const isResulted = result === 'demo' || result === 'sale';
-
-    if (!isResulted) {
-      setIsOutcomeLoading(false);
-      return;
-    }
-
-    const fetchOutcomeData = async () => {
-      try {
-        setIsOutcomeLoading(true);
-        const res = await LeadService.getLeadOutcome(lead._id);
-        const data = res.data?.data || res.data;
-        if (data) {
-          const outcome = data.outcome || data.leadData || data;
-          if (outcome?.jobBuilder) setJobState(outcome.jobBuilder);
-          if (outcome?.LFCalculator) setCalculatorData(outcome.LFCalculator);
-          setOutcomeForm(outcome);
-        }
-      } catch (err: any) {
-        // 404 is expected for leads that haven't been resulted/processed yet
-        if (err?.response?.status !== 404 && err?.status !== 404) {
-          console.warn('[LeadCenter] Failed to fetch outcome data:', err);
-        }
-      } finally {
-        setIsOutcomeLoading(false);
-      }
-    };
-    fetchOutcomeData();
-  }, [lead?._id, lead?.result, lead?.status]);
+    setIsOutcomeLoading(false);
+  }, [lead?._id]);
 
   const [sectionImages, setSectionImages] = useState<Record<string, any[]>>({});
 

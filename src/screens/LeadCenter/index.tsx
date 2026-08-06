@@ -465,21 +465,27 @@ export default function LeadCenterPage() {
             };
             setJobState(updatedJobState);
           }
+          // Read the calculator + outcome form off THIS response. They used to come
+          // from a mount-time `getLeadOutcome` in `useLeadCenterData`, which existed
+          // only to prefill these two values — that call is gone (web makes no outcome
+          // request on this screen), so derive them here, where the data is fresher.
+          const nextCalculatorData = outcome?.LFCalculator || calculatorData;
+          const nextOutcomeForm = outcome || outcomeForm;
           const uId = user?._id || user?.id;
           if (uId && lead?._id) {
             logBuildJobInitiated({
               userId: uId,
               leadId: lead._id,
-              result: outcomeForm?.result || undefined,
-              calculatorId: calculatorData?._id,
-              calculatorType: calculatorData?.type,
+              result: nextOutcomeForm?.result || undefined,
+              calculatorId: nextCalculatorData?._id,
+              calculatorType: nextCalculatorData?.type,
             });
           }
           navigation.navigate('JobBuilder', {
             initialJobState: updatedJobState,
-            calculatorData,
+            calculatorData: nextCalculatorData,
             leadId: lead?._id,
-            outcomeForm,
+            outcomeForm: nextOutcomeForm,
             onGoBack: setJobState,
           });
         } catch (e) {
@@ -546,21 +552,25 @@ export default function LeadCenterPage() {
         };
         setJobState(updatedJobState);
       }
+      // Same as the auto-open path: the calculator + outcome form come from THIS
+      // response, not from a mount-time prefetch (removed — see useLeadCenterData).
+      const nextCalculatorData = outcome?.LFCalculator || calculatorData;
+      const nextOutcomeForm = outcome || outcomeForm;
       const uId = user?._id || user?.id;
       if (uId && lead?._id) {
         logBuildJobInitiated({
           userId: uId,
           leadId: lead._id,
-          result: outcomeForm?.result || undefined,
-          calculatorId: calculatorData?._id,
-          calculatorType: calculatorData?.type,
+          result: nextOutcomeForm?.result || undefined,
+          calculatorId: nextCalculatorData?._id,
+          calculatorType: nextCalculatorData?.type,
         });
       }
       navigation.navigate('JobBuilder', {
         initialJobState: updatedJobState,
-        calculatorData,
+        calculatorData: nextCalculatorData,
         leadId: lead?._id,
-        outcomeForm,
+        outcomeForm: nextOutcomeForm,
         onGoBack: setJobState,
       });
     } catch (e) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   View,
@@ -211,13 +211,37 @@ export function SummaryFinalizeCards({
   // held on `jobState` (web's `existingAgreements={jobState?.agreements}`), deduped
   // so a document that exists in both — the normal case once it has uploaded — is
   // listed once.
+  //
+  // EXCEPT in EDIT mode, where merging the two doubled every document. The deal is
+  // already submitted there, so the server read (`downloadOutcomeDocuments` —
+  // lead-scoped, and the ONLY source that reflects deletions) is the complete
+  // record. The draft copies on `jobState` are those SAME documents, but written by
+  // the sign/scan flow WITHOUT a `serverId`/`filePath` — so `docIdentity` keys them
+  // on their local `file://` uri while the server copy keys on `serverId`, the two
+  // never collide, and `dedupeDocs` cannot merge them. (Name is NOT usable as a
+  // fallback key: two genuinely different agreements both display as "Agreement",
+  // so matching on it would HIDE a real document.)
+  //
+  // A document added during the edit session is safe: `commitUploaded` replaces
+  // BOTH sources with the server read-back, so it is already in `resolvedDocuments`.
+  // The `.length` guard keeps the draft as a fallback if that read ever comes back
+  // empty, so an edit can never render zero documents when the draft has some.
+  const mergeDocSources = useCallback(
+    (server: any[] | undefined, draft: any[] | undefined) => {
+      const serverFiles = server || [];
+      if (editMode && serverFiles.length) return serverFiles;
+      return dedupeDocs([...serverFiles, ...toFlatFiles(draft)]);
+    },
+    [editMode]
+  );
+
   const agreementFiles = useMemo(
-    () => collapseSignedAgreement(dedupeDocs([...(resolvedDocuments?.agreements || []), ...toFlatFiles(agreements)])),
-    [agreements, resolvedDocuments]
+    () => collapseSignedAgreement(mergeDocSources(resolvedDocuments?.agreements, agreements)),
+    [agreements, resolvedDocuments, mergeDocSources]
   );
   const orderSheetFiles = useMemo(
-    () => dedupeDocs([...(resolvedDocuments?.orderSheets || []), ...toFlatFiles(orderSheets)]),
-    [orderSheets, resolvedDocuments]
+    () => mergeDocSources(resolvedDocuments?.orderSheets, orderSheets),
+    [orderSheets, resolvedDocuments, mergeDocSources]
   );
 
   // --- appointment -------------------------------------------------------
