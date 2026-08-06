@@ -914,6 +914,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             embedded
             mode="edit"
             initialConfig={jobBuilderConfig ?? undefined}
+            // System A calculator schemas — the Job Builder Summary resolves each
+            // card's header colour from the matching schema CATEGORY's colour (web
+            // parity: `resolveTabAccentColor` → `findTabCategoryColorFromSchemas`).
+            // They are NOT on `initialConfig` (that is the System B job-builder
+            // config), so without this every tab fell through to the single
+            // `vertical.color` and every card rendered the same purple. The new-deal
+            // path (`DynamicDealCenterScreen`) passes this same array as `verticals`.
+            calculatorSchemas={configuredSchemas}
             initialJobState={initialState}
             dealCenterData={dealCenterData}
             calculatorResultData={{

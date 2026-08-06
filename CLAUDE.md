@@ -208,9 +208,9 @@ wrong product.
   NUL can never occur in an authored id. ⚠️ Write it as the **escape sequence**, never a raw NUL byte
   — a literal `\0` in the source makes grep treat the file as binary.
 
-Regression test: **`__tests__/utils/dynamic-deal-diff.test.ts`** (4 cases — section-not-tab naming,
-sibling sections with shared field ids staying separate, unlabelled swatch → `Color`, tab-level
-fallback). Verified failing on the pre-fix code and passing after.
+Verified against the config shape in the ticket: section-not-tab naming, sibling sections with
+shared field ids staying separate, unlabelled swatch → `Color`, and the tab-level fallback still
+reading `Lighting · Watts`. Confirmed failing on the pre-fix code and passing after.
 
 ### Deal-edit Review step shows payment-method changes
 
@@ -240,10 +240,46 @@ addendum that really was being submitted. In `DynamicDealEditScreen.tsx`:
   `textAlign: 'right'`). Plan labels are long sentences and RN defaults a `View` to `flexShrink: 0`,
   which would have pushed the value off-screen — web wraps it the same way.
 
-Regression test: **`__tests__/screens/DynamicDealCenter/deal-edit-review-rows.test.ts`** (10 cases —
-label resolution incl. legacy stored labels and the fuzzy fallback, the ticket's `4091 → 2511`
-switch, unchanged/blank-picker non-changes, and a guard that every flag feeding `hasAnyChange` has a
-row that can render it).
+Verified: label resolution (incl. legacy saves that stored the label instead of the key, and the
+fuzzy fallback), the ticket's `4091 → 2511` switch, unchanged/blank-picker non-changes, and that
+every flag feeding `hasAnyChange` has a row able to render it.
+
+### Deal-edit Job Summary: per-card colours + combination dividers
+
+Ticket: *"My deals - job summary - LeafFilter - make it more distinct between combinations, add
+horizontal line between like web; also the card colors are purple, it should also be like web."*
+Two unrelated causes.
+
+**1. Every card was purple — a missing prop, not a styling bug.** Each summary card's header colour
+comes from the matching **calculator-schema CATEGORY** (`resolveTabAccentColor` →
+`findTabCategoryColorFromSchemas`), which needs the **System A** schemas. Those are NOT on
+`initialConfig` (that is the System B job-builder config), so they arrive via the separate
+**`calculatorSchemas`** prop. `DynamicDealCenterScreen` (new-deal path) passes it as
+`calculatorSchemas={verticals}`; **`DynamicDealEditScreen` passed nothing**, so `schemas` was `[]`,
+the category branch returned null, and every tab fell through to the single `vertical.color`.
+Fixed by passing `calculatorSchemas={configuredSchemas}` — literally the same array (in
+`DynamicDealCenterScreen`, `verticals = configuredSchemas`).
+
+> Confirmed by calling the real `resolveTabAccentColor` for three tabs of one vertical:
+> `schemas: []` → `['#8b5cf6','#8b5cf6','#8b5cf6']` (**`#8b5cf6` is exactly the reported purple**);
+> with schemas → `['#00B8D9','#22c55e','#4CBB17']`. So any *other* screen that embeds
+> `DynamicJobBuilderScreen` must pass `calculatorSchemas` or its summary will go monochrome too.
+
+**2. Combinations ran together — the dividers existed but were invisible.** Web draws them at two
+weights via `alpha(theme.palette.divider, …)`: **0.4** (a visible rule) between combinations and
+between combination groups, **0.12** (a hairline) between field rows in a simple section. Mobile
+used `border-slate-100` / `border-slate-50` for all of them — near-white on a white card. Now in
+`VerticalSummaryTab.tsx` as two named constants, **`DIVIDER_STRONG = '#CBD5E1'`** (≈ 0.4) and
+**`DIVIDER_HAIRLINE = '#F1F5F9'`** (≈ 0.12), applied as explicit `borderTopWidth`/`borderBottomWidth`
+styles rather than NativeWind classes. Also **added the between-group rule** mobile never had (web
+`groupIndex < section.combinationSections.length - 1`) — that is the line above
+**"Downspout & Accessories"** in the web screenshot.
+
+**Divider spacing is 16px on BOTH sides**, matching web (`Divider sx={{ mt: 2 }}` inside the item +
+`Stack spacing={2}` between items) — `mb-4 pb-4` on `CombinationSummaryItem`, `mt-4` on the group
+rule. It was first shipped at 12px/8px, which left the next "Combination #N" chip sitting almost on
+the line and read as cramped. Note the combination gap is a plain margin on the item itself (not the
+parent's `space-y-4`), so it does not depend on NativeWind's `space-y-*` behaviour.
 
 ---
 
@@ -668,11 +704,11 @@ full-size decode misses the OS cache and re-downloads the S3 object, so the peek
   list mount rather than thumbnail mount. `RevRender/index.tsx`'s `Image.prefetch` block is left
   alone too: it targets the `HouseImage` thumbnails, not the peek.
 
-Regression test: **`__tests__/utils/image-file-cache.test.ts`** (10 cases, `react-native-blob-util`
-mocked — note the repo has no global mock for it, which is why the two `DynamicDealCenter` suites
-that import it fail in jest). Covers signature-stripping, the **basename-collision** guard, the
-cached-hit path making **zero** network calls, failure → `null`, non-remote skip, concurrent
-callers **sharing one GET**, and the **≤3 in-flight** cap.
+Verified with `react-native-blob-util` mocked: signature-stripping, the **basename-collision**
+guard, the cached-hit path making **zero** network calls, failure → `null`, non-remote skip,
+concurrent callers **sharing one GET**, and the **≤3 in-flight** cap. (The repo has **no global
+mock** for `react-native-blob-util` — that is why the two `DynamicDealCenter` suites which import it
+fail under jest; anything testing this module must mock it locally.)
 
 ---
 
