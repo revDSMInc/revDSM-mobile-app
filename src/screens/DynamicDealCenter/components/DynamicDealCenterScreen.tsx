@@ -17,6 +17,8 @@ import { buildSectionLabelMap } from '../utils/item-format';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
+import { useQueryClient } from '@tanstack/react-query';
+import { markLeadRolloutsConfirmed } from '../../../hooks/useLeadCalculatorStatus';
 
 type FlowStep = 'calculator' | 'rollout' | 'result' | 'jobBuilder';
 
@@ -42,6 +44,9 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   // is simply unused in the edit branch) — the activity-log user id, without adding
   // another hook after the early return.
   const { user } = useAuth();
+  // Same reason as `useAuth` above the branch: needed by `onRolloutsConfirmedDone`
+  // to prime the Investment Center's status cache.
+  const queryClient = useQueryClient();
   // Edit flow is a distinct screen (its own hooks/loading). Branch BEFORE any hook
   // below runs — `mode` is stable for a navigated screen instance, so this keeps
   // hook order consistent across renders.
@@ -276,9 +281,14 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onDownPaymentChange={handleSetDownPayment}
           onRendersChange={handleSetRenders}
           onOneYearMonthlyChange={handleSetOneYearMonthly}
-          onRolloutsConfirmedDone={() =>
-            navigation?.navigate('LeadCenter', { lead, tab: 'tools' })
-          }
+          onRolloutsConfirmedDone={() => {
+            // This button only renders once every rollout is confirmed — the exact
+            // condition the Investment Center tile gates on. Prime the tools list's
+            // status cache here so the tile is live the moment the rep lands, instead
+            // of after two GETs it doesn't need to wait for.
+            markLeadRolloutsConfirmed(queryClient, lead);
+            navigation?.navigate('LeadCenter', { lead, tab: 'tools' });
+          }}
           activeTabId={activeTabId}
           onTabSelect={setActiveTabId}
         />

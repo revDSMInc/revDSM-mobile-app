@@ -42,7 +42,7 @@ import {
   parsePrice,
   type Tiers,
 } from '../utils/dynamic-deal-pricing';
-import { computeDynamicBuildChanges } from '../utils/dynamic-deal-diff';
+import { computeDynamicBuildChanges, type BuildChangeKind } from '../utils/dynamic-deal-diff';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
@@ -1158,7 +1158,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   <View key={group.vertical} style={{ marginBottom: 10 }}>
                     <Text style={{ fontSize: 11, fontWeight: '900', color: '#64748B', marginBottom: 4 }}>{group.vertical}</Text>
                     {group.changes.map((c, i) => (
-                      <ReviewRow key={`${c.field}-${i}`} label={c.field} from={c.from} to={c.to} />
+                      <ReviewRow key={`${c.field}-${i}`} label={c.field} from={c.from} to={c.to} kind={c.kind} />
                     ))}
                   </View>
                 ))}
@@ -1598,20 +1598,41 @@ function MethodPicker({
   );
 }
 
-function ReviewRow({ label, from, to }: { label: string; from: string; to: string }) {
+function ReviewRow({
+  label,
+  from,
+  to,
+  kind,
+}: {
+  label: string;
+  from: string;
+  to: string;
+  kind?: BuildChangeKind;
+}) {
+  // A whole combination dropped from (or added to) the build is not an edit of a
+  // value, so it must not read as one — the eyebrow names the operation instead
+  // of the generic "NEW", and a removal's value column stays neutral rather than
+  // showing a green "new value" the rep never entered.
+  const eyebrow = kind === 'removed' ? 'REMOVED' : kind === 'added' ? 'ADDED' : 'NEW';
+  const eyebrowColor = kind === 'removed' ? '#DC2626' : '#94A3B8';
+  const valueColor = kind === 'removed' ? '#94A3B8' : '#15803D';
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
       <View style={{ flex: 1, flexShrink: 1, paddingRight: 12 }}>
         <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>{label}</Text>
-        <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
+        {/* An ADDED combination has no previous value — striking through an em
+            dash would read as "something was there before". */}
+        {kind !== 'added' && (
+          <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
+        )}
       </View>
       {/* Payment-plan labels are long sentences ("2511 (6 Months 0% Interest No
           Payments…)"), so the value column must SHRINK and wrap — RN defaults a
           View to flexShrink: 0, which would push it off-screen. Web wraps it the
           same way, right-aligned. */}
       <View style={{ alignItems: 'flex-end', flexShrink: 1, maxWidth: '55%' }}>
-        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8' }}>NEW</Text>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D', textAlign: 'right' }}>{to}</Text>
+        <Text style={{ fontSize: 10, fontWeight: '700', color: eyebrowColor }}>{eyebrow}</Text>
+        <Text style={{ fontSize: 13, fontWeight: '800', color: valueColor, textAlign: 'right' }}>{to}</Text>
       </View>
     </View>
   );

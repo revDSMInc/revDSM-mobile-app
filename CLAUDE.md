@@ -212,6 +212,137 @@ Verified against the config shape in the ticket: section-not-tab naming, sibling
 shared field ids staying separate, unlabelled swatch → `Color`, and the tab-level fallback still
 reading `Lighting · Watts`. Confirmed failing on the pre-fix code and passing after.
 
+### Deal-edit Review: a REMOVED combination read as an edit of the surviving one
+
+Ticket: *"My deals - addendums - combinations issues. I removed 85' of black hidden vent soffit from
+the job. But I kept the original 200' white hidden vent soffit… Makes it seem like I removed the 85
+feet black soffit and added an ADDITIONAL 200ft white soffit… I believe this issue is bc of
+combinations. This needs to be resolved correctly for ALL combinations."* The review listed
+`Soffit · Type PARTIAL → FULL`, `Soffit · Vinyl Soffit Footage 85 → 200`,
+`Soffit · Color Musket Brown → White` — i.e. the removal was invisible and the untouched survivor's
+values were reported as edits *to the deleted combination*. On an addendum ("original agreement plus
+what we added minus what we removed") that reads as **200′ + 200′ of white soffit**.
+
+⚠️ **Web has the identical bug** — `src/sections/deal/components/dynamic-deal-diff.js` is byte-for-byte
+the same algorithm. This is the first deliberate **divergence** in this file, not a port; do not
+"re-sync" it to web.
+
+Cause is one line of `flattenStateValues` in
+`src/screens/DynamicDealCenter/utils/dynamic-deal-diff.ts`: every combination of a section was
+ingested under the **same** `qualify(sectionId, fieldId)` keys, so *"later writes override earlier"* —
+a section collapsed to whichever combination happened to be **last**. With combos
+`[white 200, black 85]` the original flattened to black/85/PARTIAL/Musket Brown; after the delete it
+flattened to white/200/FULL. Hence the three phantom rows. **Positional diffing cannot work here**:
+`handleRemoveCombo` (`DynamicTabRenderer.tsx`) both shifts the array *and* renumbers
+`_combinationNumber` to `comboIndexOffset + idx + 1`, so **combinations carry no stable id at all**.
+
+Rewritten to diff combinations by **identity**:
+
+- **`collectStateSnapshot(jobState)`** replaces the flat-only walk, returning
+  `{ flat, groups }` — `flat` holds single-valued state (section fields, combination-section
+  `sectionState`, tab fields) and `groups` keeps each section's combinations as a **LIST**, keyed
+  `` `${verticalKey}\0${tabId}\0${scopeId}` `` so groups never cross tabs. Legacy tab-level
+  `combinations` are scoped by tab id, same as before.
+- **`matchCombinations(orig, next)`** — three passes:
+  1. **Exact-signature pairs claim each other FIRST.** This is the pass that fixes the ticket: the
+     untouched survivor locks onto its own original, so it can never be paired with the deleted one.
+  2. **Greedy best-overlap** (`overlapScore` = number of fields two combos agree on, ties broken by
+     index distance) for the rest, so a genuinely *edited* combination still reads as a field change
+     rather than a remove + an add.
+  3. **One left on each side ⇒ pair them** regardless of overlap — otherwise rewriting every field of
+     a section's only combination would report it as removed AND added.
+- **Leftovers become their own rows**: `Combination Removed` (`kind: 'removed'`) / `Combination Added`
+  (`kind: 'added'`), whose value is `describeCombo` — the combination named by its **contents**
+  (`Location Rear · Vinyl Soffit Footage 85 · Type PARTIAL · Color Musket Brown`). Deliberately **not**
+  numbered: `#N` is unstable across a removal (the deleted combo and the renumbered survivor can both
+  be `#1`), so content is the only honest identifier.
+- **`formatChangeFieldLabel(meta, comboLabel)`** now takes an optional middle segment, inserted **only
+  when the section holds more than one combination** (`Soffit · Combination #2 · Vinyl Soffit Footage`).
+  A single-combination section keeps the exact `<section> · <field>` label from the previous ticket —
+  that regression guard is tested.
+- **Empty combinations are dropped from both snapshots.** `ensureTabStateShape` seeds one blank default
+  combo into any section that saved none, so without this the mount would emit a phantom
+  `Combination Added` row and flip `buildChanged` true on a build the rep never touched.
+- **`BuildChange` gained `kind?: 'change' | 'added' | 'removed'`** and `ReviewRow`
+  (`DynamicDealEditScreen.tsx`) renders it: eyebrow `REMOVED` (red) / `ADDED` / `NEW`, a removal's value
+  column stays neutral grey (not green — nothing new was entered), and an **added** row hides the
+  struck-through `from` entirely, since striking an em dash reads as "something was there before".
+
+`flattenStateValues` is **kept exported but is now explicitly documented as LOSSY** for combination
+sections and is no longer used by the diff. It has no other consumer — if you reach for it, that is
+the trap this ticket was about.
+
+⚠️ `SCOPE_SEP` must still be written as the escape sequence `'\u0000'`. Writing the file with a raw NUL
+byte (and the `comboSignature` join with a raw `\u0001`) makes grep treat the source as binary — that
+happened once during this fix and had to be undone.
+
+Verified against a two-combination Soffit config with a sibling `Porch Ceiling SqFT` section sharing
+its field ids: the ticket repro (removal → exactly one `removed` row, and **none** of the three phantom
+rows), edit-one-of-two, single-combo label regression, addition, remove-plus-edit together, sibling
+sections staying separate, untouched build → `[]`, the blank-default-combo guard, and a fully rewritten
+single combination still reading as field edits. The four combination cases **fail on the pre-fix code
+and pass after**; the five regression guards pass on both. Applies to every combination section in the
+config, so Gutters / gutter guards / soffit / porch ceiling / fascia wrap / fascia boards are all covered
+by the same path.
+
+### Investment Center tile unlocks instantly after "Jobs Built — Back to Tools"
+
+Ticket: *"Investment center should be ready to go immediately after clicking 'jobs built - take me to
+tools' button… when i confirm rollouts and go back to tools it take time to enable the Investment
+Center button, can you enable it instantly, i think it's because we are calling api here, what if you
+add a small loader right end of the investment center card?"* Correct diagnosis — the tile sat on
+**"Please Fully Build ALL jobs first"** for the length of a round trip the rep had no reason to wait on.
+
+`ToolsSection` (`widgets/components/LeadCenter/OperationalSections.tsx`) gates the tile on
+`useLeadCalculatorStatus().allConfirmed`, whose `queryFn` does **two sequential GETs** — resolve the
+appointment (`/appointments`), then read its calculators (`/appointments/{id}/lfcalculators`) — and
+`useFocusEffect` refetches it on arrival. Until that resolves the hook serves the **stale cached**
+value, which is `allConfirmed: false` because it was cached *before* the rep confirmed. So the tile
+stayed locked, and tapping it warned "build and confirm all rollouts first" — about rollouts that had
+just been confirmed.
+
+**The app already knows the answer**, so the fix is to stop asking. In `hooks/useLeadCalculatorStatus.ts`:
+
+- **New `markLeadRolloutsConfirmed(queryClient, lead)`** writes
+  `{ hasCalculator: true, allConfirmed: true, count: max(prev,1) }` straight into the cache.
+  `DynamicDealCenterScreen`'s `onRolloutsConfirmedDone` calls it before navigating — that button only
+  renders once **every** rollout is confirmed, which is exactly the tile's gate, so the optimistic
+  write can't claim more than is true.
+- **It updates by key PREFIX** (`['lead-calc-status', <leadId>]` via `setQueriesData`), not the full
+  key. `LeadCenter` re-fetches its lead through `useLeadCenterData`, so the `appointmentId` /
+  `leadDate` segments of the key can differ from the copy the deal center was handed — **only the lead
+  id is dependable**. An exact-key write would silently miss.
+- **New bounded `LOCAL_CONFIRM_GRACE_MS` (60 s) override.** The confirmation is persisted by the deal
+  center's **debounced** save engine (`handleConfirmRollouts` only calls `markDirty`), so a GET can
+  legitimately still report `isRolloutConfirmed: false`. Without the override the tile would unlock and
+  then **RE-LOCK** on the first server read — visibly worse than the delay being removed. Every exit of
+  the `queryFn` — **including the two error paths** — goes through `applyLocalConfirmation`, so a
+  transient appointment-resolution failure can't re-lock the tile either. The override **self-clears**
+  the moment the server agrees (or the window elapses), so a genuinely unconfirmed lead can never stay
+  unlocked, and a later real un-confirm still re-locks.
+
+For the loader, `ToolCard` already had `isLoading` — but it swaps the ICON for a spinner, dims the card
+to 0.6 and **disables the press**, which is wrong for a background refresh the rep isn't blocked on.
+Added a light **`busy`** prop instead: the small right-side `ActivityIndicator` only, card at full
+opacity and still tappable, with the lock glyph suppressed while it spins. `ToolsSection` passes
+`busy={isCalcStatusFetching && !allConfirmed}` — **only while still locked**, since a spinner on a tile
+the rep can already open is noise. The subtitle reads **"Checking job status…"** during that window, and
+tapping then shows an `info` flash rather than the "you haven't built the jobs" warning, which mid-check
+would be a guess — and usually a wrong one, this being precisely the post-confirm window.
+
+Net: the tile is live on the first paint after "Jobs Built — Back to Tools"; the refetch still runs and
+reconciles in the background.
+
+⚠️ `markLeadRolloutsConfirmed` is the ONLY sanctioned way to unlock the tile early. Widening the grace
+window, or making it sticky without the self-clear, would let an unconfirmed lead present a quote.
+
+Verified against a real `QueryClient`: the cached status flips to unlocked, prefix matching survives a
+drifted `appointmentId`/`leadDate`, a **different** lead is untouched, a lead with **no id** is a no-op
+(rather than unlocking everything), and a lead with nothing cached still ends up reporting a calculator.
+⚠️ The React-rendering half could not be exercised — `@testing-library/react-native`'s `render` returns
+an object with **no queries** in this repo (the `__mocks__/test-renderer.js` React 19 shim), so
+component-level tests of `ToolsSection` are not currently possible.
+
 ### Deal-edit Review step shows payment-method changes
 
 Ticket: *"My deals - review screen - I changed payment plan - not showing changes."* The step-4
