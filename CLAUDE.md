@@ -723,10 +723,9 @@ fine; the *display* simply never showed the deal's own method. Now a 1:1 port of
   `coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey`. The guards only existed
   to stop a blank picker reading as a change; seeding makes them obsolete, and keeping them would have
   **masked a real edit back to the deal's original method**.
-- **New `downPaymentSelectOptions`** (web parity). The Down Pmt picker offers cash/card basics only,
-  but a seeded value may sit outside that set (a legacy deal that stored a financing plan there), so
-  the current key is spliced in from the full catalog. Without it the saved method rendered as a bare
-  key and was not re-selectable. The Balance picker already uses the full `paymentOptions` catalog.
+- ~~**New `downPaymentSelectOptions`** (web parity), splicing a seeded financing plan into the Down
+  Pmt options.~~ **Superseded and removed** — see "Down Pmt Method must never offer a financing plan"
+  below. The Balance picker still uses the full `paymentOptions` catalog.
 
 ⚠️ **Side effect on the displayed tiers, and it is the correct one.** `computeEditedTiers` receives
 `paymentMethod: resolveTierPaymentMethod(balanceMethodKey)`. That key used to be `''` → `'check'` →
@@ -736,6 +735,41 @@ than before this change.
 
 The submit payload is unchanged (`downPaymentMethodKey || lead?.paymentMethod || ''`) — it already
 matched web.
+
+### Down Pmt Method must never offer a financing plan
+
+Ticket: *"in Down Pmt Method you als showed balance method fix it please."* Job Price (step 2) opened
+with **Down Pmt Method** reading `2521 (12 Months…)` — the same financing plan as **Balance Method** —
+on a deal with **$0 down**.
+
+This was a **self-inflicted regression from the seeding ticket above.** `pricing.outcomeDownPaymentMethods`
+is correctly filtered to cash/card (`p.type === 'cash' || 'card'` in `useDealPricing`), so the picker's
+own list was fine — the financing plan was there because **`downPaymentSelectOptions` spliced it in**.
+
+`lead.paymentMethod` IS the down-payment field (see the submit payload), but a sold deal frequently has
+the **rollout's** plan written into it, so it holds a financing key. Seeding from it then surfaced that
+key, and the splice existed precisely to make such a key selectable — offering "12 months financing" as
+a way to pay a *down payment*, which it is not: financing is how the **balance** is carried.
+
+⚠️ **Deliberate divergence from web** (`dynamic-deal-edit-modal.js` is byte-identical here and has the
+same flaw — it coerces against the FULL catalog and splices the result). Do not "re-sync" this.
+
+- **New `toDownPaymentKey(stored)`** — coerces, then returns the key **only if it is in
+  `downPaymentOptions`**, else `''`. `downPaymentSelectOptions` is deleted; the picker is back to plain
+  `downPaymentOptions`, so nothing outside the basics can be shown or chosen.
+- **The change-flag baseline uses the SAME helper**
+  (`toDownPaymentKey(lead?.paymentMethod) !== downPaymentMethodKey`). Filtering only the seed would
+  compare `'2521'` against `''` and make every affected deal open already "changed", rendering a
+  phantom Review row and enabling Submit — the exact failure the removed `!!key &&` guards used to mask.
+- **The submit payload is untouched**: `downPaymentMethodKey || lead?.paymentMethod || ''` still falls
+  back to the stored value, so blanking the *display* never wipes what the deal had. The rep picking a
+  real method overrides it as before.
+
+Traced through every stored shape: a financing key → blank picker + no phantom change; `check` and a
+legacy label (`AMEX (5.00% Fee)`) → seeded normally; empty → blank; rep picks a method → change flag
+true and the Review row renders; unrecognized text → the `resolveTierPaymentMethod` fuzzy fallback still
+lands on a basic. Lowe's leads scope `downPaymentOptions` to Lowe's methods, so a non-Lowe's key blanks —
+correct, since that method is not offered for the lead, and the payload fallback preserves it.
 
 ---
 
@@ -1296,6 +1330,42 @@ empty state stayed hidden), legacy bare categories, an already-cased legacy name
 a tab name, `deletedAt` and both annotated forms excluded, the `secureUrl` fallback, an unresolvable
 photo skipped, slot grouping/ordering, empty input → empty state, and a category-less photo landing in
 `Other`.
+
+### Chat: the lead header photo had no preview, and message photos opened slowly
+
+Ticket: *"Sales app - messages - should let me preview photo / image should open instantly like re
+render and inspection photo"*, circling the **lead thumbnail in the chat header**.
+
+Two separate gaps behind one sentence:
+
+**1. The header thumbnail was inert.** `LeadHeaderThumbnail` (`widgets/components/chat/ChatHeader.tsx`)
+rendered a bare `<Image>` with **no press handling at all** — there was no way to open it. It is now a
+**`PhotoPeekPressable`**: HOLD peeks it enlarged (instant, warmed to a local `file://`), and a TAP
+opens the same **`ImageGalleryModal`** the chat's image messages already use, so the two surfaces
+behave alike. The tap gets its uri from `PhotoPeekPressable`'s **`onPress(peekUri)`** — added for the
+inspection grid — so the gallery opens on the warmed file rather than re-fetching. The
+home-outline placeholder branch is untouched: nothing to preview, nothing to press.
+
+**2. Message photos already had a viewer, but it wasn't instant.** `ImageGalleryModal` rendered raw
+urls with `cache: 'force-cache'`, which **buys nothing** on our pre-signed S3 links (no cache headers —
+see "Hold-to-peek previews" above). It now resolves through the local-file cache, in both the pager and
+the filmstrip.
+
+⚠️ The gallery warms **only while `visible`**. It is mounted per message bubble, so warming on mount
+would download every attachment in the thread on open.
+
+The warming hook is now shared: **`src/hooks/useWarmedImageUris.ts`** (`{ [url]: fileUri }`, filling in
+as downloads land), used by `ImageGalleryModal` and `InspectionPhotosPanel`. It was written for the
+inspection viewer last ticket and moved out rather than copied on the second consumer. It keys its
+effect on the **joined url string**, not the array identity — callers build the array inline, so
+depending on identity would restart every download on every render.
+
+⚠️ Reach for this hook (or `PhotoPeekPressable`, which warms its own) for **any** new full-size photo
+view. `Image.prefetch` and `cache: 'force-cache'` do not work on these urls — that is the standing
+gotcha in §6, and this ticket is the third surface to hit it.
+
+Not changed: chat image **messages** were already previewable via `ImageGalleryModal` from
+`ChatMessageBubble`, so only their speed needed fixing.
 
 ---
 

@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { PhotoPeekPressable } from '../common/PhotoPeekPressable';
-import { isRemoteImageUrl, warmToLocalCache } from '../../utils/imageFileCache';
+import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
 import {
   buildInspectionSections,
   formatCaptureTime,
@@ -27,40 +27,6 @@ export interface InspectionPhotosPanelProps {
 
 const THUMB_SIZE = 56;
 const THUMB_STRIDE = THUMB_SIZE + 8;
-
-/**
- * Resolve local `file://` copies for a list of urls, so the viewer paints instantly
- * instead of re-downloading a pre-signed S3 object per slide (see the "Hold-to-peek
- * previews" note in CLAUDE.md — the OS image cache refuses to store these urls).
- *
- * Downloads dedupe by cache path inside `imageFileCache` and are capped there, so
- * overlapping with the thumbnails' own warming costs nothing.
- */
-function useWarmedUris(uris: string[]): Record<string, string> {
-  const [warmed, setWarmed] = useState<Record<string, string>>({});
-  // Depend on the joined key, not the array identity — a new array every render
-  // would restart every download on every render.
-  const key = uris.join('|');
-
-  useEffect(() => {
-    let cancelled = false;
-    uris.forEach((uri) => {
-      if (!isRemoteImageUrl(uri)) return;
-      warmToLocalCache(uri)
-        .then((file) => {
-          if (cancelled || !file) return;
-          setWarmed((prev) => (prev[uri] ? prev : { ...prev, [uri]: file }));
-        })
-        .catch(() => {});
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-
-  return warmed;
-}
 
 interface ViewerProps {
   sectionName: string;
@@ -87,7 +53,7 @@ function InspectionPhotoViewer({ sectionName, photos, initialIndex, onClose }: V
   const stripRef = useRef<FlatList<SectionPhoto>>(null);
 
   const uris = useMemo(() => photos.map((p) => p.uri), [photos]);
-  const warmed = useWarmedUris(uris);
+  const warmed = useWarmedImageUris(uris);
   const srcOf = (p: SectionPhoto) => warmed[p.uri] || p.uri;
 
   const goTo = useCallback(

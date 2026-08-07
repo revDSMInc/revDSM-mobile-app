@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Pressable, Image } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
 import Pin from '../../../assets/svgs/icons/pin';
 import { useLeadPreviewUrl } from '../../../hooks/useLeadPreviewUrl';
+import { PhotoPeekPressable } from '../../common/PhotoPeekPressable';
+import { ImageGalleryModal } from '../../modals/ImageGalleryModal';
 
 const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
   Announcements: { icon: '📢', color: '#FF6B6B' },
@@ -20,18 +22,41 @@ const CHANNEL_SCHEMES: Record<string, { icon: string; color: string }> = {
  * Lead preview thumbnail shown before the title in a lead chat header — the same
  * street-view image as the Recent-Leads row, resolved via the shared hook. Falls
  * back to a home-outline glyph, matching web's `quick-chat-dialog.js` header.
+ *
+ * The thumbnail is previewable: HOLD peeks it enlarged (instant, because
+ * `PhotoPeekPressable` warms a local `file://` copy — see the "Hold-to-peek
+ * previews" note in CLAUDE.md), and a TAP opens the same full-screen
+ * `ImageGalleryModal` the chat's image messages use. It was previously an inert
+ * `<Image>` with no press handling at all, so the rep could not open it.
  */
-function LeadHeaderThumbnail({ leadPreview }: { leadPreview: any }) {
+function LeadHeaderThumbnail({ leadPreview, title }: { leadPreview: any; title?: string }) {
   const thumbnailUrl = useLeadPreviewUrl(leadPreview);
+  const [preview, setPreview] = useState<string | null>(null);
 
   if (thumbnailUrl) {
     return (
-      <Image
-        source={{ uri: thumbnailUrl }}
-        className="w-10 h-10 rounded-xl mr-3"
-        style={{ backgroundColor: '#F1F5F9' }}
-        resizeMode="cover"
-      />
+      <>
+        <PhotoPeekPressable
+          uri={thumbnailUrl}
+          label={title}
+          // `onPress` hands back the WARMED uri, so the gallery opens on the local
+          // file rather than re-fetching the pre-signed S3 object.
+          onPress={(peekUri) => setPreview(peekUri || thumbnailUrl)}
+          className="w-10 h-10 rounded-xl mr-3 overflow-hidden"
+          style={{ backgroundColor: '#F1F5F9' }}
+        >
+          <Image
+            source={{ uri: thumbnailUrl }}
+            style={{ width: '100%', height: '100%' }}
+            resizeMode="cover"
+          />
+        </PhotoPeekPressable>
+        <ImageGalleryModal
+          visible={!!preview}
+          images={preview ? [{ uri: preview, label: title }] : []}
+          onClose={() => setPreview(null)}
+        />
+      </>
     );
   }
 
@@ -114,7 +139,7 @@ export const ChatHeader = ({
               <Text className="text-md">{CHANNEL_SCHEMES[customerName]?.icon || '💬'}</Text>
             </View>
           ) : (
-            <LeadHeaderThumbnail leadPreview={leadPreview} />
+            <LeadHeaderThumbnail leadPreview={leadPreview} title={customerName} />
           )}
           <View className="flex-1">
             <Text
