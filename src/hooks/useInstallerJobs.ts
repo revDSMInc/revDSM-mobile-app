@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { InstallerService, type JobPeriod } from '../services/api/installer';
 import type {
   InstallerJob,
@@ -12,6 +17,19 @@ export const installerKeys = {
   jobs: (period: JobPeriod) => ['installer', 'jobs', period] as const,
   job: (jobId: string) => ['installer', 'job', jobId] as const,
 };
+
+/**
+ * Marks the installer's cached schedule stale WITHOUT refetching it.
+ *
+ * `my-jobs` belongs to the dashboard and must only be requested from there. A plain
+ * invalidate would not respect that: the dashboard stays mounted underneath the detail
+ * screen, so its query is still active and the invalidate fires the request immediately
+ * — from inside the job, where nothing renders the list. `refetchType: 'none'` drops the
+ * cache instead, and the dashboard's own `useFocusEffect` re-fetches when the installer
+ * actually comes back to it.
+ */
+export const staleInstallerJobs = (queryClient: QueryClient) =>
+  queryClient.invalidateQueries({ queryKey: installerKeys.all, refetchType: 'none' });
 
 /** Installer's schedule — `GET installer/v1/my-jobs?period=all|tomorrow`. */
 export function useInstallerJobs(period: JobPeriod = 'all') {
@@ -58,7 +76,9 @@ export function useUpdateJobStatus() {
     mutationFn: ({ jobId, status }: { jobId: string; status: JobStatus }) =>
       InstallerService.setJobStatus(jobId, status),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: installerKeys.all });
+      // Stale, not refetched — the caller navigates into the job right after this, so a
+      // refetch here would put `my-jobs` on the detail screen. See `staleInstallerJobs`.
+      staleInstallerJobs(queryClient);
     },
   });
 }
@@ -80,7 +100,9 @@ export function useSubmitInstallerResult() {
     mutationFn: ({ jobId, status, reason }: InstallerResultSubmission) =>
       InstallerService.setJobStatus(jobId, status, reason),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: installerKeys.all });
+      // Only ever submitted from the detail screen, so the schedule is dropped rather
+      // than re-requested from there. See `staleInstallerJobs`.
+      staleInstallerJobs(queryClient);
     },
   });
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -93,6 +93,32 @@ export default function InstallerDashboard() {
   const { coords: deviceCoords } = useInstallerProximity();
 
   /**
+   * The other half of what a card's button says: the clock.
+   *
+   * A 12–4 job reads "Preview Appointment" until its window opens, so a crew waiting on
+   * a card at 11:58 has to see it turn into "Start Appointment" without pulling to
+   * refresh. Nothing else on this screen re-renders on time alone — the schedule is
+   * cached for five minutes and the position watch only fires when the phone MOVES, so a
+   * crew already parked at the address gets no render at all.
+   *
+   * A minute is the resolution the windows are written at (whole hours, in practice), so
+   * the label can lag by at most that. Cheap enough to leave running: one `setState` per
+   * minute on a focused screen. It stops with the screen, via `useFocusEffect` — an
+   * interval left running behind the job detail would re-render a list nobody is looking
+   * at, for the whole visit.
+   */
+  const [now, setNow] = useState(() => new Date());
+  useFocusEffect(
+    useCallback(() => {
+      const timer = setInterval(() => setNow(new Date()), 60000);
+      // Fires immediately as well: coming back from a job that took an hour must not
+      // spend another minute showing the labels from before it.
+      setNow(new Date());
+      return () => clearInterval(timer);
+    }, [])
+  );
+
+  /**
    * True when the installer is demonstrably somewhere else — a fix exists and it is
    * outside `CHECK_IN_RADIUS_METERS` of both the job's own coordinates and every company
    * office on the profile.
@@ -113,6 +139,13 @@ export default function InstallerDashboard() {
     },
     [deviceCoords, user]
   );
+
+  /**
+   * `FlatList` takes ONE `extraData`, and two things outside `data` decide what a row
+   * says — where the phone is and what time it is. Bundled so a change in either re-runs
+   * the rows.
+   */
+  const extraData = useMemo(() => ({ deviceCoords, now }), [deviceCoords, now]);
 
   // Header count prefers the API's own total (paginated lists can be shorter).
   const jobCount = summaryCounts?.total ?? jobs.length;
@@ -500,10 +533,10 @@ export default function InstallerDashboard() {
         <FlatList
           data={jobs}
           keyExtractor={(item) => item._id}
-          // The rows depend on something outside `data`: a new fix has to re-run
-          // `isOffSite` for every visible card, or the labels would only catch up the
-          // next time the schedule itself changed.
-          extraData={deviceCoords}
+          // The rows depend on two things outside `data` — the device fix and the clock.
+          // Both have to re-run every visible card's state, or the labels would only
+          // catch up the next time the schedule itself changed.
+          extraData={extraData}
           windowSize={15}
           initialNumToRender={8}
           maxToRenderPerBatch={10}
@@ -520,6 +553,9 @@ export default function InstallerDashboard() {
               // Runtime location check — the button reads "Preview Appointment" until
               // the crew is at the address or at a company office.
               offSite={isOffSite(item)}
+              // Ticks each minute, so a 12–4 job stops reading "Preview Appointment" the
+              // moment its window opens.
+              now={now}
               onPress={() => openJob(item)}
             />
           )}
