@@ -58,7 +58,6 @@ import {
 } from '../../utils/installer-step-data';
 import { ConfirmActionModal } from '../../widgets/modals/installer/ConfirmActionModal';
 import { InstallTimeline } from '../../widgets/components/installer/InstallTimeline';
-import { StepUploadGuard } from '../../widgets/components/installer/StepUploadGuard';
 import { JobReferenceCards } from '../../widgets/components/installer/JobReferenceCards';
 import { ResultJobModal } from '../../widgets/modals/installer/ResultJobModal';
 import { MapSelectionModal } from '../../widgets/common/modal/MapSelectionModal';
@@ -133,55 +132,43 @@ export default function InstallerJobDetail() {
   // resolved to signed S3 URLs); the static mock is only a fallback for jobs that
   // carry no `preInstallPhotos`.
   const repSections = useRepPhotoSections(job?.preInstallPhotos);
-  const photoSections = repSections.length ? repSections : PHOTO_SECTIONS;
-
-  /**
-   * Is there a rep capture set to ghost against?
-   *
-   * This is the difference between the two ways the photo steps can run, and every
-   * decision below keys off it:
-   *
-   *  - **guided** — the rep shot N views, so the installer matches those N and the step
-   *    completes when the last one lands.
-   *  - **free** — the job shipped no `preInstallPhotos`, the tagger is running on the
-   *    static stand-in sections, and there is nothing to ghost against. Requiring the
-   *    stand-in's full tag list meant an installer had to shoot all 16 views for a job
-   *    that asked for none of them. They now shoot as many as the job needs and confirm
-   *    the step themselves.
-   */
-  const guidedPhotoMatch = repSections.length > 0;
+  const hasRepPhotoSet = repSections.length > 0;
+  const photoSections = hasRepPhotoSet ? repSections : PHOTO_SECTIONS;
 
   // A job whose `preInstallPhotos.products` is empty has no rep capture set, so the
   // tagger runs on the static stand-in and NO tag can ever show a reference shot.
   // Worth saying out loud — it reads on-device as "the images are broken".
   useEffect(() => {
-    if (!__DEV__ || !job?._id || repSections.length) return;
+    if (!__DEV__ || !job?._id || hasRepPhotoSet) return;
     console.warn(
       `[InstallerJob] Job ${job._id} returned no pre-install rep photos ` +
         `(preInstallPhotos.totalPhotos=${job.preInstallPhotos?.totalPhotos ?? 0}). ` +
-        'Falling back to the static PHOTO_SECTIONS stand-in — reference shots will be empty.'
+        'Falling back to the static PHOTO_SECTIONS stand-in — reference shots will be ' +
+        'empty and the photo steps run free-form.'
     );
-  }, [job, repSections.length]);
+  }, [job, hasRepPhotoSet]);
+
   /**
-   * The tags the installer MUST match — read from the rep's sections, never from the
-   * static fallback.
+   * The shots the installer MUST match — and deliberately **empty when the job shipped
+   * no rep photos**.
    *
-   * Empty on a free pass, which is precisely the signal `useInstallProgress` uses to
-   * switch the two photo steps over to "shoot what you need, then confirm". Built off
-   * `repSections` rather than `photoSections` for that reason: the stand-in sections
-   * claim `hasRep: true` on 16 tags that have no reference photo behind them, so
-   * reading them here is what manufactured a 16-shot requirement out of nothing.
+   * It used to be derived from `photoSections`, which falls back to the static
+   * `PHOTO_SECTIONS` stand-in. That stand-in claims `hasRep: true` on all 16 of its
+   * placeholder tags, so a job with no rep capture set demanded 16 ghost-matches against
+   * 16 references that do not exist — unsatisfiable busywork, and the reason the tagger
+   * read "1/16 MATCHED" with nothing to match. With no rep set there is no defensible
+   * required list, so the photo steps go free-form and one shot is enough
+   * (`useInstallProgress` → `photoPhaseDone`).
    */
   const requiredPhotoTagIds = useMemo(
-    () => requiredTagIdsFromSections(repSections),
-    [repSections]
+    () => (hasRepPhotoSet ? requiredTagIdsFromSections(photoSections) : []),
+    [hasRepPhotoSet, photoSections]
   );
 
   const {
     progress,
     progressRef,
     stepStatus,
-    activeStep,
     completedCount,
     totalSteps,
     addMaterialPhoto,
@@ -212,13 +199,6 @@ export default function InstallerJobDetail() {
   const queryClient = useQueryClient();
 
   const [openStep, setOpenStep] = useState<InstallStepKey | null>(null);
-  /**
-   * The installer asked to leave a capture step while photos were still uploading.
-   *
-   * The step stays open behind `StepUploadGuard` and closes itself the moment the
-   * queue drains — see `handleCloseStep`.
-   */
-  const [stepExitPending, setStepExitPending] = useState(false);
   const [resultType, setResultType] = useState<InstallerResultType | null>(null);
   const [showPhoneOptions, setShowPhoneOptions] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
@@ -426,48 +406,6 @@ export default function InstallerJobDetail() {
   );
 
   /**
-   * Re-sends photos whose upload gave up.
-   *
-   * The predicate is what stops a shot the installer DELETED from being put back: the
-   * upload hook holds retry arguments by photo id and knows nothing about removals, so
-   * the screen that owns the state answers "is this still wanted?". `indexPhotosById`
-   * covers every step collection; result evidence lives outside it and is checked
-   * alongside.
-   */
-  const retryFailedUploads = useCallback(() => {
-    upload.retryFailed((photoId) => {
-      const current = progressRef.current;
-      return (
-        indexPhotosById(current).has(photoId) ||
-        (current.resultPhotos ?? []).some((p) => p.id === photoId)
-      );
-    });
-  }, [upload, progressRef]);
-
-  /**
-   * Coming back to the job is the retry.
-   *
-   * A failed upload is almost always a moment, not a verdict — the crew was behind the
-   * house, or the cell dropped as the shutter closed. Landing back here is both the
-   * natural "try that again" gesture and, by then, usually a different moment on the
-   * network. A photo that has already landed is not in the queue, so this costs nothing
-   * when there is nothing to do.
-   *
-   * Read through a ref with an EMPTY dependency list, so it fires once per focus and
-   * not once per render. `retryFailedUploads` closes over `upload`, whose identity
-   * changes with the uploading/failed counts — as a real dependency, a photo that keeps
-   * failing would bump the count, re-run this effect, retry, fail, and spin forever.
-   */
-  const retryUploadsRef = useRef(retryFailedUploads);
-  retryUploadsRef.current = retryFailedUploads;
-
-  useFocusEffect(
-    useCallback(() => {
-      retryUploadsRef.current();
-    }, [])
-  );
-
-  /**
    * The iOS swipe-back gesture, which no button handler can intercept — it is turned
    * off outright while photos are in flight (the screen is registered with
    * `gestureEnabled: true` in `navigation/index.tsx`) and restored the moment the queue
@@ -478,31 +416,13 @@ export default function InstallerJobDetail() {
     navigation.setOptions({ gestureEnabled: uploadingCount === 0 });
   }, [navigation, uploadingCount]);
 
-  /**
-   * Opening a timeline step. Its status tells the portal whether it was a re-visit.
-   *
-   * A LOCKED step is refused here rather than by making its card inert. The rail
-   * unlocks strictly one step at a time (`STEP_DEPENDENCIES`), and after an app-data
-   * wipe it is rebuilt from whatever the server held — so a step can show a summary
-   * line ("3/16 shots matched") and still be closed. A card that simply does nothing
-   * when tapped reads as a broken screen; saying which step comes first does not.
-   */
+  /** Opening a timeline step. Its status tells the portal whether it was a re-visit. */
   const handleOpenStep = useCallback(
     (step: InstallStepKey) => {
-      if (stepStatus[step] === 'locked') {
-        const next = INSTALL_STEPS.find((s) => s.key === activeStep);
-        FlashMessage.info(
-          'Finish the steps in order',
-          next
-            ? `Complete step ${next.n} — ${t(next.titleKey)} — before opening this one.`
-            : 'Complete the step above this one first.'
-        );
-        return;
-      }
       log.stepOpened(step, stepStatus[step]);
       setOpenStep(step);
     },
-    [log, stepStatus, activeStep, t]
+    [log, stepStatus]
   );
 
   // ── Capture → S3 ──────────────────────────────────────────────────────────
@@ -1084,55 +1004,13 @@ export default function InstallerJobDetail() {
    * `sendStepData` skips a body identical to that step's last successful save, so a
    * step completed and then closed sends one request, not two.
    */
-  /** Actually closes the step: log, recover, save, dismiss. */
-  const closeStepNow = useCallback(
-    (step: InstallStepKey) => {
-      log.stepClosed(step);
-      // Re-drive anything that gave up BEFORE the save, not after: `sendStepData`
-      // drains the queue first, so a shot that recovers here is referenced by the very
-      // PATCH that closes the step rather than waiting for the next visit. The step
-      // sheets are modals over this screen, so `useFocusEffect` never fires on close —
-      // this is the hook that covers the commonest failure moment there is.
-      retryFailedUploads();
-      void sendStepData(step);
-      setStepExitPending(false);
-      setOpenStep(null);
-    },
-    [log, sendStepData, retryFailedUploads]
-  );
-
-  /**
-   * Backing out of a capture step while photos are still going up **holds the step
-   * open** and puts `StepUploadGuard` over it.
-   *
-   * Closing a step means PATCHing the photos it recorded, and that body can only name a
-   * shot whose `s3url` has come back. Let the step close mid-upload and the request goes
-   * out listing the ones that happened to land — the rest sit on the device, referenced
-   * by nothing, and the installer is looking at a step they filled and a record that is
-   * short of it. So the exit waits for the queue instead of racing it.
-   */
   const handleCloseStep = useCallback(() => {
-    if (!openStep) {
-      setOpenStep(null);
-      return;
+    if (openStep) {
+      log.stepClosed(openStep);
+      void sendStepData(openStep);
     }
-    if (upload.uploadingCount > 0) {
-      setStepExitPending(true);
-      return;
-    }
-    closeStepNow(openStep);
-  }, [openStep, upload.uploadingCount, closeStepNow]);
-
-  /**
-   * The wait is over — close on the installer's behalf.
-   *
-   * They already asked to leave; making them ask twice would turn a guard into a
-   * chore, and the whole point of holding them was that the answer was "not yet".
-   */
-  useEffect(() => {
-    if (!stepExitPending || upload.uploadingCount > 0 || !openStep) return;
-    closeStepNow(openStep);
-  }, [stepExitPending, upload.uploadingCount, openStep, closeStepNow]);
+    setOpenStep(null);
+  }, [openStep, log, sendStepData]);
 
   // Shots captured so far, offered as evidence when reporting a discrepancy.
   const jobPhotos: JobPhotoRef[] = useMemo(() => {
@@ -1173,22 +1051,25 @@ export default function InstallerJobDetail() {
         : null;
 
     /**
-     * Guided passes read as progress towards the rep's set; a free pass has no
-     * denominator, so it reports what was actually taken instead of "3/16", which on a
-     * job with no rep photos named a target that does not exist.
+     * `required` is the phase's own denominator — the rep's set for pre, the pre pass's
+     * own shots for post. Empty means free-form.
      */
     const matchNote = (
-      m: Record<string, CapturedPhoto>,
-      extra: Record<string, CapturedPhoto[]>
+      required: string[],
+      m: Record<string, unknown>,
+      x: Record<string, unknown[]>
     ) => {
-      if (guidedPhotoMatch) {
-        const n = requiredPhotoTagIds.filter((id) => m[id]).length;
-        return n > 0 ? `${n}/${requiredPhotoTagIds.length} shots matched` : null;
+      // Free-form: no denominator to count against, so the rail reports what was taken
+      // rather than a fraction of a demand that isn't being made. Extras count here for
+      // the same reason they satisfy the step.
+      if (!required.length) {
+        const n =
+          Object.keys(m).length +
+          Object.values(x).reduce((sum, list) => sum + (list?.length ?? 0), 0);
+        return n > 0 ? `${n} photo${n > 1 ? 's' : ''} taken` : null;
       }
-      const n =
-        Object.keys(m).length +
-        Object.values(extra).reduce((total, list) => total + (list?.length ?? 0), 0);
-      return n > 0 ? `${n} photo${n > 1 ? 's' : ''} captured` : null;
+      const n = required.filter((id) => m[id]).length;
+      return n > 0 ? `${n}/${required.length} shots matched` : null;
     };
 
     const settled = productIds.filter((id) => progress.scope[id]?.state !== 'pending' && progress.scope[id]);
@@ -1198,14 +1079,19 @@ export default function InstallerJobDetail() {
       pickup: materialNote('pickup'),
       return: materialNote('return'),
       pec: pecNote,
-      pre: matchNote(progress.preMatched, progress.preExtras),
-      post: matchNote(progress.postMatched, progress.postExtras),
+      pre: matchNote(requiredPhotoTagIds, progress.preMatched, progress.preExtras),
+      // Post is measured against the pre pass — see `isStepDone('post')`.
+      post: matchNote(
+        Object.keys(progress.preMatched),
+        progress.postMatched,
+        progress.postExtras
+      ),
       measure: scopeNote,
       coc: progress.cocPages.length
         ? `${progress.cocPages.length} page${progress.cocPages.length > 1 ? 's' : ''} scanned`
         : null,
     };
-  }, [progress, productIds, requiredPhotoTagIds, guidedPhotoMatch]);
+  }, [progress, productIds, requiredPhotoTagIds]);
 
   // Guard sits below every hook so hook order stays identical across renders.
   if (!job) {
@@ -1223,23 +1109,6 @@ export default function InstallerJobDetail() {
   const name =
     job.customerName ||
     [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
-
-  /**
-   * The step-exit upload guard, built once and handed to every capture step.
-   *
-   * Passed DOWN as a node rather than rendered here because each step lives in its own
-   * `Modal`: a second Modal presented over the first from a sibling position is exactly
-   * the stacking iOS refuses, so the overlay has to be mounted inside the step's own
-   * tree. Every step renders it last, above its camera.
-   */
-  const stepGuard =
-    stepExitPending && openStep ? (
-      <StepUploadGuard
-        count={upload.uploadingCount}
-        onKeepShooting={() => setStepExitPending(false)}
-        onLeaveAnyway={() => closeStepNow(openStep)}
-      />
-    ) : null;
 
   /**
    * Sends the chosen result — `PUT installer/v1/update/{id}` with
@@ -1456,13 +1325,8 @@ export default function InstallerJobDetail() {
             {t('installer.leadCenter')}
           </Text>
           {/* Photos are uploaded in the background — say so, so the installer knows
-              there is still work in flight before they leave the job.
-
-              When nothing is in flight but something gave up, the same slot becomes a
-              Retry chip. The queue is re-driven on its own (on focus, and when a step
-              closes), so this is the manual "now, please" — and, more importantly, the
-              standing evidence that N photos are not on the server yet. */}
-          {upload.uploadingCount > 0 ? (
+              there is still work in flight before they leave the job. */}
+          {upload.uploadingCount > 0 && (
             <View className="flex-row items-center ml-auto">
               <ActivityIndicator size="small" color={colors.primary.main} />
               <Text
@@ -1472,21 +1336,7 @@ export default function InstallerJobDetail() {
                 Uploading {upload.uploadingCount}
               </Text>
             </View>
-          ) : upload.failedCount > 0 ? (
-            <TouchableOpacity
-              onPress={retryFailedUploads}
-              className="flex-row items-center ml-auto rounded-full px-2.5 py-1"
-              style={{ backgroundColor: colors.error.main + '1A' }}
-            >
-              <MaterialIcon name="reload" size={13} color={colors.error.main} />
-              <Text
-                className="ml-1 text-[11px] font-black"
-                style={{ color: colors.error.main }}
-              >
-                Retry {upload.failedCount}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
+          )}
         </View>
 
         <ScrollView
@@ -1715,7 +1565,15 @@ export default function InstallerJobDetail() {
                 key={result}
                 onPress={() => handleOpenResult(result)}
                 className="flex-1 h-12 rounded-xl items-center justify-center"
-                style={{ backgroundColor: RESULT_COLORS[result] }}
+                style={{
+                  // On a completed job Reset drops its in-flow amber for error red: it
+                  // no longer nudges a live job along, it undoes a signed-off result.
+                  // Nothing to clash with either — Can't Do Work is gone by then.
+                  backgroundColor:
+                    isJobComplete && result === 'Reset'
+                      ? colors.error.main
+                      : RESULT_COLORS[result],
+                }}
               >
                 <Text className="text-white text-[13px] font-bold text-center">
                   {t(RESULT_LABEL_KEY[result])}
@@ -1740,7 +1598,6 @@ export default function InstallerJobDetail() {
       {/* ── Timeline sub-flows ─────────────────────────────────────────────── */}
 
       <MaterialPhotoStep
-        guard={stepGuard}
         visible={openStep === 'pickup'}
         mode="pickup"
         state={progress.pickup}
@@ -1754,7 +1611,6 @@ export default function InstallerJobDetail() {
       />
 
       <MaterialPhotoStep
-        guard={stepGuard}
         visible={openStep === 'return'}
         mode="return"
         state={progress.return}
@@ -1768,7 +1624,6 @@ export default function InstallerJobDetail() {
       />
 
       <PECStep
-        guard={stepGuard}
         visible={openStep === 'pec'}
         hasConditions={progress.pecHasConditions}
         entries={progress.pecEntries}
@@ -1786,40 +1641,32 @@ export default function InstallerJobDetail() {
       />
 
       <PhotoMatchStep
-        guard={stepGuard}
         visible={openStep === 'pre'}
         phase="pre"
-        guided={guidedPhotoMatch}
         sections={photoSections}
+        freeform={!hasRepPhotoSet}
         matched={progress.preMatched}
         extras={progress.preExtras}
         onMatch={(tagId, photo) => handleMatchPhoto('pre', tagId, photo)}
         onAddExtra={(sid, photo) => handleExtraPhoto('pre', sid, photo)}
         onComplete={() =>
-          finishStep('pre', {
-            matched: Object.keys(progressRef.current.preMatched).length,
-            required: requiredPhotoTagIds.length,
-          })
+          finishStep('pre', { matched: Object.keys(progress.preMatched).length })
         }
         onBack={handleCloseStep}
       />
 
       <PhotoMatchStep
-        guard={stepGuard}
         visible={openStep === 'post'}
         phase="post"
-        guided={guidedPhotoMatch}
         sections={photoSections}
+        freeform={!hasRepPhotoSet}
         matched={progress.postMatched}
         extras={progress.postExtras}
         preMatched={progress.preMatched}
         onMatch={(tagId, photo) => handleMatchPhoto('post', tagId, photo)}
         onAddExtra={(sid, photo) => handleExtraPhoto('post', sid, photo)}
         onComplete={() =>
-          finishStep('post', {
-            matched: Object.keys(progressRef.current.postMatched).length,
-            required: requiredPhotoTagIds.length,
-          })
+          finishStep('post', { matched: Object.keys(progress.postMatched).length })
         }
         onBack={handleCloseStep}
       />
@@ -1843,7 +1690,6 @@ export default function InstallerJobDetail() {
       />
 
       <CoCStep
-        guard={stepGuard}
         visible={openStep === 'coc'}
         pages={progress.cocPages}
         onAddPage={handleCocPage}
@@ -1921,8 +1767,17 @@ export default function InstallerJobDetail() {
         // result is the heavier decision and should interrupt.
         presentation={isJobComplete ? 'dialog' : 'sheet'}
         title="Reset Lead Result?"
-        // No description: the title asks the question and the reason list below answers
-        // it, so the blurb only pushed the reasons further down the sheet.
+        // The completed-job dialog spells out what Reset costs — it is wiping a result
+        // that has already been signed off, and the title alone doesn't say that the
+        // lead comes back for a re-run. The in-progress SHEET stays blurb-free: there
+        // is no result to clear yet, and the copy would only push the reason list
+        // further down the sheet.
+        description={
+          isJobComplete
+            ? 'Are you sure you want to reset this lead result? This will clear the ' +
+              'current result and allow you to re-enter the lead.'
+            : undefined
+        }
         // The API requires a reason on every result, Reset included, so the picker
         // lives in this dialog rather than behind a second popup.
         reasons={INSTALLER_RESULT_REASONS.Reset}

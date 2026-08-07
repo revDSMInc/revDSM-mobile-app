@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Modal, StatusBar } from 'reac
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { headerTopPadding } from '../../../utils/installer-insets';
 
 interface Props {
   visible: boolean;
@@ -18,14 +19,6 @@ interface Props {
    * insets rather than being trapped inside scroll content.
    */
   overlay?: React.ReactNode;
-  /**
-   * Topmost layer — above `overlay`, so it also covers the camera.
-   *
-   * Its one caller is the step-exit upload guard (`StepUploadGuard`), which has to sit
-   * over everything the step can show: an installer who backs out from the camera is
-   * leaving the step just as surely as one who backs out from the list.
-   */
-  guard?: React.ReactNode;
 }
 
 /**
@@ -43,7 +36,6 @@ export function InstallerSubScreen({
   children,
   footer,
   overlay,
-  guard,
 }: Props) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -66,12 +58,19 @@ export function InstallerSubScreen({
           zero insets and the header collides with the status bar. The
           useSafeAreaInsets() hook reads React context, which does cross the
           Modal boundary. Same approach as PhotoMatchStep / AgreementSignatureModal.
+
+          The hook is not the whole answer either, though: what crosses the boundary is
+          the ROOT window's inset, not this modal window's, and the two stop agreeing the
+          moment something else re-declares the status bar — opening the camera over a
+          step and dismissing it is enough. `insets.top` then comes back 0 and the back
+          button lands on the status bar. `headerTopPadding` floors it so that cannot
+          happen; a real, larger inset still wins.
         */}
         <View
           style={{
             flex: 1,
             backgroundColor: colors.background,
-            paddingTop: insets.top,
+            paddingTop: headerTopPadding(insets.top),
             paddingLeft: insets.left,
             paddingRight: insets.right,
           }}
@@ -128,7 +127,6 @@ export function InstallerSubScreen({
         )}
         </View>
         {overlay}
-        {guard}
       </View>
     </Modal>
   );

@@ -4,14 +4,19 @@
  * Two independent gates decide whether a crew gets into a job, and they answer different
  * questions:
  *
- *   - **this file — WHEN.** Today or any earlier date opens; a future date does not. A
- *     job the crew isn't due at yet has nothing for them to do, and starting it would
- *     stamp `inProgress` and a check-in on a visit that hasn't happened.
+ *   - **this file — WHEN.** Today or any earlier date opens; a future date does not, and
+ *     nor does today's job before its arrival window opens. A job the crew isn't due at
+ *     yet has nothing for them to do, and starting it would stamp `inProgress` and a
+ *     check-in on a visit that hasn't happened.
  *   - `installer-geofence.ts` — **WHERE.** Close enough to the address, or to an office.
  *
- * Compared on the **local calendar day**, not on timestamps. A job scheduled 8AM today is
- * still today's job at 5PM — the window having passed is a matter for `workflowState:
- * 'expired'`, not for locking the crew out. Equally, midnight tonight is already tomorrow.
+ * Both gates guard the START of a visit only. A job already `inProgress` is past them —
+ * see `isJobInProgress` in `installer-card-state.ts`.
+ *
+ * The DATE is compared on the **local calendar day**, not on timestamps, and the window
+ * gate is **one-sided**: a job scheduled 8AM today is still today's job at 5PM. The
+ * window having *passed* is a matter for `workflowState: 'expired'`, not for locking the
+ * crew out; only being **early** refuses. Equally, midnight tonight is already tomorrow.
  */
 
 import type { InstallerJob } from '../config/types/installer';
@@ -101,6 +106,12 @@ interface ArrivalWindow {
   label: string;
   /** False for a lead that carries one time rather than a window ("9am"). */
   isRange: boolean;
+  /**
+   * The opening time, when it parsed as one — what the "too early" gate compares against.
+   * Null for a window whose shape wasn't recognised, which is passed through as a label
+   * only and must not be turned into a lockout.
+   */
+  start: WindowEnd | null;
 }
 
 const describeArrivalWindow = (leadTime?: string | null): ArrivalWindow | null => {
@@ -118,23 +129,96 @@ const describeArrivalWindow = (leadTime?: string | null): ArrivalWindow | null =
       return {
         label: `${formatWindowEnd(start, !sameHalf)} - ${formatWindowEnd(end, true)}`,
         isRange: true,
+        start,
       };
     }
     // Parsed as two ends but at least one isn't a time — a range all the same.
-    return { label: cleaned, isRange: true };
+    return { label: cleaned, isRange: true, start: null };
   }
 
   const single = parseWindowEnd(cleaned);
-  if (single) return { label: formatWindowEnd(single, true), isRange: false };
+  if (single) {
+    return { label: formatWindowEnd(single, true), isRange: false, start: single };
+  }
 
   // An unrecognised shape still says more than no window does, so it goes through in the
   // API's own words rather than being dropped.
-  return { label: cleaned, isRange: ends.length > 1 };
+  return { label: cleaned, isRange: ends.length > 1, start: null };
 };
 
 /** `"12NOON - 4PM ARRIVAL"` → `"12:00 - 4:00 PM"`. Null when there is no usable time. */
 export const formatArrivalWindow = (leadTime?: string | null): string | null =>
   describeArrivalWindow(leadTime)?.label ?? null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Too early
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 12AM → 0, 12PM → 12, everything else the obvious way. */
+const to24Hour = (end: WindowEnd): number => {
+  if (end.meridiem === 'AM') return end.hour12 === 12 ? 0 : end.hour12;
+  return end.hour12 === 12 ? 12 : end.hour12 + 12;
+};
+
+/**
+ * The instant this job's arrival window opens, on its own calendar day.
+ *
+ * Built from the job's local calendar day plus the window's start time, NOT from
+ * `leadDate`'s own clock component — `leadDate` carries a server-side time
+ * (`2026-07-30T09:00:00+05:00`) that has no relationship to the `leadTime` window the
+ * customer was actually given.
+ *
+ * Null whenever either half is missing or unparseable. That is the "don't gate" answer:
+ * a data gap must never be the reason a crew can't open work they are standing at.
+ */
+export const arrivalWindowStart = (job?: InstallerJob | null): Date | null => {
+  const start = describeArrivalWindow(job?.leadTime)?.start;
+  if (!start || !job?.leadDate) return null;
+
+  const scheduled = new Date(job.leadDate);
+  if (Number.isNaN(scheduled.getTime())) return null;
+
+  return new Date(
+    scheduled.getFullYear(),
+    scheduled.getMonth(),
+    scheduled.getDate(),
+    to24Hour(start),
+    start.minutes,
+    0,
+    0
+  );
+};
+
+/**
+ * True when the crew is trying to start this job BEFORE its arrival window opens.
+ *
+ * Deliberately one-sided: the window's END is not a gate. A crew running late still has
+ * the job to do, and locking them out at 4:01 PM would strand real work — that is what
+ * `workflowState: 'expired'` is for, a note that the slot is stale rather than a refusal.
+ * So this only stops a 12–4 PM job being opened at 9 AM.
+ *
+ * Also one-sided about data: no window, no date, or a shape that didn't parse all return
+ * false. Only a window we positively understand can refuse a tap.
+ */
+export const isBeforeArrivalWindow = (
+  job?: InstallerJob | null,
+  now: Date = new Date()
+): boolean => {
+  const start = arrivalWindowStart(job);
+  return !!start && now.getTime() < start.getTime();
+};
+
+/**
+ * The opening time on its own — `"12:00 PM"`.
+ *
+ * What the early refusal quotes. It names the START, not the window, because that is the
+ * one fact the crew can act on; echoing `12:00 - 4:00 PM` would leave them working out
+ * which end the refusal meant. Null when there is no parseable start.
+ */
+export const arrivalWindowStartLabel = (job?: InstallerJob | null): string | null => {
+  const start = describeArrivalWindow(job?.leadTime)?.start;
+  return start ? formatWindowEnd(start, true) : null;
+};
 
 /**
  * What a crew who isn't on site yet is told.

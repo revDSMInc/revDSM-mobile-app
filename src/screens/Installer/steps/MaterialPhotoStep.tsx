@@ -22,8 +22,6 @@ interface Props {
   onRemovePhoto: (photoId: string) => void | Promise<void>;
   onSkip: () => void;
   onBack: () => void;
-  /** Topmost layer — the parent's step-exit upload guard. */
-  guard?: React.ReactNode;
 }
 
 /**
@@ -41,7 +39,6 @@ export function MaterialPhotoStep({
   onRemovePhoto,
   onSkip,
   onBack,
-  guard,
 }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -97,7 +94,6 @@ export function MaterialPhotoStep({
         isPickup ? t('installer.materialPickupSub') : t('installer.materialReturnSub')
       }
       onBack={onBack}
-      guard={guard}
       overlay={
         cameraOpen ? (
           <InstallerCamera

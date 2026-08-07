@@ -27,6 +27,7 @@ import type {
   PhotoSection,
   PhotoTag,
   PhotoPhase,
+  StatusReasonImage,
 } from '../config/types/installer';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,44 +245,6 @@ const RETRY_DELAY_MS = [2000, 6000];
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Serialization
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Tail of the upload chain — **one installer photo is sent at a time, app-wide**.
- *
- * Captures were previously fired the instant the shutter closed, so a crew working
- * through the ghost tagger had three or four multipart PUTs in the air at once, all
- * appending to the SAME job document. That is a read-modify-write race: the server
- * reads the photo array, appends one shot, writes it back — and the write that lands
- * second has a copy of the array from before the first, so one upload silently loses
- * its entry (or the write is rejected outright). Which is exactly what the field saw:
- * several photos land, one comes back "Couldn't upload …" after a single attempt, and
- * the step-data PATCH then has nothing to reference for it.
- *
- * Serializing costs nothing an installer notices — the bytes go out over one cell
- * connection either way, and the queue drains in the background while they keep
- * shooting — and it removes the race rather than papering over it with more retries.
- */
-let uploadChain: Promise<unknown> = Promise.resolve();
-
-/**
- * Runs `task` after everything already queued, whatever happened to it.
- *
- * The chain is advanced with a SWALLOWED copy of the result, so one photo's failure
- * can never reject the chain and take the queue down with it; the real promise, with
- * its real outcome, is what the caller gets back.
- */
-const enqueueUpload = <T,>(task: () => Promise<T>): Promise<T> => {
-  const run = uploadChain.then(task, task);
-  uploadChain = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
-};
-
 /**
  * Is sending the same bytes again worth anything?
  *
@@ -311,10 +274,9 @@ const isRetryableUploadError = (err: any): boolean => {
  *
  * `buildDescriptor` receives the resolved fix so each phase can shape its own
  * descriptor without every caller re-fetching the location. Both it and the location
- * are resolved ONCE, **before the photo is queued** — so a shot that waits behind two
- * others is still stamped with where and when IT was taken, not with wherever the crew
- * had walked to by the time the queue reached it. The same resolved pair is reused
- * across retries for the same reason.
+ * are resolved ONCE, outside the retry loop — a retry re-sends the original capture,
+ * including where and when it was taken, not a fresh fix from wherever the crew has
+ * walked to since.
  */
 export const uploadInstallerPhoto = async (
   jobId: string,
@@ -336,38 +298,14 @@ export const uploadInstallerPhoto = async (
     attempts,
   });
 
-  return enqueueUpload(() => sendPhoto(jobId, phase, file, descriptor, coordinates, size, failed));
-};
-
-/**
- * The request half of `uploadInstallerPhoto`, run one at a time by `enqueueUpload`.
- *
- * Split out so the location fix, the file part and the descriptor are all built at
- * CAPTURE time while everything about the shot is still true, and only the network
- * work waits its turn in the queue.
- */
-const sendPhoto = async (
-  jobId: string,
-  phase: InstallerImagePhase,
-  file: InstallerUploadFile,
-  descriptor: InstallerImageDescriptor,
-  coordinates: GeoCoordinates | null,
-  size: number,
-  failed: (attempts: number) => UploadOutcome
-): Promise<UploadOutcome> => {
   for (let attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++) {
     try {
       const result = await InstallerService.uploadImages(jobId, phase, [file], [descriptor]);
-      // `appended` is the contract, but a response carrying only the full post-append
-      // list still says what landed: uploads are serialized, so exactly one photo is in
-      // flight and the TAIL of that list is this one. Without the fallback a perfectly
-      // good upload was reported to the installer as "Couldn't upload …" after a single
-      // attempt, purely because the field it was read from was absent.
-      const stored = result.appended[0] ?? result.photos[result.photos.length - 1];
+      const stored = result.appended[0];
 
       if (!stored?.s3url) {
-        // A 2xx that stored nothing at all. The server has answered, and it answers the
-        // same way every time for the same body, so this is final — retrying would only
+        // A 2xx that stored nothing. The server has answered, and it answers the same
+        // way every time for the same body, so this is final — retrying would only
         // delay the message by two more round-trips.
         console.warn('[InstallerUpload] Upload returned no image for', phase);
         return failed(attempt);

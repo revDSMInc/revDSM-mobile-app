@@ -184,6 +184,33 @@ export const resultedActionLabel = (job: InstallerJob): string | null => {
   return outcome.toLowerCase() === 'resulted' ? 'Resulted!' : `Resulted - ${outcome}!`;
 };
 
+/**
+ * Has this visit already begun?
+ *
+ * The check-in gates — being on site, and the job being due today — exist to stop a crew
+ * *starting* a visit they aren't at or aren't due at. Once the job is `inProgress` that
+ * question is settled: the crew checked in on site, and they must be able to get back
+ * into their own job from wherever they are — the van, a supply run, a spot where the
+ * fix drifts out of the 20 m radius. So this is what both gates test before they run
+ * (see `openJob` in `screens/Installer/index.tsx`).
+ *
+ * Two signals, either of which means started, because they come from different parts of
+ * the payload and a job can carry one without the other:
+ *   - `status: 'inProgress'` — the workflow transition the start tap PATCHes;
+ *   - `workflowState: 'resume'` — the API's own word for "already checked in once".
+ *
+ * A resulted job is NOT in progress whichever it says: the visit is over, and it takes
+ * the read-only review path instead.
+ */
+export const isJobInProgress = (job?: InstallerJob | null): boolean => {
+  if (!job || job.resulted) return false;
+
+  const status = String(job.status ?? '').trim().toLowerCase();
+  if (status === 'inprogress') return true;
+
+  return String(job.workflowState ?? '').trim().toLowerCase() === 'resume';
+};
+
 export interface JobCardStateOptions {
   /** The Upcoming tab — preview-only regardless of what the job's own state says. */
   isUpcoming?: boolean;
@@ -256,7 +283,11 @@ export const resolveJobCardState = (
   // offering to *resume* one never begun would skip the start the crew expects.
   const resolved = state ?? BY_WORKFLOW_STATE.start;
 
-  if (offSite) {
+  // A job already underway is exempt: the crew checked in on site, and being off site
+  // now doesn't take it away from them, so the tap still opens it and the card has to
+  // keep saying so. Greying it to a preview would be the card refusing an action that
+  // `openJob` allows.
+  if (offSite && !isJobInProgress(job)) {
     // The installer is not at the address and not at an office, so the check-in at the
     // end of this tap would be refused — the card must not promise to start a visit it
     // cannot start.

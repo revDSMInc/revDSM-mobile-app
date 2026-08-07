@@ -20,8 +20,6 @@ interface Props {
    */
   onRemovePage: (pageId: string) => void | Promise<void>;
   onBack: () => void;
-  /** Topmost layer — the parent's step-exit upload guard. */
-  guard?: React.ReactNode;
 }
 
 /**
@@ -30,14 +28,7 @@ interface Props {
  * Uses the same document-scanner plugin as the job-builder flow so edge detection
  * and crop adjustment behave identically to the rest of the app.
  */
-export function CoCStep({
-  visible,
-  pages,
-  onAddPage,
-  onRemovePage,
-  onBack,
-  guard,
-}: Props) {
+export function CoCStep({ visible, pages, onAddPage, onRemovePage, onBack }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const log = useInstallerActivityLog();
@@ -96,7 +87,6 @@ export function CoCStep({
       title={t('installer.cocTitle')}
       subtitle={t('installer.cocSub')}
       onBack={onBack}
-      guard={guard}
       footer={
         hasPages ? (
           <TouchableOpacity

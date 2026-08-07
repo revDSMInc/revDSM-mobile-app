@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTranslation } from '../../../i18n/LanguageProvider';
+import { footerBottomPadding } from '../../../utils/installer-insets';
 import { GhostSlider } from './GhostSlider';
 import { HouseGhost } from './HouseGhost';
 import type { CapturedPhoto } from '../../../config/types/installer';
@@ -172,7 +173,7 @@ export function InstallerCamera({
 
         <View
           className="flex-row px-4 pt-3"
-          style={{ gap: 12, paddingBottom: Math.max(insets.bottom, 20) }}
+          style={{ gap: 12, paddingBottom: footerBottomPadding(insets.bottom) }}
         >
           <TouchableOpacity
             onPress={() => setCaptured(null)}
@@ -248,7 +249,7 @@ export function InstallerCamera({
       {/* Controls */}
       <View
         className="px-6 pt-4"
-        style={{ paddingBottom: Math.max(insets.bottom, 20) }}
+        style={{ paddingBottom: footerBottomPadding(insets.bottom) }}
       >
         {withGhost && (
           <View className="flex-row items-center mb-2">
