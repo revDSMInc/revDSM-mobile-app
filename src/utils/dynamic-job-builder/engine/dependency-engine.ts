@@ -237,6 +237,25 @@ function isNonZero(value: any) {
   return Boolean(value);
 }
 
+/**
+ * Truthiness for the `truthy`/`falsy` operators (web parity). A quantity of `0`
+ * — or the string `"0"` a text input produces — means "nothing entered", so it
+ * must read as FALSY; a plain `Boolean()` counted `"0"` as truthy, which let a
+ * zero-valued contributor/visibility rule match when web's would not.
+ * Non-numeric strings stay truthy.
+ */
+function isTruthyValue(value: any): boolean {
+  if (value === null || value === undefined || value === '') return false;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    const numeric = Number(trimmed);
+    return Number.isNaN(numeric) ? true : numeric !== 0;
+  }
+  return Boolean(value);
+}
+
 export function evaluateRule(rule: any, ctx: any = {}) {
   if (!rule) return true;
 
@@ -280,13 +299,13 @@ export function evaluateRule(rule: any, ctx: any = {}) {
   }
 
   if (operator === 'truthy') {
-    if (Array.isArray(raw)) return raw.some((v) => Boolean(v));
-    return Boolean(raw);
+    if (Array.isArray(raw)) return raw.some((v) => isTruthyValue(v));
+    return isTruthyValue(raw);
   }
 
   if (operator === 'falsy') {
-    if (Array.isArray(raw)) return raw.every((v) => !v);
-    return !raw;
+    if (Array.isArray(raw)) return raw.every((v) => !isTruthyValue(v));
+    return !isTruthyValue(raw);
   }
 
   const left = Array.isArray(raw) ? toNumber(raw.reduce((s: number, v: any) => s + toNumber(v), 0)) : toNumber(raw);
@@ -341,7 +360,47 @@ function resolveAllocationAvailFromDc(field: any, dealCenterData: any = {}) {
   return sumDealCenterRefs(dealCenterData, keys, field?.dcAggregate || 'sum');
 }
 
+function resolveAllocationAvailFromValueSource(valueSource: any, dealCenterData: any = {}) {
+  if (!valueSource) return 0;
+
+  if (valueSource.type === 'dealCenter') {
+    return resolveAllocationAvailFromDc(
+      {
+        dcField: valueSource.dcField,
+        dcFields: valueSource.dcFields,
+        dcAggregate: valueSource.dcAggregate,
+        avail: valueSource.fallback ?? 0,
+      },
+      dealCenterData
+    );
+  }
+
+  // static / state / contributors / computed budgets aren't a single deal-center
+  // number — use the configured fallback so a real budget isn't read as 0.
+  return Number(valueSource.fallback) || 0;
+}
+
+function getAllocationBudgetValueSource(field: any) {
+  const metrics = field?.metrics;
+  if (!metrics?.length) return null;
+  const budget =
+    metrics.find((metric: any) => metric.role === 'budget') ||
+    metrics.find((metric: any) => metric.id === 'avail');
+  return budget?.valueSource || null;
+}
+
 export function resolveAllocationAvail(field: any, dealCenterData: any = {}) {
+  // Modern allocations define their budget inside the budget metric's
+  // valueSource (metrics: [{ role: 'budget', valueSource: { type: 'dealCenter' } }]);
+  // legacy ones put it on field.dcField / field.avail. Resolve the metrics form
+  // FIRST, otherwise a metrics-based card (whose top-level field.avail is 0) is
+  // mistaken for a zero-budget/excluded card and silently skipped by completion
+  // checks — leaving Next enabled while its allocation is still incomplete.
+  const budgetSource = getAllocationBudgetValueSource(field);
+  if (budgetSource) {
+    return resolveAllocationAvailFromValueSource(budgetSource, dealCenterData);
+  }
+
   if (field?.dcField || field?.dcFields?.length) {
     return resolveAllocationAvailFromDc(field, dealCenterData);
   }

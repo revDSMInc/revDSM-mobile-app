@@ -19,6 +19,15 @@ import DocumentScanner from 'react-native-document-scanner-plugin';
 import { LeadService } from '../../../services/api/leads';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+// Same resolution the summary cards use — a server document's source lives on
+// `secureUrl`/`url`, NOT on `uri`, and a signed agreement is a PDF that `Image`
+// cannot decode. Both are why the tile rendered as a blank grey card.
+const isPdfFile = (f: any) =>
+  (f?.contentType || f?.mimeType || '').includes('pdf') ||
+  String(f?.name || f?.uri || f?.url || '').toLowerCase().endsWith('.pdf');
+const fileSrc = (f: any) =>
+  f?.uri || f?.secureUrl || f?.displayUrl || f?.url || f?.thumbnailUrl || f?.file;
+
 interface DocumentScannerModalProps {
   visible: boolean;
   onClose: () => void;
@@ -28,6 +37,14 @@ interface DocumentScannerModalProps {
   leadId: string;
   category: 'agreement' | 'orderSheet' | 'downPaymentReceipt';
   initialFiles?: any[];
+  /**
+   * Whether ALREADY-FILED documents (everything that arrived via `initialFiles`)
+   * can be crossed out here. Pages scanned in this session are always removable,
+   * so a misscan is never stuck. Defaults to `true` — existing callers keep the
+   * old behaviour; the dynamic Job Builder passes `false` for agreements so the
+   * signed/generated one can't be destroyed from the scan sheet.
+   */
+  allowRemoveExisting?: boolean;
 }
 
 export const DocumentScannerModal = ({
@@ -39,6 +56,7 @@ export const DocumentScannerModal = ({
   leadId,
   category,
   initialFiles = [],
+  allowRemoveExisting = true,
 }: DocumentScannerModalProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -52,11 +70,15 @@ export const DocumentScannerModal = ({
 
   useEffect(() => {
     if (visible) {
+      // Carry the WHOLE file object through. The old projection kept only
+      // `{ uri, serverId, isNew, name }`, which (a) dropped `url`/`secureUrl`/
+      // `contentType` so the tile had nothing to render, and (b) dropped
+      // `filePath`, so a document identified by filePath alone no longer matched
+      // itself on the way back out and got pruned from the card on Update.
       const initial = (initialFiles || []).map((f) => ({
-        uri: f.uri,
+        ...f,
         serverId: f.serverId || f._id,
         isNew: false,
-        name: f.name,
       }));
       setFiles(initial);
       setRemovedServerIds([]);
@@ -151,7 +173,9 @@ export const DocumentScannerModal = ({
           <View style={styles.infoBox}>
             <Icon name="information" size={20} color="#0369a1" style={{ marginTop: 2 }} />
             <Text style={styles.infoText}>
-              Scan documents via camera. You can remove existing or new pages and tap "Add More" to capture additional pages.
+              {allowRemoveExisting
+                ? 'Scan documents via camera. You can remove existing or new pages and tap "Add More" to capture additional pages.'
+                : 'Scan documents via camera. Tap "Add More" to capture additional pages. Documents already on file can\'t be removed here.'}
             </Text>
           </View>
 
@@ -163,17 +187,34 @@ export const DocumentScannerModal = ({
             </TouchableOpacity>
           ) : (
             <View style={styles.grid}>
-              {files.map((item, idx) => (
-                <View key={idx} style={[styles.thumbnailContainer, { width: columnWidth }]}>
-                  <View style={styles.thumbnailWrapper}>
-                    <Image source={{ uri: item.uri }} style={styles.thumbnail} resizeMode="cover" />
-                    <DeleteButton onPress={() => handleRemove(idx)} />
-                    <View style={styles.pageBadge}>
-                      <Text style={styles.pageBadgeText}>{idx + 1}</Text>
+              {files.map((item, idx) => {
+                const src = fileSrc(item);
+                // A PDF (or a document with no resolvable source) gets the same
+                // placeholder the summary card shows, instead of an Image that
+                // decodes to nothing.
+                const showPdfTile = isPdfFile(item) || !src;
+                const canRemove = allowRemoveExisting || item.isNew !== false;
+                return (
+                  <View key={idx} style={[styles.thumbnailContainer, { width: columnWidth }]}>
+                    <View style={styles.thumbnailWrapper}>
+                      {showPdfTile ? (
+                        <View style={styles.pdfTile}>
+                          <Icon name="file-pdf-box" size={40} color="#EF4444" />
+                          <Text style={styles.pdfTileName} numberOfLines={2}>
+                            {item.name || 'PDF'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Image source={{ uri: src }} style={styles.thumbnail} resizeMode="cover" />
+                      )}
+                      {canRemove && <DeleteButton onPress={() => handleRemove(idx)} />}
+                      <View style={styles.pageBadge}>
+                        <Text style={styles.pageBadgeText}>{idx + 1}</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
 
               {files.length < 10 && (
                 <View style={[styles.thumbnailContainer, { width: columnWidth }]}>
@@ -253,6 +294,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   thumbnail: { width: '100%', height: '100%' },
+  pdfTile: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  pdfTileName: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#94a3b8',
+    marginTop: 8,
+    textAlign: 'center',
+  },
   deleteButton: {
     position: 'absolute',
     top: 8,

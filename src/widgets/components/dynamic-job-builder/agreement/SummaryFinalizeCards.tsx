@@ -885,6 +885,13 @@ export function SummaryFinalizeCards({
         leadId={leadId || ''}
         category={scannerCategory || 'orderSheet'}
         initialFiles={scannerCategory === 'agreement' ? agreementFiles : orderSheetFiles}
+        // CREATE flow only: while the job is being built the agreement on file is
+        // the freshly signed/generated one, and the scan sheet is for ADDING pages
+        // — not for destroying it — so its ✕ is hidden. Pages scanned in this
+        // session keep theirs, and order sheets are untouched.
+        // The MY DEALS edit flow keeps delete (`editMode`): the rep is revising a
+        // submitted deal and must be able to swap out a wrong agreement.
+        allowRemoveExisting={editMode || scannerCategory !== 'agreement'}
       />
 
       <DynamicAgreementDialog

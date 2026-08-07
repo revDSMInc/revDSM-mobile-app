@@ -233,9 +233,8 @@ addendum that really was being submitted. In `DynamicDealEditScreen.tsx`:
   stored method fuzzy-resolves via `resolveTierPaymentMethod` (amex / visa-mc-dscvr, else **check**),
   so it renders a real label — same as web.
 - **Two `ReviewRow`s added**: `Down Pmt Method` and `Balance Method`, each gated on its flag.
-- ⚠️ **Mobile keeps its `!!key &&` guard** on both method flags. Web coerces with a `'check'`
-  fallback so its key is never blank; mobile leaves the picker genuinely unselected, so without the
-  guard a blank "Select payment method" would read as a change. This divergence is deliberate.
+- ⚠️ ~~Mobile keeps its `!!key &&` guard on both method flags.~~ **Superseded** — the pickers no
+  longer open blank, so the guard is gone. See "Deal-edit payment methods now seed from the sale".
 - **`ReviewRow`'s value column now shrinks and wraps** (`flexShrink: 1`, `maxWidth: '55%'`,
   `textAlign: 'right'`). Plan labels are long sentences and RN defaults a `View` to `flexShrink: 0`,
   which would have pushed the value off-screen — web wraps it the same way.
@@ -321,20 +320,27 @@ Ticket: *"My deals - final page - not letting me see 'notes' or 'phone number', 
 avoidance at all — so on the Review & Submit step the keyboard sat over **Additional Notes** and
 **Send Addendum To ▸ Phone Number**, which are the last things on the page.
 
-Fixed with the pattern the rest of this flow already uses (`VerticalSummaryTab`,
-`DynamicTabRenderer`, `InvestmentPanel`): **`automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}`
-+ `keyboardDismissMode="interactive"`**, relying on Android's `adjustResize` (already set in
-`AndroidManifest.xml`). `contentContainerStyle` also gained `paddingBottom: 48` so the last field
-clears the sticky Back / Submit footer.
+Steps 2 (Job Price) and 3 (Review & Submit) now use **`KeyboardAwareScrollView` from
+`react-native-keyboard-controller`** with `bottomOffset={24}`, plus `paddingBottom: 48` so the last
+field clears the sticky Back / Submit footer. Step 0 has no text inputs and was left alone.
 
-⚠️ **Do NOT "fix" this with a padding `KeyboardAvoidingView`.** That only shrinks the ScrollView to
-the space above the keyboard, leaving a low field below the fold and still hidden — it is the very
-bug the comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. Note this
-differs from `RolloutView` / `CalculatorView` / `ResultJobModal`, which DO use `KeyboardAvoidingView`;
-those wrap a non-scrolling root, so the trade-off is not the same.
+⚠️ **`automaticallyAdjustKeyboardInsets` is NOT enough — it is iOS-only.** That was the first fix
+here and it left Android broken: the phone field still sat behind the keypad. The manifest does set
+`android:windowSoftInputMode="adjustResize"`, but that no longer shrinks the window once
+`KeyboardProvider` (mounted in `App.tsx`) puts the app edge-to-edge — so nothing moved the field.
+`KeyboardAwareScrollView` scrolls the **focused input** above the keyboard on **both** platforms and
+needs no per-platform branching. It requires `KeyboardProvider`, which is already app-wide.
 
-Applied to **step 2 (Job Price)** as well as step 3 — its Contract Price / Down Payment inputs sit
-just as low once the payment pickers expand. Step 0 has no text inputs and was left alone.
+This is the **first use of `KeyboardAwareScrollView` in the repo** — prefer it over
+`automaticallyAdjustKeyboardInsets` for any *scrolling* form with fields near the bottom.
+`VerticalSummaryTab` / `DynamicTabRenderer` / `InvestmentPanel` still use the iOS-only prop and have
+the same latent Android gap if a field there ever sits low enough.
+
+⚠️ Still **do NOT** reach for a padding `KeyboardAvoidingView`: it only shrinks the ScrollView to the
+space above the keyboard, leaving a low field below the fold and still hidden — the very bug the
+comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. (`RolloutView` /
+`CalculatorView` / `ResultJobModal` do use one, but they wrap a non-scrolling root, so the trade-off
+differs.)
 
 ### Deal-edit summary listed every document twice
 
@@ -413,6 +419,192 @@ silently HIDE a real document.
 Note `__tests__/screens/DynamicDealCenter/summary-documents.test.tsx` covers this area but is one of
 the two suites that cannot run under jest (no global `react-native-blob-util` mock), so this change
 was verified by tracing the two sources' identities rather than by a test run.
+
+### Deal-edit price didn't move when a combination's footage changed
+
+Ticket: *"My deals - I changed footages which means price should change but nothing changed — left
+side 333ft and in the third step price is not going to update."* Step 2 (Job Price) showed **New Job
+Build identical to Previous** plus *"No priced quantity change detected from the build"*, i.e.
+`computeEditedTiers` returned `delta = 0`.
+
+Nothing is wrong in `dynamic-deal-pricing.ts` itself — it is a faithful port. The break is **upstream,
+in the job-builder engine it calls**. Money never lives on the builder: a combination's footage
+reaches the calculator schema through an **allocation** (`buildCalculatorDetails` →
+`buildAllocationQtyMap` → `collectAllocationFields` → `resolveAllocationMetrics().allocated` →
+`collectAllocationDcRefs`). Mobile's engine predates web commits **`9293ad28`** and **`99eb8d8a`**
+("Improved allocation tracking to be config-driven … and to validate nested allocations in
+stacks/accordions"), so three pieces of that chain were missing. Ported now:
+
+- **`allocation-utils.ts` › `collectAllocationFields` only scanned the TOP level** of `tab.fields` and
+  `section.fields`. An allocation authored **inside a `stack`/`accordion` container** was invisible →
+  `buildAllocationQtyMap` returned `{}` → the footage never reached the schema → `delta` 0. New
+  `collectAllocationFieldsDeep` recurses on any `field.fields`, matching web. **This is the fix for
+  the ticket**; it also un-breaks tab-completeness checks, which call the same function.
+- **`combination-utils.ts` › `computeGroupUsed`** took only the **FIRST** locationGrid
+  (`rowFields.find`) and read it **only** as `combo[gridField.id]` — a grid stored under the field's
+  `key`, or the legacy `combo.grid` slot, resolved `undefined` → 0 used. Now sums **every** grid field
+  with `combo[gf.id] ?? combo[gf.key] ?? combo.grid`, and the no-grid branch sums **every `number`
+  field** instead of the hardcoded `['sqft','sq','count']` key heuristic. (Grids win over sibling
+  numbers so add-ons like miters/end-caps aren't double-counted against the allocation.)
+- **`allocation-utils.ts` › `getTabLevelUsed`** got the same generalization for legacy tab-level
+  combinations.
+- **`dependency-engine.ts` › `resolveAllocationAvail` is now metrics-first.** Modern allocations put
+  the budget in `metrics[{ role:'budget' }].valueSource`; only legacy ones use `field.dcField` /
+  `field.avail`. Reading the legacy shape first made a metrics-based card look like a **zero-budget /
+  excluded** card.
+
+Two more divergences fixed in the same pass:
+
+- **`dynamic-deal-pricing.ts` › `buildBuilderQtyIndex` triple-counted allocation quantities.**
+  `buildAllocationQtyMap` **already emits both the raw ref and `normName(ref)`** as separate keys, and
+  the overlay then re-added `normName(ref)` for each of them — so `byDcField[normalized]` ended up at
+  3× the real quantity. Web adds each entry once; mobile now does too.
+- **`dependency-engine.ts` › `truthy`/`falsy` operators used bare `Boolean(raw)`**, so a quantity of
+  `0` — or the string `"0"` a text input produces — read as TRUE. New `isTruthyValue` (web parity)
+  treats numeric-zero as falsy and leaves non-numeric strings truthy. ⚠️ This is the one change with
+  reach beyond the ticket: it applies to **every** `truthy`/`falsy` dependency rule (tab locks, field
+  visibility, allocation contributor `when` gates), which is exactly why the divergence mattered — a
+  zero-valued contributor could match on mobile and not on web.
+
+Verified by driving the REAL `computeEditedTiers` over a LeafFilter-shaped config (combination section
++ locationGrid + option-bound allocation), footage 300 → 333: **fails on the pre-fix code** for the
+nested-allocation and grid-stored-under-key cases, passes after, and an untouched build still reports
+`changed: false` with `next === previous`. tsc error count unchanged (83, all pre-existing), lint
+unchanged, suite 926 passing.
+
+✅ **Confirmed on device**: after these fixes a GUTTERS edit re-prices to **COST $3,848 / PAR $5,502 /
+RETAIL $8,195** — identical to web to the dollar on the same deal ("QS test"). The bridge works.
+
+⚠️ **One case is still open: a LEAFFILTER-only edit does not move the tiers.** In the failing repro the
+GUTTERS tab reads "No data entered", so LeafFilter is the only quantity in play. Not yet reproduced
+locally, and it is NOT known whether web moves the price for that case either — the working web
+comparison had gutters populated. Do not assume it is the same bug as above; the gutters path proves
+the machinery is sound.
+
+Ruled out while chasing it (all verified parity, don't re-investigate): the whole engine —
+`allocation-utils`, `combination-utils`, `allocation-value-resolver`, `allocation-config-utils`,
+`dependency-engine`, `deal-center-field-utils`, `location-grid-utils`, `toggle-utils`,
+`combination-summary-utils`; the price normalizer (`bakeFieldPrice` DOES strip thousands separators,
+same as web `toPriceNumber`); `tierFor`'s schema walk (identical to web `calculateResultUtil`); the
+embedded builder does **not** auto-save in edit mode (`performAutoSave` early-returns on `embedded`),
+so the baseline can't absorb the edit; `jobState` is keyed by config ids via `updateTabState`, so no
+storage-key drift; and the builder is seeded from the same `initialState` the diff compares against.
+
+**`DEAL_PRICING_DEBUG` in `dynamic-deal-pricing.ts` is temporarily `true`** and a `describeBridge()`
+helper logs `[dealEditPricing:bridge]` with the counts that isolate the broken link — `flatNext` (did
+the edited state arrive), `keyMapHits` (do config field ids line up with the state's section-qualified
+keys), `allocRefs` (did any allocation map a quantity), `overlayDiff` (did the calculator keys move)
+and `overlayDiffPriceable` (are those keys ones the schema can price). ⚠️ **Set the flag back to
+`false` before release** — it logs on every keystroke in the wizard.
+
+### Deal-edit Job Price step had NO validation (price below cost, down payment above price)
+
+Ticket: *"it will not allow me to go next, like web, until i filled the right contract price."* Web
+shows a red-bordered Contract Price with **"Cannot be below the cost of $3,848."** and a **disabled
+Next · Review**; mobile showed the same `COST -94%` badge but no error and an enabled button, so a rep
+could advance and submit an addendum priced 94 % below cost.
+
+Mobile had **no price validation at all**. Ported web's three values verbatim into
+`DynamicDealEditScreen.tsx`:
+
+- `costFloor = tierResult.next.cost` — the REBUILT cost, so the floor tracks the edited build.
+- `contractPriceError` — `Cannot be below the cost of ${fmtMoney(costFloor)}.`
+- `downPaymentError` — `Cannot exceed the contract price of ${fmtMoney(contractPrice)}.` (a down
+  payment over the price yields a negative balance).
+- `hasPriceError` gates **both** footer buttons: `Next · Review` on step 2 and `Submit Addendum` on
+  step 3 — web disables both, so an error can't be walked past in either direction.
+
+Each input turns red (`#DC2626`) and renders its message underneath; the Contract Price row drops its
+bottom margin to 4 when erroring so the message sits tight under the field, as on web.
+
+⚠️ **Still not ported: web's `rebuildEntriesFromSchema`** (commit `3be3929e`, REVDSM-1075). That
+rewrites the stored `LFCalculator` `entries`/`totals` from the schema when an addendum changes the
+build, so the accepted scope matches the scoreboard. It affects the **submit payload**, not the tiers
+the rep is shown, so it is a separate ticket.
+
+### Scan-document sheet: blank PDF tile + the agreement was deletable from it
+
+Ticket: *"don't allow user to delete agreement from here creating job builder; also show some preview
+here like we are showing outside — empty card is not showing well."* Job Builder ▸ Summary ▸
+**Agreements** pencil opens `DocumentScannerModal` ("Scan Agreement"), where the filed agreement
+rendered as a **blank grey tile with a red ✕**.
+
+Both problems are in **`src/widgets/modals/job-builder/DocumentScannerModal.tsx`**:
+
+- **The tile was blank because the modal threw the file away.** Its `visible` effect projected each
+  `initialFiles` entry down to `{ uri, serverId, isNew, name }`. A server document's source lives on
+  **`secureUrl`/`url`, not `uri`**, so `<Image source={{ uri: undefined }}>` had nothing to draw —
+  and even with a URL a signed agreement is a **PDF**, which `Image` cannot decode. It now **spreads
+  the whole file** (`{ ...f, serverId: f.serverId || f._id, isNew: false }`) and renders the same
+  placeholder the summary card uses — `file-pdf-box` icon + the document name — whenever
+  `isPdfFile(item) || !fileSrc(item)`. `isPdfFile`/`fileSrc` are local copies of the
+  `SummaryFinalizeCards` helpers, so the two surfaces agree on what is a PDF.
+  - ⚠️ Keeping the whole object also fixes a **latent identity bug**: the narrow projection dropped
+    `filePath`, and `SummaryFinalizeCards.handleScannerSave` prunes by `docIdentity`
+    (`serverId ?? _id ?? filePath ?? id ?? url ?? uri ?? name`). A document identified only by
+    `filePath` therefore failed to match itself on the way back out and was **pruned from the card on
+    Update** even though the rep removed nothing.
+  - The `uri` field is deliberately **not** overwritten with the resolved source — `docIdentity` reads
+    `uri`, so rewriting it could change a document's identity. Display resolution happens at render.
+- **New `allowRemoveExisting?: boolean` prop (default `true`).** When false the ✕ is hidden for
+  documents that arrived via `initialFiles` (`isNew === false`); **pages scanned in this session keep
+  theirs**, so a misscan is never stuck. The info banner swaps to "Documents already on file can't be
+  removed here." Defaulting to `true` leaves the other two callers — `LeadCenter/JobDocsSection` and
+  the legacy `job-builder/SummarySection` — unchanged.
+
+`SummaryFinalizeCards` passes **`allowRemoveExisting={editMode || scannerCategory !== 'agreement'}`**,
+so the ✕ is hidden for exactly one case: an **already-filed agreement in the CREATE flow**. Order
+sheets always keep delete, and so does the **My Deals ▸ Edit Job Build** flow — the rep is revising a
+submitted deal there and must be able to swap out a wrong agreement.
+
+⚠️ In the create flow this leaves **no delete path for an existing agreement on the Job Builder
+summary screen** — the card header's pencil is the only entry point. That is deliberate and is the
+ticket's intent.
+
+⚠️ **`editMode` is the create/edit discriminator for this whole component** (it also drives
+`agreementRequired`, `showOrderSheetCard` and `mergeDocSources`). Gating on the scanner category alone
+was the first attempt here and was wrong — it stripped delete from the My Deals edit flow too.
+
+The other two callers get the PDF-preview fix for free — they had the same blank-tile bug. They filter
+`p.isNew === true` before uploading, so the richer existing-file objects pass straight through.
+
+### Deal-edit payment methods now seed from the sale
+
+Ticket: *"My deals - payment method from sale isn't showing; in web it's showing."* Job Price (step 2)
+opened with **Down Pmt Method** and **Balance Method** both reading "Select payment method", even
+though the deal was sold with one (the outcome carries `balancePaymentMethod: "check"`).
+
+This was **deliberate on mobile and wrong** — it is the divergence recorded in the section above. The
+seed effect explicitly blanked both (`setDownPaymentMethod('')`), reasoning that the rep should
+re-pick and that the submit payload falls back to `lead.paymentMethod` anyway. The payload was indeed
+fine; the *display* simply never showed the deal's own method. Now a 1:1 port of web
+`dynamic-deal-edit-modal.js`, in `DynamicDealEditScreen.tsx`:
+
+- **Seed both from the lead**: `setDownPaymentMethod(lead?.paymentMethod || '')`,
+  `setBalanceMethod(lead?.balancePaymentMethod || '')`.
+- **`balanceMethodKey = coerceToPlanKey(balanceMethod, 'check')`** — the balance ALWAYS resolves,
+  because every sold deal has a balance to collect (web uses the same `'check'` fallback). The down
+  payment keeps its blank-allowed form (`downPaymentMethod ? coerce(…, '') : ''`) — a deal with no
+  money down legitimately has no method.
+- **The `!!key &&` guards are removed** from both change flags; each now compares against the same
+  baseline it was seeded from, with the matching fallback:
+  `coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey` and
+  `coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey`. The guards only existed
+  to stop a blank picker reading as a change; seeding makes them obsolete, and keeping them would have
+  **masked a real edit back to the deal's original method**.
+- **New `downPaymentSelectOptions`** (web parity). The Down Pmt picker offers cash/card basics only,
+  but a seeded value may sit outside that set (a legacy deal that stored a financing plan there), so
+  the current key is spliced in from the full catalog. Without it the saved method rendered as a bare
+  key and was not re-selectable. The Balance picker already uses the full `paymentOptions` catalog.
+
+⚠️ **Side effect on the displayed tiers, and it is the correct one.** `computeEditedTiers` receives
+`paymentMethod: resolveTierPaymentMethod(balanceMethodKey)`. That key used to be `''` → `'check'` →
+0 % bank fee for every deal. A deal whose balance method is **AMEX or MC/VISA/DSCVR** now grosses its
+COST/PAR/RETAIL up by that plan's fee, exactly as web does — so those deals' tiers will read higher
+than before this change.
+
+The submit payload is unchanged (`downPaymentMethodKey || lead?.paymentMethod || ''`) — it already
+matched web.
 
 ---
 
