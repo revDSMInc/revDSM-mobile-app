@@ -10,9 +10,15 @@
  * no branch there at all. Mobile reads the field directly, as the API means it: the
  * backend has already decided whether this visit is a start, a resume or a review, and
  * re-deriving that on the phone would just be a second opinion that can disagree.
- * Being on site is enforced separately, at the tap, by `installer-geofence.ts`.
+ *
+ * What the phone DOES decide is whether the crew can act on that state right now, and it
+ * decides it the same way the tap does — the arrival window (`installer-schedule.ts`) and
+ * the device's position (`installer-geofence.ts`) both downgrade the card to a preview.
+ * Those two are local facts the backend can't know when it builds the row: `my-jobs` is
+ * answered once and then read for minutes while the crew drives and the clock runs.
  */
 
+import { isBeforeArrivalWindow } from './installer-schedule';
 import type { InstallerJob } from '../config/types/installer';
 import type { TranslationKey } from '../i18n/translations';
 
@@ -224,26 +230,53 @@ export interface JobCardStateOptions {
    * true: an unresolved location is not evidence of being somewhere else.
    */
   offSite?: boolean;
+  /**
+   * Clock the arrival window is judged against. Injectable so the caller can drive the
+   * re-render (the label changes on its own as noon passes) and so the rule is testable
+   * without waiting for a Tuesday.
+   */
+  now?: Date;
 }
 
 /**
  * The card's presentation for one job.
  *
- * Precedence: **resulted → upcoming → off-site → `workflowState`**. Resulted wins
- * outright because the visit is over whatever the workflow says, and the Upcoming tab is
- * a preview of jobs whose `workflowState` is still `start` — showing them as actionable
- * would invite a crew to open future work today.
+ * Precedence: **resulted → upcoming → too early → off-site → `workflowState`**. Resulted
+ * wins outright because the visit is over whatever the workflow says, and the Upcoming
+ * tab is a preview of jobs whose `workflowState` is still `start` — showing them as
+ * actionable would invite a crew to open future work today.
+ *
+ * **The button says what the tap will DO.** The two middle branches are the card's copy
+ * of `openJob`'s two gates (`installer-schedule.ts` WHEN, `installer-geofence.ts` WHERE),
+ * and they are here so the card can never offer an action the tap then refuses. Which
+ * gives, for a job the crew is standing at:
+ *
+ *   | window | now      | on site | button                |
+ *   |--------|----------|---------|-----------------------|
+ *   | 8–12   | 9 AM     | yes     | Start Appointment     |
+ *   | 8–12   | 1 PM     | yes     | Start Appointment     | ← window END is not a gate
+ *   | 12–4   | 9 AM     | yes     | Preview Appointment   | ← too early
+ *   | 8–12   | any      | no      | Preview Appointment   |
+ *   | 12–4   | any      | no      | Preview Appointment   |
+ *
+ * A visit already `inProgress` sits outside the table entirely — it keeps Resume, from
+ * wherever the crew is and whatever the clock says, for the reason in `isJobInProgress`.
  */
 export const resolveJobCardState = (
   job: InstallerJob,
-  { isUpcoming = false, loading = false, offSite = false }: JobCardStateOptions = {}
+  {
+    isUpcoming = false,
+    loading = false,
+    offSite = false,
+    now = new Date(),
+  }: JobCardStateOptions = {}
 ): JobCardState => {
   if (loading) {
     // Mid-request. Keep the card's own accent so it doesn't flash a different colour
     // while it is in flight; only the label changes. A resulted or upcoming card is
     // FETCHING, not starting — those open read-only, and "Starting Job…" would claim
     // a finished visit is being reopened.
-    const base = resolveJobCardState(job, { isUpcoming, offSite });
+    const base = resolveJobCardState(job, { isUpcoming, offSite, now });
     return {
       ...base,
       // Cleared, not just overridden: a literal `actionLabel` outranks the key, so
@@ -283,25 +316,45 @@ export const resolveJobCardState = (
   // offering to *resume* one never begun would skip the start the crew expects.
   const resolved = state ?? BY_WORKFLOW_STATE.start;
 
-  // A job already underway is exempt: the crew checked in on site, and being off site
-  // now doesn't take it away from them, so the tap still opens it and the card has to
-  // keep saying so. Greying it to a preview would be the card refusing an action that
-  // `openJob` allows.
-  if (offSite && !isJobInProgress(job)) {
-    // The installer is not at the address and not at an office, so the check-in at the
-    // end of this tap would be refused — the card must not promise to start a visit it
-    // cannot start.
-    //
-    // Presented exactly like the Upcoming tab's preview: the same light blue, the same
-    // label, no accent bar. Both say the same thing — this job is readable but not
-    // actionable from here — so they should not look like two different states. It
-    // reverts to the workflow colour the moment the crew arrives.
-    return {
-      key: 'UPCOMING',
-      color: JOB_CARD_COLORS.UPCOMING,
-      actionLabelKey: 'installer.previewAppointment',
-      accentBar: false,
-    };
+  /**
+   * Both gates below guard the START of a visit and nothing else. A job already underway
+   * is past them — the crew checked in on site to get it there, `openJob` skips both for
+   * it, and greying it to a preview would be the card refusing an action the tap allows.
+   */
+  const startable = !isJobInProgress(job);
+
+  /**
+   * Preview: readable, not actionable from here.
+   *
+   * One presentation for both refusals — the same light blue as the Upcoming tab, the
+   * same label, no accent bar. They say the same thing to the crew ("not from here, not
+   * yet"), so they must not look like two different states, and both revert on their own:
+   * one when the crew arrives, one when the clock reaches the window.
+   */
+  const preview: JobCardState = {
+    key: 'UPCOMING',
+    color: JOB_CARD_COLORS.UPCOMING,
+    actionLabelKey: 'installer.previewAppointment',
+    accentBar: false,
+  };
+
+  // WHEN. A 12–4 job tapped at 9 AM would be refused with "too early" — so the card says
+  // preview rather than promising a start. Only being EARLY refuses: the window's end is
+  // not a gate (`isBeforeArrivalWindow`), which is what keeps an 8–12 job startable at
+  // 1 PM, and a job with no parseable window is never refused on time at all.
+  if (startable && isBeforeArrivalWindow(job, now)) return preview;
+
+  // WHERE. Not at the address and not at an office, so the check-in this tap ends in
+  // would be refused — the card must not promise to start a visit it cannot start.
+  if (startable && offSite) return preview;
+
+  // Past both gates and on site, so this job DOES open — which makes "Appointment
+  // Expired" the wrong words for it. That label read as a refusal to a crew who had
+  // simply arrived after the window closed, and the work is still theirs to do. The grey
+  // stays: the slot really is stale, and that is worth showing (see `EXPIRED`). Only the
+  // button changes, to what the tap actually does.
+  if (resolved.key === 'EXPIRED') {
+    return { ...resolved, actionLabelKey: 'installer.startAppointment' };
   }
 
   return resolved;
