@@ -20,7 +20,11 @@ import greenRooflinesImages, {
   GREEN_ROOFLINES_COMPANY_ID,
   GREEN_ROOFLINES_CATEGORIES,
 } from '../../constants/green-rooflines-pitchbook';
-import { IMAGE_CATEGORIES } from '../../constants/lead-center';
+import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotosPanel';
+import {
+  PhotoPeekScrollLockProvider,
+  PeekAwareScrollView,
+} from '../../widgets/common/PhotoPeekScrollLock';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
@@ -110,7 +114,6 @@ export default function PitchbookScreen() {
   const [activeToolTab, setActiveToolTab] = useState('inspection');
   const [loading, setLoading] = useState(true);
   const [fullLeadData, setFullLeadData] = useState<any>(null);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const activePhotos = useMemo(() => {
     return fullLeadData?.outcome?.salesPhotos || fullLeadData?.salesPhotos || lead?.salesPhotos || [];
@@ -258,7 +261,6 @@ export default function PitchbookScreen() {
 
   // Removed artificial loading state that caused permanent loaders for local images
 
-  const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [pdfPreviewData, setPdfPreviewData] = useState({ url: '', title: '' });
 
@@ -541,96 +543,20 @@ export default function PitchbookScreen() {
             </View>
           </View>
           <View className="flex-1">
-            <ScrollView className="p-6" showsVerticalScrollIndicator={false}>
+            {/* The peek holds the finger down over an enlarged preview; without
+                the lock a stray drag scrolls this list, steals the touch and
+                dismisses the peek mid-hold. */}
+            <PhotoPeekScrollLockProvider>
+            <PeekAwareScrollView className="p-6" showsVerticalScrollIndicator={false}>
               {activeToolTab === 'inspection' && (
                 <View>
                   <Text className="text-text-primary font-bold text-base mb-4">
                     Property Inspection Photos
                   </Text>
-                  {IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0).map(
-                    (section) => {
-                      const categoryPhotos = secureImages[section.name] || [];
-                      const sectionTotal =
-                        section.subCategories?.reduce(
-                          (s: number, sub: any) => s + (sub.required || 1),
-                          0
-                        ) || 0;
-
-                      return (
-                        <View key={section.id} className="mb-4">
-                          <TouchableOpacity
-                            onPress={() =>
-                              setExpandedCat(expandedCat === section.id ? null : section.id)
-                            }
-                            className="flex-row items-center justify-between px-3 py-2 rounded-md shadow-sm"
-                            style={{
-                              backgroundColor: '#F4F6F8',
-                              borderBottomLeftRadius: expandedCat === section.id ? 0 : 8,
-                              borderBottomRightRadius: expandedCat === section.id ? 0 : 8,
-                            }}
-                          >
-                            <Text className="text-sm font-semibold text-[#1C252E]">
-                              {section.name}
-                            </Text>
-                            <View className="flex-row items-center">
-                              <View
-                                className="px-3 py-1 rounded-md mr-3"
-                                style={{ backgroundColor: '#212B36' }}
-                              >
-                                <Text className="text-sm text-white font-semibold">
-                                  {categoryPhotos.length} of{' '}
-                                  {Math.max(sectionTotal, categoryPhotos.length)} complete
-                                </Text>
-                              </View>
-                              <Icon
-                                name={expandedCat === section.id ? 'chevron-up' : 'chevron-down'}
-                                size={16}
-                                color="#919EAB"
-                              />
-                            </View>
-                          </TouchableOpacity>
-
-                          {expandedCat === section.id && (
-                            <View className="flex-row flex-wrap gap-2 mt-3 px-1">
-                              {categoryPhotos.map((img, i) => (
-                                <View key={i} className="w-[31%] mb-2">
-                                  <TouchableOpacity
-                                    onPress={() => setPreviewImage(img.uri)}
-                                    className="aspect-square rounded-xl overflow-hidden border border-slate-100 bg-slate-50 shadow-sm"
-                                  >
-                                    <Image
-                                      source={{ uri: img.uri }}
-                                      className="w-full h-full"
-                                      resizeMode="cover"
-                                    />
-                                    <View className="absolute bottom-0 left-0 right-0 bg-black/40 py-1">
-                                      <Text
-                                        className="text-white text-[8px] font-black text-center  px-1"
-                                        numberOfLines={1}
-                                      >
-                                        {img.subcategory || 'Photo'}
-                                      </Text>
-                                    </View>
-                                  </TouchableOpacity>
-                                </View>
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                      );
-                    }
-                  )}
-                  {Object.keys(secureImages).length === 0 && (
-                    <View className="items-center justify-center py-12 opacity-50">
-                      <Icon name="image-off" size={48} color="#919EAB" />
-                      <Text className="text-text-secondary mt-4 font-bold">
-                        No inspection photos available
-                      </Text>
-                      <Text className="text-text-secondary text-[10px] mt-1">
-                        Photos added in Job Docs will appear here.
-                      </Text>
-                    </View>
-                  )}
+                  <InspectionPhotosPanel
+                    photos={activePhotos}
+                    secureImages={secureImages}
+                  />
                 </View>
               )}
 
@@ -669,7 +595,8 @@ export default function PitchbookScreen() {
                   </View>
                 </View>
               )}
-            </ScrollView>
+            </PeekAwareScrollView>
+            </PhotoPeekScrollLockProvider>
           </View>
         </Animated.View>
       </View>
@@ -1281,25 +1208,6 @@ export default function PitchbookScreen() {
             )}
             {renderInteractiveTools()}
 
-            {/* Full Screen Image Preview (Nested inside Modal to show on top of it) */}
-            <Modal visible={!!previewImage && isFullscreen} transparent animationType="fade">
-              <View className="flex-1 bg-black/90 justify-center items-center">
-                <TouchableOpacity
-                  onPress={() => setPreviewImage(null)}
-                  className="absolute top-12 right-6 z-10 w-10 h-10 bg-white/20 rounded-full items-center justify-center"
-                >
-                  <Icon name="close" size={24} color="white" />
-                </TouchableOpacity>
-                {previewImage && (
-                  <Image
-                    source={{ uri: previewImage }}
-                    className="w-full h-[80%]"
-                    resizeMode="contain"
-                  />
-                )}
-              </View>
-            </Modal>
-
             <PdfPreviewModal
               visible={showPdfModal && isFullscreen}
               onClose={() => setShowPdfModal(false)}
@@ -1310,25 +1218,6 @@ export default function PitchbookScreen() {
         </Modal>
 
         {!isFullscreen && renderInteractiveTools()}
-
-        {/* Full Screen Image Preview */}
-        <Modal visible={!!previewImage && !isFullscreen} transparent animationType="fade">
-          <View className="flex-1 bg-black/90 justify-center items-center">
-            <TouchableOpacity
-              onPress={() => setPreviewImage(null)}
-              className="absolute top-12 right-6 z-10 w-10 h-10 bg-white/20 rounded-full items-center justify-center"
-            >
-              <Icon name="close" size={24} color="white" />
-            </TouchableOpacity>
-            {previewImage && (
-              <Image
-                source={{ uri: previewImage }}
-                className="w-full h-[80%]"
-                resizeMode="contain"
-              />
-            )}
-          </View>
-        </Modal>
 
         <PdfPreviewModal
           visible={showPdfModal && !isFullscreen}

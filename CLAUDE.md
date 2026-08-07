@@ -1166,6 +1166,137 @@ concurrent callers **sharing one GET**, and the **≤3 in-flight** cap. (The rep
 mock** for `react-native-blob-util` — that is why the two `DynamicDealCenter` suites which import it
 fail under jest; anything testing this module must mock it locally.)
 
+### Inspection photos were invisible in the Pitchbook / Roofline Deck
+
+Ticket: *"images are not showing in inspection like web"* (`src/screens/Pitchbook/index.tsx`). The
+tool drawer's **Inspection** tab rendered the "Property Inspection Photos" heading over **blank
+space** — no photos, and not even the empty state.
+
+Both screens matched photos against the **static** `IMAGE_CATEGORIES` list:
+
+```ts
+IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0)   // ← the bug
+```
+
+`useSecureUrls` keys its map by the photo's **raw `category`**, and the dynamic capture flow scopes
+that per product — `useDynamicInspectionCapture.scopeCat` stores
+`` `${productKey} — ${label}` ``, e.g. **`"Gutters/Roofline — HOME"`**. The static list only holds
+`Home` / `Inspection` / `Measurements` / `Miscellaneous`, so **nothing matched** and every
+dynamically-captured photo was invisible. Only the legacy flow (`JobDocsSection` / `TagPhotoModal`,
+which pass a bare `section.name`) ever rendered.
+
+⚠️ The empty state didn't fire either: it tested `Object.keys(secureImages).length === 0`, which is
+**false** — the map was full, just under a key nothing looked up. That is why the tab looked broken
+rather than empty.
+
+Fixed the way web does it (`src/sections/pitch-book/components/pb-inspection-photos.js`): **derive
+sections from each photo's own category, never from a fixed list.** Split across a pure
+**`src/utils/inspection-photos.ts`** (grouping) and **`src/widgets/components/InspectionPhotosPanel.tsx`**
+(rendering) — the split is deliberate: the panel imports `PhotoPeekPressable`, which pulls in
+**reanimated**, and the repo has no reanimated mock, so anything importing the panel is **untestable
+under jest**. Keep new logic in the util.
+
+- **`sectionFromCategory(category)`** handles both storage formats — splits on the **em dash** for
+  `"{product} — {TAB}"` → `Home`, else takes the name as-is. The **full** category string is the
+  section id, so two products that both have a `HOME` tab stay separate accordions instead of merging.
+- **`prettify`** title-cases the all-caps tab name, leaving already-cased legacy names
+  (`"Roofline Observation"`) intact.
+- **Deleted (`deletedAt`) and annotated photos are dropped**, which mobile never did — annotated
+  copies belong to the annotation surface and were duplicating the originals here.
+- **`buildInspectionSections(photos, secureImages)`** re-groups from the **raw `salesPhotos`** records
+  (they carry category / subcategory / deletedAt / timestamp) and uses `secureImages` only as a
+  flattened `s3url → signed url` lookup, falling back to `photo.secureUrl`. A photo with no
+  resolvable url is skipped rather than rendering a blank tile.
+- The count chip is now web's **"N photos"**. The old "N of M complete" derived M from the static
+  category's `subCategories`, which a dynamically-captured section does not have.
+
+**Both screens were byte-identical copies of this block**, so `Pitchbook` and `RooflineDeck` now
+render the shared panel (each dropped its own `expandedCat` state and its `IMAGE_CATEGORIES` import;
+the panel owns the accordion and takes an `onPreview` callback, since the preview `Modal` stays on the
+parent). RooflineDeck was **not named in the ticket** but had the exact same defect — fixing only the
+reported screen would have left it broken.
+
+⚠️ **`useSecureUrls` was deliberately NOT changed.** Five call sites depend on its
+category-keyed shape (`RooflineDeck`, `InvestmentPanel`, `LeadImagePickerModal`,
+`DynamicManagePhotosView`, `Pitchbook`); the grouping is wrong only for *this* use, so it is undone
+locally rather than by reshaping a shared hook.
+
+⚠️ One deliberate divergence from web: web renders **one card per subcategory slot** with a `+N`
+badge. Mobile renders **every** photo instead, so nothing hides behind a badge. Photos are still
+grouped by slot (oldest first within a slot) so repeat shots sit together.
+
+#### Card design + instant preview (follow-up on the same ticket)
+
+Follow-up: *"set the design like web and image show instantly while we press like we set in rev
+render."*
+
+**Design** now mirrors web's `ImageCard`: the group is one **white elevated card** holding both header
+and grid (was a grey `#F4F6F8` bar with the photos loose underneath); tiles are **two per row**
+(web `xs={6}`) at a **4/3** crop with a 2px border (were three per row, square); an **eye badge**
+sits top-left; and the caption bar carries the subcategory on the left with the **capture time**
+(`01:05 PM`) on the right. The time comes from `formatCaptureTime`, written **by hand rather than via
+`toLocaleTimeString('en-US', …)`** (what web uses) so it cannot depend on Intl being compiled into the
+JS engine.
+
+⚠️ The grid uses `justifyContent: 'space-between'` with `width: '48%'`, **not** a pixel `gap` — two 48%
+columns plus a fixed gap can exceed 100% on a narrow drawer and wrap to one card per row.
+
+**Instant preview** reuses the existing revRender machinery rather than re-solving it: each tile is a
+**`PhotoPeekPressable`**, so hold-to-peek warms a local `file://` copy through `imageFileCache` and the
+enlarged image opens instantly instead of blanking for 2–3 s (see "Hold-to-peek previews" above for
+why `Image.prefetch` cannot do this).
+
+- **`PhotoPeekPressable.onPress` now receives the warmed uri** (`(peekUri?: string | null) => void`).
+  The panel passes it straight to `onPreview`, so the parent's **tap** preview `Modal` renders the
+  cached file too — previously only the hold-peek benefited. Backwards compatible: a `() => void`
+  handler is assignable, so the other four call sites are untouched.
+- Both drawers now wrap their tool `ScrollView` in **`PhotoPeekScrollLockProvider`** and use
+  **`PeekAwareScrollView`** (the same pairing RevRender/RolloutView use). Without it a stray drag
+  during the hold scrolls the list, steals the touch and dismisses the peek mid-hold.
+
+Verified additionally: the caption time across noon/midnight/single-digit hours and degrading to `''`
+for missing or unparseable timestamps.
+
+#### Card shadow + a pageable viewer (second follow-up)
+
+Follow-up: *"add shadow on card like this also add slide left right option like web."*
+
+**The shadow was already written and simply not rendering.** The group card carried both the shadow
+and `overflow-hidden` on the SAME view, and **iOS clips a shadow when the view sets
+`overflow: hidden`**. Now two nested Views: shadow on the outer wrapper, rounding/clipping on the
+inner one. (Opacity/radius also raised to 0.16 / 10 with `elevation: 4` so it reads on Android.)
+
+**New `InspectionPhotoViewer`** replaces the single-image preview with web's lightbox behaviour:
+swipe or tap the chevrons to move through a section's photos, with the `"{Section} - {Subcategory}"`
+title, the capture time, an **`n / total`** counter and a tappable **thumbnail strip** that keeps the
+active thumb scrolled into view. A horizontal `FlatList` with `pagingEnabled` does the paging;
+`getItemLayout` is **required** for `initialScrollIndex`/`scrollToIndex` to work on it.
+
+- **The viewer lives INSIDE the panel, and that removed a duplicate.** Each screen previously carried
+  **two identical** preview `Modal`s gated on `isFullscreen`, because the pitchbook renders its tool
+  drawer either inside a fullscreen `Modal` or outside it. A `Modal` rendered from the panel nests
+  correctly in **both** cases automatically, so the panel's `onPreview` prop and both screens'
+  `previewImage` state + **four** dead modals are gone.
+- **`useWarmedUris`** warms every photo of the open section through `imageFileCache`, so paging paints
+  from `file://` instead of re-fetching a pre-signed S3 object per slide. It keys its effect on the
+  **joined url string**, not the array identity — a fresh array each render would restart every
+  download on every render. Downloads dedupe by cache path, so overlapping with the thumbnails' own
+  warming costs nothing.
+
+⚠️ RN has no `translateY(-50%)`: the chevrons use `top: '50%'` **plus `marginTop: -22`** (half their
+height), otherwise their top edge — not their centre — sits on the midline.
+
+⚠️ This supersedes the earlier note that mobile "cannot page a slot". It can now; the reason mobile
+still renders every photo rather than web's one-card-per-slot `+N` is simply that nothing should hide
+behind a badge.
+
+Verified against both storage formats: the ticket's `"Gutters/Roofline — HOME"` case (with the old
+static filter asserted to match **nothing**, and `secureImages` asserted non-empty to show why the
+empty state stayed hidden), legacy bare categories, an already-cased legacy name, two products sharing
+a tab name, `deletedAt` and both annotated forms excluded, the `secureUrl` fallback, an unresolvable
+photo skipped, slot grouping/ordering, empty input → empty state, and a category-less photo landing in
+`Other`.
+
 ---
 
 ## 7. Scripts
