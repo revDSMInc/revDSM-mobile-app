@@ -421,6 +421,109 @@ Note `__tests__/screens/DynamicDealCenter/summary-documents.test.tsx` covers thi
 the two suites that cannot run under jest (no global `react-native-blob-util` mock), so this change
 was verified by tracing the two sources' identities rather than by a test run.
 
+### Deal-edit price didn't move when a combination's footage changed
+
+Ticket: *"My deals - I changed footages which means price should change but nothing changed — left
+side 333ft and in the third step price is not going to update."* Step 2 (Job Price) showed **New Job
+Build identical to Previous** plus *"No priced quantity change detected from the build"*, i.e.
+`computeEditedTiers` returned `delta = 0`.
+
+Nothing is wrong in `dynamic-deal-pricing.ts` itself — it is a faithful port. The break is **upstream,
+in the job-builder engine it calls**. Money never lives on the builder: a combination's footage
+reaches the calculator schema through an **allocation** (`buildCalculatorDetails` →
+`buildAllocationQtyMap` → `collectAllocationFields` → `resolveAllocationMetrics().allocated` →
+`collectAllocationDcRefs`). Mobile's engine predates web commits **`9293ad28`** and **`99eb8d8a`**
+("Improved allocation tracking to be config-driven … and to validate nested allocations in
+stacks/accordions"), so three pieces of that chain were missing. Ported now:
+
+- **`allocation-utils.ts` › `collectAllocationFields` only scanned the TOP level** of `tab.fields` and
+  `section.fields`. An allocation authored **inside a `stack`/`accordion` container** was invisible →
+  `buildAllocationQtyMap` returned `{}` → the footage never reached the schema → `delta` 0. New
+  `collectAllocationFieldsDeep` recurses on any `field.fields`, matching web. **This is the fix for
+  the ticket**; it also un-breaks tab-completeness checks, which call the same function.
+- **`combination-utils.ts` › `computeGroupUsed`** took only the **FIRST** locationGrid
+  (`rowFields.find`) and read it **only** as `combo[gridField.id]` — a grid stored under the field's
+  `key`, or the legacy `combo.grid` slot, resolved `undefined` → 0 used. Now sums **every** grid field
+  with `combo[gf.id] ?? combo[gf.key] ?? combo.grid`, and the no-grid branch sums **every `number`
+  field** instead of the hardcoded `['sqft','sq','count']` key heuristic. (Grids win over sibling
+  numbers so add-ons like miters/end-caps aren't double-counted against the allocation.)
+- **`allocation-utils.ts` › `getTabLevelUsed`** got the same generalization for legacy tab-level
+  combinations.
+- **`dependency-engine.ts` › `resolveAllocationAvail` is now metrics-first.** Modern allocations put
+  the budget in `metrics[{ role:'budget' }].valueSource`; only legacy ones use `field.dcField` /
+  `field.avail`. Reading the legacy shape first made a metrics-based card look like a **zero-budget /
+  excluded** card.
+
+Two more divergences fixed in the same pass:
+
+- **`dynamic-deal-pricing.ts` › `buildBuilderQtyIndex` triple-counted allocation quantities.**
+  `buildAllocationQtyMap` **already emits both the raw ref and `normName(ref)`** as separate keys, and
+  the overlay then re-added `normName(ref)` for each of them — so `byDcField[normalized]` ended up at
+  3× the real quantity. Web adds each entry once; mobile now does too.
+- **`dependency-engine.ts` › `truthy`/`falsy` operators used bare `Boolean(raw)`**, so a quantity of
+  `0` — or the string `"0"` a text input produces — read as TRUE. New `isTruthyValue` (web parity)
+  treats numeric-zero as falsy and leaves non-numeric strings truthy. ⚠️ This is the one change with
+  reach beyond the ticket: it applies to **every** `truthy`/`falsy` dependency rule (tab locks, field
+  visibility, allocation contributor `when` gates), which is exactly why the divergence mattered — a
+  zero-valued contributor could match on mobile and not on web.
+
+Verified by driving the REAL `computeEditedTiers` over a LeafFilter-shaped config (combination section
++ locationGrid + option-bound allocation), footage 300 → 333: **fails on the pre-fix code** for the
+nested-allocation and grid-stored-under-key cases, passes after, and an untouched build still reports
+`changed: false` with `next === previous`. tsc error count unchanged (83, all pre-existing), lint
+unchanged, suite 926 passing.
+
+⚠️ **Still not ported: web's `rebuildEntriesFromSchema`** (commit `3be3929e`, REVDSM-1075). That
+rewrites the stored `LFCalculator` `entries`/`totals` from the schema when an addendum changes the
+build, so the accepted scope matches the scoreboard. It affects the **submit payload**, not the tiers
+the rep is shown, so it is a separate ticket.
+
+### Scan-document sheet: blank PDF tile + the agreement was deletable from it
+
+Ticket: *"don't allow user to delete agreement from here creating job builder; also show some preview
+here like we are showing outside — empty card is not showing well."* Job Builder ▸ Summary ▸
+**Agreements** pencil opens `DocumentScannerModal` ("Scan Agreement"), where the filed agreement
+rendered as a **blank grey tile with a red ✕**.
+
+Both problems are in **`src/widgets/modals/job-builder/DocumentScannerModal.tsx`**:
+
+- **The tile was blank because the modal threw the file away.** Its `visible` effect projected each
+  `initialFiles` entry down to `{ uri, serverId, isNew, name }`. A server document's source lives on
+  **`secureUrl`/`url`, not `uri`**, so `<Image source={{ uri: undefined }}>` had nothing to draw —
+  and even with a URL a signed agreement is a **PDF**, which `Image` cannot decode. It now **spreads
+  the whole file** (`{ ...f, serverId: f.serverId || f._id, isNew: false }`) and renders the same
+  placeholder the summary card uses — `file-pdf-box` icon + the document name — whenever
+  `isPdfFile(item) || !fileSrc(item)`. `isPdfFile`/`fileSrc` are local copies of the
+  `SummaryFinalizeCards` helpers, so the two surfaces agree on what is a PDF.
+  - ⚠️ Keeping the whole object also fixes a **latent identity bug**: the narrow projection dropped
+    `filePath`, and `SummaryFinalizeCards.handleScannerSave` prunes by `docIdentity`
+    (`serverId ?? _id ?? filePath ?? id ?? url ?? uri ?? name`). A document identified only by
+    `filePath` therefore failed to match itself on the way back out and was **pruned from the card on
+    Update** even though the rep removed nothing.
+  - The `uri` field is deliberately **not** overwritten with the resolved source — `docIdentity` reads
+    `uri`, so rewriting it could change a document's identity. Display resolution happens at render.
+- **New `allowRemoveExisting?: boolean` prop (default `true`).** When false the ✕ is hidden for
+  documents that arrived via `initialFiles` (`isNew === false`); **pages scanned in this session keep
+  theirs**, so a misscan is never stuck. The info banner swaps to "Documents already on file can't be
+  removed here." Defaulting to `true` leaves the other two callers — `LeadCenter/JobDocsSection` and
+  the legacy `job-builder/SummarySection` — unchanged.
+
+`SummaryFinalizeCards` passes **`allowRemoveExisting={editMode || scannerCategory !== 'agreement'}`**,
+so the ✕ is hidden for exactly one case: an **already-filed agreement in the CREATE flow**. Order
+sheets always keep delete, and so does the **My Deals ▸ Edit Job Build** flow — the rep is revising a
+submitted deal there and must be able to swap out a wrong agreement.
+
+⚠️ In the create flow this leaves **no delete path for an existing agreement on the Job Builder
+summary screen** — the card header's pencil is the only entry point. That is deliberate and is the
+ticket's intent.
+
+⚠️ **`editMode` is the create/edit discriminator for this whole component** (it also drives
+`agreementRequired`, `showOrderSheetCard` and `mergeDocSources`). Gating on the scanner category alone
+was the first attempt here and was wrong — it stripped delete from the My Deals edit flow too.
+
+The other two callers get the PDF-preview fix for free — they had the same blank-tile bug. They filter
+`p.isNew === true` before uploading, so the richer existing-file objects pass straight through.
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

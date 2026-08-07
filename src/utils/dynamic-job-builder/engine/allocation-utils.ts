@@ -1,5 +1,6 @@
 import {
   computeGroupUsed,
+  flattenLeafFields,
   getCombinationGroups,
   getTabSections,
   hasCombinationGroups,
@@ -53,17 +54,27 @@ export function splitFieldListIntoBlocks(fields: any[] = []) {
   return blocks;
 }
 
+function collectAllocationFieldsDeep(fields: any[] | undefined, out: any[]) {
+  (fields || []).forEach((field: any) => {
+    if (isAllocationField(field)) {
+      out.push(field);
+      return;
+    }
+    // Descend into container fields (stack / accordion) whose nested `fields`
+    // may hold allocations — config-driven, no field-type hardcoding.
+    if (Array.isArray(field?.fields) && field.fields.length) {
+      collectAllocationFieldsDeep(field.fields, out);
+    }
+  });
+}
+
 export function collectAllocationFields(tab: any) {
   const allocations: any[] = [];
 
-  (tab?.fields || []).forEach((field: any) => {
-    if (isAllocationField(field)) allocations.push(field);
-  });
+  collectAllocationFieldsDeep(tab?.fields, allocations);
 
   getTabSections(tab).forEach((section: any) => {
-    (section.fields || []).forEach((field: any) => {
-      if (isAllocationField(field)) allocations.push(field);
-    });
+    collectAllocationFieldsDeep(section.fields, allocations);
   });
 
   return allocations;
@@ -102,16 +113,37 @@ export function getTabLevelUsed(tabState: any, tabConfig: any) {
     return computeFieldsUsed(tabConfig?.fields, tabState);
   }
 
+  // Legacy top-level combinations. Derive the consumed quantity generically from
+  // the combo fields (grids preferred, else every numeric input) so the tracker
+  // works for any field naming, not only sqft/sq/count.
   const combos = tabState?.combinations || [];
-  const hasGrid = tabConfig.combinations.fields?.some((f: any) => f.type === 'locationGrid');
-  if (hasGrid) return computeComboTotal(combos, 'grid');
+  const comboFields = flattenLeafFields(tabConfig.combinations.fields || []);
 
-  const sqField = tabConfig.combinations.fields?.find((f: any) =>
-    ['sqft', 'sq', 'count'].includes(f.key)
+  const gridFields = comboFields.filter((f: any) => f.type === 'locationGrid');
+  if (gridFields.length) {
+    return combos.reduce(
+      (total: number, combo: any) =>
+        total +
+        gridFields.reduce(
+          (gs: number, gf: any) =>
+            gs +
+            computeGridTotal(combo[gf.id] ?? (gf.key ? combo[gf.key] : undefined) ?? combo.grid),
+          0
+        ),
+      0
+    );
+  }
+
+  const numberFields = comboFields.filter((f: any) => f.type === 'number');
+  return combos.reduce(
+    (total: number, combo: any) =>
+      total +
+      numberFields.reduce(
+        (ns: number, nf: any) => ns + (Number(combo[nf.id] ?? (nf.key ? combo[nf.key] : undefined)) || 0),
+        0
+      ),
+    0
   );
-  if (sqField) return computeComboTotal(combos, sqField.key);
-
-  return computeComboTotal(combos, 'grid');
 }
 
 export function getAllocationUsed(tabState: any, tabConfig: any) {

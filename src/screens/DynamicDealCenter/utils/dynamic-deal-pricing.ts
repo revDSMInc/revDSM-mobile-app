@@ -417,12 +417,11 @@ function buildBuilderQtyIndex(jobState: any, config: any, dealCenterData: any = 
     })
   );
 
-  // Overlay allocation-derived quantities.
+  // Overlay allocation-derived quantities. `buildAllocationQtyMap` ALREADY emits
+  // both the raw ref and its normalized form as separate keys, so re-adding
+  // `normName(ref)` here counted the normalized key up to three times over.
   const allocMap = buildAllocationQtyMap(jobState, config, dealCenterData);
-  Object.entries(allocMap).forEach(([ref, qty]) => {
-    addSum(byDcField, ref, qty);
-    addSum(byDcField, normName(ref), qty);
-  });
+  Object.entries(allocMap).forEach(([ref, qty]) => addSum(byDcField, ref, qty));
 
   return { byDcField, byId, byName, bySection };
 }

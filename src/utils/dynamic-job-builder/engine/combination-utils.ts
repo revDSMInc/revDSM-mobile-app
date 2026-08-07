@@ -278,26 +278,53 @@ export function syncTabCombinationGroups(tab: any, combinationGroups: any[]) {
 }
 
 export function computeGroupUsed(combos: any[] = [], group: any) {
+  // rowFields is already flattened, so grid/number inputs nested inside a stack
+  // or accordion are included — allocation tracking works regardless of how the
+  // combination fields are grouped in the config.
   const rowFields = getFlattenedCombinationSectionRowFields(group);
-  const hasGrid = rowFields.some((f: any) => f.type === 'locationGrid');
-  if (hasGrid) {
-    return combos.reduce((sum: number, combo: any) => {
-      const gridField = rowFields.find((f: any) => f.type === 'locationGrid');
-      const grid = gridField ? combo[gridField.id] : combo.grid;
-      return (
+
+  // Measurement grids define the consumed quantity when present. Sum only the
+  // grids and ignore sibling numbers (e.g. miters / end-caps) so add-on inputs
+  // that share the combination aren't double-counted against the allocation.
+  const gridFields = rowFields.filter((f: any) => f.type === 'locationGrid');
+  if (gridFields.length) {
+    return combos.reduce(
+      (sum: number, combo: any) =>
         sum +
-        Object.values(grid || {}).reduce(
-          (gs: number, stories: any) =>
-            gs + Object.values(stories || {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0),
-          0
-        )
-      );
-    }, 0);
+        gridFields.reduce((gridSum: number, gf: any) => {
+          // The grid may be stored under the field id, its `key`, or the legacy
+          // `grid` slot — a grid that resolves `undefined` reads as 0 used, which
+          // is what silently froze the price when footage changed.
+          const grid = combo[gf.id] ?? (gf.key ? combo[gf.key] : undefined) ?? combo.grid;
+          return (
+            gridSum +
+            Object.values(grid || {}).reduce(
+              (gs: number, stories: any) =>
+                gs +
+                Object.values(stories || {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0),
+              0
+            )
+          );
+        }, 0),
+      0
+    );
   }
 
-  const sqField = rowFields.find((f: any) => ['sqft', 'sq', 'count'].includes(f.key));
-  if (sqField) {
-    return combos.reduce((sum: number, combo: any) => sum + (Number(combo[sqField.id]) || 0), 0);
+  // No grid: the consumed quantity is the sum of every numeric input in the
+  // combination. Config-driven — does NOT rely on specific field keys, so any
+  // tab's allocation (sqft, linear feet, units, custom names…) tracks correctly.
+  const numberFields = rowFields.filter((f: any) => f.type === 'number');
+  if (numberFields.length) {
+    return combos.reduce(
+      (sum: number, combo: any) =>
+        sum +
+        numberFields.reduce(
+          (ns: number, nf: any) =>
+            ns + (Number(combo[nf.id] ?? (nf.key ? combo[nf.key] : undefined)) || 0),
+          0
+        ),
+      0
+    );
   }
 
   return 0;
