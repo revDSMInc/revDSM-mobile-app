@@ -551,6 +551,60 @@ Note `__tests__/screens/DynamicDealCenter/summary-documents.test.tsx` covers thi
 the two suites that cannot run under jest (no global `react-native-blob-util` mock), so this change
 was verified by tracing the two sources' identities rather than by a test run.
 
+#### (c) The backend files a SECOND agreement row on submit
+
+Follow-up on the same symptom: with (a) and (b) fixed, the Edit ▸ Summary Agreements card still showed
+**two** PDFs. A device network trace of `GET .../download` ("Lead outcome documents downloaded
+successfully") shows the server genuinely returns two agreement rows for one signed agreement:
+
+| | `_id` | `name` | `filePath` | size |
+|---|---|---|---|---|
+| real | `…b4748` | `Agreement_OFN-A_1786106851569.pdf` | `…/agreements/1786106851569-Agreement_OFN-A_….pdf` | 69395 |
+| duplicate | `…b4c0c` | **`""`** | `…/agreements/1786106886943-**0-document.pdf**` | 69395 |
+
+Identical `fileData.size` AND identical `base64Data`, but a **distinct `_id` and `filePath`** — so
+`docIdentity` keys them apart, `dedupeDocs` cannot merge them, and neither is `isSystemGenerated` so
+`collapseSignedAgreement` passes both through. **This is a real duplicate on the server**, written at
+submit time; nothing on the client created it.
+
+⚠️ **The filter MUST run on the RAW server rows, not in the display component.** The first attempt at
+this put it in `SummaryFinalizeCards` and it silently did nothing: **every** loader defaults the name —
+`d.name || (group === 'agreement' ? 'Agreement' : 'Order Sheet')` — so by the time a row reaches the
+card the empty name, the only thing distinguishing the duplicate, is already gone. The card was
+labelling the duplicate `"Agreement"` and the filter saw a named row. Two loaders do this:
+`resolveOutcomeDocRows` (`utils/outcome-documents.ts:107`, create path) and the inline `toDisplay` in
+`DynamicJobBuilderScreen.tsx` (`editDocsData`, the edit path in the ticket).
+
+Two exports in **`utils/outcome-documents.ts`**, applied before either mapper:
+- **`dropUnnamedAgreements(rows)`** — a pure agreement array; used by the edit-mode `editDocsData` query.
+- **`dropUnnamedAgreementRows(rows)`** — the same rule over a MIXED row list, keyed off each row's
+  `documentType`/`_group`; used inside `resolveOutcomeDocRows`, which receives agreements and order
+  sheets together.
+
+⚠️ **Explicitly a DISPLAY-LEVEL WORKAROUND**, requested as one (*"for now … only show that agreement
+who has the name"*). The duplicate row still exists on the server — the real fix is to stop writing it
+on submit. This does NOT contradict the warning above: that says name is unusable as a *dedupe key*
+(two real agreements can share a name); this only tests whether a name **exists**.
+
+⚠️ **AGREEMENTS ONLY.** Order sheets are legitimately filed with an empty name by the same endpoint —
+the very payload that exposed this has `orderSheets[0].name === ""` — so applying it there would hide
+the only order sheet on the deal.
+
+Safety valve, since a blank name is not by itself proof of a duplicate: if filtering leaves **nothing**,
+the unfiltered list is returned, so a deal whose agreements are all unnamed still renders them instead
+of an empty card. (Locally scanned/draft documents never reach these helpers — they live on
+`jobState.agreements` and are merged in the component, downstream of this.)
+
+⚠️ **The Deal screen (`JobDocsSection`) is NOT covered** and will still list both. Its `mapWith`
+**overwrites** `name` with a constant (`'Agreement'` / `'Order Sheet'` / …) before display, so the
+server name is gone by then — the filter would have to run on the raw docs, pre-map. Separate change.
+
+Verified against the three rows from the trace verbatim (both agreements + the unnamed order sheet):
+the duplicate dropped and the real agreement kept; **the unnamed order sheet kept** in the mixed-list
+form; all-unnamed falling back to the full list; a single named agreement and two genuinely different
+named agreements untouched; the legacy `_group` tag honoured alongside `documentType`; original order
+preserved; empty/undefined input a no-op.
+
 ### Deal-edit price didn't move when a combination's footage changed
 
 Ticket: *"My deals - I changed footages which means price should change but nothing changed — left
@@ -683,10 +737,16 @@ Both problems are in **`src/widgets/modals/job-builder/DocumentScannerModal.tsx`
   removed here." Defaulting to `true` leaves the other two callers — `LeadCenter/JobDocsSection` and
   the legacy `job-builder/SummarySection` — unchanged.
 
-`SummaryFinalizeCards` passes **`allowRemoveExisting={editMode || scannerCategory !== 'agreement'}`**,
+`SummaryFinalizeCards` passes **`allowRemoveExisting={scannerCategory === 'agreement' ? editMode : true}`**,
 so the ✕ is hidden for exactly one case: an **already-filed agreement in the CREATE flow**. Order
 sheets always keep delete, and so does the **My Deals ▸ Edit Job Build** flow — the rep is revising a
 submitted deal there and must be able to swap out a wrong agreement.
+
+⚠️ Write it as that **explicit branch on the category**, not as the equivalent
+`editMode || scannerCategory !== 'agreement'`. The two are logically identical, but QA reported the ✕
+missing from ORDER SHEETS against the boolean form, and the flat expression makes it easy to believe —
+and easy to break for real when the agreement rule is next edited. The full truth table is: order
+sheets `true` in all four (create/edit × filed/new); agreements `false` only for create + already-filed.
 
 ⚠️ In the create flow this leaves **no delete path for an existing agreement on the Job Builder
 summary screen** — the card header's pencil is the only entry point. That is deliberate and is the

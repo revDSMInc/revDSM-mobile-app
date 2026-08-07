@@ -24,6 +24,7 @@ import {
   loadResolvedOutcomeDocuments,
   fetchOutcomeDocumentRows,
   resolveOutcomeDocRows,
+  dropUnnamedAgreements,
 } from './utils/outcome-documents';
 import { buildDocumentPayloads } from './utils/document-payloads';
 import { canCompleteJobBuilder, finalizeBlockedReason as computeFinalizeBlockedReason } from './utils/finalize-gate';
@@ -300,7 +301,11 @@ function DynamicJobBuilderInner({
             })
             .filter(Boolean);
         return {
-          agreements: toDisplay(docs.agreements, 'agreement'),
+          // Filtered on the RAW rows — `toDisplay` defaults the name below
+          // (`d?.name || 'Agreement'`), which erases the only thing that marks the
+          // backend's duplicate submit row. Order sheets are legitimately unnamed
+          // here, so they are NOT filtered.
+          agreements: toDisplay(dropUnnamedAgreements(docs.agreements), 'agreement'),
           orderSheets: toDisplay(docs.orderSheets, 'orderSheet'),
         };
       } catch (e) {

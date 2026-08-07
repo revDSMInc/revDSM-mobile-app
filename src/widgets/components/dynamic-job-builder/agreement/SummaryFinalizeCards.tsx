@@ -235,6 +235,10 @@ export function SummaryFinalizeCards({
     [editMode]
   );
 
+  // NOTE: the backend's unnamed duplicate agreement row is dropped UPSTREAM, on the raw
+  // server rows (`dropUnnamedAgreements` in `utils/outcome-documents.ts`). It cannot be
+  // done here — every loader defaults the name to 'Agreement' before the rows reach this
+  // component, so the empty name that identifies the duplicate is already gone.
   const agreementFiles = useMemo(
     () => collapseSignedAgreement(mergeDocSources(resolvedDocuments?.agreements, agreements)),
     [agreements, resolvedDocuments, mergeDocSources]
@@ -885,13 +889,17 @@ export function SummaryFinalizeCards({
         leadId={leadId || ''}
         category={scannerCategory || 'orderSheet'}
         initialFiles={scannerCategory === 'agreement' ? agreementFiles : orderSheetFiles}
-        // CREATE flow only: while the job is being built the agreement on file is
-        // the freshly signed/generated one, and the scan sheet is for ADDING pages
-        // — not for destroying it — so its ✕ is hidden. Pages scanned in this
-        // session keep theirs, and order sheets are untouched.
-        // The MY DEALS edit flow keeps delete (`editMode`): the rep is revising a
+        // ORDER SHEETS ARE NEVER RESTRICTED — written as an explicit branch on the
+        // category (rather than folding both cases into one boolean) so that editing
+        // the agreement rule here cannot silently take the ✕ off order sheets too.
+        //
+        // Agreements: hidden in the CREATE flow only. While the job is being built the
+        // agreement on file is the freshly signed/generated one and the scan sheet is
+        // for ADDING pages, not destroying it. Pages scanned in THIS session keep their
+        // ✕ regardless (`item.isNew` in DocumentScannerModal), so a misscan is never
+        // stuck. The MY DEALS edit flow (`editMode`) keeps delete: the rep is revising a
         // submitted deal and must be able to swap out a wrong agreement.
-        allowRemoveExisting={editMode || scannerCategory !== 'agreement'}
+        allowRemoveExisting={scannerCategory === 'agreement' ? editMode : true}
       />
 
       <DynamicAgreementDialog
