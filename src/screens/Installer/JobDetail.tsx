@@ -41,6 +41,7 @@ import {
   mergeServerProgress,
   normalizeKey,
   storedPhotoAssets,
+  subcategoryKey,
   type SecureUrlMap,
 } from '../../utils/installer-hydrate';
 import {
@@ -280,6 +281,40 @@ export default function InstallerJobDetail() {
     return map;
   }, [photoSections]);
 
+  /**
+   * `subcategory` → tag id, for the shots `tagIdBySalesPhotoId` cannot place: the ones
+   * the installer took on tags the rep never covered, which pair with no rep photo.
+   *
+   * Both spellings are indexed because the two writers disagree — the step PATCH stores
+   * the tag ID (`buildMatchedRefs`), the multipart upload stores the tag LABEL
+   * (`matchedPhotoDescriptor`), and the server appends from both into the same array.
+   *
+   * A key claimed by two tags is DROPPED rather than resolved to the first one. Slot
+   * labels repeat across categories ("Back-Left" under both Home and Roofline), and
+   * hanging a photo on the wrong elevation is worse than leaving the tag empty — the
+   * empty tag is visibly wrong, the misfiled one is not.
+   */
+  const tagIdBySubcategory = useMemo(() => {
+    const map = new Map<string, string>();
+    const ambiguous = new Set<string>();
+    photoSections.forEach((section) =>
+      section.tags.forEach((tag) => {
+        [tag.id, tag.label].forEach((candidate) => {
+          const key = subcategoryKey(candidate);
+          if (!key || ambiguous.has(key)) return;
+          const claimed = map.get(key);
+          if (claimed && claimed !== tag.id) {
+            map.delete(key);
+            ambiguous.add(key);
+            return;
+          }
+          map.set(key, tag.id);
+        });
+      })
+    );
+    return map;
+  }, [photoSections]);
+
   const stored = job?.stored;
   useEffect(() => {
     if (!stored) return;
@@ -310,14 +345,17 @@ export default function InstallerJobDetail() {
       }
       if (cancelled) return;
       hydrate((previous) =>
-        mergeServerProgress(previous, stored, urls, { tagIdBySalesPhotoId })
+        mergeServerProgress(previous, stored, urls, {
+          tagIdBySalesPhotoId,
+          tagIdBySubcategory,
+        })
       );
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [stored, hydrate, tagIdBySalesPhotoId]);
+  }, [stored, hydrate, tagIdBySalesPhotoId, tagIdBySubcategory]);
 
   // ── Leaving with uploads in flight ────────────────────────────────────────
   //

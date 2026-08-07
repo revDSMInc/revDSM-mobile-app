@@ -149,7 +149,22 @@ const toScopeStatus = (item: any): ScopeStatus | null => {
 export interface HydrateOptions {
   /** `salesPhotoId` → tag id, so a matched shot lands back on the slot it came from. */
   tagIdBySalesPhotoId?: Map<string, string>;
+  /**
+   * Fallback for a shot with NO `salesPhotoId`: the stored `subcategory` → tag id.
+   *
+   * Needed because the pre pass lets the installer shoot tags the rep never covered
+   * (`PhotoMatchStep.isTagOpen`). Those shots pair with no rep photo, so the id map above
+   * can never place them and a second device would show the tag empty while the photo sat
+   * in the record.
+   *
+   * Keyed BOTH ways — see `tagIdBySubcategory` in `JobDetail` — because the two writers
+   * disagree: the step PATCH stores the tag ID, the image upload stores the tag LABEL.
+   */
+  tagIdBySubcategory?: Map<string, string>;
 }
+
+/** Case/space-insensitive, so a label lookup isn't defeated by "Back-Left " vs "back-left". */
+export const subcategoryKey = (value?: string): string => (value ?? '').trim().toLowerCase();
 
 /**
  * Merges the server's record into local progress. Returns `previous` unchanged when
@@ -199,11 +214,12 @@ export const mergeServerProgress = (
   }
 
   // ── Matched pre/post shots ────────────────────────────────────────────────
-  // Keyed by the rep photo each pairs with (`salesPhotoId`), which is stable; the
-  // stored `subcategory` is not — the upload writes the tag LABEL there and the step
-  // PATCH writes the tag ID, so it can't be trusted to identify a slot.
-  const { tagIdBySalesPhotoId } = options;
-  if (tagIdBySalesPhotoId?.size) {
+  // Keyed by the rep photo each pairs with (`salesPhotoId`), which is stable and exact.
+  // `subcategory` is the fallback, and only that: it is written by two different paths
+  // (the upload puts the tag LABEL there, the step PATCH the tag ID), so it is matched
+  // through a map that carries both spellings and drops any that are ambiguous.
+  const { tagIdBySalesPhotoId, tagIdBySubcategory } = options;
+  if (tagIdBySalesPhotoId?.size || tagIdBySubcategory?.size) {
     (['pre', 'post'] as const).forEach((phase) => {
       const field = phase === 'pre' ? 'preMatched' : 'postMatched';
       const serverImages =
@@ -222,9 +238,14 @@ export const mergeServerProgress = (
       });
 
       serverImages.forEach((image) => {
-        const tagId = image.salesPhotoId
-          ? tagIdBySalesPhotoId.get(image.salesPhotoId)
-          : undefined;
+        const tagId =
+          (image.salesPhotoId
+            ? tagIdBySalesPhotoId?.get(image.salesPhotoId)
+            : undefined) ??
+          // Only reached for a shot the rep set can't identify — an added tag. A row
+          // that HAS a `salesPhotoId` is never resolved this way, so the weaker key
+          // can't override the exact one.
+          tagIdBySubcategory?.get(subcategoryKey(image.subcategory));
         // An already-filled slot is left alone: the local shot is the newer one.
         if (!tagId || matched[tagId]) return;
         const photo = toCapturedPhoto(image, urls);

@@ -98,24 +98,62 @@ export function PhotoMatchStep({
   const sections = sectionsProp?.length ? sectionsProp : PHOTO_SECTIONS;
 
   /**
-   * Is this tag shootable in THIS phase?
+   * Does this tag OWE a shot in this phase — the set the counter and the Done button
+   * are measured against?
    *
    * **Pre** — the rep photographed it (`hasRep`), so there is a reference to ghost against.
    *
    * **Post** — the installer photographed it in the PRE pass. Post-install exists to be
    * compared against pre-install, so a post shot with no pre counterpart has nothing to
-   * compare to and the tag stays closed. Note what decides this: what the installer
-   * actually shot, not what the rep supplied. Match only Back-Left in pre and Back-Left
-   * is the only tag open in post.
+   * compare to. Note what decides this: what the installer actually shot, not what the
+   * rep supplied. Match only Back-Left in pre and Back-Left is the only tag post owes.
    */
-  const isTagOpen = useCallback(
+  const isTagRequired = useCallback(
     (tag: PhotoTag): boolean => (phase === 'post' ? !!preMatched?.[tag.id] : tag.hasRep),
     [phase, preMatched]
   );
 
+  /**
+   * Is this tag SHOOTABLE — a superset of what it owes.
+   *
+   * **Pre — every tag, whether the rep supplied a reference or not.** What the sale side
+   * sent is a FLOOR, not a quota: a rep who shot one elevation has documented one
+   * elevation, and the crew standing at the house routinely needs the other sides on
+   * record (damage, access, an obstruction the sale visit never saw). Those tags used to
+   * render dimmed as `N/A` and refuse the tap, so the only way to file the shot was as an
+   * untagged "Extra" — evidence with no side attached to it. Now the tag takes it and the
+   * shot is labelled Back-Left in the portal like any other.
+   *
+   * A tag with no rep photo simply has no ghost: the camera falls back to the line-art
+   * house, exactly as it does for a job that shipped no rep set at all.
+   *
+   * **Post — unchanged, still only what the pre pass shot.** Post is a comparison, and a
+   * post shot with no before is not one. This needs no special case for the extra tags
+   * above: shoot Back-Left in pre and post opens it too, because `preMatched` is what
+   * decides. `useInstallProgress` reads the same set, so every pre shot — required or
+   * added — is owed its after.
+   */
+  const isTagOpen = useCallback(
+    (tag: PhotoTag): boolean => (phase === 'post' ? !!preMatched?.[tag.id] : true),
+    [phase, preMatched]
+  );
+
   const requiredTags = useMemo(
-    () => sections.flatMap((s) => s.tags.filter(isTagOpen)),
-    [sections, isTagOpen]
+    () => sections.flatMap((s) => s.tags.filter(isTagRequired)),
+    [sections, isTagRequired]
+  );
+
+  /**
+   * Shots taken on tags nothing was owed on. Reported beside the fraction as `+N` rather
+   * than folded into it — they are not progress toward the rep's set, and inflating
+   * `done` past `total` would read as a bug.
+   */
+  const optionalMatchedTotal = useMemo(
+    () =>
+      sections
+        .flatMap((s) => s.tags)
+        .filter((tag) => !isTagRequired(tag) && !!matched[tag.id]).length,
+    [sections, isTagRequired, matched]
   );
 
   /**
@@ -191,18 +229,30 @@ export function PhotoMatchStep({
     // No denominator in free-form mode — there is no quota for this section, so a
     // "1/7" would be reporting a requirement that isn't being made.
     if (isFreeform) return String(tags.filter((t) => matched[t.id]).length);
-    const req = tags.filter(isTagOpen);
-    return `${req.filter((t) => matched[t.id]).length}/${req.length}`;
+    const req = tags.filter(isTagRequired);
+    // Added shots are reported outside the fraction, for the reason in
+    // `optionalMatchedTotal` — the tab reads "1/1 +3".
+    const added = tags.filter((t) => !isTagRequired(t) && matched[t.id]).length;
+    const done = req.filter((t) => matched[t.id]).length;
+    return `${done}/${req.length}${added ? ` +${added}` : ''}`;
   };
 
   /** Reference shot for a tag: rep photo on the pre pass, own pre shot on the post pass. */
   const referenceUri = (tag: PhotoTag): string | undefined =>
     phase === 'pre' ? tag.repPhotoUrl : preMatched?.[tag.id]?.uri ?? tag.repPhotoUrl;
 
-  /** Next unmatched tag — prefers the current section, then falls through globally. */
+  /**
+   * Next tag that still OWES a shot — prefers the current section, then falls through
+   * globally.
+   *
+   * Deliberately blind to the added-shot tags: jumping the installer onto a tag nothing
+   * was asked of would present optional work as the next thing due. When nothing is
+   * outstanding the selection stays where it is, on the shot just taken, which is also
+   * what puts it into its "tap to review" state.
+   */
   const advance = (fromId: string) => {
     const inSection = (section?.tags ?? []).filter(
-      (t) => isTagOpen(t) && !matched[t.id] && t.id !== fromId
+      (t) => isTagRequired(t) && !matched[t.id] && t.id !== fromId
     );
     if (inSection.length) return setSelected(inSection[0]);
 
@@ -214,11 +264,20 @@ export function PhotoMatchStep({
     }
   };
 
-  // Matched tags sink below pending ones; unavailable tags sink to the bottom.
+  /**
+   * Owed-and-pending first, then the tags that can be added to, then anything already
+   * shot, then what this phase can't shoot at all. The order is the priority: what the
+   * job demands stays at the top of the picker, and the optional tags sit under it as an
+   * offer rather than a checklist.
+   */
   const orderedTags = useMemo(() => {
-    const rank = (t: PhotoTag) => (!isTagOpen(t) ? 2 : matched[t.id] ? 1 : 0);
+    const rank = (t: PhotoTag) => {
+      if (!isTagOpen(t)) return 3;
+      if (matched[t.id]) return 2;
+      return isTagRequired(t) ? 0 : 1;
+    };
     return [...(section?.tags ?? [])].sort((a, b) => rank(a) - rank(b));
-  }, [section, matched, isTagOpen]);
+  }, [section, matched, isTagOpen, isTagRequired]);
 
   const isSelectedMatched = !!(selected && matched[selected.id]);
   const selectedRef = selected ? referenceUri(selected) : undefined;
@@ -237,7 +296,14 @@ export function PhotoMatchStep({
   /** Shootable in this phase — see `isTagOpen`. */
   const selectedOpen = !!selected && isTagOpen(selected);
 
-  /** The tag expects a rep shot but this job shipped none — nothing to ghost against. */
+  /**
+   * Shootable, but with nothing to ghost against — the rep never covered this tag.
+   *
+   * Two ways in: a tag the rep skipped (now shootable, see `isTagOpen`), and the static
+   * fallback sections, whose tags claim `hasRep` but carry no key. Both mean the same
+   * thing to the installer, so both get the same pane: the line-art house and an invite
+   * to shoot rather than a "match" prompt.
+   */
   const referenceUnavailable = selectedOpen && !selected?.repPhotoS3Url && !selectedRef;
 
   /**
@@ -331,7 +397,7 @@ export function PhotoMatchStep({
               : t('installer.matchedCount', {
                   done: matchedTotal,
                   total: requiredTags.length,
-                })}
+                }) + (optionalMatchedTotal ? ` +${optionalMatchedTotal}` : '')}
           </Text>
         </View>
 
@@ -395,8 +461,14 @@ export function PhotoMatchStep({
           <View className="absolute top-2.5 left-0 right-0 items-center">
             <View className="rounded-2xl px-3 py-1.5" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}>
               <Text className="text-white text-xs font-bold">
-                {phase === 'pre' ? t('installer.repPhoto') : t('installer.preInstallPhoto')} •{' '}
-                {selected ? selected.label : '—'}
+                {/* "REP PHOTO" over a blank frame reads as a photo that failed to load.
+                    A tag with no reference is an addition, so it says so. */}
+                {referenceUnavailable
+                  ? t('installer.addPhoto')
+                  : phase === 'pre'
+                  ? t('installer.repPhoto')
+                  : t('installer.preInstallPhoto')}{' '}
+                • {selected ? selected.label : '—'}
               </Text>
             </View>
           </View>
@@ -439,7 +511,9 @@ export function PhotoMatchStep({
               {isFreeform
                 ? t('installer.selectTagFree')
                 : phase === 'pre'
-                ? t('installer.selectTagRep')
+                ? // Says outright that the rep's tags aren't the limit — the previously
+                  // dead N/A rows give an installer no reason to try tapping one.
+                  t('installer.selectTagRepPlus')
                 : t('installer.selectTagPre')}
             </Text>
           </View>
@@ -473,10 +547,17 @@ export function PhotoMatchStep({
               {orderedTags.map((t) => {
                 const m = !!matched[t.id];
                 const sel = selected?.id === t.id;
-                // Closed in this phase: no rep photo (pre), or no pre shot to compare
-                // against (post). Untappable, dimmed, and marked N/A below.
+                // Closed in this phase: no pre shot to compare against (post only).
+                // Untappable, dimmed, and marked N/A below.
                 const open = isTagOpen(t);
-                const pending = open && !m;
+                // Owed. Everything else that is open can still be shot — it just isn't
+                // asked for, so it carries no amber edge and no N/A.
+                const required = isTagRequired(t);
+                const pending = required && !m;
+                // Shootable, nothing recorded, nothing owed — the "you may add this"
+                // state. The plus is what says the row is live; without it a tag with no
+                // rep photo looks exactly like the disabled N/A rows it replaced.
+                const addable = open && !required && !m;
 
                 return (
                   <TouchableOpacity
@@ -496,10 +577,16 @@ export function PhotoMatchStep({
                     }}
                   >
                     {m && <Icon name="check" size={12} color={T_GREEN} style={{ marginRight: 4 }} />}
+                    {addable && (
+                      <Icon name="plus" size={12} color={T_DIM} style={{ marginRight: 4 }} />
+                    )}
                     <Text
                       className="text-xs font-bold text-center"
                       style={{
-                        color: !open ? '#44554b' : m ? '#8fae87' : T_TEXT,
+                        // Optional tags read one step back from the owed ones, but stay
+                        // legible — they are tappable, so the near-invisible closed grey
+                        // would be a lie about what the row does.
+                        color: !open ? '#44554b' : m ? '#8fae87' : required ? T_TEXT : '#9db3a6',
                         textDecorationLine: m ? 'line-through' : 'none',
                       }}
                       numberOfLines={2}

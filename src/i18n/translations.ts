@@ -191,9 +191,13 @@ export const en = {
     preInstallPhoto: 'PRE-INSTALL PHOTO',
     matchedTapReview: '✓ MATCHED — tap to review',
     noRepPhoto: 'NO REP PHOTO FOR THIS TAG — TAP TO SHOOT',
+    /** Eyebrow on a tag the rep never covered — it is an addition, not a match. */
+    addPhoto: 'ADD PHOTO',
     loadingRepPhoto: 'LOADING REP PHOTO…',
     tapToMatch: 'TAP PHOTO TO MATCH WITH GHOST',
     selectTagRep: 'SELECT TAG TO VIEW REP PHOTO',
+    /** Pre pass — the rep's tags are the floor, any other tag can be added to. */
+    selectTagRepPlus: 'PICK A REP TAG — OR ANY OTHER TAG TO ADD A SHOT',
     selectTagPre: 'SELECT TAG TO VIEW PRE-INSTALL PHOTO',
     /** Free-form phase — says outright that the count is the installer's call. */
     selectTagFree: 'PICK A TAG AND SHOOT — TAKE AS MANY AS YOU NEED',
@@ -410,9 +414,12 @@ export const es: TranslationTree = {
     preInstallPhoto: 'FOTO DE PREINSTALACIÓN',
     matchedTapReview: '✓ COINCIDE — toca para revisar',
     noRepPhoto: 'NO HAY FOTO PARA ESTA ETIQUETA — TOCA PARA FOTOGRAFIAR',
+    addPhoto: 'AÑADIR FOTO',
     loadingRepPhoto: 'CARGANDO FOTO DEL REPRESENTANTE…',
     tapToMatch: 'TOCA LA FOTO PARA IGUALAR CON LA GUÍA',
     selectTagRep: 'ELIGE UNA ETIQUETA PARA VER LA FOTO DEL REPRESENTANTE',
+    selectTagRepPlus:
+      'ELIGE UNA ETIQUETA DEL REPRESENTANTE — O CUALQUIER OTRA PARA AÑADIR UNA FOTO',
     selectTagPre: 'ELIGE UNA ETIQUETA PARA VER LA FOTO DE PREINSTALACIÓN',
     selectTagFree: 'ELIGE UNA ETIQUETA Y FOTOGRAFÍA — TOMA LAS QUE NECESITES',
     allShotsMatched: 'Listo — Todas las fotos coinciden',
