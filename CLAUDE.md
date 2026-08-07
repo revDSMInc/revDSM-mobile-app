@@ -321,20 +321,27 @@ Ticket: *"My deals - final page - not letting me see 'notes' or 'phone number', 
 avoidance at all — so on the Review & Submit step the keyboard sat over **Additional Notes** and
 **Send Addendum To ▸ Phone Number**, which are the last things on the page.
 
-Fixed with the pattern the rest of this flow already uses (`VerticalSummaryTab`,
-`DynamicTabRenderer`, `InvestmentPanel`): **`automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}`
-+ `keyboardDismissMode="interactive"`**, relying on Android's `adjustResize` (already set in
-`AndroidManifest.xml`). `contentContainerStyle` also gained `paddingBottom: 48` so the last field
-clears the sticky Back / Submit footer.
+Steps 2 (Job Price) and 3 (Review & Submit) now use **`KeyboardAwareScrollView` from
+`react-native-keyboard-controller`** with `bottomOffset={24}`, plus `paddingBottom: 48` so the last
+field clears the sticky Back / Submit footer. Step 0 has no text inputs and was left alone.
 
-⚠️ **Do NOT "fix" this with a padding `KeyboardAvoidingView`.** That only shrinks the ScrollView to
-the space above the keyboard, leaving a low field below the fold and still hidden — it is the very
-bug the comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. Note this
-differs from `RolloutView` / `CalculatorView` / `ResultJobModal`, which DO use `KeyboardAvoidingView`;
-those wrap a non-scrolling root, so the trade-off is not the same.
+⚠️ **`automaticallyAdjustKeyboardInsets` is NOT enough — it is iOS-only.** That was the first fix
+here and it left Android broken: the phone field still sat behind the keypad. The manifest does set
+`android:windowSoftInputMode="adjustResize"`, but that no longer shrinks the window once
+`KeyboardProvider` (mounted in `App.tsx`) puts the app edge-to-edge — so nothing moved the field.
+`KeyboardAwareScrollView` scrolls the **focused input** above the keyboard on **both** platforms and
+needs no per-platform branching. It requires `KeyboardProvider`, which is already app-wide.
 
-Applied to **step 2 (Job Price)** as well as step 3 — its Contract Price / Down Payment inputs sit
-just as low once the payment pickers expand. Step 0 has no text inputs and was left alone.
+This is the **first use of `KeyboardAwareScrollView` in the repo** — prefer it over
+`automaticallyAdjustKeyboardInsets` for any *scrolling* form with fields near the bottom.
+`VerticalSummaryTab` / `DynamicTabRenderer` / `InvestmentPanel` still use the iOS-only prop and have
+the same latent Android gap if a field there ever sits low enough.
+
+⚠️ Still **do NOT** reach for a padding `KeyboardAvoidingView`: it only shrinks the ScrollView to the
+space above the keyboard, leaving a low field below the fold and still hidden — the very bug the
+comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. (`RolloutView` /
+`CalculatorView` / `ResultJobModal` do use one, but they wrap a non-scrolling root, so the trade-off
+differs.)
 
 ### Deal-edit summary listed every document twice
 

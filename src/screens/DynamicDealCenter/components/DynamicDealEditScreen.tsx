@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Modal,
   StyleSheet,
-  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -49,6 +48,11 @@ import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-log';
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
+// Handles keyboard avoidance on BOTH platforms (its `KeyboardProvider` is mounted in
+// App.tsx). `automaticallyAdjustKeyboardInsets` is iOS-only, and on Android the
+// manifest's `adjustResize` no longer shrinks the window once KeyboardProvider goes
+// edge-to-edge — so the phone field stayed hidden behind the keypad there.
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 
 /**
  * 4-step DYNAMIC deal-edit wizard. Faithful port of web
@@ -969,11 +973,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         {step === 2 && (
           // Same keyboard treatment as step 3 — the Contract Price / Down Payment
           // inputs are equally low on the page once the payment pickers are expanded.
-          <ScrollView
+          <KeyboardAwareScrollView
             contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
-            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            bottomOffset={24}
           >
             <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, padding: 16, marginBottom: 12 }}>
               <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 8 }}>PREVIOUS JOB BUILD</Text>
@@ -1076,24 +1080,24 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 </View>
               </View>
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollView>
         )}
 
         {/* STEP 3 — Review & Submit */}
         {step === 3 && (
-          // Additional Notes and Phone Number sit near the bottom, so the keyboard
-          // covered them. Same remedy the rest of this flow uses (VerticalSummaryTab /
-          // DynamicTabRenderer): iOS `automaticallyAdjustKeyboardInsets` + Android
-          // `adjustResize` (already set in AndroidManifest) scroll the focused field
-          // above the keyboard. Deliberately NOT a padding `KeyboardAvoidingView` —
+          // Additional Notes and Phone Number sit at the very bottom, so the keyboard
+          // covered them. `KeyboardAwareScrollView` scrolls the FOCUSED input above the
+          // keyboard on both platforms, which plain `automaticallyAdjustKeyboardInsets`
+          // could not do on Android. `bottomOffset` keeps a gap between the caret and
+          // the keypad; the extra bottom padding lets the last field clear the sticky
+          // Back / Submit footer. Deliberately NOT a padding `KeyboardAvoidingView` —
           // that only shrinks the ScrollView and leaves a low field below the fold,
           // which is the bug it was meant to fix (see DynamicJobBuilderScreen).
-          // The extra bottom padding lets the last field clear the sticky footer.
-          <ScrollView
+          <KeyboardAwareScrollView
             contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
-            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            bottomOffset={24}
           >
             <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 2 }}>Addendum Review</Text>
             <Text style={{ fontSize: 13, color: '#94A3B8', marginBottom: 14 }}>{customerName}</Text>
@@ -1176,7 +1180,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 />
               </View>
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollView>
         )}
       </View>
 
