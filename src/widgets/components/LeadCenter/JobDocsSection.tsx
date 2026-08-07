@@ -1283,7 +1283,26 @@ export const JobDocsSection = ({
       };
 
       let mergedAllDocs = dedupeDocs(jbAllDocs);
-      if (leadId) {
+
+      // Web renders Contract Details documents from `lead.jobBuilderDocuments` ALONE —
+      // the record it already has from the sales-portal list
+      // (`contract-details.js`: `lead?.jobBuilderDocuments?.agreements`). It makes NO
+      // outcome call on this screen at all.
+      //
+      // Mobile used to ALWAYS merge the two outcome reads on top, and that is what
+      // listed one agreement twice: the same signed agreement exists as a
+      // JobBuilderDocument AND as a LeadOutcomeDocument, in different collections, so
+      // the copies share neither `_id` nor `filePath` — and their byte sizes differ
+      // slightly (68 KB vs 66 KB in the ticket), so the `type:size` content key misses
+      // too. Neither dedupe key can join them, so both rendered.
+      //
+      // So the outcome reads are now a FALLBACK, not a merge: they run only when the
+      // lead carries no documents of its own. That keeps web parity (and drops two
+      // requests per open) while preserving the case they were added for — a signed /
+      // generated agreement is filed ONLY as a LeadOutcomeDocument, and for that flow
+      // the backend returns `jobBuilderDocuments` empty, so without this the agreement
+      // would not appear anywhere.
+      if (leadId && mergedAllDocs.length === 0) {
         try {
           const calcId = lead?.selectedCalculatorId;
           const [leadRes, calcRes] = await Promise.all([
@@ -1297,10 +1316,9 @@ export const JobDocsSection = ({
             const outcome = body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
             return flatten(outcome?.leadOutcomeDocuments);
           };
-          const ocAllDocs = [...docsFrom(leadRes), ...docsFrom(calcRes)];
-          mergedAllDocs = dedupeDocs([...jbAllDocs, ...ocAllDocs]);
+          mergedAllDocs = dedupeDocs([...docsFrom(leadRes), ...docsFrom(calcRes)]);
         } catch (e) {
-          console.warn('[JobDocsSection] outcome document merge failed', e);
+          console.warn('[JobDocsSection] outcome document fallback failed', e);
         }
       }
 

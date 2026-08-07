@@ -275,11 +275,144 @@ styles rather than NativeWind classes. Also **added the between-group rule** mob
 `groupIndex < section.combinationSections.length - 1`) — that is the line above
 **"Downspout & Accessories"** in the web screenshot.
 
-**Divider spacing is 16px on BOTH sides**, matching web (`Divider sx={{ mt: 2 }}` inside the item +
-`Stack spacing={2}` between items) — `mb-4 pb-4` on `CombinationSummaryItem`, `mt-4` on the group
-rule. It was first shipped at 12px/8px, which left the next "Combination #N" chip sitting almost on
-the line and read as cramped. Note the combination gap is a plain margin on the item itself (not the
-parent's `space-y-4`), so it does not depend on NativeWind's `space-y-*` behaviour.
+**Divider spacing lives in `style`, not NativeWind margin classes**, and is deliberately **asymmetric**:
+`CombinationSummaryItem` uses `paddingBottom: 16` / `marginBottom: 22`, and the group rule
+`marginTop: 16` / `marginBottom: 6` (the latter stacking on the parent's `space-y-4`).
+
+Web's own 16/16 (`Divider sx={{ mt: 2 }}` + `Stack spacing={2}`) does NOT translate 1:1 here, which
+is why this was re-tuned twice — first 12/8, then an even 16/16, and QA still reported the rule
+"touching the Combination text". Two optical reasons: above the rule the last field row contributes
+its own row spacing, so 16px reads as ~24px; below it the next **"Combination #N" chip is a tight
+pill** (`py-0.5`) whose text sits flush against its top edge, so an equal 16px reads as touching.
+22px below balances them. Keep the spacing in `style` — the View already carries a `style` prop for
+the border, and mixing margin classes with it made it ambiguous which applied.
+
+### Deal-edit "Send Addendum To" phone is dash-formatted, always +1
+
+Ticket: *"My deals - phone number show the dashes, like this: 443-878-4937, always use +1 as we are
+using app in usa."* The field took raw keystrokes, so a rep saw `0948320498`.
+
+Two new helpers in **`src/utils/phone-util.ts`** (that file's existing `formatUSPhoneNumber` emits
+`+1 (XXX) XXX-XXXX` — parens, and its OWN `+1` — so it is wrong for a field that renders a static
+`+1` beside the input):
+- **`formatLocalUSPhone(text)`** → the local 10 digits as `XXX-XXX-XXXX`, no country code.
+- **`toE164USPhone(text)`** → `+1XXXXXXXXXX` for the API.
+
+Both take the **LAST 10 digits** when given more, rather than stripping a leading `1`. That handles
+`+1…` / `1…` / already-formatted input, and never mangles a partially-typed number mid-entry.
+
+In `DynamicDealEditScreen.tsx`: the input formats on change (`maxLength={12}` = 10 digits + 2
+dashes, placeholder `443-878-4937`), and the **seed** from `lead.customerDetails.phone` is formatted
+too — it may be stored raw or E.164.
+
+⚠️ **The submit payload stays E.164.** The old code passed the value through untouched whenever it
+merely *started with* `+`, so a display string like `+1 443-878-4937` would have reached the SMS
+provider with spaces and dashes once the field became formatted; and a stored `14438784937` became
+`+114438784937`. `toE164USPhone` fixes both.
+
+Verified: progressive typing (`4` → `443-8` → `443-878-4937`), every stored shape (raw / E.164 /
+`1`-prefixed / parens / already-dashed) normalizing to the same display and the same `+14438784937`
+payload, idempotence, and the 10-digit cap.
+
+### Deal-edit wizard: keyboard covered the Notes / Phone / Price inputs
+
+Ticket: *"My deals - final page - not letting me see 'notes' or 'phone number', keypad in way."*
+`DynamicDealEditScreen`'s three step `ScrollView`s had only `keyboardShouldPersistTaps` — no keyboard
+avoidance at all — so on the Review & Submit step the keyboard sat over **Additional Notes** and
+**Send Addendum To ▸ Phone Number**, which are the last things on the page.
+
+Fixed with the pattern the rest of this flow already uses (`VerticalSummaryTab`,
+`DynamicTabRenderer`, `InvestmentPanel`): **`automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}`
++ `keyboardDismissMode="interactive"`**, relying on Android's `adjustResize` (already set in
+`AndroidManifest.xml`). `contentContainerStyle` also gained `paddingBottom: 48` so the last field
+clears the sticky Back / Submit footer.
+
+⚠️ **Do NOT "fix" this with a padding `KeyboardAvoidingView`.** That only shrinks the ScrollView to
+the space above the keyboard, leaving a low field below the fold and still hidden — it is the very
+bug the comment in `DynamicJobBuilderScreen.tsx` (~line 1412) records having removed. Note this
+differs from `RolloutView` / `CalculatorView` / `ResultJobModal`, which DO use `KeyboardAvoidingView`;
+those wrap a non-scrolling root, so the trade-off is not the same.
+
+Applied to **step 2 (Job Price)** as well as step 3 — its Contract Price / Down Payment inputs sit
+just as low once the payment pickers expand. Step 0 has no text inputs and was left alone.
+
+### Deal-edit summary listed every document twice
+
+Ticket: *"My deals - summary page - why is it showing two order sheets and two agreements? I haven't
+added any more."* The Deal screen showed 2 agreements + 1 order sheet; **Edit ▸ Summary showed 4 + 2**
+— an exact doubling.
+
+There were **two separate causes** — one on the Deal screen, one in the edit wizard. Fix both.
+
+#### (a) Deal screen — `JobDocsSection` merged the lead record with two outcome reads
+
+⚠️ Corrects an earlier claim in this doc that no legacy outcome call fires here — **it does.** A
+device network trace shows `GET /lead/v1/{leadId}/outcome` (no calculator id) on opening the Deal.
+
+Web renders Contract Details documents from **`lead.jobBuilderDocuments` alone** — the record it
+already holds from the sales-portal list (`contract-details.js`:
+`lead?.jobBuilderDocuments?.agreements`) — and makes **no outcome call on this screen**. Mobile
+always merged **two more** sources on top: `getLeadOutcome(leadId)` and
+`getLeadOutcomeByCalculator(leadId, calcId)`, both read for `leadOutcomeDocuments`.
+
+That is what listed one agreement twice. The same signed agreement exists as a **JobBuilderDocument**
+AND as a **LeadOutcomeDocument** — different collections, so the copies share neither `_id` nor
+`filePath`, and their byte sizes differ slightly (68 KB vs 66 KB in the ticket) so the `type:size`
+content key misses too. **Neither dedupe key can join them**, so both rendered.
+
+The two outcome reads are now a **FALLBACK, not a merge** — they run only when the lead carries no
+documents of its own. That restores web parity and drops two requests per open, while preserving the
+case they were added for: a signed/generated agreement is filed ONLY as a LeadOutcomeDocument, and
+for that flow the backend returns `jobBuilderDocuments` empty, so without the fallback it would not
+appear at all.
+
+#### (a2) The mount-time outcome prefetch in `useLeadCenterData` is gone too
+
+`useLeadCenterData` also fired `GET /lead/v1/{leadId}/outcome` on mount for every resulted lead —
+visible in the trace even after (a) — purely to prefill `jobState` / `calculatorData` /
+`outcomeForm`. **Nothing renders from those**: the screen's documents and contract figures come from
+the lead record itself. Web makes no outcome request on this screen at all.
+
+Their only consumers are the two Job Builder launch paths in `LeadCenter/index.tsx` — the
+`openJobBuilder` auto-open effect and `handleShowJobBuilder` — and **both already issue their own
+`getLeadOutcome` at the moment of launch**. They previously took only `jobBuilder` from that
+response and still read `LFCalculator` / the outcome form from the stale prefetch; they now derive
+**all three** from their own response (`outcome?.LFCalculator || calculatorData`), so the Job Builder
+gets *fresher* data than before.
+
+The effect is now just `setIsOutcomeLoading(false)` (the flag still gates the auto-open effect, it is
+simply never true), and `outcomeForm` / `calculatorData` became frozen module-level empty objects —
+stable identities, read only as fallbacks, never written.
+
+Net: opening a Deal makes **three fewer requests** than before this ticket (two from (a), one here).
+
+#### (b) Edit wizard — `SummaryFinalizeCards` merged the server list with the draft copy
+
+`SummaryFinalizeCards.tsx` renders the union of **two display sources**:
+the server-resolved list and the draft copy on `jobState.agreements` / `.orderSheets`. Normally they
+dedupe, because `commitUploaded` writes the **server rows** (carrying `serverId`) into both. But an
+agreement filed by the **sign/scan flow** is stored on the draft as a bare local file —
+`{ name, uri: 'file:///…', isSystemGenerated: true }` with **no `serverId`/`filePath`**. `docIdentity`
+therefore keys the draft copy on its `file://` uri and the server copy on `serverId`, the keys never
+collide, and `dedupeDocs` keeps both.
+
+Fix: **in edit mode the server read is authoritative** — new `mergeDocSources(server, draft)` returns
+the server list outright when `editMode && server.length`, and otherwise falls back to the previous
+dedupe-union. Rationale:
+- The deal is already submitted, so every document is on the server, and `downloadOutcomeDocuments`
+  (lead-scoped) is the only source that **reflects deletions** — see [[dynamic-jb-edit-mode-docs-source]].
+  So the endpoint choice is deliberate and must NOT be "fixed" by switching to the calc-scoped read.
+- A document added *during* the edit session is safe: `commitUploaded` replaces **both** sources with
+  the server read-back, so it is already in `resolvedDocuments`.
+- The `.length` guard keeps the draft as a fallback, so an edit can never render zero documents.
+
+⚠️ **Name is NOT usable as a dedupe fallback key.** Two genuinely different agreements both display as
+`"Agreement"` (the ticket's own screenshot shows 68 KB and 66 KB rows), so matching on name would
+silently HIDE a real document.
+
+Note `__tests__/screens/DynamicDealCenter/summary-documents.test.tsx` covers this area but is one of
+the two suites that cannot run under jest (no global `react-native-blob-util` mock), so this change
+was verified by tracing the two sources' identities rather than by a test run.
 
 ---
 

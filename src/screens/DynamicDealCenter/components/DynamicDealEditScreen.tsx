@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Modal,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -47,6 +48,7 @@ import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-log';
+import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 
 /**
  * 4-step DYNAMIC deal-edit wizard. Faithful port of web
@@ -206,7 +208,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     // blank, so nothing is lost by not pre-seeding them here.
     setDownPaymentMethod('');
     setBalanceMethod('');
-    setCustomerPhone(lead?.customerDetails?.phone || lead?.customerDetails?.phoneNumber || '');
+    // Seed already dash-formatted — the stored value may be raw digits or E.164
+    // (`+14438784937`), and the field renders its own "+1", so only the local part
+    // belongs in the value.
+    setCustomerPhone(
+      formatLocalUSPhone(lead?.customerDetails?.phone || lead?.customerDetails?.phoneNumber || '')
+    );
     // Pre-fill with the lead's existing note so the rep sees the current value and
     // edits from it; a matching value then reads as "no change".
     setNote(lead?.note != null ? String(lead.note) : '');
@@ -632,10 +639,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       const draftId = b?.data?.draft?._id || b?.draft?._id || b?.data?._id || b?._id;
 
       if (draftId) {
-        const rawPhone = customerPhone || lead?.customerDetails?.phone || '';
-        const formattedPhone = String(rawPhone).startsWith('+')
-          ? rawPhone
-          : `+1${String(rawPhone).replace(/[^0-9]/g, '')}`;
+        // Always E.164 (+1XXXXXXXXXX) for the SMS provider. The old branch passed a
+        // value through untouched when it merely STARTED with '+', so a display
+        // string like "+1 443-878-4937" reached the API with spaces and dashes; and
+        // a stored "14438784937" became "+114438784937". `toE164USPhone` strips
+        // formatting and takes the last 10 digits, so every shape normalizes.
+        const formattedPhone = toE164USPhone(customerPhone || lead?.customerDetails?.phone || '');
         try {
           await LeadService.sendDraftSubmitEmail(draftId, {
             customerEmail: lead?.customerDetails?.email || '',
@@ -958,7 +967,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
         {/* STEP 2 — Job Price */}
         {step === 2 && (
-          <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+          // Same keyboard treatment as step 3 — the Contract Price / Down Payment
+          // inputs are equally low on the page once the payment pickers are expanded.
+          <ScrollView
+            contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          >
             <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, padding: 16, marginBottom: 12 }}>
               <Text style={{ fontSize: 11, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5, marginBottom: 8 }}>PREVIOUS JOB BUILD</Text>
               <TierRow tiers={tierResult.previous} />
@@ -1065,7 +1081,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
 
         {/* STEP 3 — Review & Submit */}
         {step === 3 && (
-          <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+          // Additional Notes and Phone Number sit near the bottom, so the keyboard
+          // covered them. Same remedy the rest of this flow uses (VerticalSummaryTab /
+          // DynamicTabRenderer): iOS `automaticallyAdjustKeyboardInsets` + Android
+          // `adjustResize` (already set in AndroidManifest) scroll the focused field
+          // above the keyboard. Deliberately NOT a padding `KeyboardAvoidingView` —
+          // that only shrinks the ScrollView and leaves a low field below the fold,
+          // which is the bug it was meant to fix (see DynamicJobBuilderScreen).
+          // The extra bottom padding lets the last field clear the sticky footer.
+          <ScrollView
+            contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          >
             <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 2 }}>Addendum Review</Text>
             <Text style={{ fontSize: 13, color: '#94A3B8', marginBottom: 14 }}>{customerName}</Text>
 
@@ -1135,9 +1164,13 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <Text style={{ color: '#94A3B8', marginRight: 4, fontSize: 14 }}>+1</Text>
                 <TextInput
                   value={customerPhone}
-                  onChangeText={setCustomerPhone}
+                  // Dash-formatted as typed (443-878-4937). The country code is the
+                  // static "+1" to the left, so the value holds the local part only.
+                  onChangeText={(t) => setCustomerPhone(formatLocalUSPhone(t))}
                   keyboardType="phone-pad"
-                  placeholder="Enter phone number"
+                  // 10 digits + 2 dashes — stops extra digits being appended silently.
+                  maxLength={12}
+                  placeholder="443-878-4937"
                   placeholderTextColor="#94A3B8"
                   style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 10 }}
                 />
