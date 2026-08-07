@@ -27,7 +27,7 @@ import { useInstallProgress } from '../../hooks/useInstallProgress';
 import {
   useSubmitInstallerResult,
   useReportDiscrepancy,
-  installerKeys,
+  staleInstallerJobs,
 } from '../../hooks/useInstallerJobs';
 import { useInstallerActivityLog } from '../../hooks/useInstallerActivityLog';
 import { useInstallerPhotoUpload } from '../../hooks/useInstallerPhotoUpload';
@@ -864,7 +864,11 @@ export default function InstallerJobDetail() {
       // Drop the cached schedule so the dashboard can't paint this job as live.
       // `completeJob` calls the service directly rather than through
       // `useUpdateJobStatus`, so nothing invalidates on its behalf.
-      queryClient.invalidateQueries({ queryKey: installerKeys.all });
+      //
+      // Dropped, NOT refetched: this screen stays open after the sign-off, and the
+      // dashboard's list query is still active underneath it — a refetching invalidate
+      // would fire `my-jobs` from in here. The dashboard reloads on focus instead.
+      staleInstallerJobs(queryClient);
       FlashMessage.success('Job completed', 'Sent back to the Install Manager.');
     } catch (err: any) {
       console.warn('[InstallerJob] Failed to complete job:', err);
@@ -967,7 +971,9 @@ export default function InstallerJobDetail() {
 
         log.resultSubmitted('Reset', reason);
         await wipeJobData();
-        queryClient.invalidateQueries({ queryKey: installerKeys.all });
+        // Stale only — `goBack()` below re-focuses the dashboard, which refetches the
+        // schedule itself. Refetching here would send `my-jobs` from this screen.
+        staleInstallerJobs(queryClient);
         setShowResetConfirm(false);
         FlashMessage.success('Lead result reset', 'The job can be re-entered.');
         navigation.goBack();
