@@ -472,6 +472,51 @@ nested-allocation and grid-stored-under-key cases, passes after, and an untouche
 `changed: false` with `next === previous`. tsc error count unchanged (83, all pre-existing), lint
 unchanged, suite 926 passing.
 
+✅ **Confirmed on device**: after these fixes a GUTTERS edit re-prices to **COST $3,848 / PAR $5,502 /
+RETAIL $8,195** — identical to web to the dollar on the same deal ("QS test"). The bridge works.
+
+⚠️ **One case is still open: a LEAFFILTER-only edit does not move the tiers.** In the failing repro the
+GUTTERS tab reads "No data entered", so LeafFilter is the only quantity in play. Not yet reproduced
+locally, and it is NOT known whether web moves the price for that case either — the working web
+comparison had gutters populated. Do not assume it is the same bug as above; the gutters path proves
+the machinery is sound.
+
+Ruled out while chasing it (all verified parity, don't re-investigate): the whole engine —
+`allocation-utils`, `combination-utils`, `allocation-value-resolver`, `allocation-config-utils`,
+`dependency-engine`, `deal-center-field-utils`, `location-grid-utils`, `toggle-utils`,
+`combination-summary-utils`; the price normalizer (`bakeFieldPrice` DOES strip thousands separators,
+same as web `toPriceNumber`); `tierFor`'s schema walk (identical to web `calculateResultUtil`); the
+embedded builder does **not** auto-save in edit mode (`performAutoSave` early-returns on `embedded`),
+so the baseline can't absorb the edit; `jobState` is keyed by config ids via `updateTabState`, so no
+storage-key drift; and the builder is seeded from the same `initialState` the diff compares against.
+
+**`DEAL_PRICING_DEBUG` in `dynamic-deal-pricing.ts` is temporarily `true`** and a `describeBridge()`
+helper logs `[dealEditPricing:bridge]` with the counts that isolate the broken link — `flatNext` (did
+the edited state arrive), `keyMapHits` (do config field ids line up with the state's section-qualified
+keys), `allocRefs` (did any allocation map a quantity), `overlayDiff` (did the calculator keys move)
+and `overlayDiffPriceable` (are those keys ones the schema can price). ⚠️ **Set the flag back to
+`false` before release** — it logs on every keystroke in the wizard.
+
+### Deal-edit Job Price step had NO validation (price below cost, down payment above price)
+
+Ticket: *"it will not allow me to go next, like web, until i filled the right contract price."* Web
+shows a red-bordered Contract Price with **"Cannot be below the cost of $3,848."** and a **disabled
+Next · Review**; mobile showed the same `COST -94%` badge but no error and an enabled button, so a rep
+could advance and submit an addendum priced 94 % below cost.
+
+Mobile had **no price validation at all**. Ported web's three values verbatim into
+`DynamicDealEditScreen.tsx`:
+
+- `costFloor = tierResult.next.cost` — the REBUILT cost, so the floor tracks the edited build.
+- `contractPriceError` — `Cannot be below the cost of ${fmtMoney(costFloor)}.`
+- `downPaymentError` — `Cannot exceed the contract price of ${fmtMoney(contractPrice)}.` (a down
+  payment over the price yields a negative balance).
+- `hasPriceError` gates **both** footer buttons: `Next · Review` on step 2 and `Submit Addendum` on
+  step 3 — web disables both, so an error can't be walked past in either direction.
+
+Each input turns red (`#DC2626`) and renders its message underneath; the Contract Price row drops its
+bottom margin to 4 when erroring so the message sits tight under the field, as on web.
+
 ⚠️ **Still not ported: web's `rebuildEntriesFromSchema`** (commit `3be3929e`, REVDSM-1075). That
 rewrites the stored `LFCalculator` `entries`/`totals` from the schema when an addendum changes the
 build, so the accepted scope matches the scoreboard. It affects the **submit payload**, not the tiers

@@ -444,6 +444,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // addendum (baseline is the lead's existing note).
   const noteChanged = String(lead?.note ?? '') !== note;
   const downPaymentChanged = parsePrice(lead?.downPayment) !== Number(downPayment);
+
+  // ── price validation (web parity: `contractPriceError` / `downPaymentError`) ──
+  // Selling under the rebuilt COST loses money on the addendum, and a down payment
+  // above the contract price yields a negative balance. Both block the wizard here
+  // rather than being caught downstream — mobile had NO validation at all, so a rep
+  // could advance and submit an addendum priced below cost.
+  const costFloor = Number(tierResult?.next?.cost) || 0;
+  const contractPriceError =
+    costFloor > 0 && (Number(contractPrice) || 0) < costFloor
+      ? `Cannot be below the cost of ${fmtMoney(costFloor)}.`
+      : '';
+  const downPaymentError =
+    (Number(downPayment) || 0) > (Number(contractPrice) || 0)
+      ? `Cannot exceed the contract price of ${fmtMoney(Number(contractPrice) || 0)}.`
+      : '';
+  const hasPriceError = Boolean(contractPriceError || downPaymentError);
   // Compare each picker against the SAME baseline it was seeded from, so opening the
   // wizard and touching nothing reads as no change. Both sides go through
   // `coerceToPlanKey` with the matching fallback ('check' for the balance, blank for
@@ -1034,7 +1050,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               <TierRow tiers={tierResult.next} highlight />
 
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginTop: 8, marginBottom: 4 }}>Contract Price</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 12, marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: contractPriceError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 12, marginBottom: contractPriceError ? 4 : 12 }}>
                 <Text style={{ color: '#94A3B8', marginRight: 6, fontSize: 16 }}>$</Text>
                 <TextInput
                   value={String(contractPrice)}
@@ -1051,12 +1067,17 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   </Text>
                 </View>
               </View>
+              {!!contractPriceError && (
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#DC2626', marginBottom: 12 }}>
+                  {contractPriceError}
+                </Text>
+              )}
 
               {/* Down Payment + its method, side by side (web parity). */}
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Payment</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: downPaymentError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 10 }}>
                     <Text style={{ color: '#94A3B8', marginRight: 4 }}>$</Text>
                     <TextInput
                       value={String(downPayment)}
@@ -1065,6 +1086,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                       style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 12 }}
                     />
                   </View>
+                  {!!downPaymentError && (
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#DC2626', marginTop: 4 }}>
+                      {downPaymentError}
+                    </Text>
+                  )}
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Pmt Method</Text>
@@ -1211,15 +1237,21 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           </TouchableOpacity>
           <View style={{ flex: 1 }} />
           {step === 2 ? (
-            <TouchableOpacity onPress={() => setStep(3)} style={{ backgroundColor: '#0F172A', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            // Web parity: a price below cost (or a down payment above it) blocks the
+            // step — the rep must correct it before Review, not discover it later.
+            <TouchableOpacity
+              onPress={() => setStep(3)}
+              disabled={hasPriceError}
+              style={{ backgroundColor: hasPriceError ? '#CBD5E1' : '#0F172A', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+            >
               <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Next · Review</Text>
               <Icon name="arrow-right" size={16} color="#fff" />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               onPress={handleSubmit}
-              disabled={isSubmitting || !hasAnyChange}
-              style={{ backgroundColor: hasAnyChange ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
+              disabled={isSubmitting || !hasAnyChange || hasPriceError}
+              style={{ backgroundColor: hasAnyChange && !hasPriceError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
             >
               {isSubmitting && <ActivityIndicator size="small" color="#fff" />}
               <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Submit Addendum</Text>

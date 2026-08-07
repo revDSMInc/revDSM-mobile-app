@@ -10,7 +10,9 @@ import { resolveFieldTierPrice, applyFeesToTier, type PricingConfig } from './pr
 
 // TEMP diagnostic — flip to true to trace the [dealEditPricing] delta computation
 // (mirrors web's `MYDEALFLOW_DEBUG`; logs schemaPrev/schemaNext/delta + changed qty).
-const DEAL_PRICING_DEBUG = false;
+// ⚠️ TEMPORARILY ON to diagnose "price doesn't change when the build changes".
+// Set back to `false` before release — it logs on every keystroke in the wizard.
+const DEAL_PRICING_DEBUG = true;
 
 export interface Tiers {
   cost: number;
@@ -150,6 +152,102 @@ function schemaRetailBreakdown(
     });
   });
   return rows.sort((a, b) => b.subtotal - a.subtotal).slice(0, 20);
+}
+
+/**
+ * DIAGNOSTIC (gated on `DEAL_PRICING_DEBUG`): report which link of the
+ * build→calculator bridge produced — or failed to produce — a quantity. Every
+ * value here is derived from the same helpers the real path uses, so it cannot
+ * disagree with them. See the call site for how to read it.
+ */
+function describeBridge(
+  dealCenterData: any,
+  originalJobState: any,
+  editedJobState: any,
+  config: any,
+  schemas: any[]
+) {
+  const flatPrev = extractQuantitiesByFieldId(originalJobState);
+  const flatNext = extractQuantitiesByFieldId(editedJobState);
+  const keyMap = buildFieldCalcKeyMap(config);
+  const keyMapHits = Object.keys(keyMap).filter((qid) => flatNext[qid] !== undefined);
+  const allocNext = buildAllocationQtyMap(editedJobState, config, dealCenterData);
+  const fieldOptions = extractDealCenterFieldOptions(schemas);
+  const prev = buildCalculatorDetails(dealCenterData, originalJobState, config, fieldOptions);
+  const next = buildCalculatorDetails(dealCenterData, editedJobState, config, fieldOptions);
+  const overlayDiff = Object.keys(next)
+    .filter((k) => Number(next[k] ?? 0) !== Number(prev[k] ?? 0))
+    .slice(0, 25)
+    .map((k) => ({ key: k, from: prev[k] ?? null, to: next[k] ?? null }));
+  // Every quantity key the SCHEMA can actually price, so an overlay key that is not
+  // in this set is a ref the schema will silently ignore.
+  const schemaKeys = new Set<string>();
+  (schemas || []).forEach((s: any) =>
+    (s?.categories || []).forEach((c: any) => {
+      [...(c.directFields || c.fields || []), ...((c.sections || []) as any[]).flatMap((x: any) => x.fields || [])]
+        .forEach((f: any) => {
+          if (f?.id) schemaKeys.add(String(f.id));
+          if (f?.name) schemaKeys.add(String(f.name));
+        });
+    })
+  );
+  // Per-allocation detail (web's `>>mydealflow alloc`): for every allocation the
+  // config declares, whether its tab state was found, what the metric engine
+  // resolved as "used", and which calculator refs that total maps onto. An
+  // allocation whose `optionBinding` doesn't match the rep's selection (e.g. a 5"
+  // gutter allocation while the combo says 7") legitimately resolves 0 — that is
+  // NOT a bug, and this is how to tell it apart from a broken binding.
+  const allocDetail: any[] = [];
+  (config?.verticals || []).forEach((v: any) =>
+    (v.tabs || []).forEach((t: any) => {
+      let tabState = editedJobState?.[v.id]?.[t.id];
+      if (!tabState) {
+        const vs = Object.values(editedJobState || {}).filter(
+          (x: any) => x && typeof x === 'object' && !Array.isArray(x)
+        );
+        for (let i = 0; i < vs.length; i += 1) {
+          if ((vs[i] as any)[t.id]) {
+            tabState = (vs[i] as any)[t.id];
+            break;
+          }
+        }
+      }
+      const allocs = collectAllocationFields(t);
+      if (!allocs.length) return;
+      allocs.forEach((a: any) => {
+        let allocated: any = 0;
+        let error = '';
+        try {
+          allocated =
+            resolveAllocationMetrics(a, { field: a, tab: t, tabState, dealCenterData })?.allocated ?? 0;
+        } catch (e: any) {
+          error = String(e?.message || e);
+        }
+        allocDetail.push({
+          tab: t.label || t.id,
+          alloc: a.label || a.id,
+          tabStateFound: Boolean(tabState),
+          allocated,
+          refs: collectAllocationDcRefs(a),
+          ...(error ? { error } : {}),
+        });
+      });
+    })
+  );
+
+  return {
+    flatPrev: Object.keys(flatPrev).length,
+    flatNext: Object.keys(flatNext).length,
+    keyMapSize: Object.keys(keyMap).length,
+    keyMapHits: keyMapHits.length,
+    allocRefs: Object.keys(allocNext).length,
+    allocSample: Object.entries(allocNext).slice(0, 10),
+    allocDetail,
+    schemaKeyCount: schemaKeys.size,
+    overlayDiff,
+    overlayDiffPriceable: overlayDiff.filter((d) => schemaKeys.has(d.key)).map((d) => d.key),
+    flatNextSample: Object.entries(flatNext).slice(0, 12),
+  };
 }
 
 function tiersFromDetails(details: any, opts: TierOpts): Tiers {
@@ -621,6 +719,17 @@ export function computeEditedTiers({
       const breakdown = schemaRetailBreakdown(stripped(prevDetails), schemas, opts.pricingConfig);
       // eslint-disable-next-line no-console
       console.warn('[dealEditPricing]', JSON.stringify({ stored: rawStored, schemaPrev, schemaNext, delta, topRetailFields: breakdown }));
+      // WHY the delta is what it is. `delta: 0` with a real build edit means the
+      // bridge found nothing — this says at which link it broke:
+      //   flatNext 0            → the edited job state never reached here
+      //   keyMapHits 0          → config field ids don't line up with the state's
+      //                           section-qualified keys (scope drift)
+      //   allocRefs 0           → no allocation mapped a quantity to a calculator ref
+      //   overlayDiff []        → prev and next produced identical calculator keys
+      //   overlayDiff non-empty → the keys moved but the schema prices none of them
+      //                           (the refs aren't schema field ids/names)
+      // eslint-disable-next-line no-console
+      console.warn('[dealEditPricing:bridge]', JSON.stringify(describeBridge(dealCenterData, originalJobState, editedJobState, config, schemas)));
     }
     // Real stored totals win; otherwise the schema-priced ORIGINAL build (which
     // carries COST/PAR/RETAIL), and only then the bare contract-price fallback.
