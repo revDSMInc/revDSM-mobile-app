@@ -207,11 +207,13 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleTimeWindow(sched.timeWindow || '');
     setContractPrice(parsePrice(lead?.originalContractPrice));
     setDownPayment(parsePrice(lead?.downPayment));
-    // Payment methods start UNSELECTED ("Select payment method") — the rep explicitly
-    // chooses. The submit payload falls back to the lead's saved method when left
-    // blank, so nothing is lost by not pre-seeding them here.
-    setDownPaymentMethod('');
-    setBalanceMethod('');
+    // Seed BOTH methods from the sale (web parity — `dynamic-deal-edit-modal.js`
+    // seeds `lead.paymentMethod` / `lead.balancePaymentMethod`). These used to open
+    // blank on the theory that the rep should re-pick; the result was that the deal's
+    // own payment method simply never showed. The change flags below compare against
+    // the same lead values, so a seeded picker still reads as "no change".
+    setDownPaymentMethod(lead?.paymentMethod || '');
+    setBalanceMethod(lead?.balancePaymentMethod || '');
     // Seed already dash-formatted — the stored value may be raw digits or E.164
     // (`+14438784937`), and the field renders its own "+1", so only the local part
     // belongs in the value.
@@ -345,9 +347,24 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [paymentOptions]
   );
 
-  // Both default to '' (unselected → "Select payment method") until the rep picks.
-  const balanceMethodKey = balanceMethod ? coerceToPlanKey(balanceMethod, '') : '';
+  // Web parity (`dynamic-deal-edit-modal.js`): the BALANCE always resolves — it falls
+  // back to `check` — because every sold deal has a balance to collect. The DOWN
+  // PAYMENT may legitimately be unset (a deal with no money down), so it stays blank
+  // and the picker shows its placeholder.
+  const balanceMethodKey = coerceToPlanKey(balanceMethod, 'check');
   const downPaymentMethodKey = downPaymentMethod ? coerceToPlanKey(downPaymentMethod, '') : '';
+
+  // Now that the down-payment picker is SEEDED from the sale, the saved method may sit
+  // outside the cash/card basics the list normally offers (a legacy deal that stored a
+  // financing plan there). Web parity (`downPaymentSelectOptions`): splice the current
+  // key in from the full catalog so it renders with its real label and stays
+  // re-selectable, instead of showing a bare key or dropping the selection.
+  const downPaymentSelectOptions = useMemo(() => {
+    if (!downPaymentMethodKey) return downPaymentOptions;
+    if (downPaymentOptions.some((o) => o.key === downPaymentMethodKey)) return downPaymentOptions;
+    const extra = paymentOptions.find((o) => o.key === downPaymentMethodKey);
+    return extra ? [...downPaymentOptions, extra] : downPaymentOptions;
+  }, [downPaymentOptions, downPaymentMethodKey, paymentOptions]);
 
   // Plan key → human label for the Review rows, e.g. `2511` → "2511 (6 Months 0%
   // Interest No Payments…) (Bank Fee: 4%)". Web parity: `resolvePlanLabel`. Falls
@@ -427,14 +444,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // addendum (baseline is the lead's existing note).
   const noteChanged = String(lead?.note ?? '') !== note;
   const downPaymentChanged = parsePrice(lead?.downPayment) !== Number(downPayment);
-  // Only count a method as changed once the rep has actually PICKED one — a blank
-  // "Select payment method" (the default) must not read as a change. (Web coerces
-  // with a 'check' fallback so its key is never blank; mobile leaves the picker
-  // genuinely unselected, hence the extra guard.)
+  // Compare each picker against the SAME baseline it was seeded from, so opening the
+  // wizard and touching nothing reads as no change. Both sides go through
+  // `coerceToPlanKey` with the matching fallback ('check' for the balance, blank for
+  // the down payment) — web parity. The old `!!key &&` guard existed only because the
+  // pickers opened blank; seeding them made it obsolete, and keeping it would have
+  // masked a real edit back to the deal's original method.
   const downPaymentMethodChanged =
-    !!downPaymentMethodKey && coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey;
+    coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey;
   const balanceMethodChanged =
-    !!balanceMethodKey && coerceToPlanKey(lead?.balancePaymentMethod, '') !== balanceMethodKey;
+    coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey;
 
   // These were previously inlined here, so the Submit button enabled on a payment
   // change but the Review list had no row for it — the rep saw "no changes" for an
@@ -1050,7 +1069,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Pmt Method</Text>
                   <MethodPicker
-                    options={downPaymentOptions}
+                    options={downPaymentSelectOptions}
                     selected={downPaymentMethodKey}
                     onSelect={(k) => setDownPaymentMethod(k)}
                     allowNone

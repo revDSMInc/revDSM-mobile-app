@@ -233,9 +233,8 @@ addendum that really was being submitted. In `DynamicDealEditScreen.tsx`:
   stored method fuzzy-resolves via `resolveTierPaymentMethod` (amex / visa-mc-dscvr, else **check**),
   so it renders a real label — same as web.
 - **Two `ReviewRow`s added**: `Down Pmt Method` and `Balance Method`, each gated on its flag.
-- ⚠️ **Mobile keeps its `!!key &&` guard** on both method flags. Web coerces with a `'check'`
-  fallback so its key is never blank; mobile leaves the picker genuinely unselected, so without the
-  guard a blank "Select payment method" would read as a change. This divergence is deliberate.
+- ⚠️ ~~Mobile keeps its `!!key &&` guard on both method flags.~~ **Superseded** — the pickers no
+  longer open blank, so the guard is gone. See "Deal-edit payment methods now seed from the sale".
 - **`ReviewRow`'s value column now shrinks and wraps** (`flexShrink: 1`, `maxWidth: '55%'`,
   `textAlign: 'right'`). Plan labels are long sentences and RN defaults a `View` to `flexShrink: 0`,
   which would have pushed the value off-screen — web wraps it the same way.
@@ -523,6 +522,44 @@ was the first attempt here and was wrong — it stripped delete from the My Deal
 
 The other two callers get the PDF-preview fix for free — they had the same blank-tile bug. They filter
 `p.isNew === true` before uploading, so the richer existing-file objects pass straight through.
+
+### Deal-edit payment methods now seed from the sale
+
+Ticket: *"My deals - payment method from sale isn't showing; in web it's showing."* Job Price (step 2)
+opened with **Down Pmt Method** and **Balance Method** both reading "Select payment method", even
+though the deal was sold with one (the outcome carries `balancePaymentMethod: "check"`).
+
+This was **deliberate on mobile and wrong** — it is the divergence recorded in the section above. The
+seed effect explicitly blanked both (`setDownPaymentMethod('')`), reasoning that the rep should
+re-pick and that the submit payload falls back to `lead.paymentMethod` anyway. The payload was indeed
+fine; the *display* simply never showed the deal's own method. Now a 1:1 port of web
+`dynamic-deal-edit-modal.js`, in `DynamicDealEditScreen.tsx`:
+
+- **Seed both from the lead**: `setDownPaymentMethod(lead?.paymentMethod || '')`,
+  `setBalanceMethod(lead?.balancePaymentMethod || '')`.
+- **`balanceMethodKey = coerceToPlanKey(balanceMethod, 'check')`** — the balance ALWAYS resolves,
+  because every sold deal has a balance to collect (web uses the same `'check'` fallback). The down
+  payment keeps its blank-allowed form (`downPaymentMethod ? coerce(…, '') : ''`) — a deal with no
+  money down legitimately has no method.
+- **The `!!key &&` guards are removed** from both change flags; each now compares against the same
+  baseline it was seeded from, with the matching fallback:
+  `coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey` and
+  `coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey`. The guards only existed
+  to stop a blank picker reading as a change; seeding makes them obsolete, and keeping them would have
+  **masked a real edit back to the deal's original method**.
+- **New `downPaymentSelectOptions`** (web parity). The Down Pmt picker offers cash/card basics only,
+  but a seeded value may sit outside that set (a legacy deal that stored a financing plan there), so
+  the current key is spliced in from the full catalog. Without it the saved method rendered as a bare
+  key and was not re-selectable. The Balance picker already uses the full `paymentOptions` catalog.
+
+⚠️ **Side effect on the displayed tiers, and it is the correct one.** `computeEditedTiers` receives
+`paymentMethod: resolveTierPaymentMethod(balanceMethodKey)`. That key used to be `''` → `'check'` →
+0 % bank fee for every deal. A deal whose balance method is **AMEX or MC/VISA/DSCVR** now grosses its
+COST/PAR/RETAIL up by that plan's fee, exactly as web does — so those deals' tiers will read higher
+than before this change.
+
+The submit payload is unchanged (`downPaymentMethodKey || lead?.paymentMethod || ''`) — it already
+matched web.
 
 ---
 
