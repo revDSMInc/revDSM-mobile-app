@@ -8,9 +8,11 @@ import {
   Modal,
   ActivityIndicator,
   StyleSheet,
+  Animated,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import Feather from 'react-native-vector-icons/Feather';
 import Ionicon from 'react-native-vector-icons/Ionicons';
@@ -105,6 +107,14 @@ const signatureOf = (body: InstallerJobPatch): string =>
   );
 
 /**
+ * How long "Wait for uploads" holds the installer before handing the decision back.
+ *
+ * Long enough to cover a slow photo plus a retry; short enough that a crew walking away
+ * from a dead cell is never left watching a spinner they cannot dismiss.
+ */
+const UPLOAD_WAIT_CAP_MS = 30000;
+
+/**
  * Installer job detail — lead context, the install timeline, and read-only job
  * reference. Every timeline step opens as a full-screen sub-flow over this screen.
  */
@@ -122,22 +132,37 @@ export default function InstallerJobDetail() {
   // resolved to signed S3 URLs); the static mock is only a fallback for jobs that
   // carry no `preInstallPhotos`.
   const repSections = useRepPhotoSections(job?.preInstallPhotos);
-  const photoSections = repSections.length ? repSections : PHOTO_SECTIONS;
+  const hasRepPhotoSet = repSections.length > 0;
+  const photoSections = hasRepPhotoSet ? repSections : PHOTO_SECTIONS;
 
   // A job whose `preInstallPhotos.products` is empty has no rep capture set, so the
   // tagger runs on the static stand-in and NO tag can ever show a reference shot.
   // Worth saying out loud — it reads on-device as "the images are broken".
   useEffect(() => {
-    if (!__DEV__ || !job?._id || repSections.length) return;
+    if (!__DEV__ || !job?._id || hasRepPhotoSet) return;
     console.warn(
       `[InstallerJob] Job ${job._id} returned no pre-install rep photos ` +
         `(preInstallPhotos.totalPhotos=${job.preInstallPhotos?.totalPhotos ?? 0}). ` +
-        'Falling back to the static PHOTO_SECTIONS stand-in — reference shots will be empty.'
+        'Falling back to the static PHOTO_SECTIONS stand-in — reference shots will be ' +
+        'empty and the photo steps run free-form.'
     );
-  }, [job, repSections.length]);
+  }, [job, hasRepPhotoSet]);
+
+  /**
+   * The shots the installer MUST match — and deliberately **empty when the job shipped
+   * no rep photos**.
+   *
+   * It used to be derived from `photoSections`, which falls back to the static
+   * `PHOTO_SECTIONS` stand-in. That stand-in claims `hasRep: true` on all 16 of its
+   * placeholder tags, so a job with no rep capture set demanded 16 ghost-matches against
+   * 16 references that do not exist — unsatisfiable busywork, and the reason the tagger
+   * read "1/16 MATCHED" with nothing to match. With no rep set there is no defensible
+   * required list, so the photo steps go free-form and one shot is enough
+   * (`useInstallProgress` → `photoPhaseDone`).
+   */
   const requiredPhotoTagIds = useMemo(
-    () => requiredTagIdsFromSections(photoSections),
-    [photoSections]
+    () => (hasRepPhotoSet ? requiredTagIdsFromSections(photoSections) : []),
+    [hasRepPhotoSet, photoSections]
   );
 
   const {
@@ -294,11 +319,102 @@ export default function InstallerJobDetail() {
     };
   }, [stored, hydrate, tagIdBySalesPhotoId]);
 
+  // ── Leaving with uploads in flight ────────────────────────────────────────
+  //
+  // Leaving mid-upload LOSES the photo, even when the bytes reach S3.
+  //
+  // `patchPhoto` writes the returned `s3url` through `useInstallProgress.commit`, whose
+  // `setProgress` is a no-op once this screen has unmounted — so the persist effect
+  // never runs, MMKV keeps the shot as `uploadStatus: 'uploading'` for good, and the
+  // step-data PATCH has no key to reference. The image sits in S3 attached to nothing.
+  //
+  // So the exits the installer drives are held until the queue drains. Programmatic
+  // `goBack()`s are deliberately NOT intercepted (the result and reset flows own their
+  // own exit and already drain first) — blocking those would strand a submitted result
+  // on this screen.
+
+  /** Open while the installer is being asked to wait for in-flight uploads. */
+  const [showUploadGuard, setShowUploadGuard] = useState(false);
+  const [waitingForUploads, setWaitingForUploads] = useState(false);
+
   /** Back to the schedule. The job isn't finished, so the session is paused. */
-  const handleLeave = useCallback(() => {
+  const leave = useCallback(() => {
     if (job?._id) log.jobPaused(job, { completedSteps: completedCount, totalSteps });
     navigation.goBack();
   }, [job, completedCount, totalSteps, log, navigation]);
+
+  const handleLeave = useCallback(() => {
+    if (upload.uploadingCount > 0) {
+      setShowUploadGuard(true);
+      return;
+    }
+    leave();
+  }, [upload.uploadingCount, leave]);
+
+  /**
+   * Waits the queue out, then leaves.
+   *
+   * **Capped at `UPLOAD_WAIT_CAP_MS`, and that cap is the point.** `waitForUploads`
+   * does settle on its own — a photo either lands or exhausts its retries — but on a
+   * dead cell that is three attempts against a 120 s request timeout, so the honest
+   * worst case is minutes. `ConfirmActionModal` disables its cancel button while
+   * `submitting`, so an uncapped wait would lock a crew who are packing up onto this
+   * screen with no way out. On expiry the dialog simply returns to its idle state, with
+   * "Leave anyway" live again and the choice back where it belongs.
+   */
+  const handleWaitForUploads = useCallback(async () => {
+    setWaitingForUploads(true);
+    const timedOut = await Promise.race([
+      upload.waitForUploads().then(() => false),
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(true), UPLOAD_WAIT_CAP_MS)
+      ),
+    ]);
+    setWaitingForUploads(false);
+
+    if (timedOut) {
+      // Still going. The uploads carry on in the background either way — this only
+      // hands the decision back rather than holding them any longer.
+      FlashMessage.info(
+        'Still uploading',
+        'This connection is slow. Keep waiting, or leave and retake the photos later.'
+      );
+      return;
+    }
+
+    setShowUploadGuard(false);
+    leave();
+  }, [upload, leave]);
+
+  /**
+   * The Android hardware back button — the same guard as the header arrow.
+   *
+   * `useFocusEffect` rather than a plain `useEffect`: the handler must be detached
+   * while a step sheet or the packet viewer is on top, or this screen would answer a
+   * back press meant for them.
+   */
+  const uploadingCount = upload.uploadingCount;
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (uploadingCount === 0) return false; // let the default back run
+        setShowUploadGuard(true);
+        return true;
+      });
+      return () => subscription.remove();
+    }, [uploadingCount])
+  );
+
+  /**
+   * The iOS swipe-back gesture, which no button handler can intercept — it is turned
+   * off outright while photos are in flight (the screen is registered with
+   * `gestureEnabled: true` in `navigation/index.tsx`) and restored the moment the queue
+   * drains. Without this, the one exit that skips both guards above is also the easiest
+   * one to trigger by accident on a phone held in a work glove.
+   */
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: uploadingCount === 0 });
+  }, [navigation, uploadingCount]);
 
   /** Opening a timeline step. Its status tells the portal whether it was a re-visit. */
   const handleOpenStep = useCallback(
@@ -678,6 +794,56 @@ export default function InstallerJobDetail() {
     String(job?.status ?? '').toLowerCase() === 'completed';
 
   /**
+   * The sign-off button breathes while it is waiting to be pressed.
+   *
+   * It appears at the bottom of a long screen, in the middle of a stack of other
+   * full-width buttons (the two result actions, Msg Ops), only after the seventh step
+   * closes — a moment the installer's attention is on the step sheet they just
+   * dismissed, not on the rail below it. The pulse is what says the last thing is now
+   * available.
+   *
+   * Deliberately the SAME motion the sales LeadCard uses for its live card — a 1.03
+   * scale over a 1 s in / 1 s out loop (`widgets/components/LeadCard.tsx`) — so the two
+   * screens read as one app rather than inventing a second idea of "press this".
+   *
+   * It runs only while the button can actually be pressed: not once the job is signed
+   * off (it goes inert and grey — animating it would promise an action that no longer
+   * exists) and not mid-PATCH.
+   */
+  const completePulse = useRef(new Animated.Value(1)).current;
+  const canCompleteJob = allStepsDone && !isJobComplete && !completingJob;
+
+  useEffect(() => {
+    if (!canCompleteJob) {
+      completePulse.setValue(1);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(completePulse, {
+          toValue: 1.03,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(completePulse, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+
+    // Stopped on cleanup, not just when the flag flips: this screen unmounts straight
+    // into the schedule on a result, and a loop left running holds the driver.
+    return () => {
+      loop.stop();
+      completePulse.setValue(1);
+    };
+  }, [canCompleteJob, completePulse]);
+
+  /**
    * The installer's explicit sign-off ("Yes" on the completion dialog): drains
    * uploads, PATCHes ALL 7 steps' data in one body, then moves the job to `completed`
    * via the status endpoint.
@@ -884,9 +1050,26 @@ export default function InstallerJobDetail() {
         ? `${flagged.length} area${flagged.length > 1 ? 's' : ''} flagged`
         : null;
 
-    const matchNote = (m: Record<string, unknown>) => {
-      const n = requiredPhotoTagIds.filter((id) => m[id]).length;
-      return n > 0 ? `${n}/${requiredPhotoTagIds.length} shots matched` : null;
+    /**
+     * `required` is the phase's own denominator — the rep's set for pre, the pre pass's
+     * own shots for post. Empty means free-form.
+     */
+    const matchNote = (
+      required: string[],
+      m: Record<string, unknown>,
+      x: Record<string, unknown[]>
+    ) => {
+      // Free-form: no denominator to count against, so the rail reports what was taken
+      // rather than a fraction of a demand that isn't being made. Extras count here for
+      // the same reason they satisfy the step.
+      if (!required.length) {
+        const n =
+          Object.keys(m).length +
+          Object.values(x).reduce((sum, list) => sum + (list?.length ?? 0), 0);
+        return n > 0 ? `${n} photo${n > 1 ? 's' : ''} taken` : null;
+      }
+      const n = required.filter((id) => m[id]).length;
+      return n > 0 ? `${n}/${required.length} shots matched` : null;
     };
 
     const settled = productIds.filter((id) => progress.scope[id]?.state !== 'pending' && progress.scope[id]);
@@ -896,8 +1079,13 @@ export default function InstallerJobDetail() {
       pickup: materialNote('pickup'),
       return: materialNote('return'),
       pec: pecNote,
-      pre: matchNote(progress.preMatched),
-      post: matchNote(progress.postMatched),
+      pre: matchNote(requiredPhotoTagIds, progress.preMatched, progress.preExtras),
+      // Post is measured against the pre pass — see `isStepDone('post')`.
+      post: matchNote(
+        Object.keys(progress.preMatched),
+        progress.postMatched,
+        progress.postExtras
+      ),
       measure: scopeNote,
       coc: progress.cocPages.length
         ? `${progress.cocPages.length} page${progress.cocPages.length > 1 ? 's' : ''} scanned`
@@ -1322,28 +1510,36 @@ export default function InstallerJobDetail() {
           {/* Sign-off — only once every step on the rail is satisfied. Goes inert
               (not hidden) after completion, so the state stays legible. */}
           {allStepsDone && (
-            <TouchableOpacity
-              disabled={isJobComplete || completingJob}
-              onPress={() => setShowCompleteConfirm(true)}
-              className="h-12 rounded-xl items-center justify-center flex-row mb-4"
-              style={{
-                backgroundColor: isJobComplete
-                  ? colors.textSecondary + '33'
-                  : colors.success.main,
-              }}
+            // The scale lives on a wrapper rather than on the button itself: the margin
+            // has to stay OUTSIDE the transform, or the gap to the next card would
+            // breathe along with it.
+            <Animated.View
+              className="mb-4"
+              style={{ transform: [{ scale: completePulse }] }}
             >
-              <MaterialIcon
-                name="check-decagram"
-                size={18}
-                color={isJobComplete ? colors.textSecondary : '#fff'}
-              />
-              <Text
-                className="ml-2 text-base font-black tracking-wide text-center"
-                style={{ color: isJobComplete ? colors.textSecondary : '#fff' }}
+              <TouchableOpacity
+                disabled={isJobComplete || completingJob}
+                onPress={() => setShowCompleteConfirm(true)}
+                className="h-12 rounded-xl items-center justify-center flex-row"
+                style={{
+                  backgroundColor: isJobComplete
+                    ? colors.textSecondary + '33'
+                    : colors.success.main,
+                }}
               >
-                {t('installer.jobCompleted')}
-              </Text>
-            </TouchableOpacity>
+                <MaterialIcon
+                  name="check-decagram"
+                  size={18}
+                  color={isJobComplete ? colors.textSecondary : '#fff'}
+                />
+                <Text
+                  className="ml-2 text-base font-black tracking-wide text-center"
+                  style={{ color: isJobComplete ? colors.textSecondary : '#fff' }}
+                >
+                  {t('installer.jobCompleted')}
+                </Text>
+              </TouchableOpacity>
+            </Animated.View>
           )}
 
           {/* Read-only reference */}
@@ -1369,7 +1565,15 @@ export default function InstallerJobDetail() {
                 key={result}
                 onPress={() => handleOpenResult(result)}
                 className="flex-1 h-12 rounded-xl items-center justify-center"
-                style={{ backgroundColor: RESULT_COLORS[result] }}
+                style={{
+                  // On a completed job Reset drops its in-flow amber for error red: it
+                  // no longer nudges a live job along, it undoes a signed-off result.
+                  // Nothing to clash with either — Can't Do Work is gone by then.
+                  backgroundColor:
+                    isJobComplete && result === 'Reset'
+                      ? colors.error.main
+                      : RESULT_COLORS[result],
+                }}
               >
                 <Text className="text-white text-[13px] font-bold text-center">
                   {t(RESULT_LABEL_KEY[result])}
@@ -1440,11 +1644,14 @@ export default function InstallerJobDetail() {
         visible={openStep === 'pre'}
         phase="pre"
         sections={photoSections}
+        freeform={!hasRepPhotoSet}
         matched={progress.preMatched}
         extras={progress.preExtras}
         onMatch={(tagId, photo) => handleMatchPhoto('pre', tagId, photo)}
         onAddExtra={(sid, photo) => handleExtraPhoto('pre', sid, photo)}
-        onComplete={() => finishStep('pre', { matched: requiredPhotoTagIds.length })}
+        onComplete={() =>
+          finishStep('pre', { matched: Object.keys(progress.preMatched).length })
+        }
         onBack={handleCloseStep}
       />
 
@@ -1452,12 +1659,15 @@ export default function InstallerJobDetail() {
         visible={openStep === 'post'}
         phase="post"
         sections={photoSections}
+        freeform={!hasRepPhotoSet}
         matched={progress.postMatched}
         extras={progress.postExtras}
         preMatched={progress.preMatched}
         onMatch={(tagId, photo) => handleMatchPhoto('post', tagId, photo)}
         onAddExtra={(sid, photo) => handleExtraPhoto('post', sid, photo)}
-        onComplete={() => finishStep('post', { matched: requiredPhotoTagIds.length })}
+        onComplete={() =>
+          finishStep('post', { matched: Object.keys(progress.postMatched).length })
+        }
         onBack={handleCloseStep}
       />
 
@@ -1505,6 +1715,35 @@ export default function InstallerJobDetail() {
         />
       )}
 
+      {/* The leave guard. Presented as a dialog, not a sheet: it interrupts an exit the
+          installer has already asked for, so it has to sit in the middle of the screen
+          with nowhere to tap but its two buttons.
+
+          "Leave anyway" is deliberately still offered. The wait is bounded, but a crew
+          packing up on a dead cell must never be held on a screen by an upload that
+          cannot succeed — the description says plainly what leaving costs. */}
+      <ConfirmActionModal
+        visible={showUploadGuard}
+        icon="cloud-upload-outline"
+        title={
+          uploadingCount === 1
+            ? '1 photo is still uploading'
+            : `${uploadingCount} photos are still uploading`
+        }
+        description={
+          'Leave now and they lose their link to this job — the shots stay on the ' +
+          'phone but never attach to the install record. It only takes a moment.'
+        }
+        confirmLabel="Wait for uploads"
+        cancelLabel="Leave anyway"
+        submitting={waitingForUploads}
+        onCancel={() => {
+          setShowUploadGuard(false);
+          leave();
+        }}
+        onConfirm={handleWaitForUploads}
+      />
+
       <ConfirmActionModal
         visible={showCompleteConfirm}
         icon="check-decagram"
@@ -1528,8 +1767,17 @@ export default function InstallerJobDetail() {
         // result is the heavier decision and should interrupt.
         presentation={isJobComplete ? 'dialog' : 'sheet'}
         title="Reset Lead Result?"
-        // No description: the title asks the question and the reason list below answers
-        // it, so the blurb only pushed the reasons further down the sheet.
+        // The completed-job dialog spells out what Reset costs — it is wiping a result
+        // that has already been signed off, and the title alone doesn't say that the
+        // lead comes back for a re-run. The in-progress SHEET stays blurb-free: there
+        // is no result to clear yet, and the copy would only push the reason list
+        // further down the sheet.
+        description={
+          isJobComplete
+            ? 'Are you sure you want to reset this lead result? This will clear the ' +
+              'current result and allow you to re-enter the lead.'
+            : undefined
+        }
         // The API requires a reason on every result, Reset included, so the picker
         // lives in this dialog rather than behind a second popup.
         reasons={INSTALLER_RESULT_REASONS.Reset}

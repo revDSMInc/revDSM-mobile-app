@@ -133,7 +133,14 @@ const DEFAULT_REQUIRED_TAG_IDS = REQUIRED_PHOTO_TAGS.map((t) => t.id);
 export function useInstallProgress(
   jobId: string,
   productIds: string[] = [],
-  /** Tag ids the installer must match — from the job's real rep photos when available. */
+  /**
+   * Tag ids the installer must match — from the job's real rep photos.
+   *
+   * **Empty means "no rep capture set", not "nothing to do".** A job whose
+   * `preInstallPhotos` shipped no photos has nothing to ghost-match against, so there is
+   * no defensible list of shots to demand; the photo steps become free-form and the
+   * installer decides how many to take. See `photoPhaseDone`.
+   */
   requiredPhotoTagIds: string[] = DEFAULT_REQUIRED_TAG_IDS
 ) {
   const [progress, setProgress] = useState<InstallProgress>(() => readStored(jobId));
@@ -203,6 +210,32 @@ export function useInstallProgress(
   // Material, PEC, photo, scope and CoC steps derive from their own data rather
   // than a flag, so a step can never read "done" while its evidence is missing.
 
+  /**
+   * Pre-Install / Post-Install completion, in the two modes these steps have.
+   *
+   * **Matched** (`requiredIds` non-empty) — every id has to carry a shot.
+   *
+   * **Free-form** (empty) — nothing is owed in particular, so one photo satisfies the
+   * step and the installer takes as many as the job warrants. Extras count here: with no
+   * tag to attach to, a shot filed as an "extra" is the same evidence as a matched one,
+   * only the label differs.
+   *
+   * What fills `requiredIds` differs per phase, and that is the whole point — see the
+   * two call sites.
+   */
+  const photoPhaseDone = useCallback(
+    (
+      requiredIds: string[],
+      matchedMap: Record<string, CapturedPhoto>,
+      extrasMap: Record<string, CapturedPhoto[]>
+    ): boolean =>
+      requiredIds.length > 0
+        ? requiredIds.every((id) => !!matchedMap[id])
+        : Object.keys(matchedMap).length > 0 ||
+          Object.values(extrasMap).some((list) => (list?.length ?? 0) > 0),
+    []
+  );
+
   const isStepDone = useCallback(
     (key: InstallStepKey): boolean => {
       switch (key) {
@@ -213,14 +246,22 @@ export function useInstallProgress(
         case 'coc':
           return progress.cocPages.length > 0;
         case 'pre':
-          return (
-            requiredPhotoTagIds.length > 0 &&
-            requiredPhotoTagIds.every((id) => !!progress.preMatched[id])
+          // Answers the REP's capture set (empty → free-form; see the param doc).
+          return photoPhaseDone(
+            requiredPhotoTagIds,
+            progress.preMatched,
+            progress.preExtras
           );
         case 'post':
-          return (
-            requiredPhotoTagIds.length > 0 &&
-            requiredPhotoTagIds.every((id) => !!progress.postMatched[id])
+          // Answers the PRE pass, not the rep set. Post-install is a comparison, so what
+          // it owes is one shot per pre-install shot — no more (a tag the installer never
+          // shot has nothing to compare against) and no fewer (every before deserves its
+          // after). Using the rep set here would demand post shots for tags the pre pass
+          // legitimately skipped, and in free-form mode would demand none at all.
+          return photoPhaseDone(
+            Object.keys(progress.preMatched),
+            progress.postMatched,
+            progress.postExtras
           );
         case 'pec':
           if (progress.pecHasConditions === false) return true;
@@ -243,7 +284,7 @@ export function useInstallProgress(
           return !!progress.completedSteps[key];
       }
     },
-    [progress, productIds, requiredPhotoTagIds]
+    [progress, productIds, requiredPhotoTagIds, photoPhaseDone]
   );
 
   const stepStatus = useMemo(() => {

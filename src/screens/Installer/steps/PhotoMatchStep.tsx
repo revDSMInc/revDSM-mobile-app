@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerCamera } from '../../../widgets/components/installer/InstallerCamera';
+import {
+  footerBottomPadding,
+  headerTopPadding,
+} from '../../../utils/installer-insets';
 import { HouseGhost, tagTint } from '../../../widgets/components/installer/HouseGhost';
 import {
   TaggerImage,
@@ -50,6 +54,16 @@ interface Props {
    * `preInstallPhotos` (`buildRepPhotoSections`); falls back to the static mock.
    */
   sections?: PhotoSection[];
+  /**
+   * The job shipped no rep photos, so `sections` is the static stand-in and none of its
+   * tags has a reference image.
+   *
+   * With nothing to match against, the tag list stops being a checklist and becomes a
+   * way to LABEL shots: the installer takes as many or as few as the job warrants, and
+   * one is enough to finish the step. Demanding all 16 placeholder tags was demanding
+   * ghost-matches against references that do not exist.
+   */
+  freeform?: boolean;
   onMatch: (tagId: string, photo: CapturedPhoto) => void;
   onAddExtra: (sectionId: string, photo: CapturedPhoto) => void;
   onComplete: () => void;
@@ -70,6 +84,7 @@ export function PhotoMatchStep({
   extras,
   preMatched,
   sections: sectionsProp,
+  freeform = false,
   onMatch,
   onAddExtra,
   onComplete,
@@ -81,9 +96,26 @@ export function PhotoMatchStep({
 
   // Data-driven from the rep's real capture set when provided; static mock otherwise.
   const sections = sectionsProp?.length ? sectionsProp : PHOTO_SECTIONS;
+
+  /**
+   * Is this tag shootable in THIS phase?
+   *
+   * **Pre** — the rep photographed it (`hasRep`), so there is a reference to ghost against.
+   *
+   * **Post** — the installer photographed it in the PRE pass. Post-install exists to be
+   * compared against pre-install, so a post shot with no pre counterpart has nothing to
+   * compare to and the tag stays closed. Note what decides this: what the installer
+   * actually shot, not what the rep supplied. Match only Back-Left in pre and Back-Left
+   * is the only tag open in post.
+   */
+  const isTagOpen = useCallback(
+    (tag: PhotoTag): boolean => (phase === 'post' ? !!preMatched?.[tag.id] : tag.hasRep),
+    [phase, preMatched]
+  );
+
   const requiredTags = useMemo(
-    () => sections.flatMap((s) => s.tags.filter((t) => t.hasRep)),
-    [sections]
+    () => sections.flatMap((s) => s.tags.filter(isTagOpen)),
+    [sections, isTagOpen]
   );
 
   /**
@@ -122,10 +154,44 @@ export function PhotoMatchStep({
 
   const setSelected = (tag: PhotoTag) => setSelectedId(tag.id);
   const matchedTotal = requiredTags.filter((t) => matched[t.id]).length;
-  const allDone = requiredTags.length > 0 && matchedTotal === requiredTags.length;
+
+  const extrasTotal = useMemo(
+    () => Object.values(extras).reduce((n, list) => n + (list?.length ?? 0), 0),
+    [extras]
+  );
+
+  /**
+   * Everything shot in this phase, tagged or not.
+   *
+   * Free-form mode counts extras alongside matches: with no rep tag to attach to, an
+   * "extra" is the same evidence as a match — only the label differs.
+   */
+  const takenTotal = Object.keys(matched).length + extrasTotal;
+
+  /**
+   * Free-form applies to the PRE pass only — and only while there is genuinely nothing
+   * to work from.
+   *
+   * Post is never the installer's choice of shots: it is the pre pass replayed, so the
+   * open tags below already say exactly what it owes. The one exception is a pre pass
+   * that produced no tagged shots at all (free-form, everything filed as an extra) —
+   * then post has no open tag either, and without this it could never be finished. Post
+   * gates CoC, Return and job completion, so that would be a hard lockout.
+   */
+  const isFreeform = requiredTags.length === 0 || (freeform && phase === 'pre');
+
+  // Free-form: ONE shot finishes the step, however it was filed. Otherwise every open
+  // tag has to be answered.
+  const allDone = isFreeform
+    ? takenTotal > 0
+    : requiredTags.length > 0 && matchedTotal === requiredTags.length;
 
   const sectionCount = (sid: string) => {
-    const req = (sections.find((s) => s.id === sid)?.tags ?? []).filter((t) => t.hasRep);
+    const tags = sections.find((s) => s.id === sid)?.tags ?? [];
+    // No denominator in free-form mode — there is no quota for this section, so a
+    // "1/7" would be reporting a requirement that isn't being made.
+    if (isFreeform) return String(tags.filter((t) => matched[t.id]).length);
+    const req = tags.filter(isTagOpen);
     return `${req.filter((t) => matched[t.id]).length}/${req.length}`;
   };
 
@@ -136,7 +202,7 @@ export function PhotoMatchStep({
   /** Next unmatched tag — prefers the current section, then falls through globally. */
   const advance = (fromId: string) => {
     const inSection = (section?.tags ?? []).filter(
-      (t) => t.hasRep && !matched[t.id] && t.id !== fromId
+      (t) => isTagOpen(t) && !matched[t.id] && t.id !== fromId
     );
     if (inSection.length) return setSelected(inSection[0]);
 
@@ -150,9 +216,9 @@ export function PhotoMatchStep({
 
   // Matched tags sink below pending ones; unavailable tags sink to the bottom.
   const orderedTags = useMemo(() => {
-    const rank = (t: PhotoTag) => (!t.hasRep ? 2 : matched[t.id] ? 1 : 0);
+    const rank = (t: PhotoTag) => (!isTagOpen(t) ? 2 : matched[t.id] ? 1 : 0);
     return [...(section?.tags ?? [])].sort((a, b) => rank(a) - rank(b));
-  }, [section, matched]);
+  }, [section, matched, isTagOpen]);
 
   const isSelectedMatched = !!(selected && matched[selected.id]);
   const selectedRef = selected ? referenceUri(selected) : undefined;
@@ -168,8 +234,30 @@ export function PhotoMatchStep({
    */
   const awaitingReference = !!selected?.repPhotoS3Url && !selectedRef;
 
+  /** Shootable in this phase — see `isTagOpen`. */
+  const selectedOpen = !!selected && isTagOpen(selected);
+
   /** The tag expects a rep shot but this job shipped none — nothing to ghost against. */
-  const referenceUnavailable = !!selected?.hasRep && !selected?.repPhotoS3Url && !selectedRef;
+  const referenceUnavailable = selectedOpen && !selected?.repPhotoS3Url && !selectedRef;
+
+  /**
+   * Keep the selection on a tag that can actually be shot in this phase.
+   *
+   * Both passes stay mounted with `visible` toggling, so the initial selection is picked
+   * long before the post pass is opened — at which point `preMatched` was still empty and
+   * the chosen tag is very likely one post has since closed. Landing on a dead tag would
+   * show a disabled reference pane and look broken.
+   *
+   * Guarded on the selection being INVALID, so it can never override a manual pick.
+   */
+  useEffect(() => {
+    if (!visible || (selected && isTagOpen(selected))) return;
+    const next = requiredTags.find((tag) => !matched[tag.id]) ?? requiredTags[0];
+    if (!next) return;
+    setSelectedId(next.id);
+    const owner = sections.find((s) => s.tags.some((tag) => tag.id === next.id));
+    if (owner) setSectionId(owner.id);
+  }, [visible, selected, isTagOpen, requiredTags, matched, sections]);
 
   const handleSelectSection = (s: PhotoSection) => {
     if (s.id === sectionId) return;
@@ -192,8 +280,10 @@ export function PhotoMatchStep({
   const handleComplete = () => {
     log.photoPhaseCompleted(phase, {
       matched: matchedTotal,
-      total: requiredTags.length,
-      extras: Object.values(extras).reduce((n, list) => n + (list?.length ?? 0), 0),
+      // 0 in free-form mode — and that is the useful record: it says the job had no rep
+      // capture set, so the shot count was the installer's call.
+      total: isFreeform ? 0 : requiredTags.length,
+      extras: extrasTotal,
     });
     onComplete();
     onBack();
@@ -220,7 +310,9 @@ export function PhotoMatchStep({
         style={[
           styles.root,
           {
-            paddingTop: insets.top,
+            // Floored — see `headerTopPadding`. Inside a Modal `insets.top` can come
+            // back 0, which put the back arrow on the status bar.
+            paddingTop: headerTopPadding(insets.top),
             paddingBottom: insets.bottom,
             paddingLeft: insets.left,
             paddingRight: insets.right,
@@ -234,10 +326,12 @@ export function PhotoMatchStep({
           </TouchableOpacity>
           <Text className="text-xs font-black tracking-widest" style={{ color: T_DIM }}>
             {phase === 'pre' ? t('installer.phasePre') : t('installer.phasePost')} •{' '}
-            {t('installer.matchedCount', {
-              done: matchedTotal,
-              total: requiredTags.length,
-            })}
+            {isFreeform
+              ? t('installer.shotsTakenCount', { done: takenTotal })
+              : t('installer.matchedCount', {
+                  done: matchedTotal,
+                  total: requiredTags.length,
+                })}
           </Text>
         </View>
 
@@ -280,9 +374,9 @@ export function PhotoMatchStep({
         {/* Reference photo — tap to shoot or review */}
         <TouchableOpacity
           activeOpacity={0.9}
-          disabled={!selected?.hasRep}
+          disabled={!selectedOpen}
           onPress={() => {
-            if (!selected?.hasRep) return;
+            if (!selectedOpen || !selected) return;
             if (matched[selected.id]) setReviewTagId(selected.id);
             else setCameraTagId(selected.id);
           }}
@@ -342,7 +436,9 @@ export function PhotoMatchStep({
         >
           <View className="px-3 pt-2.5 pb-1.5">
             <Text className="text-[10px] font-black tracking-widest" style={{ color: T_DIM }}>
-              {phase === 'pre'
+              {isFreeform
+                ? t('installer.selectTagFree')
+                : phase === 'pre'
                 ? t('installer.selectTagRep')
                 : t('installer.selectTagPre')}
             </Text>
@@ -355,7 +451,11 @@ export function PhotoMatchStep({
               style={{ backgroundColor: T_GREEN }}
             >
               <Text className="text-[#0e1c16] text-sm font-black">
-                {t('installer.allShotsMatched')}
+                {/* "All Shots Matched" would be a lie in free-form mode — nothing was
+                    matched and nothing more is owed. It names the count instead. */}
+                {isFreeform
+                  ? t('installer.donePhotosTaken', { count: takenTotal })
+                  : t('installer.allShotsMatched')}
               </Text>
             </TouchableOpacity>
           )}
@@ -373,12 +473,15 @@ export function PhotoMatchStep({
               {orderedTags.map((t) => {
                 const m = !!matched[t.id];
                 const sel = selected?.id === t.id;
-                const pending = t.hasRep && !m;
+                // Closed in this phase: no rep photo (pre), or no pre shot to compare
+                // against (post). Untappable, dimmed, and marked N/A below.
+                const open = isTagOpen(t);
+                const pending = open && !m;
 
                 return (
                   <TouchableOpacity
                     key={t.id}
-                    disabled={!t.hasRep}
+                    disabled={!open}
                     onPress={() => setSelected(t)}
                     className="rounded-xl items-center justify-center flex-row px-2 py-2.5"
                     style={{
@@ -396,13 +499,13 @@ export function PhotoMatchStep({
                     <Text
                       className="text-xs font-bold text-center"
                       style={{
-                        color: !t.hasRep ? '#44554b' : m ? '#8fae87' : T_TEXT,
+                        color: !open ? '#44554b' : m ? '#8fae87' : T_TEXT,
                         textDecorationLine: m ? 'line-through' : 'none',
                       }}
                       numberOfLines={2}
                     >
                       {t.label}
-                      {!t.hasRep ? ' · N/A' : ''}
+                      {!open ? ' · N/A' : ''}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -563,7 +666,9 @@ function ReviewPair({
 
       <View
         className="flex-row px-3.5 pt-3"
-        style={{ gap: 10, paddingBottom: Math.max(insets.bottom, 16) }}
+        // Same footer as `InstallerCamera`'s review, so it clears the nav bar by the
+        // same amount — see `footerBottomPadding` there for why the inset alone isn't it.
+        style={{ gap: 10, paddingBottom: footerBottomPadding(insets.bottom) }}
       >
         <TouchableOpacity
           onPress={onRetake}

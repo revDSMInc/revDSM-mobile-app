@@ -32,7 +32,13 @@ import {
   resolveProximity,
 } from '../../utils/installer-geofence';
 import { useInstallerProximity } from '../../hooks/useInstallerProximity';
-import { isFutureDatedJob } from '../../utils/installer-schedule';
+import { isJobInProgress } from '../../utils/installer-card-state';
+import {
+  arrivalWindowMessage,
+  arrivalWindowStartLabel,
+  isBeforeArrivalWindow,
+  isFutureDatedJob,
+} from '../../utils/installer-schedule';
 import type {
   InstallerCheckInPayload,
   InstallerJob,
@@ -164,15 +170,22 @@ export default function InstallerDashboard() {
    *  - **WHEN** (`utils/installer-schedule.ts`) — today or any earlier date opens; a
    *    future-dated job does not, it only says when the crew is due. Decided by the job's
    *    OWN date, not by which tab it was tapped in, so an upcoming job is refused even if
-   *    "All" happens to list it.
+   *    "All" happens to list it. Today's job is refused too until its arrival window
+   *    OPENS — being late is fine, being early is not.
    *  - **WHERE** (`utils/installer-geofence.ts`) — within `CHECK_IN_RADIUS_METERS` of the
    *    address or of a company office. Runs before anything is sent, so a refusal costs no
    *    request and never flips the job to `inProgress`.
    *
-   * An already-resulted job skips both: the visit is over, so it opens read-only for
-   * review with no status change and no geofence — nobody is claiming to be on site. It is
-   * still FETCHED, through the same `PUT installer/v1/{id}/work` (it is what answers with
-   * the full payload), because nothing on this screen is served from local storage.
+   * **Both gate the START of a visit, and nothing else.** A job already `inProgress` is
+   * past them: the crew checked in on site to get it there, and it then has to reopen from
+   * anywhere — the van, a supply run, a corner of the roof where the fix drifts out of the
+   * 20 m radius. Holding them out of their own open job over a GPS reading is a lockout
+   * with no work behind it.
+   *
+   * An already-resulted job skips both as well: the visit is over, so it opens read-only
+   * for review with no status change and no geofence — nobody is claiming to be on site.
+   * It is still FETCHED, through the same `PUT installer/v1/{id}/work` (it is what answers
+   * with the full payload), because nothing on this screen is served from local storage.
    */
   const openJob = async (job: InstallerJob) => {
     // Bind the job to the log context first so every downstream installer event —
@@ -184,10 +197,15 @@ export default function InstallerDashboard() {
     // Review comes first: a resulted job is readable whatever its date.
     const readOnly = !!job.resulted;
 
+    // Both gates below guard the START of a visit. This job's visit has already started
+    // — the crew checked in on site to get it here — so neither applies any more and it
+    // reopens from wherever they are. See `isJobInProgress`.
+    const alreadyStarted = isJobInProgress(job);
+
     // ── WHEN ──────────────────────────────────────────────────────────────────
     // Not due yet. Refused outright rather than opened read-only: there is nothing to
     // review on a visit that hasn't happened, and the message says when to come back.
-    if (!readOnly && isFutureDatedJob(job)) {
+    if (!readOnly && !alreadyStarted && isFutureDatedJob(job)) {
       const scheduled = job.leadDate ? new Date(job.leadDate) : null;
       const dateLabel =
         scheduled && !Number.isNaN(scheduled.getTime())
@@ -199,6 +217,28 @@ export default function InstallerDashboard() {
         t('installer.notYetTitle'),
         dateLabel
           ? t('installer.notYetBody', { date: dateLabel })
+          : t('installer.notYetBodyNoDate')
+      );
+      return;
+    }
+
+    // Right day, too early — the arrival window hasn't opened. Refused for the same
+    // reason a future date is: the visit isn't the crew's yet, and checking in would
+    // stamp a start on it hours before the customer expects anyone.
+    //
+    // Only the window's START gates. A crew arriving after it closed still has the work
+    // to do, so a late job opens normally (`workflowState: 'expired'` marks the stale
+    // slot); it is being EARLY that is refused.
+    if (!readOnly && !alreadyStarted && isBeforeArrivalWindow(job)) {
+      const timeLabel = arrivalWindowStartLabel(job);
+
+      log.jobStartFailed(job, new Error('Arrival window has not opened yet'));
+      FlashMessage.info(
+        t('installer.tooEarlyTitle'),
+        // `isBeforeArrivalWindow` can only be true when the start parsed, so the label is
+        // always there — the fallback exists so a future refactor can't print "undefined".
+        timeLabel
+          ? t('installer.tooEarlyBody', { time: timeLabel })
           : t('installer.notYetBodyNoDate')
       );
       return;
@@ -251,15 +291,25 @@ export default function InstallerDashboard() {
     // ── Geofence ───────────────────────────────────────────────────────────────
     // Waiting on a GPS fix is why the card spinner starts before this rather than
     // after: on a cold fix this is the slowest part of opening a job.
+    //
+    // Skipped entirely for a job already in progress — it is a re-entry, not a check-in,
+    // and the crew must not be held out of their own open job (nor made to wait on a
+    // cold fix) because they stepped away from the address. The screen's own live watch
+    // still supplies coordinates if it happens to have a fix, so the server keeps its
+    // record of where the re-entry came from; it just isn't waited on.
     let eligibility;
-    try {
-      eligibility = await resolveCheckInEligibility(job, user);
-    } catch (err) {
-      // A crash in the gate must not become a lockout — the backend re-checks the
-      // same radius from the payload below, so failing open here is recoverable
-      // while failing closed leaves a crew stuck on site with no way in.
-      console.warn('[InstallerJob] Geofence check failed, allowing check-in:', err);
+    if (alreadyStarted) {
       eligibility = null;
+    } else {
+      try {
+        eligibility = await resolveCheckInEligibility(job, user);
+      } catch (err) {
+        // A crash in the gate must not become a lockout — the backend re-checks the
+        // same radius from the payload below, so failing open here is recoverable
+        // while failing closed leaves a crew stuck on site with no way in.
+        console.warn('[InstallerJob] Geofence check failed, allowing check-in:', err);
+        eligibility = null;
+      }
     }
 
     if (eligibility && !eligibility.allowed) {
@@ -274,6 +324,11 @@ export default function InstallerDashboard() {
 
     // Where the tap happened, for the server's own check. Omitted when the gate let
     // this through without a fix (job with no coordinates and no locatable office).
+    //
+    // A re-entry sends NO location, exactly as the read-only review above doesn't:
+    // reopening a job already in progress is not a claim to be standing at it, and
+    // handing the server a far-off position to validate is the one way this tap could
+    // still be refused on distance — which is the whole thing being lifted here.
     const checkInPayload: InstallerCheckInPayload | undefined = eligibility?.coords
       ? {
           address: job.fullAddress,
@@ -311,14 +366,19 @@ export default function InstallerDashboard() {
       }
 
       // 403 — the server ran the geofence on the payload above and refused. It is the
-      // authority on this, so its verdict overrides the on-device check that just
-      // passed (a spoofed fix clears the client gate and nothing else). Hard stop,
-      // with the server's own wording.
+      // authority on WHETHER, so its verdict overrides the on-device check that just
+      // passed (a spoofed fix clears the client gate and nothing else). Hard stop.
+      //
+      // The WORDING is ours, though, so this refusal reads the same as the on-device one
+      // — the arrival window, not a distance. The server's own message is the fallback for
+      // a job carrying no `leadTime`.
       if (err?.httpStatus === 403 || err?.code === 403) {
         log.jobStartFailed(job, err);
         FlashMessage.error(
           'Too far to check in',
-          err?.message || 'Head to the job site to check in.'
+          arrivalWindowMessage(job) ||
+            err?.message ||
+            'Head to the job site to check in.'
         );
         setStartingId(null);
         return;

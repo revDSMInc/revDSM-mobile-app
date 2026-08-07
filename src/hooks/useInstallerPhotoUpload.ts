@@ -78,7 +78,7 @@ export function useInstallerPhotoUpload(
       setUploadingCount((n) => n + 1);
 
       const task = uploadInstallerPhoto(jobId, phase, photo, buildDescriptor)
-        .then(({ patch, size, coordinates }) => {
+        .then(({ patch, size, coordinates, attempts }) => {
           patchPhoto(photo.id, patch);
 
           const meta: InstallerPhotoLogMeta = {
@@ -94,9 +94,13 @@ export function useInstallerPhotoUpload(
 
           if (patch.uploadStatus === 'failed') {
             logInstallerPhotoFailed(userRef.current, meta);
+            // Only reached once the retries in `uploadInstallerPhoto` are exhausted, so
+            // this is now a real failure rather than one bad moment on a job-site cell.
+            // The count is said out loud because it is the difference between "wait a
+            // second" and "this is not going to fix itself".
             FlashMessage.error(
               `Couldn't upload ${failureLabel}`,
-              'The photo is saved on this device — retake it once you have signal.'
+              `Tried ${attempts} times. The photo is saved on this device — retake it once you have signal.`
             );
             return;
           }

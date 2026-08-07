@@ -83,6 +83,10 @@ export const en = {
     notYetBody: "This job is scheduled for {date}. You can open it on the day.",
     notYetBodyNoDate: 'This job is scheduled for a later date. You can open it on the day.',
 
+    /** Right day, too early — the arrival window hasn't opened yet. */
+    tooEarlyTitle: 'Not open yet',
+    tooEarlyBody: 'This job opens at {time}, when its arrival window starts.',
+
     leadCenter: 'Lead Center',
     timeline: 'Install Timeline',
     stepsDone: '{done} of {total} done',
@@ -181,6 +185,8 @@ export const en = {
     phasePre: 'PRE-INSTALL',
     phasePost: 'POST-INSTALL',
     matchedCount: '{done}/{total} MATCHED',
+    /** Free-form phase (no rep capture set) — a count, never a fraction. */
+    shotsTakenCount: '{done} TAKEN',
     repPhoto: 'REP PHOTO',
     preInstallPhoto: 'PRE-INSTALL PHOTO',
     matchedTapReview: '✓ MATCHED — tap to review',
@@ -189,7 +195,10 @@ export const en = {
     tapToMatch: 'TAP PHOTO TO MATCH WITH GHOST',
     selectTagRep: 'SELECT TAG TO VIEW REP PHOTO',
     selectTagPre: 'SELECT TAG TO VIEW PRE-INSTALL PHOTO',
+    /** Free-form phase — says outright that the count is the installer's call. */
+    selectTagFree: 'PICK A TAG AND SHOOT — TAKE AS MANY AS YOU NEED',
     allShotsMatched: 'Done — All Shots Matched',
+    donePhotosTaken: 'Done — {count} Taken',
     repSale: 'REP (SALE)',
     tagMatched: '{tag} — Matched',
     extraShotHint: "Free shot — no ghost. Document anything the rep didn't.",
@@ -300,6 +309,9 @@ export const es: TranslationTree = {
     notYetBodyNoDate:
       'Este trabajo está programado para una fecha posterior. Podrás abrirlo ese día.',
 
+    tooEarlyTitle: 'Aún no disponible',
+    tooEarlyBody: 'Este trabajo se abre a las {time}, cuando comienza su ventana de llegada.',
+
     leadCenter: 'Centro de clientes',
     timeline: 'Cronograma de instalación',
     stepsDone: '{done} de {total} completados',
@@ -393,6 +405,7 @@ export const es: TranslationTree = {
     phasePre: 'PREINSTALACIÓN',
     phasePost: 'POSINSTALACIÓN',
     matchedCount: '{done}/{total} COINCIDEN',
+    shotsTakenCount: '{done} TOMADAS',
     repPhoto: 'FOTO DEL REPRESENTANTE',
     preInstallPhoto: 'FOTO DE PREINSTALACIÓN',
     matchedTapReview: '✓ COINCIDE — toca para revisar',
@@ -401,7 +414,9 @@ export const es: TranslationTree = {
     tapToMatch: 'TOCA LA FOTO PARA IGUALAR CON LA GUÍA',
     selectTagRep: 'ELIGE UNA ETIQUETA PARA VER LA FOTO DEL REPRESENTANTE',
     selectTagPre: 'ELIGE UNA ETIQUETA PARA VER LA FOTO DE PREINSTALACIÓN',
+    selectTagFree: 'ELIGE UNA ETIQUETA Y FOTOGRAFÍA — TOMA LAS QUE NECESITES',
     allShotsMatched: 'Listo — Todas las fotos coinciden',
+    donePhotosTaken: 'Listo — {count} tomadas',
     repSale: 'REPRESENTANTE (VENTA)',
     tagMatched: '{tag} — Coincide',
     extraShotHint: 'Foto libre — sin guía. Documenta lo que el representante no captó.',

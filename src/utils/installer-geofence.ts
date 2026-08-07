@@ -22,6 +22,7 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import type { GeoCoordinates, InstallerJob } from '../config/types/installer';
 import { getAllOfficeCoords, type OfficeCoords } from './office-location';
+import { arrivalWindowMessage } from './installer-schedule';
 
 /**
  * How close is close enough, in metres.
@@ -91,13 +92,25 @@ const NEARBY_METERS = 500;
 /**
  * The one-line refusal.
  *
- * Deliberately short and actionable, and it says only what is useful at that distance:
- * 24 km away needs a destination, 45 m away needs a nudge. The earlier wording followed
- * the distance with a restatement of the rule ("Check in within 20 m of the customer's
- * address or a company office") — two sentences, two units, and a number the installer
- * can do nothing with.
+ * **The job's arrival window is the answer whenever it has one** — "This job will be
+ * available between 12:00 - 4:00 PM when you arrive on site." It tells the crew the two
+ * things they can act on, that the job opens on arrival and when it is theirs to work,
+ * and it does not read as an accusation the way a distance does.
+ *
+ * Distance is the fallback for a job with no usable `leadTime`. It says only what is
+ * useful at that distance: 24 km away needs a destination, 45 m away needs a nudge. It is
+ * a poor primary message at the radius itself — a fix drifting 25–50 m is ordinary, so
+ * "You're 47 m away. Move a bit closer" was routinely shown to a crew standing in the
+ * driveway (`CHECK_IN_RADIUS_METERS` is deliberately tight; see its note).
  */
-const tooFarMessage = (meters: number, nearest: CheckInMatch): string => {
+const tooFarMessage = (
+  meters: number,
+  nearest: CheckInMatch,
+  job?: InstallerJob | null
+): string => {
+  const window = arrivalWindowMessage(job);
+  if (window) return window;
+
   const away = `You're ${formatDistance(meters)} away.`;
   if (meters < NEARBY_METERS) return `${away} Move a bit closer and try again.`;
   return nearest === 'office'
@@ -355,6 +368,6 @@ export const resolveCheckInEligibility = async (
     distanceMeters: Math.round(nearest.distance),
     accuracyMeters: fix.accuracy,
     title: 'Too far to check in',
-    reason: tooFarMessage(nearest.distance, nearest.kind),
+    reason: tooFarMessage(nearest.distance, nearest.kind, job),
   };
 };

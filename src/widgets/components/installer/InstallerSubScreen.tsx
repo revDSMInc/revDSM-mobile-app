@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Modal, StatusBar } from 'reac
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { headerTopPadding } from '../../../utils/installer-insets';
 
 interface Props {
   visible: boolean;
@@ -57,12 +58,19 @@ export function InstallerSubScreen({
           zero insets and the header collides with the status bar. The
           useSafeAreaInsets() hook reads React context, which does cross the
           Modal boundary. Same approach as PhotoMatchStep / AgreementSignatureModal.
+
+          The hook is not the whole answer either, though: what crosses the boundary is
+          the ROOT window's inset, not this modal window's, and the two stop agreeing the
+          moment something else re-declares the status bar — opening the camera over a
+          step and dismissing it is enough. `insets.top` then comes back 0 and the back
+          button lands on the status bar. `headerTopPadding` floors it so that cannot
+          happen; a real, larger inset still wins.
         */}
         <View
           style={{
             flex: 1,
             backgroundColor: colors.background,
-            paddingTop: insets.top,
+            paddingTop: headerTopPadding(insets.top),
             paddingLeft: insets.left,
             paddingRight: insets.right,
           }}
