@@ -22,6 +22,13 @@ interface Props {
    * refused. False while the position is still unknown.
    */
   offSite?: boolean;
+  /**
+   * Clock the arrival window is judged against. Supplied by the dashboard's ticker rather
+   * than read here, so a card sitting on screen as noon passes actually re-renders —
+   * `new Date()` inside the component would be re-read only when something else already
+   * caused a render, which is exactly when it isn't needed.
+   */
+  now?: Date;
   onPress: () => void;
 }
 
@@ -30,8 +37,8 @@ interface Props {
  *
  * Follows LeadCard's visual contract — `rounded-2xl border-2` with a `color + '10'`
  * tinted wash and a full-width `h-12 rounded-xl` action button. The accent colour and
- * the action label both come from the job's `workflowState`, via
- * `resolveJobCardState` — the mobile port of the web card's palette.
+ * the action label come from `resolveJobCardState`: the job's `workflowState`, downgraded
+ * to a preview when the arrival window hasn't opened or the crew isn't on site.
  */
 export function InstallerJobCard({
   job,
@@ -39,6 +46,7 @@ export function InstallerJobCard({
   loading = false,
   disabled = false,
   offSite = false,
+  now,
   onPress,
 }: Props) {
   const { colors, isDark } = useTheme();
@@ -46,7 +54,7 @@ export function InstallerJobCard({
 
   const resulted = !!job.resulted;
   const inert = loading || disabled;
-  const state = resolveJobCardState(job, { isUpcoming, loading, offSite });
+  const state = resolveJobCardState(job, { isUpcoming, loading, offSite, now });
   const accent = state.color;
   // A literal label wins over the phrase book — a resulted job reports the API's own
   // outcome string (`Resulted - Cant Do Work`), which has no translation key.
