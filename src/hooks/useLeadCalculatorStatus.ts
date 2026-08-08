@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 
 /**
@@ -24,15 +24,76 @@ export interface LeadCalculatorStatus {
 
 const EMPTY: LeadCalculatorStatus = { hasCalculator: false, allConfirmed: false, count: 0 };
 
+/** The stable part of the query key — the lead id survives a lead refetch, the rest may not. */
+const statusKeyPrefix = (leadKey: string) => ['lead-calc-status', leadKey];
+
+const leadKeyOf = (lead: any) => String(lead?._id || lead?.selfGenLeadId || lead?.id || '');
+
+/**
+ * Leads whose rollouts were just confirmed locally, and when.
+ *
+ * The confirmation is written by the deal center's DEBOUNCED save engine, so the
+ * `PUT /lfcalculators/{id}` can still be in flight when the tools list reads back.
+ * Without this override the Investment Center tile would unlock instantly and then
+ * RE-LOCK on the first server read — visibly worse than the delay being removed.
+ * The window is bounded, so the server is authoritative again moments later and a
+ * genuinely unconfirmed lead can never stay unlocked.
+ */
+const LOCAL_CONFIRM_GRACE_MS = 60_000;
+const locallyConfirmedAt = new Map<string, number>();
+
+function applyLocalConfirmation(leadKey: string, status: LeadCalculatorStatus): LeadCalculatorStatus {
+  const at = locallyConfirmedAt.get(leadKey);
+  if (!at) return status;
+  // Server agrees, or the window elapsed → stop overriding and let it speak.
+  if (status.allConfirmed || Date.now() - at > LOCAL_CONFIRM_GRACE_MS) {
+    locallyConfirmedAt.delete(leadKey);
+    return status;
+  }
+  return { ...status, hasCalculator: true, allConfirmed: true, count: Math.max(status.count, 1) };
+}
+
+/**
+ * Record that every rollout for this lead was just confirmed, and unlock the
+ * Investment Center tile IMMEDIATELY.
+ *
+ * The rep has just done the thing the tile waits for, so making them watch two
+ * GETs (`/appointments` then `/lfcalculators`) resolve before the tile opens is
+ * pure latency over information the app already has.
+ *
+ * Updates by key PREFIX: `LeadCenter` re-fetches its lead, so the `appointmentId`
+ * / `leadDate` segments can differ from the copy the deal center was handed — only
+ * the lead id is dependable.
+ */
+export function markLeadRolloutsConfirmed(queryClient: QueryClient, lead: any) {
+  const leadKey = leadKeyOf(lead);
+  if (!leadKey) return;
+  locallyConfirmedAt.set(leadKey, Date.now());
+  queryClient.setQueriesData<LeadCalculatorStatus>(
+    { queryKey: statusKeyPrefix(leadKey) },
+    (prev) => ({
+      hasCalculator: true,
+      allConfirmed: true,
+      count: Math.max(prev?.count ?? 0, 1),
+    })
+  );
+}
+
 export function useLeadCalculatorStatus(lead: any) {
   const directAppt = lead?.appointmentId;
   const leadIdHuman = lead?.leadId;
   const selfGenLeadId = lead?._id || lead?.selfGenLeadId || lead?.id;
   const leadDate = lead?.leadDate || lead?.lead_date;
+  const leadKey = leadKeyOf(lead);
 
   return useQuery<LeadCalculatorStatus>({
-    queryKey: ['lead-calc-status', String(selfGenLeadId || ''), String(directAppt || ''), String(leadDate || '')],
+    queryKey: [...statusKeyPrefix(leadKey), String(directAppt || ''), String(leadDate || '')],
     queryFn: async () => {
+      // Every exit goes through `applyLocalConfirmation`, including the error paths
+      // — a transient failure to resolve the appointment must not re-lock a tile the
+      // rep just earned.
+      const resolve = (status: LeadCalculatorStatus) => applyLocalConfirmation(leadKey, status);
+
       // 1. Resolve an EXISTING appointment — never create one.
       let apptId: string | null = directAppt ? String(directAppt) : null;
       if (!apptId && (leadIdHuman || selfGenLeadId)) {
@@ -46,10 +107,10 @@ export function useLeadCalculatorStatus(lead: any) {
           );
           if (found) apptId = String(found._id || found.id);
         } catch {
-          return EMPTY;
+          return resolve(EMPTY);
         }
       }
-      if (!apptId) return EMPTY;
+      if (!apptId) return resolve(EMPTY);
 
       // 2. Read its calculators.
       try {
@@ -68,9 +129,9 @@ export function useLeadCalculatorStatus(lead: any) {
         // web `allJobsConfirmed`: computed over the REAL calculators (an unbuilt
         // bare-number placeholder is hidden from the rollout and must not block it).
         const allConfirmed = real.length > 0 && real.every((c: any) => !!c?.isRolloutConfirmed);
-        return { hasCalculator: real.length > 0, allConfirmed, count: real.length };
+        return resolve({ hasCalculator: real.length > 0, allConfirmed, count: real.length });
       } catch {
-        return EMPTY;
+        return resolve(EMPTY);
       }
     },
     enabled: !!(directAppt || leadIdHuman || selfGenLeadId),

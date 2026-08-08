@@ -32,8 +32,14 @@ interface PhotoPeekPressableProps {
   uri?: string | null;
   /** Optional caption shown under the peek preview. */
   label?: string;
-  /** Normal tap handler (opens gallery / annotation etc.). */
-  onPress?: () => void;
+  /**
+   * Normal tap handler (opens gallery / annotation etc.).
+   *
+   * Receives the WARMED uri — the local `file://` copy once cached, else the
+   * original url — so a full-screen viewer opened by tapping is instant for the
+   * same reason the peek is. Existing callers that take no argument are unaffected.
+   */
+  onPress?: (peekUri?: string | null) => void;
   /** Disables both the tap and the peek. */
   disabled?: boolean;
   /** Disables only the hold-to-peek, while leaving `onPress` (tap) active. */
@@ -167,7 +173,7 @@ export const PhotoPeekPressable: React.FC<PhotoPeekPressableProps> = ({
     <>
       <Pressable
         disabled={disabled}
-        onPress={onPress}
+        onPress={onPress ? () => onPress(peekUri) : undefined}
         onLongPress={canPeek ? openPeek : undefined}
         onPressOut={closePeek}
         delayLongPress={minDurationMs}

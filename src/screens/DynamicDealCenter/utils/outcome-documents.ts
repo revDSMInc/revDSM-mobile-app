@@ -70,6 +70,46 @@ export async function fetchOutcomeDocumentRows(
 }
 
 /**
+ * Drop the duplicate agreement row the backend files on SUBMIT.
+ *
+ * A submitted job comes back with the same PDF twice: the real one
+ * (`Agreement_OFN-A_….pdf`) and a second copy at a generated `…-0-document.pdf`
+ * path with an **empty `name`** — identical `fileData.size` and identical
+ * `base64Data`, but a distinct `_id` AND `filePath`, so no identity-based dedupe
+ * downstream can merge them.
+ *
+ * ⚠️ Must run on the RAW server rows. Every display mapper defaults the name
+ * (`d.name || 'Agreement'`), so by the time a row reaches the summary card the
+ * empty name — the only thing distinguishing the duplicate — is gone.
+ *
+ * ⚠️ This is a DISPLAY-LEVEL WORKAROUND, requested as such. The duplicate row still
+ * exists on the server; the real fix is to stop writing it at submit.
+ *
+ * Falls back to the full list when NO agreement is named, so a deal whose agreements
+ * are all unnamed still renders them instead of an empty card.
+ */
+export function dropUnnamedAgreements<T extends Record<string, any>>(rows: T[]): T[] {
+  const list = rows || [];
+  const named = list.filter((d) => String(d?.name || '').trim());
+  return named.length ? named : list;
+}
+
+/**
+ * `dropUnnamedAgreements` for a MIXED row list, keyed off each row's group.
+ *
+ * ⚠️ Order sheets are deliberately untouched: the same endpoint legitimately files
+ * them with an empty name — the very payload that exposed this bug has
+ * `orderSheets[0].name === ""` — so filtering them would hide the only order sheet
+ * on the deal.
+ */
+export function dropUnnamedAgreementRows<T extends Record<string, any>>(rows: T[]): T[] {
+  const list = rows || [];
+  const isAgreement = (d: any) => (d?.documentType || d?._group) === 'agreement';
+  const kept = new Set(dropUnnamedAgreements(list.filter(isAgreement)));
+  return list.filter((d) => !isAgreement(d) || kept.has(d));
+}
+
+/**
  * Resolve S3 document rows to local file entries with signed URLs
  * (web `hydrateJobBuilderDocumentGroups` → `mapS3DocArrayToLocalGroup`).
  */
@@ -97,7 +137,7 @@ export async function resolveOutcomeDocRows(
     }
   }
 
-  const mapped: LocalDocFile[] = all.map((d, i) => {
+  const mapped: LocalDocFile[] = dropUnnamedAgreementRows(all).map((d, i) => {
     const u = urls.find((x) => x.filePath === d.filePath);
     const type = (d.documentType || d._group) as 'agreement' | 'orderSheet';
     const url = u?.secureUrl || u?.url || d.filePath || '';

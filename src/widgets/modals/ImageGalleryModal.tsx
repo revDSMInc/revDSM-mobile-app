@@ -28,10 +28,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import Icon from 'react-native-vector-icons/Ionicons';
 
+import { useWarmedImageUris } from '../../hooks/useWarmedImageUris';
+
 const { width: SW, height: SH } = Dimensions.get('window');
 const THUMB = 52;
 const THUMB_GAP = 8;
 
+// Pre-signed S3 urls carry no cache headers, so `cache: 'force-cache'` alone leaves
+// a full-size decode re-downloading and the page blank for 2-3s. Warm a local file
+// and render that instead — the same mechanism revRender and the inspection grid use.
 export interface GalleryImage {
   uri: string;
   label?: string;
@@ -238,6 +243,10 @@ export const ImageGalleryModal = ({
   onClose,
 }: ImageGalleryModalProps) => {
   const insets = useSafeAreaInsets();
+  // Only warm while open — the gallery is mounted per message bubble, so warming
+  // on mount would download every conversation attachment in the thread.
+  const warmed = useWarmedImageUris(visible ? images.map((i) => i.uri) : []);
+  const srcOf = (uri: string) => warmed[uri] || uri;
   const pagerRef = useRef<FlatList>(null);
   const stripRef = useRef<FlatList>(null);
   const [index, setIndex] = useState(initialIndex);
@@ -418,7 +427,7 @@ export const ImageGalleryModal = ({
               }}
               renderItem={({ item, index: i }) => (
                 <ZoomablePage
-                  uri={item.uri}
+                  uri={srcOf(item.uri)}
                   width={SW}
                   height={mediaH}
                   active={i === index}
@@ -498,7 +507,7 @@ export const ImageGalleryModal = ({
                       >
                         {item.uri ? (
                           <Animated.Image
-                            source={{ uri: item.uri, cache: 'force-cache' }}
+                            source={{ uri: srcOf(item.uri), cache: 'force-cache' }}
                             style={{ width: '100%', height: '100%' }}
                             resizeMode="cover"
                           />

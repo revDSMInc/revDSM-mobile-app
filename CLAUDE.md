@@ -212,6 +212,137 @@ Verified against the config shape in the ticket: section-not-tab naming, sibling
 shared field ids staying separate, unlabelled swatch → `Color`, and the tab-level fallback still
 reading `Lighting · Watts`. Confirmed failing on the pre-fix code and passing after.
 
+### Deal-edit Review: a REMOVED combination read as an edit of the surviving one
+
+Ticket: *"My deals - addendums - combinations issues. I removed 85' of black hidden vent soffit from
+the job. But I kept the original 200' white hidden vent soffit… Makes it seem like I removed the 85
+feet black soffit and added an ADDITIONAL 200ft white soffit… I believe this issue is bc of
+combinations. This needs to be resolved correctly for ALL combinations."* The review listed
+`Soffit · Type PARTIAL → FULL`, `Soffit · Vinyl Soffit Footage 85 → 200`,
+`Soffit · Color Musket Brown → White` — i.e. the removal was invisible and the untouched survivor's
+values were reported as edits *to the deleted combination*. On an addendum ("original agreement plus
+what we added minus what we removed") that reads as **200′ + 200′ of white soffit**.
+
+⚠️ **Web has the identical bug** — `src/sections/deal/components/dynamic-deal-diff.js` is byte-for-byte
+the same algorithm. This is the first deliberate **divergence** in this file, not a port; do not
+"re-sync" it to web.
+
+Cause is one line of `flattenStateValues` in
+`src/screens/DynamicDealCenter/utils/dynamic-deal-diff.ts`: every combination of a section was
+ingested under the **same** `qualify(sectionId, fieldId)` keys, so *"later writes override earlier"* —
+a section collapsed to whichever combination happened to be **last**. With combos
+`[white 200, black 85]` the original flattened to black/85/PARTIAL/Musket Brown; after the delete it
+flattened to white/200/FULL. Hence the three phantom rows. **Positional diffing cannot work here**:
+`handleRemoveCombo` (`DynamicTabRenderer.tsx`) both shifts the array *and* renumbers
+`_combinationNumber` to `comboIndexOffset + idx + 1`, so **combinations carry no stable id at all**.
+
+Rewritten to diff combinations by **identity**:
+
+- **`collectStateSnapshot(jobState)`** replaces the flat-only walk, returning
+  `{ flat, groups }` — `flat` holds single-valued state (section fields, combination-section
+  `sectionState`, tab fields) and `groups` keeps each section's combinations as a **LIST**, keyed
+  `` `${verticalKey}\0${tabId}\0${scopeId}` `` so groups never cross tabs. Legacy tab-level
+  `combinations` are scoped by tab id, same as before.
+- **`matchCombinations(orig, next)`** — three passes:
+  1. **Exact-signature pairs claim each other FIRST.** This is the pass that fixes the ticket: the
+     untouched survivor locks onto its own original, so it can never be paired with the deleted one.
+  2. **Greedy best-overlap** (`overlapScore` = number of fields two combos agree on, ties broken by
+     index distance) for the rest, so a genuinely *edited* combination still reads as a field change
+     rather than a remove + an add.
+  3. **One left on each side ⇒ pair them** regardless of overlap — otherwise rewriting every field of
+     a section's only combination would report it as removed AND added.
+- **Leftovers become their own rows**: `Combination Removed` (`kind: 'removed'`) / `Combination Added`
+  (`kind: 'added'`), whose value is `describeCombo` — the combination named by its **contents**
+  (`Location Rear · Vinyl Soffit Footage 85 · Type PARTIAL · Color Musket Brown`). Deliberately **not**
+  numbered: `#N` is unstable across a removal (the deleted combo and the renumbered survivor can both
+  be `#1`), so content is the only honest identifier.
+- **`formatChangeFieldLabel(meta, comboLabel)`** now takes an optional middle segment, inserted **only
+  when the section holds more than one combination** (`Soffit · Combination #2 · Vinyl Soffit Footage`).
+  A single-combination section keeps the exact `<section> · <field>` label from the previous ticket —
+  that regression guard is tested.
+- **Empty combinations are dropped from both snapshots.** `ensureTabStateShape` seeds one blank default
+  combo into any section that saved none, so without this the mount would emit a phantom
+  `Combination Added` row and flip `buildChanged` true on a build the rep never touched.
+- **`BuildChange` gained `kind?: 'change' | 'added' | 'removed'`** and `ReviewRow`
+  (`DynamicDealEditScreen.tsx`) renders it: eyebrow `REMOVED` (red) / `ADDED` / `NEW`, a removal's value
+  column stays neutral grey (not green — nothing new was entered), and an **added** row hides the
+  struck-through `from` entirely, since striking an em dash reads as "something was there before".
+
+`flattenStateValues` is **kept exported but is now explicitly documented as LOSSY** for combination
+sections and is no longer used by the diff. It has no other consumer — if you reach for it, that is
+the trap this ticket was about.
+
+⚠️ `SCOPE_SEP` must still be written as the escape sequence `'\u0000'`. Writing the file with a raw NUL
+byte (and the `comboSignature` join with a raw `\u0001`) makes grep treat the source as binary — that
+happened once during this fix and had to be undone.
+
+Verified against a two-combination Soffit config with a sibling `Porch Ceiling SqFT` section sharing
+its field ids: the ticket repro (removal → exactly one `removed` row, and **none** of the three phantom
+rows), edit-one-of-two, single-combo label regression, addition, remove-plus-edit together, sibling
+sections staying separate, untouched build → `[]`, the blank-default-combo guard, and a fully rewritten
+single combination still reading as field edits. The four combination cases **fail on the pre-fix code
+and pass after**; the five regression guards pass on both. Applies to every combination section in the
+config, so Gutters / gutter guards / soffit / porch ceiling / fascia wrap / fascia boards are all covered
+by the same path.
+
+### Investment Center tile unlocks instantly after "Jobs Built — Back to Tools"
+
+Ticket: *"Investment center should be ready to go immediately after clicking 'jobs built - take me to
+tools' button… when i confirm rollouts and go back to tools it take time to enable the Investment
+Center button, can you enable it instantly, i think it's because we are calling api here, what if you
+add a small loader right end of the investment center card?"* Correct diagnosis — the tile sat on
+**"Please Fully Build ALL jobs first"** for the length of a round trip the rep had no reason to wait on.
+
+`ToolsSection` (`widgets/components/LeadCenter/OperationalSections.tsx`) gates the tile on
+`useLeadCalculatorStatus().allConfirmed`, whose `queryFn` does **two sequential GETs** — resolve the
+appointment (`/appointments`), then read its calculators (`/appointments/{id}/lfcalculators`) — and
+`useFocusEffect` refetches it on arrival. Until that resolves the hook serves the **stale cached**
+value, which is `allConfirmed: false` because it was cached *before* the rep confirmed. So the tile
+stayed locked, and tapping it warned "build and confirm all rollouts first" — about rollouts that had
+just been confirmed.
+
+**The app already knows the answer**, so the fix is to stop asking. In `hooks/useLeadCalculatorStatus.ts`:
+
+- **New `markLeadRolloutsConfirmed(queryClient, lead)`** writes
+  `{ hasCalculator: true, allConfirmed: true, count: max(prev,1) }` straight into the cache.
+  `DynamicDealCenterScreen`'s `onRolloutsConfirmedDone` calls it before navigating — that button only
+  renders once **every** rollout is confirmed, which is exactly the tile's gate, so the optimistic
+  write can't claim more than is true.
+- **It updates by key PREFIX** (`['lead-calc-status', <leadId>]` via `setQueriesData`), not the full
+  key. `LeadCenter` re-fetches its lead through `useLeadCenterData`, so the `appointmentId` /
+  `leadDate` segments of the key can differ from the copy the deal center was handed — **only the lead
+  id is dependable**. An exact-key write would silently miss.
+- **New bounded `LOCAL_CONFIRM_GRACE_MS` (60 s) override.** The confirmation is persisted by the deal
+  center's **debounced** save engine (`handleConfirmRollouts` only calls `markDirty`), so a GET can
+  legitimately still report `isRolloutConfirmed: false`. Without the override the tile would unlock and
+  then **RE-LOCK** on the first server read — visibly worse than the delay being removed. Every exit of
+  the `queryFn` — **including the two error paths** — goes through `applyLocalConfirmation`, so a
+  transient appointment-resolution failure can't re-lock the tile either. The override **self-clears**
+  the moment the server agrees (or the window elapses), so a genuinely unconfirmed lead can never stay
+  unlocked, and a later real un-confirm still re-locks.
+
+For the loader, `ToolCard` already had `isLoading` — but it swaps the ICON for a spinner, dims the card
+to 0.6 and **disables the press**, which is wrong for a background refresh the rep isn't blocked on.
+Added a light **`busy`** prop instead: the small right-side `ActivityIndicator` only, card at full
+opacity and still tappable, with the lock glyph suppressed while it spins. `ToolsSection` passes
+`busy={isCalcStatusFetching && !allConfirmed}` — **only while still locked**, since a spinner on a tile
+the rep can already open is noise. The subtitle reads **"Checking job status…"** during that window, and
+tapping then shows an `info` flash rather than the "you haven't built the jobs" warning, which mid-check
+would be a guess — and usually a wrong one, this being precisely the post-confirm window.
+
+Net: the tile is live on the first paint after "Jobs Built — Back to Tools"; the refetch still runs and
+reconciles in the background.
+
+⚠️ `markLeadRolloutsConfirmed` is the ONLY sanctioned way to unlock the tile early. Widening the grace
+window, or making it sticky without the self-clear, would let an unconfirmed lead present a quote.
+
+Verified against a real `QueryClient`: the cached status flips to unlocked, prefix matching survives a
+drifted `appointmentId`/`leadDate`, a **different** lead is untouched, a lead with **no id** is a no-op
+(rather than unlocking everything), and a lead with nothing cached still ends up reporting a calculator.
+⚠️ The React-rendering half could not be exercised — `@testing-library/react-native`'s `render` returns
+an object with **no queries** in this repo (the `__mocks__/test-renderer.js` React 19 shim), so
+component-level tests of `ToolsSection` are not currently possible.
+
 ### Deal-edit Review step shows payment-method changes
 
 Ticket: *"My deals - review screen - I changed payment plan - not showing changes."* The step-4
@@ -420,6 +551,60 @@ Note `__tests__/screens/DynamicDealCenter/summary-documents.test.tsx` covers thi
 the two suites that cannot run under jest (no global `react-native-blob-util` mock), so this change
 was verified by tracing the two sources' identities rather than by a test run.
 
+#### (c) The backend files a SECOND agreement row on submit
+
+Follow-up on the same symptom: with (a) and (b) fixed, the Edit ▸ Summary Agreements card still showed
+**two** PDFs. A device network trace of `GET .../download` ("Lead outcome documents downloaded
+successfully") shows the server genuinely returns two agreement rows for one signed agreement:
+
+| | `_id` | `name` | `filePath` | size |
+|---|---|---|---|---|
+| real | `…b4748` | `Agreement_OFN-A_1786106851569.pdf` | `…/agreements/1786106851569-Agreement_OFN-A_….pdf` | 69395 |
+| duplicate | `…b4c0c` | **`""`** | `…/agreements/1786106886943-**0-document.pdf**` | 69395 |
+
+Identical `fileData.size` AND identical `base64Data`, but a **distinct `_id` and `filePath`** — so
+`docIdentity` keys them apart, `dedupeDocs` cannot merge them, and neither is `isSystemGenerated` so
+`collapseSignedAgreement` passes both through. **This is a real duplicate on the server**, written at
+submit time; nothing on the client created it.
+
+⚠️ **The filter MUST run on the RAW server rows, not in the display component.** The first attempt at
+this put it in `SummaryFinalizeCards` and it silently did nothing: **every** loader defaults the name —
+`d.name || (group === 'agreement' ? 'Agreement' : 'Order Sheet')` — so by the time a row reaches the
+card the empty name, the only thing distinguishing the duplicate, is already gone. The card was
+labelling the duplicate `"Agreement"` and the filter saw a named row. Two loaders do this:
+`resolveOutcomeDocRows` (`utils/outcome-documents.ts:107`, create path) and the inline `toDisplay` in
+`DynamicJobBuilderScreen.tsx` (`editDocsData`, the edit path in the ticket).
+
+Two exports in **`utils/outcome-documents.ts`**, applied before either mapper:
+- **`dropUnnamedAgreements(rows)`** — a pure agreement array; used by the edit-mode `editDocsData` query.
+- **`dropUnnamedAgreementRows(rows)`** — the same rule over a MIXED row list, keyed off each row's
+  `documentType`/`_group`; used inside `resolveOutcomeDocRows`, which receives agreements and order
+  sheets together.
+
+⚠️ **Explicitly a DISPLAY-LEVEL WORKAROUND**, requested as one (*"for now … only show that agreement
+who has the name"*). The duplicate row still exists on the server — the real fix is to stop writing it
+on submit. This does NOT contradict the warning above: that says name is unusable as a *dedupe key*
+(two real agreements can share a name); this only tests whether a name **exists**.
+
+⚠️ **AGREEMENTS ONLY.** Order sheets are legitimately filed with an empty name by the same endpoint —
+the very payload that exposed this has `orderSheets[0].name === ""` — so applying it there would hide
+the only order sheet on the deal.
+
+Safety valve, since a blank name is not by itself proof of a duplicate: if filtering leaves **nothing**,
+the unfiltered list is returned, so a deal whose agreements are all unnamed still renders them instead
+of an empty card. (Locally scanned/draft documents never reach these helpers — they live on
+`jobState.agreements` and are merged in the component, downstream of this.)
+
+⚠️ **The Deal screen (`JobDocsSection`) is NOT covered** and will still list both. Its `mapWith`
+**overwrites** `name` with a constant (`'Agreement'` / `'Order Sheet'` / …) before display, so the
+server name is gone by then — the filter would have to run on the raw docs, pre-map. Separate change.
+
+Verified against the three rows from the trace verbatim (both agreements + the unnamed order sheet):
+the duplicate dropped and the real agreement kept; **the unnamed order sheet kept** in the mixed-list
+form; all-unnamed falling back to the full list; a single named agreement and two genuinely different
+named agreements untouched; the legacy `_group` tag honoured alongside `documentType`; original order
+preserved; empty/undefined input a no-op.
+
 ### Deal-edit price didn't move when a combination's footage changed
 
 Ticket: *"My deals - I changed footages which means price should change but nothing changed — left
@@ -552,10 +737,16 @@ Both problems are in **`src/widgets/modals/job-builder/DocumentScannerModal.tsx`
   removed here." Defaulting to `true` leaves the other two callers — `LeadCenter/JobDocsSection` and
   the legacy `job-builder/SummarySection` — unchanged.
 
-`SummaryFinalizeCards` passes **`allowRemoveExisting={editMode || scannerCategory !== 'agreement'}`**,
+`SummaryFinalizeCards` passes **`allowRemoveExisting={scannerCategory === 'agreement' ? editMode : true}`**,
 so the ✕ is hidden for exactly one case: an **already-filed agreement in the CREATE flow**. Order
 sheets always keep delete, and so does the **My Deals ▸ Edit Job Build** flow — the rep is revising a
 submitted deal there and must be able to swap out a wrong agreement.
+
+⚠️ Write it as that **explicit branch on the category**, not as the equivalent
+`editMode || scannerCategory !== 'agreement'`. The two are logically identical, but QA reported the ✕
+missing from ORDER SHEETS against the boolean form, and the flat expression makes it easy to believe —
+and easy to break for real when the agreement rule is next edited. The full truth table is: order
+sheets `true` in all four (create/edit × filed/new); agreements `false` only for create + already-filed.
 
 ⚠️ In the create flow this leaves **no delete path for an existing agreement on the Job Builder
 summary screen** — the card header's pencil is the only entry point. That is deliberate and is the
@@ -592,10 +783,9 @@ fine; the *display* simply never showed the deal's own method. Now a 1:1 port of
   `coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey`. The guards only existed
   to stop a blank picker reading as a change; seeding makes them obsolete, and keeping them would have
   **masked a real edit back to the deal's original method**.
-- **New `downPaymentSelectOptions`** (web parity). The Down Pmt picker offers cash/card basics only,
-  but a seeded value may sit outside that set (a legacy deal that stored a financing plan there), so
-  the current key is spliced in from the full catalog. Without it the saved method rendered as a bare
-  key and was not re-selectable. The Balance picker already uses the full `paymentOptions` catalog.
+- ~~**New `downPaymentSelectOptions`** (web parity), splicing a seeded financing plan into the Down
+  Pmt options.~~ **Superseded and removed** — see "Down Pmt Method must never offer a financing plan"
+  below. The Balance picker still uses the full `paymentOptions` catalog.
 
 ⚠️ **Side effect on the displayed tiers, and it is the correct one.** `computeEditedTiers` receives
 `paymentMethod: resolveTierPaymentMethod(balanceMethodKey)`. That key used to be `''` → `'check'` →
@@ -605,6 +795,41 @@ than before this change.
 
 The submit payload is unchanged (`downPaymentMethodKey || lead?.paymentMethod || ''`) — it already
 matched web.
+
+### Down Pmt Method must never offer a financing plan
+
+Ticket: *"in Down Pmt Method you als showed balance method fix it please."* Job Price (step 2) opened
+with **Down Pmt Method** reading `2521 (12 Months…)` — the same financing plan as **Balance Method** —
+on a deal with **$0 down**.
+
+This was a **self-inflicted regression from the seeding ticket above.** `pricing.outcomeDownPaymentMethods`
+is correctly filtered to cash/card (`p.type === 'cash' || 'card'` in `useDealPricing`), so the picker's
+own list was fine — the financing plan was there because **`downPaymentSelectOptions` spliced it in**.
+
+`lead.paymentMethod` IS the down-payment field (see the submit payload), but a sold deal frequently has
+the **rollout's** plan written into it, so it holds a financing key. Seeding from it then surfaced that
+key, and the splice existed precisely to make such a key selectable — offering "12 months financing" as
+a way to pay a *down payment*, which it is not: financing is how the **balance** is carried.
+
+⚠️ **Deliberate divergence from web** (`dynamic-deal-edit-modal.js` is byte-identical here and has the
+same flaw — it coerces against the FULL catalog and splices the result). Do not "re-sync" this.
+
+- **New `toDownPaymentKey(stored)`** — coerces, then returns the key **only if it is in
+  `downPaymentOptions`**, else `''`. `downPaymentSelectOptions` is deleted; the picker is back to plain
+  `downPaymentOptions`, so nothing outside the basics can be shown or chosen.
+- **The change-flag baseline uses the SAME helper**
+  (`toDownPaymentKey(lead?.paymentMethod) !== downPaymentMethodKey`). Filtering only the seed would
+  compare `'2521'` against `''` and make every affected deal open already "changed", rendering a
+  phantom Review row and enabling Submit — the exact failure the removed `!!key &&` guards used to mask.
+- **The submit payload is untouched**: `downPaymentMethodKey || lead?.paymentMethod || ''` still falls
+  back to the stored value, so blanking the *display* never wipes what the deal had. The rep picking a
+  real method overrides it as before.
+
+Traced through every stored shape: a financing key → blank picker + no phantom change; `check` and a
+legacy label (`AMEX (5.00% Fee)`) → seeded normally; empty → blank; rep picks a method → change flag
+true and the Review row renders; unrecognized text → the `resolveTierPaymentMethod` fuzzy fallback still
+lands on a basic. Lowe's leads scope `downPaymentOptions` to Lowe's methods, so a non-Lowe's key blanks —
+correct, since that method is not offered for the lead, and the payload fallback preserves it.
 
 ---
 
@@ -1034,6 +1259,173 @@ guard, the cached-hit path making **zero** network calls, failure → `null`, no
 concurrent callers **sharing one GET**, and the **≤3 in-flight** cap. (The repo has **no global
 mock** for `react-native-blob-util` — that is why the two `DynamicDealCenter` suites which import it
 fail under jest; anything testing this module must mock it locally.)
+
+### Inspection photos were invisible in the Pitchbook / Roofline Deck
+
+Ticket: *"images are not showing in inspection like web"* (`src/screens/Pitchbook/index.tsx`). The
+tool drawer's **Inspection** tab rendered the "Property Inspection Photos" heading over **blank
+space** — no photos, and not even the empty state.
+
+Both screens matched photos against the **static** `IMAGE_CATEGORIES` list:
+
+```ts
+IMAGE_CATEGORIES.filter((s) => secureImages[s.name]?.length > 0)   // ← the bug
+```
+
+`useSecureUrls` keys its map by the photo's **raw `category`**, and the dynamic capture flow scopes
+that per product — `useDynamicInspectionCapture.scopeCat` stores
+`` `${productKey} — ${label}` ``, e.g. **`"Gutters/Roofline — HOME"`**. The static list only holds
+`Home` / `Inspection` / `Measurements` / `Miscellaneous`, so **nothing matched** and every
+dynamically-captured photo was invisible. Only the legacy flow (`JobDocsSection` / `TagPhotoModal`,
+which pass a bare `section.name`) ever rendered.
+
+⚠️ The empty state didn't fire either: it tested `Object.keys(secureImages).length === 0`, which is
+**false** — the map was full, just under a key nothing looked up. That is why the tab looked broken
+rather than empty.
+
+Fixed the way web does it (`src/sections/pitch-book/components/pb-inspection-photos.js`): **derive
+sections from each photo's own category, never from a fixed list.** Split across a pure
+**`src/utils/inspection-photos.ts`** (grouping) and **`src/widgets/components/InspectionPhotosPanel.tsx`**
+(rendering) — the split is deliberate: the panel imports `PhotoPeekPressable`, which pulls in
+**reanimated**, and the repo has no reanimated mock, so anything importing the panel is **untestable
+under jest**. Keep new logic in the util.
+
+- **`sectionFromCategory(category)`** handles both storage formats — splits on the **em dash** for
+  `"{product} — {TAB}"` → `Home`, else takes the name as-is. The **full** category string is the
+  section id, so two products that both have a `HOME` tab stay separate accordions instead of merging.
+- **`prettify`** title-cases the all-caps tab name, leaving already-cased legacy names
+  (`"Roofline Observation"`) intact.
+- **Deleted (`deletedAt`) and annotated photos are dropped**, which mobile never did — annotated
+  copies belong to the annotation surface and were duplicating the originals here.
+- **`buildInspectionSections(photos, secureImages)`** re-groups from the **raw `salesPhotos`** records
+  (they carry category / subcategory / deletedAt / timestamp) and uses `secureImages` only as a
+  flattened `s3url → signed url` lookup, falling back to `photo.secureUrl`. A photo with no
+  resolvable url is skipped rather than rendering a blank tile.
+- The count chip is now web's **"N photos"**. The old "N of M complete" derived M from the static
+  category's `subCategories`, which a dynamically-captured section does not have.
+
+**Both screens were byte-identical copies of this block**, so `Pitchbook` and `RooflineDeck` now
+render the shared panel (each dropped its own `expandedCat` state and its `IMAGE_CATEGORIES` import;
+the panel owns the accordion and takes an `onPreview` callback, since the preview `Modal` stays on the
+parent). RooflineDeck was **not named in the ticket** but had the exact same defect — fixing only the
+reported screen would have left it broken.
+
+⚠️ **`useSecureUrls` was deliberately NOT changed.** Five call sites depend on its
+category-keyed shape (`RooflineDeck`, `InvestmentPanel`, `LeadImagePickerModal`,
+`DynamicManagePhotosView`, `Pitchbook`); the grouping is wrong only for *this* use, so it is undone
+locally rather than by reshaping a shared hook.
+
+⚠️ One deliberate divergence from web: web renders **one card per subcategory slot** with a `+N`
+badge. Mobile renders **every** photo instead, so nothing hides behind a badge. Photos are still
+grouped by slot (oldest first within a slot) so repeat shots sit together.
+
+#### Card design + instant preview (follow-up on the same ticket)
+
+Follow-up: *"set the design like web and image show instantly while we press like we set in rev
+render."*
+
+**Design** now mirrors web's `ImageCard`: the group is one **white elevated card** holding both header
+and grid (was a grey `#F4F6F8` bar with the photos loose underneath); tiles are **two per row**
+(web `xs={6}`) at a **4/3** crop with a 2px border (were three per row, square); an **eye badge**
+sits top-left; and the caption bar carries the subcategory on the left with the **capture time**
+(`01:05 PM`) on the right. The time comes from `formatCaptureTime`, written **by hand rather than via
+`toLocaleTimeString('en-US', …)`** (what web uses) so it cannot depend on Intl being compiled into the
+JS engine.
+
+⚠️ The grid uses `justifyContent: 'space-between'` with `width: '48%'`, **not** a pixel `gap` — two 48%
+columns plus a fixed gap can exceed 100% on a narrow drawer and wrap to one card per row.
+
+**Instant preview** reuses the existing revRender machinery rather than re-solving it: each tile is a
+**`PhotoPeekPressable`**, so hold-to-peek warms a local `file://` copy through `imageFileCache` and the
+enlarged image opens instantly instead of blanking for 2–3 s (see "Hold-to-peek previews" above for
+why `Image.prefetch` cannot do this).
+
+- **`PhotoPeekPressable.onPress` now receives the warmed uri** (`(peekUri?: string | null) => void`).
+  The panel passes it straight to `onPreview`, so the parent's **tap** preview `Modal` renders the
+  cached file too — previously only the hold-peek benefited. Backwards compatible: a `() => void`
+  handler is assignable, so the other four call sites are untouched.
+- Both drawers now wrap their tool `ScrollView` in **`PhotoPeekScrollLockProvider`** and use
+  **`PeekAwareScrollView`** (the same pairing RevRender/RolloutView use). Without it a stray drag
+  during the hold scrolls the list, steals the touch and dismisses the peek mid-hold.
+
+Verified additionally: the caption time across noon/midnight/single-digit hours and degrading to `''`
+for missing or unparseable timestamps.
+
+#### Card shadow + a pageable viewer (second follow-up)
+
+Follow-up: *"add shadow on card like this also add slide left right option like web."*
+
+**The shadow was already written and simply not rendering.** The group card carried both the shadow
+and `overflow-hidden` on the SAME view, and **iOS clips a shadow when the view sets
+`overflow: hidden`**. Now two nested Views: shadow on the outer wrapper, rounding/clipping on the
+inner one. (Opacity/radius also raised to 0.16 / 10 with `elevation: 4` so it reads on Android.)
+
+**New `InspectionPhotoViewer`** replaces the single-image preview with web's lightbox behaviour:
+swipe or tap the chevrons to move through a section's photos, with the `"{Section} - {Subcategory}"`
+title, the capture time, an **`n / total`** counter and a tappable **thumbnail strip** that keeps the
+active thumb scrolled into view. A horizontal `FlatList` with `pagingEnabled` does the paging;
+`getItemLayout` is **required** for `initialScrollIndex`/`scrollToIndex` to work on it.
+
+- **The viewer lives INSIDE the panel, and that removed a duplicate.** Each screen previously carried
+  **two identical** preview `Modal`s gated on `isFullscreen`, because the pitchbook renders its tool
+  drawer either inside a fullscreen `Modal` or outside it. A `Modal` rendered from the panel nests
+  correctly in **both** cases automatically, so the panel's `onPreview` prop and both screens'
+  `previewImage` state + **four** dead modals are gone.
+- **`useWarmedUris`** warms every photo of the open section through `imageFileCache`, so paging paints
+  from `file://` instead of re-fetching a pre-signed S3 object per slide. It keys its effect on the
+  **joined url string**, not the array identity — a fresh array each render would restart every
+  download on every render. Downloads dedupe by cache path, so overlapping with the thumbnails' own
+  warming costs nothing.
+
+⚠️ RN has no `translateY(-50%)`: the chevrons use `top: '50%'` **plus `marginTop: -22`** (half their
+height), otherwise their top edge — not their centre — sits on the midline.
+
+⚠️ This supersedes the earlier note that mobile "cannot page a slot". It can now; the reason mobile
+still renders every photo rather than web's one-card-per-slot `+N` is simply that nothing should hide
+behind a badge.
+
+Verified against both storage formats: the ticket's `"Gutters/Roofline — HOME"` case (with the old
+static filter asserted to match **nothing**, and `secureImages` asserted non-empty to show why the
+empty state stayed hidden), legacy bare categories, an already-cased legacy name, two products sharing
+a tab name, `deletedAt` and both annotated forms excluded, the `secureUrl` fallback, an unresolvable
+photo skipped, slot grouping/ordering, empty input → empty state, and a category-less photo landing in
+`Other`.
+
+### Chat: the lead header photo had no preview, and message photos opened slowly
+
+Ticket: *"Sales app - messages - should let me preview photo / image should open instantly like re
+render and inspection photo"*, circling the **lead thumbnail in the chat header**.
+
+Two separate gaps behind one sentence:
+
+**1. The header thumbnail was inert.** `LeadHeaderThumbnail` (`widgets/components/chat/ChatHeader.tsx`)
+rendered a bare `<Image>` with **no press handling at all** — there was no way to open it. It is now a
+**`PhotoPeekPressable`**: HOLD peeks it enlarged (instant, warmed to a local `file://`), and a TAP
+opens the same **`ImageGalleryModal`** the chat's image messages already use, so the two surfaces
+behave alike. The tap gets its uri from `PhotoPeekPressable`'s **`onPress(peekUri)`** — added for the
+inspection grid — so the gallery opens on the warmed file rather than re-fetching. The
+home-outline placeholder branch is untouched: nothing to preview, nothing to press.
+
+**2. Message photos already had a viewer, but it wasn't instant.** `ImageGalleryModal` rendered raw
+urls with `cache: 'force-cache'`, which **buys nothing** on our pre-signed S3 links (no cache headers —
+see "Hold-to-peek previews" above). It now resolves through the local-file cache, in both the pager and
+the filmstrip.
+
+⚠️ The gallery warms **only while `visible`**. It is mounted per message bubble, so warming on mount
+would download every attachment in the thread on open.
+
+The warming hook is now shared: **`src/hooks/useWarmedImageUris.ts`** (`{ [url]: fileUri }`, filling in
+as downloads land), used by `ImageGalleryModal` and `InspectionPhotosPanel`. It was written for the
+inspection viewer last ticket and moved out rather than copied on the second consumer. It keys its
+effect on the **joined url string**, not the array identity — callers build the array inline, so
+depending on identity would restart every download on every render.
+
+⚠️ Reach for this hook (or `PhotoPeekPressable`, which warms its own) for **any** new full-size photo
+view. `Image.prefetch` and `cache: 'force-cache'` do not work on these urls — that is the standing
+gotcha in §6, and this ticket is the third surface to hit it.
+
+Not changed: chat image **messages** were already previewable via `ImageGalleryModal` from
+`ChatMessageBubble`, so only their speed needed fixing.
 
 ---
 

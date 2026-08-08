@@ -32,10 +32,14 @@ export const ToolsSection = ({
   // Calculator/rollout status for the Deal Center + Investment Center tiles.
   // `allConfirmed` (web `allJobsConfirmed`) gates the Investment Center. Refetch on
   // focus so returning from the Deal Center reflects a newly-confirmed rollout.
-  const { data: calcStatus, refetch: refetchCalcStatus } = useLeadCalculatorStatus(lead);
+  const { data: calcStatus, refetch: refetchCalcStatus, isFetching: isCalcStatusFetching } =
+    useLeadCalculatorStatus(lead);
   const hasCalc = !!calcStatus?.hasCalculator;
   const isLeadSold = lead?.status === 'sale';
   const allConfirmed = !!calcStatus?.allConfirmed || isLeadSold;
+  // Only while the tile is still locked — once it's open the rep has what they came
+  // for and a spinner would just be noise on a card they can already use.
+  const investmentStatusPending = isCalcStatusFetching && !allConfirmed;
   useFocusEffect(
     React.useCallback(() => {
       refetchCalcStatus?.();
@@ -163,15 +167,22 @@ export const ToolsSection = ({
         title="Investment Center"
         // Locked until every rollout is confirmed (web `allJobsConfirmed`). Tapping
         // while locked warns instead of opening.
-        desc={isLeadSold ? 'View finalized proposal details' : (!allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
+        desc={isLeadSold ? 'View finalized proposal details' : (investmentStatusPending ? 'Checking job status…' : !allConfirmed ? 'Please Fully Build ALL jobs first' : 'Present quote & 1-yr free quote')}
         statusText={allConfirmed ? (isLeadSold ? 'Sale finalized' : (consentReport ? 'Consent on file — present quote' : 'Ready to present')) : undefined}
         // "SOLD" (green) once finalized, else an "Already Generated" pill — same
         // violet design as the Customer Consent Form tag — once consent is on file.
         badgeText={isLeadSold ? 'SOLD' : (allConfirmed && consentReport ? 'Already Generated' : undefined)}
         badgeVariant={isLeadSold ? undefined : 'violet'}
         locked={!allConfirmed}
+        busy={investmentStatusPending}
         icon="chart-line"
         onPress={() => {
+          if (investmentStatusPending) {
+            // Mid-check, so "you haven't built the jobs" would be a guess — and often
+            // a wrong one, since this is exactly the window after a confirm.
+            FlashMessage.info('Investment Center', 'Checking job status — one moment.');
+            return;
+          }
           if (!allConfirmed) {
             FlashMessage.warning('Investment Center', 'Please build and confirm all rollouts first.');
             return;
@@ -489,7 +500,7 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
 };
 
 
-const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, badgeVariant, locked, blur, icon, onPress, onDownload, isGenerated, isLoading }: any) => {
+const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, badgeVariant, locked, blur, icon, onPress, onDownload, isGenerated, isLoading, busy }: any) => {
   const { colors, isDark } = useTheme();
   const green = statusColor || '#16A34A';
   // A locked card stays tappable on purpose — the parent's onPress shows a toast
@@ -533,10 +544,15 @@ const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, ba
             <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>{desc}</Text>
           ) : null}
         </View>
-        {isLoading && (
+        {/* `busy` is a LIGHT variant of `isLoading`: a small right-side spinner only,
+            with the card left at full opacity and still tappable. It reports that a
+            background status read is in flight (e.g. the Investment Center checking
+            whether every rollout is confirmed) — `isLoading` would dim and disable the
+            card, which is wrong for a refresh the rep isn't waiting on. */}
+        {(isLoading || busy) && (
           <ActivityIndicator size="small" color={colors.primary.main} style={{ marginRight: 8 }} />
         )}
-        {locked && !isLoading && (
+        {locked && !isLoading && !busy && (
             <Icon name="lock" size={12} color={'#919EAB'} style={{marginRight:8}} />
         )}
         {/* Right-side status pill. `badgeVariant: 'violet'` renders the exact same

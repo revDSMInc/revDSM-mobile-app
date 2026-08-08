@@ -42,7 +42,7 @@ import {
   parsePrice,
   type Tiers,
 } from '../utils/dynamic-deal-pricing';
-import { computeDynamicBuildChanges } from '../utils/dynamic-deal-diff';
+import { computeDynamicBuildChanges, type BuildChangeKind } from '../utils/dynamic-deal-diff';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
@@ -352,19 +352,31 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // PAYMENT may legitimately be unset (a deal with no money down), so it stays blank
   // and the picker shows its placeholder.
   const balanceMethodKey = coerceToPlanKey(balanceMethod, 'check');
-  const downPaymentMethodKey = downPaymentMethod ? coerceToPlanKey(downPaymentMethod, '') : '';
 
-  // Now that the down-payment picker is SEEDED from the sale, the saved method may sit
-  // outside the cash/card basics the list normally offers (a legacy deal that stored a
-  // financing plan there). Web parity (`downPaymentSelectOptions`): splice the current
-  // key in from the full catalog so it renders with its real label and stays
-  // re-selectable, instead of showing a bare key or dropping the selection.
-  const downPaymentSelectOptions = useMemo(() => {
-    if (!downPaymentMethodKey) return downPaymentOptions;
-    if (downPaymentOptions.some((o) => o.key === downPaymentMethodKey)) return downPaymentOptions;
-    const extra = paymentOptions.find((o) => o.key === downPaymentMethodKey);
-    return extra ? [...downPaymentOptions, extra] : downPaymentOptions;
-  }, [downPaymentOptions, downPaymentMethodKey, paymentOptions]);
+  /**
+   * Coerce a stored value to a DOWN-PAYMENT key, which must be one of the cash/card
+   * basics the picker offers.
+   *
+   * ⚠️ Deliberate divergence from web. `lead.paymentMethod` is the down-payment
+   * field, but a sold deal often has the ROLLOUT's plan written into it — i.e. a
+   * financing plan like `2521`. Web coerces against the FULL catalog and then
+   * splices whatever comes out into the Down Pmt options, so the picker ends up
+   * offering a balance/financing plan as a way to pay a down payment. It isn't one:
+   * financing is how the BALANCE is carried. Anything outside the basics resolves to
+   * blank here, so the picker shows its placeholder and the rep picks a real method.
+   *
+   * Used for the live selection AND for the change-flag baseline — if only one side
+   * were filtered, opening the wizard and touching nothing would read as a change.
+   */
+  const toDownPaymentKey = useCallback(
+    (stored: any) => {
+      const key = stored ? coerceToPlanKey(stored, '') : '';
+      return key && downPaymentOptions.some((o) => o.key === key) ? key : '';
+    },
+    [coerceToPlanKey, downPaymentOptions]
+  );
+
+  const downPaymentMethodKey = toDownPaymentKey(downPaymentMethod);
 
   // Plan key → human label for the Review rows, e.g. `2511` → "2511 (6 Months 0%
   // Interest No Payments…) (Bank Fee: 4%)". Web parity: `resolvePlanLabel`. Falls
@@ -466,8 +478,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // the down payment) — web parity. The old `!!key &&` guard existed only because the
   // pickers opened blank; seeding them made it obsolete, and keeping it would have
   // masked a real edit back to the deal's original method.
+  // Same filter as the seed (`toDownPaymentKey`): a deal storing a financing plan in
+  // `paymentMethod` blanks BOTH sides, so opening the wizard and touching nothing is
+  // not a change. Once the rep picks a real method it compares blank → that method.
   const downPaymentMethodChanged =
-    coerceToPlanKey(lead?.paymentMethod, '') !== downPaymentMethodKey;
+    toDownPaymentKey(lead?.paymentMethod) !== downPaymentMethodKey;
   const balanceMethodChanged =
     coerceToPlanKey(lead?.balancePaymentMethod, 'check') !== balanceMethodKey;
 
@@ -1095,7 +1110,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Pmt Method</Text>
                   <MethodPicker
-                    options={downPaymentSelectOptions}
+                    options={downPaymentOptions}
                     selected={downPaymentMethodKey}
                     onSelect={(k) => setDownPaymentMethod(k)}
                     allowNone
@@ -1158,7 +1173,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   <View key={group.vertical} style={{ marginBottom: 10 }}>
                     <Text style={{ fontSize: 11, fontWeight: '900', color: '#64748B', marginBottom: 4 }}>{group.vertical}</Text>
                     {group.changes.map((c, i) => (
-                      <ReviewRow key={`${c.field}-${i}`} label={c.field} from={c.from} to={c.to} />
+                      <ReviewRow key={`${c.field}-${i}`} label={c.field} from={c.from} to={c.to} kind={c.kind} />
                     ))}
                   </View>
                 ))}
@@ -1598,20 +1613,41 @@ function MethodPicker({
   );
 }
 
-function ReviewRow({ label, from, to }: { label: string; from: string; to: string }) {
+function ReviewRow({
+  label,
+  from,
+  to,
+  kind,
+}: {
+  label: string;
+  from: string;
+  to: string;
+  kind?: BuildChangeKind;
+}) {
+  // A whole combination dropped from (or added to) the build is not an edit of a
+  // value, so it must not read as one — the eyebrow names the operation instead
+  // of the generic "NEW", and a removal's value column stays neutral rather than
+  // showing a green "new value" the rep never entered.
+  const eyebrow = kind === 'removed' ? 'REMOVED' : kind === 'added' ? 'ADDED' : 'NEW';
+  const eyebrowColor = kind === 'removed' ? '#DC2626' : '#94A3B8';
+  const valueColor = kind === 'removed' ? '#94A3B8' : '#15803D';
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
       <View style={{ flex: 1, flexShrink: 1, paddingRight: 12 }}>
         <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>{label}</Text>
-        <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
+        {/* An ADDED combination has no previous value — striking through an em
+            dash would read as "something was there before". */}
+        {kind !== 'added' && (
+          <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
+        )}
       </View>
       {/* Payment-plan labels are long sentences ("2511 (6 Months 0% Interest No
           Payments…)"), so the value column must SHRINK and wrap — RN defaults a
           View to flexShrink: 0, which would push it off-screen. Web wraps it the
           same way, right-aligned. */}
       <View style={{ alignItems: 'flex-end', flexShrink: 1, maxWidth: '55%' }}>
-        <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8' }}>NEW</Text>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D', textAlign: 'right' }}>{to}</Text>
+        <Text style={{ fontSize: 10, fontWeight: '700', color: eyebrowColor }}>{eyebrow}</Text>
+        <Text style={{ fontSize: 13, fontWeight: '800', color: valueColor, textAlign: 'right' }}>{to}</Text>
       </View>
     </View>
   );
