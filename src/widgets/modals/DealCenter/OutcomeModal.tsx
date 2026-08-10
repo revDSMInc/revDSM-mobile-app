@@ -78,6 +78,8 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 }) => {
   const { colors, isDark } = useTheme();
   const isLowesLead = lead?.lowesLead === true;
+  // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
+  const isRehashed = lead?.isRehashed === true;
   const contractPrice = cleanNum(outcomeForm.originalContractPrice);
   const downPaymentMethods = getOutcomeDownPaymentMethods(isLowesLead);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -407,11 +409,26 @@ export const OutcomeModal: React.FC<OutcomeModalProps> = ({
 
                 {outcomeStatus === 'sale' && (
                   <>
+                    {/* Editable only on a rehash — web `disabled={!isRehashed}`. The
+                        balance is stored, not derived, so it is recomputed here the way
+                        web's `handleContractPriceChange` does. */}
                     {renderInput(
                       'Original Contract Price',
                       outcomeForm.originalContractPrice,
                       'originalContractPrice',
-                      false
+                      isRehashed,
+                      'numeric',
+                      isRehashed
+                        ? (t) => {
+                            const cp = cleanNum(t);
+                            const dp = cleanNum(outcomeForm.downPayment);
+                            setOutcomeForm({
+                              ...outcomeForm,
+                              originalContractPrice: t,
+                              balance: cp - dp >= 0 ? (cp - dp).toFixed(0) : '',
+                            });
+                          }
+                        : undefined
                     )}
 
                     <View className="flex-col z-[80] border border-[#919EAB33] rounded-lg px-3 pt-3 mb-3">

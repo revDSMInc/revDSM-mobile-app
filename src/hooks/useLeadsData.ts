@@ -4,7 +4,16 @@ import { LeadService } from '../services/api/leads';
 import { useAuth } from './useAuth';
 import type { Lead } from '../config/types/lead';
 
-export function useLeadsData(params?: { status?: string; period?: string }) {
+/**
+ * @param options.enabled Hold the request off while the list it feeds isn't on screen.
+ *   Web parity: `job-list.js` passes `apiParams: null` for the tabs served by another
+ *   endpoint (Rehash, Calendar), which makes its SWR key null and skips the fetch —
+ *   this is that switch. Defaults to on, so existing callers are unaffected.
+ */
+export function useLeadsData(
+  params?: { status?: string; period?: string },
+  options?: { enabled?: boolean }
+) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -16,7 +25,7 @@ export function useLeadsData(params?: { status?: string; period?: string }) {
       const leadsData = res.data?.data?.leads || res.data?.data;
       return Array.isArray(leadsData) ? leadsData : [];
     },
-    enabled: !!user?._id,
+    enabled: !!user?._id && options?.enabled !== false,
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 

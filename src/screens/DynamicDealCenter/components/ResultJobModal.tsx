@@ -223,6 +223,8 @@ export function ResultJobModal({
   onConfirm,
 }: ResultJobModalProps) {
   const { isDark } = useTheme();
+  // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
+  const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
   const [resultType, setResultType] = useState<'sale' | 'demo'>(initialResultType || 'sale');
   const [demoReason, setDemoReason] = useState('');
@@ -403,7 +405,17 @@ export function ResultJobModal({
 
               {resultType === 'sale' && (
                 <>
-                  <MoneyField label="Original Contract Price" value={contractPrice} editable={false} />
+                  {/* Web parity (result-lead-modal.js `disabled={!isRehashed}`): normally
+                      the contract price is locked to what the rollout quoted. On a rehash
+                      the price carried forward from the ORIGINAL appointment is a starting
+                      point, not a commitment, so the rep can overwrite it here.
+                      `balance` is derived from this value, so it follows automatically. */}
+                  <MoneyField
+                    label="Original Contract Price"
+                    value={contractPrice}
+                    editable={isRehashed}
+                    onChange={isRehashed ? setContractPrice : undefined}
+                  />
                   <View style={{ borderWidth: 1, borderColor: '#919EAB33', borderRadius: 8, paddingHorizontal: 12, paddingTop: 12, marginBottom: 16 }}>
                     <MoneyField label="Down Payment" value={downPayment} onChange={setDownPayment} />
                     <SelectField
