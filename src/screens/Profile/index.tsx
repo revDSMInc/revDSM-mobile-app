@@ -35,7 +35,9 @@ import { useNavigation } from '@react-navigation/native';
 import { GlobalKeyboardAvoidingView } from '../../widgets/common/keyboard/GlobalKeyboard';
 
 import Icon from 'react-native-vector-icons/Ionicons';
+import Feather from 'react-native-vector-icons/Feather';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useUserRole } from '../../hooks/useUserRole';
 import { launchImageLibrary } from 'react-native-image-picker';
 import FlashMessage from 'react-native-flash-message';
 import { formatUSPhoneNumber, getRawPhoneNumber } from '../../utils/phone-util';
@@ -50,7 +52,21 @@ export default function ProfilePage() {
   const dispatch = useDispatch();
   const { colors, isDark } = useTheme();
   const navigation = useNavigation<any>();
+  const { isInstaller } = useUserRole();
   const [activeTab, setActiveTab] = useState<TabType>('profile');
+
+  // This screen is shared by both dashboards, but the sales landing route is NOT
+  // registered in the installer stack (`navigation/index.tsx`), so the hardcoded
+  // `navigate('Leads')` this screen used to do was a dead end for an installer —
+  // and the global `<Header />` carries no back affordance, so there was no way
+  // out of Account Settings at all. Prefer popping the stack (the screen is
+  // always pushed from the header popover); fall back to whichever landing route
+  // the signed-in account actually has.
+  const homeRoute = isInstaller ? 'InstallerDashboard' : 'Leads';
+  const handleBack = useCallback(() => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate(homeRoute);
+  }, [navigation, homeRoute]);
   const [loading, setLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
 
@@ -299,7 +315,7 @@ export default function ProfilePage() {
       Alert.alert('Success', 'Profile updated successfully', [
         {
           text: 'OK',
-          onPress: () => navigation.navigate('Leads')
+          onPress: handleBack
         }
       ]);
     } catch (error: any) {
@@ -576,30 +592,53 @@ export default function ProfilePage() {
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Title & Breadcrumbs */}
           <View className="px-5 py-6">
-            <Text className="text-xl font-black" style={{ color: colors.text }}>
-              Account Settings
-            </Text>
-            <View className="flex-row items-center mt-1">
+            <View className="flex-row items-center">
+              {/* Same bordered-square back button the installer screens use
+                  (`widgets/components/installer/InstallerSubScreen.tsx`). */}
               <TouchableOpacity
-                onPress={() => navigation.navigate('Leads')}
-                className="flex-row items-center"
+                onPress={handleBack}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                className="mr-3 p-1 items-center justify-center rounded-lg"
+                style={{ width: 32, height: 32, borderWidth: 1, borderColor: colors.border }}
               >
-                <Icon
-                  name="menu"
+                <Feather
+                  name="arrow-left"
                   size={14}
-                  color={colors.textSecondary}
-                  style={{ marginRight: 4 }}
+                  color={isDark ? colors.text : colors.textSecondary}
                 />
-                <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
-                  Map View
-                </Text>
               </TouchableOpacity>
-              <Text className="text-[11px] font-bold mx-2" style={{ color: colors.textSecondary }}>
-                •
-              </Text>
-              <Text className="text-[11px] font-bold " style={{ color: colors.textSecondary }}>
-                Account Settings
-              </Text>
+              <View className="flex-1">
+                <Text className="text-xl font-black" style={{ color: colors.text }}>
+                  Account Settings
+                </Text>
+                {/* Installers get no breadcrumb: their only crumb would be the
+                    dashboard, which the back button beside the title already
+                    covers, and the trail then reads "Account Settings" twice. */}
+                {!isInstaller && (
+                  <View className="flex-row items-center mt-1">
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate(homeRoute)}
+                      className="flex-row items-center"
+                    >
+                      <Icon
+                        name="menu"
+                        size={14}
+                        color={colors.textSecondary}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
+                        Map View
+                      </Text>
+                    </TouchableOpacity>
+                    <Text className="text-[11px] font-bold mx-2" style={{ color: colors.textSecondary }}>
+                      •
+                    </Text>
+                    <Text className="text-[11px] font-bold " style={{ color: colors.textSecondary }}>
+                      Account Settings
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
 
