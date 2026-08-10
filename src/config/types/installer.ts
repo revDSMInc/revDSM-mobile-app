@@ -404,6 +404,34 @@ export interface StatusReasonPayload {
   images?: StatusReasonImage[];
 }
 
+/**
+ * One image on a status request. Richer than `StatusReasonImage`: the request is a
+ * claim about site conditions that ops has to adjudicate, so each shot carries WHEN
+ * and WHERE it was taken. Both come off the `CapturedPhoto` the installer already
+ * took (`takenAt` / `coordinates`) — nothing extra is captured for this.
+ *
+ * `coordinates` is `null`, not absent, when the device could not produce a fix: the
+ * distinction between "no signal" and "not sent" matters to whoever reviews it.
+ */
+export interface StatusRequestImage {
+  s3url: string;
+  bucketName?: string;
+  timestampTaken?: string;
+  coordinates?: GeoCoordinates | null;
+}
+
+/**
+ * Body of `POST installer/v1/{jobId}/status-requests` — the "Can't Do Work" flow.
+ *
+ * NOT a `statusReason`, and deliberately not routed through `setJobStatus`: this
+ * files a REQUEST for the job to be stood down, it does not transition the job
+ * itself. The status only moves once ops acts on the request.
+ */
+export interface StatusRequestPayload {
+  reason: string;
+  images?: StatusRequestImage[];
+}
+
 export interface InstallerResultSubmission {
   jobId: string;
   /** The button the installer pressed — kept for logging and copy. */

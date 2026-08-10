@@ -26,6 +26,7 @@ import { FlashMessage } from '../../config/message';
 import { useInstallProgress } from '../../hooks/useInstallProgress';
 import {
   useSubmitInstallerResult,
+  useSubmitStatusRequest,
   useReportDiscrepancy,
   staleInstallerJobs,
 } from '../../hooks/useInstallerJobs';
@@ -93,6 +94,7 @@ import type {
   PhotoPhase,
   StatusReasonImage,
   StatusReasonPayload,
+  StatusRequestImage,
 } from '../../config/types/installer';
 
 /**
@@ -192,6 +194,7 @@ export default function InstallerJobDetail() {
   } = useInstallProgress(job?._id ?? 'unknown', productIds, requiredPhotoTagIds);
 
   const submitResult = useSubmitInstallerResult();
+  const statusRequest = useSubmitStatusRequest();
   const reportDiscrepancy = useReportDiscrepancy(job?._id ?? '');
   const log = useInstallerActivityLog();
   const { user } = useAuth();
@@ -1155,23 +1158,35 @@ export default function InstallerJobDetail() {
     [job.customerDetails?.firstName, job.customerDetails?.lastName].filter(Boolean).join(' ');
 
   /**
-   * Sends the chosen result — `PUT installer/v1/update/{id}` with
-   * `{ status, statusReason }`.
+   * Sends the chosen result. TWO endpoints, decided by which button was pressed:
+   *
+   *  - **Can't Do Work** → `POST installer/v1/{id}/status-requests` with
+   *    `{ reason, images[] }`. A request for the job to be stood down, NOT a
+   *    transition — the status stays put until the office acts on it. Its images
+   *    carry `timestampTaken` + `coordinates` as well as the key, because whoever
+   *    reviews the claim needs to know when and where each shot was taken.
+   *  - **Not Hit** → `PUT installer/v1/update/{id}` with `{ status, statusReason }`,
+   *    unchanged. This one really does close the job, so it stays a transition.
    *
    * The status is the wire CODE, not the button label the installer read
-   * (`RESULT_STATUS_CODE`). Reset never reaches here; it has its own endpoint, via
-   * `handleConfirmReset`.
+   * (`RESULT_STATUS_CODE`); on the request path it only gates non-result types.
+   * Reset never reaches here; it has its own endpoint, via `handleConfirmReset`.
    *
-   * Drains in-flight photo uploads first, collects every uploaded photo's s3url
-   * into `statusReason.images`, then fires the status transition — so evidence is on
-   * the job before it closes. A failed evidence upload does NOT block the result: the
-   * installer needs to move on even if the network drops their last shot.
+   * Drains in-flight photo uploads first so every attached photo has its s3url before
+   * either request goes out — evidence lands with the record, not after it. A failed
+   * evidence upload does NOT block the submission: the installer needs to move on even
+   * if the network drops their last shot.
    */
   const handleSubmitResult = async (reason: string) => {
     const result = resultType!;
     const status = RESULT_STATUS_CODE[result as Exclude<InstallerResultType, 'Reset'>];
     if (!status) return;
-    if (drainingUploads || submitResult.isPending) return;
+    if (drainingUploads || submitResult.isPending || statusRequest.isPending) return;
+
+    // "Can't Do Work" no longer transitions the job. It files a status REQUEST that ops
+    // reviews (`POST installer/v1/{jobId}/status-requests`); the status moves only if
+    // they approve it. "Not Hit" is unchanged and still transitions directly below.
+    const isStatusRequest = result === "Can't Do Work";
 
     // Drain uploads so every photo that has started uploading has its s3url. The flag
     // is what puts the sheet's button into its loading state for the duration — this
@@ -1183,10 +1198,21 @@ export default function InstallerJobDetail() {
       setDrainingUploads(false);
     }
 
-    // Collect images that have an s3url (uploaded successfully).
-    const images: StatusReasonImage[] = progressRef.current.resultPhotos
-      .filter((p) => !!p.s3url)
-      .map((p) => ({ s3url: p.s3url!, bucketName: p.bucketName }));
+    // Collect images that have an s3url (uploaded successfully). The status-request
+    // endpoint records each shot's capture time and fix alongside the key — both are
+    // already on the CapturedPhoto, so nothing extra is captured for it. `coordinates`
+    // stays `null` rather than being dropped when the device had no fix.
+    const uploaded = progressRef.current.resultPhotos.filter((p) => !!p.s3url);
+    const images: StatusReasonImage[] = uploaded.map((p) => ({
+      s3url: p.s3url!,
+      bucketName: p.bucketName,
+    }));
+    const requestImages: StatusRequestImage[] = uploaded.map((p) => ({
+      s3url: p.s3url!,
+      bucketName: p.bucketName,
+      timestampTaken: p.takenAt,
+      coordinates: p.coordinates ?? null,
+    }));
 
     // Every attached photo failed to reach S3. Submitting now would file a Can't Do
     // Work with no evidence behind it — the thing the modal makes mandatory — so say so
@@ -1199,6 +1225,43 @@ export default function InstallerJobDetail() {
       return;
     }
 
+    // The photos are on the server's own record now — the status request or the job's
+    // `statusReason` — so the local copies are duplicates. Cleared WITHOUT a server
+    // delete, since that record references them. Leaving them behind is what made
+    // Can't Do Work's photos reappear under Not Hit on the next open.
+    const finish = (title: string, body: string) => {
+      log.resultSubmitted(result, reason);
+      clearResultPhotos();
+      FlashMessage.success(title, body);
+      setResultType(null);
+      navigation.goBack();
+    };
+
+    const fail = (title: string) => (err: any) => {
+      log.resultFailed(result, reason);
+      FlashMessage.error(title, err?.message || 'Please try again.');
+    };
+
+    if (isStatusRequest) {
+      statusRequest.mutate(
+        {
+          jobId: job._id,
+          request: {
+            reason,
+            ...(requestImages.length > 0 ? { images: requestImages } : {}),
+          },
+        },
+        {
+          // Worded as a request, not a result: the job has NOT been stood down yet, and
+          // telling the installer it was resulted would be a lie they act on.
+          onSuccess: () =>
+            finish('Request sent', `${reason} — the office will review it.`),
+          onError: fail("Couldn't send request"),
+        }
+      );
+      return;
+    }
+
     const statusReason: StatusReasonPayload = {
       reason,
       ...(images.length > 0 ? { images } : {}),
@@ -1207,24 +1270,8 @@ export default function InstallerJobDetail() {
     submitResult.mutate(
       { jobId: job._id, result, status, reason: statusReason },
       {
-        onSuccess: () => {
-          log.resultSubmitted(result, reason);
-          // The s3urls are on the job's `statusReason` now, so the server holds the
-          // record and these local copies are duplicates. Cleared WITHOUT a server
-          // delete — the result references them. Leaving them behind is what made
-          // Can't Do Work's photos reappear under Not Hit on the next open.
-          clearResultPhotos();
-          FlashMessage.success('Job resulted', `${result} — ${reason}`);
-          setResultType(null);
-          navigation.goBack();
-        },
-        onError: (err: any) => {
-          log.resultFailed(result, reason);
-          FlashMessage.error(
-            'Could not result job',
-            err?.message || 'Please try again.'
-          );
-        },
+        onSuccess: () => finish('Job resulted', `${result} — ${reason}`),
+        onError: fail('Could not result job'),
       }
     );
   };
@@ -1836,7 +1883,7 @@ export default function InstallerJobDetail() {
         result={resultType}
         // Covers BOTH waits — the photo drain and the result request — so the button
         // never falls back to "Submit Result" in the gap between them.
-        submitting={drainingUploads || submitResult.isPending}
+        submitting={drainingUploads || submitResult.isPending || statusRequest.isPending}
         photos={progress.resultPhotos ?? []}
         uploadingCount={upload.uploadingCount}
         onPhotoCaptured={handleResultPhoto}

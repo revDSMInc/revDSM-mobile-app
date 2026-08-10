@@ -8,6 +8,7 @@ import { InstallerService, type JobPeriod } from '../services/api/installer';
 import type {
   InstallerJob,
   InstallerResultSubmission,
+  StatusRequestPayload,
   DiscrepancyReport,
   JobStatus,
 } from '../config/types/installer';
@@ -102,6 +103,27 @@ export function useSubmitInstallerResult() {
     onSuccess: () => {
       // Only ever submitted from the detail screen, so the schedule is dropped rather
       // than re-requested from there. See `staleInstallerJobs`.
+      staleInstallerJobs(queryClient);
+    },
+  });
+}
+
+/**
+ * Files a "Can't Do Work" status request — `POST installer/v1/{jobId}/status-requests`.
+ *
+ * Separate from `useSubmitInstallerResult` because it is a different KIND of action:
+ * that one transitions the job, this one asks ops to. Nothing is optimistically
+ * applied to the job's status here — the request has to be reviewed first — but the
+ * schedule is still marked stale so the list reflects whatever the server decides on
+ * the next read.
+ */
+export function useSubmitStatusRequest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ jobId, request }: { jobId: string; request: StatusRequestPayload }) =>
+      InstallerService.createStatusRequest(jobId, request),
+    onSuccess: () => {
       staleInstallerJobs(queryClient);
     },
   });

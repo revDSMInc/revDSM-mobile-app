@@ -181,7 +181,9 @@ const buildCandidates = (
  * the tap is actually allowed to check in.
  *
  * `inRange` is deliberately three-valued — `null` means there was nothing to compare
- * against, which must not be presented as "you're too far away".
+ * against, which must not be presented as "you're too far away". It is still a REFUSAL
+ * (the gate below rejects that case), just a different one: the card shows Preview and
+ * the gate's own message names the missing address rather than a distance.
  */
 export interface Proximity {
   /** `true` in range, `false` out of range, `null` when there are no reference points. */
@@ -290,12 +292,20 @@ export const getDeviceFix = async (timeoutMs = 15000): Promise<DeviceFix | null>
  * job when the installer is at the address (the normal case) rather than an office that
  * happens to sit next door.
  *
- * Two deliberate open cases:
+ * Everything that cannot be verified is REFUSED:
+ *  - **No fix** → refused. An unverifiable location is the thing this gate exists to
+ *    catch.
  *  - **No reference points at all** (job never geocoded AND the profile carries no
- *    locatable office) → allowed. There is nothing to compare against, and refusing
- *    would strand a crew over a data gap they cannot fix from a roof.
- *  - **No fix** → refused, since an unverifiable location is the thing this gate exists
- *    to catch.
+ *    locatable office) → refused. This used to be allowed, on the reasoning that
+ *    refusing would strand a crew over a data gap they cannot fix from a roof — but it
+ *    also meant any job the backend failed to geocode (a Plus Code address, say) opened
+ *    from anywhere in the world, which is the rule this gate exists to enforce. The
+ *    office is the fallback for a job with no point of its own; when there is no office
+ *    either, there is no way to establish the crew is anywhere near the work.
+ *
+ *    ⚠️ This makes an ungeocoded job UNOPENABLE until its address is fixed. That is the
+ *    intended trade-off, but it means a bad address is now a field-blocking bug, not a
+ *    cosmetic one.
  */
 export const resolveCheckInEligibility = async (
   job: InstallerJob,
@@ -307,16 +317,19 @@ export const resolveCheckInEligibility = async (
 
   if (!jobCoords && offices.length === 0) {
     console.warn(
-      '[InstallerGeofence] No job coordinates and no locatable office — check-in not gated.'
+      '[InstallerGeofence] No job coordinates and no locatable office — check-in refused.'
     );
     return {
-      allowed: true,
+      allowed: false,
       coords: null,
       matched: null,
       distanceMeters: null,
       accuracyMeters: null,
-      title: '',
-      reason: '',
+      // Names the real problem — the office has to fix the address; nothing the crew
+      // does on site will change the outcome, so "move closer" would waste their time.
+      title: "Can't verify this location",
+      reason:
+        "This job has no map location on file, so we can't confirm you're on site. Ask the office to add the address.",
     };
   }
 

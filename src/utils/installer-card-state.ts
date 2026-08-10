@@ -259,8 +259,10 @@ export interface JobCardStateOptions {
  *   | 8–12   | any      | no      | Preview Appointment   |
  *   | 12–4   | any      | no      | Preview Appointment   |
  *
- * A visit already `inProgress` sits outside the table entirely — it keeps Resume, from
- * wherever the crew is and whatever the clock says, for the reason in `isJobInProgress`.
+ * A visit already `inProgress` is exempt from the WHEN gate only — it keeps Resume
+ * whatever the clock says, since a visit underway cannot be "too early". It is NOT
+ * exempt from the WHERE gate: `openJob` re-runs the geofence on every re-entry, so an
+ * off-site in-progress job reads Preview like any other.
  */
 export const resolveJobCardState = (
   job: InstallerJob,
@@ -317,9 +319,13 @@ export const resolveJobCardState = (
   const resolved = state ?? BY_WORKFLOW_STATE.start;
 
   /**
-   * Both gates below guard the START of a visit and nothing else. A job already underway
-   * is past them — the crew checked in on site to get it there, `openJob` skips both for
-   * it, and greying it to a preview would be the card refusing an action the tap allows.
+   * The WHEN gate guards the START of a visit and nothing else. A job already underway is
+   * past it — a visit in progress cannot be "too early" — and greying it to a preview on
+   * the clock would be the card refusing an action the tap allows.
+   *
+   * ⚠️ This does NOT exempt it from the WHERE gate below. `openJob` re-runs the geofence
+   * on a re-entry, so an off-site in-progress job WILL be refused, and the card has to
+   * say so.
    */
   const startable = !isJobInProgress(job);
 
@@ -346,7 +352,11 @@ export const resolveJobCardState = (
 
   // WHERE. Not at the address and not at an office, so the check-in this tap ends in
   // would be refused — the card must not promise to start a visit it cannot start.
-  if (startable && offSite) return preview;
+  //
+  // Deliberately NOT gated on `startable`: the geofence now runs on re-entry too, so an
+  // in-progress job the crew has walked away from must read Preview rather than offering
+  // a Resume that `openJob` will refuse.
+  if (offSite) return preview;
 
   // Past both gates and on site, so this job DOES open — which makes "Appointment
   // Expired" the wrong words for it. That label read as a refusal to a crew who had

@@ -1988,13 +1988,35 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
         <TouchableOpacity onPress={onBack} style={{ padding: 8, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#DFE3E8', borderRadius: 12, backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
           <Ionicons name="arrow-back" size={18} color="#212B36" />
         </TouchableOpacity>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', height: 40 }}>
-          <View style={{ flex: 1, position: 'relative', flexDirection: 'row', alignItems: 'center', height: '100%' }}>
+        {/*
+          Rollout tab strip geometry — do NOT put a fixed `height` back on this row.
+
+          Reported by a client as "rollouts cut off … the bar adjusts vertically":
+          the calculator titles rendered with their top half sliced away. The strip
+          was `height: 40` with `alignItems: 'center'`, so the horizontal ScrollView
+          was NOT stretched to that 40 — its cross size fell back to its content, and
+          each tab's `height: '100%'` resolved against the ScrollView's content
+          container, which has no definite height, so it collapsed to `auto` and the
+          tab hugged its own text. A label taller than 40 was then centred inside a
+          40pt box and overflowed symmetrically, top and bottom, and got clipped.
+
+          Nothing in the app caps font scaling (`App.tsx` injects a fontFamily only,
+          `allowFontScaling` stays on), so any device with the OS text size raised
+          renders a line box past 40 — which is why this reproduces for the client
+          and not for us at the default scale.
+
+          The strip is now stretch-aligned and `minHeight`, so it GROWS instead of
+          clipping, and the label carries an explicit line box plus a scale cap so it
+          cannot grow without bound.
+        */}
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'stretch', minHeight: 40 }}>
+          <View style={{ flex: 1, position: 'relative', flexDirection: 'row', alignItems: 'stretch' }}>
             <ScrollView
               ref={summaryTabsScrollViewRef}
               horizontal
               showsHorizontalScrollIndicator={false}
               style={{ flex: 1 }}
+              contentContainerStyle={{ alignItems: 'stretch' }}
               scrollEventThrottle={16}
               onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
               onContentSizeChange={(w) => setContentWidth(w)}
@@ -2007,12 +2029,18 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                 // can spot which rollout to review without opening each one.
                 const needsReview = scopeChangedOf(calc);
                 return (
-                  <TouchableOpacity key={calc.id} onPress={() => onTabSelect?.(calc.id)} style={{ flexDirection: 'row', alignItems: 'center', height: '100%', paddingHorizontal: 12, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent' }}>
+                  <TouchableOpacity key={calc.id} onPress={() => onTabSelect?.(calc.id)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch', paddingHorizontal: 12, paddingVertical: 4, borderBottomWidth: 2, borderBottomColor: isActive ? '#16A34A' : 'transparent' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       {hasLockedDrop && (
                         <Ionicons name="lock-closed" size={12} color={isActive ? '#16A34A' : '#94A3B8'} style={{ marginRight: 6 }} />
                       )}
-                      <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: isActive ? '#212B36' : '#637381' }}>{calc.title}</Text>
+                      <Text
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={1.3}
+                        style={{ fontSize: 14, includeFontPadding: false, fontWeight: '900', color: isActive ? '#212B36' : '#637381' }}
+                      >
+                        {calc.title}
+                      </Text>
                       {needsReview && (
                         <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#F59E0B', marginLeft: 6 }} />
                       )}
