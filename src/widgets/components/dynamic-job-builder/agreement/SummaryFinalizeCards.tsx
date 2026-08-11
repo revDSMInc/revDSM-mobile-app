@@ -893,13 +893,13 @@ export function SummaryFinalizeCards({
         // category (rather than folding both cases into one boolean) so that editing
         // the agreement rule here cannot silently take the ✕ off order sheets too.
         //
-        // Agreements: hidden in the CREATE flow only. While the job is being built the
-        // agreement on file is the freshly signed/generated one and the scan sheet is
-        // for ADDING pages, not destroying it. Pages scanned in THIS session keep their
-        // ✕ regardless (`item.isNew` in DocumentScannerModal), so a misscan is never
-        // stuck. The MY DEALS edit flow (`editMode`) keeps delete: the rep is revising a
-        // submitted deal and must be able to swap out a wrong agreement.
-        allowRemoveExisting={scannerCategory === 'agreement' ? editMode : true}
+        // Agreements: hidden in the MY DEALS edit flow only (`editMode`). That deal is
+        // already SUBMITTED, so its agreement is the executed contract — an addendum
+        // adds to it and must never delete it. The JOB BUILDER create flow keeps delete,
+        // because nothing is filed yet and the rep may still be correcting the document.
+        // Pages scanned in THIS session keep their ✕ regardless (`item.isNew` in
+        // DocumentScannerModal), so a misscan is never stuck in either flow.
+        allowRemoveExisting={scannerCategory === 'agreement' ? !editMode : true}
       />
 
       <DynamicAgreementDialog

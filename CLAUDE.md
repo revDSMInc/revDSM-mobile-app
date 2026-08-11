@@ -737,24 +737,40 @@ Both problems are in **`src/widgets/modals/job-builder/DocumentScannerModal.tsx`
   removed here." Defaulting to `true` leaves the other two callers — `LeadCenter/JobDocsSection` and
   the legacy `job-builder/SummarySection` — unchanged.
 
-`SummaryFinalizeCards` passes **`allowRemoveExisting={scannerCategory === 'agreement' ? editMode : true}`**,
-so the ✕ is hidden for exactly one case: an **already-filed agreement in the CREATE flow**. Order
-sheets always keep delete, and so does the **My Deals ▸ Edit Job Build** flow — the rep is revising a
-submitted deal there and must be able to swap out a wrong agreement.
+`SummaryFinalizeCards` passes
+**`allowRemoveExisting={scannerCategory === 'agreement' ? !editMode : true}`**, so the ✕ is hidden for
+exactly one case: an **already-filed agreement in the MY DEALS edit flow** (`DynamicDealEditScreen`).
+
+⚠️ **The flow this applies to was INVERTED on 2026-08-11 — read this before "restoring" it.** The
+original ticket above was written against the Job Builder create flow, so the rule shipped as
+`? editMode :` (hidden while creating). QA then corrected the requirement:
+
+> *"I mistakenly made changes in the Job Builder based on my previous request. Please revert those
+> changes… The only change required is to remove the delete/cross option from Agreements in the My
+> Deals section."*
+
+The reasoning behind the corrected direction is the stronger one: a **My Deals** deal is already
+**submitted**, so its agreement is the *executed contract* — an addendum adds to it and must never
+delete it. In the **Job Builder** create flow nothing is filed yet and the rep may still be correcting
+the document, so delete stays. Hence `!editMode`. The current truth table:
+
+| | create (Job Builder) | edit (My Deals) |
+|---|---|---|
+| **Order Sheets** — filed or new | ✕ shown | ✕ shown |
+| **Agreements** — already filed | ✕ shown | **hidden** |
+| **Agreements** — scanned this session | ✕ shown | ✕ shown |
 
 ⚠️ Write it as that **explicit branch on the category**, not as the equivalent
-`editMode || scannerCategory !== 'agreement'`. The two are logically identical, but QA reported the ✕
+`!editMode || scannerCategory !== 'agreement'`. The two are logically identical, but QA reported the ✕
 missing from ORDER SHEETS against the boolean form, and the flat expression makes it easy to believe —
-and easy to break for real when the agreement rule is next edited. The full truth table is: order
-sheets `true` in all four (create/edit × filed/new); agreements `false` only for create + already-filed.
+and easy to break for real when the agreement rule is next edited.
 
-⚠️ In the create flow this leaves **no delete path for an existing agreement on the Job Builder
-summary screen** — the card header's pencil is the only entry point. That is deliberate and is the
-ticket's intent.
+⚠️ In the My Deals edit flow this leaves **no delete path for an existing agreement** — the card
+header's pencil is the only entry point into the scanner. That is deliberate and is the ticket's intent.
 
 ⚠️ **`editMode` is the create/edit discriminator for this whole component** (it also drives
 `agreementRequired`, `showOrderSheetCard` and `mergeDocSources`). Gating on the scanner category alone
-was the first attempt here and was wrong — it stripped delete from the My Deals edit flow too.
+was an early attempt here and was wrong — it stripped delete from **both** flows.
 
 The other two callers get the PDF-preview fix for free — they had the same blank-tile bug. They filter
 `p.isNew === true` before uploading, so the richer existing-file objects pass straight through.
