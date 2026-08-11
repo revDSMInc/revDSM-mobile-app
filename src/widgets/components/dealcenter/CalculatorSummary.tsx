@@ -526,16 +526,25 @@ export const CalculatorSummary = ({
             <Feather name="arrow-left" size={18} color={colors.text} />
           </TouchableOpacity>
 
+          {/*
+            Stretch-aligned with a MINIMUM height, never a fixed one — a fixed `h-10`
+            here clipped the calculator titles for a client running a raised OS text
+            size. See the long note on the same strip in
+            `screens/DynamicDealCenter/components/RolloutView.tsx` for the mechanism;
+            this is the legacy copy of it and had the identical defect.
+          */}
           <View
             pointerEvents="auto"
-            className={`flex-1 flex-row items-center ${calculators.length > 1 ? 'h-10' : 'h-12'}`}
+            className="flex-1 flex-row items-stretch"
+            style={{ minHeight: calculators.length > 1 ? 40 : 48 }}
           >
-            <View className="flex-1 relative flex-row items-center h-full">
+            <View className="flex-1 relative flex-row items-stretch">
               <ScrollView
                 ref={summaryTabsScrollViewRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 className="flex-1"
+                contentContainerStyle={{ alignItems: 'stretch' }}
                 scrollEventThrottle={16}
                 onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.x)}
                 onContentSizeChange={(w) => setContentWidth(w)}
@@ -552,7 +561,7 @@ export const CalculatorSummary = ({
                       key={idx}
                       onPress={() => setActiveIdx(idx)}
                       onLayout={(e) => onTabLayout(idx, e)}
-                      className={`flex-row items-center h-full px-3 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
+                      className={`flex-row items-center justify-center self-stretch px-3 py-1 border-b-2 ${idx === activeIdx ? 'border-green-500' : 'border-transparent'
                         }`}
                     >
                       <View className="flex-row items-center">
@@ -574,6 +583,8 @@ export const CalculatorSummary = ({
                         )}
                         <Text
                           numberOfLines={1}
+                          maxFontSizeMultiplier={1.3}
+                          style={{ includeFontPadding: false }}
                           className={`text-sm font-black  ${idx === activeIdx ? 'text-text-primary' : 'text-text-secondary'
                             }`}
                         >

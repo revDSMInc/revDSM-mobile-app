@@ -123,19 +123,20 @@ export default function InstallerDashboard() {
    * outside `CHECK_IN_RADIUS_METERS` of both the job's own coordinates and every company
    * office on the profile.
    *
-   * Two cases deliberately return false rather than true, because neither is evidence of
-   * being away from the job, and both would otherwise label a card the crew is standing
-   * in front of as a preview:
-   *  - **no fix yet** — permission still pending, location off, or the first fix hasn't
-   *    landed. Unknown is not "elsewhere".
-   *  - **nothing to compare against** (`inRange === null`) — the job was never geocoded
-   *    and the profile carries no locatable office. The check-in gate lets that through
-   *    for the same reason, so the button must not contradict it.
+   * **No fix yet** deliberately returns false — permission still pending, location off,
+   * or the first fix hasn't landed. Unknown is not "elsewhere", and treating it as such
+   * would label a card the crew is standing in front of as a preview.
+   *
+   * **Nothing to compare against** (`inRange === null` — the job was never geocoded and
+   * the profile carries no locatable office) returns TRUE. It used to return false,
+   * because the check-in gate let that case through and the button must not contradict
+   * the gate; the gate now refuses it, so the button follows. Offering "Start
+   * Appointment" for a tap that can only fail is the worse of the two.
    */
   const isOffSite = useCallback(
     (job: InstallerJob): boolean => {
       if (!deviceCoords) return false;
-      return resolveProximity(deviceCoords, job, user).inRange === false;
+      return resolveProximity(deviceCoords, job, user).inRange !== true;
     },
     [deviceCoords, user]
   );
@@ -209,11 +210,24 @@ export default function InstallerDashboard() {
    *    address or of a company office. Runs before anything is sent, so a refusal costs no
    *    request and never flips the job to `inProgress`.
    *
-   * **Both gate the START of a visit, and nothing else.** A job already `inProgress` is
-   * past them: the crew checked in on site to get it there, and it then has to reopen from
-   * anywhere — the van, a supply run, a corner of the roof where the fix drifts out of the
-   * 20 m radius. Holding them out of their own open job over a GPS reading is a lockout
-   * with no work behind it.
+   * **WHEN gates the START of a visit only.** A job already `inProgress` is past it — a
+   * visit underway cannot be "too early".
+   *
+   * **A manager's `installerBypass` switches BOTH gates off** — either of its flags does,
+   * since an override is one decision about one job (`utils/job-bypass.ts`). It is applied
+   * inside the two helper modules rather than here, so this function reads unchanged and
+   * the card's labels, the tap's refusals and the check-in payload cannot drift apart over
+   * whether an override was in force. A bypassed job also survives a missing fix and an
+   * ungeocoded address: with the radius out of the picture there is nothing left for those
+   * to be evidence about. The server's own 403 is still honoured below — it remains the
+   * authority, and it holds the same override we do.
+   *
+   * **WHERE gates EVERY open**, including a re-entry ("Resume Appointment"). It used to be
+   * skipped for an in-progress job, so that a crew could reopen from the van or a supply
+   * run rather than be locked out of their own job over a GPS reading — but that also
+   * meant a live job opened from anywhere at all, which is the rule the gate exists to
+   * enforce. The lockout risk is the accepted cost; a crew off site now sees Preview and
+   * has to be back in range to re-enter.
    *
    * An already-resulted job skips both as well: the visit is over, so it opens read-only
    * for review with no status change and no geofence — nobody is claiming to be on site.
@@ -230,9 +244,9 @@ export default function InstallerDashboard() {
     // Review comes first: a resulted job is readable whatever its date.
     const readOnly = !!job.resulted;
 
-    // Both gates below guard the START of a visit. This job's visit has already started
-    // — the crew checked in on site to get it here — so neither applies any more and it
-    // reopens from wherever they are. See `isJobInProgress`.
+    // The two WHEN gates below guard the START of a visit. This job's visit has already
+    // started, so neither applies any more and it reopens whatever the clock says. The
+    // WHERE gate further down is NOT skipped for it. See `isJobInProgress`.
     const alreadyStarted = isJobInProgress(job);
 
     // ── WHEN ──────────────────────────────────────────────────────────────────
@@ -325,24 +339,26 @@ export default function InstallerDashboard() {
     // Waiting on a GPS fix is why the card spinner starts before this rather than
     // after: on a cold fix this is the slowest part of opening a job.
     //
-    // Skipped entirely for a job already in progress — it is a re-entry, not a check-in,
-    // and the crew must not be held out of their own open job (nor made to wait on a
-    // cold fix) because they stepped away from the address. The screen's own live watch
-    // still supplies coordinates if it happens to have a fix, so the server keeps its
-    // record of where the re-entry came from; it just isn't waited on.
+    // ⚠️ This runs for a RE-ENTRY too ("Resume Appointment"), not just a first check-in.
+    // It used to be skipped for a job already in progress, on the reasoning that the
+    // crew had proved they were on site to start it and must not be held out of their
+    // own open job. That made an in-progress job openable from anywhere — which is the
+    // rule this gate exists to enforce, so the skip is gone: every open of a live job
+    // re-proves the crew is at the address or at a company office.
+    //
+    // Cost, deliberately accepted: a crew that steps away mid-job (materials run, lunch,
+    // a fix that will not settle on a roof) is refused until they are back in range, and
+    // every re-entry now waits on a cold GPS fix. The two WHEN gates above are still
+    // skipped for a re-entry — a visit already underway cannot be "too early".
     let eligibility;
-    if (alreadyStarted) {
+    try {
+      eligibility = await resolveCheckInEligibility(job, user);
+    } catch (err) {
+      // A crash in the gate must not become a lockout — the backend re-checks the
+      // same radius from the payload below, so failing open here is recoverable
+      // while failing closed leaves a crew stuck on site with no way in.
+      console.warn('[InstallerJob] Geofence check failed, allowing check-in:', err);
       eligibility = null;
-    } else {
-      try {
-        eligibility = await resolveCheckInEligibility(job, user);
-      } catch (err) {
-        // A crash in the gate must not become a lockout — the backend re-checks the
-        // same radius from the payload below, so failing open here is recoverable
-        // while failing closed leaves a crew stuck on site with no way in.
-        console.warn('[InstallerJob] Geofence check failed, allowing check-in:', err);
-        eligibility = null;
-      }
     }
 
     if (eligibility && !eligibility.allowed) {
@@ -355,13 +371,13 @@ export default function InstallerDashboard() {
       return;
     }
 
-    // Where the tap happened, for the server's own check. Omitted when the gate let
-    // this through without a fix (job with no coordinates and no locatable office).
+    // Where the tap happened, for the server's own check. Omitted only when the gate
+    // threw and was failed open, since there is then no fix to report.
     //
-    // A re-entry sends NO location, exactly as the read-only review above doesn't:
-    // reopening a job already in progress is not a claim to be standing at it, and
-    // handing the server a far-off position to validate is the one way this tap could
-    // still be refused on distance — which is the whole thing being lifted here.
+    // A re-entry now sends its location too. It used to be omitted deliberately, so the
+    // server could not refuse the re-entry on distance — that exemption went with the
+    // client-side one above: the position is the evidence, and the backend re-checking
+    // it is the point of sending it.
     const checkInPayload: InstallerCheckInPayload | undefined = eligibility?.coords
       ? {
           address: job.fullAddress,

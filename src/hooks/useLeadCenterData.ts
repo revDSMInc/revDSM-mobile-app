@@ -80,8 +80,21 @@ export const useLeadCenterData = (
           setLead((prev: any) => ({ ...prev, ...workData }));
         }
       }
-    } catch (err) {
-      console.error('[LeadCenter] Refresh failed:', err);
+    } catch (err: any) {
+      // This runs from `useFocusEffect` on EVERY focus, and it is a background
+      // refresh of a lead that is already on screen — losing it costs the rep
+      // nothing, they keep the record they navigated in with. `normalizeApiError`
+      // only attaches `httpStatus` when a response came back, so its absence means
+      // the request never reached the API (no connectivity, VPN down, or the
+      // configured `ENV.API_URL` host isn't listening). That is an environment
+      // condition, not a fault in this screen, so it must not `console.error` —
+      // in dev that throws the full-screen red LogBox over a working Lead Center.
+      // A genuine API failure still logs at error level.
+      if (err?.httpStatus === undefined) {
+        console.warn('[LeadCenter] Refresh skipped — API unreachable:', err?.message || err);
+      } else {
+        console.error('[LeadCenter] Refresh failed:', err);
+      }
     } finally {
       setIsRefreshing(false);
     }

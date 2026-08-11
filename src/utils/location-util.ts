@@ -97,16 +97,20 @@ export const getScheduledDateTime = (lead: any): Date | null => {
 };
 
 /**
- * Web parity: job-card-utils.js isGpsBypassActive()
- * Manager-applied override that REPLACES the physical GPS/geofence check.
+ * Manager-applied overrides — re-exported so the sales callers keep importing them from
+ * here, while the rule itself lives in ONE place.
+ *
+ * Web parity: job-card-utils.js `isGpsBypassActive()` / `isEarlyStartBypassActive()`.
+ * `gpsBypass` REPLACES the physical geofence check; `earlyStart` REPLACES the time-window
+ * gate. The shared reader also accepts the installer payload's `installerBypass` spelling
+ * of the same object — see `utils/job-bypass.ts`.
  */
-export const isGpsBypassActive = (lead: any): boolean => lead?.bypass?.gpsBypass === true;
-
-/**
- * Web parity: job-card-utils.js isEarlyStartBypassActive()
- * Manager-applied override that REPLACES the time-window gate.
- */
-export const isEarlyStartBypassActive = (lead: any): boolean => lead?.bypass?.earlyStart === true;
+export {
+  isGpsBypassActive,
+  isEarlyStartBypassActive,
+  gpsBypassReason,
+  earlyStartBypassReason,
+} from './job-bypass';
 
 /**
  * Web parity: job-card-utils.js isWithinTimeWindow()

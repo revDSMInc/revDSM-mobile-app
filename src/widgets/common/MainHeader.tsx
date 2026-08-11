@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../hooks/useAuth';
+import { useUserRole } from '../../hooks/useUserRole';
 import { useSecureLogo } from '../../hooks/useSecureLogo';
 import { useTheme } from '../../theme/ThemeProvider';
 import { AccountPopover } from '../components/AccountPopover';
@@ -66,6 +67,12 @@ export function Header({
   // presigned per session. Falls back to the rep's initials when neither resolves.
   const secureLogo = useSecureLogo();
 
+  // The brand button is a "go home" affordance, but `Leads` is not registered in
+  // the installer stack (`navigation/index.tsx`), so tapping it from an installer
+  // screen threw instead of navigating.
+  const { isInstaller } = useUserRole();
+  const homeRoute = isInstaller ? 'InstallerDashboard' : 'Leads';
+
   const activeOnNavigate = parentOnNavigate || ctx?.onNavigate;
   const activeOnFilterPress = parentOnFilterPress || ctx?.onFilterPress;
   const activeOnListPress = parentOnListPress || ctx?.onListPress;
@@ -96,7 +103,7 @@ export function Header({
         }}
       >
         <View className="flex-row items-center">
-          <TouchableOpacity onPress={() => onNavigate('Leads')} style={styles.logo}>
+          <TouchableOpacity onPress={() => onNavigate(homeRoute)} style={styles.logo}>
             <Logo />
           </TouchableOpacity>
         </View>

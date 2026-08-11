@@ -22,6 +22,7 @@ import type {
   InstallerStoredRecords,
   InstallerUploadFile,
   StatusReasonPayload,
+  StatusRequestPayload,
 } from '../../config/types/installer';
 // No job payload is served from mocks any more — `getJob` fetches the real thing, so a
 // stand-in job can no longer reach the screen. The remaining `INSTALLER_USE_MOCKS`
@@ -104,6 +105,14 @@ export const InstallerEndpoints = {
    * Takes `{ statusReason }`; the job returns to `inProgress`.
    */
   reset: (jobId: string) => `installer/v1/${jobId}/reset`,
+  /**
+   * Status requests — the "Can't Do Work" flow. Live.
+   *
+   * POST `{ reason, images[] }`. A request, not a transition: it asks for the job to
+   * be stood down and leaves the status alone until ops acts, which is why it is its
+   * own collection endpoint and not a `status` on `update`.
+   */
+  statusRequests: (jobId: string) => `installer/v1/${jobId}/status-requests`,
 };
 
 /**
@@ -419,6 +428,11 @@ export const normalizeInstallerJob = (raw: any): InstallerJob => {
     location: raw?.location,
     status,
     workflowState: raw?.workflowState,
+    // `installerBypass` on the installer rows; `bypass` is the same object under the
+    // name the sales endpoints use, accepted so a job fetched through either shape
+    // reaches the gates. Left undefined when neither is present — the gates test the
+    // flags, not the object, but an empty `{}` would still be a lie about the payload.
+    installerBypass: raw?.installerBypass ?? raw?.bypass ?? undefined,
     companyName: raw?.companyName,
     resulted: RESULTED_STATUSES.includes(status.toLowerCase()),
     notes: normalizeJobNotes(raw?.note ?? raw?.notes),
@@ -553,6 +567,36 @@ export const InstallerService = {
     traceResponse('Job status', res.data);
     const data = res.data?.data ?? res.data;
     return data?._id ? normalizeInstallerJob(data) : null;
+  },
+
+  /**
+   * Files a status request — "Can't Do Work".
+   *
+   * `POST installer/v1/{jobId}/status-requests` with `{ reason, images[] }`.
+   *
+   * ⚠️ This REPLACED the `PUT …/update/{jobId}` + `{ status: 'cantDoWork' }` transition
+   * that used to back this button. Do not send both: the request is the record ops
+   * reviews, and setting the status here as well would stand the job down before
+   * anyone had looked at it. "Not Hit" is unaffected and still uses `setJobStatus`.
+   *
+   * Returns nothing — the response shape is not part of the contract, same as
+   * `resetJob`. The caller reports success from the absence of a throw.
+   */
+  createStatusRequest: async (
+    jobId: string,
+    request: StatusRequestPayload
+  ): Promise<void> => {
+    traceRequest(
+      'Status request',
+      'post',
+      InstallerEndpoints.statusRequests(jobId),
+      request
+    );
+    const res: AxiosResponse<any> = await api.post(
+      InstallerEndpoints.statusRequests(jobId),
+      request
+    );
+    traceResponse('Status request', res.data);
   },
 
   /**

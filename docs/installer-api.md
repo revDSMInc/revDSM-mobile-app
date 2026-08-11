@@ -24,10 +24,11 @@ every screen, including a read-only review, is filled from a response.
 | 3 | `PUT` | `installer/v1/{jobId}/reset` | Reset — reopen a job |
 | 4 | `PUT` | `installer/v1/{jobId}/images` | Photo capture (multipart) |
 | 5 | `DELETE` | `installer/v1/{jobId}/images` | Removing a captured photo |
-| 6a | `PUT` | `installer/v1/update/{jobId}` | Status transitions — start, Can't Do Work, Not Hit |
+| 6a | `PUT` | `installer/v1/update/{jobId}` | Status transitions — start, Not Hit |
 | 6b | `PATCH` | `installer/v1/update/{jobId}` | Step data + completion sign-off |
-| 7 | `POST` | `url/v1/secure/multiple` | Rep photos + job packet (shared endpoint) |
-| 8 | `POST` | `user-activity-log/v1/create` | Activity logging (shared endpoint) |
+| 7 | `POST` | `installer/v1/{jobId}/status-requests` | **Can't Do Work** — files a stand-down request |
+| 8 | `POST` | `url/v1/secure/multiple` | Rep photos + job packet (shared endpoint) |
+| 9 | `POST` | `user-activity-log/v1/create` | Activity logging (shared endpoint) |
 
 > **Retired:** `PUT installer/v1/update-job-status/{jobId}` is gone. Transitions are now
 > a `status` on #6a, and Reset has its own endpoint (#3).
@@ -46,6 +47,27 @@ the tab labels**: the installer reads "Today" and "Tomorrow".
 Which tab a job was tapped in does not decide whether it opens; its own `leadDate` does.
 Today or earlier opens (subject to the geofence); a future date is refused with a
 "not scheduled yet" message (`utils/installer-schedule.ts`).
+
+**`installerBypass` overrides all of that for one job.** A manager files it when the
+automatic checks are getting a job wrong, and **either flag being true opens the job with
+no location, arrival-window or date check at all**:
+
+```json
+"installerBypass": {
+  "gpsBypass": true,
+  "gpsBypassReason": "Job address incorrect in system (installer is at correct physical location, system has wrong coordinates)",
+  "earlyStart": true,
+  "earlyStartReason": "Weather/safety — moving install up to avoid conditions later"
+}
+```
+
+Both flags can be set at once, or just one. The two are the *reason* an override was filed,
+not two separately unlockable halves of the check — the gating rule is
+`isJobBypassActive` in `utils/job-bypass.ts`, and the flags and reasons are attached to the
+`job_started` activity log so a bypassed check-in is distinguishable from an ordinary one.
+An override that has been switched off arrives as the same object with both flags false and
+gates normally: the flags decide, never the object's presence. The backend still applies its
+own check on the check-in request and remains the authority — a 403 there is honoured.
 
 **Response** `{ data: { jobs[], pagination, summaryCounts } }` — each row normalized by
 `normalizeInstallerJob`. The list row carries identity, address, arrival window and
@@ -242,18 +264,18 @@ writes its data.** This is the only write route for a job — it replaced the ol
 
 ```json
 { "status": "inProgress" }                            ← job start
-{ "status": "cantDoWork",
-  "statusReason": { "reason": "Site unsafe",
-                    "images": [{ "s3url": "…", "bucketName": "…" }] } }
 { "status": "notHit",
   "statusReason": { "reason": "Customer was not home" } }
 ```
 
-The status is a **wire code, not the button label**: the installer reads "Can't Do
-Work", the request carries `cantDoWork` (`RESULT_STATUS_CODE` maps them). The reason is
+The status is a **wire code, not the button label**: the installer reads "Not Hit", the
+request carries `notHit` (`RESULT_STATUS_CODE` maps them). The reason is
 **`statusReason`** — an object with `reason` + optional `images[]`, the same shape as
-Reset in §3. Images are mandatory for Can't Do Work (enforced in the modal), optional
-elsewhere.
+Reset in §3.
+
+> ⚠️ **Can't Do Work no longer comes through here.** It files a status request (§7)
+> instead of transitioning the job. Sending `{ "status": "cantDoWork" }` as well would
+> stand the job down before anyone had reviewed the request.
 
 Workflow statuses: `scheduled | inProgress | completed | onHold`. Reset does **not**
 come through here — §3. Starting a job is **not blocking**: if this fails, the job
@@ -317,7 +339,45 @@ back to its untouched value, including the four photo arrays emptied.
 
 ---
 
-### 7 · Signed URLs (shared)
+### 7 · Status requests — Can't Do Work
+
+```
+POST installer/v1/{jobId}/status-requests
+```
+```json
+{ "reason": "Existing structure is unsafe.",
+  "images": [
+    { "s3url": "images/jobs/…/photo1.jpeg",
+      "bucketName": "np-revdsm-staging",
+      "timestampTaken": "2026-08-10T10:00:00.000Z",
+      "coordinates": { "latitude": 40.7128, "longitude": -74.006 } }
+  ] }
+```
+
+The **Can't Do Work** button. A *request* for the job to be stood down, not a
+transition: the job's status is untouched until the office acts on it, which is why
+this is its own collection and not a `status` on §6a. It replaced the
+`{ "status": "cantDoWork", "statusReason": … }` PUT — do not send both.
+
+`images` are the result photos the modal makes mandatory, after their upload (§4) has
+returned an `s3url`. Richer than §6a's `statusReason.images`: each carries
+**`timestampTaken`** and **`coordinates`** as well, because someone off-site has to
+adjudicate the claim and needs to know when and where each shot was taken. Both come
+straight off the `CapturedPhoto` (`takenAt` / `coordinates`) — nothing extra is
+captured for this. `coordinates` is sent as `null`, not omitted, when the device could
+not produce a fix.
+
+Photo uploads are drained before the request goes out, so evidence lands with the
+record. If every attached photo failed to upload the request is not sent at all — the
+installer is asked to retake rather than filing an unevidenced claim.
+
+- Service: `InstallerService.createStatusRequest(jobId, request)`
+- Hook: `useSubmitStatusRequest`
+- Caller: `handleSubmitResult` in `src/screens/Installer/JobDetail.tsx`
+
+---
+
+### 8 · Signed URLs (shared)
 
 ```
 POST url/v1/secure/multiple
@@ -339,7 +399,7 @@ Service: `LeadService.getSecureUrls(filePaths)`
 
 ---
 
-### 8 · Activity log (shared)
+### 9 · Activity log (shared)
 
 ```
 POST user-activity-log/v1/create
