@@ -109,6 +109,9 @@ interface RolloutViewProps {
   pricing: DealPricing;
   /** Lowe's leads get the Lowe's-only plan groups + `lowes_ach` default. */
   isLowesLead?: boolean;
+  /** Rehash: the Result Lead button shows no price, since none is carried forward
+   *  from the original appointment (web `QuoteResultCard.isRehashed`). */
+  isRehashed?: boolean;
   /** Lead id — threaded into the rollout/drop activity logs (web parity). */
   leadId?: string;
   /** Appointment id — the CalcTab does NOT carry it, so the rollout/drop logs must
@@ -735,10 +738,11 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, onDismissScopeWarning, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, onDismissScopeWarning, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
+  isRehashed?: boolean;
   pricing: DealPricing;
   verticals: CalculatorSchema[];
   pricingConfig?: PricingConfig | null;
@@ -1047,10 +1051,28 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const srVetDiscount = msrp * (seniorVetPct / 100);
   const preOrderDiscountVal = msrp * (discountPct / 100);
   const preOrderMonthly = rolloutResult.monthly;
+  /**
+   * Is the ROLLOUT END PRICE box locked? Narrower than `isLocked` below, on purpose.
+   *
+   * On a rehash the rollout really is still confirmed — the badge, the drops, the
+   * discount tiles and the Jobs-Built button all stay exactly as they are — but the
+   * price is the one thing the second visit exists to change. So this single control
+   * unlocks and nothing else does, matching the calculator step, where the locked
+   * receipt likewise exposes the end price and only the end price.
+   *
+   * Re-pricing does NOT un-confirm the calculator: `onPriceChange` persists the new
+   * figure against a rollout that stays confirmed, so the rep never has to re-run
+   * Confirm Rollouts to keep going.
+   */
+  const priceLocked = !!calculator.isRolloutConfirmed && !isRehashed;
+
   // Before lock: the breakdown auto-shows as soon as a valid end price is entered.
   // After lock: it's collapsed behind the end-price box's chevron (web parity —
   // `(price>0 && !error && !confirmed) || (confirmed && isRolloutExpanded)`).
-  const showResult = calculator.isRolloutConfirmed ? showLockedDetails : (priceNum > 0 && !priceErr);
+  // Keyed on `priceLocked`, not `isRolloutConfirmed`: the chevron that toggles
+  // `showLockedDetails` lives ON the locked price box, so once that box is an input
+  // (rehash) the breakdown would be stuck collapsed with nothing left to open it.
+  const showResult = priceLocked ? showLockedDetails : (priceNum > 0 && !priceErr);
 
   const toggleDefault = async (next: boolean) => {
     try {
@@ -1477,8 +1499,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
 
         {/* 5. Rollout End Price — old UI style */}
         <View style={{ marginHorizontal: 14, marginBottom: 4 }}>
-          <Text style={{ fontSize: 10, fontWeight: '900', color: calculator.isRolloutConfirmed ? '#16A34A' : '#F59E0B', marginBottom: 8, marginLeft: 4, letterSpacing: 1 }}>ROLLOUT END PRICE</Text>
-          {calculator.isRolloutConfirmed ? (
+          <Text style={{ fontSize: 10, fontWeight: '900', color: priceLocked ? '#16A34A' : '#F59E0B', marginBottom: 8, marginLeft: 4, letterSpacing: 1 }}>ROLLOUT END PRICE</Text>
+          {priceLocked ? (
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => setShowLockedDetails((v) => !v)}
@@ -1787,9 +1809,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             >
               <Ionicons name="document-text-outline" size={16} color="#EA580C" style={{ marginBottom: 2 }} />
               <Text style={{ fontSize: 12, fontWeight: '900', color: '#EA580C', marginBottom: 1 }}>Result Lead</Text>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: '#EA580C' }}>
-                {finalPrice > 0 ? fmt(finalPrice) : ''}
-              </Text>
+              {/* Web parity (QuoteResultCard.js:964 `{!isRehashed && …}`): on a rehash
+                  the price isn't carried forward from the original appointment — the rep
+                  enters it in the result modal — so the button shows no locked figure. */}
+              {!isRehashed && (
+                <Text style={{ fontSize: 14, fontWeight: '900', color: '#EA580C' }}>
+                  {finalPrice > 0 ? fmt(finalPrice) : ''}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -1863,7 +1890,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   );
 }
 
-export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPriceCommit, onDismissScopeWarning, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
+export function RolloutView({ calculators, verticals, pricingConfig, pricing, isLowesLead = false, isRehashed = false, leadId, appointmentId, onBack, onConfirmRollouts, onResultJob, onPriceCommit, onDismissScopeWarning, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange, onRolloutsConfirmedDone, activeTabId, onTabSelect }: RolloutViewProps) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -2078,6 +2105,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               initialPrice={effectivePrice(selectedCalc)}
               categoryMeta={categoryMeta}
               isLowesLead={isLowesLead}
+              isRehashed={isRehashed}
               leadId={leadId}
               appointmentId={appointmentId}
               pricing={pricing}

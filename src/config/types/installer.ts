@@ -274,6 +274,31 @@ export type JobResetStatus = 'reset';
 
 export type JobStatus = JobWorkflowStatus | JobResultStatus | JobResetStatus;
 
+/**
+ * Manager-applied overrides for one job — `installerBypass` on the `my-jobs` row.
+ *
+ * **Either flag being true opens the job outright**, with no location, arrival-window or
+ * date check at all. They are the two reasons an override gets filed, not two separately
+ * unlockable halves of the check:
+ *
+ *   - `gpsBypass`   — the location can't be judged. Seen in the field for a multi-unit
+ *     property the radius can't resolve to a unit, and for an address whose stored
+ *     coordinates are wrong while the crew is at the right house.
+ *   - `earlyStart`  — the schedule shouldn't hold, e.g. weather moving an install up.
+ *
+ * Both can be set at once. The gating rule lives in `utils/job-bypass.ts`
+ * (`isJobBypassActive`); nothing else should read this field to decide whether a job opens.
+ *
+ * The reasons are the manager's own words, kept for the activity log rather than shown on
+ * the card, and are null whenever the matching flag is off.
+ */
+export interface InstallerBypass {
+  gpsBypass?: boolean;
+  gpsBypassReason?: string | null;
+  earlyStart?: boolean;
+  earlyStartReason?: string | null;
+}
+
 export interface InstallerJob {
   _id: string;
   /** Mongo id of the lead. Not the human-facing number — see `leadDisplayId`. */
@@ -303,6 +328,12 @@ export interface InstallerJob {
   status?: JobStatus | string;
   /** Position in the installer workflow, e.g. "start". */
   workflowState?: string;
+  /**
+   * Manager overrides that switch off the check-in gates for this job. Absent on jobs
+   * nobody has overridden, which is the normal case — see `utils/job-bypass.ts`, which
+   * is the only thing that should read it.
+   */
+  installerBypass?: InstallerBypass;
   companyName?: string;
   notes?: JobNote[];
   contract?: ContractDetails;

@@ -37,6 +37,10 @@ import {
   deserializeDynamicJobStateFromStorage,
   hydrateJobStateForPersistence,
 } from '../../utils/dynamic-job-builder/engine/dynamic-job-state-storage';
+import {
+  extractCalculatorOutcome,
+  extractSavedJobBuildState,
+} from './utils/saved-job-build';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -71,6 +75,15 @@ interface DynamicJobBuilderScreenProps {
   // upsertPortalJobBuilder instead of the outcome PUT, and does NOT re-run the
   // /job-builder POST on complete (editing doesn't re-create the job).
   mode?: 'new' | 'edit';
+  /**
+   * Web `skipDraftState` (JobBuilderContext) / `jobBuilderData.startFresh`.
+   *
+   * REHASH only: the rep was offered the calculator's existing build and chose to
+   * rebuild from scratch, so the saved outcome is still fetched (documents, and the
+   * record the save writes back to) but its `dynamicJobState` is NOT applied.
+   * Meaningless outside a rehash, where there is no prompt and reuse is the behaviour.
+   */
+  startFresh?: boolean;
   // Pre-deserialized job state for edit mode (parent loaded + deserialized it).
   initialJobState?: any;
   // Web `portalUnrestrictedEdit`: unlock every tab, show all fields/sections
@@ -149,6 +162,7 @@ function DynamicJobBuilderInner({
   onJobComplete,
   onGoBack,
   mode = 'new',
+  startFresh = false,
   initialJobState: initialJobStateProp,
   portalUnrestrictedEdit: portalUnrestrictedEditProp,
   hideAllocationTrackers: hideAllocationTrackersProp,
@@ -181,31 +195,25 @@ function DynamicJobBuilderInner({
   // displays. Documents live under `leadOutcomeDocuments`. 404 = fresh start.
   const calcId = (calculatorResultData as any)?.calculatorId;
   const { data: outcomeData, isFetched: isOutcomeFetched } = useQuery({
-    queryKey: ['leadOutcome', leadId, calcId],
+    queryKey: ['leadOutcome', leadId, calcId, startFresh],
     queryFn: async () => {
       try {
         const res = await LeadService.getLeadOutcomeByCalculator(leadId!, calcId);
-        const body = res.data;
-        // Unwrap exactly like web's extractCalculatorOutcome
-        // (calculator-outcome-api.js): data.outcome ?? outcome ?? data ?? body.
-        const outcome =
-          body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
-
-        // Web contract (JobBuilderContext.loadCalculatorDraft): the serialized
-        // dynamic state lives at outcome.jobBuilder.dynamicJobState. Tolerate older
-        // mobile saves that stored the raw runtime state directly under jobBuilder.
-        const savedState =
-          outcome?.jobBuilder?.dynamicJobState ??
-          outcome?.dynamicJobState ??
-          outcome?.jobBuilder ??
-          null;
+        // Unwrap + locate the saved state through the shared helper, so the rehash
+        // "Use Existing / Start Fresh" pre-check keys off exactly the same rule.
+        const outcome = extractCalculatorOutcome(res.data);
+        const savedState = extractSavedJobBuildState(outcome);
 
         // Deserialize storage-keys → runtime ids with the SAME config web used to
         // serialize (deserializeDynamicJobStateFromStorage). Idempotent for legacy
         // raw saves — keys without the `__` storage marker pass through unchanged —
         // so both web-written and old-mobile-written state rehydrate correctly.
+        //
+        // `startFresh` (web `skipDraftState`) drops it: on a rehash the rep answered
+        // "Start Fresh", so the outcome is still read — the documents query below and
+        // the record we save back to stay linked — but the prior build is NOT applied.
         const jobState =
-          savedState && typeof savedState === 'object'
+          savedState && typeof savedState === 'object' && !startFresh
             ? deserializeDynamicJobStateFromStorage(savedState, initialConfig)
             : undefined;
 

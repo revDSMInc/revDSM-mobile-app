@@ -8,6 +8,11 @@ import { ENV } from '../../config/env';
 export const LeadEndpoints = {
   create: 'lead/v1/create',
   salesPortal: 'demo/v1/leads/sales-portal',
+  // Rehashed leads for the signed-in rep. A DIFFERENT service prefix to everything
+  // else in this file (`rehash/` not `lead/`), and the rep is taken from the JWT —
+  // there is no repId parameter, unlike `salesPortal`. Web ref:
+  // `endpoints.rehash.leads` in `src/utils/axios.js`.
+  rehashLeads: 'rehash/rep/v1/leads',
   work: (leadId: string) => `lead/v1/${leadId}/work`,
   jobBuilder: (leadId: string) => `lead/v1/${leadId}/job-builder`,
   outcome: (leadId: string) => `lead/v1/${leadId}/outcome`,
@@ -135,6 +140,42 @@ export const LeadService = {
   getSalesLeads: (repId: string, params?: any): Promise<AxiosResponse<any>> => {
     const query = new URLSearchParams({ repId, ...params }).toString();
     return api.get(`${LeadEndpoints.salesPortal}?${query}`);
+  },
+  /**
+   * Rehashed leads for the signed-in rep — web parity with `useGetRehashLeads`
+   * (`src/api/leads.js`).
+   *
+   * `page`/`limit` are sent on EVERY request, defaulted the way web defaults them, so
+   * the server never has to fall back to its own page size. The remaining filters are
+   * omitted when unset rather than sent empty: `?date=` is a filter for the empty
+   * string, not the absence of one.
+   *
+   * `companyId` travels as a HEADER, not a query param — the same convention
+   * `getLeadDraft` uses.
+   */
+  getRehashLeads: (
+    params?: {
+      page?: number;
+      limit?: number;
+      date?: string;
+      timeSlot?: string;
+      office?: string;
+      status?: string;
+    },
+    companyId?: string
+  ): Promise<AxiosResponse<any>> => {
+    const search = new URLSearchParams();
+    search.set('page', String(params?.page ?? 1));
+    search.set('limit', String(params?.limit ?? 200));
+    if (params?.date) search.set('date', params.date);
+    if (params?.timeSlot) search.set('timeSlot', params.timeSlot);
+    if (params?.office) search.set('office', params.office);
+    if (params?.status) search.set('status', params.status);
+
+    return api.get(
+      `${LeadEndpoints.rehashLeads}?${search.toString()}`,
+      companyId ? { headers: { companyId } } : undefined
+    );
   },
   workLead: (leadId: string, userId: string): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.work(leadId), { userId, workStartedBy: userId }),

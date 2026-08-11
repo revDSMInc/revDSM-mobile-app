@@ -12,6 +12,9 @@ import { RolloutView } from './RolloutView';
 import { ResultJobModal } from './ResultJobModal';
 import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
 import { DynamicDealEditScreen } from './DynamicDealEditScreen';
+import { BuildFromExistingModal } from './BuildFromExistingModal';
+import { extractCalculatorOutcome, hasSavedJobBuild } from '../utils/saved-job-build';
+import { createRehashDraftLatch, latchRehashDrafts, releaseRehashDrafts, isRehashDraftCalculator } from '../utils/rehash-draft-calculators';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { buildSectionLabelMap } from '../utils/item-format';
 import { LeadService } from '../../../services/api/leads';
@@ -59,6 +62,14 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const [resultModal, setResultModal] = useState<{ visible: boolean; calculatorId?: string; resultType?: 'sale' | 'demo'; price?: number; paymentMethod?: string; downPayment?: number }>({ visible: false });
   const [calculatorResultData, setCalculatorResultData] = useState<any>(null);
   const [currentCalculatorId, setCurrentCalculatorId] = useState<string | undefined>();
+  // Rehash only (web `pendingJobBuild` / `jobBuilderData.startFresh`): whether the
+  // reuse-or-rebuild prompt is up, and the rep's answer. Inert on a normal lead.
+  // Kept as ONE state object deliberately — every hook in this component sits after
+  // the edit-mode branch above, so each additional one widens that compromise.
+  const [rehashBuild, setRehashBuild] = useState<{ prompt: boolean; startFresh: boolean }>({
+    prompt: false,
+    startFresh: false,
+  });
 
   const {
     config: jobBuilderConfig,
@@ -107,6 +118,26 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   } = useDynamicCalculators(lead, verticals);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  /**
+   * REHASH: which calculators the rep may still BUILD in this session — a rehash that
+   * arrived with nothing scoped opens the entry form instead of an empty locked
+   * receipt. The rule, and why it has to be latched rather than re-read from the live
+   * entries, is documented on `rehash-draft-calculators.ts`.
+   *
+   * Latched during render, not in an effect: an effect lands one frame late and the
+   * rep would see the locked receipt flash before the form replaced it. The latch is
+   * idempotent, so a repeated or discarded render reaches the same verdict.
+   *
+   * One ref holds both sets for the reason given on `rehashBuild` above — every hook
+   * here sits after the edit-mode early return, so each extra one widens that
+   * compromise.
+   */
+  const rehashLatchRef = useRef(createRehashDraftLatch());
+  if (lead?.isRehashed === true && !isCalcLoading) latchRehashDrafts(rehashLatchRef.current, tabs);
+  // Only ever true on a rehash — the latch stays empty on every other lead.
+  const isRehashDraftTab = isRehashDraftCalculator(rehashLatchRef.current, activeTab?.id);
+
   // sectionId → label for the Result Lead Job Summary rows (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
@@ -140,6 +171,26 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     handleResultJob(optIn.calculatorId, 'sale', optIn.price, optIn.paymentMethod, optIn.downPayment);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route?.params?.resultOptIn, isCalcLoading, tabs]);
+
+  /**
+   * Rendered alongside BOTH result-modal mounts (calculator step and rollout step) —
+   * `handleResultConfirm` can fire from either, so a single mount would leave the
+   * prompt invisible on one of the two paths and the rep stuck on the result step.
+   * Inert unless `rehashBuild.prompt`, which only a rehash can set.
+   */
+  const buildFromExistingPrompt = (
+    <BuildFromExistingModal
+      visible={rehashBuild.prompt}
+      onReuse={() => {
+        setRehashBuild({ prompt: false, startFresh: false });
+        setFlowStep('jobBuilder');
+      }}
+      onStartFresh={() => {
+        setRehashBuild({ prompt: false, startFresh: true });
+        setFlowStep('jobBuilder');
+      }}
+    />
+  );
 
   const handleResultConfirm = useCallback((data: any) => {
     setResultModal({ visible: false });
@@ -183,7 +234,46 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         calculatorType: 'dynamic',
       }).catch(() => {});
     }
-    setFlowStep('jobBuilder');
+    /**
+     * Web `TabbedCalculator.startJobBuild`.
+     *
+     * Opening the job builder normally reuses any saved build for the calculator
+     * without saying so. On a REHASH the rep is picking up a lead they already
+     * worked, so that reuse has to be their explicit call — ask before applying it.
+     *
+     * The extra GET is web's too (its `loadCalculatorDraft` re-reads the same endpoint
+     * a moment later). On any non-404 failure it falls through and opens as normal: a
+     * lookup problem must never block the rep from building.
+     *
+     * Inlined rather than lifted into its own `useCallback` for the reason on
+     * `rehashBuild` above — the deps it would need (`lead`, `currentCalculatorId`) are
+     * already this callback's.
+     */
+    const openJobBuilder = (startFresh: boolean) => {
+      setRehashBuild({ prompt: false, startFresh });
+      setFlowStep('jobBuilder');
+    };
+
+    if (lead?.isRehashed !== true || !currentCalculatorId || !leadIdForProgress) {
+      openJobBuilder(false);
+      return;
+    }
+
+    LeadService.getLeadOutcomeByCalculator(leadIdForProgress, currentCalculatorId)
+      .then((res: any) => {
+        if (hasSavedJobBuild(extractCalculatorOutcome(res.data))) {
+          setRehashBuild({ prompt: true, startFresh: false });
+        } else {
+          openJobBuilder(false);
+        }
+      })
+      .catch((e: any) => {
+        // 404 means there's no prior build to offer — expected, not a failure.
+        if (e?.httpStatus !== 404) {
+          console.warn('[DynamicDealCenter] existing job-build check failed:', e?.message || e);
+        }
+        openJobBuilder(false);
+      });
   }, [currentCalculatorId, tabs, lead, user, appointmentId]);
 
   const handleJobBuilderBack = useCallback(() => {
@@ -248,6 +338,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         dealCenterData={consolidatedDealCenterData}
         calculatorResultData={calculatorResultData}
         leadId={lead?._id || lead?.leadId || lead?.id}
+        // Rehash + "Start Fresh": load the outcome but not its saved build.
+        startFresh={rehashBuild.startFresh}
         onGoBack={handleJobBuilderBack}
         onJobComplete={handleJobBuilderComplete}
       />
@@ -266,10 +358,21 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           pricingConfig={pricingConfig}
           pricing={pricing}
           isLowesLead={lead?.lowesLead === true}
+          isRehashed={lead?.isRehashed === true}
           leadId={lead?._id || lead?.leadId || lead?.id}
           appointmentId={appointmentId || undefined}
           onBack={() => setFlowStep('calculator')}
-          onConfirmRollouts={handleConfirmRollouts}
+          onConfirmRollouts={(confirmed) => {
+            // A rehash draft the rep has just priced and confirmed is an ordinary
+            // confirmed calculator now, so it locks on the way back to the calculator
+            // step. Driven by the confirm ACTION, not by re-reading `isRolloutConfirmed`
+            // — on a rehash that flag can already be true on arrival, so it cannot mark
+            // the transition. Inline (not a `useCallback`) because `RolloutView` holds
+            // this in a ref, and because another hook here would widen the compromise
+            // noted on `rehashBuild`.
+            releaseRehashDrafts(rehashLatchRef.current, confirmed.map((c) => c.id));
+            handleConfirmRollouts(confirmed);
+          }}
           onResultJob={handleResultJob}
           // Persist the entered end price live (survives back-to-calculator edits) and
           // let the rep dismiss the "job scope changed" warning once reviewed.
@@ -308,6 +411,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onClose={() => setResultModal({ visible: false })}
           onConfirm={handleResultConfirm}
         />
+        {buildFromExistingPrompt}
       </>
     );
   }
@@ -379,7 +483,38 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onEntryChange={handleEntryChange}
           onClearSection={handleClearSection}
           totals={activeTab?.totals || { cost: 0, par: 0, retail: 0 }}
-          readOnly={activeTab?.isRolloutConfirmed || false}
+          /**
+           * A REHASH opens on the locked receipt view whenever the calculator ALREADY
+           * holds a job scope, whatever the stored `isRolloutConfirmed` says.
+           *
+           * A rehash is a second run at a job that was already scoped and sold: the
+           * rep is renegotiating the PRICE, not re-measuring the house. Dropping them
+           * into the product-entry form (what mobile did) invites edits to gutter /
+           * LeafFilter quantities that would silently re-scope the original sale.
+           *
+           * Not gated on `isRolloutConfirmed` because that flag is the ORIGINAL
+           * appointment's and cannot be relied on to survive the rehash — `isRehashed`
+           * is the fact we actually have.
+           *
+           * It is NOT sufficient on its own, though: a rehash whose calculator was
+           * never built (`isRehashDraftTab` — see the latch above) has nothing to
+           * protect and must open editable, or the rep is stuck on an empty $0 receipt
+           * with no way to enter the job. That case is the only way a rehash reaches
+           * the entry form; once the calculator carries a scope it locks as before.
+           *
+           * ⚠️ The draft verdict out-ranks `isRolloutConfirmed` TOO, which is why it
+           * wraps the whole expression rather than sitting beside the rehash arm: a
+           * rehash can inherit a `true` flag on a calculator holding no dynamic scope,
+           * and that stale confirmation is what pinned the rep to the locked $0 receipt.
+           * A confirm made in THIS session re-locks it — `releaseRehashDrafts` on the
+           * rollout's `onConfirmRollouts` below.
+           *
+           * The end price stays LOCKED here, exactly as on any confirmed calculator.
+           * Re-pricing a rehash happens one screen along, on the rollout step (the blue
+           * grid button), where `PremiumQuoteCard.priceLocked` opens that one field —
+           * so there is a single place a price is entered rather than two.
+           */
+          readOnly={!isRehashDraftTab && (activeTab?.isRolloutConfirmed || lead?.isRehashed === true)}
           price={activeTab?.price || 0}
           drops={activeTab?.dropPrice || []}
           tabs={tabs}
@@ -419,6 +554,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onClose={() => setResultModal({ visible: false })}
           onConfirm={handleResultConfirm}
         />
+        {buildFromExistingPrompt}
     </SafeAreaView>
   );
 }

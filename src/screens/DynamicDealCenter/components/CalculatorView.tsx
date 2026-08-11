@@ -17,6 +17,7 @@ import { JobTrackerButton } from './JobTrackerButton';
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
+import { isFullPackageSelection, FULL_PACKAGE_INCLUDES } from '../utils/tab-naming';
 import { useAuth } from '../../../hooks/useAuth';
 
 interface CalculatorTabLite {
@@ -24,6 +25,8 @@ interface CalculatorTabLite {
   title: string;
   isRolloutConfirmed?: boolean;
   paymentMethod?: string;
+  /** Live field values — read to decide whether this tab is a full package. */
+  entries?: Record<string, CalculatorEntry>;
 }
 
 interface CalculatorViewProps {
@@ -577,6 +580,7 @@ export function CalculatorView({
   // sectionId → label so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)".
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
+  const [packageInfoVisible, setPackageInfoVisible] = useState(false);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; tabId: string; name: string }>({ visible: false, tabId: '', name: '' });
   const [selectedVerticalId, setSelectedVerticalId] = useState<string | undefined>(verticals[0]?.id);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -655,7 +659,12 @@ export function CalculatorView({
     // remain untitled and display only their overflow menu.
     name: /^\d+$/.test(t.title) ? '' : t.title,
     isRolloutConfirmed: t.isRolloutConfirmed,
-  })), [tabs]);
+    // Gutter + Soffit + Trim wrap [Fascia] all entered → the tab shows a package
+    // icon + ⓘ instead of the `G+VMax+S+FWrap` letters. Recomputed from each tab's
+    // OWN live entries, so it appears/disappears as the rep types — including on the
+    // tabs they aren't currently looking at.
+    isFullPackage: isFullPackageSelection(t.entries || {}, verticals),
+  })), [tabs, verticals]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
   const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
@@ -771,6 +780,7 @@ export function CalculatorView({
                 tabsScrollViewRef={tabsScrollRef}
                 scrollXRef={scrollXRef}
                 getIsDuplicate={() => false}
+                onShowPackageInfo={() => setPackageInfoVisible(true)}
               />
             </ScrollView>
           </View>
@@ -787,6 +797,31 @@ export function CalculatorView({
           </View>
         </View>
       </View>
+
+      {/* Full-package contents — opened by the ⓘ on a package tab. A Modal, not an
+          inline popover: the tab bar is a horizontal ScrollView and anything drawn
+          inside it gets clipped at the row's bounds. */}
+      <Modal transparent visible={packageInfoVisible} animationType="fade" onRequestClose={() => setPackageInfoVisible(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.35)', justifyContent: 'flex-end' }} onPress={() => setPackageInfoVisible(false)}>
+          {/* Sits just above the tab bar it belongs to, rather than centred, so the
+              relationship to the tapped tab stays obvious. */}
+          <Pressable style={{ marginHorizontal: 24, marginBottom: 110, backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18, borderWidth: 1, borderColor: '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 20, elevation: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+              <Ionicons name="cube" size={18} color="#B45309" style={{ marginRight: 8 }} />
+              <Text style={{ flex: 1, fontSize: 15, fontWeight: '800', color: '#1C252E' }}>Full Package Includes:</Text>
+              <TouchableOpacity onPress={() => setPackageInfoVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="close" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+            {FULL_PACKAGE_INCLUDES.map((item) => (
+              <View key={item} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, color: '#637381', marginRight: 8 }}>•</Text>
+                <Text style={{ fontSize: 14, color: '#637381' }}>{item}</Text>
+              </View>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Tab context menu (duplicate / rename / delete) */}
       <Modal transparent visible={menuIdx !== null} animationType="fade" onRequestClose={() => setMenuIdx(null)}>

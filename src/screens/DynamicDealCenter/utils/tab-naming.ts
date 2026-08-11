@@ -265,6 +265,56 @@ export function getLiveSchemaBaseName(
   return parts.join('+');
 }
 
+// ─── Full Package ─────────────────────────────────────────────────────────────
+
+/**
+ * The keys a calculator must carry to BE a full package: gutter + soffit + the
+ * Fascia tab's trim-wrap field + a LeafFilter product.
+ *
+ * Expressed as TAB KEYS rather than field ids on purpose — they are what
+ * `resolveFieldTabKey` already derives from the server-authored label + category,
+ * so a renamed or duplicated field still resolves (`Trim wrap [Fascia]` →
+ * `FWrap` via the Fascia resolver's `/trim\s*wrap/i`) and the rule cannot drift
+ * away from the name it replaces.
+ *
+ * The LeafFilter slot is a CHOICE, matching the tooltip's `(Versa OR VMax)`. It
+ * accepts the generic-catalog mains (`Guard` / `SpecGuard`) as well, because
+ * `resolveGuardCategoryKey` names the same product that way in a micro-mesh catalog —
+ * requiring the literal Versa keys would silently exclude those companies.
+ *
+ * ⚠️ `LF Misc` / `GuardMisc` do NOT satisfy it: those are standalone add-ons (corners,
+ * sawzall, remove protection…), not the guard product itself, so a calculator carrying
+ * only an add-on is not a package.
+ */
+const FULL_PACKAGE_REQUIRED_KEYS = ['G', 'S', 'FWrap'];
+const FULL_PACKAGE_GUARD_KEYS = ['Versa', 'VMax', 'Guard', 'SpecGuard'];
+
+/** The tooltip's bullet list. Lives here so it can never drift from the rule above. */
+export const FULL_PACKAGE_INCLUDES = ['Gutter', 'Soffit', 'FWrap', '(Versa OR VMax)'];
+
+/**
+ * Does this calculator's live entries make up a full package?
+ *
+ * Derived from the same filled-field pass as `getLiveSchemaBaseName`, so it tracks
+ * the rep's typing in real time and flips the moment the last of the three fields
+ * gets a value — the badge replaces the `G+VMax+S+FWrap` name rather than being a
+ * stored flag anyone has to maintain.
+ */
+export function isFullPackageSelection(
+  entries: Record<string, CalculatorEntry>,
+  schemas?: CalculatorSchema[]
+): boolean {
+  if (!schemas || schemas.length === 0) return false;
+  const parts = collectTabKeys(schemas, (f) => {
+    const entry = entries?.[f.id];
+    return !!entry && Number(entry.inputValue) > 0;
+  });
+  return (
+    FULL_PACKAGE_REQUIRED_KEYS.every((key) => parts.includes(key)) &&
+    FULL_PACKAGE_GUARD_KEYS.some((key) => parts.includes(key))
+  );
+}
+
 export interface TabNameInput {
   id: string;
   entries: Record<string, CalculatorEntry>;

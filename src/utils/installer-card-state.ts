@@ -19,6 +19,7 @@
  */
 
 import { isBeforeArrivalWindow } from './installer-schedule';
+import { isJobBypassActive } from './job-bypass';
 import type { InstallerJob } from '../config/types/installer';
 import type { TranslationKey } from '../i18n/translations';
 
@@ -263,6 +264,14 @@ export interface JobCardStateOptions {
  * whatever the clock says, since a visit underway cannot be "too early". It is NOT
  * exempt from the WHERE gate: `openJob` re-runs the geofence on every re-entry, so an
  * off-site in-progress job reads Preview like any other.
+ *
+ * **A manager's bypass removes the three middle branches entirely** — Upcoming, too early
+ * and off site (`utils/job-bypass.ts`) — for the same reason the branches exist at all: the
+ * card must say what the tap will do, and neither gate refuses a bypassed job any more. So
+ * an overridden job reads Start (or Resume) from the moment it appears, on either tab, from
+ * anywhere. Its `workflowState` still decides which of those it says, and a resulted job is
+ * still resulted: the override lifts the gates on opening a job, not the record of one
+ * that is already over.
  */
 export const resolveJobCardState = (
   job: InstallerJob,
@@ -303,7 +312,11 @@ export const resolveJobCardState = (
     };
   }
 
-  if (isUpcoming) {
+  // The Upcoming tab is a preview of work that isn't due — unless a manager has overridden
+  // this job, in which case it falls through to the ordinary branches below and reads
+  // Start. The TAB is what forces this branch; the job's own date already answers "not
+  // future" under the same override (`isFutureDatedJob`).
+  if (isUpcoming && !isJobBypassActive(job)) {
     return {
       key: 'UPCOMING',
       color: JOB_CARD_COLORS.UPCOMING,
@@ -356,7 +369,11 @@ export const resolveJobCardState = (
   // Deliberately NOT gated on `startable`: the geofence now runs on re-entry too, so an
   // in-progress job the crew has walked away from must read Preview rather than offering
   // a Resume that `openJob` will refuse.
-  if (offSite) return preview;
+  //
+  // The bypass is checked here rather than by the caller so every consumer of this
+  // function is covered by one rule, and because `offSite` stays an honest answer either
+  // way — the crew really is outside the radius; it just no longer decides this job.
+  if (offSite && !isJobBypassActive(job)) return preview;
 
   // Past both gates and on site, so this job DOES open — which makes "Appointment
   // Expired" the wrong words for it. That label read as a refusal to a crew who had

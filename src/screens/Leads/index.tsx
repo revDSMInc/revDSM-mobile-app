@@ -25,6 +25,7 @@ import { logSalesMapView } from '../../utils/activity-log/map-activity-log';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useLeadsData } from '../../hooks/useLeadsData';
+import { useRehashLeads } from '../../hooks/useRehashLeads';
 import { useWorkLeadMutation } from '../../hooks/useLeadMutation';
 import LeadCreateModal from '../../widgets/modals/LeadCreate';
 import ZoneCanvasserMap from '../../widgets/modals/ZoneCanvasserMap';
@@ -113,7 +114,14 @@ export default function LeadsPage() {
     null
   );
 
+  // Rehash is served by its OWN endpoint (`rehash/rep/v1/leads`), not by a `status`
+  // filter on the sales-portal list — see `useRehashLeads`.
+  const isRehash = currentTab === 'rehash';
+
   const apiParams = useMemo(() => {
+    // Unused while the Rehash tab is open: the sales-portal query is disabled below,
+    // exactly as web nulls its SWR key for this tab. The object is still returned so
+    // the query key stays stable across the tab switch rather than churning.
     if (currentTab === 'rehash') return {};
     if (currentTab === 'issued') return { status: 'lfLead', period: issuedSubTab };
     if (currentTab === 'selfGen') {
@@ -125,7 +133,32 @@ export default function LeadsPage() {
     return {};
   }, [currentTab, issuedSubTab, selfGenSubTab]);
 
-  const { leads, loading, refresh, removeLocalLead } = useLeadsData(apiParams);
+  const { leads, loading, refresh, removeLocalLead } = useLeadsData(apiParams, {
+    enabled: !isRehash,
+  });
+  const {
+    rehashLeads,
+    loading: rehashLoading,
+    refresh: refreshRehash,
+    removeLocalLead: removeLocalRehashLead,
+  } = useRehashLeads(isRehash);
+
+  // The rest of the screen — search, count chip, list, refresh, archive/delete — is
+  // written against these three, so the Rehash tab reuses all of it instead of getting
+  // a parallel branch that can drift.
+  const sourceLeads = isRehash ? rehashLeads : leads;
+  const isListLoading = isRehash ? rehashLoading : loading;
+  const refreshActive = useCallback(
+    () => (isRehash ? refreshRehash() : refresh()),
+    [isRehash, refreshRehash, refresh]
+  );
+  // A card archived or deleted from the Rehash tab lives in the rehash cache, not the
+  // sales-portal one — pruning the wrong list would leave the row on screen.
+  const removeActiveLead = useCallback(
+    (id: string) => (isRehash ? removeLocalRehashLead(id) : removeLocalLead(id)),
+    [isRehash, removeLocalRehashLead, removeLocalLead]
+  );
+
   const [refreshing, setRefreshing] = useState(false);
 
   React.useEffect(() => {
@@ -238,18 +271,20 @@ export default function LeadsPage() {
       );
 
       // Re-fetch leads so workflowState (resume/preview/complete) is in sync
-      // with whatever changed in the LeadCenter (footstep) session
-      refresh().catch((err) => console.warn('[Leads] Focus refresh error:', err));
+      // with whatever changed in the LeadCenter (footstep) session. Only the list
+      // actually on screen — refetching the disabled one would defeat the point of
+      // disabling it.
+      refreshActive().catch((err) => console.warn('[Leads] Focus refresh error:', err));
 
       return () => { cancelled = true; };
-    }, [refresh])
+    }, [refreshActive])
   );
 
   const filteredLeads = useMemo(() => {
-    if (!leads) return [];
+    if (!sourceLeads) return [];
     const q = searchQuery.toLowerCase();
 
-    const filtered = leads.filter((l) => {
+    const filtered = sourceLeads.filter((l) => {
       const name = `${l.customerDetails?.firstName || ''} ${l.customerDetails?.lastName || ''
         }`.toLowerCase();
       // Coerce to string before toLowerCase — leadId/leadCode/fullAddress can come
@@ -267,8 +302,13 @@ export default function LeadsPage() {
     });
 
     // Web parity (job-list.js): the Archived + Sold self-gen tabs are shown
-    // as-returned by the API (not time-sorted).
-    if (currentTab === 'selfGen' && (selfGenSubTab === 'archived' || selfGenSubTab === 'sold')) {
+    // as-returned by the API (not time-sorted). Rehash likewise — web's `rehashJobs`
+    // only maps and search-filters, and the rehash service returns its own ordering,
+    // which a client-side sort by lead time would throw away.
+    if (
+      isRehash ||
+      (currentTab === 'selfGen' && (selfGenSubTab === 'archived' || selfGenSubTab === 'sold'))
+    ) {
       return filtered;
     }
     // Otherwise sort by time (earliest first)
@@ -277,7 +317,7 @@ export default function LeadsPage() {
       const timeB = getScheduledDateTime(b)?.getTime() || 0;
       return timeA - timeB;
     });
-  }, [leads, searchQuery, currentTab, selfGenSubTab]);
+  }, [sourceLeads, searchQuery, currentTab, selfGenSubTab, isRehash]);
 
   useFocusEffect(
     useCallback(() => {
@@ -304,11 +344,11 @@ export default function LeadsPage() {
       triggerThresholdCrossing();
     }
     setRefreshing(true);
-    const refreshPromise = refresh();
+    const refreshPromise = refreshActive();
     const delayPromise = new Promise<void>((resolve) => setTimeout(resolve, 1000));
     await Promise.all([refreshPromise, delayPromise]);
     setRefreshing(false);
-  }, [refresh]);
+  }, [refreshActive]);
 
   const handleActionPress = async (item: Lead) => {
     setSelectedLead(item);
@@ -512,21 +552,19 @@ export default function LeadsPage() {
         </View>
       )}
 
-      {currentTab === 'rehash' ? (
-        <View className="flex-1 items-center pt-[30%]">
-          <Clipboard className="text-text-secondary" />
-          <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
-            No jobs available
-          </Text>
-        </View>
-      ) : loading ? (
+      {isListLoading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={colors.primary.main} size="large" />
         </View>
       ) : (
         <FlatList
           data={filteredLeads}
-          keyExtractor={(item) => item._id}
+          // Web's rehash list falls back the same way (`_id || id || leadId ||
+          // jobNumber`) — a rehash row is not guaranteed to carry the sales-portal's
+          // `_id`, and an undefined key silently collapses the list to one row.
+          keyExtractor={(item, index) =>
+            String(item._id ?? (item as any).id ?? item.leadId ?? index)
+          }
           windowSize={15}
           initialNumToRender={8}
           maxToRenderPerBatch={10}
@@ -546,8 +584,8 @@ export default function LeadsPage() {
                 navigation.navigate('Pitchbook', { lead: item });
               }}
               onActionPress={() => handleActionPress(item)}
-              onArchiveSuccess={(id) => removeLocalLead(id)}
-              onDeleteSuccess={(id) => removeLocalLead(id)}
+              onArchiveSuccess={(id) => removeActiveLead(id)}
+              onDeleteSuccess={(id) => removeActiveLead(id)}
               userLocation={userLocation}
             />
           )}
@@ -567,7 +605,10 @@ export default function LeadsPage() {
             <View className="flex-1 items-center justify-center pt-[30%]">
               <Clipboard className="text-text-secondary" />
               <Text className="text-base text-center mt-4" style={{ color: colors.textSecondary }}>
-                No jobs available
+                {/* Web says "No rehash leads found" here — worth keeping distinct, so an
+                    empty Rehash tab reads as "you have none" rather than as the tab
+                    having failed to load. */}
+                {isRehash ? 'No rehash leads found' : 'No jobs available'}
               </Text>
             </View>
           }
@@ -590,7 +631,13 @@ export default function LeadsPage() {
         visible={createModalVisible}
         onClose={() => setCreateModalVisible(false)}
         onSuccess={(createdLead, leadType) => {
-          onRefresh();
+          // A created lead is always Issued or Self-Gen, never Rehash — and the tab it
+          // belongs to is switched to on the next line. Invalidating by PREFIX marks
+          // every sales-portal list stale, including the one currently disabled behind
+          // the Rehash tab, so the tab being switched to refetches instead of serving a
+          // cache that predates the lead. (`refresh()` would only cover the key mounted
+          // right now, which may not be the destination.)
+          queryClient.invalidateQueries({ queryKey: ['leads'] });
           if (leadType === 'selfGen') {
             setCurrentTab('selfGen');
             setSelfGenSubTab('today');

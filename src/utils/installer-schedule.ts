@@ -17,9 +17,18 @@
  * gate is **one-sided**: a job scheduled 8AM today is still today's job at 5PM. The
  * window having *passed* is a matter for `workflowState: 'expired'`, not for locking the
  * crew out; only being **early** refuses. Equally, midnight tonight is already tomorrow.
+ *
+ * **A manager's bypass switches this whole file off for one job** — either flag of it, not
+ * just `earlyStart`; the override means "let this crew in", and it is not the phone's place
+ * to hold half of it back (`utils/job-bypass.ts`). It is applied at the bottom, in the two
+ * predicates themselves, rather than at each call site, so every consumer — the card's
+ * label, the tap's refusal — agrees for free. That agreement is the property that matters:
+ * a card offering "Start Appointment" for a tap that then refuses is worse than either gate
+ * on its own.
  */
 
 import type { InstallerJob } from '../config/types/installer';
+import { isJobBypassActive } from './job-bypass';
 
 const startOfLocalDay = (date: Date): number =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
@@ -32,12 +41,16 @@ const startOfLocalDay = (date: Date): number =>
  * source of `leadDate`, and it arrives with an offset (`2026-07-30T09:00:00+05:00`), so
  * parsing lands it in the device's own timezone — which is the crew's, and the right one
  * to compare a working day against.
+ *
+ * A bypassed job answers false whatever the date says: the override is what decides, and
+ * a job dated ahead is the case it is most often filed for — weather moving an install up
+ * is one of the reasons in hand, and that job is by definition not today's.
  */
 export const isFutureDatedJob = (
   job?: InstallerJob | null,
   now: Date = new Date()
 ): boolean => {
-  if (!job?.leadDate) return false;
+  if (!job?.leadDate || isJobBypassActive(job)) return false;
 
   const scheduled = new Date(job.leadDate);
   if (Number.isNaN(scheduled.getTime())) return false;
@@ -199,11 +212,15 @@ export const arrivalWindowStart = (job?: InstallerJob | null): Date | null => {
  *
  * Also one-sided about data: no window, no date, or a shape that didn't parse all return
  * false. Only a window we positively understand can refuse a tap.
+ *
+ * A bypassed job returns false as well — nothing about the clock refuses it.
  */
 export const isBeforeArrivalWindow = (
   job?: InstallerJob | null,
   now: Date = new Date()
 ): boolean => {
+  if (isJobBypassActive(job)) return false;
+
   const start = arrivalWindowStart(job);
   return !!start && now.getTime() < start.getTime();
 };

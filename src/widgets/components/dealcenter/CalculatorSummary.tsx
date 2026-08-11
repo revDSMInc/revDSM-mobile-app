@@ -145,6 +145,8 @@ export const CalculatorSummary = ({
   const { colors, isDark } = useTheme();
   const { user, refreshUser } = useAuth();
   const isLowesLead = lead?.lowesLead === true;
+  // Web `QuoteResultCard.js:103`. See `Lead.isRehashed`.
+  const isRehashed = lead?.isRehashed === true;
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -1610,13 +1612,17 @@ export const CalculatorSummary = ({
                         <Ionicons name="document-text-outline" size={16} color="orange" />
                         <Text className="text-orange-600 font-black text-xs ml-2">Result Lead</Text>
                       </View>
-                      <Text className="text-orange-600 font-black text-sm">
-                        {fCurrency(
-                          droppedPrices.length > 0
-                            ? droppedPrices[droppedPrices.length - 1].price
-                            : activeCalc.price
-                        )}
-                      </Text>
+                      {/* Web parity (QuoteResultCard.js:964): no carried-forward price on
+                          a rehash — the rep enters it in the result modal. */}
+                      {!isRehashed && (
+                        <Text className="text-orange-600 font-black text-sm">
+                          {fCurrency(
+                            droppedPrices.length > 0
+                              ? droppedPrices[droppedPrices.length - 1].price
+                              : activeCalc.price
+                          )}
+                        </Text>
+                      )}
                     </TouchableOpacity>
                   )}
                 </View>

@@ -295,6 +295,12 @@ export function buildConfigStorageIndex(config: any) {
   const verticalFromStorage = new Map<string, string>();
   const tabToStorage = new Map<string, string>();
   const tabFromStorage = new Map<string, string>();
+  // Canonical ids + per-vertical tab slugs, used ONLY to recover a saved key whose
+  // exact form is no longer in the config (see `resolveVerticalIdFromStorage` /
+  // `resolveTabIdFromStorage`). Never used when the exact key still matches.
+  const verticalIds = new Set<string>();
+  const tabIds = new Set<string>();
+  const tabsByVertical = new Map<string, Array<{ id: string; slug: string }>>();
   const sectionToStorage = new Map<string, string>();
   const sectionFromStorage = new Map<string, string>();
   const fieldToStorage = new Map<string, string>();
@@ -307,6 +313,9 @@ export function buildConfigStorageIndex(config: any) {
     const verticalStorageKey = buildStorageKey(verticalId, verticalSlug);
     verticalToStorage.set(verticalId, verticalStorageKey);
     verticalFromStorage.set(verticalStorageKey, verticalId);
+    verticalIds.add(verticalId);
+
+    const verticalTabs: Array<{ id: string; slug: string }> = [];
 
     (vertical.tabs || []).forEach((tab: any) => {
       const tabId = String(tab.id);
@@ -322,6 +331,8 @@ export function buildConfigStorageIndex(config: any) {
 
       tabToStorage.set(tabId, tabStorageKey);
       tabFromStorage.set(tabStorageKey, tabId);
+      tabIds.add(tabId);
+      verticalTabs.push({ id: tabId, slug: storageKeySlug(tabStorageKey) });
 
       const sectionSlugUsed = new Set<string>();
 
@@ -362,6 +373,8 @@ export function buildConfigStorageIndex(config: any) {
         });
       }
     });
+
+    tabsByVertical.set(verticalId, verticalTabs);
   });
 
   return {
@@ -373,7 +386,78 @@ export function buildConfigStorageIndex(config: any) {
     sectionFromStorage,
     fieldToStorage,
     fieldFromStorage,
+    verticalIds,
+    tabIds,
+    tabsByVertical,
   };
+}
+
+/** The part of a storage key after the `__` marker (`vertical_1__gutters` → `gutters`). */
+function storageKeySlug(storageKey: string) {
+  const marker = storageKey.indexOf('__');
+  return marker === -1 ? '' : storageKey.slice(marker + 2);
+}
+
+/**
+ * Recover a canonical id from a saved storage key whose exact form is no longer in
+ * the config, by taking the part BEFORE the `__` marker and accepting it only if it
+ * is a real id in the current config.
+ *
+ * Membership is checked against the config rather than a string prefix (`field_`,
+ * `section_`, …) because vertical and tab ids carry no common prefix, and inventing
+ * an id that isn't in the config would file the state under a key nothing reads —
+ * the exact failure this recovery exists to prevent.
+ */
+function recoverCanonicalId(storageKey: string, knownIds: Set<string>): string | undefined {
+  if (knownIds.has(storageKey)) return storageKey; // legacy raw (pre-storage-key) save
+  const canonical = storageKeySlug(storageKey) ? storageKey.slice(0, storageKey.indexOf('__')) : '';
+  return canonical && knownIds.has(canonical) ? canonical : undefined;
+}
+
+/**
+ * Saved vertical key → runtime vertical id.
+ *
+ * ⚠️ The stored key is `${vertical.id}__${slug(vertical.label)}`, so it embeds the
+ * LABEL. Rename a product in the job-builder config and every previously-saved build
+ * stops matching: the old key isn't in `verticalFromStorage`, and the pre-existing
+ * `.get(key) || key` fallback then filed the whole vertical under the raw storage key
+ * — which no renderer reads, so the restored build came up completely blank while the
+ * data sat in memory under an unreadable id. Sections and fields already recovered
+ * this way (`resolveCanonicalKeyFromStorage`); verticals and tabs did not.
+ */
+function resolveVerticalIdFromStorage(storageKey: string, index: any): string {
+  return (
+    index.verticalFromStorage.get(storageKey) ||
+    recoverCanonicalId(storageKey, index.verticalIds) ||
+    storageKey
+  );
+}
+
+/**
+ * Saved tab key → runtime tab id, resolved WITHIN its vertical.
+ *
+ * Two recoveries, because a tab key takes one of two shapes (see the index build):
+ *  - `buildStorageKey(tabId, label)` — id-prefixed, so the id recovery finds it;
+ *  - `buildTabKey(productId, productCategory)` — carries the PRODUCT id and the
+ *    category slug, and **no tab id at all**. A changed `productId` is unrecoverable
+ *    by prefix, so we match the category slug against the vertical's own tabs. Scoped
+ *    to the resolved vertical so two products sharing a category name (both having a
+ *    "Gutters" tab) can never cross-restore.
+ */
+function resolveTabIdFromStorage(storageKey: string, verticalId: string, index: any): string {
+  const exact = index.tabFromStorage.get(storageKey);
+  if (exact) return exact;
+
+  const byId = recoverCanonicalId(storageKey, index.tabIds);
+  if (byId) return byId;
+
+  const slug = storageKeySlug(storageKey);
+  if (slug) {
+    const match = (index.tabsByVertical.get(verticalId) || []).find((t: any) => t.slug === slug);
+    if (match) return match.id;
+  }
+
+  return storageKey;
 }
 
 function remapFieldKeyedObject(obj: any, index: any, { reverse = false } = {}) {
@@ -681,13 +765,12 @@ export function deserializeDynamicJobStateFromStorage(saved: any, config: any) {
       return;
     }
 
-    const canonicalVerticalId =
-      index.verticalFromStorage.get(verticalKey) || verticalKey;
+    const canonicalVerticalId = resolveVerticalIdFromStorage(verticalKey, index);
 
     runtime[canonicalVerticalId] = {};
 
     Object.entries(verticalState || {}).forEach(([tabKey, tabState]) => {
-      const canonicalTabId = index.tabFromStorage.get(tabKey) || tabKey;
+      const canonicalTabId = resolveTabIdFromStorage(tabKey, canonicalVerticalId, index);
 
       runtime[canonicalVerticalId][canonicalTabId] = remapTabStateFromStorage(tabState, index);
     });
