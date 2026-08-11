@@ -1,5 +1,5 @@
 # ─── Environment Variables ────────────────────────────────────────────────────
-.env.*.local
+*.env.*.local
 
 # ─── macOS ────────────────────────────────────────────────────────────────────
 .DS_Store
@@ -78,4 +78,3 @@ __tests__/
 !.yarn/versions
 yarn.lock
 branch_structure.json
-config.bat
