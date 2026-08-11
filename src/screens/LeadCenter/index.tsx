@@ -1447,7 +1447,15 @@ export default function LeadCenterPage() {
                 }}
                 onShowDynamicDealCenter={() => navigation.navigate('DynamicDealCenter', { lead })}
                 onShowInvestmentCenter={() => navigation.navigate('InvestmentCenter', { lead })}
-                onShowPitchbook={() => navigation.navigate('Pitchbook', { lead })}
+                // `book` is set when the rep picked a portal-authored pitch book from
+                // the card's list; without it the screen serves the bundled deck.
+                onShowPitchbook={(book?: { bookId: string; bookName?: string }) =>
+                  navigation.navigate('Pitchbook', {
+                    lead,
+                    bookId: book?.bookId,
+                    bookName: book?.bookName,
+                  })
+                }
                 onShowRooflineDeck={() => navigation.navigate('RooflineDeck', { lead })}
                 onShowInspectionGrid={() => toggleModal('showInspectionGrid', true)}
                 onOpenPdf={handleOpenPdf}

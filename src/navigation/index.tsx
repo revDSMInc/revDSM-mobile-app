@@ -67,7 +67,10 @@ export type RootStackParamList = {
     previewImages?: any;
   };
   MapDetail: { currentLead?: any };
-  Pitchbook: { lead: any };
+  // `bookId` selects a PORTAL-AUTHORED pitch book (Lead Center card → book list);
+  // omit it for the bundled deck. `bookName` is only a title placeholder shown
+  // while the book is still loading — the fetched name wins once it lands.
+  Pitchbook: { lead: any; bookId?: string; bookName?: string };
   RooflineDeck: { lead: any };
   DealCenter: { lead: any };
   ForgotPassword: undefined;

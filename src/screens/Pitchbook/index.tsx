@@ -42,6 +42,7 @@ import { downloadPdfToDevice } from '../../utils/download-utils';
 import { storage } from '../../utils/storage';
 import { triggerLightTap, prepareHaptic } from '../../utils/haptics';
 import { useSecureUrls } from '../../hooks/useSecureUrls';
+import { usePitchBookDeck } from '../../hooks/usePitchBooks';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
@@ -49,7 +50,11 @@ import { logEvent } from '../../services/api/LoggerService';
 const { width } = Dimensions.get('window');
 
 // Persisted slide position per lead, so the pitchbook resumes where the rep left off.
-const progressKey = (leadId?: string | null) => `pitchbook-progress-${leadId || 'default'}`;
+// A portal-authored book is scoped by its id as well: its sections are unrelated to
+// the bundled deck's (and to another book's), so one shared key would restore a rep
+// into a tab that doesn't exist in the deck they just opened.
+const progressKey = (leadId?: string | null, bookId?: string | null) =>
+  `pitchbook-progress-${leadId || 'default'}${bookId ? `-${bookId}` : ''}`;
 
 const DEFAULT_CATEGORIES = [
   { id: 'leafFilter_story', label: 'LeafFilter Story' },
@@ -69,28 +74,58 @@ export default function PitchbookScreen() {
   // `pitchBookImages` below shadow the module defaults so all downstream reads are
   // deck-aware with no further changes. No schema/API — the choice is companyId only.
   const isGreenRooflines = (user?.companyId || '') === GREEN_ROOFLINES_COMPANY_ID;
-  const CATEGORIES = useMemo(
-    () => (isGreenRooflines ? GREEN_ROOFLINES_CATEGORIES : DEFAULT_CATEGORIES),
-    [isGreenRooflines]
-  );
-  const pitchBookImages: Record<string, Record<string, any>> = useMemo(
-    () => (isGreenRooflines ? greenRooflinesImages : pitchBookImagesDefault),
-    [isGreenRooflines]
-  );
-  const defaultCategoryId = isGreenRooflines ? 'green_rooflines' : 'leafFilter_story';
   const insets = useSafeAreaInsets();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const isLandscape = winWidth > winHeight;
   const landscapeRightInset = Platform.OS === 'android' ? Math.max(insets.right || 0, 48) : (insets.right || 0);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute();
-  const { lead } = (route.params as any) || {};
+  const { lead, bookId, bookName } = (route.params as any) || {};
   const leadId = lead?._id || lead?.id || null;
+
+  // A `bookId` param means the rep picked a PORTAL-AUTHORED book from the Lead
+  // Center card; without one the screen keeps its previous behaviour and serves the
+  // bundled deck. `deck.images` / `deck.categories` arrive in exactly the static
+  // decks' shape, so everything below reads from one pair of variables either way.
+  const {
+    data: remoteDeck,
+    isLoading: isDeckLoading,
+    isError: isDeckError,
+    refetch: refetchDeck,
+  } = usePitchBookDeck(bookId);
+  const isRemoteDeck = !!bookId;
+
+  const CATEGORIES = useMemo(
+    () =>
+      isRemoteDeck
+        ? remoteDeck?.categories || []
+        : isGreenRooflines
+        ? GREEN_ROOFLINES_CATEGORIES
+        : DEFAULT_CATEGORIES,
+    [isRemoteDeck, remoteDeck, isGreenRooflines]
+  );
+  const pitchBookImages: Record<string, Record<string, any>> = useMemo(
+    () =>
+      isRemoteDeck
+        ? remoteDeck?.images || {}
+        : isGreenRooflines
+        ? greenRooflinesImages
+        : pitchBookImagesDefault,
+    [isRemoteDeck, remoteDeck, isGreenRooflines]
+  );
+  // Remote decks have no fixed first tab — it is whatever the portal ordered first,
+  // and it isn't known until the fetch lands (see the reconcile effect below).
+  const defaultCategoryId = isRemoteDeck
+    ? remoteDeck?.categories?.[0]?.id || ''
+    : isGreenRooflines
+    ? 'green_rooflines'
+    : 'leafFilter_story';
+  const deckTitle = (isRemoteDeck && (remoteDeck?.bookName || bookName)) || 'Pitch Book';
 
   // Restore the last viewed slide for this lead (if any).
   const savedProgress = useMemo(() => {
     try {
-      const raw = storage.getString(progressKey(leadId));
+      const raw = storage.getString(progressKey(leadId, bookId));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.category === 'string' && typeof parsed.slideIndex === 'number') {
@@ -98,7 +133,7 @@ export default function PitchbookScreen() {
       }
     } catch (e) { }
     return null;
-  }, [leadId]);
+  }, [leadId, bookId]);
 
   const [viewMode, setViewMode] = useState<'rep' | 'homeowner'>('rep');
   const [activeCategory, setActiveCategory] = useState(() => {
@@ -165,6 +200,27 @@ export default function PitchbookScreen() {
     return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex, getGlobalPosition]);
 
+  // Reconcile the selected tab with the deck actually in hand. A remote deck's
+  // sections aren't known at mount, so `activeCategory` starts empty and lands here
+  // once the fetch resolves; this also covers a book EDITED on the portal since the
+  // rep last presented it (saved tab deleted → fall back to the first one).
+  useEffect(() => {
+    if (!CATEGORIES.length) return;
+    if (CATEGORIES.some((c) => c.id === activeCategory)) return;
+    const saved = savedProgress?.category;
+    const restorable = !!saved && CATEGORIES.some((c) => c.id === saved);
+    setActiveCategory(restorable ? (saved as string) : CATEGORIES[0].id);
+    setCurrentSlideIndex(restorable ? savedProgress?.slideIndex || 0 : 0);
+  }, [CATEGORIES, activeCategory, savedProgress]);
+
+  // …and with the slides in that tab. Restoring slide 8 of a section the portal has
+  // since trimmed to 5 would leave the rep on a blank frame with working arrows.
+  useEffect(() => {
+    if (!currentCategoryImages.length) return;
+    if (currentSlideIndex < currentCategoryImages.length) return;
+    setCurrentSlideIndex(currentCategoryImages.length - 1);
+  }, [currentCategoryImages, currentSlideIndex]);
+
   const activeCategoryRef = useRef(activeCategory);
   const currentSlideIndexRef = useRef(currentSlideIndex);
 
@@ -185,6 +241,7 @@ export default function PitchbookScreen() {
         created_by: userId,
         meta: {
           leadId,
+          bookId: bookId || null,
           action: 'pitch_book_opened',
           totalSlides: totalGlobalPages,
         },
@@ -208,17 +265,20 @@ export default function PitchbookScreen() {
         });
       }
     };
-  }, [user?._id, user?.id, leadId, totalGlobalPages, getCurrentSlideName]);
+  }, [user?._id, user?.id, leadId, bookId, totalGlobalPages, getCurrentSlideName]);
 
-  // Persist the current slide position for this lead whenever it changes.
+  // Persist the current slide position for this lead whenever it changes. Skipped
+  // while the tab is still empty (a remote deck's first render), otherwise opening a
+  // book would immediately overwrite the position saved on the last visit.
   useEffect(() => {
+    if (!activeCategory) return;
     try {
       storage.set(
-        progressKey(leadId),
+        progressKey(leadId, bookId),
         JSON.stringify({ category: activeCategory, slideIndex: currentSlideIndex })
       );
     } catch (e) { }
-  }, [leadId, activeCategory, currentSlideIndex]);
+  }, [leadId, bookId, activeCategory, currentSlideIndex]);
 
   useEffect(() => {
     prepareHaptic('impact');
@@ -603,6 +663,61 @@ export default function PitchbookScreen() {
     );
   };
 
+  // A portal-authored deck has to be fetched (and its slides signed) before any of
+  // the presentation UI means anything — page counters, tabs and the fullscreen
+  // viewer all read the same two variables. Gating the whole screen here covers all
+  // of them at once rather than teaching each render site an empty state.
+  if (isRemoteDeck && (isDeckLoading || isDeckError || !CATEGORIES.length)) {
+    return (
+      <SafeAreaView className="flex-1 bg-background" edges={['bottom', 'left', 'right']}>
+        <View className="flex-row items-center gap-3 px-4 pt-6 bg-background">
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            className="p-1 items-center justify-center border border-border rounded-lg"
+            style={{ width: 32, height: 32 }}
+          >
+            <Feather name="arrow-left" size={14} color={isDark ? colors.text : colors.textSecondary} />
+          </TouchableOpacity>
+          <Text className="text-text-primary text-sm font-medium">{deckTitle}</Text>
+        </View>
+
+        <View className="flex-1 items-center justify-center px-10">
+          {isDeckLoading ? (
+            <>
+              <ActivityIndicator size="large" color={colors.primary.main} />
+              <Text className="text-text-secondary text-sm mt-4">Loading pitch book…</Text>
+            </>
+          ) : (
+            <>
+              <Icon
+                name={isDeckError ? 'cloud-off-outline' : 'book-open-page-variant'}
+                size={48}
+                color="#919EAB"
+              />
+              <Text className="text-text-primary text-base font-semibold mt-4 text-center">
+                {isDeckError ? "Couldn't load this pitch book" : 'No slides published yet'}
+              </Text>
+              <Text className="text-text-secondary text-sm mt-1 text-center">
+                {isDeckError
+                  ? 'Check your connection and try again.'
+                  : 'This pitch book has no published slides. Ask your manager to publish it.'}
+              </Text>
+              {isDeckError && (
+                <TouchableOpacity
+                  onPress={() => refetchDeck()}
+                  className="mt-5 px-5 py-2.5 rounded-lg"
+                  style={{ backgroundColor: colors.primary.main }}
+                >
+                  <Text className="text-white text-sm font-bold">Try Again</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['bottom', 'left', 'right']}>
 
@@ -623,7 +738,9 @@ export default function PitchbookScreen() {
               color={isDark ? colors.text : colors.textSecondary}
             />
           </TouchableOpacity>
-          <Text className="text-text-primary text-sm font-medium">Pitch Book</Text>
+          <Text className="text-text-primary text-sm font-medium" numberOfLines={1}>
+            {deckTitle}
+          </Text>
         </View>
 
         {/* Fullscreen Button */}

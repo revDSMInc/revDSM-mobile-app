@@ -6,6 +6,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRevRenderRunsQuery } from '../../../hooks/useLeadQuery';
 import { useLeadCalculatorStatus } from '../../../hooks/useLeadCalculatorStatus';
+import { usePitchBooks } from '../../../hooks/usePitchBooks';
+import type { PitchBookSummary } from '../../../utils/pitch-book';
 import { useFocusEffect } from '@react-navigation/native';
 import { FlashMessage } from '../../../config/message';
 import { RevRenderHistoryModal, prefetchToLocalCache } from '../../modals/lead-center/RevRenderHistoryModal';
@@ -293,11 +295,7 @@ export const ToolsSection = ({
           </ScrollView>
         )}
       </TouchableOpacity>
-      <ToolCard
-        title="Pitch Book"
-        icon="book-open-page-variant"
-        onPress={onShowPitchbook}
-      />
+      <PitchBookCard onOpen={onShowPitchbook} />
       <ToolCard
         title="Roofline Deck"
         icon="home-roof"
@@ -499,6 +497,136 @@ const ImageWithLoader = ({ uri, colors }: { uri: string; colors: any }) => {
   );
 };
 
+
+/**
+ * Pitch Book tile — the entry point for the PORTAL-AUTHORED pitch books.
+ *
+ * A manager can now publish several books (uploaded as PDFs and parsed into slides
+ * on the portal), so the rep has to choose one before presenting. The tile keeps the
+ * usual `ToolCard` frame and adds a chevron that expands the published list in
+ * place; picking a book hands its `bookId` to the Pitchbook screen.
+ *
+ * With nothing published — a company that hasn't configured any, or a failed list
+ * read — the tile behaves exactly as it did before: one tap opens the bundled deck.
+ * The dynamic list is an addition, never a way to end up with no pitch book at all.
+ */
+const PitchBookCard = ({ onOpen }: { onOpen: (book?: PitchBookSummary) => void }) => {
+  const { colors, isDark } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const { data: books = [], isLoading, isError, refetch, isFetching } = usePitchBooks();
+  const hasBooks = books.length > 0;
+
+  // A failed list read must NOT read as "nothing published" — the fallback below is
+  // deliberately quiet (it still opens the bundled deck), so without this the two are
+  // indistinguishable on screen and a 404 looks like an empty, correctly-working card.
+  const subtitle = hasBooks
+    ? `${books.length} pitch book${books.length === 1 ? '' : 's'} available`
+    : isLoading || isFetching
+    ? 'Loading pitch books…'
+    : isError
+    ? "Couldn't load pitch books — tap ↻ to retry"
+    : 'No pitch books published — standard deck';
+
+  return (
+    <View
+      className="mb-4 rounded-lg border"
+      style={{
+        borderColor: '#919EAB33',
+        backgroundColor: isDark ? colors.surface : colors.background,
+      }}
+    >
+      <TouchableOpacity
+        onPress={() => (hasBooks ? setExpanded((v) => !v) : onOpen())}
+        className="flex-row items-center p-3"
+      >
+        <View
+          className="w-8 h-8 rounded-full items-center justify-center"
+          style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
+        >
+          <Icon
+            name="book-open-page-variant"
+            size={16}
+            color={isDark ? colors.grey[0] : '#637381'}
+          />
+        </View>
+        <View className="flex-1 ml-4">
+          <Text className="text-base font-semibold" style={{ color: '#1C252E' }}>
+            Pitch Book
+          </Text>
+          <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>
+            {subtitle}
+          </Text>
+        </View>
+        {(isLoading || isFetching) && !hasBooks ? (
+          <ActivityIndicator size="small" color={colors.primary.main} />
+        ) : hasBooks ? (
+          <Icon
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={22}
+            color={isDark ? colors.grey[0] : '#637381'}
+          />
+        ) : null}
+      </TouchableOpacity>
+
+      {/* Retry sits OUTSIDE the row's press target so the row keeps opening the
+          bundled deck — a rep mid-pitch must never be blocked by a failed list. */}
+      {isError && !hasBooks && !isFetching && (
+        <TouchableOpacity
+          onPress={() => refetch()}
+          className="absolute right-3 top-3 w-8 h-8 rounded-full items-center justify-center"
+          style={{ backgroundColor: isDark ? colors.grey[800] : '#919EAB1F' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Icon name="refresh" size={16} color={isDark ? colors.grey[0] : '#637381'} />
+        </TouchableOpacity>
+      )}
+
+      {expanded && hasBooks && (
+        <View className="px-3 pb-3">
+          {books.map((book) => (
+            <TouchableOpacity
+              key={book.bookId}
+              onPress={() => onOpen(book)}
+              className="flex-row items-center p-2 mt-2 rounded-lg border"
+              style={{
+                borderColor: '#919EAB33',
+                backgroundColor: isDark ? colors.background : '#919EAB14',
+              }}
+            >
+              <View
+                className="w-12 h-9 rounded-md overflow-hidden items-center justify-center"
+                style={{ backgroundColor: isDark ? colors.grey[800] : '#FFFFFF' }}
+              >
+                {book.thumbnailUri ? (
+                  <Image
+                    source={{ uri: book.thumbnailUri }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Icon name="file-image-outline" size={16} color="#919EAB" />
+                )}
+              </View>
+              <View className="flex-1 ml-3">
+                <Text
+                  className="text-sm font-semibold"
+                  style={{ color: '#1C252E' }}
+                  numberOfLines={1}
+                >
+                  {book.bookName}
+                </Text>
+                <Text className="text-[12px] mt-0.5" style={{ color: '#919EAB' }}>
+                  {book.slideCount} slide{book.slideCount === 1 ? '' : 's'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#919EAB" />
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+};
 
 const ToolCard = ({ title, desc, statusText, statusColor, badgeText, badgeBg, badgeColor, badgeVariant, locked, blur, icon, onPress, onDownload, isGenerated, isLoading, busy }: any) => {
   const { colors, isDark } = useTheme();

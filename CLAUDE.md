@@ -83,7 +83,7 @@ Legend: ✅ full · 🟡 partial/in-progress · ⛔ stub. "Web ref" points into 
 | Job Tracker | ✅ | `src/screens/JobTracker/index.tsx` | `src/sections/job-tracker/` |
 | RevRender (before/after) | ✅ | `src/screens/RevRender/index.tsx` | `src/pages/dashboard/rev-render/` |
 | Image Annotation | ✅ | `src/screens/ImageAnnotation/index.tsx` (WebView canvas) | `src/components/image-annotation/` |
-| Pitch Book | ✅ | `src/screens/Pitchbook/index.tsx` | `src/sections/pitch-book/` |
+| Pitch Book (+ dynamic portal-authored books) | ✅ | `src/screens/Pitchbook/index.tsx`, `src/hooks/usePitchBooks.ts`, `src/utils/pitch-book.ts` | `src/sections/pitch-book/` (static only — web has no pitch-book API client) |
 | Roofline Deck | ✅ | `src/screens/RooflineDeck/index.tsx` | `src/sections/roofline-deck/` |
 | Chat (leads + team channels) | ✅ | `src/screens/{ChatThreads,ChatDetail}/*`, `src/widgets/components/chat/*` | `src/components/chat-module/`, `team-channels/` |
 | Voice notes | ✅ | `src/hooks/useVoiceNote.ts`, `VoiceNotePlayer.tsx` | `src/components/voice-recorder/` |
@@ -1442,6 +1442,111 @@ gotcha in §6, and this ticket is the third surface to hit it.
 
 Not changed: chat image **messages** were already previewable via `ImageGalleryModal` from
 `ChatMessageBubble`, so only their speed needed fixing.
+
+### Dynamic (portal-authored) Pitch Books
+
+Ticket: *"Portal | Dynamic Pitch Books — PDF Upload and Image Parsing… I think in Lead Center screen
+(Pitch book card) there should be arrow down and up option which show the list of pitch, on selecting
+the one we will take the id of that pitch book and show the data inside pitchbook accordingly."*
+
+The portal half (bulk PDF upload → parse pages to images → sections → publish) is a separate repo;
+this is the **rep-facing consumption** half. A manager can now publish several books, so the rep picks
+one instead of always getting the bundled deck. **The web app has no pitch-book API client yet**
+(`grep pitch-books` over `mhalt-revDSM-sales-frontend` is empty), so unusually there is **no web ref
+to port from** — this was written against the documented endpoints and their sample payloads.
+
+**Two endpoints, both company-scoped by the JWT and both PUBLISHED-only:**
+- `GET /pitch-books/sales-rep[?documentType=pitch_book]` → `{ data: { books: [...] } }` — id, name,
+  `slideCount`, and a `thumbnail: { filePath, bucketName }`.
+- `GET /pitch-books/sales-rep/:bookId` → `{ data: { book, sections: [...] } }` — sections ordered by
+  `sectionSortOrder`, each holding slides ordered by `sortOrder`.
+
+⚠️ **Slides arrive as `{ filePath, bucketName }`, NOT urls.** They must be exchanged for pre-signed
+urls via `LeadService.getSecureUrls` before an `<Image>` can render them.
+
+Three new files:
+
+- **`src/services/api/PitchBookService.ts`** — the two GETs, in the `InspectionService` house style.
+- **`src/utils/pitch-book.ts`** (pure, zero imports) — `normalizePitchBookSections`,
+  `collectSlideRefs`, `buildPitchBookDeck`, `normalizePitchBookList`. Split out for the same reason as
+  `utils/inspection-photos.ts`: the hook and screen pull in RN, this doesn't, so the logic is testable.
+- **`src/hooks/usePitchBooks.ts`** — `usePitchBooks()` (list + batched thumbnail signing) and
+  `usePitchBookDeck(bookId)` (one book, slides signed in **one batched call** via `collectSlideRefs`).
+  Both cache for **50 minutes** — pre-signed urls expire at 60, the same window `useSecureUrls` uses.
+
+**The key design decision: a remote book is projected into the STATIC decks' shape** —
+`categories: [{ id, label }]` + `images: { [categoryId]: { [slideName]: source } }`. `<Image source>`
+takes both a `require()` number and `{ uri }`, so once the projection is done **every** downstream read
+in `Pitchbook/index.tsx` (slide counts, `getGlobalPosition`, `getCurrentSlideName` analytics, the
+fullscreen portrait AND landscape viewers) works against either deck with no per-site branching.
+
+`Pitchbook/index.tsx` now takes **`bookId` / `bookName`** nav params (`RootStackParamList` updated).
+With no `bookId` it behaves exactly as before — bundled LeafFilter deck, or the Green Rooflines
+company deck. With one, `CATEGORIES` / `pitchBookImages` / `defaultCategoryId` come from the fetched
+deck instead. Also:
+
+- **Saved progress is keyed by book** (`pitchbook-progress-{leadId}-{bookId}`) — one shared key would
+  restore a rep into a section that doesn't exist in the book they just opened. The default deck keeps
+  the old un-suffixed key, so existing saved positions survive.
+- **Two reconcile effects.** A remote deck's sections aren't known at mount, so `activeCategory` starts
+  `''` and the first effect lands it on the saved-or-first tab once the fetch resolves. The second
+  clamps `currentSlideIndex` into range. Both also cover a book **edited on the portal** since the rep
+  last presented it (tab deleted / section trimmed) — otherwise the rep opens onto a blank frame with
+  working arrows.
+- **The persist effect skips an empty `activeCategory`**, or the first render of a remote deck would
+  immediately overwrite the position saved on the previous visit.
+- **One early return** handles loading / error (with Try Again) / nothing-published, placed after all
+  hooks and before the main `return`. Gating the whole screen covers all four slide render sites at
+  once; teaching each an empty state would be four chances to miss one.
+
+`ToolsSection`'s Pitch Book `ToolCard` became **`PitchBookCard`** (same file): the familiar row plus a
+**chevron-down/up** that expands the published list in place (thumbnail, name, `N slides`), each row
+navigating with its `bookId`. `LeadCenter`'s `onShowPitchbook` now takes an optional book.
+
+⚠️ **With nothing published — or a failed list read — one tap opens the bundled deck, exactly as
+before.** The dynamic list is strictly additive; a company that hasn't configured any book, or a rep
+with no signal, must never end up with no pitch book at all. Same reasoning inside the normalizer: a
+slide whose url can't be signed falls back to the bare S3 url rather than being dropped.
+
+Deliberate drops, both because a blank frame mid-pitch is worse than a shorter deck: a **section with
+no slides** (a legitimate portal state — created, not filled) and a **slide with no `filePath`**.
+
+⚠️ **Two slides in one section CAN share a `slotDisplayName`** — the portal derives it from the
+uploaded file name, and two PDFs both yield "Page 1.jpg". The images map is keyed by name, so
+`uniqueName()` suffixes duplicates (`Page 1.jpg (2)`); without it a page vanishes from the deck with
+no error anywhere.
+
+#### Follow-up: a failed list read was indistinguishable from "none published"
+
+QA: *"i don't know where do you make the changes, nothing showing here, i even i check api is not
+calling here /pitch-books/sales-rep."* The card WAS the new one (its subtitle only exists in the new
+code; the old `ToolCard` had none) — but it read **"Present the standard deck"**, which was the single
+subtitle for *every* non-loading empty state.
+
+That was a real defect in the fallback above: `data: books = []` swallows an error, so a **404 / 403 /
+unreachable endpoint looked exactly like a correctly-working card for a company with nothing
+published**, with no way to tell which — including for whoever is debugging it.
+
+- **Three distinct subtitles now**: `Loading pitch books…` / `Couldn't load pitch books — tap ↻ to
+  retry` (on `isError`) / `No pitch books published — standard deck`.
+- **A retry button rendered OUTSIDE the row's press target**, so tapping the row still opens the
+  bundled deck — a rep mid-pitch must never be blocked by a failed list read.
+- **Both `queryFn`s log the failure in `__DEV__`** (`[pitchBooks] list FAILED <status> <body>`) and the
+  list logs its count on success. The axios wrapper already prints `[API] → GET /pitch-books/sales-rep`
+  for every request, so the pair isolates "never requested" from "requested and rejected".
+
+Service layer verified separately (module callable, `/pitch-books/sales-rep`,
+`?documentType=pitch_book`, and the `:bookId` detail path) — a failed import would present as "no
+request", so that was ruled out explicitly.
+
+Verified against the ticket's payloads verbatim: section/slide ordering (including a payload whose
+sections are out of order and a slide pair whose `sortOrder` reverses them), ties keeping server order,
+duplicate display names keeping both slides, empty/malformed sections and slides dropped, the
+`slotKey` → `Slide N` name fallbacks, section label falling back to its id, ref de-duplication across
+sections, an unsignable slide skipped and its section dropped when that empties it, the list
+normalizer with and without a `thumbnail` block, and junk input (`undefined` / `null` / `{}`) as a
+no-op throughout. tsc 44 (baseline unchanged); eslint on `Pitchbook/index.tsx` back to its HEAD
+baseline of 13 pre-existing errors, and the three new files are clean.
 
 ---
 
