@@ -37,6 +37,12 @@ export function BuildFromExistingModal({
           blurAmount={10}
           reducedTransparencyFallbackColor={isDark ? '#000000' : '#FFFFFF'}
         />
+        {/* Scrim OVER the blur. A light blur of a mostly-white screen is itself
+            near-white, so the white card had nothing to sit against and its edges
+            disappeared. Dimming what is behind the card — rather than tinting the card
+            — keeps the dialog reading as the foreground element. `pointerEvents="none"`
+            so it never swallows a tap meant for the buttons. */}
+        <View pointerEvents="none" style={styles.scrim} />
         <Pressable style={styles.card}>
           <View style={styles.iconCircle}>
             <Ionicons name="time-outline" size={32} color="#4CBB17" />
@@ -66,12 +72,26 @@ export function BuildFromExistingModal({
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.45)' },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
     paddingHorizontal: 24,
     paddingTop: 32,
     paddingBottom: 20,
+    // The card must read as a raised surface, not as a lighter patch of the
+    // background. Border AND shadow, because neither carries both platforms: the
+    // hairline is what defines the edge on Android where elevation renders as a soft
+    // ambient wash, and the shadow is what lifts it on iOS. No `overflow: 'hidden'`
+    // here — iOS drops a shadow on any view that clips (see the inspection-card note
+    // in CLAUDE.md), and nothing inside needs clipping.
+    borderWidth: 1,
+    borderColor: '#DFE3E8',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 16,
   },
   iconCircle: {
     width: 64,

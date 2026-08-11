@@ -831,6 +831,175 @@ true and the Review row renders; unrecognized text → the `resolveTierPaymentMe
 lands on a basic. Lowe's leads scope `downPaymentOptions` to Lowe's methods, so a non-Lowe's key blanks —
 correct, since that method is not offered for the lead, and the payload fallback preserves it.
 
+### Rehash with no job scope opens the entry form, not a locked $0 receipt
+
+Ticket: *"in the rehash module when the lead having `isRehashed: true` … if the lead is in the rehash
+and the calculator is not created then the user moves to the calculator screen on which user inputs
+the values and creates the calculator; if the calculator is already created then do not move the user
+on the input screen, move on the current logic screen."*
+
+A rehash lead opened on the **locked receipt** unconditionally
+(`readOnly={activeTab?.isRolloutConfirmed || lead?.isRehashed === true}`), which is right when the
+first visit already scoped the job — the second visit renegotiates the PRICE, and dropping the rep
+into the product-entry form invites gutter/LeafFilter edits that silently re-scope the original sale.
+
+But a rehash can arrive with **nothing built**. The appointment a rehash resolves is not the original
+one, so `useDynamicCalculators` creates an **empty placeholder calculator** for it — seeded with the
+full field list at `inputValue: 0`. Locking that is a dead end: an empty receipt (title `1`, "No items
+in this category", COST/PAR/RETAIL `$0`, end price `—` **LOCKED**) with no way to enter the job, and
+**nothing for the rollout step to show either** — `visibleCalculators` hides calculators whose title
+is still a bare number (`/^\d+$/`), and an unbuilt calculator's derived title is exactly that.
+
+⚠️ **"Is a calculator record present" is NOT the question.** One is always POSTed the moment an
+appointment resolves, so that test is true for every lead and answers nothing. The real question is
+whether a **job scope** was entered — new **`hasEnteredScope(entries)`** in `utils/scope-signature.ts`,
+built on the same `inputValue > 0` rule `scopeSignature`, the Job Summary and the rollout item rows
+already use, so "entered" can't come to mean two different things.
+
+New **`src/screens/DynamicDealCenter/utils/rehash-draft-calculators.ts`** holds the rule
+(`createRehashDraftLatch` / `latchRehashDrafts` / `releaseRehashDrafts` / `isRehashDraftCalculator`);
+`DynamicDealCenterScreen` keeps one `useRef` latch and gates on
+`readOnly={!isRehashDraftTab && (activeTab?.isRolloutConfirmed || lead?.isRehashed === true)}`.
+
+- ⚠️ **A draft OUT-RANKS the stored `isRolloutConfirmed`** — which is why the check wraps the whole
+  expression instead of sitting beside the rehash arm. A rehash can inherit that flag already `true`
+  on a calculator carrying **no dynamic scope at all**: the first sale may have been scoped in the
+  **classic** deal center, whose values live in the legacy top-level columns (`wedges`, `gutter5DsE`,
+  …) and leave `entries` all-zero, exactly as web's dynamic deal center also shows. That stale
+  confirmation is what pinned the rep to the `$0` "Rollout price confirmed" receipt in the ticket
+  screenshot, and it protects nothing, because the scope it was made against isn't on screen.
+  The first pass at this fix gated on `isRolloutConfirmed || (isRehashed && !draft)` and therefore
+  **did not fix that lead at all**.
+- **Only a confirm made in THIS session re-locks it**: `onConfirmRollouts` on `RolloutView` is wrapped
+  to call `releaseRehashDrafts(latch, ids)` before `handleConfirmRollouts`. Driven by the confirm
+  ACTION rather than by re-reading `isRolloutConfirmed`, because a flag that is already `true` on
+  arrival cannot mark the transition. The wrapper is inline, not a `useCallback` — `RolloutView` holds
+  the prop in a ref, so identity churn is free, and another hook would widen the compromise below.
+- ⚠️ **The verdict is LATCHED per calculator on first sight and never re-read from the live entries.**
+  Re-deriving flips the calculator to locked on the rep's **first keystroke**, swapping the form out
+  from under them mid-entry — the whole reason this isn't a one-line expression.
+- **Per calculator id, not once per screen**, which is what keeps **＋** working on a rehash: a newly
+  added tab is empty when first seen so it opens editable, while the original scoped calculator stays
+  locked. A **duplicated** tab copies the source entries, so it latches as already-scoped — correct,
+  it is the same job.
+- **Latched during render, not in an effect.** An effect lands one frame late and the rep sees the
+  locked receipt flash before the form replaces it. The latch is idempotent, so a repeated or
+  discarded render reaches the same verdict. Both sets live in **ONE ref** for the reason on
+  `rehashBuild` — every hook in this component sits after the edit-mode early return.
+- **Guarded on `!isCalcLoading`.** A tab judged before its saved entries arrive would latch as a draft
+  and wrongly unlock a scoped calculator. (`setLoading(false)` is batched with the `setTabs` hydration,
+  so by the time it flips, entries are real.)
+- **Nothing changes for a non-rehash lead** — the latch is only ever fed on `isRehashed`, so its sets
+  stay empty and `readOnly` reduces to `isRolloutConfirmed`, exactly as before.
+
+Downstream needs no change: once values are entered the derived title stops being numeric, so the
+calculator appears in the rollout, and `PremiumQuoteCard.priceLocked` is already open on a rehash.
+
+### Rehash "Use Existing" restored nothing after a config rename
+
+Ticket: *"when user click on the existing and this screen is open but the previously uploaded data is
+not displayed."* The rehash prompt's **Use Existing** opened the job builder with every field blank,
+even though `GET /lead/v1/{leadId}/outcome/{calculatorId}` carries the build under
+`jobBuilder.dynamicJobState`.
+
+**Start Fresh was verified correct and unchanged** — driving the real engine over a Gutters config
+showed `footage/color/location` → `""` and `scheduleTime` dropped on Start Fresh, versus
+`120 / Musket Brown / Rear` + the install window on Use Existing. Only the calculator-driven LOCKED
+field survives Start Fresh (`5" Gutter/DS/E = 34`), because it comes from `LFCalculator.entries`, not
+from the saved build, and it is the allocation budget the rep distributes.
+
+The defect is in `deserializeDynamicJobStateFromStorage` (`engine/dynamic-job-state-storage.ts`).
+Storage keys embed **LABELS**:
+
+| level | stored key | rename that breaks it |
+|---|---|---|
+| vertical | `${vertical.id}__${slug(vertical.label)}` | product label |
+| tab | `buildTabKey(productId, productCategory)` — **no tab id at all** | productId, or the category |
+| section | `${section.id}__${slug(section.label)}` | (already recovered) |
+| field | `${field.id}__${slug(field.key/label)}` | (already recovered) |
+
+Sections and fields recovered from an index miss via `resolveCanonicalKeyFromStorage` (split on the
+`__` marker, keep the canonical id). **Verticals and tabs did not** — they were plain
+`index.xFromStorage.get(key) || key`, so a miss filed the ENTIRE vertical/tab under the raw storage
+key. Nothing reads that id, so the build sat in memory, fully deserialized, and rendered blank. A
+rehash is the most exposed population by definition: its saved build is from the earlier appointment,
+so it has had the most time to be re-labelled in the portal.
+
+Now resolved through `resolveVerticalIdFromStorage` / `resolveTabIdFromStorage`:
+- **vertical** — exact key, else the id before `__` **if it is a real vertical id in this config**.
+- **tab** — exact key, else the id before `__` if it is a real tab id (covers the
+  `buildStorageKey(tabId, label)` branch), else the **category slug matched against the tabs of the
+  RESOLVED vertical** (covers a changed `productId`, whose key carries no tab id).
+
+⚠️ **Membership is checked against the config, never a string prefix** (`field_`, `section_`, …):
+vertical and tab ids share no prefix, and inventing an id that is not in the config would re-file the
+state under another unreadable key — the very failure being fixed.
+
+⚠️ **A renamed tab CATEGORY is deliberately NOT recovered.** That key carries neither the tab id nor
+any other stable handle, so any match would be a guess, and restoring a build onto the WRONG tab is
+worse than restoring nothing. The state stays under its raw key: inert, never misattributed. Tested.
+
+Slug recovery is **scoped to the resolved vertical**, so two products that both have a "Gutters" tab
+can never cross-restore.
+
+Verified with 9 tests (`__tests__/utils/dynamic-job-state-storage-restore.test.ts`) round-tripping
+through the real serializer: no-rename, product rename, productId change, product+productId+section
+renamed together, install date surviving a rename, the tab-category limitation, no cross-restore
+between two products sharing a category, an unknown vertical left verbatim, and a legacy raw
+(pre-storage-key) save passing through.
+
+⚠️ **This fixes the rename case only.** If a rep's build is still blank, compare the vertical/tab keys
+inside `dynamicJobState` against `GET /company/v1/job-builder-products` — if they match exactly, the
+cause is elsewhere.
+
+### A full-package calculator tab shows a package icon + ⓘ, not `G+VMax+S+FWrap`
+
+Ticket: *"Inside the deal center when user input the data against the Gutter input fields, sofit fields
+and fascia first field name Trim wrap [Fascia] … instead of showing the combinations of the letter …
+show the box and the information icon; when user click on it show the provided information. Make sure
+it should be change on the runtime."* Follow-up: *"also Leaffilter fields include in this conditions."*
+
+A calculator carrying all four of **Gutter + LeafFilter + Soffit + Trim wrap [Fascia]** now renders a
+**package icon** and an **ⓘ** in its footer tab in place of the derived name; the ⓘ opens a card
+listing **Gutter / Soffit / FWrap / (Versa OR VMax)**.
+
+- **`isFullPackageSelection(entries, schemas)`** (`utils/tab-naming.ts`) is the rule, and
+  **`FULL_PACKAGE_INCLUDES`** is the tooltip copy — same file, so the badge and the list it explains
+  cannot drift apart.
+- **Matched on TAB KEYS, not field ids.** It runs the same `collectTabKeys` pass that derives the name
+  it replaces, so the two can never disagree — a calculator is a package exactly when its name would
+  have read `G+<guard>+S+FWrap`. That is asserted directly in the tests. It also means a renamed or
+  duplicated field still resolves, since `resolveFieldTabKey` reads the server-authored **label +
+  category** (`Trim wrap [Fascia]` → `FWrap` via the Fascia resolver's `/trim\s*wrap/i`).
+- **The guard slot is a choice** — `Versa` / `VMax`, plus `Guard` / `SpecGuard`, because
+  `resolveGuardCategoryKey` names the same product that way in a micro-mesh catalog; requiring the
+  literal Versa keys would silently exclude those companies. ⚠️ `LF Misc` / `GuardMisc` do NOT count:
+  those are standalone add-ons (corners, sawzall…), not the guard product.
+- **Runtime by construction.** `CalculatorView.tabCalcs` recomputes the flag from each tab's OWN live
+  entries, so it appears on the fourth field and disappears when one is cleared — including on tabs the
+  rep isn't currently viewing. No stored flag. Tested field-by-field.
+
+⚠️ **The ⓘ sits INSIDE the tab pill**, not floating above it as in the ticket's mock. That row is a
+horizontal ScrollView with drag-reorder, and Android clips children drawn outside their parent's
+bounds, so an overhanging badge is a coin-flip on whether it renders. For the same reason the popover
+is a `Modal` (anchored just above the tab bar) rather than an inline absolutely-positioned card.
+
+`HorizontalDraggableTabs` gained `onShowPackageInfo` and reads `calc.isFullPackage`. **The classic deal
+center never sets that flag**, so its tabs are untouched.
+
+Verified with 12 tests (`__tests__/screens/DynamicDealCenter/full-package-tab.test.ts`) over a
+gutter-roofline schema: the four-part package, `Versa` in place of `VMax`, each of the four missing in
+turn, the field-by-field runtime transition, clearing a value, an add-on not counting as the guard,
+`Fascia Board` not counting as the trim wrap, extra products not breaking it, empty/no-schema input,
+and a renamed trim-wrap field still resolving by label.
+
+Verified with 24 tests (`__tests__/screens/DynamicDealCenter/rehash-draft-calculators.test.ts`) driving
+the real helpers plus the exact `readOnly` expression: the ticket repro (unbuilt rehash → editable)
+**both with and without an inherited `isRolloutConfirmed`**, a built rehash still locked, **no re-lock
+on first keystroke**, still editable between building and confirming, locked after an in-session
+confirm, no retro-unlock when a scoped calculator is cleared (before or after release), ＋ on a scoped
+rehash, duplicates, and a normal lead unchanged.
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

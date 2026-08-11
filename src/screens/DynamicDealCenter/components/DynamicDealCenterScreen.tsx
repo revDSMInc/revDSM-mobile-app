@@ -14,6 +14,7 @@ import { DynamicJobBuilderScreen } from '../DynamicJobBuilderScreen';
 import { DynamicDealEditScreen } from './DynamicDealEditScreen';
 import { BuildFromExistingModal } from './BuildFromExistingModal';
 import { extractCalculatorOutcome, hasSavedJobBuild } from '../utils/saved-job-build';
+import { createRehashDraftLatch, latchRehashDrafts, releaseRehashDrafts, isRehashDraftCalculator } from '../utils/rehash-draft-calculators';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { buildSectionLabelMap } from '../utils/item-format';
 import { LeadService } from '../../../services/api/leads';
@@ -117,6 +118,26 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   } = useDynamicCalculators(lead, verticals);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  /**
+   * REHASH: which calculators the rep may still BUILD in this session — a rehash that
+   * arrived with nothing scoped opens the entry form instead of an empty locked
+   * receipt. The rule, and why it has to be latched rather than re-read from the live
+   * entries, is documented on `rehash-draft-calculators.ts`.
+   *
+   * Latched during render, not in an effect: an effect lands one frame late and the
+   * rep would see the locked receipt flash before the form replaced it. The latch is
+   * idempotent, so a repeated or discarded render reaches the same verdict.
+   *
+   * One ref holds both sets for the reason given on `rehashBuild` above — every hook
+   * here sits after the edit-mode early return, so each extra one widens that
+   * compromise.
+   */
+  const rehashLatchRef = useRef(createRehashDraftLatch());
+  if (lead?.isRehashed === true && !isCalcLoading) latchRehashDrafts(rehashLatchRef.current, tabs);
+  // Only ever true on a rehash — the latch stays empty on every other lead.
+  const isRehashDraftTab = isRehashDraftCalculator(rehashLatchRef.current, activeTab?.id);
+
   // sectionId → label for the Result Lead Job Summary rows (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
 
@@ -341,7 +362,17 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           leadId={lead?._id || lead?.leadId || lead?.id}
           appointmentId={appointmentId || undefined}
           onBack={() => setFlowStep('calculator')}
-          onConfirmRollouts={handleConfirmRollouts}
+          onConfirmRollouts={(confirmed) => {
+            // A rehash draft the rep has just priced and confirmed is an ordinary
+            // confirmed calculator now, so it locks on the way back to the calculator
+            // step. Driven by the confirm ACTION, not by re-reading `isRolloutConfirmed`
+            // — on a rehash that flag can already be true on arrival, so it cannot mark
+            // the transition. Inline (not a `useCallback`) because `RolloutView` holds
+            // this in a ref, and because another hook here would widen the compromise
+            // noted on `rehashBuild`.
+            releaseRehashDrafts(rehashLatchRef.current, confirmed.map((c) => c.id));
+            handleConfirmRollouts(confirmed);
+          }}
           onResultJob={handleResultJob}
           // Persist the entered end price live (survives back-to-calculator edits) and
           // let the rep dismiss the "job scope changed" warning once reviewed.
@@ -453,8 +484,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           onClearSection={handleClearSection}
           totals={activeTab?.totals || { cost: 0, par: 0, retail: 0 }}
           /**
-           * A REHASH always opens on the locked receipt view, whatever the stored
-           * `isRolloutConfirmed` says.
+           * A REHASH opens on the locked receipt view whenever the calculator ALREADY
+           * holds a job scope, whatever the stored `isRolloutConfirmed` says.
            *
            * A rehash is a second run at a job that was already scoped and sold: the
            * rep is renegotiating the PRICE, not re-measuring the house. Dropping them
@@ -463,14 +494,27 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
            *
            * Not gated on `isRolloutConfirmed` because that flag is the ORIGINAL
            * appointment's and cannot be relied on to survive the rehash — `isRehashed`
-           * is the fact we actually have, and it is sufficient on its own.
+           * is the fact we actually have.
+           *
+           * It is NOT sufficient on its own, though: a rehash whose calculator was
+           * never built (`isRehashDraftTab` — see the latch above) has nothing to
+           * protect and must open editable, or the rep is stuck on an empty $0 receipt
+           * with no way to enter the job. That case is the only way a rehash reaches
+           * the entry form; once the calculator carries a scope it locks as before.
+           *
+           * ⚠️ The draft verdict out-ranks `isRolloutConfirmed` TOO, which is why it
+           * wraps the whole expression rather than sitting beside the rehash arm: a
+           * rehash can inherit a `true` flag on a calculator holding no dynamic scope,
+           * and that stale confirmation is what pinned the rep to the locked $0 receipt.
+           * A confirm made in THIS session re-locks it — `releaseRehashDrafts` on the
+           * rollout's `onConfirmRollouts` below.
            *
            * The end price stays LOCKED here, exactly as on any confirmed calculator.
            * Re-pricing a rehash happens one screen along, on the rollout step (the blue
            * grid button), where `PremiumQuoteCard.priceLocked` opens that one field —
            * so there is a single place a price is entered rather than two.
            */
-          readOnly={activeTab?.isRolloutConfirmed || lead?.isRehashed === true}
+          readOnly={!isRehashDraftTab && (activeTab?.isRolloutConfirmed || lead?.isRehashed === true)}
           price={activeTab?.price || 0}
           drops={activeTab?.dropPrice || []}
           tabs={tabs}

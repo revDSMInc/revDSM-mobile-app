@@ -27,6 +27,15 @@ interface HorizontalDraggableTabsProps {
    * duplicate). Dynamic callers pass `() => false` to opt out.
    */
   getIsDuplicate?: (calc: any, idx: number) => boolean;
+  /**
+   * Tapping a full-package tab's ⓘ. A calculator flagged `isFullPackage` shows a
+   * package icon + this button INSTEAD of its derived `G+VMax+S+FWrap` name, and the
+   * caller owns the popover that lists what the package contains.
+   *
+   * Omitted by the classic deal center, which never sets `isFullPackage`, so its tabs
+   * are untouched.
+   */
+  onShowPackageInfo?: (calc: any, idx: number) => void;
 }
 
 const isCalculatorIdentical = (c1: any, c2: any) => {
@@ -67,6 +76,7 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   tabsScrollViewRef,
   scrollXRef,
   getIsDuplicate,
+  onShowPackageInfo,
 }) => {
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
 
@@ -381,17 +391,49 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                   style={{ marginRight: 6 }}
                 />
               )}
-              <Text
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                style={[
-                  styles.tabText,
-                  isActive ? styles.activeTabText : styles.inactiveTabText,
-                  isCurrentlyDragging && styles.draggingTabText,
-                ]}
-              >
-                {calc.name === '.' ? '' : calc.name || ''}
-              </Text>
+              {calc.isFullPackage ? (
+                /* A full package replaces the derived name outright: the four-part
+                   `G+VMax+S+FWrap` string is what the package icon stands for, so
+                   rendering both would just be the same fact twice. The ⓘ carries the
+                   breakdown the letters used to spell out.
+
+                   ⓘ sits INSIDE the pill rather than floating above it as in the mock:
+                   this row is a horizontal ScrollView with drag-reorder, and Android
+                   clips children drawn outside their parent's bounds, so an overhanging
+                   badge is a coin-flip on whether it renders at all. */
+                <View style={styles.packageRow}>
+                  <Ionicons
+                    name="cube"
+                    size={18}
+                    color={isCurrentlyDragging ? '#22C55E' : isActive ? '#FFFFFF' : '#94A3B8'}
+                  />
+                  <TouchableOpacity
+                    onPress={() => onShowPackageInfo?.(calc, idx)}
+                    style={styles.infoButton}
+                    hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="What the full package includes"
+                  >
+                    <Ionicons
+                      name="information-circle"
+                      size={18}
+                      color={isCurrentlyDragging ? '#22C55E' : isActive ? '#FFFFFF' : '#00B8D9'}
+                    />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  style={[
+                    styles.tabText,
+                    isActive ? styles.activeTabText : styles.inactiveTabText,
+                    isCurrentlyDragging && styles.draggingTabText,
+                  ]}
+                >
+                  {calc.name === '.' ? '' : calc.name || ''}
+                </Text>
+              )}
               <TouchableOpacity
                 onPress={() => setMenuVisible(idx)}
                 style={styles.menuButton}
@@ -483,4 +525,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  packageRow: { flexDirection: 'row', alignItems: 'center' },
+  infoButton: { marginLeft: 6, alignItems: 'center', justifyContent: 'center' },
 });

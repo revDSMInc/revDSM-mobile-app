@@ -21,3 +21,18 @@ export function scopeSignature(entries: Record<string, any> = {}): string {
     .sort()
     .join('|');
 }
+
+/**
+ * True when the calculator holds at least one entered line item — i.e. a job scope
+ * has actually been built on it.
+ *
+ * A calculator is ALWAYS created as a record (`useDynamicCalculators` posts one the
+ * moment an appointment resolves) and is seeded with the full field list at
+ * `inputValue: 0`, so "does a calculator row exist" says nothing about whether the
+ * rep ever built anything. This is the check that answers that, and it is the same
+ * `inputValue > 0` rule the signature above, the Job Summary and the rollout item
+ * rows all use, so "entered" can never mean two different things.
+ */
+export function hasEnteredScope(entries: Record<string, any> = {}): boolean {
+  return scopeSignature(entries) !== '';
+}
