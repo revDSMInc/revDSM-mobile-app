@@ -23,6 +23,7 @@ import Geolocation from 'react-native-geolocation-service';
 import type { GeoCoordinates, InstallerJob } from '../config/types/installer';
 import { getAllOfficeCoords, type OfficeCoords } from './office-location';
 import { arrivalWindowMessage } from './installer-schedule';
+import { isJobBypassActive } from './job-bypass';
 
 /**
  * How close is close enough, in metres.
@@ -35,8 +36,15 @@ import { arrivalWindowMessage } from './installer-schedule';
  */
 export const CHECK_IN_RADIUS_METERS = 20;
 
-/** Where the installer was allowed to check in from. */
-export type CheckInMatch = 'customer' | 'office';
+/**
+ * Where the installer was allowed to check in from.
+ *
+ * `bypass` is not a place — it is the answer for a job whose `gpsBypass` override made
+ * the question moot. It is a distinct value rather than a reused `'customer'` so the
+ * check-in log records that an override let this one through, and never claims the crew
+ * was measured at the address when nothing was measured.
+ */
+export type CheckInMatch = 'customer' | 'office' | 'bypass';
 
 export interface CheckInEligibility {
   allowed: boolean;
@@ -286,6 +294,44 @@ export const getDeviceFix = async (timeoutMs = 15000): Promise<DeviceFix | null>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The verdict for a job carrying a manager's bypass: allowed, whatever was or wasn't
+ * measured.
+ *
+ * Shared by the three ways a bypassed job reaches an allow — no reference points, no
+ * device fix, and out of range — so none of them can drift into reporting a bypassed
+ * check-in as an ordinary on-site one.
+ */
+const allowedByBypass = (
+  coords: GeoCoordinates | null,
+  distance: number | null,
+  job: InstallerJob,
+  accuracy: number | null = null
+): CheckInEligibility => {
+  if (__DEV__) {
+    const why = [
+      job.installerBypass?.gpsBypassReason,
+      job.installerBypass?.earlyStartReason,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    console.log(
+      '[InstallerGeofence] bypass active → check-in allowed without a radius check' +
+        (why ? ` (${why})` : '')
+    );
+  }
+
+  return {
+    allowed: true,
+    coords,
+    matched: 'bypass',
+    distanceMeters: distance,
+    accuracyMeters: accuracy,
+    title: '',
+    reason: '',
+  };
+};
+
+/**
  * Decides whether this installer may check in to this job, right now.
  *
  * Order matters: the job site is checked before the offices, so `matched` names the
@@ -305,7 +351,19 @@ export const getDeviceFix = async (timeoutMs = 15000): Promise<DeviceFix | null>
  *
  *    ⚠️ This makes an ungeocoded job UNOPENABLE until its address is fixed. That is the
  *    intended trade-off, but it means a bad address is now a field-blocking bug, not a
- *    cosmetic one.
+ *    cosmetic one. A manager's bypass is the office's way out of it without a redeploy.
+ *
+ * **A bypass clears every one of those refusals** (`utils/job-bypass.ts`). Someone has
+ * already decided the automatic checks are getting this job wrong — one of the reasons in
+ * hand is literally "job address incorrect in system: installer is at the correct physical
+ * location, system has wrong coordinates", which is a statement that the number this gate
+ * computes is meaningless for this job. Measuring is then not merely unnecessary, it is the
+ * thing producing the wrong answer.
+ *
+ * A fix is still REQUESTED, because the backend re-runs its own check on the coordinates
+ * this sends and a bypassed check-in is worth recording the position of; it just cannot
+ * refuse. So a job with no fix, no coordinates and no office still opens under the
+ * override, which is the whole point of filing one.
  */
 export const resolveCheckInEligibility = async (
   job: InstallerJob,
@@ -314,8 +372,9 @@ export const resolveCheckInEligibility = async (
 ): Promise<CheckInEligibility> => {
   const jobCoords = getJobCoords(job);
   const offices: OfficeCoords[] = getAllOfficeCoords(user);
+  const bypassed = isJobBypassActive(job);
 
-  if (!jobCoords && offices.length === 0) {
+  if (!jobCoords && offices.length === 0 && !bypassed) {
     console.warn(
       '[InstallerGeofence] No job coordinates and no locatable office — check-in refused.'
     );
@@ -335,6 +394,11 @@ export const resolveCheckInEligibility = async (
 
   const fix = await getDeviceFix();
   if (!fix) {
+    // Under a bypass, a missing fix is not a refusal — nothing was going to be measured
+    // against it. `coords: null` then travels on: the check-in payload omits the location
+    // rather than inventing one, and the server sees the same absence the phone did.
+    if (bypassed) return allowedByBypass(null, null, job);
+
     return {
       allowed: false,
       coords: null,
@@ -349,7 +413,12 @@ export const resolveCheckInEligibility = async (
   const candidates = buildCandidates(fix.coords, jobCoords, offices);
 
   const within = candidates.find((c) => c.distance <= radiusMeters);
-  const nearest = candidates.reduce((a, b) => (b.distance < a.distance ? b : a));
+  // Guarded, not asserted: with a bypass in play the "no reference points" refusal above
+  // is skipped, so this is the one path that can reach here with nothing to compare
+  // against — and `reduce` on an empty array throws.
+  const nearest = candidates.length
+    ? candidates.reduce((a, b) => (b.distance < a.distance ? b : a))
+    : null;
 
   if (__DEV__) {
     console.log(
@@ -358,7 +427,8 @@ export const resolveCheckInEligibility = async (
         candidates
           .map((c) => `${c.kind} ${Math.round(c.distance)} m`)
           .join(' · ') +
-        ` · radius ${radiusMeters} m → ${within ? 'ALLOW' : 'BLOCK'}`
+        ` · radius ${radiusMeters} m → ` +
+        (within ? 'ALLOW' : bypassed ? 'ALLOW (bypass)' : 'BLOCK')
     );
   }
 
@@ -374,13 +444,29 @@ export const resolveCheckInEligibility = async (
     };
   }
 
+  // Out of range on the measurement, but the override says the measurement doesn't decide
+  // this job. The distance is still reported — it is true, and it is what makes a bypassed
+  // check-in reviewable afterwards — but `matched: 'bypass'` records that it did not
+  // authorise anything.
+  if (bypassed) {
+    return allowedByBypass(
+      fix.coords,
+      nearest ? Math.round(nearest.distance) : null,
+      job,
+      fix.accuracy
+    );
+  }
+
+  // Unreachable with no candidates: without a bypass, the empty case returned above.
   return {
     allowed: false,
     coords: fix.coords,
     matched: null,
-    distanceMeters: Math.round(nearest.distance),
+    distanceMeters: nearest ? Math.round(nearest.distance) : null,
     accuracyMeters: fix.accuracy,
     title: 'Too far to check in',
-    reason: tooFarMessage(nearest.distance, nearest.kind, job),
+    reason: nearest
+      ? tooFarMessage(nearest.distance, nearest.kind, job)
+      : "This job has no map location on file, so we can't confirm you're on site.",
   };
 };

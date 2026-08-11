@@ -29,6 +29,12 @@ import {
   INSTALLER_STEP_MODULES,
   LOG_ACTIONS,
 } from '../../constants/activity-log.constants';
+import {
+  earlyStartBypassReason,
+  gpsBypassReason,
+  isEarlyStartBypassActive,
+  isGpsBypassActive,
+} from '../job-bypass';
 import type {
   GeoCoordinates,
   InstallerJob,
@@ -220,7 +226,16 @@ export const logInstallerJobsRefreshed = (user: any, period: string) =>
 // Job session — check in / pause / resume
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Check-in + `status: inProgress` succeeded; the working payload is in hand. */
+/**
+ * Check-in + `status: inProgress` succeeded; the working payload is in hand.
+ *
+ * An ACTIVE manager bypass is attached with the reason it was filed under, mirroring what
+ * the sales card records (`utils/lead-activity-log.ts`). A check-in that skipped the
+ * geofence or the arrival window has to say so in the Forever Record — otherwise it is
+ * indistinguishable from one made on site and on time, and the reviewer has no way to tell
+ * an authorised exception from a rule that silently failed. Absent keys on an ordinary
+ * check-in, so nothing is claimed about jobs with no override.
+ */
 export const logInstallerJobStarted = (user: any, job: InstallerJob) =>
   emit(
     user,
@@ -232,6 +247,14 @@ export const logInstallerJobStarted = (user: any, job: InstallerJob) =>
       hasContract: !!job?.contract,
       hasRepPhotos: !!job?.preInstallPhotos,
       productCount: job?.products?.length ?? 0,
+      ...(isGpsBypassActive(job) && {
+        usedGpsBypass: true,
+        gpsBypassReason: gpsBypassReason(job),
+      }),
+      ...(isEarlyStartBypassActive(job) && {
+        usedEarlyStartBypass: true,
+        earlyStartBypassReason: earlyStartBypassReason(job),
+      }),
     },
     job
   );

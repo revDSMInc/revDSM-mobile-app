@@ -48,6 +48,27 @@ Which tab a job was tapped in does not decide whether it opens; its own `leadDat
 Today or earlier opens (subject to the geofence); a future date is refused with a
 "not scheduled yet" message (`utils/installer-schedule.ts`).
 
+**`installerBypass` overrides all of that for one job.** A manager files it when the
+automatic checks are getting a job wrong, and **either flag being true opens the job with
+no location, arrival-window or date check at all**:
+
+```json
+"installerBypass": {
+  "gpsBypass": true,
+  "gpsBypassReason": "Job address incorrect in system (installer is at correct physical location, system has wrong coordinates)",
+  "earlyStart": true,
+  "earlyStartReason": "Weather/safety — moving install up to avoid conditions later"
+}
+```
+
+Both flags can be set at once, or just one. The two are the *reason* an override was filed,
+not two separately unlockable halves of the check — the gating rule is
+`isJobBypassActive` in `utils/job-bypass.ts`, and the flags and reasons are attached to the
+`job_started` activity log so a bypassed check-in is distinguishable from an ordinary one.
+An override that has been switched off arrives as the same object with both flags false and
+gates normally: the flags decide, never the object's presence. The backend still applies its
+own check on the check-in request and remains the authority — a 403 there is honoured.
+
 **Response** `{ data: { jobs[], pagination, summaryCounts } }` — each row normalized by
 `normalizeInstallerJob`. The list row carries identity, address, arrival window and
 status; it does **not** carry `contractDetails`, `preInstallPhotos` or `productDetails`.

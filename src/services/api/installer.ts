@@ -428,6 +428,11 @@ export const normalizeInstallerJob = (raw: any): InstallerJob => {
     location: raw?.location,
     status,
     workflowState: raw?.workflowState,
+    // `installerBypass` on the installer rows; `bypass` is the same object under the
+    // name the sales endpoints use, accepted so a job fetched through either shape
+    // reaches the gates. Left undefined when neither is present — the gates test the
+    // flags, not the object, but an empty `{}` would still be a lie about the payload.
+    installerBypass: raw?.installerBypass ?? raw?.bypass ?? undefined,
     companyName: raw?.companyName,
     resulted: RESULTED_STATUSES.includes(status.toLowerCase()),
     notes: normalizeJobNotes(raw?.note ?? raw?.notes),

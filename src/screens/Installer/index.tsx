@@ -213,6 +213,15 @@ export default function InstallerDashboard() {
    * **WHEN gates the START of a visit only.** A job already `inProgress` is past it — a
    * visit underway cannot be "too early".
    *
+   * **A manager's `installerBypass` switches BOTH gates off** — either of its flags does,
+   * since an override is one decision about one job (`utils/job-bypass.ts`). It is applied
+   * inside the two helper modules rather than here, so this function reads unchanged and
+   * the card's labels, the tap's refusals and the check-in payload cannot drift apart over
+   * whether an override was in force. A bypassed job also survives a missing fix and an
+   * ungeocoded address: with the radius out of the picture there is nothing left for those
+   * to be evidence about. The server's own 403 is still honoured below — it remains the
+   * authority, and it holds the same override we do.
+   *
    * **WHERE gates EVERY open**, including a re-entry ("Resume Appointment"). It used to be
    * skipped for an in-progress job, so that a crew could reopen from the van or a supply
    * run rather than be locked out of their own job over a GPS reading — but that also
