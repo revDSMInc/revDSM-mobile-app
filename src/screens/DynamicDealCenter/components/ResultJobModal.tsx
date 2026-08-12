@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { BlurView } from '@react-native-community/blur';
@@ -12,32 +12,28 @@ import { unitSuffix, labelWithSection } from '../utils/item-format';
 import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
-import { ENV } from '../../../config/env';
+import { useAuth } from '../../../hooks/useAuth';
 import { FUND } from './funding/funding-theme';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
 import { SendLinkModal } from './funding/SendLinkModal';
+import { useFunding } from '../hooks/useFunding';
+import type { FundingChannel, FundingPaymentRow, FundingRecord } from '../../../services/api/FundingService';
 import {
   applyDecisionsToRows,
   assignedTotal,
-  buildApplicationLink,
-  buildPayments,
+  attemptLog,
   coverageOK,
   effectiveRowAmount,
+  formatStamp,
   fundingBlockers,
   hasDecline,
+  hydrateRowsFromRecord,
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
-  newRowId,
-  stampTime,
-  syncPayments,
-  toggleQueued,
-  toPaymentPayload,
-  type AttemptLogEntry,
-  type Decision,
+  newPaymentId,
+  toUpsertRows,
   type DecisionBanner,
-  type FundingPayment,
-  type FundingPaymentPayload,
   type PaymentRow,
 } from '../utils/funding';
 
@@ -122,13 +118,14 @@ interface ResultJobModalProps {
     versatile?: boolean;
     pineapple?: boolean;
     /**
-     * Sale only — the funding step's output. `payments` is the full multi-method
-     * breakdown; the four fields above stay populated (first/summed) so every
-     * existing consumer of the outcome payload keeps working unchanged.
+     * Sale only — the funding record as the SERVER holds it once Submit landed.
+     * `payments` is the full multi-method breakdown; the four fields above stay
+     * populated (first/summed) so every existing consumer of the outcome payload
+     * keeps working unchanged.
      */
     bankDecline?: boolean;
-    payments?: FundingPaymentPayload[];
-    fundingAttempts?: AttemptLogEntry[];
+    payments?: FundingPaymentRow[];
+    fundingAttempts?: FundingRecord['attemptHistory'];
   }) => void;
 }
 
@@ -231,6 +228,9 @@ export function ResultJobModal({
   onConfirm,
 }: ResultJobModalProps) {
   const { isDark } = useTheme();
+  // The funding endpoints are company-scoped by a header (spec §1). The lead's own
+  // company wins over the signed-in rep's — same resolution `JobDocsSection` uses.
+  const { user } = useAuth();
   // Web `result-lead-modal.js:61`. See `Lead.isRehashed`.
   const isRehashed = lead?.isRehashed === true;
   const [oneLeg, setOneLeg] = useState('No');
@@ -242,26 +242,31 @@ export function ResultJobModal({
   const [pineapple, setPineapple] = useState(false);
 
   // ── funding state ────────────────────────────────────────────────────────
+  /**
+   * The Funding API. It owns the record; everything the funding screen renders
+   * comes from there and ⚠️ **no step is ever advanced locally** (spec rule 3).
+   * Only the PRICING rows below are local, because they are an unsaved draft until
+   * the rep taps Confirm.
+   */
+  const funding = useFunding(lead?._id || lead?.leadId || lead?.id, lead?.companyId || user?.companyId);
+
   /** Which half of the sheet is showing. A demo never leaves `result`. */
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
   /** The editable pricing lines. One down row + one auto balance row to start. */
   const [rows, setRows] = useState<PaymentRow[]>([]);
-  /** Those rows projected into life-cycle state, once the rep has confirmed them. */
-  const [payments, setPayments] = useState<FundingPayment[]>([]);
-  const [log, setLog] = useState<AttemptLogEntry[]>([]);
   /** Messages a lender decision left above the Balance group. */
   const [banners, setBanners] = useState<DecisionBanner[]>([]);
   /** A decision changed what the job can fund, so the contract price opens up. */
   const [priceUnlocked, setPriceUnlocked] = useState(false);
   /** `bank_decline` is only reachable once a lender has actually declined. */
   const [resultChoice, setResultChoice] = useState<'sale' | 'bank_decline'>('sale');
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-  const [syncingAll, setSyncingAll] = useState(false);
-  const [syncingId, setSyncingId] = useState<string | null>(null);
-  /** Payment id whose share sheet is open. */
+  /** Payment pid whose share sheet is open, plus the url `POST …/link` returned. */
   const [linkTarget, setLinkTarget] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [isLoadingLink, setIsLoadingLink] = useState(false);
 
   const isSale = resultType === 'sale';
+  const payments = funding.payments;
   const bankDeclined = isSale && resultChoice === 'bank_decline';
 
   /**
@@ -274,34 +279,61 @@ export function ResultJobModal({
     [pricing.outcomeDownPaymentMethods]
   );
 
-  // Sync incoming result type + prefill the contract price each time it opens.
+  /**
+   * Open the sheet: reset the form, then load whatever funding this lead already
+   * has and seed the pricing rows from it.
+   *
+   * ⚠️ Hydrating rather than always re-seeding is what keeps `pid` STABLE across
+   * visits — it is the server's merge key, so inventing fresh ids on every open
+   * would create a second set of rows for the same deal on the next save.
+   */
   useEffect(() => {
     if (!visible) return;
+    let cancelled = false;
+
     setResultType(initialResultType || 'sale');
-    setContractPrice(initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '');
     setDemoReason('');
     setReasonExplanation('');
-    // Funding starts over with the sheet: carrying a previous lead's lender
-    // decisions into a new one would be a data leak between deals.
     setScreen('result');
-    setPayments([]);
-    setLog([]);
     setBanners([]);
     setPriceUnlocked(false);
     setResultChoice('sale');
-    setLastSyncedAt(null);
     setLinkTarget(null);
-    setRows([
+    setLinkUrl('');
+    funding.clearServerBlockers();
+
+    const seededPrice = initialPrice && initialPrice > 0 ? String(Math.round(initialPrice)) : '';
+    setContractPrice(seededPrice);
+    const freshRows: PaymentRow[] = [
       {
-        id: newRowId(),
+        pid: newPaymentId(),
         kind: 'down',
         amount: initialDownPayment && initialDownPayment > 0 ? String(Math.round(initialDownPayment)) : '',
         method: seedDownMethod(initialPaymentMethod),
       },
       // The auto row absorbs whatever the down payment leaves, so the two halves
       // always add up to the contract without the rep doing the subtraction.
-      { id: newRowId(), kind: 'bal', amount: '', method: initialPaymentMethod || '', auto: true },
-    ]);
+      { pid: newPaymentId(), kind: 'bal', amount: '', method: initialPaymentMethod || '', auto: true },
+    ];
+    setRows(freshRows);
+
+    // A demo never funds anything, so don't fetch a record it will never use.
+    if ((initialResultType || 'sale') !== 'sale') return;
+
+    funding.load().then((record) => {
+      if (cancelled || !record) return;
+      const saved = hydrateRowsFromRecord(record, pricing.plans);
+      if (saved.length) setRows(saved);
+      // The stored contract price wins over the rollout's: it is what the saved
+      // rows were priced against, and a mismatch would misreport the remainder.
+      if (record.contractPrice > 0) setContractPrice(String(record.contractPrice));
+      if (record.result === 'bankDecline') setResultChoice('bank_decline');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initialResultType, initialPrice, initialPaymentMethod, initialDownPayment, seedDownMethod]);
 
   const contractNum = parseFloat(contractPrice) || 0;
@@ -385,12 +417,12 @@ export function ResultJobModal({
 
   // ── pricing-row editing ──────────────────────────────────────────────────
 
-  const updateRow = useCallback((id: string, patch: Partial<PaymentRow>) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const updateRow = useCallback((pid: string, patch: Partial<PaymentRow>) => {
+    setRows((prev) => prev.map((r) => (r.pid === pid ? { ...r, ...patch } : r)));
   }, []);
 
-  const removeRow = useCallback((id: string) => {
-    setRows((prev) => prev.filter((r) => r.id !== id));
+  const removeRow = useCallback((pid: string) => {
+    setRows((prev) => prev.filter((r) => r.pid !== pid));
   }, []);
 
   const addRow = useCallback((kind: 'down' | 'bal') => {
@@ -405,7 +437,7 @@ export function ResultJobModal({
           break;
         }
       }
-      next.splice(insertAt, 0, { id: newRowId(), kind, amount: '', method: '' });
+      next.splice(insertAt, 0, { pid: newPaymentId(), kind, amount: '', method: '' });
       return next;
     });
   }, []);
@@ -428,7 +460,7 @@ export function ResultJobModal({
     if (!target) return;
     // Only reclaim a row the rep has not typed into — never overwrite an amount.
     if (parseFloat(target.amount || '0') > 0) return;
-    updateRow(target.id, { auto: true });
+    updateRow(target.pid, { auto: true });
   }, [rows, contractNum, isSale, updateRow]);
 
   const needsRowId = useMemo(() => needsAttentionRowId(rows, banners), [rows, banners]);
@@ -445,7 +477,15 @@ export function ResultJobModal({
   const underAssigned = contractNum > 0 && totalAssigned < contractNum - EPS;
   const saleReady = contractNum > 0 && fundedRows.length > 0 && !missingMethod && !overAssigned;
 
-  const goFunding = useCallback(() => {
+  /**
+   * Confirm — save the pricing rows, then move to Funding.
+   *
+   * The `PUT` is the save for the whole screen: `payments` is the COMPLETE list,
+   * so a row the rep deleted is deleted server-side too. Only advance on success —
+   * the funding screen renders the server's record, so opening it after a failed
+   * save would show the rep the previous state under the new price.
+   */
+  const goFunding = useCallback(async () => {
     if (contractNum <= 0) {
       FlashMessage.error('Contract price', 'Enter the contract price before confirming.');
       return;
@@ -461,11 +501,12 @@ export function ResultJobModal({
       );
       return;
     }
-    // Carrying `prev` keeps progress a rep already made on any method that did
-    // not change — re-pricing a card must not un-send its link.
-    setPayments((prev) => buildPayments(rows, contractNum, pricing.plans, prev));
-    setScreen('funding');
-  }, [contractNum, missingMethod, overAssigned, totalAssigned, rows, pricing.plans]);
+    const res = await funding.savePayments(
+      Math.round(contractNum),
+      toUpsertRows(rows, contractNum, pricing.plans)
+    );
+    if (res.ok) setScreen('funding');
+  }, [contractNum, missingMethod, overAssigned, totalAssigned, rows, pricing.plans, funding]);
 
   /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
@@ -473,18 +514,30 @@ export function ResultJobModal({
     setRows(applied.rows);
     setBanners(applied.banners);
     if (applied.banners.length) setPriceUnlocked(true);
+    funding.clearServerBlockers();
     setScreen('result');
-  }, [rows, payments, contractNum]);
+  }, [rows, payments, contractNum, funding]);
 
   // ── funding actions ──────────────────────────────────────────────────────
 
-  const patchPayment = useCallback((id: string, patch: Partial<FundingPayment>) => {
-    setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-  }, []);
-
   const covered = useMemo(() => coverageOK(payments, contractNum), [payments, contractNum]);
-  const blockers = useMemo(() => fundingBlockers(payments, contractNum), [payments, contractNum]);
-  const declineHappened = useMemo(() => hasDecline(payments, log), [payments, log]);
+  /**
+   * The live checklist. The SERVER's list replaces it the moment a submit is
+   * refused (spec §5.12) — that one is authoritative and already ordered — but
+   * showing the local mirror beforehand means the rep works the list instead of
+   * discovering it by tapping a button that says no.
+   */
+  const localBlockers = useMemo(() => fundingBlockers(payments, contractNum), [payments, contractNum]);
+  const blockers = funding.serverBlockers ?? localBlockers;
+  /** ⚠️ Read from the record: the server refuses `bankDecline` without a logged decline. */
+  const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
+  const attempts = useMemo(() => attemptLog(funding.record), [funding.record]);
+  /** The most recent status check across every row. */
+  const lastSyncedAt = useMemo(() => {
+    const stamps = payments.map((p) => p.syncedAt).filter(Boolean) as string[];
+    if (!stamps.length) return null;
+    return formatStamp(stamps.sort().slice(-1)[0]);
+  }, [payments]);
 
   // A rep who reassigns a declined amount can end up with no live decline; the
   // job must not stay resulted as a Bank Decline in that case.
@@ -493,52 +546,49 @@ export function ResultJobModal({
   }, [declineHappened, resultChoice]);
 
   /**
-   * Latest payments, readable from a timer callback.
+   * Open the send sheet and fetch the hosted-page url.
    *
-   * `runSync` resolves after a delay, so a plain closure would act on the state as
-   * it was when the rep tapped. Same pattern as `tabsRef` in `useDynamicCalculators`.
+   * ⚠️ `POST …/link` marks NOTHING — merely opening the sheet must not tick Link
+   * Sent (spec §5.4). It is idempotent, so backing out and reopening returns the
+   * same page rather than minting a second live link.
    */
-  const paymentsRef = useRef<FundingPayment[]>([]);
-  useEffect(() => {
-    paymentsRef.current = payments;
-  }, [payments]);
+  const openSendSheet = useCallback(
+    async (pid: string) => {
+      setLinkTarget(pid);
+      setLinkUrl('');
+      setIsLoadingLink(true);
+      const res = await funding.fetchLink(pid);
+      setLinkUrl(res.ok ? res.data?.url || '' : '');
+      setIsLoadingLink(false);
+    },
+    [funding]
+  );
 
-  /** Scenario Simulator: stage the outcome the next Sync will deliver. */
-  const handleQueueOutcome = useCallback((id: string, decision: Decision) => {
-    setPayments((prev) => prev.map((p) => (p.id === id ? toggleQueued(p, decision) : p)));
-  }, []);
+  /** The rep confirmed a send happened. Resolves false if the server did not deliver. */
+  const handleSendLink = useCallback(
+    async (channel: FundingChannel, destination?: string): Promise<boolean> => {
+      if (!linkTarget) return false;
+      const res = await funding.markLinkSent(linkTarget, channel, destination);
+      return res.ok;
+    },
+    [funding, linkTarget]
+  );
 
   /**
-   * Status check — deliver whatever the lender/processor has (see `syncPayments`).
-   * The short delay is the network round trip it will become, and it stops the
-   * spinner from flashing.
+   * Bank Decline / back to Sale.
    *
-   * The next state is computed OUTSIDE the `setPayments` updater on purpose: this
-   * also appends to the attempt log, and an append performed inside an updater is
-   * duplicated whenever React re-invokes it (StrictMode, and any discarded render).
+   * ⚠️ Only mirrored locally once the SERVER accepts it — it refuses the switch
+   * without a logged lender decline, and refuses to undo one after submission.
    */
-  const runSync = useCallback((only?: string) => {
-    if (only) setSyncingId(only);
-    else setSyncingAll(true);
-    setTimeout(() => {
-      const at = stampTime();
-      const current = paymentsRef.current;
-      const target = only ? current.filter((p) => p.id === only) : current;
-      const { payments: updated, log: entries } = syncPayments(target, at);
-      const byId = new Map(updated.map((p) => [p.id, p]));
-      setPayments((prev) => prev.map((p) => byId.get(p.id) || p));
-      if (entries.length) setLog((l) => [...l, ...entries]);
-      if (!only) setLastSyncedAt(at);
-      setSyncingAll(false);
-      setSyncingId(null);
-    }, 600);
-  }, []);
-
-  const linkPayment = useMemo(() => payments.find((p) => p.id === linkTarget) || null, [payments, linkTarget]);
-  const applicationLink = useMemo(
-    () => (linkPayment ? buildApplicationLink(ENV.API_URL, lead?._id || lead?.leadId || lead?.id || '', linkPayment) : ''),
-    [linkPayment, lead]
+  const handleSetResult = useCallback(
+    async (next: 'sale' | 'bank_decline') => {
+      const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
+      if (res.ok) setResultChoice(next);
+    },
+    [funding]
   );
+
+  const linkPayment = useMemo(() => payments.find((p) => p.pid === linkTarget) || null, [payments, linkTarget]);
 
   // ── submit ───────────────────────────────────────────────────────────────
 
@@ -548,10 +598,26 @@ export function ResultJobModal({
   // covers a paid-in-full deal that has no balance line at all.
   const demoDisabled =
     !demoReason || (demoReason === 'Other (Explain)' && !reasonExplanation.trim()) || !(contractNum > 0);
-  const submitDisabled = bankDeclined ? false : blockers.length > 0;
+  // The server is the real gate; this only keeps the rep from tapping into a
+  // rejection it can already see coming. A Bank Decline submits with no checks.
+  const submitDisabled = funding.isSubmitting || (!bankDeclined && localBlockers.length > 0);
 
-  const handleBuild = useCallback(() => {
+  /**
+   * Finish.
+   *
+   * A **demo** has nothing to fund, so it hands off immediately. A **sale** must
+   * submit the funding first and only proceeds if the server accepts — a refusal
+   * comes back as the itemised `blockers` list, which is rendered in place of the
+   * local one rather than dropping the rep into the job builder on an unfunded job.
+   */
+  const handleBuild = useCallback(async () => {
     const isDemo = resultType === 'demo';
+
+    if (!isDemo) {
+      const res = await funding.submit();
+      if (!res.ok) return;
+    }
+
     onConfirm?.({
       resultType,
       oneLeg,
@@ -571,13 +637,14 @@ export function ResultJobModal({
         ? {}
         : {
             bankDecline: bankDeclined,
-            payments: toPaymentPayload(payments),
-            fundingAttempts: log,
+            // The record as the server holds it after the submit landed.
+            payments,
+            fundingAttempts: funding.record?.attemptHistory || [],
           }),
     });
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
-    demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, log, onConfirm,
+    demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
   ]);
 
   // ── price lock ───────────────────────────────────────────────────────────
@@ -628,25 +695,28 @@ export function ResultJobModal({
 
             <ScrollView style={{ paddingHorizontal: 20, paddingTop: 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
               {onFunding ? (
+                /* Every callback is an ENDPOINT — nothing here ticks a step
+                   locally; the screen redraws from the record each one returns. */
                 <FundingView
                   payments={payments}
                   contractTotal={contractNum}
                   covered={covered}
                   bankDeclined={bankDeclined}
-                  log={log}
+                  log={attempts}
                   lastSyncedAt={lastSyncedAt}
-                  syncingAll={syncingAll}
-                  syncingId={syncingId}
-                  onSyncAll={() => runSync()}
-                  onSyncOne={(id) => runSync(id)}
-                  onSendLink={setLinkTarget}
-                  onMarkCollected={(id) => patchPayment(id, { step: 1 })}
-                  onChargeCard={(id) => patchPayment(id, { step: 3 })}
-                  onActivate={(id) => patchPayment(id, { activated: true, step: 3 })}
-                  onQueueOutcome={handleQueueOutcome}
+                  syncingAll={funding.syncingAll}
+                  busyPid={funding.busyPid}
+                  mockDisabled={funding.mockDisabled}
+                  onSyncAll={funding.syncAll}
+                  onSyncOne={funding.syncPayment}
+                  onSendLink={openSendSheet}
+                  onMarkCollected={funding.markCheckCollected}
+                  onChargeCard={funding.chargeCard}
+                  onActivate={funding.activateLoan}
+                  onSimulate={funding.mockProvider}
                   onEditPayments={goResult}
-                  onResultAsBankDecline={() => setResultChoice('bank_decline')}
-                  onUndoBankDecline={() => setResultChoice('sale')}
+                  onResultAsBankDecline={() => handleSetResult('bank_decline')}
+                  onUndoBankDecline={() => handleSetResult('sale')}
                 />
               ) : (
                 <>
@@ -950,21 +1020,18 @@ export function ResultJobModal({
               )}
             </View>
 
-            {/* Share sheet — an in-sheet overlay, not a nested Modal (see SendLinkModal). */}
+            {/* Share sheet — an in-sheet overlay, not a nested Modal (see SendLinkModal).
+                It reports the send; the STEP comes back on the record, never from here. */}
             {!!linkPayment && (
               <SendLinkModal
                 payment={linkPayment}
-                link={applicationLink}
-                onClose={() => setLinkTarget(null)}
-                onSent={(sentTo) => {
-                  setPayments((prev) =>
-                    prev.map((p) =>
-                      p.id === linkPayment.id
-                        ? { ...p, linkSent: true, sentTo, step: p.type === 'cc' ? Math.max(p.step, 1) : p.step }
-                        : p
-                    )
-                  );
+                link={linkUrl}
+                isLoadingLink={isLoadingLink}
+                isSending={funding.busyPid === linkPayment.pid}
+                onSend={handleSendLink}
+                onClose={() => {
                   setLinkTarget(null);
+                  setLinkUrl('');
                 }}
               />
             )}

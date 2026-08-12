@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FUND } from './funding-theme';
 import { FundingStepper } from './FundingStepper';
-import { FLOW, doneFor, openShort, ownerOf, type FundingPayment } from '../../utils/funding';
+import { FLOW, canSync, doneFor, formatStamp, openShort, ownerOf, type FundingPayment } from '../../utils/funding';
 
 /**
  * One payment's funding card: the amount and method it represents, its progress
@@ -13,6 +13,10 @@ import { FLOW, doneFor, openShort, ownerOf, type FundingPayment } from '../../ut
  * bank, a processor or the install crew is rendered as a locked step plus a note
  * saying so — see `FundingStepper`. That split is the whole point of the screen:
  * a rep should be able to look at a card and know whether they are finished.
+ *
+ * ⚠️ Nothing here advances a step locally. Each action calls its endpoint and the
+ * screen redraws from the record that comes back (spec rule 3), which is why every
+ * button is disabled while `isBusy` — a second tap would race the first response.
  */
 
 interface Props {
@@ -21,12 +25,13 @@ interface Props {
   covered: boolean;
   /** Result is Bank Decline — the job is closing, so lender actions stop being offered. */
   bankDeclined: boolean;
-  isSyncing: boolean;
+  /** An action for THIS payment is in flight. */
+  isBusy: boolean;
   onSendLink: () => void;
   onMarkCollected: () => void;
   onChargeCard: () => void;
   onActivate: () => void;
-  /** Ask the lender/processor for an update — see `syncPayments`. */
+  /** Ask the processor/lender what happened — `POST …/sync`. */
   onSync: () => void;
   /** "Add another payment method" — sends the rep back to the pricing screen. */
   onEditPayments: () => void;
@@ -35,24 +40,33 @@ interface Props {
 }
 
 /** Full-width action. `alt` is the outlined secondary used for recovery paths. */
-function ActionButton({ label, onPress, alt, tone }: { label: string; onPress: () => void; alt?: boolean; tone?: 'danger' }) {
+function ActionButton({ label, onPress, alt, tone, busy, disabled }: {
+  label: string; onPress: () => void; alt?: boolean; tone?: 'danger'; busy?: boolean; disabled?: boolean;
+}) {
   const danger = tone === 'danger';
+  const off = !!disabled || !!busy;
   return (
     <TouchableOpacity
       activeOpacity={0.85}
       onPress={onPress}
+      disabled={off}
       style={{
         marginTop: 12,
         borderRadius: 11,
         paddingVertical: 13,
         alignItems: 'center',
         justifyContent: 'center',
+        opacity: off ? 0.55 : 1,
         backgroundColor: alt ? '#fff' : FUND.GREEN,
         borderWidth: alt ? 1.6 : 0,
         borderColor: danger ? FUND.RED_BORDER : FUND.BORDER,
       }}
     >
-      <Text style={{ fontSize: 14, fontWeight: '700', color: alt ? (danger ? FUND.RED_TEXT : '#3A4048') : '#fff' }}>{label}</Text>
+      {busy ? (
+        <ActivityIndicator size="small" color={alt ? FUND.SUBTEXT : '#fff'} />
+      ) : (
+        <Text style={{ fontSize: 14, fontWeight: '700', color: alt ? (danger ? FUND.RED_TEXT : '#3A4048') : '#fff' }}>{label}</Text>
+      )}
     </TouchableOpacity>
   );
 }
@@ -70,7 +84,7 @@ export function PaymentFundingCard({
   payment: p,
   covered,
   bankDeclined,
-  isSyncing,
+  isBusy,
   onSendLink,
   onMarkCollected,
   onChargeCard,
@@ -114,31 +128,42 @@ export function PaymentFundingCard({
         </Text>
         <View style={{ maxWidth: '58%', backgroundColor: FUND.FILL, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20 }}>
           <Text style={{ fontSize: 12.5, fontWeight: '700', color: FUND.SUBTEXT }} numberOfLines={1}>
-            {p.methodLabel}
+            {p.method}
           </Text>
         </View>
       </View>
 
       <FundingStepper payment={p} covered={covered} />
 
-      {/* ── rep actions ── */}
-      {p.type === 'check' && p.kind === 'down' && p.step === 0 && (
-        <ActionButton label="Mark collected" onPress={onMarkCollected} />
+      {/* ── rep actions ──
+          Each is gated on the SERVER's own flag, never on a local guess: only the
+          rep's own steps appear, and each disappears the moment the record comes
+          back with it done. */}
+      {p.type === 'check' && p.kind === 'down' && !p.collected && (
+        <ActionButton label="Mark collected" onPress={onMarkCollected} busy={isBusy} />
       )}
 
       {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && (
-        <ActionButton label={`Send ${p.type === 'bank' ? 'application' : 'payment'} link`} onPress={onSendLink} />
+        <ActionButton
+          label={`Send ${p.type === 'bank' ? 'application' : 'payment'} link`}
+          onPress={onSendLink}
+          busy={isBusy}
+        />
       )}
 
-      {/* Card on File is not a rep action — the processor reports it on Sync. */}
-      {p.type === 'cc' && p.kind === 'down' && p.step >= 2 && p.step < 3 && (
-        <ActionButton label={`Charge $${p.amount.toLocaleString()}`} onPress={onChargeCard} />
+      {/* Card on File is not a rep action — the processor reports it on Sync.
+          Charging is: a DOWN-payment card on file that has not been charged. A
+          balance card is charged by the processor after install and the endpoint
+          refuses it (spec §5.10). */}
+      {p.type === 'cc' && p.kind === 'down' && p.step >= 2 && !p.charged && (
+        <ActionButton label={`Charge $${p.amount.toLocaleString()}`} onPress={onChargeCard} busy={isBusy} />
       )}
 
       {p.type === 'bank' && !p.activated && (p.decision === 'full' || (p.decision === 'short' && !isOpenShort)) && (
         <ActionButton
           label={`Authorize & activate loan for $${(p.approvedAmt != null ? p.approvedAmt : p.amount).toLocaleString()}`}
           onPress={onActivate}
+          busy={isBusy}
         />
       )}
 
@@ -148,7 +173,7 @@ export function PaymentFundingCard({
             Approved for ${(p.approvedAmt || 0).toLocaleString()} of ${(p.requested || p.amount).toLocaleString()} requested. $
             {shortfall.toLocaleString()} needs a different payment method before this can be authorized.
           </Banner>
-          <ActionButton label="Add another payment method" onPress={onEditPayments} alt />
+          <ActionButton label="Add another payment method" onPress={onEditPayments} alt disabled={isBusy} />
         </>
       )}
 
@@ -158,24 +183,25 @@ export function PaymentFundingCard({
             Declined. The full ${p.amount.toLocaleString()} needs a different payment method — or the job gets resulted as a
             bank decline.
           </Banner>
-          <ActionButton label="Add another payment method" onPress={onEditPayments} alt />
-          <ActionButton label="Result as Bank Decline" onPress={onResultAsBankDecline} alt tone="danger" />
+          <ActionButton label="Add another payment method" onPress={onEditPayments} alt disabled={isBusy} />
+          <ActionButton label="Result as Bank Decline" onPress={onResultAsBankDecline} alt tone="danger" disabled={isBusy} />
         </>
       )}
 
-      {/* Status check — only while a third party still owes an answer. */}
-      {(p.type === 'bank' || p.type === 'cc') && !finished && p.linkSent && (
+      {/* Status check — only while a third party still owes an answer. A check has
+          no external system to poll and `sync` refuses it (spec §5.8). */}
+      {canSync(p) && !finished && (
         <View style={{ marginTop: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.MUTED }}>
-            {p.syncedAt ? `Synced ${p.syncedAt}` : 'Awaiting response'}
+            {p.syncedAt ? `Synced ${formatStamp(p.syncedAt)}` : 'Awaiting response'}
           </Text>
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={onSync}
-            disabled={isSyncing}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: FUND.FILL, borderWidth: 1, borderColor: FUND.BORDER, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 7 }}
+            disabled={isBusy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isBusy ? 0.55 : 1, backgroundColor: FUND.FILL, borderWidth: 1, borderColor: FUND.BORDER, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 7 }}
           >
-            {isSyncing ? <ActivityIndicator size="small" color={FUND.SUBTEXT} /> : <Ionicons name="refresh" size={13} color={FUND.SUBTEXT} />}
+            {isBusy ? <ActivityIndicator size="small" color={FUND.SUBTEXT} /> : <Ionicons name="refresh" size={13} color={FUND.SUBTEXT} />}
             <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.SUBTEXT }}>Sync</Text>
           </TouchableOpacity>
         </View>

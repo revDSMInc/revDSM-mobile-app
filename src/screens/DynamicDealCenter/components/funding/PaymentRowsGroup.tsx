@@ -82,10 +82,10 @@ export function PaymentRowsGroup({
 
       {rows.map((row) => {
         const locked = !!row.decision;
-        const needs = row.id === needsRowId;
+        const needs = row.pid === needsRowId;
         const amount = effectiveRowAmount(row, allRows, price);
         const label = plans[row.method]?.label;
-        const isOpen = openRowId === row.id;
+        const isOpen = openRowId === row.pid;
         const readOnlyAmount = locked || !!row.auto;
 
         // The auto row can only be dismissed once it has nothing left to hold;
@@ -97,7 +97,7 @@ export function PaymentRowsGroup({
         const fieldBg = needs ? FUND.AMBER_BG : locked || row.auto ? FUND.FILL : '#fff';
 
         return (
-          <View key={row.id} style={{ marginBottom: 10 }}>
+          <View key={row.pid} style={{ marginBottom: 10 }}>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
               {/* amount */}
               <View style={{ flexBasis: '34%', flexGrow: 0, flexShrink: 0, flexDirection: 'row', alignItems: 'center', borderWidth: 1.6, borderColor: fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 13, backgroundColor: fieldBg }}>
@@ -110,7 +110,7 @@ export function PaymentRowsGroup({
                   <TextInput
                     style={{ flex: 1, fontSize: 18, fontWeight: '700', color: FUND.TEXT, padding: 0 }}
                     value={row.amount}
-                    onChangeText={(t) => onChangeAmount(row.id, t.replace(/[^0-9.]/g, ''))}
+                    onChangeText={(t) => onChangeAmount(row.pid, t.replace(/[^0-9.]/g, ''))}
                     placeholder="0"
                     placeholderTextColor={FUND.MUTED}
                     keyboardType="numeric"
@@ -122,7 +122,7 @@ export function PaymentRowsGroup({
               <TouchableOpacity
                 activeOpacity={locked ? 1 : 0.8}
                 disabled={locked}
-                onPress={() => setOpenRowId(isOpen ? null : row.id)}
+                onPress={() => setOpenRowId(isOpen ? null : row.pid)}
                 style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderWidth: 1.6, borderColor: isOpen ? FUND.TEXT : fieldBorder, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 14, backgroundColor: fieldBg }}
               >
                 <Text style={{ flex: 1, fontSize: 13, fontWeight: label ? '700' : '600', color: label ? FUND.TEXT : FUND.MUTED }} numberOfLines={1}>
@@ -138,7 +138,7 @@ export function PaymentRowsGroup({
               {/* remove */}
               <View style={{ width: 22, alignItems: 'center', justifyContent: 'center' }}>
                 {removable && (
-                  <TouchableOpacity onPress={() => onRemove(row.id)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
+                  <TouchableOpacity onPress={() => onRemove(row.pid)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
                     <Ionicons name="close" size={17} color={FUND.MUTED} />
                   </TouchableOpacity>
                 )}
@@ -156,7 +156,7 @@ export function PaymentRowsGroup({
                     <TouchableOpacity
                       key={o.value}
                       onPress={() => {
-                        onChangeMethod(row.id, o.value);
+                        onChangeMethod(row.pid, o.value);
                         setOpenRowId(null);
                       }}
                       style={{ paddingHorizontal: 13, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', backgroundColor: isSel ? FUND.FILL : 'transparent' }}
@@ -190,7 +190,7 @@ export function PaymentRowsGroup({
                               FlashMessage.warning('Payment plan', belowMinMsg(plans, key, gateAt));
                               return;
                             }
-                            onChangeMethod(row.id, key);
+                            onChangeMethod(row.pid, key);
                             setOpenRowId(null);
                           }}
                           style={{ paddingHorizontal: 13, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF0F2', opacity: belowMin ? 0.5 : 1, backgroundColor: isSel ? FUND.FILL : 'transparent' }}

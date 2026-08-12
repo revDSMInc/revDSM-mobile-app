@@ -14,8 +14,9 @@ import type { AttemptLogEntry, Decision, FundingPayment } from '../../utils/fund
  * that collects NOW (the down payment) and money that settles AFTER INSTALL (the
  * balance), because those two have completely different expectations of the rep.
  *
- * Purely presentational — every rule lives in `utils/funding.ts` and every action
- * is a callback. The owner (`ResultJobModal`) holds the payment state.
+ * Purely presentational, and everything it draws comes from the funding record the
+ * server last returned — ⚠️ **no step is ever advanced locally** (spec rule 3).
+ * Every action is a callback into `useFunding`.
  */
 
 interface Props {
@@ -25,17 +26,21 @@ interface Props {
   /** Result switched to Bank Decline — nothing collects, but the attempts stay on record. */
   bankDeclined: boolean;
   log: AttemptLogEntry[];
+  /** ISO timestamp of the most recent sync across all rows, already formatted. */
   lastSyncedAt: string | null;
   syncingAll: boolean;
-  syncingId: string | null;
+  /** The pid whose own action is in flight. */
+  busyPid: string | null;
+  /** The server is not in mock mode, so the simulator can't stand in for a lender. */
+  mockDisabled: boolean;
   onSyncAll: () => void;
-  onSyncOne: (id: string) => void;
-  onSendLink: (id: string) => void;
-  onMarkCollected: (id: string) => void;
-  onChargeCard: (id: string) => void;
-  onActivate: (id: string) => void;
-  /** Scenario Simulator — stage the outcome the next Sync will deliver. */
-  onQueueOutcome: (id: string, decision: Decision) => void;
+  onSyncOne: (pid: string) => void;
+  onSendLink: (pid: string) => void;
+  onMarkCollected: (pid: string) => void;
+  onChargeCard: (pid: string) => void;
+  onActivate: (pid: string) => void;
+  /** TEST ONLY — `POST …/mock-provider`; the rep still has to Sync (spec §10). */
+  onSimulate: (pid: string, action: 'cardOnFile' | Decision, approvedAmt?: number) => void;
   onEditPayments: () => void;
   onResultAsBankDecline: () => void;
   onUndoBankDecline: () => void;
@@ -58,14 +63,15 @@ export function FundingView({
   log,
   lastSyncedAt,
   syncingAll,
-  syncingId,
+  busyPid,
+  mockDisabled,
   onSyncAll,
   onSyncOne,
   onSendLink,
   onMarkCollected,
   onChargeCard,
   onActivate,
-  onQueueOutcome,
+  onSimulate,
   onEditPayments,
   onResultAsBankDecline,
   onUndoBankDecline,
@@ -75,16 +81,16 @@ export function FundingView({
 
   const renderCard = (p: FundingPayment) => (
     <PaymentFundingCard
-      key={p.id}
+      key={p.pid}
       payment={p}
       covered={covered}
       bankDeclined={bankDeclined}
-      isSyncing={syncingId === p.id || syncingAll}
-      onSendLink={() => onSendLink(p.id)}
-      onMarkCollected={() => onMarkCollected(p.id)}
-      onChargeCard={() => onChargeCard(p.id)}
-      onActivate={() => onActivate(p.id)}
-      onSync={() => onSyncOne(p.id)}
+      isBusy={busyPid === p.pid || syncingAll}
+      onSendLink={() => onSendLink(p.pid)}
+      onMarkCollected={() => onMarkCollected(p.pid)}
+      onChargeCard={() => onChargeCard(p.pid)}
+      onActivate={() => onActivate(p.pid)}
+      onSync={() => onSyncOne(p.pid)}
       onEditPayments={onEditPayments}
       onResultAsBankDecline={onResultAsBankDecline}
     />
@@ -101,7 +107,7 @@ export function FundingView({
           activeOpacity={0.8}
           onPress={onSyncAll}
           disabled={syncingAll}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 7, opacity: syncingAll ? 0.6 : 1, backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 }}
         >
           {syncingAll ? <ActivityIndicator size="small" color="#5B6B60" /> : <Ionicons name="refresh" size={14} color="#5B6B60" />}
           <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B6B60' }}>Sync all</Text>
@@ -164,20 +170,30 @@ export function FundingView({
           </Text>
           {log.map((l, i) => {
             const partial = l.outcome === 'Partial';
+            const declined = l.outcome === 'Declined';
+            // A Full attempt is a normal event, not an exception — it gets a neutral
+            // rail so the two that DO need the rep's attention still stand out.
+            const rail = declined ? FUND.RED : partial ? FUND.AMBER : FUND.GREEN;
+            const badge = declined
+              ? { bg: FUND.RED_BG, fg: FUND.RED_TEXT }
+              : partial
+                ? { bg: FUND.AMBER_BG, fg: FUND.AMBER_TEXT }
+                : { bg: FUND.GREEN_BG, fg: FUND.GREEN_TEXT };
             return (
               <View
                 key={`${l.method}-${l.at}-${i}`}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, backgroundColor: '#fff', borderWidth: 1.4, borderColor: FUND.BORDER, borderLeftWidth: 4, borderLeftColor: partial ? FUND.AMBER : FUND.RED, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 8 }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, backgroundColor: '#fff', borderWidth: 1.4, borderColor: FUND.BORDER, borderLeftWidth: 4, borderLeftColor: rail, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 8 }}
               >
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#3A4048' }} numberOfLines={1}>{l.method}</Text>
                   <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.MUTED, marginTop: 3 }}>
                     ${l.amt.toLocaleString()} requested
-                    {partial ? ` · $${l.approved.toLocaleString()} approved` : ''} · {l.at}
+                    {partial ? ` · $${l.approved.toLocaleString()} approved` : ''}
+                    {l.at ? ` · ${l.at}` : ''}
                   </Text>
                 </View>
-                <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 7, backgroundColor: partial ? FUND.AMBER_BG : FUND.RED_BG }}>
-                  <Text style={{ fontSize: 10, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase', color: partial ? FUND.AMBER_TEXT : FUND.RED_TEXT }}>
+                <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 7, backgroundColor: badge.bg }}>
+                  <Text style={{ fontSize: 10, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase', color: badge.fg }}>
                     {l.outcome}
                   </Text>
                 </View>
@@ -187,10 +203,10 @@ export function FundingView({
         </View>
       )}
 
-      {/* ⚠️ Stands in for the lender API — remove with the real status endpoint.
-          Sits last (mockup `#simPanel` follows `#fundBody`) so it never reads as
-          part of the payment record above it. */}
-      <ScenarioSimulator payments={payments} onQueue={onQueueOutcome} />
+      {/* ⚠️ TEST ONLY — stands in for the lender/processor; remove with the real
+          integration. Sits last (mockup `#simPanel` follows `#fundBody`) so it never
+          reads as part of the payment record above it. */}
+      <ScenarioSimulator payments={payments} busyPid={busyPid} disabled={mockDisabled} onSimulate={onSimulate} />
     </View>
   );
 }

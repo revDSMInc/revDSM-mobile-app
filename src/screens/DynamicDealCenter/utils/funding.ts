@@ -1,26 +1,33 @@
 /**
- * funding.ts — the pure state machine behind the **Funding** step of the Result
- * Lead sheet (`ResultJobModal` → `FundingView`).
+ * funding.ts — the pure rules behind the **Funding** step of the Result Lead sheet
+ * (`ResultJobModal` → `FundingView`), sitting on top of `FundingService`.
  *
- * A sale is no longer "one down payment method + one balance method". The rep can
- * split the contract across SEVERAL instruments (two cards, a check plus a lender
- * plan, …) and each one has its own life cycle the rep has to drive to the end:
+ * A sale is no longer "one down-payment method + one balance method". The rep can
+ * split the contract across several instruments and each one has its own life
+ * cycle that has to be driven to the end:
  *
  *   check → Collected → Deposited
  *   card  → Link Sent → Card on File → Charged
  *   bank  → Link Sent → Approved → Activated → Funded
  *
- * This module owns the rules — which steps exist, whose step each one is, what is
- * still blocking submission, and how a lender decision folds back onto the pricing
- * rows. It has **no React and no react-native imports** so it stays testable; every
- * component under `components/funding/` is a renderer over these functions.
- *
- * ⚠️ There is NO funding/lender backend yet. Outcomes are staged through the
- * **Scenario Simulator** (`FundingPayment.queued`) and delivered by `syncPayments`,
- * which is the seam a real `GET …/funding/status` drops into — see its docblock.
+ * ⚠️ **The server owns every step.** Nothing here advances a payment; these
+ * functions only READ the record the API returned and decide how to draw it, what
+ * is still blocking, and how a lender decision folds back onto the pricing rows.
+ * No React and no react-native imports, so it stays testable — every component
+ * under `components/funding/` is a renderer over this file.
  */
 
 import type { DealPlan } from '../hooks/useDealPricing';
+import {
+  newPaymentId,
+  toWholeDollars,
+  type FundingDecision,
+  type FundingKind,
+  type FundingMethodType,
+  type FundingPaymentRow,
+  type FundingRecord,
+  type FundingUpsertRow,
+} from '../../../services/api/FundingService';
 
 /**
  * Splitting a half of the contract across SEVERAL payment lines is built and
@@ -32,9 +39,6 @@ import type { DealPlan } from '../hooks/useDealPricing';
  * deliberately — with Add disabled, removing a row would be unrecoverable inside
  * the session, so the rep would be one tap away from a dead end.
  *
- * Everything downstream already handles many lines (`buildPayments`, the funding
- * cards, the blockers, `applyDecisionsToRows`), so nothing else is gated on it.
- *
  * ⚠️ One exception, and it is intentional: the recovery row `applyDecisionsToRows`
  * opens after a DECLINE is not gated. That is not the rep adding a line — it is
  * the system replacing a dead one, and it is the only way a declined deal can be
@@ -42,16 +46,18 @@ import type { DealPlan } from '../hooks/useDealPricing';
  */
 export const MULTI_METHOD_ENABLED = false;
 
-/** Which half of the contract a payment belongs to. */
-export type PaymentKind = 'down' | 'bal';
+/** What the mock provider's "Approve partial" grants: 60%, to the nearest $100. */
+export const MOCK_PARTIAL_RATE = 0.6;
 
-/** The three life cycles a payment can have. Derived from the plan `type`. */
-export type MethodType = 'check' | 'cc' | 'bank';
+export type PaymentKind = FundingKind;
+export type MethodType = FundingMethodType;
+export type Decision = FundingDecision;
+/** A payment as the SERVER holds it — the funding screen renders this, nothing else. */
+export type FundingPayment = FundingPaymentRow;
 
-/** What a lender came back with. Only `bank` payments ever carry one. */
-export type Decision = 'full' | 'short' | 'declined';
+export { newPaymentId, toWholeDollars };
 
-/** Step labels per method type (mockup `FLOW`). Index order IS the step order. */
+/** Step labels per method type. Index order IS the step order. */
 export const FLOW: Record<MethodType, string[]> = {
   check: ['Collected', 'Deposited'],
   cc: ['Link Sent', 'Card on File', 'Charged'],
@@ -67,61 +73,26 @@ export type StepState = 'done' | 'now' | 'next' | 'warn' | 'bad' | 'locked';
 
 /** One editable line on the pricing screen: an amount against a payment method. */
 export interface PaymentRow {
-  id: string;
+  /** Server merge key. ⚠️ Stable across saves and across visits — see `newPaymentId`. */
+  pid: string;
   kind: PaymentKind;
   /** Kept as TEXT so the input can hold `''` mid-typing instead of snapping to 0. */
   amount: string;
-  /** Plan key into `DealPricing.plans` (`''` until the rep picks one). */
+  /** Plan KEY into `DealPricing.plans` (`''` until the rep picks one). */
   method: string;
+  /**
+   * The label the server holds, when it maps to no plan in this company's catalogue
+   * (a renamed or retired plan). Display falls back to it so a saved row never
+   * renders blank just because its plan is gone.
+   */
+  methodLabel?: string;
   /**
    * The derived remainder row. Its amount is computed from the contract price, so
    * it is not typeable and it is the row that absorbs whatever is left over.
    */
   auto?: boolean;
-  /** Set once a lender has answered — the row then reads as a locked fact. */
+  /** Mirrors the server row — a decided row is a locked fact, not an input. */
   decision?: Decision | null;
-}
-
-/** A row once it has entered the funding step, carrying its life-cycle state. */
-export interface FundingPayment {
-  /** Same id as the `PaymentRow` it came from, so decisions map back onto it. */
-  id: string;
-  kind: PaymentKind;
-  amount: number;
-  /** Plan key. */
-  method: string;
-  /** Resolved catalog label — carried so the funding screen never needs the map. */
-  methodLabel: string;
-  type: MethodType;
-  /** Index into `FLOW[type]` the rep has driven this payment to. */
-  step: number;
-  linkSent: boolean;
-  sentTo?: string;
-  decision: Decision | null;
-  /** What was asked of the lender (kept when a partial approval lowers `amount`). */
-  requested: number | null;
-  approvedAmt: number | null;
-  activated: boolean;
-  /** Display stamp from the last status check. */
-  syncedAt: string | null;
-  /**
-   * **Scenario Simulator only** — the outcome the next Sync will deliver.
-   *
-   * Standing in for the lender API means the outcome has to be staged somewhere
-   * before it is "received", so the two halves of the round trip stay distinct:
-   * the simulator queues, `syncPayments` delivers. Delete this field along with
-   * the simulator when the real endpoint lands.
-   */
-  queued: Decision | null;
-}
-
-/** A lender attempt worth keeping on the job even after the money is reassigned. */
-export interface AttemptLogEntry {
-  method: string;
-  amt: number;
-  approved: number;
-  at: string;
-  outcome: 'Partial' | 'Declined';
 }
 
 /** A message shown above the Balance group after a decision comes back. */
@@ -129,6 +100,15 @@ export interface DecisionBanner {
   id: string;
   tone: 'warn' | 'bad';
   text: string;
+}
+
+/** Read-only lender attempt, kept on the job whether or not the money moved. */
+export interface AttemptLogEntry {
+  method: string;
+  amt: number;
+  approved: number;
+  at: string;
+  outcome: 'Full' | 'Partial' | 'Declined';
 }
 
 // ── amounts ────────────────────────────────────────────────────────────────
@@ -142,10 +122,6 @@ export function rowAmount(row: Pick<PaymentRow, 'amount'>): number {
 /**
  * What the auto (remainder) row should show: the contract price minus everything
  * the rep has explicitly assigned.
- *
- * Deliberately subtracts EVERY non-auto row — down and balance alike — rather than
- * the mockup's `recalcAfterLock`, which skips unlocked balance rows and therefore
- * double-counts them into the remainder.
  */
 export function autoAmount(rows: PaymentRow[], price: number): number {
   const used = rows.reduce((sum, r) => (r.auto ? sum : sum + rowAmount(r)), 0);
@@ -162,14 +138,15 @@ export function assignedTotal(rows: PaymentRow[], price: number): number {
   return rows.reduce((sum, r) => sum + effectiveRowAmount(r, rows, price), 0);
 }
 
-// ── method classification ──────────────────────────────────────────────────
+// ── methods ────────────────────────────────────────────────────────────────
 
 /**
- * Map a plan key onto its funding life cycle.
+ * Classify a plan key locally — used only to keep financing out of the Down
+ * Payment picker before a save.
  *
- * Driven by the catalog's `type` rather than the mockup's label matching
- * (`m.startsWith('Check')`), which would misfile any company whose plans are named
- * differently — and every company authors its own plan labels.
+ * ⚠️ The SERVER is authoritative (spec §3.1: it resolves `type` from the method
+ * label against the company catalogue, and discards any `type` we send). Always
+ * render `payment.type` from the response, never this.
  */
 export function methodTypeOf(plans: Record<string, DealPlan>, key?: string): MethodType | null {
   const plan = plans[key || ''];
@@ -179,9 +156,23 @@ export function methodTypeOf(plans: Record<string, DealPlan>, key?: string): Met
   return 'check';
 }
 
-/** Catalog label for a plan key, falling back to the raw key. */
+/** Catalog label for a plan key — this is what `method` is sent AS (spec §3). */
 export function methodLabelOf(plans: Record<string, DealPlan>, key?: string): string {
   return plans[key || '']?.label || key || '';
+}
+
+/**
+ * Reverse of `methodLabelOf`: the plan key whose label the server stored.
+ *
+ * The API holds the LABEL, not the key, so a saved row has to be mapped back
+ * before the picker can show it selected. Returns `''` when the catalogue no
+ * longer has that plan — the row then displays its stored label via
+ * `PaymentRow.methodLabel` rather than going blank.
+ */
+export function planKeyForLabel(plans: Record<string, DealPlan>, label?: string): string {
+  if (!label) return '';
+  const hit = Object.keys(plans).find((k) => plans[k]?.label === label);
+  return hit || '';
 }
 
 /**
@@ -192,55 +183,105 @@ export function shortMethod(label: string): string {
   return String(label).split(' (')[0].trim() || label;
 }
 
-// ── row → payment ──────────────────────────────────────────────────────────
+// ── record → screen ────────────────────────────────────────────────────────
 
 /**
- * Project the pricing rows into funding payments, carrying forward everything the
- * rep already did.
+ * Seed the pricing rows from a saved record.
  *
- * Progress survives an edit as long as the row's METHOD is unchanged (mockup
- * `goFunding`): re-pricing a card that is already on file must not un-send its
- * link, but swapping that card for a lender plan is a different instrument
- * entirely and starts over.
+ * ⚠️ This is what keeps `pid` stable across visits, which is the whole merge
+ * contract: reopening the sheet must reuse the saved ids, or the next `PUT`
+ * creates a second set of rows for the same deal.
+ *
+ * The last undecided balance row is re-flagged `auto` so the remainder keeps
+ * behaving as it did before the save — the server does not persist that flag
+ * (it is a screen affordance, not funding state).
  */
-export function buildPayments(
+export function hydrateRowsFromRecord(
+  record: FundingRecord | null | undefined,
+  plans: Record<string, DealPlan>
+): PaymentRow[] {
+  const saved = record?.payments || [];
+  if (!saved.length) return [];
+  const rows: PaymentRow[] = saved.map((p) => ({
+    pid: p.pid,
+    kind: p.kind,
+    // A decided row shows what the lender GRANTED (spec §3.2) — that is the money
+    // this line actually brings in, and it is what the totals must add up from.
+    amount: String(p.decision ? (p.approvedAmt ?? p.amount) : p.amount),
+    method: planKeyForLabel(plans, p.method),
+    methodLabel: p.method,
+    decision: p.decision,
+  }));
+  const lastOpenBalance = [...rows].reverse().find((r) => r.kind === 'bal' && !r.decision);
+  if (lastOpenBalance) lastOpenBalance.auto = true;
+  return rows;
+}
+
+/**
+ * Project the pricing rows into the `PUT /funding` body.
+ *
+ * `method` is sent as the catalogue LABEL, because that is the field the server
+ * resolves `type` from (spec §3.1) — sending a bare key like `1509` would fall
+ * through the name heuristic and be classified `bank`.
+ *
+ * `type` is sent too, but only for forward-compatibility: the server discards it.
+ * A row with no method or no money is omitted — it is not a payment yet.
+ */
+export function toUpsertRows(
   rows: PaymentRow[],
   price: number,
-  plans: Record<string, DealPlan>,
-  previous: FundingPayment[] = []
-): FundingPayment[] {
+  plans: Record<string, DealPlan>
+): FundingUpsertRow[] {
   return rows
     .map((row) => {
-      const amount = effectiveRowAmount(row, rows, price);
-      const type = methodTypeOf(plans, row.method);
-      if (!type || amount <= 0) return null;
-      const prev = previous.find((p) => p.id === row.id);
-      if (prev && prev.method === row.method) {
-        return { ...prev, kind: row.kind, amount };
-      }
+      const amount = toWholeDollars(effectiveRowAmount(row, rows, price));
+      const method = row.method ? methodLabelOf(plans, row.method) : row.methodLabel || '';
+      if (!method || amount <= 0) return null;
       return {
-        id: row.id,
+        pid: row.pid,
         kind: row.kind,
+        method,
+        ...(methodTypeOf(plans, row.method) ? { type: methodTypeOf(plans, row.method)! } : {}),
         amount,
-        method: row.method,
-        methodLabel: methodLabelOf(plans, row.method),
-        type,
-        step: 0,
-        linkSent: false,
-        decision: null,
-        requested: null,
-        approvedAmt: null,
-        activated: false,
-        syncedAt: null,
-        queued: null,
-      } as FundingPayment;
+      } as FundingUpsertRow;
     })
-    .filter((p): p is FundingPayment => p !== null);
+    .filter((r): r is FundingUpsertRow => r !== null);
+}
+
+/** The attempt history as the screen lists it. Read-only, server-written. */
+export function attemptLog(record: FundingRecord | null | undefined): AttemptLogEntry[] {
+  return (record?.attemptHistory || []).map((a) => ({
+    method: a.method,
+    amt: a.requested,
+    approved: a.approved,
+    at: formatStamp(a.at),
+    outcome: a.outcome,
+  }));
+}
+
+/**
+ * Short `h:mm AM` from an ISO timestamp. Hand-rolled rather than
+ * `toLocaleTimeString`, so it cannot depend on Intl being compiled into the JS
+ * engine. Returns `''` for anything unparseable rather than `Invalid Date`.
+ */
+export function formatStamp(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const h = d.getHours();
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 // ── coverage ───────────────────────────────────────────────────────────────
 
-/** What a payment actually brings in — a lender's approval, not what was asked. */
+/**
+ * What a payment actually brings in.
+ *
+ * ⚠️ A decided loan funds what the lender GRANTED (`approvedAmt`), not what was
+ * asked (`amount`) — spec §3.2. Getting this backwards would let a short approval
+ * look like full coverage and unlock Submit on money that is not coming.
+ */
 export function fundedAmount(p: FundingPayment): number {
   if (p.type === 'bank' && p.approvedAmt != null) return p.approvedAmt;
   return p.amount;
@@ -270,7 +311,13 @@ export function ownerOf(p: FundingPayment): string {
 }
 
 /**
- * Render state for every step of a payment (mockup `stateOf`).
+ * Render state for every step of a payment.
+ *
+ * Driven by the server's explicit BOOLEANS (`collected`, `charged`, `activated`,
+ * `decision`, `linkSent`) rather than by `step`, because ⚠️ **a bank row's
+ * "Approved" is never `step === 2`** — a lender decision leaves `step` at 1, and
+ * the state is signalled by `decision !== null` (spec §4). Reading `step` there
+ * would leave every approved loan looking un-approved.
  *
  * The recurring rule: a BALANCE payment's final step always belongs to somebody
  * else, because the balance settles after install — the rep is never the one who
@@ -281,20 +328,23 @@ export function stateOf(p: FundingPayment, covered: boolean): Record<number, Ste
 
   if (p.type === 'check') {
     if (p.kind === 'bal') {
+      // Written at install; the crew owns both. No endpoint applies (spec §4).
       st[0] = 'locked';
       st[1] = 'locked';
     } else {
-      st[0] = p.step >= 1 ? 'done' : 'now';
-      // The rep can't deposit at the table — the bank posts it.
+      st[0] = p.collected ? 'done' : 'now';
+      // The rep can't deposit at the table — the bank posts it, and it never ticks.
       st[1] = 'locked';
     }
     return st;
   }
 
   if (p.type === 'cc') {
+    const onFile = p.step >= 2 || p.charged;
     st[0] = p.linkSent ? 'done' : 'now';
-    st[1] = p.step >= 2 ? 'done' : p.linkSent ? 'now' : 'next';
-    st[2] = p.kind === 'bal' ? 'locked' : p.step >= 3 ? 'done' : 'next';
+    st[1] = onFile ? 'done' : p.linkSent ? 'now' : 'next';
+    // A balance card is charged by the processor after install; `charge` refuses it.
+    st[2] = p.kind === 'bal' ? 'locked' : p.charged ? 'done' : 'next';
     return st;
   }
 
@@ -308,7 +358,8 @@ export function stateOf(p: FundingPayment, covered: boolean): Record<number, Ste
     : p.decision === 'full' || (p.decision === 'short' && !openShort(p, covered))
       ? 'now'
       : 'next';
-  st[3] = p.kind === 'bal' ? 'locked' : p.step >= 4 ? 'done' : 'next';
+  // Funded is the lender's, always — financing is balance-only.
+  st[3] = 'locked';
   return st;
 }
 
@@ -343,12 +394,13 @@ export function connectorTones(state: StepState): { left: ConnectorTone; right: 
 export function doneFor(p: FundingPayment, covered: boolean): string | null {
   if (p.type === 'check') {
     if (p.kind === 'bal') return 'Collected and deposited by the install crew after the job is done.';
-    if (p.step >= 1) return 'Take the check to the branch to deposit it. Deposited checks off once the bank posts it.';
+    if (p.collected) return 'Take the check to the branch to deposit it. Deposited checks off once the bank posts it.';
     return null;
   }
   if (p.type === 'cc') {
-    if (p.kind === 'bal') return p.step >= 2 ? 'Card is on file. It gets charged after install is verified.' : null;
-    return p.step >= 3 ? 'Charged. Funds confirmed.' : null;
+    const onFile = p.step >= 2 || p.charged;
+    if (p.kind === 'bal') return onFile ? 'Card is on file. It gets charged after install is verified.' : null;
+    return p.charged ? 'Charged. Funds confirmed.' : null;
   }
   if (p.decision === 'declined' || openShort(p, covered)) return null;
   if (!p.activated) return null;
@@ -357,17 +409,27 @@ export function doneFor(p: FundingPayment, covered: boolean): string | null {
     : "Loan activated. Draw settles on the lender's next funding cycle.";
 }
 
+/** Can this row be asked for an update? Checks have no external system to poll. */
+export function canSync(p: FundingPayment): boolean {
+  return (p.type === 'cc' || p.type === 'bank') && p.linkSent;
+}
+
 // ── submission gate ────────────────────────────────────────────────────────
 
 /**
  * Everything still standing between the rep and Submit, phrased as the next
- * action rather than as an error — the footer lists these verbatim.
+ * action rather than as an error — the footer lists these.
+ *
+ * ⚠️ This mirrors the SERVER's rules (spec §5.12) so the rep sees the list before
+ * tapping rather than only after a rejection; the server remains authoritative and
+ * its own `blockers` replace this list on a 409. Steps owned by a bank, lender,
+ * install crew or processor are excluded — they can never block a submit.
  */
 export function fundingBlockers(payments: FundingPayment[], price: number): string[] {
   const covered = coverageOK(payments, price);
   const out: string[] = [];
   payments.forEach((p) => {
-    const who = `$${p.amount.toLocaleString()} ${shortMethod(p.methodLabel)}`;
+    const who = `$${p.amount.toLocaleString()} ${shortMethod(p.method)}`;
     // First match wins — a payment contributes at most ONE blocker, the next thing
     // the rep has to do. Listing every unmet condition would bury the actual step.
     const reason =
@@ -376,9 +438,9 @@ export function fundingBlockers(payments: FundingPayment[], price: number): stri
       : (p.type === 'cc' || p.type === 'bank') && !p.linkSent ? '— link not sent yet'
       : p.type === 'bank' && !p.decision ? '— waiting on lender decision'
       : p.type === 'bank' && !p.activated ? '— loan not activated yet'
-      : p.type === 'cc' && p.step < 2 ? '— card not on file yet'
-      : p.type === 'cc' && p.kind === 'down' && p.step < 3 ? '— card on file but not charged'
-      : p.type === 'check' && p.kind === 'down' && p.step < 1 ? '— check not marked collected'
+      : p.type === 'cc' && p.step < 2 && !p.charged ? '— card not on file yet'
+      : p.type === 'cc' && p.kind === 'down' && !p.charged ? '— card on file but not charged'
+      : p.type === 'check' && p.kind === 'down' && !p.collected ? '— check not marked collected'
       : null;
     if (reason) out.push(`${who} ${reason}`);
   });
@@ -387,102 +449,25 @@ export function fundingBlockers(payments: FundingPayment[], price: number): stri
   return out;
 }
 
-// ── recording a lender decision ────────────────────────────────────────────
-
-/** Short `h:mm AM` stamp. Hand-rolled so it never depends on Intl being compiled in. */
-export function stampTime(d: Date = new Date()): string {
-  const h = d.getHours();
-  const m = d.getMinutes();
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
-}
-
 /**
- * Fold a lender's answer into a payment, and emit the attempt-log row it earns.
+ * Has a lender actually declined on this job?
  *
- * A partial or a decline is kept on the job whether or not the money is later
- * reassigned — the record of what the lender said is the point, and reassigning
- * the amount would otherwise erase it (mockup `pull`).
+ * ⚠️ Read from the ATTEMPT HISTORY as well as the live rows: the server refuses
+ * `result: bankDecline` without a logged `Declined` attempt, and a declined amount
+ * that has since been reassigned no longer has a live row to find it on.
  */
-export function applyDecision(
-  p: FundingPayment,
-  decision: Decision,
-  approvedAmt: number,
-  at: string = stampTime()
-): { payment: FundingPayment; log: AttemptLogEntry | null } {
-  const requested = p.requested ?? p.amount;
-  if (decision === 'full') {
-    return {
-      payment: { ...p, decision: 'full', requested, approvedAmt: requested, syncedAt: at },
-      log: null,
-    };
-  }
-  if (decision === 'short') {
-    const approved = Math.max(0, Math.min(approvedAmt, requested));
-    return {
-      payment: { ...p, decision: 'short', requested, approvedAmt: approved, syncedAt: at },
-      log: { method: p.methodLabel, amt: requested, approved, at, outcome: 'Partial' },
-    };
-  }
-  return {
-    payment: { ...p, decision: 'declined', requested, approvedAmt: 0, activated: false, syncedAt: at },
-    log: { method: p.methodLabel, amt: requested, approved: 0, at, outcome: 'Declined' },
-  };
-}
-
-/** What a simulated "Approve partial" comes back with — 60%, to the nearest $100. */
-export const SIMULATED_PARTIAL_RATE = 0.6;
-
-/** Stage an outcome on a payment (Scenario Simulator). Tapping the same chip clears it. */
-export function toggleQueued(p: FundingPayment, decision: Decision): FundingPayment {
-  return { ...p, queued: p.queued === decision ? null : decision };
-}
-
-/**
- * Status-check seam — "receive" whatever the lender/processor has for us.
- *
- * Two things arrive here, both mirroring the mockup's `pull()`:
- *  - a **card** whose link has been sent moves to *Card on File*, which is the
- *    processor telling us the homeowner saved their card;
- *  - a **loan** delivers the outcome the Scenario Simulator staged on `queued`.
- *
- * ⚠️ A decision is only ever delivered for a payment whose link has actually been
- * SENT. Nothing here can conjure one out of nothing — an outcome no lender was
- * even asked for would unlock Submit on money that is not coming.
- *
- * When the real endpoint lands, replace the body with the response mapping
- * (`applyDecision` already does the folding) and keep the signature: the screen
- * only awaits `{ payments, log }`.
- */
-export function syncPayments(
-  payments: FundingPayment[],
-  at: string = stampTime()
-): { payments: FundingPayment[]; log: AttemptLogEntry[] } {
-  const log: AttemptLogEntry[] = [];
-  const next = payments.map((p) => {
-    let updated = p;
-
-    if (p.type === 'cc' && p.linkSent && p.step < 2) {
-      updated = { ...updated, step: 2 };
-    }
-
-    if (p.type === 'bank' && p.linkSent && p.queued) {
-      const approved =
-        p.queued === 'short' ? Math.round((p.amount * SIMULATED_PARTIAL_RATE) / 100) * 100 : p.amount;
-      const res = applyDecision(updated, p.queued, approved, at);
-      updated = { ...res.payment, queued: null };
-      if (res.log) log.push(res.log);
-    }
-
-    return { ...updated, syncedAt: at };
-  });
-  return { payments: next, log };
+export function hasDecline(record: FundingRecord | null | undefined): boolean {
+  if (!record) return false;
+  return (
+    (record.payments || []).some((p) => p.decision === 'declined') ||
+    (record.attemptHistory || []).some((a) => a.outcome === 'Declined')
+  );
 }
 
 // ── decisions → pricing rows ───────────────────────────────────────────────
 
 /**
- * Carry lender decisions back onto the pricing rows (mockup `applyApprovals`).
+ * Carry lender decisions back onto the pricing rows.
  *
  * A decided row becomes a locked fact — its amount is what the lender said, not
  * what the rep asked for — and any gap that opens up is named in a banner above
@@ -498,14 +483,14 @@ export function applyDecisionsToRows(
   const banners: DecisionBanner[] = [];
 
   let next = rows.map((row) => {
-    const p = payments.find((x) => x.id === row.id);
+    const p = payments.find((x) => x.pid === row.pid);
     if (!p || !p.decision) return row;
 
     if (p.decision === 'declined') {
       banners.push({
-        id: p.id,
+        id: p.pid,
         tone: 'bad',
-        text: `${shortMethod(p.methodLabel)} was declined. The full $${p.amount.toLocaleString()} needs a different payment method.`,
+        text: `${shortMethod(p.method)} was declined. The full $${p.amount.toLocaleString()} needs a different payment method.`,
       });
       // `auto` is cleared too: a declined row is a fixed $0, not the remainder
       // absorber — leaving it auto would have it silently re-inflate to the gap.
@@ -516,9 +501,9 @@ export function applyDecisionsToRows(
     const requested = p.requested ?? p.amount;
     if (p.decision === 'short' && requested > approved) {
       banners.push({
-        id: p.id,
+        id: p.pid,
         tone: 'warn',
-        text: `${shortMethod(p.methodLabel)} approved $${approved.toLocaleString()} of the $${requested.toLocaleString()} requested. Assign the remaining $${(requested - approved).toLocaleString()} to another payment method below.`,
+        text: `${shortMethod(p.method)} approved $${approved.toLocaleString()} of the $${requested.toLocaleString()} requested. Assign the remaining $${(requested - approved).toLocaleString()} to another payment method below.`,
       });
     }
     return { ...row, amount: String(approved), auto: false, decision: p.decision };
@@ -529,7 +514,7 @@ export function applyDecisionsToRows(
   if (banners.length && !covered) {
     const hasOpenBalance = next.some((r) => r.kind === 'bal' && !r.decision);
     if (!hasOpenBalance) {
-      next = [...next, { id: newRowId(), kind: 'bal', amount: '', method: '', auto: true }];
+      next = [...next, { pid: newPaymentId(), kind: 'bal', amount: '', method: '', auto: true }];
     }
   }
 
@@ -539,79 +524,5 @@ export function applyDecisionsToRows(
 /** The first row the rep should fill to close a gap — highlighted amber. */
 export function needsAttentionRowId(rows: PaymentRow[], banners: DecisionBanner[]): string | null {
   if (!banners.length) return null;
-  return rows.find((r) => r.kind === 'bal' && !r.decision)?.id ?? null;
-}
-
-/** Has any lender actually declined? The only thing that unlocks the Result field. */
-export function hasDecline(payments: FundingPayment[], log: AttemptLogEntry[]): boolean {
-  return payments.some((p) => p.decision === 'declined') || log.some((l) => l.outcome === 'Declined');
-}
-
-// ── ids ────────────────────────────────────────────────────────────────────
-
-let rowSeq = 0;
-/** Stable per-session row id. Rows are matched to payments by it, so it must not
- *  be derived from the index — reordering or removing a row would re-key the lot. */
-export function newRowId(): string {
-  rowSeq += 1;
-  return `pr_${rowSeq}`;
-}
-
-// ── the homeowner's link ───────────────────────────────────────────────────
-
-/**
- * The URL the homeowner opens to save a card or fill in a loan application.
- *
- * ⚠️ **PLACEHOLDER.** A real application link is minted by the lender/processor
- * per attempt and has to arrive with the funding API — this builds a deterministic
- * stand-in from the ids we already hold so the rep flow is walkable end to end.
- * Replace the body (not the signature) when the endpoint lands; every caller only
- * needs a string.
- */
-export function buildApplicationLink(apiUrl: string, leadId: string, payment: FundingPayment): string {
-  // `api.<env>.revdsm.com` is the API host; `app.<env>.revdsm.com` is the web app
-  // the homeowner would actually land on (see `config/env.ts`).
-  const base = apiUrl
-    .replace('//dev-api.', '//app.np.')
-    .replace('//api.', '//app.')
-    .replace(/\/+$/, '');
-  const path = payment.type === 'bank' ? 'apply' : 'pay';
-  return `${base}/${path}/${leadId || 'lead'}/${payment.id}`;
-}
-
-// ── outbound payload ───────────────────────────────────────────────────────
-
-/** Serializable funding record handed to `onConfirm` (and on to the outcome save). */
-export interface FundingPaymentPayload {
-  kind: PaymentKind;
-  amount: number;
-  method: string;
-  methodLabel: string;
-  type: MethodType;
-  step: number;
-  stepLabel: string;
-  linkSent: boolean;
-  sentTo?: string;
-  decision: Decision | null;
-  requested: number | null;
-  approvedAmt: number | null;
-  activated: boolean;
-}
-
-export function toPaymentPayload(payments: FundingPayment[]): FundingPaymentPayload[] {
-  return payments.map((p) => ({
-    kind: p.kind,
-    amount: p.amount,
-    method: p.method,
-    methodLabel: p.methodLabel,
-    type: p.type,
-    step: p.step,
-    stepLabel: FLOW[p.type][Math.min(p.step, FLOW[p.type].length - 1)] || '',
-    linkSent: p.linkSent,
-    ...(p.sentTo ? { sentTo: p.sentTo } : {}),
-    decision: p.decision,
-    requested: p.requested,
-    approvedAmt: p.approvedAmt,
-    activated: p.activated,
-  }));
+  return rows.find((r) => r.kind === 'bal' && !r.decision)?.pid ?? null;
 }
