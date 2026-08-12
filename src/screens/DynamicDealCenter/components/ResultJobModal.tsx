@@ -9,6 +9,8 @@ import { buildCategoryMeta, styleForKey } from '../utils/icon-color';
 import { DealPricing, DealPlan, PayCategory, planBelowMin, belowMinMsg } from '../hooks/useDealPricing';
 import { FlashMessage } from '../../../config/message';
 import { unitSuffix, labelWithSection } from '../utils/item-format';
+import { describeFullPackage } from '../utils/tab-naming';
+import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 
 /**
@@ -285,6 +287,13 @@ export function ResultJobModal({
   // categoryId → { label, style }; icon/color are schema-driven (Iconify → Ionicons).
   const categoryMeta = useMemo(() => buildCategoryMeta(verticals), [verticals]);
 
+  // Full package → the Calculator block shows the icon + ⓘ instead of the derived
+  // `G+VMax+Versa+S+FWrap` name. The contents card is an IN-SHEET overlay, never a
+  // nested <Modal>: stacking native modals is unreliable on both platforms.
+  const packageInfo = useMemo(() => describeFullPackage(entries, verticals), [entries, verticals]);
+  const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
+  const [showPackageInfo, setShowPackageInfo] = useState(false);
+
   // Count of entered items per category → the "Gutters (3)" pills, in entry order.
   const categoryChips = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -443,7 +452,19 @@ export function ResultJobModal({
               {!!calculatorTitle && (
                 <View style={{ marginBottom: 20, padding: 12, backgroundColor: '#F4F6F8', borderRadius: 8 }}>
                   <Text style={{ fontSize: 11, color: '#919EAB' }}>Calculator</Text>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#1C252E' }}>{calculatorTitle}</Text>
+                  {/* A full package shows the icon + ⓘ here too, so this block matches the
+                      tab, the quote card and the Sale/Demo chooser the rep came through.
+                      Derived from the same `entries` the Job Summary below lists, so the
+                      two halves of this sheet can never describe different jobs. */}
+                  <FullPackageTitle
+                    {...packageInfo}
+                    title={calculatorTitle}
+                    size={13}
+                    weight="600"
+                    color="#1C252E"
+                    iconColor="#16A34A"
+                    onInfo={(rect) => { setPackageAnchor(rect); setShowPackageInfo(true); }}
+                  />
                 </View>
               )}
 
@@ -519,6 +540,12 @@ export function ResultJobModal({
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Last child of this sheet's root so it covers the card. In-sheet, not a
+              nested <Modal> — see `packageInfo` above. */}
+          {showPackageInfo && (
+            <FullPackageInfoOverlay anchorRect={packageAnchor} onClose={() => setShowPackageInfo(false)} />
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>

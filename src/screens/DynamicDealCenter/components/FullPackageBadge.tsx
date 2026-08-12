@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { View, Text, TouchableOpacity, Modal, Pressable, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, Pressable, Dimensions, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FULL_PACKAGE_INCLUDES } from '../utils/tab-naming';
 
@@ -32,6 +32,7 @@ export function FullPackageTitle({
   title,
   extras,
   size,
+  weight = '900',
   color,
   iconColor,
   infoColor,
@@ -48,6 +49,9 @@ export function FullPackageTitle({
   extras?: string;
   /** Font size of the name; the icons scale with it so they sit on the same line. */
   size: number;
+  /** Weight of the NAME (the icons don't have one). Tab labels are 900; the
+   *  Sale/Demo chooser's heading is 600, and must not be bolded by adopting this. */
+  weight?: any;
   color: string;
   iconColor?: string;
   infoColor?: string;
@@ -59,7 +63,7 @@ export function FullPackageTitle({
 
   if (!isFullPackage) {
     return (
-      <Text numberOfLines={1} style={[{ fontSize: size, fontWeight: '900', color }, style]}>
+      <Text numberOfLines={1} style={[{ fontSize: size, fontWeight: weight, color }, style]}>
         {title || ''}
       </Text>
     );
@@ -74,7 +78,7 @@ export function FullPackageTitle({
       {!!extras && (
         <Text
           numberOfLines={1}
-          style={{ fontSize: size, fontWeight: '900', color, marginLeft: 4, flexShrink: 1 }}
+          style={{ fontSize: size, fontWeight: weight, color, marginLeft: 4, flexShrink: 1 }}
         >
           +{extras}
         </Text>
@@ -125,20 +129,24 @@ const SCREEN_MARGIN = 16;
 const ANCHOR_GAP = 8;
 
 /**
- * The contents card the ⓘ opens, positioned JUST BELOW the icon that was tapped.
+ * Scrim + the contents card, positioned JUST BELOW the icon that was tapped, WITHOUT
+ * a `Modal` wrapper.
  *
- * A `Modal`, not an inline popover: every trigger sits inside a horizontal ScrollView
- * or a bordered card, both of which clip. It was originally pinned to a fixed screen
- * edge per trigger, which read as "wrong card" when the tapped ⓘ was at the other end
- * of the screen — the receipt heading is at the top, its footer tab at the bottom, and
- * one fixed anchor cannot serve both. It now follows the anchor it was given.
+ * This is the form used inside an already-open modal (the Sale/Demo chooser), because
+ * stacking native modals is unreliable on both platforms — the same reason the funding
+ * flow's `SendLinkModal` is an in-sheet overlay. Render it as the LAST child of the
+ * host modal's full-screen root so it covers the sheet, and give the host root
+ * window-space coordinates to measure against.
+ *
+ * The card was originally pinned to a fixed screen edge per screen, which read as
+ * "wrong card" when the tapped ⓘ was at the other end of the screen — a receipt
+ * heading is at the top, its footer tab at the bottom, and one fixed anchor cannot
+ * serve both. It follows the anchor it is given.
  */
-export function FullPackageInfoModal({
-  visible,
+export function FullPackageInfoOverlay({
   onClose,
   anchorRect,
 }: {
-  visible: boolean;
   onClose: () => void;
   /** Where the tapped ⓘ is on screen. `null` → the card centres itself. */
   anchorRect?: PackageAnchorRect | null;
@@ -168,10 +176,12 @@ export function FullPackageInfoModal({
   }
 
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.35)' }} onPress={onClose}>
-        {/* Inner Pressable swallows the tap so pressing the card doesn't dismiss it. */}
-        <Pressable
+    <Pressable
+      style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(15,23,42,0.35)' }]}
+      onPress={onClose}
+    >
+      {/* Inner Pressable swallows the tap so pressing the card doesn't dismiss it. */}
+      <Pressable
           style={[
             {
               width: cardWidth,
@@ -206,8 +216,27 @@ export function FullPackageInfoModal({
               <Text style={{ fontSize: 14, color: '#637381' }}>{item}</Text>
             </View>
           ))}
-        </Pressable>
       </Pressable>
+    </Pressable>
+  );
+}
+
+/**
+ * The overlay above, in its own `Modal` — the form used by a screen that is NOT
+ * already inside one (the calculator step and the rollout step).
+ */
+export function FullPackageInfoModal({
+  visible,
+  onClose,
+  anchorRect,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  anchorRect?: PackageAnchorRect | null;
+}) {
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <FullPackageInfoOverlay onClose={onClose} anchorRect={anchorRect} />
     </Modal>
   );
 }

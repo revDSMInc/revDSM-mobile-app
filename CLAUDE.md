@@ -1023,15 +1023,27 @@ is still missing the box"* against the two card headings):
 |---|---|
 | calculator step — footer tab | `HorizontalDraggableTabs`, via `isFullPackage` on `CalculatorView.tabCalcs` |
 | calculator step — locked receipt heading | `LockedCalculatorView` |
-| rollout step — top tab strip | `RolloutView`, via a `fullPackageIds` set |
+| rollout step — top tab strip | `RolloutView`, via `packageByCalcId` |
 | rollout step — quote card heading | `PremiumQuoteCard` |
+| "Result Job \<name\>" — Sale/Demo chooser | `ResultJobChooser` |
+| Result Lead sheet — the `Calculator` block | `ResultJobModal` |
 
 Each computes it by calling `isFullPackageSelection` on the calculator's OWN entries, so no screen can
 read as a package while another reads as letters, and none of them needs a flag threaded through.
 
 **`components/FullPackageBadge.tsx`** holds the shared rendering — `FullPackageTitle` (the name, or the
-icon pair) and `FullPackageInfoModal` (the contents card). Icon size tracks the font size it replaces
-(`size * 1.15`), so the 20pt receipt heading and the 14pt card heading each stay optically balanced.
+icon pair) and the contents card in two forms. Icon size tracks the font size it replaces
+(`size * 1.15`), so the 20pt receipt heading and the 13pt Result Lead block each stay optically
+balanced, and **`weight` defaults to `900` but must be passed as `600`** by the two Result surfaces —
+their headings are not tab labels and would otherwise be silently bolded.
+
+⚠️ **Two forms of the card, and the choice is not cosmetic.** `FullPackageInfoModal` wraps it in a
+`Modal` (calculator step, rollout step); **`FullPackageInfoOverlay` is the same scrim + card with NO
+`Modal`**, for the two surfaces that are already inside one — the Sale/Demo chooser and the Result Lead
+sheet. Stacked native modals are unreliable on both platforms, the same reason the funding flow's
+`SendLinkModal` is an in-sheet overlay. Render the overlay as the LAST child of the host modal's
+full-screen root: it covers the sheet, and the window-space anchor still resolves because that root
+occupies the same frame.
 
 **The card opens directly beneath the tapped ⓘ.** It was first pinned to a fixed screen edge per
 screen, which read as "the box appears at the bottom, that is wrong" the moment the rep used the ⓘ on
