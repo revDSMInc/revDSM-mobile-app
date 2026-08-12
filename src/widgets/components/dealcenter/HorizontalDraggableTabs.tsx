@@ -11,6 +11,18 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
+/**
+ * Screen-space box of a tapped ⓘ. Declared locally, not imported from the Dynamic
+ * Deal Center's `FullPackageBadge`: this is a shared `widgets/` component and must
+ * not depend on a screen. Structurally identical, so it satisfies that consumer.
+ */
+export interface PackageAnchorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface HorizontalDraggableTabsProps {
   calculators: any[];
   activeIdx: number;
@@ -32,10 +44,14 @@ interface HorizontalDraggableTabsProps {
    * package icon + this button INSTEAD of its derived `G+VMax+S+FWrap` name, and the
    * caller owns the popover that lists what the package contains.
    *
+   * `rect` is the ⓘ's box in WINDOW space so the caller can open its card directly
+   * beneath the icon — this row scrolls horizontally, so the icon's position is only
+   * knowable at tap time. `null` when the view could not be measured.
+   *
    * Omitted by the classic deal center, which never sets `isFullPackage`, so its tabs
    * are untouched.
    */
-  onShowPackageInfo?: (calc: any, idx: number) => void;
+  onShowPackageInfo?: (calc: any, idx: number, rect: PackageAnchorRect | null) => void;
 }
 
 const isCalculatorIdentical = (c1: any, c2: any) => {
@@ -124,6 +140,20 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
   };
 
   const hasPanResponderCapturedRef = useRef<boolean>(false);
+
+  // Per-tab ⓘ nodes. This row scrolls horizontally and reorders, so an icon's screen
+  // position is only knowable at tap time — measured then, never cached.
+  const infoRefs = useRef<Record<number, any>>({});
+  const reportPackageInfo = (calc: any, idx: number) => {
+    const node = infoRefs.current[idx];
+    if (!node?.measureInWindow) {
+      onShowPackageInfo?.(calc, idx, null);
+      return;
+    }
+    node.measureInWindow((x: number, y: number, width: number, height: number) => {
+      onShowPackageInfo?.(calc, idx, width && height ? { x, y, width, height } : null);
+    });
+  };
 
   // A horizontal ScrollView must measure its child by its intrinsic content
   // width. Keep the selected tab in view after a programmatic tab change (for
@@ -407,8 +437,26 @@ export const HorizontalDraggableTabs: React.FC<HorizontalDraggableTabsProps> = (
                     size={18}
                     color={isCurrentlyDragging ? '#22C55E' : isActive ? '#FFFFFF' : '#94A3B8'}
                   />
+                  {/* Anything the package doesn't cover keeps its letters, so a
+                      duplicated package with a product added never looks identical
+                      to the tab it was copied from. */}
+                  {!!calc.packageExtras && (
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={[
+                        styles.tabText,
+                        { marginLeft: 4 },
+                        isActive ? styles.activeTabText : styles.inactiveTabText,
+                        isCurrentlyDragging && styles.draggingTabText,
+                      ]}
+                    >
+                      +{calc.packageExtras}
+                    </Text>
+                  )}
                   <TouchableOpacity
-                    onPress={() => onShowPackageInfo?.(calc, idx)}
+                    ref={(node) => { infoRefs.current[idx] = node; }}
+                    onPress={() => reportPackageInfo(calc, idx)}
                     style={styles.infoButton}
                     hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
                     accessibilityRole="button"

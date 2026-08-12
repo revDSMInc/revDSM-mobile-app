@@ -304,15 +304,55 @@ export function isFullPackageSelection(
   entries: Record<string, CalculatorEntry>,
   schemas?: CalculatorSchema[]
 ): boolean {
-  if (!schemas || schemas.length === 0) return false;
+  return describeFullPackage(entries, schemas).isFullPackage;
+}
+
+export interface FullPackageDescription {
+  isFullPackage: boolean;
+  /**
+   * The tab keys the package does NOT account for, joined with "+" — e.g. a package
+   * calculator that also carries lighting reads `Light`, and the tab renders
+   * `📦 +Light`. Empty when the calculator is exactly a package.
+   */
+  extras: string;
+}
+
+/**
+ * The package verdict AND whatever the calculator carries beyond it, from ONE pass
+ * over the filled fields.
+ *
+ * The extras exist because a rep duplicates a package tab and adds a product to it:
+ * collapsing that to a bare package icon would show two tabs that look identical and
+ * quote different jobs. So the icon stands for the four package components only, and
+ * anything else keeps the letters it always had.
+ *
+ * ⚠️ EVERY guard key present is consumed by the package, not just the one that
+ * satisfied it. A calculator carrying both `Versa` and `VMax` is still exactly a
+ * package — the tooltip's `(Versa OR VMax)` is about which one qualifies, not a limit
+ * of one. Treating the second as an extra would put `📦 +Versa` on a calculator the
+ * rep already accepts as a plain package.
+ */
+export function describeFullPackage(
+  entries: Record<string, CalculatorEntry>,
+  schemas?: CalculatorSchema[]
+): FullPackageDescription {
+  if (!schemas || schemas.length === 0) return { isFullPackage: false, extras: '' };
   const parts = collectTabKeys(schemas, (f) => {
     const entry = entries?.[f.id];
     return !!entry && Number(entry.inputValue) > 0;
   });
-  return (
+  const isFullPackage =
     FULL_PACKAGE_REQUIRED_KEYS.every((key) => parts.includes(key)) &&
-    FULL_PACKAGE_GUARD_KEYS.some((key) => parts.includes(key))
-  );
+    FULL_PACKAGE_GUARD_KEYS.some((key) => parts.includes(key));
+  if (!isFullPackage) return { isFullPackage: false, extras: '' };
+
+  const consumed = new Set([...FULL_PACKAGE_REQUIRED_KEYS, ...FULL_PACKAGE_GUARD_KEYS]);
+  return {
+    isFullPackage: true,
+    // Schema order is preserved (`collectTabKeys` builds it in schema/field order),
+    // so the extras read in the same sequence the full name used to.
+    extras: parts.filter((key) => !consumed.has(key)).join('+'),
+  };
 }
 
 export interface TabNameInput {

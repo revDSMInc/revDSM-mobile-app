@@ -17,7 +17,8 @@ import { JobTrackerButton } from './JobTrackerButton';
 import { computeCalculatorTiers } from '../utils/dynamic-rollout-pricing';
 import { unitSuffix, labelWithSection, buildSectionLabelMap } from '../utils/item-format';
 import { withPlanFee, type DealPlan } from '../hooks/useDealPricing';
-import { isFullPackageSelection, FULL_PACKAGE_INCLUDES } from '../utils/tab-naming';
+import { describeFullPackage } from '../utils/tab-naming';
+import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { useAuth } from '../../../hooks/useAuth';
 
 interface CalculatorTabLite {
@@ -398,7 +399,7 @@ function JobSummary({ entries, catMeta, sectionLabelMap }: { entries: Record<str
  * center `LockedCalculatorView` (`CalculatorForm.tsx`). Rendered instead of the
  * editable category list once a tab's rollout price is confirmed (`readOnly`).
  */
-function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals, plans, method }: {
+function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingConfig, verticals, plans, method, onShowPackageInfo }: {
   name: string;
   entries: Record<string, CalculatorEntry>;
   catMeta: Record<string, { label: string; style: CatStyle }>;
@@ -408,6 +409,8 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
   verticals: CalculatorSchema[];
   plans?: Record<string, DealPlan>;
   method?: string;
+  /** Opens the package-contents card below the heading's ⓘ. */
+  onShowPackageInfo?: (rect: PackageAnchorRect | null) => void;
 }) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
@@ -472,9 +475,16 @@ function LockedCalculatorView({ name, entries, catMeta, price, drops, pricingCon
 
       {/* Main receipt card */}
       <View style={{ backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#4CBB17', borderRadius: 20, paddingBottom: 16 }}>
-        {/* Calculator name */}
+        {/* Calculator name — or the package badge, same swap as the tab that opened it */}
         <View style={{ paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
-          <Text style={{ fontSize: 20, fontWeight: '900', color: '#1C252E' }}>{name}</Text>
+          <FullPackageTitle
+            {...describeFullPackage(entries, verticals)}
+            title={name}
+            size={20}
+            color="#1C252E"
+            iconColor="#16A34A"
+            onInfo={onShowPackageInfo}
+          />
         </View>
 
         {/* Category filter pills */}
@@ -580,7 +590,16 @@ export function CalculatorView({
   // sectionId → label so Job Summary rows read "5' 5" Gutter/DS/E (All Stories)".
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
   const [menuIdx, setMenuIdx] = useState<number | null>(null);
+  // Where the tapped ⓘ is on screen — the contents card opens just below it, so the
+  // same modal serves the footer tab and the receipt heading at opposite ends of the
+  // screen. `null` while closed; the presence of a rect is not the visibility flag,
+  // because a measure can legitimately come back null (see `measureAnchor`).
   const [packageInfoVisible, setPackageInfoVisible] = useState(false);
+  const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
+  const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
+    setPackageAnchor(rect);
+    setPackageInfoVisible(true);
+  }, []);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; tabId: string; name: string }>({ visible: false, tabId: '', name: '' });
   const [selectedVerticalId, setSelectedVerticalId] = useState<string | undefined>(verticals[0]?.id);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -653,18 +672,25 @@ export function CalculatorView({
   }, [entries]);
 
   // Adapt the id-based tab model to the index-based draggable-tabs component.
-  const tabCalcs = useMemo(() => tabs.map((t) => ({
+  const tabCalcs = useMemo(() => tabs.map((t) => {
+    const pkg = describeFullPackage(t.entries || {}, verticals);
+    return {
     _id: t.id,
     // Numeric draft titles are internal identifiers. New tabs intentionally
     // remain untitled and display only their overflow menu.
     name: /^\d+$/.test(t.title) ? '' : t.title,
     isRolloutConfirmed: t.isRolloutConfirmed,
-    // Gutter + Soffit + Trim wrap [Fascia] all entered → the tab shows a package
-    // icon + ⓘ instead of the `G+VMax+S+FWrap` letters. Recomputed from each tab's
-    // OWN live entries, so it appears/disappears as the rep types — including on the
-    // tabs they aren't currently looking at.
-    isFullPackage: isFullPackageSelection(t.entries || {}, verticals),
-  })), [tabs, verticals]);
+    // Gutter + LeafFilter + Soffit + Trim wrap [Fascia] all entered → the tab shows a
+    // package icon + ⓘ instead of the `G+VMax+S+FWrap` letters, plus `+<extras>` for
+    // anything the package doesn't cover. Recomputed from each tab's OWN live entries,
+    // so it tracks the rep's typing — including on tabs they aren't looking at.
+    isFullPackage: pkg.isFullPackage,
+    // NOT `extras` — `HorizontalDraggableTabs.isCalculatorIdentical` reads `calc.extras`
+    // as the classic deal center's extras OBJECT, and a string there would be walked
+    // as one. The dynamic flow opts out of that check, but the name would still be a trap.
+    packageExtras: pkg.extras,
+    };
+  }), [tabs, verticals]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
   const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
@@ -703,6 +729,7 @@ export function CalculatorView({
         {readOnly ? (
           <LockedCalculatorView
             name={tabs.find((t) => t.id === activeTabId)?.title || 'Calculator'}
+            onShowPackageInfo={openPackageInfo}
             entries={entries}
             catMeta={catMeta}
             price={price}
@@ -780,7 +807,7 @@ export function CalculatorView({
                 tabsScrollViewRef={tabsScrollRef}
                 scrollXRef={scrollXRef}
                 getIsDuplicate={() => false}
-                onShowPackageInfo={() => setPackageInfoVisible(true)}
+                onShowPackageInfo={(_calc, _idx, rect) => openPackageInfo(rect)}
               />
             </ScrollView>
           </View>
@@ -798,30 +825,13 @@ export function CalculatorView({
         </View>
       </View>
 
-      {/* Full-package contents — opened by the ⓘ on a package tab. A Modal, not an
-          inline popover: the tab bar is a horizontal ScrollView and anything drawn
-          inside it gets clipped at the row's bounds. */}
-      <Modal transparent visible={packageInfoVisible} animationType="fade" onRequestClose={() => setPackageInfoVisible(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.35)', justifyContent: 'flex-end' }} onPress={() => setPackageInfoVisible(false)}>
-          {/* Sits just above the tab bar it belongs to, rather than centred, so the
-              relationship to the tapped tab stays obvious. */}
-          <Pressable style={{ marginHorizontal: 24, marginBottom: 110, backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18, borderWidth: 1, borderColor: '#DFE3E8', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 20, elevation: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-              <Ionicons name="cube" size={18} color="#B45309" style={{ marginRight: 8 }} />
-              <Text style={{ flex: 1, fontSize: 15, fontWeight: '800', color: '#1C252E' }}>Full Package Includes:</Text>
-              <TouchableOpacity onPress={() => setPackageInfoVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons name="close" size={18} color="#94A3B8" />
-              </TouchableOpacity>
-            </View>
-            {FULL_PACKAGE_INCLUDES.map((item) => (
-              <View key={item} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                <Text style={{ fontSize: 14, color: '#637381', marginRight: 8 }}>•</Text>
-                <Text style={{ fontSize: 14, color: '#637381' }}>{item}</Text>
-              </View>
-            ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Full-package contents — opened by the ⓘ on a package tab or on the locked
+          receipt heading. Anchored above the footer tab bar it belongs to. */}
+      <FullPackageInfoModal
+        visible={packageInfoVisible}
+        onClose={() => setPackageInfoVisible(false)}
+        anchorRect={packageAnchor}
+      />
 
       {/* Tab context menu (duplicate / rename / delete) */}
       <Modal transparent visible={menuIdx !== null} animationType="fade" onRequestClose={() => setMenuIdx(null)}>

@@ -994,11 +994,64 @@ listing **Gutter / Soffit / FWrap / (Versa OR VMax)**.
 - **Runtime by construction.** `CalculatorView.tabCalcs` recomputes the flag from each tab's OWN live
   entries, so it appears on the fourth field and disappears when one is cleared — including on tabs the
   rep isn't currently viewing. No stored flag. Tested field-by-field.
+- **Anything BEYOND the package keeps its letters** (follow-up: *"when i duplicate the box and add any
+  other value than show the box + that value letter … currently when we add any other value it should
+  not be reflected"*). `describeFullPackage(entries, schemas)` returns `{ isFullPackage, extras }` from
+  one pass; `extras` is the derived keys the package doesn't account for, so a duplicated package with
+  lighting added renders **`📦 +Light`**. Without it, the copy and the tab it was duplicated from look
+  identical while quoting different jobs. `isFullPackageSelection` is now a thin wrapper over it.
+  ⚠️ **EVERY guard key is consumed by the package, not just the one that satisfied it** — a calculator
+  carrying both `Versa` and `VMax` is still exactly a package (`(Versa OR VMax)` says which one
+  qualifies, not that only one may be present), so it must not render `📦 +Versa`. Same for a second
+  gutter size. ⚠️ Extras are `''` when the calculator is NOT a package, since the full letters render in
+  that case and would otherwise be printed twice.
+- ⚠️ On the tab object the field is **`packageExtras`, not `extras`** —
+  `HorizontalDraggableTabs.isCalculatorIdentical` reads `calc.extras` as the classic deal center's
+  extras OBJECT and would walk a string as one. The dynamic flow opts out of that check
+  (`getIsDuplicate={() => false}`), but the name would still be a trap.
 
 ⚠️ **The ⓘ sits INSIDE the tab pill**, not floating above it as in the ticket's mock. That row is a
 horizontal ScrollView with drag-reorder, and Android clips children drawn outside their parent's
 bounds, so an overhanging badge is a coin-flip on whether it renders. For the same reason the popover
-is a `Modal` (anchored just above the tab bar) rather than an inline absolutely-positioned card.
+is a `Modal` rather than an inline absolutely-positioned card.
+
+**All FOUR places that print the name carry the badge** (follow-ups: *"the bottom logic is working
+perfectly but when we go to the next screen … top shows the combination of the letters"*, then *"here
+is still missing the box"* against the two card headings):
+
+| where | component |
+|---|---|
+| calculator step — footer tab | `HorizontalDraggableTabs`, via `isFullPackage` on `CalculatorView.tabCalcs` |
+| calculator step — locked receipt heading | `LockedCalculatorView` |
+| rollout step — top tab strip | `RolloutView`, via a `fullPackageIds` set |
+| rollout step — quote card heading | `PremiumQuoteCard` |
+
+Each computes it by calling `isFullPackageSelection` on the calculator's OWN entries, so no screen can
+read as a package while another reads as letters, and none of them needs a flag threaded through.
+
+**`components/FullPackageBadge.tsx`** holds the shared rendering — `FullPackageTitle` (the name, or the
+icon pair) and `FullPackageInfoModal` (the contents card). Icon size tracks the font size it replaces
+(`size * 1.15`), so the 20pt receipt heading and the 14pt card heading each stay optically balanced.
+
+**The card opens directly beneath the tapped ⓘ.** It was first pinned to a fixed screen edge per
+screen, which read as "the box appears at the bottom, that is wrong" the moment the rep used the ⓘ on
+the *receipt heading* at the TOP of the same screen — one fixed anchor cannot serve two triggers at
+opposite ends. Each ⓘ now measures itself on press (`measureAnchor` → `measureInWindow`) and the caller
+passes that rect as `anchorRect`:
+- **WINDOW space, not parent space** — the card renders inside a `Modal`, its own full-screen host, so
+  parent-relative coordinates would resolve against the wrong origin.
+- **Measured at tap time, never cached** — both tab strips scroll horizontally and reorder, so an
+  icon's position is not knowable earlier.
+- The card **flips above** the icon when it won't fit below, and its left edge is **clamped** to the
+  screen. Height is estimated from the item count rather than measured: measuring means painting once
+  in the wrong place and moving, which reads as a flinch.
+- A measure can return zeros for a view mid-layout → `null` → the card **centres itself**. That is why
+  visibility is its own state and not `!!anchorRect`.
+
+⚠️ **`HorizontalDraggableTabs` deliberately does NOT import `FullPackageTitle`** — it is a shared
+`widgets/` component and must not depend on a screen, so it renders its own icon pair from the
+`isFullPackage` flag it is handed, measures its own ⓘ, and declares its own structurally-identical
+`PackageAnchorRect`. That is the one intentional duplicate.
 
 `HorizontalDraggableTabs` gained `onShowPackageInfo` and reads `calc.isFullPackage`. **The classic deal
 center never sets that flag**, so its tabs are untouched.

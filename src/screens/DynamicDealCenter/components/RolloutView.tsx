@@ -12,6 +12,8 @@ import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { dedupeDrops } from '../utils/drop-prices';
+import { describeFullPackage } from '../utils/tab-naming';
+import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { SettingsService } from '../../../services/api/SettingsService';
@@ -738,7 +740,7 @@ function DeclinedPriceModal({ visible, declinedPrice, onResultLead, onClose }: {
   );
 }
 
-function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, onDismissScopeWarning, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
+function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead, isRehashed = false, pricing, verticals, pricingConfig, leadId, appointmentId, scopeChanged = false, onDismissScopeWarning, onShowPackageInfo, onPriceChange, onResult, onPaymentMethodChange, onDropChange, onDiscountChange, onDownPaymentChange, onRendersChange, onOneYearMonthlyChange }: {
   calculator: CalculatorTab; initialPrice?: number;
   categoryMeta: Record<string, { label: string; style: CatStyle }>;
   isLowesLead: boolean;
@@ -752,6 +754,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   scopeChanged?: boolean;
   /** dismiss the scope-changed warning (re-baselines the snapshot). */
   onDismissScopeWarning?: () => void;
+  /** opens the package-contents card below the heading's ⓘ (full-package calcs only). */
+  onShowPackageInfo?: (rect: PackageAnchorRect | null) => void;
   onPriceChange: (id: string, price: number, pricemarkup?: string) => void;
   onResult: (id: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => void;
   onPaymentMethodChange: (id: string, method: string) => void;
@@ -1407,8 +1411,18 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
         {/* 1. Heading — calculator name + confirmed/required badge (old UI parity) */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 }}>
           {/* Web `QuoteResultCard.js:153-165` renders the calculator title at
-              fontWeight 800 — mobile had it at 600, so it read as normal text. */}
-          <Text style={{ fontSize: 14, fontWeight: '900', color: '#212B36', flex: 1 }}>{calculator.title}</Text>
+              fontWeight 800 — mobile had it at 600, so it read as normal text.
+              A full package shows the badge here too, so this heading and the strip
+              tab that selected it never disagree. */}
+          <FullPackageTitle
+            {...describeFullPackage(calculator.entries || {}, verticals || [])}
+            title={calculator.title}
+            size={14}
+            color="#212B36"
+            iconColor="#16A34A"
+            onInfo={onShowPackageInfo}
+            style={{ flex: 1 }}
+          />
           {calculator.isRolloutConfirmed ? (
             <View style={{ backgroundColor: '#16A34A', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="lock-closed" size={10} color="#fff" />
@@ -1917,6 +1931,28 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
     () => calculators.filter((c) => !/^\d+$/.test((c.title || '').trim())),
     [calculators]
   );
+  /**
+   * Calculators that are a FULL PACKAGE — their tab in the strip above shows the
+   * package icon + ⓘ instead of the `G+VMax+Versa+S+FWrap` letters, matching the
+   * calculator step's footer tabs. Same rule, same source of truth
+   * (`isFullPackageSelection` over each calculator's own live entries), so a tab
+   * cannot read as a package on one screen and as letters on the other.
+   */
+  const packageByCalcId = useMemo(() => {
+    const map: Record<string, { isFullPackage: boolean; extras: string }> = {};
+    visibleCalculators.forEach((c) => {
+      map[c.id] = describeFullPackage(c.entries || {}, verticals || []);
+    });
+    return map;
+  }, [visibleCalculators, verticals]);
+  // Anchored to the tapped ⓘ (strip tab or quote-card heading) so the card opens
+  // directly beneath it rather than at a fixed screen edge.
+  const [packageInfoVisible, setPackageInfoVisible] = useState(false);
+  const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
+  const openPackageInfo = useCallback((rect: PackageAnchorRect | null) => {
+    setPackageAnchor(rect);
+    setPackageInfoVisible(true);
+  }, []);
   const allConfirmed = visibleCalculators.length > 0 && visibleCalculators.every((c) => c.isRolloutConfirmed);
   const allHavePrices = visibleCalculators.length > 0 && visibleCalculators.every((c) => effectivePrice(c) > 0);
   // Progress tracks calculators with an END PRICE ENTERED (web `ConfirmRolloutPrices`
@@ -2061,13 +2097,29 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
                       {hasLockedDrop && (
                         <Ionicons name="lock-closed" size={12} color={isActive ? '#16A34A' : '#94A3B8'} style={{ marginRight: 6 }} />
                       )}
-                      <Text
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={1.3}
-                        style={{ fontSize: 14, includeFontPadding: false, fontWeight: '900', color: isActive ? '#212B36' : '#637381' }}
-                      >
-                        {calc.title}
-                      </Text>
+                      {/* Same swap as the calculator step's footer tab: the package icon
+                          stands for the four-part name, and the ⓘ carries the breakdown
+                          the letters used to spell out. An inactive tab's ⓘ is greyed
+                          with the rest of the tab so it doesn't out-shout the selected one. */}
+                      {packageByCalcId[calc.id]?.isFullPackage ? (
+                        <FullPackageTitle
+                          isFullPackage
+                          extras={packageByCalcId[calc.id]?.extras}
+                          size={14}
+                          color={isActive ? '#212B36' : '#637381'}
+                          iconColor={isActive ? '#16A34A' : '#94A3B8'}
+                          infoColor={isActive ? '#00B8D9' : '#94A3B8'}
+                          onInfo={openPackageInfo}
+                        />
+                      ) : (
+                        <Text
+                          numberOfLines={1}
+                          maxFontSizeMultiplier={1.3}
+                          style={{ fontSize: 14, includeFontPadding: false, fontWeight: '900', color: isActive ? '#212B36' : '#637381' }}
+                        >
+                          {calc.title}
+                        </Text>
+                      )}
                       {needsReview && (
                         <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#F59E0B', marginLeft: 6 }} />
                       )}
@@ -2113,6 +2165,7 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
               pricingConfig={pricingConfig}
               scopeChanged={scopeChangedOf(selectedCalc)}
               onDismissScopeWarning={() => onDismissScopeWarning?.(selectedCalc.id)}
+              onShowPackageInfo={openPackageInfo}
               onPriceChange={(id, price, pricemarkup) => {
                 setPrices((p) => ({ ...p, [id]: price }));
                 rolloutLastChangedRef.current = { ...rolloutLastChangedRef.current, [id]: Date.now() };
@@ -2224,6 +2277,15 @@ export function RolloutView({ calculators, verticals, pricingConfig, pricing, is
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Full-package contents — the ⓘ on a package tab in the strip above, or on the
+          quote card heading. Anchored near the TOP here (the calculator step anchors
+          its copy near the bottom) because that is where this screen's strip sits. */}
+      <FullPackageInfoModal
+        visible={packageInfoVisible}
+        onClose={() => setPackageInfoVisible(false)}
+        anchorRect={packageAnchor}
+      />
     </KeyboardAvoidingView>
     </PhotoPeekScrollLockProvider>
   );
