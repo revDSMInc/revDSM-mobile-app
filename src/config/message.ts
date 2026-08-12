@@ -19,10 +19,21 @@ export const FlashMessage = {
       duration: 3000,
       floating: true,
       statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
+      // ⚠️ `backgroundColor` is SPREAD IN only for danger — never written as
+      // `backgroundColor: type === 'danger' ? '#D32F2F' : undefined`.
+      //
+      // react-native-flash-message resolves the type colour into its style array
+      // and then applies OUR `style` last (`FlashMessage.js` ~line 224), and RN's
+      // style flatten lets a present-but-`undefined` key win over an earlier
+      // value. So an explicit `undefined` here wiped `ColorTheme[type]` and the
+      // banner rendered TRANSPARENT — white text straight onto whatever was
+      // behind it, which on the Lead Center is the dark green MainHeader.
+      // `success`/`warning`/`info`/`error` never hit this because they don't set
+      // the key at all (or set a real value).
       style: {
         zIndex: 9999,
         elevation: 9999,
-        backgroundColor: type === 'danger' ? '#D32F2F' : undefined,
+        ...(type === 'danger' ? { backgroundColor: '#D32F2F' } : null),
       },
       hideStatusBar: false,
     });

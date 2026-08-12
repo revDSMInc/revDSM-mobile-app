@@ -197,7 +197,8 @@ export default function DealDetail({ navigation, route }: DealDetailProps) {
       FlashMessage.show(
         'Edit on web',
         'This deal uses the legacy job builder. Please edit it from the web app.',
-        'info'
+        'info',
+        
       );
       return;
     }

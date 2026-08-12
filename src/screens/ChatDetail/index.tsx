@@ -31,6 +31,12 @@ import {
   MentionSuggestions,
   EditHistoryModal,
 } from '../../widgets/components/chat/ChatModals';
+import { JobChangeMessageCard } from '../../widgets/components/chat/JobChangeMessageCard';
+import { JobChangeDetailsModal } from '../../widgets/components/chat/JobChangeDetailsModal';
+import { PdfPreviewModal } from '../../widgets/modals/PdfPreviewModal';
+import { LeadService } from '../../services/api/leads';
+import { FlashMessage } from '../../config/message';
+import { JobChangeMeta, getJobChangeMeta } from '../../utils/job-change-summary';
 import { RootStackParamList } from '../../navigation';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useVoiceNote, formatTime, formatMs } from '../../hooks/useVoiceNote';
@@ -260,6 +266,25 @@ export default function ChatDetailScreen() {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
+
+  // ─── Job-change addendum cards (SALES-APP-ADDENDUM-CHAT.md) ────────────────
+  // `jobChangeDraftId` drives the changes modal. `addendumPdfPending` is BOTH the
+  // spinner and the double-tap guard — `/amendment-pdf` generates the document on
+  // demand for addendums approved before the feature existed, so two taps would
+  // mean two PDF builds and two uploads for one addendum.
+  //
+  // ⚠️ It carries `cardId` (the MESSAGE id) as well as `draftId`, and the spinner
+  // is keyed on `cardId`. One addendum posts up to THREE cards (proposed →
+  // approved/declined) which all share the same `draftId`, so keying the spinner
+  // on the draft lights up every card of that addendum instead of the tapped one.
+  const [jobChangeDraftId, setJobChangeDraftId] = useState<string | null>(null);
+  const [addendumPdfPending, setAddendumPdfPending] = useState<
+    { draftId: string; cardId: string } | null
+  >(null);
+  const [addendumPdf, setAddendumPdf] = useState<{ visible: boolean; uri: string }>({
+    visible: false,
+    uri: '',
+  });
 
   const pendingScrollTargetIdRef = useRef<string | null>(null);
 
@@ -640,9 +665,90 @@ export default function ChatDetailScreen() {
     [currentUserId, filteredParticipants, setReplyingTo, handleNavigateToMessage, imageUrls, isViewOnly, handleDisabledClick, searchQuery, highlightedMessageId, searchResults, searchIndex, chatId, user._id, setMessages, isChannel, leadId, setEditingMessage, setComposerText, setShowMentions, setPinnedMessages]
   );
 
+  // ─── Job-change addendum cards ─────────────────────────────────────────────
+
+  /**
+   * Fetch and open an addendum's SIGNED PDF (spec §4.1).
+   *
+   * The url is a short-lived pre-signed S3 link, so it is fetched at tap time and
+   * never cached. Guarded against a double tap: the endpoint GENERATES the
+   * document on demand for addendums approved before this feature shipped, so a
+   * second concurrent tap costs a duplicate build + upload.
+   */
+  const openAddendumPdf = useCallback(
+    async (draftId: string, cardId: string) => {
+      if (!draftId || addendumPdfPending) return;
+      setAddendumPdfPending({ draftId, cardId });
+      try {
+        const res = await LeadService.getDraftAmendmentPdf(draftId);
+        const body = res?.data;
+        const url = body?.data?.url || body?.url || null;
+        if (!url) throw new Error('No PDF returned');
+        // ⚠️ The changes modal is deliberately LEFT OPEN when the PDF is opened
+        // from inside it (the accepted-fallback button). Dismissing one Modal and
+        // presenting another in the same tick is unreliable on iOS — the second
+        // can silently fail to appear. The PDF stacks on top instead, and closing
+        // it returns to the "customer approved" card, which reads correctly.
+        setAddendumPdf({ visible: true, uri: url });
+      } catch (err: any) {
+        // 409 = the draft is not accepted. It shouldn't reach here from an
+        // ACCEPTED card, but fall back to the changes view rather than dead-end.
+        if (err?.response?.status === 409) {
+          setJobChangeDraftId(draftId);
+        } else {
+          console.warn('[ChatDetail] addendum PDF failed:', err);
+          FlashMessage.error('Error', 'Failed to open the signed addendum. Please try again.');
+        }
+      } finally {
+        setAddendumPdfPending(null);
+      }
+    },
+    [addendumPdfPending]
+  );
+
+  /**
+   * View on an addendum card. Approved ⇒ the signed PDF, always; anything still
+   * open (proposed / declined) ⇒ the before/after the customer was asked to sign.
+   * Deliberate, and specified by the client.
+   */
+  const handleViewJobChange = useCallback(
+    (meta: JobChangeMeta, cardId: string) => {
+      // Always the tapped card's OWN draftId — a lead can carry several
+      // addendums, so "the lead's addendum" is never a valid lookup.
+      if (meta.action === 'ACCEPTED') openAddendumPdf(meta.draftId, cardId);
+      else setJobChangeDraftId(meta.draftId);
+    },
+    [openAddendumPdf]
+  );
+
   const renderMessage = useCallback(
     (props: any) => {
       // allow empty messages to render
+
+      // Addendum lifecycle events render as a CARD, not a bubble — bypassing
+      // `Message` also drops the avatar, me/them alignment, reactions, the
+      // long-press menu and the read-receipt row, all of which web suppresses
+      // here. `getJobChangeMeta` returns null for every other message (including
+      // unknown future `metadata.type` values), so those fall through unchanged.
+      const jobChangeMeta = getJobChangeMeta(props.currentMessage);
+      if (jobChangeMeta) {
+        return (
+          <JobChangeMessageCard
+            message={props.currentMessage}
+            meta={jobChangeMeta}
+            onView={handleViewJobChange}
+            // Keyed on the MESSAGE id, not the draft: the proposed and the
+            // approved card of one addendum share a draftId, so matching on that
+            // would spin BOTH when only one was tapped.
+            isLoading={
+              !!addendumPdfPending &&
+              addendumPdfPending.cardId === String(props.currentMessage?._id)
+            }
+            colors={colors}
+            isDark={isDark}
+          />
+        );
+      }
 
       const isSameUser =
         props.currentMessage?.user?._id === props.nextMessage?.user?._id;
@@ -657,7 +763,7 @@ export default function ChatDetailScreen() {
         />
       );
     },
-    []
+    [handleViewJobChange, addendumPdfPending, colors, isDark]
   );
 
   const renderInputToolbar = useCallback(
@@ -1186,6 +1292,26 @@ export default function ChatDetailScreen() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* Addendum "View" — the before/after for a proposed/declined change… */}
+      <JobChangeDetailsModal
+        visible={!!jobChangeDraftId}
+        draftId={jobChangeDraftId}
+        onClose={() => setJobChangeDraftId(null)}
+        // The modal has a single button, so there is no card to disambiguate —
+        // it gets its own sentinel id and reads `pdfLoading` rather than the
+        // per-card match.
+        onOpenPdf={(draftId) => openAddendumPdf(draftId, `modal:${draftId}`)}
+        pdfLoading={!!addendumPdfPending}
+      />
+
+      {/* …and the signed document once the customer has approved. */}
+      <PdfPreviewModal
+        visible={addendumPdf.visible}
+        uri={addendumPdf.uri}
+        title="Signed Addendum"
+        onClose={() => setAddendumPdf({ visible: false, uri: '' })}
+      />
 
       <LeadImagePickerModal
         visible={showLeadImagePicker}
