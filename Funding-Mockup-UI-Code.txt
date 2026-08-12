@@ -1,0 +1,1027 @@
+Content is user-generated and unverified.
+
+
+20
+Learn about artifacts
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Result Lead → Funding</title>
+<style>
+  :root{
+    --green:#4ec52f; --text:#111418; --muted:#9aa1ab; --border:#e6e8ec;
+    --fill:#f4f5f7; --chev:#9fc3d6;
+    --lav-bg:#f4f2fb; --lav-pill:#e7dffb; --lav-text:#6b4ecf;
+    --blue-bg:#dff0fc; --blue-text:#2ba3e0;
+    --grn-bg:#dcf6e2; --grn-text:#3ec24f;
+    --grp-head:#dff0d8; --panel:#eef3ef; --panel-line:#dde5df;
+    --amber:#e8961e; --amber-bg:#fdf3e2; --red:#d4483b; --red-bg:#fdeeec;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Helvetica,Arial,sans-serif;
+       background:#c9ccc9; display:flex; justify-content:center; padding:26px 10px 60px;}
+  .phone{width:392px; background:#3d4a3e; border-radius:44px; overflow:hidden; padding:18px 0 2px; position:relative;}
+  .sheet{margin:0 15px; background:#fff; border-radius:26px; overflow:hidden;
+         box-shadow:0 0 26px 4px rgba(78,197,47,.55); display:flex; flex-direction:column; height:730px; position:relative;}
+  .sheet-head{background:var(--green); color:#fff; padding:22px 22px 20px;
+              display:flex; justify-content:space-between; align-items:center; flex:0 0 auto;}
+  .sheet-head h1{margin:0; font-size:25px; font-weight:700; letter-spacing:-.3px;}
+  .head-l{display:flex; align-items:center;}
+  .back{font-size:26px; line-height:1; margin-right:12px; cursor:pointer;}
+  .x{font-size:24px; line-height:1;}
+  .scroll{flex:1 1 auto; overflow-y:auto; padding:22px 18px 14px; min-height:0;}
+  .screen{display:none;}
+  .screen.active{display:flex; flex-direction:column; flex:1 1 auto; min-height:0;}
+
+  /* ---- form fields ---- */
+  .field{position:relative; margin-bottom:20px;}
+  .field > .lab{position:absolute; top:-8px; left:14px; background:#fff; padding:0 6px;
+                font-size:13.5px; font-weight:600; color:var(--text); z-index:2;}
+  .ctrl{border:1.6px solid var(--border); border-radius:14px; padding:19px 16px;
+        font-size:21px; font-weight:700; color:var(--text);
+        display:flex; justify-content:space-between; align-items:center;}
+  .ctrl.locked{background:var(--fill); color:var(--muted); font-weight:400;}
+  .chev{color:var(--chev); font-size:16px; font-weight:700;}
+
+  .money{background:var(--panel); border:1px solid var(--panel-line); border-radius:22px;
+         padding:16px 14px 6px; margin-bottom:22px;}
+  .money-head{padding:2px 4px 14px;}
+  .money-head .t{font-size:12px; font-weight:800; letter-spacing:1.2px; color:#6d7a70; text-transform:uppercase;}
+  .money .field{margin-bottom:18px;}
+  .money .field > .lab{background:linear-gradient(var(--panel) 52%, var(--fill) 52%);}
+  .money .ctrl.locked{border-color:var(--panel-line);}
+  .ctrl.declined{border-color:var(--red); color:var(--red);}
+  .declbar{background:var(--red-bg); color:#992d22; border-radius:14px; padding:14px;
+           font-size:13px; font-weight:700; line-height:1.5; margin-bottom:18px;}
+  .declbar .u{display:inline-block; margin-top:9px; font-size:12px; font-weight:800;
+              text-decoration:underline; cursor:pointer;}
+  .ctrl.unlocked{background:#fff; color:var(--text); font-weight:700; border-color:var(--amber);}
+  .ctrl.unlocked .num{outline:none;}
+  .pill.edit{background:var(--amber-bg); color:#8a5b0c;}
+  .price-hint{font-size:11.5px; font-weight:700; color:#8a5b0c; margin:-10px 4px 16px; line-height:1.4;}
+
+  .group{position:relative; background:#fff; border:1.6px solid var(--border); border-radius:16px;
+         padding:20px 14px 14px; margin-bottom:18px;}
+  .group-title{position:absolute; top:-9px; left:16px; background:#fff; padding:0 6px;
+               font-size:13.5px; font-weight:700; color:var(--text);}
+  .row{display:flex; gap:8px; margin-bottom:10px; position:relative;}
+  .amt{flex:0 0 36%; border:1.6px solid var(--border); border-radius:12px; padding:15px 12px;
+       font-size:19px; font-weight:700; display:flex; align-items:center; gap:5px; background:#fff;}
+  .amt.auto{background:var(--fill);}
+  .amt .dol{user-select:none; pointer-events:none;}
+  .amt.auto .dol,.amt.auto .num{color:var(--muted); font-weight:400;}
+  .amt .num{outline:none; min-width:14px; flex:1;}
+  .meth{flex:1 1 auto; min-width:0; border:1.6px solid var(--border); border-radius:12px; padding:15px 12px;
+        font-size:15px; font-weight:700; display:flex; justify-content:space-between; align-items:center; gap:6px; cursor:pointer;}
+  .meth.empty{color:var(--muted); font-weight:600;}
+  .meth .txt{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .meth.open{border-color:#111418; border-radius:12px 12px 0 0;}
+  .dd{display:none; position:absolute; z-index:20; left:calc(36% + 8px); right:0; top:100%;
+      background:#fff; border:1.6px solid #111418; border-top:none; border-radius:0 0 12px 12px;
+      max-height:260px; overflow-y:auto;}
+  .dd.show{display:block;}
+  .rdd{display:none; position:absolute; z-index:40; left:0; right:0; top:100%;
+       background:#fff; border:1.6px solid #111418; border-top:none; border-radius:0 0 14px 14px;}
+  .rdd.show{display:block;}
+  .ropt{padding:16px 14px; font-size:17px; font-weight:600; color:#5b626c;
+        border-bottom:1px solid #eef0f2; cursor:pointer; display:flex; justify-content:space-between;}
+  .ropt:last-child{border-bottom:none;}
+  .ropt.on{color:var(--text); font-weight:700; background:#f4f5f7;}
+  .rhint{font-size:11.5px; font-weight:600; color:var(--muted); margin:8px 4px 0;}
+  .dd .opt.disabled{color:#c3c8ce; cursor:not-allowed;}
+  .dd .opt.disabled .why{font-size:11px; font-weight:600; color:#c3c8ce;}
+  .ctrl.open{border-color:#111418; border-radius:14px 14px 0 0;}
+  .dd .opt{padding:15px 13px; font-size:16px; color:#5b626c; border-bottom:1px solid #eef0f2; cursor:pointer;
+           display:flex; justify-content:space-between; gap:8px;}
+  .dd .opt.sel{color:var(--text); font-weight:700; background:#f4f5f7;}
+  .dd .grp{padding:12px 13px; font-size:14.5px; font-weight:800; background:var(--grp-head); letter-spacing:.3px;}
+  .del{flex:0 0 22px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer;}
+  .add{display:inline-flex; align-items:center; gap:7px; color:var(--lav-text); font-size:14.5px; font-weight:700;
+       padding:6px 4px 2px; cursor:pointer;}
+  .add .p{width:21px; height:21px; border-radius:50%; background:var(--lav-pill); color:var(--lav-text);
+          display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:800;}
+
+  .calc{background:var(--fill); border-radius:16px; padding:18px; margin-bottom:22px;}
+  .calc .l{font-size:15px; color:var(--muted); margin-bottom:5px;}
+  .calc .v{font-size:22px; font-weight:700;}
+  .js{background:var(--lav-bg); border-radius:18px; padding:16px 14px;}
+  .js-top{display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;}
+  .js-t{display:flex; align-items:center; gap:11px; font-size:23px; font-weight:700; letter-spacing:-.4px;}
+  .js-ic{width:38px; height:38px; border-radius:12px; background:#eae5f9; display:flex; align-items:center; justify-content:center;}
+  .js-n{background:var(--lav-pill); color:var(--lav-text); font-weight:700; font-size:15px; padding:9px 16px; border-radius:12px;}
+  .js-tags{display:flex; gap:10px; margin-bottom:12px;}
+  .tg{font-size:15px; font-weight:700; padding:9px 16px; border-radius:22px;}
+  .tg.b{background:var(--blue-bg); color:var(--blue-text);} .tg.g{background:var(--grn-bg); color:var(--grn-text);}
+  .it{background:#fff; border-radius:14px; padding:15px 14px; margin-bottom:9px; display:flex; align-items:center;
+      gap:13px; font-size:18px; font-weight:700;}
+  .it:last-child{margin-bottom:0;}
+  .it .ic{width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:15px;}
+  .ic.b{background:var(--blue-bg);} .ic.g{background:var(--grn-bg);}
+
+  .foot{flex:0 0 auto; border-top:1px solid #eef0f2; padding:14px 18px 20px; background:#fff;}
+  .confirm{width:100%; background:var(--green); color:#fff; border:none; border-radius:14px; padding:20px;
+           font-size:21px; font-weight:700; cursor:pointer;}
+  .confirm.off{background:#e9ebee; color:#a8aeb6; cursor:not-allowed;}
+  .blockers{font-size:11.5px; font-weight:700; color:var(--muted); line-height:1.5; margin-bottom:11px; padding:0 2px;}
+  .blockers b{color:#5b626c;}
+  .ready{font-size:11.5px; font-weight:700; color:#2f7d1c; margin-bottom:11px; padding:0 2px;}
+  .confirm.ghost{background:#fff; color:#5b626c; border:1.6px solid var(--border); font-size:17px; padding:15px; margin-bottom:10px;}
+
+  /* ---- funding ---- */
+  .sync{display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;}
+  .sync .ts{font-size:12px; color:var(--muted); font-weight:600;}
+  .refresh{display:flex; align-items:center; gap:7px; background:var(--panel); border:1px solid var(--panel-line);
+           border-radius:20px; padding:8px 14px; font-size:13px; font-weight:700; color:#5b6b60; cursor:pointer;}
+  .refresh .ico{display:inline-block; font-size:14px;}
+  .refresh.spin .ico{animation:sp .8s linear infinite;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+
+  .fund-total{background:var(--panel); border:1px solid var(--panel-line); border-radius:18px; padding:16px;
+              margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;}
+  .fund-total .l{font-size:12px; font-weight:800; letter-spacing:1.2px; color:#6d7a70; text-transform:uppercase;}
+  .fund-total .v{font-size:24px; font-weight:700; letter-spacing:-.4px;}
+  .sect-lab{font-size:12px; font-weight:800; letter-spacing:1.2px; color:#8a9490; text-transform:uppercase;
+            margin:0 4px 10px; display:flex; justify-content:space-between; align-items:baseline;}
+  .sect-lab .hint{font-weight:600; letter-spacing:0; text-transform:none; font-size:12px; color:var(--muted);}
+
+  .pay-card{border:1.6px solid var(--border); border-radius:16px; padding:15px 14px 12px; margin-bottom:14px; background:#fff;}
+  .pay-card.warn{border-color:#f0d09a; background:#fffdf8;}
+  .pay-card.ok{border-color:#b6e3a4; background:#f6fcf3;}
+  .done-strip{margin-top:12px; padding-top:11px; border-top:1px solid #d8eecd;
+              font-size:12px; font-weight:700; color:#2f7d1c; line-height:1.45;
+              display:flex; gap:7px; align-items:flex-start;}
+  .done-strip .nx{display:block; font-weight:600; color:#5f7a55; margin-top:2px;}
+  .card-sync{margin-top:13px; display:flex; justify-content:space-between; align-items:center;}
+  .csync{display:inline-flex; align-items:center; gap:6px; background:var(--fill); border:1px solid var(--border);
+         border-radius:18px; padding:7px 13px; font-size:12px; font-weight:700; color:#5b6b60; cursor:pointer;}
+  .csync .ico{font-size:13px; display:inline-block;}
+  .csync.spin .ico{animation:sp .8s linear infinite;}
+  .cts{font-size:11px; color:var(--muted); font-weight:600;}
+  .pay-card.bad{border-color:#f0b8b1; background:#fffbfa;}
+  .pc-top{display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:16px;}
+  .pc-amt{font-size:22px; font-weight:700; letter-spacing:-.4px;}
+  .pc-meth{font-size:12.5px; font-weight:700; color:#5b626c; background:var(--fill); padding:6px 11px;
+           border-radius:20px; max-width:58%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+
+  .stepper{display:flex; align-items:flex-start;}
+  .step{flex:1 1 0; position:relative; text-align:center; cursor:pointer;}
+  .step::before,.step::after{content:''; position:absolute; top:13px; height:2.5px; background:var(--border);}
+  .step::before{left:0; width:50%;} .step::after{right:0; width:50%;}
+  .step:first-child::before{display:none;} .step:last-child::after{display:none;}
+  .step.done::before,.step.done::after,.step.now::before{background:var(--green);}
+  .step.warn::before,.step.bad::before{background:var(--border);}
+  .dot{position:relative; z-index:2; width:26px; height:26px; margin:0 auto 7px; border-radius:50%;
+       background:#fff; border:2.5px solid var(--border); display:flex; align-items:center; justify-content:center;
+       font-size:12px; font-weight:800; color:var(--muted);}
+  .step.done .dot{background:var(--green); border-color:var(--green); color:#fff;}
+  .step.now .dot{border-color:var(--green); color:var(--green); box-shadow:0 0 0 4px rgba(78,197,47,.18);}
+  .step.warn .dot{background:var(--amber); border-color:var(--amber); color:#fff;}
+  .step.bad .dot{background:var(--red); border-color:var(--red); color:#fff;}
+  .step.locked .dot{background:transparent; border:2.5px dashed #d3d8de; color:transparent;}
+  .step.locked::before{background:repeating-linear-gradient(90deg,#d3d8de 0 4px,transparent 4px 8px); height:2px; top:13px;}
+  .step.locked::after{background:repeating-linear-gradient(90deg,#d3d8de 0 4px,transparent 4px 8px); height:2px; top:13px;}
+  .owner{display:block; font-size:9px; font-weight:800; letter-spacing:.5px; text-transform:uppercase;
+         color:#b6bcc4; margin-top:3px;}
+  .slab{font-size:10.5px; font-weight:700; color:var(--muted); line-height:1.25; padding:0 2px;}
+  .step.done .slab,.step.now .slab{color:var(--text);}
+  .step.warn .slab{color:var(--amber);} .step.bad .slab{color:var(--red);}
+  .step.locked .slab{color:#b6bcc4;}
+  .sub{display:block; font-size:9.5px; font-weight:700; margin-top:2px; opacity:.85;}
+
+  .act{width:100%; margin-top:14px; border:none; border-radius:11px; padding:13px; font-size:14.5px;
+       font-weight:700; cursor:pointer; background:var(--green); color:#fff;}
+  .act.alt{background:#fff; border:1.6px solid var(--border); color:#3a4048;}
+  .banner{margin-top:12px; border-radius:11px; padding:11px 12px; font-size:12.5px; font-weight:700; line-height:1.45;}
+  .banner.warn{background:var(--amber-bg); color:#8a5b0c;}
+  .banner.bad{background:var(--red-bg); color:#992d22;}
+  .after-note{margin-top:12px; padding-top:10px; border-top:1px dashed var(--border);
+              font-size:11.5px; color:var(--muted); font-weight:600; line-height:1.45;}
+
+  .hist{margin-top:22px; padding-top:16px; border-top:1px solid var(--border);}
+  .hist h4{margin:0 0 4px; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; color:#8a9490;}
+  .hist p{margin:0 0 11px; font-size:11.5px; color:var(--muted); line-height:1.45;}
+  .hrow{display:flex; justify-content:space-between; align-items:center; gap:10px;
+        background:#fff; border:1.4px solid var(--border); border-left:4px solid var(--red);
+        border-radius:11px; padding:11px 12px; margin-bottom:8px;}
+  .hrow .hl{min-width:0;}
+  .hrow .hm{font-size:13.5px; font-weight:700; color:#3a4048; overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap;}
+  .hrow .hs{font-size:11px; font-weight:600; color:var(--muted); margin-top:3px;}
+  .hrow.part{border-left-color:var(--amber);}
+  .hrow.part .hb{background:var(--amber-bg); color:#8a5b0c;}
+  .hrow .hb{font-size:10px; font-weight:800; letter-spacing:.4px; text-transform:uppercase;
+            background:var(--red-bg); color:#992d22; padding:5px 9px; border-radius:7px; white-space:nowrap;}
+
+  /* ---- scenario panel ---- */
+  .sim{border:1.6px dashed #c9ced6; border-radius:16px; padding:14px; margin-top:8px; background:#fbfcfd;}
+  .sim h4{margin:0 0 4px; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; color:#7b838d;}
+  .sim p{margin:0 0 12px; font-size:11.5px; color:var(--muted); line-height:1.45;}
+  .sim-row{margin-bottom:12px;}
+  .sim-row .who{font-size:12.5px; font-weight:700; color:#3a4048; margin-bottom:7px;}
+  .chips{display:flex; gap:6px; flex-wrap:wrap;}
+  .chip{border:1.4px solid var(--border); background:#fff; border-radius:18px; padding:7px 12px;
+        font-size:11.5px; font-weight:700; color:#5b626c; cursor:pointer;}
+  .chip.on{border-color:var(--green); background:#f0fbec; color:#2f7d1c;}
+  .chip.on.w{border-color:var(--amber); background:var(--amber-bg); color:#8a5b0c;}
+  .chip.on.b{border-color:var(--red); background:var(--red-bg); color:#992d22;}
+  .queued{margin-top:8px; font-size:11.5px; font-weight:700; color:var(--lav-text);}
+
+  /* ---- share modal ---- */
+  .ovl{position:absolute; inset:0; background:rgba(17,20,24,.45); display:none; align-items:center;
+       justify-content:center; z-index:60; padding:20px;}
+  .ovl.show{display:flex;}
+  .modal{background:#fff; border-radius:22px; padding:22px 20px; width:100%; text-align:center;}
+  .modal h3{margin:0 0 4px; font-size:19px; font-weight:700;}
+  .modal .who2{font-size:12.5px; color:var(--muted); font-weight:600; margin-bottom:16px;}
+  #qr{border-radius:12px; border:1px solid var(--border);}
+  .link{margin:14px 0 4px; background:var(--fill); border-radius:10px; padding:11px; font-size:11.5px;
+        color:#5b626c; font-weight:600; word-break:break-all;}
+  .mbtns{display:flex; gap:8px; margin-top:12px;}
+  .mbtn{flex:1; border:none; border-radius:11px; padding:13px; font-size:14px; font-weight:700; cursor:pointer;
+        background:var(--green); color:#fff;}
+  .mbtn.alt{background:#fff; border:1.6px solid var(--border); color:#3a4048;}
+  .qrcap{font-size:12px; font-weight:700; color:#5b626c; margin-top:10px;}
+  .orline{display:flex; align-items:center; gap:10px; margin:14px 0 10px; color:var(--muted);
+          font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px;}
+  .orline::before,.orline::after{content:''; flex:1; height:1px; background:var(--border);}
+  .mclose{margin-top:10px; font-size:13px; color:var(--muted); font-weight:700; cursor:pointer;}
+  .minput{width:100%; margin-top:14px; border:1.6px solid var(--border); border-radius:11px; padding:14px;
+          font-size:16px; font-weight:600; text-align:center; outline:none; font-family:inherit;}
+  .minput:focus{border-color:var(--green);}
+  .msent{font-size:34px; margin:10px 0 6px;}
+  .stage{display:none;} .stage.on{display:block;}
+
+  /* approval status on screen 1 */
+  .row.lockedrow .amt{background:var(--fill);}
+  .row.lockedrow .meth{background:var(--fill); cursor:default;}
+  .pill{font-size:10px; font-weight:800; padding:4px 8px; border-radius:8px; letter-spacing:.4px;
+        text-transform:uppercase; white-space:nowrap;}
+  .pill.ok{background:var(--grn-bg); color:#2f7d1c;}
+  .pill.bad{background:var(--red-bg); color:#992d22;}
+  .row.needs .amt{border-color:var(--amber); background:var(--amber-bg);}
+  .row.needs .meth{border-color:var(--amber);}
+  .gbanner{background:var(--amber-bg); color:#8a5b0c; border-radius:11px; padding:11px 12px;
+           font-size:12px; font-weight:700; line-height:1.45; margin-bottom:12px;}
+  .gbanner.bad{background:var(--red-bg); color:#992d22;}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div class="head-l">
+        <span class="back" id="backBtn" style="display:none" onclick="goResult()">‹</span>
+        <h1 id="sheetTitle">Result Lead</h1>
+      </div>
+      <div class="x">✕</div>
+    </div>
+
+    <!-- SCREEN 1 -->
+    <div class="screen active" id="screenResult">
+      <div class="scroll">
+        <div class="field"><div class="lab">One Leg</div><div class="ctrl">No <span class="chev">⌄</span></div></div>
+        <div class="field" style="position:relative">
+          <div class="lab">Result</div>
+          <div class="ctrl locked" id="resultCtrl"><span id="resultVal">Sale</span> <span class="chev" id="resultChev" style="display:none">⌄</span></div>
+          <div class="rdd" id="resultMenu">
+            <div class="ropt" data-v="Sale">Sale <span class="rck">✓</span></div>
+            <div class="ropt" data-v="Bank Decline">Bank Decline <span class="rck"></span></div>
+          </div>
+          <div class="rhint" id="resultHint">Locked to Sale unless a lender declines.</div>
+        </div>
+
+        <div class="money">
+          <div class="money-head"><span class="t">Pricing</span></div>
+          <div class="field">
+            <div class="lab" style="background:linear-gradient(var(--panel) 52%, var(--fill) 52%)">Original Contract Price</div>
+            <div class="ctrl locked" id="priceCtrl"><span><span class="dol">$&nbsp;</span><span class="num" id="priceNum">5000</span></span><span class="pill" id="priceEdit" style="display:none">Editable</span></div>
+          </div>
+          <div class="group">
+            <div class="group-title">Down Payment</div>
+            <div id="downRows"></div>
+            <div class="add" onclick="addRow('down')"><span class="p">+</span> Add payment method</div>
+          </div>
+          <div class="group">
+            <div class="group-title">Balance</div>
+            <div id="balRows"></div>
+            <div class="add" onclick="addRow('bal')"><span class="p">+</span> Add payment method</div>
+          </div>
+        </div>
+
+        <div class="calc"><div class="l">Calculator</div><div class="v">G+Versa (LG)</div></div>
+        <div class="js">
+          <div class="js-top"><div class="js-t"><span class="js-ic">📋</span> Job Summary</div><span class="js-n">4 Items</span></div>
+          <div class="js-tags"><span class="tg b">🏠 Gutters (1)</span><span class="tg g">🍃 LeafFilter (3)</span></div>
+          <div class="it"><span class="ic b">🏠</span>1' Wedges (Extras)</div>
+          <div class="it"><span class="ic g">🍃</span>48' 6" Versa (Story 1)</div>
+          <div class="it"><span class="ic g">🍃</span>48' Corners (Filter) (Extras)</div>
+          <div class="it"><span class="ic g">🍃</span>48' Remove Protection (Extras)</div>
+        </div>
+      </div>
+      <div class="foot"><button class="confirm" onclick="goFunding()">Confirm</button></div>
+    </div>
+
+    <!-- SCREEN 2 -->
+    <div class="screen" id="screenFunding">
+      <div class="scroll">
+        <div class="sync">
+          <span class="ts" id="ts">Not synced yet</span>
+          <div class="refresh" id="refBtn" onclick="doRefresh()"><span class="ico">⟳</span> Sync all</div>
+        </div>
+        <div class="fund-total"><span class="l">Contract Total</span><span class="v">$5,000</span></div>
+        <div id="fundBody"></div>
+        <div id="simPanel"></div>
+      </div>
+      <div class="foot">
+        <div id="blockers"></div>
+        <button class="confirm ghost" onclick="goResult()">Edit payments</button>
+        <button class="confirm off" id="submitBtn" disabled>Submit Funding</button>
+      </div>
+    </div>
+
+    <!-- SHARE MODAL -->
+    <div class="ovl" id="ovl">
+      <div class="modal">
+
+        <div class="stage on" id="stChoose">
+          <h3 id="mTitle">Send application link</h3>
+          <div class="who2" id="mWho"></div>
+          <canvas id="qr" width="180" height="180"></canvas>
+          <div class="qrcap">Have them scan this with their phone</div>
+          <div class="mbtns" style="margin-top:6px"><button class="mbtn alt" onclick="scanned()">They scanned it</button></div>
+          <div class="orline"><span>or send it</span></div>
+          <div class="mbtns">
+            <button class="mbtn alt" onclick="stage('Text')">Text</button>
+            <button class="mbtn" onclick="stage('Email')">Email</button>
+          </div>
+          <div class="mclose" onclick="closeModal()">Cancel</div>
+        </div>
+
+        <div class="stage" id="stText">
+          <h3>Text the link</h3>
+          <div class="who2">Goes straight to the homeowner's phone</div>
+          <input class="minput" id="inPhone" type="tel" placeholder="(555) 123-4567">
+          <div class="mbtns"><button class="mbtn" onclick="send('text')">Send text</button></div>
+          <div class="mclose" onclick="stage('Choose')">Back</div>
+        </div>
+
+        <div class="stage" id="stEmail">
+          <h3>Email the link</h3>
+          <div class="who2">Goes straight to the homeowner's inbox</div>
+          <input class="minput" id="inEmail" type="email" placeholder="homeowner@email.com">
+          <div class="mbtns"><button class="mbtn" onclick="send('email')">Send email</button></div>
+          <div class="mclose" onclick="stage('Choose')">Back</div>
+        </div>
+
+        <div class="stage" id="stDone">
+          <div class="msent">✅</div>
+          <h3>Link sent</h3>
+          <div class="who2" id="mDoneTo"></div>
+          <div class="mbtns"><button class="mbtn" onclick="finishSend()">Done</button></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ SCREEN 1 ============ */
+let PRICE = 5000;
+const METHODS = [
+  {t:'opt', v:'Check'}, {t:'opt', v:'MC/VISA/DSCVR'}, {t:'opt', v:'AMEX'},
+  {t:'grp', v:'GREENSKY'},
+  {t:'opt', v:'2511 (6 Months 0% Interest No Payments)'},
+  {t:'opt', v:'2521 (12 Months 0% Interest No Payments)'},
+  {t:'opt', v:'2531 (18 Months 0% Interest No Payments)'},
+  {t:'opt', v:'1599 (Fixed Rate of 9.99% APR)'},
+  {t:'opt', v:'1509 (10.99% APR, 180 months)'},
+  {t:'opt', v:'2011 (11.99% APR, 240 months)'},
+  {t:'opt', v:'1157 (Reduced rate 6.9% APR)'}
+];
+let uid = 0;
+
+function ddHTML(id, kind){
+  // financing is a balance instrument only — no lender plans on a down payment
+  const list = kind === 'down'
+    ? METHODS.filter(m => m.t === 'opt' && typeOf(m.v) !== 'bank')
+    : METHODS;
+  return '<div class="dd" id="dd'+id+'">' + list.map(m => m.t==='grp'
+    ? '<div class="grp">'+m.v+'</div>'
+    : '<div class="opt" onclick="pick('+id+',this)"><span>'+m.v+'</span><span class="ck"></span></div>').join('') + '</div>';
+}
+function rowHTML(o){
+  const id = ++uid;
+  const auto = o.auto ? ' auto' : '';
+  const del = o.auto
+    ? '<div class="del autodel" style="display:none" onclick="removeAutoRow(this)">✕</div>'
+    : '<div class="del" onclick="removeRow(this)">✕</div>';
+  const ed = o.auto ? '' : ' contenteditable="true" oninput="recalc()" onkeydown="numOnly(event)"';
+  const nid = o.auto ? ' id="autoNum"' : '';
+  const lbl = o.method || 'Select Payment Method';
+  return '<div class="row" data-pid="'+id+'"><div class="amt'+auto+'"><span class="dol">$</span><span class="num"'+nid+ed+'>'+(o.val||0)+'</span></div>'+
+    '<div class="meth'+(o.method?'':' empty')+'" id="m'+id+'" onclick="toggle('+id+')"><span class="txt">'+lbl+'</span><span class="chev">⌄</span></div>'+
+    del + ddHTML(id, o.kind || 'bal') + '</div>';
+}
+function init(){
+  document.getElementById('downRows').innerHTML = rowHTML({val:500, method:'Check', kind:'down'});
+  document.getElementById('balRows').innerHTML  = rowHTML({auto:true, val:PRICE, method:'1509 (10.99% APR, 180 months)', kind:'bal'});
+  recalc();
+}
+function addRow(k){
+  const kind = (k === 'bal') ? 'bal' : 'down';
+  document.getElementById(k==='bal'?'balRows':'downRows').insertAdjacentHTML('beforeend', rowHTML({val:0, kind}));
+  recalc();
+}
+let balanceCleared = false;
+function removeRow(el){ el.parentElement.remove(); recalc(); }
+function removeAutoRow(el){ balanceCleared = true; el.parentElement.remove(); recalc(); }
+function restoreAutoRow(){
+  balanceCleared = false;
+  document.getElementById('balRows').insertAdjacentHTML('beforeend', rowHTML({auto:true, val:0, kind:'bal'}));
+}
+function toggle(id){
+  const dd=document.getElementById('dd'+id), m=document.getElementById('m'+id), open=dd.classList.contains('show');
+  closeAll(); if(!open){dd.classList.add('show'); m.classList.add('open');}
+}
+function closeAll(){
+  document.querySelectorAll('.dd.show').forEach(d=>d.classList.remove('show'));
+  document.querySelectorAll('.meth.open').forEach(m=>m.classList.remove('open'));
+}
+function pick(id, el){
+  const v = el.querySelector('span').innerText, m = document.getElementById('m'+id);
+  m.querySelector('.txt').innerText = v; m.classList.remove('empty');
+  const dd = document.getElementById('dd'+id);
+  dd.querySelectorAll('.opt').forEach(o=>{o.classList.remove('sel'); o.querySelector('.ck').innerText='';});
+  el.classList.add('sel'); el.querySelector('.ck').innerText='✓'; closeAll();
+}
+function numOnly(e){
+  if(['Backspace','Delete','ArrowLeft','ArrowRight','Tab','Enter'].includes(e.key)) return;
+  if(!/^[0-9]$/.test(e.key)) e.preventDefault();
+}
+function num(el){ return parseInt((el.innerText||'').replace(/[^0-9]/g,'')||'0',10); }
+function recalc(){
+  let used=0;
+  document.querySelectorAll('#downRows .num').forEach(n=>used+=num(n));
+  document.querySelectorAll('#balRows .amt:not(.auto) .num').forEach(n=>used+=num(n));
+  const remaining = Math.max(PRICE-used, 0);
+  const a = document.getElementById('autoNum');
+  if(a){
+    a.innerText = remaining.toLocaleString();
+    const d = a.closest('.row').querySelector('.autodel');
+    if(d) d.style.display = (remaining === 0) ? 'flex' : 'none';
+  } else if(remaining > 0 && balanceCleared){
+    restoreAutoRow();
+    const b = document.getElementById('autoNum');
+    if(b) b.innerText = remaining.toLocaleString();
+  }
+}
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.meth') && !e.target.closest('.dd')) closeAll();
+});
+
+/* ============ FUNDING ============ */
+const FLOW = {
+  check: ['Collected','Deposited'],
+  cc:    ['Link Sent','Card on File','Charged'],
+  bank:  ['Link Sent','Approved','Activated','Funded']
+};
+function typeOf(m){
+  if(!m || m==='Select Payment Method') return null;
+  if(m.startsWith('Check')) return 'check';
+  if(m.startsWith('MC/VISA')||m.startsWith('AMEX')) return 'cc';
+  return 'bank';
+}
+let P = [], modalTarget = null, LOG = [], jobResult = 'Sale';
+
+function readRows(id, kind){
+  return [...document.querySelectorAll('#'+id+' .row')].map(r=>({
+    pid: r.dataset.pid, el: r, amt: num(r.querySelector('.num')),
+    method: r.querySelector('.txt').innerText, kind
+  })).filter(x=>x.amt>0);
+}
+function goFunding(){
+  const rows = [...readRows('downRows','down'), ...readRows('balRows','bal')];
+  P = rows.map(r=>{
+    const prev = P.find(x => x.pid === r.pid);
+    // keep everything already done, unless the method itself changed
+    if(prev && prev.method === r.method)
+      return {...prev, el:r.el, amt:r.amt, kind:r.kind};
+    return {pid:r.pid, el:r.el, amt:r.amt, method:r.method, kind:r.kind,
+            type:typeOf(r.method), step:0, linkSent:false, decision:null,
+            approvedAmt:null, activated:false, queued:null, syncedAt:null};
+  });
+  P.forEach((p,i)=>p.id=i);
+  renderFunding();
+  document.getElementById('screenResult').classList.remove('active');
+  document.getElementById('screenFunding').classList.add('active');
+  document.getElementById('sheetTitle').innerText='Funding';
+  document.getElementById('backBtn').style.display='block';
+}
+function goResult(){
+  applyApprovals();
+  refreshResultField();
+  document.getElementById('screenFunding').classList.remove('active');
+  document.getElementById('screenResult').classList.add('active');
+  document.getElementById('sheetTitle').innerText='Result Lead';
+  document.getElementById('backBtn').style.display='none';
+}
+
+/* carry lender decisions back onto the pricing screen */
+function applyApprovals(){
+  document.querySelectorAll('.gbanner').forEach(b=>b.remove());
+  let msgs = [];
+
+  P.forEach(p=>{
+    if(!p.el || !p.decision) return;
+    const row = p.el, amtEl = row.querySelector('.num'), meth = row.querySelector('.meth');
+
+    if(p.decision==='full'){
+      row.classList.add('lockedrow'); row.classList.remove('needs');
+      amtEl.setAttribute('contenteditable','false');
+      amtEl.innerText = p.approvedAmt.toLocaleString();
+      amtEl.removeAttribute('id');
+      row.classList.remove('auto');
+      stamp(meth, 'ok', 'Approved');
+    }
+
+    if(p.decision==='short'){
+      row.classList.add('lockedrow'); row.classList.remove('needs');
+      amtEl.setAttribute('contenteditable','false');
+      amtEl.innerText = p.approvedAmt.toLocaleString();
+      amtEl.removeAttribute('id');
+      row.querySelector('.amt').classList.remove('auto');
+      stamp(meth, 'ok', 'Approved');
+      const req = p.requested || p.amt;
+      if(req > p.approvedAmt)
+        msgs.push({cls:'', text: p.method.split(' (')[0] + ' approved $' + p.approvedAmt.toLocaleString() +
+          ' of the $' + req.toLocaleString() + ' requested. Assign the remaining $' +
+          (req - p.approvedAmt).toLocaleString() + ' to another payment method below.'});
+    }
+
+    if(p.decision==='declined'){
+      row.classList.add('lockedrow');
+      amtEl.setAttribute('contenteditable','false');
+      amtEl.innerText = '0';
+      row.querySelector('.amt').classList.remove('auto');
+      amtEl.removeAttribute('id');
+      stamp(meth, 'bad', 'Declined');
+      msgs.push({cls:'bad', text: p.method.split(' (')[0] + ' was declined. The full $' +
+        p.amt.toLocaleString() + ' needs a different payment method.'});
+    }
+  });
+
+  if(msgs.length){ unlockPrice(); }
+
+  if(msgs.length){
+    const grp = document.getElementById('balRows');
+    msgs.reverse().forEach(m=>{
+      grp.insertAdjacentHTML('beforebegin', '<div class="gbanner '+m.cls+'">'+m.text+'</div>');
+    });
+    ensureRemainderRow();
+  }
+  recalcAfterLock();
+}
+
+function unlockPrice(){
+  const ctrl = document.getElementById('priceCtrl');
+  if(ctrl.classList.contains('unlocked')) return;
+  ctrl.classList.remove('locked'); ctrl.classList.add('unlocked');
+  const n = document.getElementById('priceNum');
+  n.setAttribute('contenteditable','true');
+  n.setAttribute('onkeydown','numOnly(event)');
+  n.setAttribute('oninput','priceChanged()');
+  const pill = document.getElementById('priceEdit');
+  pill.className = 'pill edit'; pill.style.display = 'inline-block'; pill.innerText = 'Editable';
+  ctrl.insertAdjacentHTML('afterend',
+    '<div class="price-hint" id="priceHint">Unlocked because a lender decision changed what this job can fund. Lower the price if you are rewriting the deal.</div>');
+}
+
+function priceChanged(){
+  const v = parseInt((document.getElementById('priceNum').innerText||'').replace(/[^0-9]/g,'')||'0',10);
+  PRICE = v;
+  let locked = 0;
+  document.querySelectorAll('.row.lockedrow .num').forEach(n=>locked += num(n));
+  const hint = document.getElementById('priceHint');
+  if(hint){
+    if(v < locked){
+      hint.innerText = 'Contract price is below the $' + locked.toLocaleString() +
+        ' already approved and locked. Void that application before going lower.';
+      hint.style.color = '#992d22';
+    } else {
+      hint.innerText = 'Unlocked because a lender decision changed what this job can fund. Lower the price if you are rewriting the deal.';
+      hint.style.color = '#8a5b0c';
+    }
+  }
+  recalcAfterLock();
+}
+
+function stamp(meth, kind, label){
+  if(meth.querySelector('.pill')) return;
+  meth.querySelector('.chev').outerHTML = '<span class="pill '+kind+'">'+label+'</span>';
+  meth.onclick = null;
+}
+
+function ensureRemainderRow(){
+  const rows = [...document.querySelectorAll('#balRows .row')];
+  const open = rows.find(r=>!r.classList.contains('lockedrow'));
+  if(open){ open.classList.add('needs'); return; }
+  document.getElementById('balRows').insertAdjacentHTML('beforeend', rowHTML({val:0, kind:'bal'}));
+  const added = document.querySelector('#balRows .row:last-child');
+  added.classList.add('needs');
+  added.querySelector('.num').id = 'autoNum';
+}
+
+function recalcAfterLock(){
+  let locked = 0;
+  document.querySelectorAll('.row.lockedrow .num').forEach(n=>locked += num(n));
+  document.querySelectorAll('#downRows .row:not(.lockedrow) .num').forEach(n=>locked += num(n));
+  const auto = document.getElementById('autoNum');
+  if(auto && !auto.closest('.row').classList.contains('lockedrow')){
+    auto.innerText = Math.max(PRICE - locked, 0).toLocaleString();
+  }
+}
+
+function stateOf(p){
+  // returns index-keyed status map for the stepper
+  const st = {};
+  if(p.type==='check'){
+    if(p.kind==='bal'){ st[0]='locked'; st[1]='locked'; }
+    else {
+      st[0] = p.step>=1 ? 'done' : 'now';
+      st[1] = 'locked';           // rep can't deposit at the table — bank posts it
+    }
+  }
+  if(p.type==='cc'){
+    st[0] = p.linkSent ? 'done' : 'now';
+    st[1] = p.step>=2 ? 'done' : (p.linkSent ? 'now' : 'next');
+    st[2] = p.kind==='bal' ? 'locked' : (p.step>=3 ? 'done':'next');
+  }
+  if(p.type==='bank'){
+    st[0] = p.linkSent ? 'done' : 'now';
+    if(p.decision==='declined') st[1]='bad';
+    else if(p.decision==='short') st[1] = openShort(p) ? 'warn' : 'done';
+    else if(p.decision==='full') st[1]='done';
+    else st[1] = p.linkSent ? 'now' : 'next';
+    st[2] = p.activated ? 'done'
+          : ((p.decision==='full' || (p.decision==='short' && !openShort(p))) ? 'now' : 'next');
+    st[3] = p.kind==='bal' ? 'locked' : (p.step>=4?'done':'next');
+  }
+  return st;
+}
+
+/* how far can this payment get right now? returns null if more to do */
+function doneFor(p){
+  if(p.type==='check'){
+    if(p.kind==='bal') return 'Collected and deposited by the install crew after the job is done.';
+    if(p.step>=1) return 'Take the check to the branch to deposit it. Deposited checks off once the bank posts it.';
+    return null;
+  }
+  if(p.type==='cc'){
+    if(p.kind==='bal') return p.step>=2 ? 'Card is on file. It gets charged after install is verified.' : null;
+    return p.step>=3 ? 'Charged. Funds confirmed.' : null;
+  }
+  if(p.type==='bank'){
+    if(p.decision==='declined' || openShort(p)) return null;
+    if(!p.activated) return null;
+    return p.kind==='bal'
+      ? 'Loan activated. Funds release after install is verified.'
+      : 'Loan activated. Draw settles on the lender\'s next funding cycle.';
+  }
+  return null;
+}
+
+function coverageOK(){
+  return P.reduce((n,p)=>n+fundedAmount(p),0) >= PRICE;
+}
+// a shortfall only blocks while the gap is still unassigned
+function openShort(p){ return p.decision==='short' && !coverageOK(); }
+
+function ownerOf(p){
+  if(p.type==='check') return p.kind==='bal' ? 'Install crew' : 'Bank';
+  if(p.type==='cc')   return 'Processor';
+  return 'Lender';
+}
+
+function cardHTML(p){
+  const steps = FLOW[p.type] || [];
+  const st = stateOf(p);
+  const shortfall = (p.decision==='short' && p.requested!=null) ? p.requested - p.approvedAmt : 0;
+
+  const stepper = steps.map((s,i)=>{
+    const cls = st[i]==='next' ? '' : st[i];
+    let mark = i+1;
+    if(st[i]==='done') mark='✓';
+    if(st[i]==='locked') mark='';
+    if(st[i]==='bad') mark='✕';
+    if(st[i]==='warn') mark='!';
+    let sub='';
+    if(i===1 && p.type==='bank' && p.approvedAmt!=null) sub='<span class="sub">$'+p.approvedAmt.toLocaleString()+'</span>';
+    if(st[i]==='locked') sub='<span class="owner">'+ownerOf(p)+'</span>';
+    const label = (i===1 && p.type==='bank' && p.decision==='declined') ? 'Declined' : s;
+    return '<div class="step '+cls+'" onclick="tapStep('+p.id+','+i+')"><div class="dot">'+mark+'</div>'+
+           '<div class="slab">'+label+sub+'</div></div>';
+  }).join('');
+
+  let extra='';
+  // check: explicit rep actions
+  if(p.type==='check'){
+    if(p.kind==='bal'){
+      extra += '';
+    } else if(p.step===0){
+      extra += '<button class="act" onclick="checkStep('+p.id+',1)">Mark collected</button>';
+    } else {
+      extra += '';
+    }
+  }
+  if(p.type==='cc' && p.kind==='down' && p.step>=2 && p.step<3)
+    extra += '<button class="act" onclick="chargeCard('+p.id+')">Charge $'+p.amt.toLocaleString()+'</button>';
+  // link button
+  if((p.type==='cc'||p.type==='bank') && !p.linkSent)
+    extra += '<button class="act" onclick="openModal('+p.id+')">Send '+(p.type==='bank'?'application':'payment')+' link</button>';
+  // authorize
+  if(p.type==='bank' && !p.activated && (p.decision==='full' || (p.decision==='short' && !openShort(p))))
+    extra += '<button class="act" onclick="activate('+p.id+')">Authorize &amp; activate loan for $'+
+             (p.approvedAmt!=null?p.approvedAmt:p.amt).toLocaleString()+'</button>';
+  if(p.type==='bank' && openShort(p))
+    extra += '<div class="banner warn">Approved for $'+p.approvedAmt.toLocaleString()+' of $'+(p.requested||p.amt).toLocaleString()+
+             ' requested. $'+shortfall.toLocaleString()+' needs a different payment method before this can be authorized.</div>'+
+             '<button class="act alt" onclick="goResult()">Add another payment method</button>';
+  if(p.type==='bank' && p.decision==='declined' && jobResult==='Sale')
+    extra += '<div class="banner bad">Declined. The full $'+p.amt.toLocaleString()+' needs a different payment method — or the job gets resulted as a bank decline.</div>'+
+             '<button class="act alt" onclick="goResult()">Add another payment method</button>'+
+             '<button class="act alt" style="margin-top:8px;border-color:#f0b8b1;color:#992d22" onclick="setResult(\'Bank Decline\')">Result as Bank Decline</button>';
+
+
+  const finished = doneFor(p);
+
+  // per-card sync — only for lender/processor-driven methods that are still moving
+  let sync = '';
+  if((p.type==='bank' || p.type==='cc') && !finished && p.linkSent){
+    sync = '<div class="card-sync">' +
+      '<span class="cts">' + (p.syncedAt ? 'Synced ' + p.syncedAt : 'Awaiting response') + '</span>' +
+      '<div class="csync" id="cs'+p.id+'" onclick="syncOne('+p.id+')"><span class="ico">⟳</span> Sync</div></div>';
+  }
+
+  const lockedLast = p.kind==='bal';
+  let note = '';
+  if(p.type==='check' && p.kind==='down' && !finished)
+    note = '<div class="after-note">Deposited is posted by the bank. It is not a rep step and never checks off here.</div>';
+  else if(lockedLast && !finished)
+    note = p.type==='check'
+      ? '<div class="after-note">Collected and deposited are handled by the install crew. Neither is a rep step.</div>'
+      : '<div class="after-note">'+steps[steps.length-1]+' is posted by the '+ownerOf(p).toLowerCase()+' after install. Not a rep step.</div>';
+
+  const strip = finished
+    ? '<div class="done-strip"><span>✓</span><span>All set for now<span class="nx">'+finished+'</span></span></div>'
+    : '';
+
+  const cls = p.decision==='declined' ? ' bad'
+            : (openShort(p) ? ' warn'
+            : (finished ? ' ok' : ''));
+
+  return '<div class="pay-card'+cls+'"><div class="pc-top"><span class="pc-amt">$'+p.amt.toLocaleString()+'</span>'+
+    '<span class="pc-meth">'+p.method+'</span></div><div class="stepper">'+stepper+'</div>'+extra+sync+strip+note+'</div>';
+}
+
+function fundedAmount(p){
+  if(p.type==='bank' && p.approvedAmt!=null) return p.approvedAmt;
+  return p.amt;
+}
+
+function fundingBlockers(){
+  const out = [];
+  P.forEach(p=>{
+    const who = '$'+p.amt.toLocaleString()+' '+p.method.split(' (')[0];
+    if(p.decision==='declined'){ out.push(who+' was declined — reassign it'); return; }
+    if(openShort(p)){ out.push(who+' came back short — cover the difference'); return; }
+    if((p.type==='cc'||p.type==='bank') && !p.linkSent){ out.push(who+' — link not sent yet'); return; }
+    if(p.type==='bank' && !p.decision){ out.push(who+' — waiting on lender decision'); return; }
+    if(p.type==='bank' && p.decision && !p.activated){ out.push(who+' — loan not activated yet'); return; }
+    if(p.type==='cc' && p.step<2){ out.push(who+' — card not on file yet'); return; }
+    if(p.type==='cc' && p.kind==='down' && p.step<3){ out.push(who+' — card on file but not charged'); return; }
+    if(p.type==='check' && p.kind==='down' && p.step<1){ out.push(who+' — check not marked collected'); return; }
+  });
+  const covered = P.reduce((n,p)=>n+fundedAmount(p),0);
+  if(covered < PRICE) out.push('$'+(PRICE-covered).toLocaleString()+' of the contract is still unassigned');
+  return out;
+}
+
+function renderSubmit(){
+  const btnEl = document.getElementById('submitBtn');
+  const boxEl = document.getElementById('blockers');
+  if(jobResult==='Bank Decline'){
+    btnEl.classList.remove('off'); btnEl.disabled = false;
+    btnEl.innerText = 'Submit Bank Decline';
+    boxEl.className = 'blockers';
+    boxEl.innerHTML = '<b>No funding to satisfy.</b><br>The job is closing as a bank decline.';
+    return;
+  }
+  btnEl.innerText = 'Submit Funding';
+  const b = fundingBlockers();
+  const btn = document.getElementById('submitBtn');
+  const box = document.getElementById('blockers');
+  if(b.length){
+    btn.classList.add('off'); btn.disabled = true;
+    box.className = 'blockers';
+    box.innerHTML = '<b>Before you can submit:</b><br>' + b.map(x=>'• '+x).join('<br>');
+  } else {
+    btn.classList.remove('off'); btn.disabled = false;
+    box.className = 'ready';
+    box.innerHTML = '✓ Every payment is as far as you can take it. Ready to submit.';
+  }
+}
+
+function hasDecline(){
+  return P.some(p=>p.decision==='declined') || LOG.some(l=>l.outcome==='Declined');
+}
+
+/* the Result field is locked to Sale until a lender actually declines */
+function refreshResultField(){
+  const ctrl = document.getElementById('resultCtrl');
+  const chev = document.getElementById('resultChev');
+  const hint = document.getElementById('resultHint');
+  const unlocked = hasDecline();
+  ctrl.classList.toggle('locked', !unlocked);
+  ctrl.classList.toggle('declined', jobResult==='Bank Decline');
+  chev.style.display = unlocked ? 'inline' : 'none';
+  hint.style.display = unlocked ? 'none' : 'block';
+  document.getElementById('resultVal').innerText = jobResult;
+  document.querySelectorAll('#resultMenu .ropt').forEach(o=>{
+    const on = o.dataset.v === jobResult;
+    o.classList.toggle('on', on);
+    o.querySelector('.rck').innerText = on ? '✓' : '';
+  });
+}
+
+function setResult(v){
+  jobResult = v;
+  refreshResultField();
+  renderFunding();
+}
+
+// wire the menu once, no inline handlers
+(function(){
+  const ctrl = document.getElementById('resultCtrl');
+  const menu = document.getElementById('resultMenu');
+  ctrl.addEventListener('click', e=>{
+    e.stopPropagation();
+    if(!hasDecline()) return;              // safeguard: nothing to switch to
+    menu.classList.toggle('show');
+    ctrl.classList.toggle('open', menu.classList.contains('show'));
+  });
+  menu.addEventListener('click', e=>{
+    e.stopPropagation();
+    const opt = e.target.closest('.ropt');
+    if(!opt) return;
+    menu.classList.remove('show');
+    ctrl.classList.remove('open');
+    setResult(opt.dataset.v);
+  });
+  document.addEventListener('click', ()=>{
+    menu.classList.remove('show');
+    ctrl.classList.remove('open');
+  });
+})();
+
+function renderFunding(){
+  const d = P.filter(p=>p.kind==='down'), b = P.filter(p=>p.kind==='bal');
+  let h='';
+  if(d.length) h+='<div class="sect-lab">Down Payment <span class="hint">Collect now</span></div>'+d.map(cardHTML).join('');
+  if(b.length) h+='<div class="sect-lab" style="margin-top:8px">Balance <span class="hint">Funds after install</span></div>'+b.map(cardHTML).join('');
+  h = h || '<div class="sect-lab">No payments entered</div>';
+  if(jobResult==='Bank Decline'){
+    h = '<div class="declbar">Resulted as <b>Bank Decline</b>. Nothing collects on this job. ' +
+        'The lender attempts below stay on the record.' +
+        '<span class="u" onclick="setResult(\'Sale\')">Undo — go back to Sale</span></div>' + h;
+  }
+  if(LOG.length){
+    h += '<div class="hist"><h4>Attempt history</h4>' +
+         '<p>Kept on the job whether or not the amount was reassigned.</p>' +
+         LOG.map(l =>
+           '<div class="hrow'+(l.outcome==='Partial'?' part':'')+'"><div class="hl">' +
+           '<div class="hm">'+l.method+'</div>' +
+           '<div class="hs">$'+l.amt.toLocaleString()+' requested' +
+           (l.outcome==='Partial' ? ' · $'+l.approved.toLocaleString()+' approved' : '') +
+           ' · '+l.at+'</div></div>' +
+           '<span class="hb">'+l.outcome+'</span></div>').join('') + '</div>';
+  }
+  document.getElementById('fundBody').innerHTML = h;
+  renderSim();
+  renderSubmit();
+  refreshResultField();
+}
+
+/* manual step taps (check / cc progress) */
+function tapStep(id, i){ /* steps advance from sync or an explicit button, never a tap */ }
+function chargeCard(id){ P.find(x=>x.id===id).step = 3; renderFunding(); }
+function checkStep(id, n){ P.find(x=>x.id===id).step = n; renderFunding(); }
+function activate(id){ const p=P.find(x=>x.id===id); p.activated=true; p.step=3; renderFunding(); }
+
+/* ---- share modal ---- */
+function openModal(id){
+  modalTarget = id;
+  const p = P.find(x=>x.id===id);
+  document.getElementById('mTitle').innerText = p.type==='bank' ? 'Send application link' : 'Send payment link';
+  document.getElementById('mWho').innerText = '$'+p.amt.toLocaleString()+' · '+p.method;
+  drawQR();
+  document.getElementById('ovl').classList.add('show');
+}
+function closeModal(){ document.getElementById('ovl').classList.remove('show'); stage('Choose'); }
+function stage(name){
+  ['Choose','Text','Email','Done'].forEach(n=>document.getElementById('st'+n).classList.toggle('on', n===name));
+}
+let sentTo = '';
+function send(via){
+  const el = document.getElementById(via==='text' ? 'inPhone' : 'inEmail');
+  sentTo = (el.value || el.placeholder);
+  document.getElementById('mDoneTo').innerText = (via==='text' ? 'Texted to ' : 'Emailed to ') + sentTo;
+  stage('Done');
+}
+function scanned(){
+  sentTo = 'QR scanned at the table';
+  document.getElementById('mDoneTo').innerText = sentTo;
+  stage('Done');
+}
+function finishSend(){
+  const p = P.find(x=>x.id===modalTarget);
+  p.linkSent = true; p.sentTo = sentTo;
+  if(p.type==='cc') p.step = Math.max(p.step,1);
+  closeModal(); renderFunding();
+}
+function drawQR(){
+  const c = document.getElementById('qr'), x = c.getContext('2d');
+  const n=21, s=180/n; x.fillStyle='#fff'; x.fillRect(0,0,180,180); x.fillStyle='#111418';
+  for(let i=0;i<n;i++) for(let j=0;j<n;j++) if(Math.random()>0.52) x.fillRect(i*s,j*s,s,s);
+  [[0,0],[n-7,0],[0,n-7]].forEach(([a,b])=>{
+    x.fillStyle='#fff'; x.fillRect(a*s,b*s,7*s,7*s);
+    x.fillStyle='#111418'; x.fillRect(a*s,b*s,7*s,7*s);
+    x.fillStyle='#fff'; x.fillRect((a+1)*s,(b+1)*s,5*s,5*s);
+    x.fillStyle='#111418'; x.fillRect((a+2)*s,(b+2)*s,3*s,3*s);
+  });
+}
+
+/* ---- API sync ---- */
+function stampTime(){
+  return new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+}
+function pull(p){
+  // processor confirms the homeowner saved their card
+  if(p.type==='cc' && p.linkSent && p.step < 2) p.step = 2;
+  if(p.type==='bank' && p.linkSent && p.queued){
+    p.requested = p.amt;
+    if(p.queued==='full'){ p.decision='full'; p.approvedAmt=p.amt; }
+    if(p.queued==='short'){
+      p.decision='short'; p.approvedAmt=Math.round(p.amt*0.6/100)*100;
+      LOG.push({method:p.method, amt:p.requested, approved:p.approvedAmt, at:stampTime(), outcome:'Partial'});
+    }
+    if(p.queued==='declined'){
+      p.decision='declined'; p.approvedAmt=0; p.activated=false;
+      LOG.push({method:p.method, amt:p.requested, approved:0, at:stampTime(), outcome:'Declined'});
+    }
+    p.queued=null;
+  }
+  p.syncedAt = stampTime();
+}
+function syncOne(id){
+  const btn = document.getElementById('cs'+id);
+  if(btn) btn.classList.add('spin');
+  setTimeout(()=>{ pull(P.find(x=>x.id===id)); renderFunding(); }, 750);
+}
+
+function doRefresh(){
+  const btn = document.getElementById('refBtn');
+  btn.classList.add('spin');
+  setTimeout(()=>{
+    P.forEach(pull);
+    btn.classList.remove('spin');
+    document.getElementById('ts').innerText = 'All synced ' + stampTime();
+    renderFunding();
+  }, 850);
+}
+
+/* ---- scenario simulator ---- */
+function queue(id, v){ const p=P.find(x=>x.id===id); p.queued = (p.queued===v?null:v); renderFunding(); }
+function renderSim(){
+  const banks = P.filter(p=>p.type==='bank');
+  if(!banks.length){ document.getElementById('simPanel').innerHTML=''; return; }
+  const rows = banks.map(p=>{
+    const q = p.queued;
+    return '<div class="sim-row"><div class="who">$'+p.amt.toLocaleString()+' · '+p.method.split(' (')[0]+'</div>'+
+      '<div class="chips">'+
+      '<div class="chip'+(q==='full'?' on':'')+'" onclick="queue('+p.id+',\'full\')">Approve full</div>'+
+      '<div class="chip'+(q==='short'?' on w':'')+'" onclick="queue('+p.id+',\'short\')">Approve partial</div>'+
+      '<div class="chip'+(q==='declined'?' on b':'')+'" onclick="queue('+p.id+',\'declined\')">Decline</div>'+
+      '</div>'+ (q && !p.linkSent ? '<div class="queued">Send the link first, then Refresh</div>'
+                : q ? '<div class="queued">Queued — hit Sync on that card</div>' : '') + '</div>';
+  }).join('');
+  document.getElementById('simPanel').innerHTML =
+    '<div class="sim"><h4>Scenario simulator</h4><p>Stands in for the lender API. Pick an outcome, then hit Refresh at the top to receive it.</p>'+rows+'</div>';
+}
+
+init();
+</script>
+</body>
+</html>

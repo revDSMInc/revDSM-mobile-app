@@ -1069,6 +1069,131 @@ on first keystroke**, still editable between building and confirming, locked aft
 confirm, no retro-unlock when a scoped calculator is cleared (before or after release), ＋ on a scoped
 rehash, duplicates, and a normal lead unchanged.
 
+### FUNDING — Result Lead is now two screens, and a sale can split across many methods
+
+New module (mockup: `Funding-Mockup-UI-Code.txt`, repo root). The Result Lead sheet used to capture
+**one** down-payment method and **one** balance method and then jump straight to the job builder. It now
+holds two screens behind one header:
+
+1. **Result Lead** — One Leg, Result, and a recessed **PRICING** panel: contract price + a *Down Payment*
+   group + a *Balance* group, each holding **as many payment lines as the deal needs**.
+2. **Funding** — one card per payment, each driven through its own life cycle before the job can submit.
+
+`Confirm` (was `Build Job`) projects the pricing rows into funding payments; `Submit Funding` is what now
+calls `onConfirm` and proceeds to the job builder. **The Demo branch is untouched** — a demo has nothing
+to fund, so it keeps the single screen and the `Build Job` button.
+
+**All the rules live in `src/screens/DynamicDealCenter/utils/funding.ts`** (pure, no React/RN imports).
+The six components under `components/funding/` are renderers over it.
+
+⚠️ **The multi-line split is SWITCHED OFF today: `MULTI_METHOD_ENABLED = false`** (`funding.ts`). Both
+*Add payment method* buttons render greyed + disabled, so the deal is one down-payment method and one
+balance method exactly as before. Flipping the flag to `true` is the only change needed to turn it on —
+everything downstream already handles many lines. Two things ride on the same flag deliberately:
+- **The per-row ✕ is gated too.** With Add disabled a removed row could not be brought back, leaving the
+  rep one tap from a dead end.
+- **The recovery row `applyDecisionsToRows` opens after a DECLINE is NOT gated.** That is the system
+  replacing a dead line, not the rep adding one, and it is the only way a declined deal can be reassigned.
+  The rep still cannot remove it.
+
+Greyed rather than hidden on purpose: a control that vanishes reads as a bug, a dimmed one reads as
+"not yet".
+
+| method | plan `type` | steps |
+|---|---|---|
+| `check` | cash | Collected → Deposited |
+| `cc` | card | Link Sent → Card on File → Charged |
+| `bank` | financing | Link Sent → Approved → Activated → Funded |
+
+- ⚠️ **`methodTypeOf` reads the catalog `type`, NOT the label.** The mockup matched
+  `label.startsWith('Check')`; every company authors its own plan labels, so that would misfile a
+  renamed cash method as financing. Tested.
+- ⚠️ **A step somebody else posts is `locked`, never "unfinished."** A balance payment's LAST step always
+  belongs to the bank / processor / install crew, and a down-payment check's *Deposited* does too. It
+  renders as a dashed empty dot captioned with its owner, contributes **no blocker**, and the card shows
+  an "All set for now" strip. A rep who reads an unchecked dot as their own task sits on a finished job.
+- **`connectorTones` — each step owns BOTH its connector halves, from its own state alone** (mockup
+  `.step.done::before/::after`). That is what draws the hand-off: a *done* step paints its right half
+  GREEN while the *locked* step beside it paints its left half DASHED, so the rule changes character
+  exactly where the work stops being the rep's. Deriving either half from the NEIGHBOUR (the first
+  attempt here) flattens the segment to one tone and loses it. `now` greens only the rule leading IN.
+  It lives in `funding.ts`, not the component, because components aren't testable under jest — and this
+  is the rule that was wrong.
+- ⚠️ **The dashed dot and dashed connector are drawn with `react-native-svg`, not `borderStyle: 'dashed'`.**
+  Android silently renders a dashed border as SOLID on any view with a border radius or a single-sided
+  width, which would erase the only cue that says "nobody here has to do this".
+- **The auto (remainder) row.** The last Balance row carries `auto` and always holds
+  `price − every other row`. ⚠️ It subtracts **balance rows too**, unlike the mockup's `recalcAfterLock`,
+  which skipped them and double-counted them into the remainder. A typed-but-methodless amount still
+  reserves its money (the rep meant to assign it); `saleReady` is what blocks Confirm until a method is
+  picked. The row can be dismissed at $0, and an effect re-flags the last empty undecided balance row as
+  `auto` if a gap re-opens — it never overwrites a typed amount.
+- **Progress survives a re-price, not a method swap** (`buildPayments` carries `prev` when
+  `method` is unchanged): re-pricing a card must not un-send its link, but swapping it for a lender plan
+  is a different instrument and starts over.
+- **A partial approval blocks only while the gap is unassigned** (`openShort`). Once another method covers
+  the shortfall it is just a smaller approved payment and becomes authorizable — otherwise the job strands.
+  Coverage counts `approvedAmt`, never the amount requested.
+- **Going back folds decisions onto the pricing rows** (`applyDecisionsToRows`, on Back and *Edit
+  payments*): a decided row locks with an Approved/Declined pill and the **approved** amount, a banner
+  above the Balance group names what to reassign, and the contract price **unlocks** (amber `Editable`
+  pill + hint; the hint turns red when the price drops under what a lender already committed).
+  ⚠️ A declined row must have `auto` **cleared** — leaving it as the remainder absorber silently
+  re-inflates a $0 row to the whole gap. Tested.
+- **`Result` is locked to Sale until a lender actually declines**, then offers **Bank Decline**
+  (`hasDecline`, which stays true from the attempt HISTORY after a declined amount is reassigned away).
+  Demo↔Sale switching is unchanged on the demo path.
+- **The single-method outcome fields still populate** — `downPayment`/`balance` are the summed halves and
+  `downPaymentMethod`/`balancePaymentMethod` are the first funded line of each — so
+  `buildCalculatorOutcomePayload`, `useOutcomeLogging` and the deal-edit baseline all keep working. The
+  full breakdown rides alongside as `payments` (+ `fundingAttempts`, `bankDecline`).
+- Down Payment options stay **cash/card only** and a carried-in financing key does **not** seed the picker
+  — same rule as the deal-edit wizard's `toDownPaymentKey` ("Down Pmt Method must never offer a
+  financing plan").
+
+⚠️ **THERE IS NO FUNDING/LENDER BACKEND YET.** Three consequences, all deliberate:
+- **The `ScenarioSimulator` panel stands in for the lender API** (mockup `#simPanel`, rendered LAST on the
+  funding screen, after the attempt history). One row per **loan**, three chips — Approve full / Approve
+  partial / Decline — which **stage** an outcome on `FundingPayment.queued`; **`syncPayments` delivers it**.
+  The two halves are kept distinct on purpose so a chip never silently mutates the deal, and so the queue
+  branch is a one-for-one stand-in for the response mapping that replaces it. A simulated partial comes
+  back at **60% to the nearest $100** (`SIMULATED_PARTIAL_RATE`). Checks and cards have no chips: a check
+  is collected by hand, and a card's *Card on File* is reported by the processor on Sync.
+  ⚠️ **Delete the component, `FundingPayment.queued` and the queue branch together** when the endpoint lands.
+- ⚠️ **A queued outcome is only delivered once the link has actually been SENT** (the panel says "Send the
+  link first, then Sync"). An outcome from a lender nobody asked would unlock Submit on money that is not
+  coming. `syncPayments` invents nothing beyond what was staged; it is the seam a real
+  `GET …/funding/status` drops into, so keep the signature (`{ payments, log }`).
+- **`buildApplicationLink` is a PLACEHOLDER** (`app.<env>.revdsm.com/apply|pay/{leadId}/{paymentId}`).
+  A real link is minted per attempt by the lender/processor and must arrive with the funding API.
+
+> An earlier pass replaced the simulator with a per-card "Record lender decision" control, on the reasoning
+> that with no API the rep is the source of truth. That was **reverted to the mockup** on request. Do not
+> re-add it alongside the panel — two controls setting the same decision on one screen is the confusion the
+> revert was about.
+
+**Send link** (`SendLinkModal`) is an **in-sheet overlay, not a nested `<Modal>`** (stacked native modals
+are unreliable on both platforms). Text/Email hand off to the **device composer** via `Linking`
+(`sms:` needs `&body=` on iOS and `?body=` on Android) rather than a backend, so the message genuinely
+goes out; there is also Copy link. The QR uses the newly added **`react-native-qrcode-svg`** — imported
+through a `try/require` guard so a missed `yarn install` degrades to text/email instead of white-screening
+a step the rep can't skip.
+
+Verified with 45 tests (`__tests__/screens/DynamicDealCenter/funding.test.ts`): plan-type classification
+incl. a renamed cash plan, the auto-row arithmetic (balance rows subtracted, clamping, junk input),
+progress kept on re-price / reset on method swap, every locked-step case producing no blocker, the partial
+approval blocking then clearing, `applyDecision`'s log rows + requested-amount preservation on a
+re-decision, the fold-back onto rows (declined `auto` cleared, new row opened, existing open row reused,
+full approval silent), `hasDecline` surviving reassignment, the simulator round trip (stage/clear, all
+three outcomes delivered, the 60% partial, **nothing delivered before the link is sent**, nothing invented
+when nothing is queued, and a card advancing to *Card on File* only once sent and never backwards), and a
+fully-funded split sale submitting clean.
+
+⚠️ **One open product decision: what a Bank Decline should DO.** `Submit Bank Decline` currently fires the
+same `onConfirm` as a sale (payload carries `bankDecline: true`), so `DynamicDealCenterScreen` still sends
+`jobBuild: 'active'` and opens the job builder. A declined job almost certainly should not build — but the
+right result status / timeline values are not specified anywhere, so nothing was guessed.
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area
@@ -1098,7 +1223,8 @@ config instead of hardcoded verticals. It is the mobile counterpart of the web
 
 **Layout (mobile):**
 - Screen flow: `src/screens/DynamicDealCenter/components/DynamicDealCenterScreen.tsx` (registered as
-  `DynamicDealCenter`) → `CalculatorView.tsx` → `RolloutView.tsx` → `ResultJobModal.tsx` →
+  `DynamicDealCenter`) → `CalculatorView.tsx` → `RolloutView.tsx` → `ResultJobModal.tsx`
+  (Result Lead → **Funding**, see the FUNDING section above) →
   `DynamicJobBuilderScreen.tsx`. Flow steps: `calculator → rollout → result → jobBuilder`.
 - **Calculator schema loader (System A): `src/screens/DynamicDealCenter/hooks/useCalculatorSchema.ts`**
   — the single seam for the calculator schema. Fetches `GET /calculator-form-schemas/deal-center` and
