@@ -13,7 +13,7 @@ import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { dedupeDrops } from '../utils/drop-prices';
 import { describeFullPackage } from '../utils/tab-naming';
-import { FullPackageTitle, FullPackageInfoModal, type PackageAnchorRect } from './FullPackageBadge';
+import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { SettingsService } from '../../../services/api/SettingsService';
@@ -633,10 +633,20 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
  * (orange) / Cancel. Choosing an outcome hands off to the full Result Lead
  * (outcome) modal at the screen level.
  */
-function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
-  visible: boolean; name: string; price: number; onSale: () => void; onDemo: () => void; onClose: () => void;
+function ResultJobChooser({ visible, name, price, isFullPackage = false, packageExtras = '', onSale, onDemo, onClose }: {
+  visible: boolean; name: string; price: number;
+  /** Full package → the heading shows the icon + ⓘ in place of the derived name. */
+  isFullPackage?: boolean;
+  /** Keys the package doesn't cover, rendered as `+Light` (see `describeFullPackage`). */
+  packageExtras?: string;
+  onSale: () => void; onDemo: () => void; onClose: () => void;
 }) {
   const { isDark } = useTheme();
+  // The contents card is an IN-SHEET overlay here, never a nested <Modal>: stacking
+  // native modals is unreliable on both platforms (same reason as the funding flow's
+  // SendLinkModal). It renders as the last child of this modal's own root.
+  const [packageAnchor, setPackageAnchor] = useState<PackageAnchorRect | null>(null);
+  const [showPackageInfo, setShowPackageInfo] = useState(false);
   const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
   // animationType="none" so the drop → chooser hand-off is instant: the dimmed
   // backdrop is up on the same frame the drop modal disappears, never revealing the
@@ -658,7 +668,22 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
               <Ionicons name="document-text" size={28} color="#FF9800" />
             </View>
           </View>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: '#1C252E', textAlign: 'center', marginBottom: 12 }}>Result Job {name}</Text>
+          {/* "Result Job <name>" — a full package swaps the name for the icon + ⓘ, so
+              this heading matches the tab and the quote card the rep just came from. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#1C252E', textAlign: 'center' }}>Result Job </Text>
+            <FullPackageTitle
+              isFullPackage={isFullPackage}
+              extras={packageExtras}
+              title={name}
+              size={16}
+              weight="600"
+              color="#1C252E"
+              iconColor="#16A34A"
+              onInfo={(rect) => { setPackageAnchor(rect); setShowPackageInfo(true); }}
+              style={{ flexShrink: 1 }}
+            />
+          </View>
           <Text style={{ fontSize: 14, color: '#999999', textAlign: 'center', marginBottom: 24 }}>How Would You Like to Result this Lead?</Text>
           <View style={{ gap: 12 }}>
             <TouchableOpacity onPress={onSale} style={{ borderRadius: 8, paddingVertical: 12, backgroundColor: '#4CBB17', alignItems: 'center' }}>
@@ -672,6 +697,12 @@ function ResultJobChooser({ visible, name, price, onSale, onDemo, onClose }: {
             <Text style={{ fontSize: 16, fontWeight: '700', color: '#1C252E' }}>Cancel</Text>
           </TouchableOpacity>
         </Pressable>
+
+        {/* Last child of this modal's root, so it covers the chooser card. Anchored in
+            window space, which is the same frame this root occupies. */}
+        {showPackageInfo && (
+          <FullPackageInfoOverlay anchorRect={packageAnchor} onClose={() => setShowPackageInfo(false)} />
+        )}
       </Pressable>
     </Modal>
   );
@@ -766,6 +797,12 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   onOneYearMonthlyChange: (id: string, plan: OneYearMonthlyValue) => void;
 }) {
   const { user, refreshUser } = useAuth();
+  // One verdict for this card AND the Sale/Demo chooser it opens, so the heading the
+  // rep taps "Result Lead" from and the heading they land on cannot disagree.
+  const packageInfo = useMemo(
+    () => describeFullPackage(calculator.entries || {}, verticals || []),
+    [calculator.entries, verticals]
+  );
   const [endPrice, setEndPrice] = useState(initialPrice ? String(initialPrice) : String(calculator.price || ''));
   const [focused, setFocused] = useState(false);
   const [showPlanPicker, setShowPlanPicker] = useState(false);
@@ -1415,7 +1452,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
               A full package shows the badge here too, so this heading and the strip
               tab that selected it never disagree. */}
           <FullPackageTitle
-            {...describeFullPackage(calculator.entries || {}, verticals || [])}
+            {...packageInfo}
             title={calculator.title}
             size={14}
             color="#212B36"
@@ -1888,6 +1925,8 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       <ResultJobChooser
         visible={showChooser}
         name={calculator.title}
+        isFullPackage={packageInfo.isFullPackage}
+        packageExtras={packageInfo.extras}
         price={chooserPrice}
         onSale={() => { setShowChooser(false); onResult(calculator.id, 'sale', chooserPrice, activeMethod, chooserDown); }}
         onDemo={() => { setShowChooser(false); onResult(calculator.id, 'demo', chooserPrice, activeMethod, chooserDown); }}
