@@ -565,7 +565,17 @@ successfully") shows the server genuinely returns two agreement rows for one sig
 Identical `fileData.size` AND identical `base64Data`, but a **distinct `_id` and `filePath`** — so
 `docIdentity` keys them apart, `dedupeDocs` cannot merge them, and neither is `isSystemGenerated` so
 `collapseSignedAgreement` passes both through. **This is a real duplicate on the server**, written at
-submit time; nothing on the client created it.
+submit time.
+
+> ✅ **ROOT CAUSE FOUND AND FIXED (2026-08-12) — the client DID create it.** The last sentence above
+> ("nothing on the client created it") was wrong. The duplicate is written by the **lead-scoped outcome
+> mirror in `handleComplete`**, which re-attached the base64 documents at submit. The two timestamps in
+> the table are 35 s apart — `…851569` is the sign endpoint filing the real row, `…886943` is the
+> submit re-send — and the empty `name` is `buildDocumentPayloads` sending `name: ''`. The old comment
+> at that call site asserted "the backend upserts by file, so re-sending … does not duplicate", and
+> this table is the proof it does not. See "the lead-scoped outcome mirror no longer re-uploads
+> documents" below. **The `dropUnnamedAgreements` display filter is kept** as a safety net for deals
+> already carrying a duplicate, but new submits should no longer produce one.
 
 ⚠️ **The filter MUST run on the RAW server rows, not in the display component.** The first attempt at
 this put it in `SummaryFinalizeCards` and it silently did nothing: **every** loader defaults the name —
@@ -660,11 +670,233 @@ unchanged, suite 926 passing.
 ✅ **Confirmed on device**: after these fixes a GUTTERS edit re-prices to **COST $3,848 / PAR $5,502 /
 RETAIL $8,195** — identical to web to the dollar on the same deal ("QS test"). The bridge works.
 
-⚠️ **One case is still open: a LEAFFILTER-only edit does not move the tiers.** In the failing repro the
-GUTTERS tab reads "No data entered", so LeafFilter is the only quantity in play. Not yet reproduced
-locally, and it is NOT known whether web moves the price for that case either — the working web
-comparison had gutters populated. Do not assume it is the same bug as above; the gutters path proves
-the machinery is sound.
+⚠️ **One case is still open — and it is NOT "LeafFilter-only".** Originally filed that way (the failing
+repro's GUTTERS tab read "No data entered", so LeafFilter was the only quantity in play). A payload
+comparison across four deals on the SAME config (`sales-portal` response, 2026-08-11) reframes it:
+
+| deal | LeafFilter combinations in the submitted build | footage edit re-prices? |
+|---|---|---|
+| `6a7aaf30…` "recipet lead" | **4** | ✅ yes |
+| `6a7b1a12…` "current lead" | 0 | ❌ no |
+| `6a7b0ad5…` "tomorrow lead" | 0 | ❌ no |
+| `6a7af6a8…` "fu lead" | 0 | ❌ no |
+
+Everything else is identical — same `configId`/`configSnapshotId` (`6a71a118…`), same vertical key,
+same six tab ids, same `resultedProducts`, all `isDynamic`, all `submitted`. **4/4 correlation with one
+structural fact: whether the combination ROW already existed.**
+
+⚠️ And it is **not** about the saved footage: all four of recipet's combos store `__grid: null`, so it
+sold with no footage either. The combos merely EXIST (each carrying a size/type, e.g. `6"` / `Versa`).
+
+⚠️ **The "combination age" hypothesis above was WRONG — superseded by an on-device A/B.** Two builds
+were made identical except for one field:
+
+| | recipet | current lead |
+|---|---|---|
+| Gutter opening / footage | 6" + 7", 444ft | 6" + 7", 444ft |
+| **LeafFilter profile** | **`Versa`** | **`Micro Mesh`** |
+| New tiers | COST $6,488 / PAR $12,763 / RETAIL $19,636 | $200 / $200 / $200 (unchanged) |
+
+**The price tracks the PROFILE VALUE, not the combination's age** — which also re-explains the earlier
+table: every one of recipet's saved combos carried `Versa` / `Versa Max`. `Versa` prices; `Micro Mesh`
+does not.
+
+Since the LeafFilter allocation's `optionBinding` / contributor `when` rules live in the CONFIG, and
+both apps evaluate them with byte-identical code (`comboMatchesOptionBinding` does an exact
+`optionValues.includes(...)` — **neither platform trims**, so an authored trailing space like the
+`"Micro Mesh "` seen in the saved payload would break BOTH), the likely conclusion is that the config
+wires `Versa`/`Versa Max` to priced calculator fields and `Micro Mesh` to none. **Prediction to test:
+web will also fail to re-price a Micro Mesh build.** The earlier "web works fine" comparison was
+almost certainly run on a Versa deal.
+
+**Ruled out by direct test against the real `resolveAllocationMetrics`:** the option-binding gate. A
+combination whose bound option is blank (which is how a freshly-added one starts) still consumes its
+full footage — `comboMatchesOptionBinding` does not zero it. Do not re-investigate that path.
+
+Also noted, ranked second: the three failing deals have `jobBuilder.appointmentId === lead._id` while
+recipet has a distinct appointment id — but 20 of the 32 deals in that payload share the same shape, so
+it looks like a normal self-gen convention rather than the defect.
+
+Still needed to close it: the job-builder config (`GET /company/v1/job-builder-products`) to read the
+LeafFilter allocation's `optionBinding` / `metrics[].valueSource` / `dcField` refs, plus the calculators
+for one working and one failing deal (`GET /appointments/{id}/lfcalculators`).
+
+#### Full web↔mobile diff of the pricing chain (2026-08-11)
+
+Driven by *"same functionality is working fine in web… can you fix this issue"*. Every function in the
+chain was compared against `mhalt-revDSM-sales-frontend/src/sections/deal/components/dynamic-deal-pricing.js`
+and found **at parity** — do not re-diff these:
+
+- `computeEditedTiers` — all three paths, same order, same `previous`/`delta`/`clamp` (mobile adds only
+  the `originalContractPrice` RETAIL fallback, which cannot affect `delta`).
+- `buildCalculatorDetails`, `extractQuantitiesByFieldId`, `buildFieldCalcKeyMap`,
+  `collectAllocationDcRefs`, `buildAllocationQtyMap`, `buildBuilderQtyIndex` — line-for-line equivalent.
+- `tierFor`'s schema walk vs web `calculateResultUtil`'s `isSchemaBased` branch — byte-identical
+  (`details[field.name] ?? details[field.id]`, `resolveFieldTierPrice`, `applyFeesToTier`, $200 floor).
+- Config normalization: both run `enrichConfigWithProductColors` → `migrateConfigTabFields` →
+  `ensureVerticalSummaryTabs` over the same endpoint.
+- `collectAllocationFields` already delegates to the deep (container-recursing) collector.
+- Edited state propagation: both stream the embedded builder's state out via `onStateChange` →
+  `setEditedJobState`, and both price `editedJobState || initialState`.
+
+**The one real divergence found is in an INPUT, not the math: `dealCenterData`.** Web
+`buildDealCenterSessionData` merges four sources and its `ingestCalculatorObject` walks the calculator's
+top-level scalar columns, writing each one under **every alias of the schema field it matches**
+(canonical id ⇄ legacy `field.name`). Mobile's `buildDealCenterData` step 3 copied `resultData` keys
+**verbatim, with no alias hop**. A calculator stores a quantity under one spelling while the config's
+`dcField` may reference the other, so the reference resolves to nothing — a `dealCenter` allocation
+metric reads a budget of 0 and the build's footage is mapped onto a ref the schema prices at 0. Silent:
+the tiers simply don't move. Ported in `utils/build-deal-center-data.ts` (objects skipped, aliases last —
+matching web's merge precedence, where `fromCalculatorDirect` wins).
+
+⚠️ Genuine port gap and strictly additive (it only adds alias keys for scalar values that match a schema
+field), but **NOT the cause of the LeafFilter case** — see below.
+
+#### ✅ ROOT CAUSE (found 2026-08-11): the edit wizard priced against `configuredSchemas`
+
+Settled by an on-screen diagnostic rather than more code-reading. `computeEditedTiers` now returns a
+`debug` block and `DynamicDealEditScreen` renders it on the Job Price step while `DEAL_PRICING_DEBUG`
+is on. On the failing deal it read:
+
+```
+path=schema  schemas=1  cfg=Y  flat=2  keyHits=2  alloc=4  diff=25  priceable=0
+```
+
+Every link worked — the right branch was taken, allocations mapped 4 refs, and **25 calculator keys
+moved** between the original and edited build — and then **not one of them was a key the schema could
+price**. `schemas=1` is the tell.
+
+`DynamicDealEditScreen` passed **`configuredSchemas`** (only entities that already have fields) where
+web's `dynamic-deal-edit-modal.js` passes the UNFILTERED **`schemas`** — it never references
+`configuredSchemas` at all (`grep -c` → 0). `tierFor` prices a quantity by matching it to a schema
+field's `id`/`name`, so every schema dropped by that filter takes all of its fields with it. The
+build resolved perfectly and then had nothing to price against.
+
+⚠️ **This is why only ONE deal ever worked.** "recipet lead" sold LeafFilter, so its quantities landed
+on fields belonging to the single surviving schema; every other deal's edits landed on fields the
+filter had removed. The Versa/Micro Mesh and combination-already-exists correlations recorded above
+were both **coincidences of that same fact** — they are not causes. Do not re-investigate them.
+
+Fixed in `DynamicDealEditScreen.tsx`: `schemas` now feeds **both** `computeEditedTiers` and
+`buildDealCenterData` (web passes the unfiltered list to `buildDealCenterSessionData` too — the
+field-option ALIASES are derived from it, so a dropped schema loses every alias it owns as well).
+`calculatorSchemas={configuredSchemas}` on the embedded builder is deliberately left alone: it drives
+tab accent colours only, and `schemas` ⊇ `configuredSchemas` there so it makes no difference.
+
+⚠️ `useCalculatorSchema` returns BOTH lists. `configuredSchemas` is for **gating UI** ("has the manager
+configured the deal center?"). Anything that PRICES must take `schemas`.
+
+#### ⚠️ The LeafFilter tab is priced ONLY by grid column sums (config fact, 2026-08-12)
+
+Follow-up: *"when i am changing in leaffilter tab in my deals flow, in the 3rd step cost PAR and
+Retail is not updated… changes are showing in the summary part, but when i go to next step nothing
+changed."* Settled by reading the **actual config** (`GET /company/v1/job-builder-products`, saved as
+`leaffilter-config.txt`) rather than more code. **Read this before touching the pricing chain again.**
+
+**Two corrections to earlier entries in this file — both were mine, and both sent me down dead ends.**
+
+1. **The `configuredSchemas` → `schemas` "ROOT CAUSE" below did NOT fix this.** The strip still reads
+   `schemas=1`, because the endpoint only ever returned one schema — the filter was never dropping
+   anything. The change is still correct (web passes the unfiltered list) and is kept, but it was
+   **not the cause**, and the section below overstates it.
+2. **`diff=25` was the diagnostic LYING.** `describeBridge`'s filter was
+   `Number(next[k]) !== Number(prev[k])`, and `Number('Micro Mesh')` / `Number('Versa')` are both
+   `NaN` — `NaN !== NaN` is **true**, so every TEXT field counted as a changed quantity. "25 calculator
+   keys moved" was mostly profile/colour strings. Fixed: the filter now requires at least one side to
+   be numeric. ⚠️ Never compare via `Number()` to detect a change on a map that also holds strings.
+
+**How LeafFilter is actually wired** (all 10 allocations on that tab):
+
+| | Gutters tab | **LeafFilter tab** |
+|---|---|---|
+| `dcField` on the allocation | `new_number_input`, `6_gutter_ds_e`, `7_gutter_ds_e` | **none — all 10** |
+| `optionBinding` | — | **`null` — all 10** |
+| `used` contributor | — | `columnSum` of ONE story column of ONE section's `locationGrid` |
+| `avail` (budget) | dealCenter ref | dealCenter ref (the calculator's own story×width quantity) |
+
+So a LeafFilter allocation's only calculator ref is its **budget** metric, and
+`buildAllocationQtyMap` maps the rep's **allocated** total onto it. Net effect: **the only build edit
+that can move a LeafFilter price is a change to a grid column sum.**
+
+Consequences, all verified against the config:
+
+- **"LeafFilter Profile" cannot affect price.** It is a **free-text field**
+  (`field_1782365732617_cgzrz`, `type: 'text'`, key `textValue_atgx2`), and every allocation has
+  `optionBinding: null`. Typing `Micro Mesh` / `Versa` / `Versa Max` into it changes no priced
+  quantity by design. ⚠️ This finally explains — and **retires** — the "Versa prices, Micro Mesh
+  doesn't" correlation recorded further up: profile never priced on *either* platform.
+- **Adding a combination with no footage changes nothing.** `used` is a column sum; a combination
+  whose grid is blank contributes 0. In the reported screenshot only Combination #1 carries footage
+  (`3rd Story · Left Side: 444ft`); #2/#3/#4 hold profiles only. Nothing to re-price.
+- **Versa Max has its OWN section** (`section_1782386890583`, grid key `grid_acoaz_rsb8y_n70le`,
+  aggregate `gridTotal`). Versa Max footage must be entered **there**, not by typing "Versa Max" into
+  the profile text field of the 6" section.
+- Each width lives in its own section — 6″ → `section_1782365542087` (grid key `grid`), 7″ →
+  `section_1782373723139` (`grid_acoaz`), 4&5″ → `section_1782373742457` (`grid_acoaz_rsb8y`) — and
+  the three story columns (`1st`/`2nd`/`3rd`) of one grid feed three different allocations.
+
+**The engine was re-diffed against web during this pass and is at parity — do not re-diff:**
+`collectAllocationDcRefs` (byte-identical), `buildAllocationQtyMap`, `allocation-value-resolver.ts`
+(only TS annotations differ) and `location-grid-utils.ts` (ditto).
+
+**New decisive diagnostic: `allocMoved`.** `describeBridge` now also builds the allocation qty map for
+the **original** state and reports which refs differ. The on-screen strip (`EditedTiersResult.debug`,
+rendered on the Job Price step) leads with it:
+
+```
+schemas=1 schemaKeys=N alloc=6 allocMoved=0 numDiff=0 priceable=0
+MOVED none — no allocation total changed
+```
+
+⚠️ **Read `allocMoved` FIRST.** `MOVED none` means the build changed nothing the config maps to a
+priced quantity — an unchanged tier is then **CORRECT**, not a bug, and no amount of engine work will
+change it. Only `allocMoved` non-empty **with** `priceable=0` is a real bridge failure (refs moved but
+aren't schema field ids/names).
+
+✅ **Both are now OFF** (2026-08-12, before push): the amber strip was removed from
+`DynamicDealEditScreen` and **`DEAL_PRICING_DEBUG` is back to `false`**. The instrumentation itself
+(`describeBridge`, `allocMoved`, `EditedTiersResult.debug`) is retained behind the flag — flip it to
+`true` to diagnose, and read `allocMoved` first.
+
+#### Also ported en route: web `ticket-1063` (2026-08-11)
+
+A side-by-side on the SAME deal (`6a7b1a12…`, Micro Mesh, 444 ft) settled it — **web $6,483 / $12,757 /
+$19,626, mobile $200 flat** — so it is a mobile bug, not the config. The web repo had been re-pulled and
+carried a commit from that same day (`51c8a246 ticket-1063`) touching five engine files, none of it
+ported. All of it is now in:
+
+- **`toggle-utils.ts` — THE fix.** `filterVisibleToggleOptions`'s second parameter changed from
+  `dealCenterData` to the **full rule context**. An `optionVisibility` rule is an ordinary rule group:
+  with only `{dealCenterData, state}` it cannot resolve a field by KEY, reach another section, or read
+  an allocation metric, so every such reference evaluated `undefined` → read as "rule not met" → **the
+  option was silently hidden**. That is why LeafFilter's `Micro Mesh` never priced on mobile while
+  `Versa` (ungated) did. New `getVisibleFieldOptions` + `getBaseFieldOptions` (which reads
+  `optionShowFields` KEYS for dropdowns, since `field.options` is stale for those);
+  `filterVisibleToggleOptions` is kept as an alias so the name reads the same at call sites.
+- **`dependency-engine.ts`** — `buildRuleEvaluationContext` **exported** (option rules must share it);
+  `isDefaultColorActive` now honours `useDefaultValue` as the dropdown twin of `useDefaultColor`; new
+  `resolveEffectiveDefaultValue`; `validateDependencies` covers `dropdown` optionVisibility.
+- **`combination-utils.ts`** — `buildDefaultItemFromFields` seeds a `dropdown` defaultValue (was `text`
+  only). Deliberately condition-blind: it cannot import the dependency engine.
+- **`dynamic-job-state-storage.ts`** — `hydrateFieldValue` applies `resolveConditionalDefault` **before**
+  falling back to `buildDefaultItemFromFields`, so a conditional default is never persisted past its own
+  condition. (This is the half that explains the **LeafFilter Color reading White on web vs Clay on
+  mobile** for the same saved state.)
+- **`tab-validation.ts`** — `isFieldValueComplete` handles `dropdown`, passes `depCtx` (not
+  `dealCenterData`), and treats a disabled dropdown / one carrying an active default as answered so Next
+  is never disabled with nothing on screen to fix.
+
+⚠️ **`DynamicTabRenderer.tsx`'s three call sites now pass `depCtx`** (already built at ~line 359). Any new
+caller of `filterVisibleToggleOptions` / `getVisibleFieldOptions` MUST pass that same context — passing
+`dealCenterData` still type-checks and still "works" for same-section rules, which is exactly what made
+this bug invisible for so long.
+
+Verified with the real engine: a cross-section-gated option is **hidden under the old stripped context and
+kept under the full one** (fails before the port, passes after), a genuinely-unmet rule still hides it,
+`applyConditions: false` / no-optionVisibility untouched, `optionShowFields` keys used for dropdowns,
+dropdown defaults seeded, `useDefaultValue` honoured (incl. explicit `false`), and `defaultWhen` respected
+both ways. tsc 44 (baseline unchanged); eslint per-file identical to HEAD (dependency-engine 2,
+storage 3, renderer 12, others 0).
 
 Ruled out while chasing it (all verified parity, don't re-investigate): the whole engine —
 `allocation-utils`, `combination-utils`, `allocation-value-resolver`, `allocation-config-utils`,
@@ -1611,6 +1843,359 @@ gotcha in §6, and this ticket is the third surface to hit it.
 
 Not changed: chat image **messages** were already previewable via `ImageGalleryModal` from
 `ChatMessageBubble`, so only their speed needed fixing.
+
+### Chat: job-change addendum lifecycle cards
+
+Spec: **`SALES-APP-ADDENDUM-CHAT.md`** (repo root, 2026-08-12) — read it, it is the contract. The
+lead chat now receives **general (sender-less) system messages** for the addendum lifecycle: the rep
+proposed job changes, and the customer approved or declined them.
+
+**Mobile emits nothing and calls no new endpoint to make these appear.** They ride the existing
+`GET /chat/v1/:chatId/messages` and the existing `new-message` socket event; `ChatService.normalizeMessage`
+spreads `...m`, so `metadata` already survives **both** paths with no service change. The entire ticket
+is *rendering* plus the two View destinations.
+
+⚠️ **There is no web ref to port from.** `grep -rl "JOB_CHANGE_ADDENDUM\|JobChangeMessageCard"` over
+`mhalt-revDSM-sales-frontend` returns only `src/api/leads.js` — the sales web app has the two API
+functions but not the chat card, so this was written against the spec. §8 of the spec names the web
+files to mirror **once they land**.
+
+**Three new files.**
+
+- **`src/utils/job-change-summary.ts`** — pure, zero imports (no React, no RN, no date library).
+  Detection (`getJobChangeMeta` / `isJobChangeAddendum` / `getJobChangeTitle` / `formatChatTime`) plus
+  the whole diff (`buildJobChangeSummary`). Split out for the same reason as `utils/inspection-photos.ts`
+  and `utils/pitch-book.ts`: the card and the modal both pull in RN and are untestable under jest here,
+  so **every rule that can be got wrong lives in this file**.
+- **`src/widgets/components/chat/JobChangeMessageCard.tsx`** — the row: round status icon, the
+  server-authored line, outlined green **View**. ⚠️ The **timestamp sits ABOVE the card, centered**,
+  not inside it — it reads as a chat time separator rather than card content, which is how web draws
+  it. The first pass put it under the title inside the card and QA sent back the web screenshot.
+  The card is a single vertically-centred row (icon | title | View), so the title wraps to two lines
+  without pushing anything out of alignment.
+- **`src/widgets/components/chat/JobChangeDetailsModal.tsx`** — the before/after, reading
+  `LeadService.getDraftSummary` (`/lead/v1/job-builder-draft/{draftId}/public`, **no auth** — the same
+  payload the customer's own consent page renders, which is the point).
+
+`ChatDetail/index.tsx` wires them: **`renderMessage` short-circuits** to the card when
+`getJobChangeMeta(props.currentMessage)` is non-null, and mounts `JobChangeDetailsModal` +
+`PdfPreviewModal`. Both `GiftedChatAny` instances (iOS / Android branches) share that one
+`renderMessage`, so a single change covers both.
+
+⚠️ **Intercepting at `renderMessage` — before `<Message>` — is what drops the sender**, and that is the
+whole failure mode the spec calls out. `senderId` is a *required, populated* user reference (so it can
+never be a `"system"` sentinel), and **all three events carry the REP as the technical sender —
+including the customer's approve/decline**, which arrives on a public no-auth endpoint where there is
+no user at all. Rendering these through the normal path would draw
+*"Customer has approved job changes"* as the rep's **own outgoing bubble**. Bypassing `<Message>` also
+suppresses the avatar, me/them alignment, reactions, reply, edit, pin, the long-press menu and the
+read-receipt row in one move, rather than teaching each of them an exception.
+
+⚠️ **Gate on `metadata`, NEVER on the message text.** An unrecognised `metadata.type` (e.g.
+`INSTALLER_JOB_STATUS_REQUEST`) returns `null` from `getJobChangeMeta`, so future event types degrade
+to normal bubble rendering instead of rendering as a broken card.
+
+**View is action-dependent, and deliberately so** (client-specified): `ACCEPTED` → the signed PDF
+directly, no intermediate screen; `PROPOSED` / `DECLINED` → the changes screen. **Approved ⇒ PDF,
+always** — including when the changes screen is opened from a `PROPOSED` card and the fetched draft
+turns out to be `accepted` (the customer signed after the card was posted), which renders a short note
+plus an "Open signed addendum PDF" button instead of change rows.
+
+⚠️ **`addendumPdfPending` is BOTH the spinner and the double-tap guard.** `/amendment-pdf`
+**generates the document on demand** for addendums approved before this feature existed, so two taps
+mean two Puppeteer builds and two S3 uploads for one addendum. A `409` (draft not accepted) falls back
+to the changes screen rather than dead-ending. The url is a short-lived pre-signed S3 link — fetched at
+tap time, never cached.
+
+⚠️ **The spinner is keyed on the MESSAGE id (`cardId`), not on `draftId`.** QA: *"when i try to view
+approved changes loader should only show with approved card."* It shipped keyed on `draftId` and lit up
+**two** cards. Not a rendering slip — one addendum posts up to three cards (proposed →
+approved/declined) and **they all carry the same `draftId` by design** (§6), so the draft can never
+identify which card was tapped. `addendumPdfPending` therefore holds `{ draftId, cardId }`: `draftId`
+still de-duplicates the in-flight request (two taps on the two cards of one addendum ARE the same PDF,
+so the second is correctly ignored) while `cardId` scopes the spinner. `JobChangeMessageCard` derives
+`cardId` from `message._id` and hands it back through `onView(meta, cardId)`. The details modal has a
+single button and no card to disambiguate, so it passes a `modal:<draftId>` sentinel and reads the
+plain `pdfLoading` boolean.
+
+⚠️ **Always `metadata.draftId` from the tapped card.** A lead can carry several addendums, each a
+separate record with its own PDF, so *"the lead's addendum"* is never a valid lookup. Cards are **not
+numbered** — the deal-details screen numbers them newest-first, so its numbering shifts whenever a new
+one is raised and any numbering here would contradict it. Timestamps are the disambiguator. The server
+de-duplicates per `(draftId, action)`, so no client-side dedupe is needed.
+
+#### The four formatting rules are not optional
+
+The two sides of a draft are **written by different screens**, so a naive comparison reports unchanged
+values as changes — phantom edits on a document a customer signs. All four live in
+`job-change-summary.ts`:
+
+1. **Compare the FORMATTED values, not the raw ones.** `current.scheduleTime.date` may be `"7/21/26"`
+   while `proposed` holds `"2026-07-21T…"` for the same day; `"14000"` vs `14000` likewise.
+2. **Parse ISO dates as TEXT** — `ISO_DATE` reads the `YYYY-MM-DD` prefix with a regex. ⚠️ The string
+   carries a **timezone offset**, so building a local `Date` shifts the calendar day: verified that
+   `new Date('2026-08-03T00:30:00+05:00')` is **Aug 2** in `America/New_York` while the text parse is
+   **Aug 3**. This is a date a customer signs — never route it through a `Date`.
+3. **Normalise the time window before comparing.** `morning → 8:00 AM - 12:00 PM`,
+   `afternoon → 12:00 PM - 4:00 PM`, whitespace collapsed, unicode dashes folded. ⚠️ That dash class is
+   written as the **escape sequence** `/[\u2010-\u2015\u2212]/` — U+2010–U+2015 and U+2212 are visually
+   indistinguishable from `-` in a diff, so a literal class is unreviewable (same family of trap as the
+   `SCOPE_SEP` NUL rule).
+4. **Strip raw authored ids** out of `buildChangeSummary[].changes[].field` — split on `·`, drop any
+   segment matching `^(field|section|tab)_\d{10,}[\w-]*$`, rejoin; `"Job Build"` if nothing survives.
+
+Two guards beyond the spec, both to avoid inventing a change: the **Schedule row is only emitted when
+the PROPOSED side actually carries a `scheduleTime`** (a pricing-only addendum leaves it absent, and
+absent means unchanged, not "changed to `—`"), and **money/time formatting is hand-rolled** rather than
+`toLocaleString`/`toLocaleTimeString` so it cannot depend on Intl being compiled into the JS engine —
+the same precedent set by `formatCaptureTime` in `utils/inspection-photos.ts`.
+
+Balance Method renders as `GreenSky — 2521`, taking the provider from the **same side** of the draft so
+a provider change still reads as a change. Legacy addendums carry `buildChangeSummary: null` — valid,
+pricing and schedule only. `/public` 404 means the draft was hard-deleted: an error state with Try
+Again, never a crash.
+
+⚠️ **`DealDetail`'s own `DraftComparison` (`screens/DealDetail/index.tsx:638`) implements NONE of these
+four rules** — it compares raw values and prints `ch.field` verbatim. That screen is currently
+unreachable (see the My Deals section above), which is why it wasn't touched, but if it is ever revived
+it should be pointed at `buildJobChangeSummary` rather than re-deriving the diff.
+
+Verified with 29 tests over the spec's payloads verbatim: detection (incl. `metadata: null`, an unknown
+`type`, a blank `draftId`, and asserting the text is never pattern-matched), all four rules with the
+timezone case proven against naive parsing, the spec payload emitting exactly Contract Price + Install
+Date + the Gutters/Roofline row while the four unchanged pricing fields stay out, provider prefixing,
+the accepted/declined flags, `buildChangeSummary: null`, empty change groups skipped, the no-proposed-
+schedule guard, and junk input as a no-op. tsc 44 (baseline unchanged); eslint 0 errors on all four
+files, and `ChatDetail` byte-for-byte at its HEAD warning count (30).
+
+### "Complete Job" took ~10 s — five SEQUENTIAL round trips, two carrying the same multi-MB docs
+
+Ticket: *"Submitted job took like 10 seconds pls make it <1 second… i saw in debugger there is still
+outcome api (old one) is calling, i think that's causing the issue."*
+
+`handleComplete` was a chain of five blocking `await`s before navigation:
+
+| # | call | why it was on the critical path |
+|---|---|---|
+| 1 | `logRolloutAndDropSummary` | activity log — **awaited, and FIRST** |
+| 2 | `buildDocumentPayloads` | may re-`download` stored docs, then `convertJpegToPdf` each |
+| 3 | `POST /lead/v1/{id}/job-builder` | the real submit — multi-MB base64 documents |
+| 4 | `PUT /lead/v1/{id}/outcome` | the mirror — **the SAME multi-MB documents again** |
+| 5 | `PATCH .../timeline-progress` | portal milestone flags |
+
+**Two were removed from the critical path** (both now fire-and-forget with a `.catch`):
+
+- **`logRolloutAndDropSummary` — exact web parity.** Web fires it **without `await`**
+  (`TabbedCalculator.js:1103`); mobile awaited it *as the first step*, so a full activity-log round
+  trip ran before the job was even sent. Nothing reads the summary synchronously.
+- **`updateLeadTimelineProgress`** — portal milestone flags that nothing the rep is about to see
+  reads, and it was the **last** blocking call before navigating. **Web makes no equivalent call here
+  at all.** ⚠️ Navigating does not cancel it: nothing aborts the request and the JS context outlives
+  the screen.
+
+⚠️ **#3 and #4 were deliberately left sequential and awaited.** Web does the same
+(`TabbedCalculator.js` ~L1086 `await updateJobBuilder(...)` after the POST) and its own comment reads
+*"Non-fatal: the job is already submitted above"*. The mirror is what populates `jobBuilderDocuments`,
+which is exactly what the Deal screen renders on arrival — racing or deferring it risks landing the rep
+on a just-submitted deal showing **no documents**.
+
+**The 3.73 s "Stalled" the reporter saw on the outcome PUT is almost certainly the logging bug fixed in
+the section below.** `logTraffic` runs **synchronously inside the axios REQUEST interceptor, before
+`return config`** — i.e. before the request is dispatched — and it was `console.log`ing the full
+multi-MB body. "Stalled" measures precisely the gap between queued and sent, so a multi-MB console
+write lands there. That trace predates `sanitizeForLog`.
+
+### ⛔ REMOVED APP-WIDE: the bare lead-scoped `lead/v1/{leadId}/outcome`
+
+Ticket: *"here is how i created the job from web and you can see no api is called with the name of
+outcome… we replaced the outcome api with the new outcome api `…/outcome/{calculatorId}`. in mobile
+there is still old outcome api is calling, which is causing some impact on the speed of the app, i
+want you to remove that api in all over the app where it's using."*
+
+**The endpoint is deprecated and 404s on device** — visible in the reporter's own mobile trace, where
+every `outcome` row is red/404 next to a working `multiple`. Each call was a wasted round trip that
+returned nothing. Web's submit PUTs to `/outcome/{calculatorId}`.
+
+⚠️ **An earlier pass in this file kept the call, on the reasoning that it was the only write feeding
+`jobBuilderDocuments`. That reasoning is superseded** — it was based on web's comment, but web's
+`updateJobBuilder` is a *different* deployment's contract. The user supplied web + mobile traces.
+
+**`LeadEndpoints.outcome`, `LeadService.getLeadOutcome`, `getJobBuilder` and `updateLeadOutcome` are
+DELETED.** Deleting them (rather than editing call sites one by one) made every remaining usage a
+**compile error**, which is what guaranteed the sweep was complete — **21 sites across 15 files**.
+
+**New `resolveLeadCalculatorId(lead)` in `services/api/leads.ts`** is the single resolution helper (the
+order the Lead Center already used: `selectedCalculatorId` → `calculatorId` →
+`jobBuilder.calculatorId` → `outcome.selectedCalculatorId` → `leadData.selectedCalculatorId` →
+`LFCalculator._id`). It returns `null` when the lead has no calculator, and **every call site skips the
+request in that case** rather than falling back to the removed route.
+
+Conversions, by kind:
+
+| kind | sites | how |
+|---|---|---|
+| write | DynamicJobBuilderScreen, JobBuilder ×3, SummarySection, useDealOutcome, JobDocsSection | → `updateLeadOutcomeByCalculator`, guarded on an id |
+| read | LeadCenter ×2, DealCenter, useDealOutcome, SummarySection, DynamicDealEditScreen, EditContractDetailsModal ×2, job-builder-auto-log | → `getLeadOutcomeByCalculator`, guarded on an id |
+| **documents** | `outcome-documents.fetchLeadOutcomeDocumentRows`, `JobDocsSection` fallback | → **`downloadOutcomeDocuments`** |
+| lead fields | Pitchbook, RooflineDeck | → **`getSalesDealById`** |
+| dead code | `useUpdateLeadOutcomeMutation` | **deleted** — zero call sites |
+
+⚠️ **`downloadOutcomeDocuments` (`…/outcome/documents/download`) is NOT the deprecated route and must
+stay.** It is the *other* lead-scoped endpoint, web still calls it, and it returns the same
+`{ agreements, orderSheets }` shape. That is what preserves the guarantee
+`fetchLeadOutcomeDocumentRows` exists for: a **remotely signed agreement is filed lead-scoped** and the
+calculator-scoped read cannot see it.
+
+⚠️ **Pitchbook / RooflineDeck were never reading an outcome in any meaningful sense** — their
+`fullLeadData` is used only for `salesPhotos` / `notes` / `customerDetails`, all of which live on the
+lead. They now read the lead directly.
+
+⚠️ **`fetchJobBuilderLoggedSections(leadId, calculatorId)` gained a required-in-practice second
+argument** and returns the empty shape without one. Both callers (`JobBuilder`, `useOutcomeLogging`)
+now pass one, **hoisted to a `loggedSectionsCalcId` const** so the `useEffect` dependency list can name
+it — passing `calculators[activeIdx]?._id` inline tripped `react-hooks/exhaustive-deps`.
+
+Verified: `grep` finds **no code reference** to the removed functions (only historical comments);
+tsc 44 (baseline unchanged); eslint across all 16 changed files **112 errors — byte-identical to the
+HEAD baseline**.
+
+⚠️ **Needs device confirmation on the flows that changed shape**, since a calculator-scoped read can
+legitimately return less than the lead-scoped one did: Lead Center auto-open Job Builder, Contract
+Details edit + save, legacy Job Builder autosave / manual save, Deal Center "reset outcome", and the
+Pitch Book / Roofline Deck notes + photos.
+
+#### The lead-scoped outcome mirror no longer re-uploads documents
+
+Follow-up: *"this outcome api is still calling while completing the job, is it has any purpose here?
+because this api was replaced with the new outcome api `…/outcome/{calculatorId}`."* The trace showed
+**27 requests, 308 MB transferred**.
+
+**The endpoint has NOT been replaced.** Web still uses the lead-scoped
+`PUT /lead/v1/{leadId}/outcome` for `updateJobBuilder` (`src/utils/axios.js:231`,
+`jobBuilderUpdate`) and calls it in its own submit path; both variants exist on both clients. So the
+call stays — but **its document attachment is now dropped**, which is where the cost and the duplicate
+both came from.
+
+**Why mobile must diverge from web here.** Web attaches the documents at submit because on web a
+document *exists nowhere else until finalize*. **Mobile files everything eagerly**: a scanned document
+is filed by `handleUploadDocs` the moment it is added (calculator-scoped
+`PUT /outcome/{calcId}` — "that is what creates the LeadOutcomeDocument rows"), and a generated
+agreement is filed by the `/sign` endpoint, which writes its own row. By submit time every document is
+already a LeadOutcomeDocument, so re-sending the bytes only **filed a second row** — the duplicate in
+section (c) above, proven by its 35-second-later timestamp and its empty `name` (which is exactly what
+`buildDocumentPayloads` sends).
+
+So dropping `agreements` / `orderSheets` from `outcomePayload` fixes the duplicate agreement **at its
+source** and removes a multi-MB upload from the submit.
+
+⚠️ **Do NOT remove the CALL itself.** It is the only write that persists the outcome **FIELDS** —
+contract price, down payment, oneLeg, reason, explain, payment methods, `LFCalculator` — to
+LeadOutcome. The eager calculator-scoped PUT sends only
+`{ result, status, selectedCalculatorId, jobBuilder, docs }`. Those fields are what Contract Details
+renders, so removing the call would blank them.
+
+⚠️ **The `/job-builder` POST still carries the documents** (`documentPayloads` at lines ~1156-1157).
+That writes the **JobBuilderDocument** collection — a different collection, which the display path does
+not read — and it is web parity for the submit record. It is **not** the source of the duplicate: the
+duplicate came back from `downloadOutcomeDocuments`, which reads LeadOutcomeDocument. Removing it there
+is a separate question and would need its own evidence.
+
+**Remaining cost.** One multi-MB upload still rides on the `/job-builder` POST, plus
+`buildDocumentPayloads` re-downloading and re-converting each document. **<1 s is not reachable while
+that holds** — the next lever is the native `convertJpegToPdf` (see the upload section below) and,
+if it can be justified, dropping the documents from the POST too.
+
+⚠️ **This is very likely the same defect as "(c) The backend files a SECOND agreement row on submit"
+above.** That duplicate row has `name: ""`, an identical `fileData.size` and identical `base64Data`,
+but a distinct `_id`/`filePath` — and `buildDocumentPayloads` emits exactly
+`{ name: '', file, type }` (`document-payloads.ts:215`). A submit-time re-upload of bytes already
+filed produces precisely that row. So dropping `agreements`/`orderSheets` from the outcome mirror
+would plausibly fix **both** the duplicate agreement and roughly half the submit time — but it must be
+confirmed first that the eager `handleUploadDocs` path files every document type in every flow
+(scanned, generated/signed, edit-mode), because if it does not, `jobBuilderDocuments` comes back empty
+and the agreement disappears from Contract Details. Not changed unilaterally.
+
+### Order-sheet / agreement upload took ~18 s — multi-MB base64 was being CONSOLE-LOGGED
+
+Ticket: *"Sales rep - Order sheet takes like 18 seconds to show it's uploaded… i checked the api
+responses which are taking almost 3 to 4 sec, can you check i think there is something else issue."*
+Correct diagnosis — the network was ~3–4 s of the 18 s. The rest was the JS thread, and most of it was
+**logging**.
+
+A scanned page becomes a base64 PDF (`convertJpegToPdf`) and is PUT as
+`[rootKey][i].file`. For a normal phone photo that string is **~3.4 MB**. Two separate places then
+logged it *in full*:
+
+- **`DynamicJobBuilderScreen.handleUploadDocs`** — `JSON.stringify(docSubmitPayload, null, 2)`,
+  pretty-printed, base64 included. ⚠️ Its two neighbours in the SAME file (`[COMPLETE JOB PAYLOAD]`,
+  `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD]`) already elide the bodies, with the comment *"stringifying
+  multi-MB base64 for a log line is exactly the kind of heap spike that used to crash Submit"* — this
+  one was simply **missed**. Now elided to `<base64 N chars>` the same way (measured: the logged string
+  goes from **3.4 MB to 205 chars**).
+- **`services/api/index.ts` › `logTraffic`** — the dev-only axios interceptors logged `config.data` and
+  `res.data` verbatim, so the same 3.4 MB went to the console a **second** time on the request, and the
+  document-download responses (which carry `base64Data` per row) went again on the way back. New
+  **`sanitizeForLog`** replaces any string over 512 chars with `<string N chars>`, caps arrays at 20 and
+  depth at 6. It only reads `.length`, so the big strings are never copied or scanned.
+
+⚠️ **The cost is `console.log`, not `JSON.stringify`.** Building the 3.4 MB string is ~16 ms on V8;
+what hurts is pushing it to the console — and with **React Native DevTools attached** (as in the
+reporter's screenshots) every logged string is serialised across the **CDP websocket**. That is the
+multi-second, invisible cost. Never log a document payload, a response containing `base64Data`, or any
+request body that can carry a file.
+
+**Still outstanding — `convertJpegToPdf` (`utils/jpeg-to-pdf.ts`) is pure-JS base64 on the JS thread.**
+It `base64.decode`s the whole JPEG into a binary string, concatenates it with the PDF objects, and
+`base64.encode`s the multi-MB result back — via the pure-JS `base-64` package, which loops per
+character. Measured on V8/laptop: **~580 ms for a 2.5 MB JPEG** (decode 385 ms + encode 197 ms); Hermes
+on-device is several times slower, and it **blocks the UI** — `handleScannerSave` only calls
+`setScannerCategory(null)` *after* the upload resolves, so the scan sheet sits frozen throughout.
+
+The fix is to assemble the PDF **natively** with `react-native-blob-util` file appends
+(`writeFile(header,'utf8')` → `appendFile(jpegBase64,'base64')` → `appendFile(footer,'utf8')` →
+`readFile('base64')`), which needs no base64 work in JS at all and has no chunk-alignment concern
+because each append decodes its own chunk to bytes. ⚠️ **Not done yet because it makes the function
+async**, and `document-payloads.ts › storedRowToPayload` is **sync**, plus there are three duplicated
+local copies of `convertJpegToPdf` (`screens/JobBuilder/index.tsx`,
+`widgets/components/job-builder/SummarySection.tsx`,
+`widgets/components/LeadCenter/JobDocsSection.tsx`) — a 4-file change on the legal-document path, which
+should not ride along with a logging fix.
+
+⚠️ Do **not** "fix" this by pre-compressing the scan without asking: these are contract documents and
+image quality is a business decision, not a perf knob.
+
+### `FlashMessage.show()` rendered a TRANSPARENT banner for every non-danger type
+
+Ticket: *"when i click on edit splash message is not visible, looking like it's picking the header
+color"* — the Lead Center "Edit on web" notice (`FlashMessage.show(..., 'info')` for a legacy deal)
+appeared as white text painted straight onto the dark green `MainHeader`, with no banner behind it.
+
+The bug is in the shared wrapper **`src/config/message.ts`**, not at the call site. `show()` built its
+style as:
+
+```ts
+style: { zIndex: 9999, elevation: 9999, backgroundColor: type === 'danger' ? '#D32F2F' : undefined }
+```
+
+`react-native-flash-message` resolves the type colour into its own style array and then applies **our
+`style` last** (`node_modules/react-native-flash-message/src/FlashMessage.js` ~line 224), and RN's
+style flatten lets a **present-but-`undefined`** key win over an earlier value. So for `info` /
+`success` / `warning` the explicit `undefined` **wiped `ColorTheme[type]`** and the banner rendered
+with no background at all. Verified directly: flattening `[{backgroundColor:'#2196F3'}, {…,
+backgroundColor: undefined}]` yields `undefined`; dropping the key yields `#2196F3`.
+
+Fixed by **spreading the key in only when it has a value** —
+`...(type === 'danger' ? { backgroundColor: '#D32F2F' } : null)`.
+
+⚠️ **Never write a conditional style value as `x ? v : undefined` in an object handed to a library that
+merges it last.** The ternary reads as "leave it alone" and does the opposite. Spread the whole key or
+omit it.
+
+This fixed **all three** non-danger `show()` call sites at once — `LeadCenter` (Edit on web),
+`DealDetail` (same notice) and `AppointmentSchedulerModal` ("Amendment requires customer signature") —
+which is why the wrapper was fixed rather than the reported call site. `FlashMessage.success` /
+`warning` / `info` / `error` were never affected: they either don't set the key or set a real value, so
+`FlashMessage.info(...)` was always the working path.
 
 ### Dynamic (portal-authored) Pitch Books
 

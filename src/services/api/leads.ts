@@ -3,6 +3,27 @@ import { AxiosResponse } from 'axios';
 import { ENV } from '../../config/env';
 
 /**
+ * The calculator id an outcome read/write should be scoped to.
+ *
+ * The outcome endpoints are calculator-scoped (`/lead/v1/{leadId}/outcome/{calcId}`)
+ * since the bare lead-scoped variant was deprecated, but a lead exposes its
+ * calculator under several shapes depending on where it was loaded from — the
+ * sales-portal list, an outcome document, or an in-memory result payload. Check
+ * them all, in the order the Lead Center already used.
+ *
+ * Returns `null` when the lead carries no calculator at all; callers must skip the
+ * request in that case rather than falling back to the removed endpoint.
+ */
+export const resolveLeadCalculatorId = (lead: any): string | null =>
+  lead?.selectedCalculatorId ||
+  lead?.calculatorId ||
+  lead?.jobBuilder?.calculatorId ||
+  lead?.outcome?.selectedCalculatorId ||
+  lead?.leadData?.selectedCalculatorId ||
+  lead?.LFCalculator?._id ||
+  null;
+
+/**
  * Lead Management Endpoints
  */
 export const LeadEndpoints = {
@@ -15,7 +36,16 @@ export const LeadEndpoints = {
   rehashLeads: 'rehash/rep/v1/leads',
   work: (leadId: string) => `lead/v1/${leadId}/work`,
   jobBuilder: (leadId: string) => `lead/v1/${leadId}/job-builder`,
-  outcome: (leadId: string) => `lead/v1/${leadId}/outcome`,
+  // ⚠️ REMOVED (2026-08-12): the bare lead-scoped `lead/v1/{leadId}/outcome`.
+  // It is DEPRECATED on the backend — replaced by the calculator-scoped
+  // `outcomeByCalculator` below — and on device it returns **404**, so every call
+  // cost a wasted round trip and returned nothing. Web no longer calls it either
+  // (its submit PUTs to `/outcome/{calculatorId}`).
+  //
+  // Do NOT reintroduce it. If you need a lead's outcome, resolve the calculator id
+  // with `resolveLeadCalculatorId(lead)` and use `outcomeByCalculator`; if you need
+  // the lead's DOCUMENTS, use `downloadOutcomeDocuments` — that one is
+  // lead-scoped and still supported (web uses it).
   outcomeByCalculator: (leadId: string, calculatorId: string) => `lead/v1/${leadId}/outcome/${calculatorId}`,
   appointments: 'appointments',
   calculators: (appointmentId: string) => `appointments/${appointmentId}/lfcalculators`,
@@ -188,10 +218,6 @@ export const LeadService = {
     hasSession()
       ? api.put(LeadEndpoints.work(leadId), { workStartedBy: null })
       : Promise.resolve(),
-  getJobBuilder: (leadId: string): Promise<AxiosResponse<any>> =>
-    api.get(LeadEndpoints.outcome(leadId)),
-  getLeadOutcome: (leadId: string): Promise<AxiosResponse<any>> =>
-    api.get(LeadEndpoints.outcome(leadId)),
   getLeadOutcomeByCalculator: (leadId: string, calculatorId: string): Promise<AxiosResponse<any>> =>
     api.get(LeadEndpoints.outcomeByCalculator(leadId, calculatorId)),
   downloadOutcomeDocuments: (leadId: string): Promise<AxiosResponse<any>> =>
@@ -200,8 +226,6 @@ export const LeadService = {
     api.post(LeadEndpoints.jobBuilder(leadId), payload),
   updateJobBuilder: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.jobBuilder(leadId), payload),
-  updateLeadOutcome: (leadId: string, payload: any): Promise<AxiosResponse<any>> =>
-    api.put(LeadEndpoints.outcome(leadId), payload),
   updateLeadOutcomeByCalculator: (leadId: string, calculatorId: string, payload: any): Promise<AxiosResponse<any>> =>
     api.put(LeadEndpoints.outcomeByCalculator(leadId, calculatorId), payload),
 

@@ -32,7 +32,7 @@ import {
   useUploadImagesMutation,
   useFinalizeConsentUploadMutation,
 } from '../../hooks/useLeadMutation';
-import { LeadService } from '../../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../../services/api/leads';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { getRawPhoneNumber } from '../../utils/phone-util';
 import { parseApiError } from '../../utils/error-util';
@@ -429,8 +429,12 @@ export default function LeadCenterPage() {
     const handleAutoOpen = async () => {
       if (route.params?.openJobBuilder && !isOutcomeLoading) {
         try {
-          const res = await LeadService.getLeadOutcome(lead?._id);
-          const data = res.data?.data || res.data;
+          // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+          const autoOpenCalcId = resolveLeadCalculatorId(lead);
+          const res = autoOpenCalcId
+            ? await LeadService.getLeadOutcomeByCalculator(lead?._id, autoOpenCalcId)
+            : null;
+          const data = res?.data?.data || res?.data;
           let updatedJobState;
           const outcome = data?.outcome || data?.leadData || data;
           if (outcome?.jobBuilder) {
@@ -516,8 +520,12 @@ export default function LeadCenterPage() {
   const handleShowJobBuilder = async () => {
     try {
       setLoading(true);
-      const res = await LeadService.getLeadOutcome(lead?._id);
-      const data = res.data?.data || res.data;
+      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+      const showJbCalcId = resolveLeadCalculatorId(lead);
+      const res = showJbCalcId
+        ? await LeadService.getLeadOutcomeByCalculator(lead?._id, showJbCalcId)
+        : null;
+      const data = res?.data?.data || res?.data;
       let updatedJobState;
       const outcome = data?.outcome || data?.leadData || data;
       if (outcome?.jobBuilder) {

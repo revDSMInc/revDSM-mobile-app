@@ -193,9 +193,15 @@ export async function fetchLeadOutcomeDocumentRows(
 ): Promise<OutcomeDocRows | null> {
   if (!leadId) return null;
   try {
-    const res = await LeadService.getLeadOutcome(leadId);
-    const outcome = unwrapOutcome(res?.data);
-    const docs = outcome?.leadOutcomeDocuments;
+    // ⚠️ Reads `GET lead/v1/{leadId}/outcome/documents/download`, NOT the bare
+    // `…/outcome` this used to call — that route is deprecated and 404s. The download
+    // endpoint is the OTHER lead-scoped one, is still supported (web calls it), and
+    // returns the same `{ agreements, orderSheets }` shape `leadOutcomeDocuments` did,
+    // so the lead-scoped guarantee this function exists for is preserved: a remotely
+    // signed agreement is filed lead-scoped and the calc-scoped read cannot see it.
+    const res = await LeadService.downloadOutcomeDocuments(leadId);
+    const body: any = res?.data;
+    const docs = body?.data ?? body;
     if (!docs) return null;
     return { agreements: docs.agreements || [], orderSheets: docs.orderSheets || [] };
   } catch (e) {

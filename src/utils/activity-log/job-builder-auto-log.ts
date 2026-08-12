@@ -54,8 +54,16 @@ export function normalizeLoggedSections(raw: unknown): Record<string, boolean> {
   return loggedSections;
 }
 
-export async function fetchJobBuilderLoggedSections(leadId: string) {
-  const res = await LeadService.getJobBuilder(leadId);
+/**
+ * ⚠️ `calculatorId` is REQUIRED in practice: the outcome endpoint is
+ * calculator-scoped since the bare lead-scoped route was deprecated. Callers that
+ * cannot resolve one get the empty shape rather than a 404 round trip.
+ */
+export async function fetchJobBuilderLoggedSections(leadId: string, calculatorId?: string | null) {
+  if (!calculatorId) {
+    return { payload: {}, jobBuilder: {}, loggedSections: normalizeLoggedSections(undefined) };
+  }
+  const res = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorId);
   const inner = res?.data?.data || res?.data || res || {};
   const jobBuilder = inner?.jobBuilder || inner?.jobState || inner;
   return {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { logEvent } from '../services/api/LoggerService';
 import { getAutoFieldEntriesForSection } from '../utils/activity-log/auto-fields';
 import { getPaymentPlanLabel } from '../utils/activity-log/rollout-log-meta';
+import { resolveLeadCalculatorId } from '../services/api/leads';
 import {
   fetchJobBuilderLoggedSections,
   markAutoFieldsLogged,
@@ -67,13 +68,17 @@ export function useOutcomeLogging(opts: {
     };
   }, [outcomeForm, outcomeStatus, calculators, activeIdx, lead]);
 
+  // Hoisted so the effect's dependency list can name it (the outcome endpoint is
+  // calculator-scoped, so the id is part of what the read depends on).
+  const loggedSectionsCalcId = calculators[activeIdx]?._id || resolveLeadCalculatorId(lead);
+
   useEffect(() => {
     if (disabled) return;
     if (!visible || !leadId) {
       setSectionsReady(false);
       return;
     }
-    fetchJobBuilderLoggedSections(leadId)
+    fetchJobBuilderLoggedSections(leadId, loggedSectionsCalcId)
       .then(({ jobBuilder, loggedSections }) => {
         jobBuilderRef.current = jobBuilder;
         loggedSectionsRef.current = loggedSections;
@@ -85,7 +90,7 @@ export function useOutcomeLogging(opts: {
       .catch(() => {
         setSectionsReady(true);
       });
-  }, [visible, leadId, disabled]);
+  }, [visible, leadId, disabled, loggedSectionsCalcId]);
 
   useEffect(() => {
     if (disabled) return;

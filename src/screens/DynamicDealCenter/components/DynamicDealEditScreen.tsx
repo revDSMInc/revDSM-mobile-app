@@ -161,10 +161,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     queryKey: ['dealEditOutcome', leadId, editCalculatorId],
     queryFn: async () => {
       try {
+        // No lead-scoped fallback: that route is deprecated and 404s, so a deal
+        // with no calculator id simply has no saved outcome to read.
         const res = editCalculatorId
           ? await LeadService.getLeadOutcomeByCalculator(leadId!, editCalculatorId)
-          : await LeadService.getJobBuilder(leadId!);
-        const body = res.data;
+          : null;
+        const body = res?.data;
         return body?.data?.outcome ?? body?.outcome ?? body?.data ?? body ?? null;
       } catch {
         return null;

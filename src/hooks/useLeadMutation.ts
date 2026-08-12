@@ -22,20 +22,8 @@ export const useCreateLeadMutation = () => {
   });
 };
 
-export const useUpdateLeadOutcomeMutation = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ leadId, data }: { leadId: string; data: any }) => {
-      const res = await LeadService.updateLeadOutcome(leadId, data);
-      return res.data;
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['leads'] });
-      queryClient.invalidateQueries({ queryKey: ['lead-outcome', variables.leadId] });
-    },
-  });
-};
+// `useUpdateLeadOutcomeMutation` was REMOVED (2026-08-12): it wrapped the deprecated
+// lead-scoped `PUT lead/v1/{leadId}/outcome` and had no call sites anywhere in the app.
 
 export const useSubmitJobBuilderMutation = () => {
   const queryClient = useQueryClient();

@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
-import { LeadService } from '../../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../../services/api/leads';
 import JobService from '../../services/api/JobService';
 import { ModalContainer } from '../../widgets/components/LeadCenter/SharedElements';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -439,7 +439,10 @@ export default function LFCalculator({ route }: any) {
     try {
       setLoading(true);
       if (!currentLead?._id) return;
-      const res = await LeadService.getLeadOutcome(currentLead._id);
+      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+      const calcId = resolveLeadCalculatorId(currentLead);
+      if (!calcId) return;
+      const res = await LeadService.getLeadOutcomeByCalculator(currentLead._id, calcId);
       const data = res.data?.data || res.data;
       if (data) {
         const outcome = data.outcome || data.leadData || data;

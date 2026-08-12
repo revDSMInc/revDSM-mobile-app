@@ -273,15 +273,18 @@ export default function JobBuilderScreen() {
   );
 
   // Hydrate autoFieldsLogged from backend (web parity)
+  // Hoisted so the dependency list can name it (the outcome endpoint is
+  // calculator-scoped, so the id is part of what this read depends on).
+  const loggedSectionsCalcId = calculatorData?._id;
   useEffect(() => {
-    if (!leadId) return;
-    fetchJobBuilderLoggedSections(leadId)
+    if (!leadId || !loggedSectionsCalcId) return;
+    fetchJobBuilderLoggedSections(leadId, loggedSectionsCalcId)
       .then(({ jobBuilder, loggedSections }) => {
         jobBuilderRecordRef.current = jobBuilder;
         autoFieldsLoggedRef.current = { ...autoFieldsLoggedRef.current, ...loggedSections };
       })
       .catch((err) => console.warn('[JobBuilder] Failed to fetch autoFieldsLogged:', err));
-  }, [leadId]);
+  }, [leadId, loggedSectionsCalcId]);
 
   // 1. Mount event logging (job_builder_opened)
   useEffect(() => {
@@ -826,7 +829,10 @@ export default function JobBuilderScreen() {
           selectedAppointmentId: calculatorData?.appointmentId || leadId,
           appointmentId: calculatorData?.appointmentId || leadId,
         };
-        await LeadService.updateLeadOutcome(leadId, payload);
+        // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
+        if (calculatorData?._id) {
+          await LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, payload);
+        }
       } catch (error) {
         console.warn('[JobBuilder] Auto-save failed:', error);
       } finally {
@@ -883,7 +889,10 @@ export default function JobBuilderScreen() {
         appointmentId: calculatorData?.appointmentId || leadId,
       };
 
-      await LeadService.updateLeadOutcome(leadId, payload);
+      // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
+      if (calculatorData?._id) {
+        await LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, payload);
+      }
 
       // Clear local new files after successful manual force save
       setJobState((prev: any) => {
@@ -1478,9 +1487,12 @@ export default function JobBuilderScreen() {
         };
 
         // Fire-and-forget draft save — don't await, don't block navigation
-        LeadService.updateLeadOutcome(leadId, draftPayload).catch((e) =>
-          console.warn('[JobBuilder] Draft save failed silently:', e)
-        );
+        // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
+        if (calculatorData?._id) {
+          LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, draftPayload).catch((e) =>
+            console.warn('[JobBuilder] Draft save failed silently:', e)
+          );
+        }
       }
     } catch (_) { /* silent */ }
   }, [leadId, calculatorData, jobState, outcomeForm, user]);

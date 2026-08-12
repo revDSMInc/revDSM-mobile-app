@@ -12,7 +12,12 @@ import { resolveFieldTierPrice, applyFeesToTier, type PricingConfig } from './pr
 // (mirrors web's `MYDEALFLOW_DEBUG`; logs schemaPrev/schemaNext/delta + changed qty).
 // ⚠️ TEMPORARILY ON to diagnose "price doesn't change when the build changes".
 // Set back to `false` before release — it logs on every keystroke in the wizard.
-const DEAL_PRICING_DEBUG = true;
+// ⚠️ Keep FALSE in anything that ships. When true, every recompute on the Job Price
+// step runs `schemaRetailBreakdown` + `describeBridge` (which rebuilds the calculator
+// details twice and walks every allocation) and emits two `console.warn`s carrying
+// large JSON — on every keystroke. Flip to `true` only while diagnosing a pricing
+// bridge issue; `describeBridge().summary` is the line to read (lead with `allocMoved`).
+const DEAL_PRICING_DEBUG = false;
 
 export interface Tiers {
   cost: number;
@@ -25,6 +30,8 @@ export interface EditedTiersResult {
   next: Tiers;
   delta: Tiers;
   changed: boolean;
+  /** Diagnostic line for the on-screen strip. Only set while `DEAL_PRICING_DEBUG`. */
+  debug?: string;
 }
 
 interface TierOpts {
@@ -172,13 +179,31 @@ function describeBridge(
   const keyMap = buildFieldCalcKeyMap(config);
   const keyMapHits = Object.keys(keyMap).filter((qid) => flatNext[qid] !== undefined);
   const allocNext = buildAllocationQtyMap(editedJobState, config, dealCenterData);
+  const allocPrev = buildAllocationQtyMap(originalJobState, config, dealCenterData);
   const fieldOptions = extractDealCenterFieldOptions(schemas);
   const prev = buildCalculatorDetails(dealCenterData, originalJobState, config, fieldOptions);
   const next = buildCalculatorDetails(dealCenterData, editedJobState, config, fieldOptions);
+  // ⚠️ NUMERIC keys only. This filter was `Number(next[k]) !== Number(prev[k])`,
+  // which counts every TEXT field as changed — `Number('Micro Mesh')` and
+  // `Number('Versa')` are both NaN and `NaN !== NaN` is true. That inflated the
+  // reported diff (25 on a build where no quantity had moved at all) and made a
+  // correctly-unchanged price look like a broken bridge.
+  const isNumericValue = (v: any) =>
+    v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
   const overlayDiff = Object.keys(next)
-    .filter((k) => Number(next[k] ?? 0) !== Number(prev[k] ?? 0))
+    .filter((k) => {
+      if (!isNumericValue(next[k]) && !isNumericValue(prev[k])) return false;
+      return Number(next[k] ?? 0) !== Number(prev[k] ?? 0);
+    })
     .slice(0, 25)
     .map((k) => ({ key: k, from: prev[k] ?? null, to: next[k] ?? null }));
+  // THE decisive signal for "why didn't the price move": which allocation totals
+  // actually differ between the original and the edited build. If this is empty,
+  // the rep changed nothing the config maps to a priced quantity — which is a
+  // CONFIG fact, not a broken bridge.
+  const allocMoved = Object.keys({ ...allocPrev, ...allocNext })
+    .filter((ref) => Number(allocNext[ref] ?? 0) !== Number(allocPrev[ref] ?? 0))
+    .map((ref) => ({ ref, from: allocPrev[ref] ?? 0, to: allocNext[ref] ?? 0 }));
   // Every quantity key the SCHEMA can actually price, so an overlay key that is not
   // in this set is a ref the schema will silently ignore.
   const schemaKeys = new Set<string>();
@@ -235,6 +260,8 @@ function describeBridge(
     })
   );
 
+  const priceable = overlayDiff.filter((d) => schemaKeys.has(d.key)).map((d) => d.key);
+
   return {
     flatPrev: Object.keys(flatPrev).length,
     flatNext: Object.keys(flatNext).length,
@@ -243,10 +270,24 @@ function describeBridge(
     allocRefs: Object.keys(allocNext).length,
     allocSample: Object.entries(allocNext).slice(0, 10),
     allocDetail,
+    allocMoved,
     schemaKeyCount: schemaKeys.size,
     overlayDiff,
-    overlayDiffPriceable: overlayDiff.filter((d) => schemaKeys.has(d.key)).map((d) => d.key),
+    overlayDiffPriceable: priceable,
     flatNextSample: Object.entries(flatNext).slice(0, 12),
+    /**
+     * One line for the on-screen strip. `allocMoved` is the one to read: empty
+     * means no allocation total changed, so there is nothing for the schema to
+     * re-price and an unchanged tier is CORRECT.
+     */
+    summary:
+      `schemas=${(schemas || []).length} schemaKeys=${schemaKeys.size} ` +
+      `alloc=${Object.keys(allocNext).length} allocMoved=${allocMoved.length} ` +
+      `numDiff=${overlayDiff.length} priceable=${priceable.length}` +
+      (allocMoved.length
+        ? `\nMOVED ${allocMoved.slice(0, 4).map((m) => `${m.ref}:${m.from}→${m.to}`).join(' ')}`
+        : '\nMOVED none — no allocation total changed') +
+      (priceable.length ? `\nPRICEABLE ${priceable.slice(0, 4).join(' ')}` : ''),
   };
 }
 
@@ -711,6 +752,7 @@ export function computeEditedTiers({
       par: schemaNext.par - schemaPrev.par,
       retail: schemaNext.retail - schemaPrev.retail,
     };
+    let debugLine: string | undefined;
     if (DEAL_PRICING_DEBUG) {
       // Per-field retail breakdown of the PREVIOUS build — the biggest contributors
       // to schemaPrev.retail. A garbage tier (e.g. $268k on a $500 job) shows up here
@@ -725,16 +767,21 @@ export function computeEditedTiers({
       //   keyMapHits 0          → config field ids don't line up with the state's
       //                           section-qualified keys (scope drift)
       //   allocRefs 0           → no allocation mapped a quantity to a calculator ref
-      //   overlayDiff []        → prev and next produced identical calculator keys
-      //   overlayDiff non-empty → the keys moved but the schema prices none of them
-      //                           (the refs aren't schema field ids/names)
+      //   allocMoved []         → the build changed nothing that maps to a priced
+      //                           quantity. NOT a bridge failure — read the config
+      //                           before touching code (see the LeafFilter note in
+      //                           CLAUDE.md: only grid column sums move that tab).
+      //   priceable 0 w/ moves  → refs moved but aren't schema field ids/names
+      const bridge = describeBridge(dealCenterData, originalJobState, editedJobState, config, schemas);
+      debugLine = bridge.summary;
       // eslint-disable-next-line no-console
-      console.warn('[dealEditPricing:bridge]', JSON.stringify(describeBridge(dealCenterData, originalJobState, editedJobState, config, schemas)));
+      console.warn('[dealEditPricing:bridge]', JSON.stringify(bridge));
     }
     // Real stored totals win; otherwise the schema-priced ORIGINAL build (which
     // carries COST/PAR/RETAIL), and only then the bare contract-price fallback.
     const previous = withContractFallback(storedHasValue ? rawStored : schemaPrev);
     return {
+      debug: debugLine,
       previous,
       next: {
         cost: clamp(previous.cost + delta.cost),
