@@ -32,6 +32,40 @@ const axiosInstance: AxiosInstance = axios.create({
  * dev-only interceptors print what was actually sent (and what came back) to the
  * Console tab instead, which is the only place the body is visible.
  */
+/** Strings longer than this are logged as `<string N chars>` instead of in full. */
+const LOG_MAX_STRING = 512;
+const LOG_MAX_ARRAY = 20;
+const LOG_MAX_DEPTH = 6;
+
+/**
+ * Replace long strings with a size marker before logging.
+ *
+ * ⚠️ PERFORMANCE, not tidiness. Document uploads carry a multi-MB base64 PDF in
+ * the request body, and the document-download responses carry `base64Data` per
+ * row. Logging those in full costs three multi-MB operations on the JS thread —
+ * serialize, allocate, and (with React Native DevTools attached) push the whole
+ * string across the CDP websocket — which added SECONDS to every order-sheet /
+ * agreement upload. Only `.length` is read here, so the big strings are never
+ * copied or scanned.
+ */
+const sanitizeForLog = (value: any, depth = 0): any => {
+  if (typeof value === 'string') {
+    return value.length > LOG_MAX_STRING ? `<string ${value.length} chars>` : value;
+  }
+  if (!value || typeof value !== 'object' || depth >= LOG_MAX_DEPTH) return value;
+  if (Array.isArray(value)) {
+    const head = value.slice(0, LOG_MAX_ARRAY).map((v) => sanitizeForLog(v, depth + 1));
+    return value.length > LOG_MAX_ARRAY
+      ? [...head, `…+${value.length - LOG_MAX_ARRAY} more`]
+      : head;
+  }
+  const out: Record<string, any> = {};
+  Object.keys(value).forEach((k) => {
+    out[k] = sanitizeForLog(value[k], depth + 1);
+  });
+  return out;
+};
+
 const logTraffic = (label: string, url?: string, body?: any) => {
   if (!__DEV__) return;
   let printable = body;
@@ -40,10 +74,10 @@ const logTraffic = (label: string, url?: string, body?: any) => {
     try {
       printable = JSON.parse(body);
     } catch {
-      // leave the raw string
+      // leave the raw string — sanitized below like any other value
     }
   }
-  console.log(`[API] ${label} ${url ?? ''}`, printable);
+  console.log(`[API] ${label} ${url ?? ''}`, sanitizeForLog(printable));
 };
 
 // Request Interceptor: Attach Auth Token

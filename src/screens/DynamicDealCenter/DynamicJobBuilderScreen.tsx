@@ -1295,11 +1295,27 @@ function DynamicJobBuilderInner({
           },
           [rootKey]: payloads,
         };
-        // Full document-submit payload (PUT /lead/v1/{leadId}/outcome/{calcId}). Includes the
-        // base64 PDF under [rootKey][i].file, so this log line is large.
+        // Document-submit payload (PUT /lead/v1/{leadId}/outcome/{calcId}).
+        //
+        // ⚠️ The base64 PDF bodies are ELIDED, exactly as the Complete-Job and
+        // outcome-mirror logs below already do. This one was missed, and it was the
+        // single largest cost in an order-sheet upload: pretty-printing a multi-MB
+        // base64 string and pushing it to the console took SECONDS on the JS thread
+        // (far worse with DevTools attached, where the whole string crosses the CDP
+        // bridge). Never stringify a document payload in full.
         console.log(
           `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome/${calcId}\n` +
-            JSON.stringify(docSubmitPayload, null, 2)
+            JSON.stringify(
+              {
+                ...docSubmitPayload,
+                [rootKey]: payloads.map((d: any) => ({
+                  ...d,
+                  file: `<base64 ${d.file?.length ?? 0} chars>`,
+                })),
+              },
+              null,
+              2
+            )
         );
         await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, docSubmitPayload);
 
