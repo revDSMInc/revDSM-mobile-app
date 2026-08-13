@@ -1005,14 +1005,19 @@ function DynamicJobBuilderInner({
           : null;
         const uid = authUser?._id || authUser?.id;
         if (uid && leadId && selectedCalc) {
-          await logRolloutAndDropSummary({
+          // ⚠️ NOT awaited — exact web parity. Web fires this without `await`
+          // (TabbedCalculator.js:1103) and mobile used to block the ENTIRE submit on
+          // it, as the very first step: a full activity-log round trip before the job
+          // was even sent. Nothing reads the summary synchronously, so awaiting it
+          // only added latency to "Complete Job".
+          logRolloutAndDropSummary({
             userId: uid,
             leadId,
             allCalculators: [selectedCalc],
             selectedCalculator: selectedCalc,
             leadData: rdForSummary,
             isLowesLead: Boolean((initialConfig as any)?.lowesLead) || Boolean(rdForSummary?.isLowesLead),
-          });
+          }).catch((e) => console.warn('[DynamicJobBuilder] rollout summary log failed:', e));
         }
       } catch (e) {
         console.warn('[DynamicJobBuilder] rollout summary log failed:', e);
@@ -1179,45 +1184,55 @@ function DynamicJobBuilderInner({
       // the outcome fields (oneLeg, result, reason, explain, contract price, etc.)
       // and uploaded documents are only in the JobBuilderDocument collection and
       // invisible to the LeadOutcome-based views.
-      if (leadId) {
+      // The outcome endpoint is calculator-scoped, so without an id there is nothing
+      // to write to — skip rather than falling back to the removed lead-scoped route.
+      const outcomeCalcId = calcId || rd.calculatorId || null;
+      if (leadId && outcomeCalcId) {
         try {
           const outcomePayload: Record<string, any> = {
             ...rdWithoutDpm,
             paymentMethod: rd.downPaymentMethod,
             result,
             status: result,
-            selectedCalculatorId: calcId || rd.calculatorId || null,
+            selectedCalculatorId: outcomeCalcId,
             selectedAppointmentId: rd.selectedAppointmentId || leadId,
             jobBuilder: jobBuilderWrapper,
             ...(validLFCalculator && { LFCalculator: validLFCalculator }),
-            // Web parity (TabbedCalculator.js L1073-1074): attach the base64
-            // agreements / order sheets to the LEAD-scoped outcome. THIS is the write
-            // that upserts the LeadOutcomeDocument rows the backend projects into the
-            // sales-portal lead's `jobBuilderDocuments` — the source ContractDetails
-            // renders. The `/job-builder` POST above only writes the (display-invisible)
-            // JobBuilderDocument collection. Without this, jobBuilderDocuments comes
-            // back EMPTY and the agreement never appears in Contract Details. The
-            // backend upserts by file, so re-sending the already-signed agreement does
-            // not duplicate on the current backend.
-            ...(documentPayloads.agreements.length > 0 && { agreements: documentPayloads.agreements }),
-            ...(documentPayloads.orderSheets.length > 0 && { orderSheets: documentPayloads.orderSheets }),
+            // ⚠️ The base64 agreements / order sheets are DELIBERATELY NOT ATTACHED here.
+            // This is a considered divergence from web (TabbedCalculator.js L1073-1074),
+            // because MOBILE FILES ITS DOCUMENTS EAGERLY and web does not:
+            //
+            //   • a scanned doc is filed the moment it is added, by `handleUploadDocs`
+            //     (PUT /lead/v1/{id}/outcome/{calcId}) — "that is what creates the
+            //     LeadOutcomeDocument rows";
+            //   • a generated agreement is filed by the /sign endpoint, which writes its
+            //     OWN LeadOutcomeDocument.
+            //
+            // So by submit time every document is ALREADY a LeadOutcomeDocument row, and
+            // re-sending the bytes here did not "upsert by file" as the old comment
+            // claimed — it filed a SECOND row. That is the duplicate agreement reported
+            // earlier: same `fileData.size` and same `base64Data`, distinct `_id` and
+            // `filePath`, and an EMPTY `name` — because `buildDocumentPayloads` sends
+            // `name: ''`. The two rows in that trace are 35 s apart
+            // (…851569 at sign time, …886943 at submit), which is this write.
+            //
+            // Dropping them fixes the duplicate at its source and removes a multi-MB
+            // upload from "Complete Job" (the reporter's trace: 27 requests, 308 MB).
+            //
+            // ⚠️ Do NOT remove the CALL itself. It is the only write that persists the
+            // outcome FIELDS — contract price, down payment, oneLeg, reason, explain,
+            // payment methods, LFCalculator — to LeadOutcome; the eager calculator-scoped
+            // PUT sends only { result, status, selectedCalculatorId, jobBuilder, docs }.
+            // Those fields are what Contract Details renders.
           };
-          // Elide the multi-MB base64 bodies from the log (heap + readability).
+          // Fields only now — no document bodies to elide (see above).
           console.log(
             `[COMPLETE JOB — OUTCOME MIRROR PAYLOAD] PUT /lead/v1/${leadId}/outcome\n` +
-              JSON.stringify(
-                {
-                  ...outcomePayload,
-                  agreements: (outcomePayload.agreements || []).map((d: any) => ({ ...d, file: `<base64 ${d.file?.length ?? 0} chars>` })),
-                  orderSheets: (outcomePayload.orderSheets || []).map((d: any) => ({ ...d, file: `<base64 ${d.file?.length ?? 0} chars>` })),
-                },
-                null,
-                2
-              )
+              JSON.stringify(outcomePayload, null, 2)
           );
-          // LEAD-scoped PUT /lead/v1/{leadId}/outcome (web `updateJobBuilder`) — NOT the
-          // calculator-scoped variant, which does not feed the jobBuilderDocuments projection.
-          await LeadService.updateLeadOutcome(leadId, outcomePayload);
+          // Calculator-scoped PUT /lead/v1/{leadId}/outcome/{calcId}. The bare
+          // lead-scoped variant this used to call is DEPRECATED and 404s on device.
+          await LeadService.updateLeadOutcomeByCalculator(leadId, outcomeCalcId, outcomePayload);
         } catch (e) {
           console.warn('[DynamicJobBuilder] outcome mirror save failed:', e);
         }
@@ -1231,16 +1246,18 @@ function DynamicJobBuilderInner({
       // completed, so the PORTAL timeline kept showing the lead result "in progress".
       // Flip both (plus salesProcess) here so the portal renders the milestone as
       // Complete — the same statuses the mobile regular flow writes (useDealOutcome.ts).
+      //
+      // ⚠️ NOT awaited. These are PORTAL milestone flags — nothing the rep is about to
+      // see reads them, and this was the last blocking round trip before navigation,
+      // so awaiting it delayed "Complete Job" for no user-visible benefit. Web makes
+      // no equivalent call here at all. The request is not cancelled by navigating:
+      // nothing aborts it and the JS context outlives this screen.
       if (leadId) {
-        try {
-          await LeadService.updateLeadTimelineProgress(leadId, {
-            salesProcess: 'completed',
-            leadResulted: 'completed',
-            jobBuild: 'complete',
-          });
-        } catch (e) {
-          console.warn('[DynamicJobBuilder] timeline progress complete failed:', e);
-        }
+        LeadService.updateLeadTimelineProgress(leadId, {
+          salesProcess: 'completed',
+          leadResulted: 'completed',
+          jobBuild: 'complete',
+        }).catch((e) => console.warn('[DynamicJobBuilder] timeline progress complete failed:', e));
       }
 
       if (onJobComplete) {
@@ -1295,11 +1312,27 @@ function DynamicJobBuilderInner({
           },
           [rootKey]: payloads,
         };
-        // Full document-submit payload (PUT /lead/v1/{leadId}/outcome/{calcId}). Includes the
-        // base64 PDF under [rootKey][i].file, so this log line is large.
+        // Document-submit payload (PUT /lead/v1/{leadId}/outcome/{calcId}).
+        //
+        // ⚠️ The base64 PDF bodies are ELIDED, exactly as the Complete-Job and
+        // outcome-mirror logs below already do. This one was missed, and it was the
+        // single largest cost in an order-sheet upload: pretty-printing a multi-MB
+        // base64 string and pushing it to the console took SECONDS on the JS thread
+        // (far worse with DevTools attached, where the whole string crosses the CDP
+        // bridge). Never stringify a document payload in full.
         console.log(
           `[DOC SUBMIT PAYLOAD] ${cat} → PUT /lead/v1/${leadId}/outcome/${calcId}\n` +
-            JSON.stringify(docSubmitPayload, null, 2)
+            JSON.stringify(
+              {
+                ...docSubmitPayload,
+                [rootKey]: payloads.map((d: any) => ({
+                  ...d,
+                  file: `<base64 ${d.file?.length ?? 0} chars>`,
+                })),
+              },
+              null,
+              2
+            )
         );
         await LeadService.updateLeadOutcomeByCalculator(leadId, calcId, docSubmitPayload);
 

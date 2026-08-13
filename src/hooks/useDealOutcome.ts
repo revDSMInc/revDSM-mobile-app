@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Alert } from 'react-native';
-import { LeadService } from '../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../services/api/leads';
 import { getDefaultPaymentMethod } from '../utils/calculator/lowes-payment-util';
 import { useAuth } from './useAuth';
 
@@ -41,7 +41,10 @@ export const useDealOutcome = (
     if (!activeLeadId) return;
     try {
       setLoading(true);
-      const res = await LeadService.getLeadOutcome(activeLeadId);
+      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+      const calcId = activeCalculator?._id || resolveLeadCalculatorId(lead);
+      if (!calcId) return;
+      const res = await LeadService.getLeadOutcomeByCalculator(activeLeadId, calcId);
       const data = res.data?.data || res.data;
       if (data) {
         const outcome = data.outcome || data.leadData || data;
@@ -224,7 +227,11 @@ export const useDealOutcome = (
       }
 
       // Update Lead Outcome (status + LFCalculator only — existing jobBuilder preserved on server)
-      await LeadService.updateLeadOutcome(leadId, payload);
+      // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
+      const outcomeCalcId = activeCalculator?._id || resolveLeadCalculatorId(lead);
+      if (outcomeCalcId) {
+        await LeadService.updateLeadOutcomeByCalculator(leadId, outcomeCalcId, payload);
+      }
 
       // Update Timeline
       await LeadService.updateLeadTimelineProgress(leadId, {

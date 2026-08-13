@@ -17,7 +17,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { paymentPlans } from '../../../utils/calculator/payment-plans';
 import { AppointmentSchedulerModal } from '../../modals/job-builder/AppointmentSchedulerModal';
 import { demoReasons } from '../../components/dealcenter/ResultViews';
-import { LeadService } from '../../../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
 import { ContractAmendmentModal, AmendmentChange } from './ContractAmendmentModal';
 import JobService from '../../../services/api/JobService';
 import { parseSafeISO } from '../../../utils/date-util';
@@ -488,7 +488,11 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       let existingJobState: any = {};
       let existingLeadData: any = {};
       try {
-        const current = await LeadService.getJobBuilder(leadId);
+        // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+        const ecdCalcId = resolveLeadCalculatorId(lead);
+        const current = ecdCalcId
+          ? await LeadService.getLeadOutcomeByCalculator(leadId, ecdCalcId)
+          : null;
         const inner = current?.data?.data || current?.data || current || {};
         existingJobState = inner?.jobBuilder || inner?.jobState || {};
         existingLeadData = inner?.leadData || {};
@@ -656,7 +660,11 @@ export const EditContractDetailsModal: React.FC<EditContractDetailsModalProps> =
       let existingJobState: any = {};
       let existingLeadData: any = {};
       try {
-        const current = await LeadService.getJobBuilder(leadId);
+        // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+        const ecdCalcId = resolveLeadCalculatorId(lead);
+        const current = ecdCalcId
+          ? await LeadService.getLeadOutcomeByCalculator(leadId, ecdCalcId)
+          : null;
         const inner = current?.data?.data || current?.data || current || {};
         existingJobState = inner?.jobBuilder || inner?.jobState || {};
         existingLeadData = inner?.leadData || {};

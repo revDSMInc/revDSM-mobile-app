@@ -23,7 +23,7 @@ import { ResultLeadModal } from '../../modals/lead-center/ResultLeadModal';
 import { CustomCameraModal } from '../../modals/CustomCameraModal';
 import { IMAGE_CATEGORIES } from '../../../constants/lead-center';
 import Geolocation from 'react-native-geolocation-service';
-import { LeadService } from '../../../services/api/leads';
+import { LeadService, resolveLeadCalculatorId } from '../../../services/api/leads';
 import { useNavigation } from '@react-navigation/native';
 import { EditContractDetailsModal } from '../../modals/lead-center/EditContractDetailsModal';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -525,7 +525,13 @@ export const JobDocsSection = ({
 
   const handleUpdateContract = async (updatedOutcome: any) => {
     try {
-      await LeadService.updateLeadOutcome(lead._id, updatedOutcome);
+      // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
+      const calcId = resolveLeadCalculatorId(lead);
+      if (!calcId) {
+        console.warn('[JobDocsSection] no calculator on the lead — contract update skipped');
+        return;
+      }
+      await LeadService.updateLeadOutcomeByCalculator(lead._id, calcId, updatedOutcome);
       await refetch();
     } catch (e) {
       console.error('Update contract details failed', e);
@@ -1302,11 +1308,15 @@ export const JobDocsSection = ({
       // generated agreement is filed ONLY as a LeadOutcomeDocument, and for that flow
       // the backend returns `jobBuilderDocuments` empty, so without this the agreement
       // would not appear anywhere.
+      // ⚠️ The lead-scoped `getLeadOutcome` arm of this fallback is GONE — that route is
+      // deprecated and 404s, so it contributed nothing but a wasted request. The
+      // calculator-scoped read remains, and `downloadOutcomeDocuments` covers the
+      // lead-scoped case (a remotely signed agreement) that the calc read cannot see.
       if (leadId && mergedAllDocs.length === 0) {
         try {
-          const calcId = lead?.selectedCalculatorId;
-          const [leadRes, calcRes] = await Promise.all([
-            LeadService.getLeadOutcome(leadId).catch(() => null),
+          const calcId = resolveLeadCalculatorId(lead);
+          const [dlRes, calcRes] = await Promise.all([
+            LeadService.downloadOutcomeDocuments(leadId).catch(() => null),
             calcId
               ? LeadService.getLeadOutcomeByCalculator(leadId, calcId).catch(() => null)
               : Promise.resolve(null),
@@ -1314,9 +1324,9 @@ export const JobDocsSection = ({
           const docsFrom = (res: any) => {
             const body: any = res?.data;
             const outcome = body?.data?.outcome ?? body?.outcome ?? body?.data ?? body;
-            return flatten(outcome?.leadOutcomeDocuments);
+            return flatten(outcome?.leadOutcomeDocuments ?? outcome);
           };
-          mergedAllDocs = dedupeDocs([...docsFrom(leadRes), ...docsFrom(calcRes)]);
+          mergedAllDocs = dedupeDocs([...docsFrom(dlRes), ...docsFrom(calcRes)]);
         } catch (e) {
           console.warn('[JobDocsSection] outcome document fallback failed', e);
         }

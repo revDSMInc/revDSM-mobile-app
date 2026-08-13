@@ -291,9 +291,12 @@ export default function PitchbookScreen() {
     const lid = lead?._id || lead?.id;
     if (!lid) return;
     try {
-      const response = await LeadService.getLeadOutcome(lid);
-      const data = response.data?.data || response.data;
-      setFullLeadData(data);
+      // Reads the LEAD, not an outcome: `fullLeadData` is only used for
+      // salesPhotos / notes / customerDetails, all of which live on the lead.
+      // The bare lead-scoped outcome route this used to call is deprecated.
+      const response = await LeadService.getSalesDealById(lid);
+      const body = response.data;
+      setFullLeadData(body?.data?.lead || body?.data || body?.lead || body);
     } catch (error) { }
   };
 

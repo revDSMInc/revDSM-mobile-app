@@ -128,7 +128,9 @@ export const SummarySection = ({
   const fetchOutcome = async () => {
     if (!leadId) return;
     try {
-      const response = await LeadService.getLeadOutcome(leadId);
+      // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
+      if (!calculatorData?._id) return;
+      const response = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorData._id);
       const data = response.data?.data || response.data;
       setOutcomeData(data);
     } catch (error) {
@@ -1892,7 +1894,10 @@ export const SummarySection = ({
               appointmentId: calculatorData?.appointmentId || leadId,
             };
 
-            await LeadService.updateLeadOutcome(leadId, outcomePayload);
+            // Calculator-scoped write — the bare lead-scoped outcome route is deprecated.
+            if (calculatorData?._id) {
+              await LeadService.updateLeadOutcomeByCalculator(leadId, calculatorData._id, outcomePayload);
+            }
             await fetchOutcome();
             onUpdate?.('', stateField, []);
             setScannerOpen(false);

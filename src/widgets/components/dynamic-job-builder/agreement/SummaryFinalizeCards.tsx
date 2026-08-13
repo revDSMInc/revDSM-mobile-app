@@ -518,7 +518,8 @@ export function SummaryFinalizeCards({
   // empty local reference). Instead we READ the stored agreement from the outcome and
   // commit it like any server-filed document.
   //
-  // The read MUST be LEAD-scoped (`fetchLeadOutcomeDocumentRows` → `getLeadOutcome`):
+  // The read MUST be LEAD-scoped (`fetchLeadOutcomeDocumentRows`, which now reads
+  // `…/outcome/documents/download` — the bare `…/outcome` route it used is deprecated):
   // agreements live on `leadOutcomeDocuments`, which the calculator-scoped outcome
   // (`onRefreshDocs`) does not echo. Routing the resolved server rows through
   // `commitUploaded` mirrors the in-person adopt path exactly — it writes BOTH the
