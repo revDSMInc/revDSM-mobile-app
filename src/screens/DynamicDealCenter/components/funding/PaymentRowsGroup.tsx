@@ -44,6 +44,13 @@ interface Props {
   onChangeMethod: (id: string, key: string) => void;
   onRemove: (id: string) => void;
   onAdd: () => void;
+  /**
+   * Rendered inside the group, below Add — the Upfront group puts its
+   * `CoverageBar` and its "no balance to finance" note here. A slot rather than
+   * two more props, so a caller can put anything under its own rows without this
+   * component learning what upfront means.
+   */
+  footer?: React.ReactNode;
 }
 
 function StatusPill({ decision }: { decision: 'full' | 'short' | 'declined' }) {
@@ -71,6 +78,7 @@ export function PaymentRowsGroup({
   onChangeMethod,
   onRemove,
   onAdd,
+  footer,
 }: Props) {
   const [openRowId, setOpenRowId] = useState<string | null>(null);
 
@@ -227,6 +235,8 @@ export function PaymentRowsGroup({
         </View>
         <Text style={{ fontSize: 14.5, fontWeight: '700', color: canAdd ? FUND.LAV_TEXT : FUND.MUTED }}>Add payment method</Text>
       </TouchableOpacity>
+
+      {footer}
     </View>
   );
 }

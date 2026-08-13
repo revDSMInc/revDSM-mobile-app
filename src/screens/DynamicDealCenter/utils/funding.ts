@@ -49,13 +49,45 @@ export const MULTI_METHOD_ENABLED = false;
 /** What the mock provider's "Approve partial" grants: 60%, to the nearest $100. */
 export const MOCK_PARTIAL_RATE = 0.6;
 
-export type PaymentKind = FundingKind;
+/**
+ * How the contract is being paid.
+ *
+ * `split`   — money now (Down Payment) + the rest financed/collected later (Balance).
+ * `upfront` — the whole contract paid in one go at the table; no balance exists.
+ */
+export type PayMode = 'split' | 'upfront';
+
+/**
+ * A pricing row's group.
+ *
+ * ⚠️ `'up'` is **client-side only** — the wire enum is `'down' | 'bal'` and the
+ * server would reject a third value. An upfront row travels as `'down'`, which is
+ * not a fudge: `down` means *collected now* to every server rule that reads it
+ * (only a `down` card can be charged, only a `down` check can be marked collected),
+ * and that is exactly what upfront is. `wireKind` is the one place it converts.
+ */
+export type PaymentKind = FundingKind | 'up';
 export type MethodType = FundingMethodType;
 export type Decision = FundingDecision;
 /** A payment as the SERVER holds it — the funding screen renders this, nothing else. */
 export type FundingPayment = FundingPaymentRow;
 
 export { newPaymentId, toWholeDollars };
+
+/** Client kind → the enum the API accepts. See `PaymentKind`. */
+export function wireKind(kind: PaymentKind): FundingKind {
+  return kind === 'up' ? 'down' : kind;
+}
+
+/** The group that absorbs an unassigned gap in each mode. */
+export function remainderKind(mode: PayMode): PaymentKind {
+  return mode === 'upfront' ? 'up' : 'bal';
+}
+
+/** Whole dollars with separators — every money string on these screens. */
+function money(n: number): string {
+  return Math.round(n).toLocaleString();
+}
 
 /** Step labels per method type. Index order IS the step order. */
 export const FLOW: Record<MethodType, string[]> = {
@@ -138,6 +170,112 @@ export function assignedTotal(rows: PaymentRow[], price: number): number {
   return rows.reduce((sum, r) => sum + effectiveRowAmount(r, rows, price), 0);
 }
 
+// ── payment structure ──────────────────────────────────────────────────────
+
+/** Money is money — compare with a cent of slack rather than exactly. */
+const EPS = 0.01;
+
+/**
+ * Which structure a saved record represents.
+ *
+ * Read from the shape rather than stored, because the API has no field for it:
+ * a record with payments but **no balance row** is a contract being collected in
+ * full now, which is upfront by definition. Split always leaves a balance row
+ * (the remainder absorber), so the two can never be confused.
+ *
+ * ⚠️ A *split* deal whose down payment happens to cover the whole price also
+ * saves with no balance row, and will reopen as Upfront. That is the honest
+ * reading — nothing is being financed and nothing settles after install — and it
+ * changes only the labelling, never a payment's own behaviour.
+ */
+export function inferPayMode(record: FundingRecord | null | undefined): PayMode {
+  const saved = record?.payments || [];
+  if (!saved.length) return 'split';
+  return saved.some((p) => p.kind === 'bal') ? 'split' : 'upfront';
+}
+
+/**
+ * Has money on this job actually started moving?
+ *
+ * Once it has, the structure is settled: an upfront row that has already been
+ * charged cannot be re-cast as a down payment against a balance that does not
+ * exist, and the rep would be re-describing a payment the processor has already
+ * taken. The rep voids it on the funding screen first.
+ *
+ * ⚠️ Tested against the server's own BOOLEANS as well as `step`, because a lender
+ * decision leaves `step` at 1 (spec §4) — reading `step` alone would call an
+ * approved loan "not started".
+ */
+export function structureLocked(payments: FundingPayment[]): boolean {
+  return payments.some(
+    (p) => p.linkSent || p.step > 0 || p.decision != null || p.collected || p.charged || p.activated
+  );
+}
+
+/** The caption under the structure selector. `nudge` = the rep just tried to switch. */
+export function structureHint(mode: PayMode, locked: boolean, nudge?: boolean): string {
+  if (locked) {
+    return nudge
+      ? 'A payment on this job has already started. Void it on the funding screen before switching structure.'
+      : 'Structure is set — a payment on this job has already started.';
+  }
+  return mode === 'upfront'
+    ? 'Upfront collects the whole contract now. No down payment or balance is created.'
+    : '';
+}
+
+export type CoverageTone = 'ok' | 'short' | 'over';
+
+/**
+ * The upfront coverage bar: is the whole contract accounted for by typed amounts?
+ *
+ * Upfront has no remainder row to quietly absorb a gap — every dollar is typed —
+ * so this is the only thing telling the rep the split still adds up.
+ */
+export function coverageState(assigned: number, price: number): { tone: CoverageTone; message: string; tally: string } {
+  const gap = price - assigned;
+  const tally = `$${money(assigned)} of $${money(price)}`;
+  if (Math.abs(gap) <= EPS) return { tone: 'ok', message: 'Full contract covered', tally };
+  if (gap > 0) return { tone: 'short', message: `$${money(gap)} still to assign`, tally };
+  return { tone: 'over', message: `$${money(-gap)} over contract price`, tally };
+}
+
+/**
+ * What still stops **Confirm** from opening the funding screen.
+ *
+ * Listed rather than thrown: the mockup puts these above a disabled button so the
+ * rep works the list, instead of tapping a live button and being told no. Phrased
+ * as the next action, same as `fundingBlockers`.
+ */
+export function confirmBlockers(rows: PaymentRow[], price: number, mode: PayMode = 'split'): string[] {
+  if (!(price > 0)) return ['Enter the contract price'];
+
+  const out: string[] = [];
+  const funded = rows.filter((r) => effectiveRowAmount(r, rows, price) > 0);
+  if (!funded.length) out.push('Assign the contract to at least one payment method');
+  // A row carrying a stored label counts as named even when its plan has left the
+  // catalogue — the money is committed to a real method, just one we can't re-pick.
+  if (funded.some((r) => !r.method && !r.methodLabel)) {
+    out.push(
+      mode === 'upfront'
+        ? 'Pick a payment method for every upfront amount'
+        : 'Pick a payment method for every amount entered'
+    );
+  }
+
+  const total = assignedTotal(rows, price);
+  if (total > price + EPS) {
+    out.push(
+      mode === 'upfront'
+        ? `Upfront is $${money(total - price)} over the contract price`
+        : `Payments add up to $${money(total)} — $${money(total - price)} more than the contract price`
+    );
+  } else if (total < price - EPS) {
+    out.push(`$${money(price - total)} of the contract is still unassigned`);
+  }
+  return out;
+}
+
 // ── methods ────────────────────────────────────────────────────────────────
 
 /**
@@ -194,7 +332,11 @@ export function shortMethod(label: string): string {
  *
  * The last undecided balance row is re-flagged `auto` so the remainder keeps
  * behaving as it did before the save — the server does not persist that flag
- * (it is a screen affordance, not funding state).
+ * (it is a screen affordance, not funding state). An UPFRONT record has no
+ * remainder row at all: every amount there is typed.
+ *
+ * The structure is re-derived here through `inferPayMode` rather than taken as an
+ * argument, so the rows and the mode a caller reads can never disagree.
  */
 export function hydrateRowsFromRecord(
   record: FundingRecord | null | undefined,
@@ -202,9 +344,10 @@ export function hydrateRowsFromRecord(
 ): PaymentRow[] {
   const saved = record?.payments || [];
   if (!saved.length) return [];
+  const upfront = inferPayMode(record) === 'upfront';
   const rows: PaymentRow[] = saved.map((p) => ({
     pid: p.pid,
-    kind: p.kind,
+    kind: upfront ? 'up' : p.kind,
     // A decided row shows what the lender GRANTED (spec §3.2) — that is the money
     // this line actually brings in, and it is what the totals must add up from.
     amount: String(p.decision ? (p.approvedAmt ?? p.amount) : p.amount),
@@ -238,8 +381,9 @@ export function toUpsertRows(
       const method = row.method ? methodLabelOf(plans, row.method) : row.methodLabel || '';
       if (!method || amount <= 0) return null;
       return {
+        // ⚠️ `up` is a client-side grouping; the wire only knows down/bal.
         pid: row.pid,
-        kind: row.kind,
+        kind: wireKind(row.kind),
         method,
         ...(methodTypeOf(plans, row.method) ? { type: methodTypeOf(plans, row.method)! } : {}),
         amount,
@@ -477,8 +621,10 @@ export function hasDecline(record: FundingRecord | null | undefined): boolean {
 export function applyDecisionsToRows(
   rows: PaymentRow[],
   payments: FundingPayment[],
-  price: number
+  price: number,
+  mode: PayMode = 'split'
 ): { rows: PaymentRow[]; banners: DecisionBanner[] } {
+  const gapKind = remainderKind(mode);
   const covered = coverageOK(payments, price);
   const banners: DecisionBanner[] = [];
 
@@ -509,12 +655,18 @@ export function applyDecisionsToRows(
     return { ...row, amount: String(approved), auto: false, decision: p.decision };
   });
 
-  // Somewhere has to be able to absorb the gap. If every balance row is now a
-  // locked decision there is nothing left to type into, so open a fresh one.
+  // Somewhere has to be able to absorb the gap. If every row in the group that
+  // carries the remainder is now a locked decision there is nothing left to type
+  // into, so open a fresh one.
   if (banners.length && !covered) {
-    const hasOpenBalance = next.some((r) => r.kind === 'bal' && !r.decision);
-    if (!hasOpenBalance) {
-      next = [...next, { pid: newPaymentId(), kind: 'bal', amount: '', method: '', auto: true }];
+    const hasOpenRow = next.some((r) => r.kind === gapKind && !r.decision);
+    if (!hasOpenRow) {
+      // Upfront has no auto row — its amounts are always typed — so the
+      // replacement is a plain empty line the rep fills in.
+      next = [
+        ...next,
+        { pid: newPaymentId(), kind: gapKind, amount: '', method: '', ...(mode === 'split' ? { auto: true } : {}) },
+      ];
     }
   }
 
@@ -522,7 +674,12 @@ export function applyDecisionsToRows(
 }
 
 /** The first row the rep should fill to close a gap — highlighted amber. */
-export function needsAttentionRowId(rows: PaymentRow[], banners: DecisionBanner[]): string | null {
+export function needsAttentionRowId(
+  rows: PaymentRow[],
+  banners: DecisionBanner[],
+  mode: PayMode = 'split'
+): string | null {
   if (!banners.length) return null;
-  return rows.find((r) => r.kind === 'bal' && !r.decision)?.pid ?? null;
+  const gapKind = remainderKind(mode);
+  return rows.find((r) => r.kind === gapKind && !r.decision)?.pid ?? null;
 }

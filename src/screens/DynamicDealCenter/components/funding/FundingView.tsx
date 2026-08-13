@@ -4,7 +4,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FUND } from './funding-theme';
 import { PaymentFundingCard } from './PaymentFundingCard';
 import { ScenarioSimulator } from './ScenarioSimulator';
-import type { AttemptLogEntry, Decision, FundingPayment } from '../../utils/funding';
+import type { AttemptLogEntry, Decision, FundingPayment, PayMode } from '../../utils/funding';
 
 /**
  * The **Funding** screen — the second half of the Result Lead sheet.
@@ -14,6 +14,12 @@ import type { AttemptLogEntry, Decision, FundingPayment } from '../../utils/fund
  * that collects NOW (the down payment) and money that settles AFTER INSTALL (the
  * balance), because those two have completely different expectations of the rep.
  *
+ * An **upfront** contract has no such split — it is all collected now — so it
+ * renders as one Upfront section instead of the two. ⚠️ Its payments arrive from
+ * the server as `kind: 'down'` (see `PaymentKind`), so the grouping is driven by
+ * `payMode` rather than by the rows: nothing about a single payment distinguishes
+ * "the down payment on a financed job" from "the whole contract paid at once".
+ *
  * Purely presentational, and everything it draws comes from the funding record the
  * server last returned — ⚠️ **no step is ever advanced locally** (spec rule 3).
  * Every action is a callback into `useFunding`.
@@ -21,6 +27,8 @@ import type { AttemptLogEntry, Decision, FundingPayment } from '../../utils/fund
 
 interface Props {
   payments: FundingPayment[];
+  /** Split (Down Payment + Balance) or Upfront — decides the section headings. */
+  payMode: PayMode;
   contractTotal: number;
   covered: boolean;
   /** Result switched to Bank Decline — nothing collects, but the attempts stay on record. */
@@ -57,6 +65,7 @@ function SectionLabel({ text, hint, first }: { text: string; hint: string; first
 
 export function FundingView({
   payments,
+  payMode,
   contractTotal,
   covered,
   bankDeclined,
@@ -76,6 +85,7 @@ export function FundingView({
   onResultAsBankDecline,
   onUndoBankDecline,
 }: Props) {
+  const upfront = payMode === 'upfront';
   const down = payments.filter((p) => p.kind === 'down');
   const balance = payments.filter((p) => p.kind === 'bal');
 
@@ -147,7 +157,12 @@ export function FundingView({
         <>
           {down.length > 0 && (
             <>
-              <SectionLabel text="Down Payment" hint="Collect now" first />
+              {/* Upfront replaces the split entirely — there is no balance to head. */}
+              <SectionLabel
+                text={upfront ? 'Upfront' : 'Down Payment'}
+                hint={upfront ? 'Paid in full now' : 'Collect now'}
+                first
+              />
               {down.map(renderCard)}
             </>
           )}

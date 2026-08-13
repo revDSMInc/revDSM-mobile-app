@@ -17,24 +17,33 @@ import { FUND } from './funding/funding-theme';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
 import { SendLinkModal } from './funding/SendLinkModal';
+import { SegmentedChoice } from './funding/SegmentedChoice';
+import { CoverageBar } from './funding/CoverageBar';
+import { BlockerList } from './funding/BlockerList';
 import { useFunding } from '../hooks/useFunding';
 import type { FundingChannel, FundingPaymentRow, FundingRecord } from '../../../services/api/FundingService';
 import {
   applyDecisionsToRows,
   assignedTotal,
   attemptLog,
+  confirmBlockers,
   coverageOK,
   effectiveRowAmount,
   formatStamp,
   fundingBlockers,
   hasDecline,
   hydrateRowsFromRecord,
+  inferPayMode,
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  structureHint,
+  structureLocked,
   toUpsertRows,
   type DecisionBanner,
+  type PaymentKind,
   type PaymentRow,
+  type PayMode,
 } from '../utils/funding';
 
 /**
@@ -252,6 +261,10 @@ export function ResultJobModal({
 
   /** Which half of the sheet is showing. A demo never leaves `result`. */
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
+  /** Down Payment + Balance, or the whole contract collected now. */
+  const [payMode, setPayMode] = useState<PayMode>('split');
+  /** The rep tried to switch structure after money started moving. */
+  const [structureNudge, setStructureNudge] = useState(false);
   /** The editable pricing lines. One down row + one auto balance row to start. */
   const [rows, setRows] = useState<PaymentRow[]>([]);
   /** Messages a lender decision left above the Balance group. */
@@ -295,6 +308,8 @@ export function ResultJobModal({
     setDemoReason('');
     setReasonExplanation('');
     setScreen('result');
+    setPayMode('split');
+    setStructureNudge(false);
     setBanners([]);
     setPriceUnlocked(false);
     setResultChoice('sale');
@@ -316,6 +331,9 @@ export function ResultJobModal({
       { pid: newPaymentId(), kind: 'bal', amount: '', method: initialPaymentMethod || '', auto: true },
     ];
     setRows(freshRows);
+    // The Upfront group is seeded lazily, the first time the rep switches to it —
+    // see `switchPayMode`. Carrying an unused third row here would put it in
+    // `rows` where the split-mode totals would count it.
 
     // A demo never funds anything, so don't fetch a record it will never use.
     if ((initialResultType || 'sale') !== 'sale') return;
@@ -323,7 +341,13 @@ export function ResultJobModal({
     funding.load().then((record) => {
       if (cancelled || !record) return;
       const saved = hydrateRowsFromRecord(record, pricing.plans);
-      if (saved.length) setRows(saved);
+      // The structure is not a stored field — it is read back off the saved rows
+      // (see `inferPayMode`), and BOTH reads come from that one function so the
+      // mode and the rows it produced can never describe different structures.
+      if (saved.length) {
+        setRows(saved);
+        setPayMode(inferPayMode(record));
+      }
       // The stored contract price wins over the rollout's: it is what the saved
       // rows were priced against, and a mismatch would misreport the remainder.
       if (record.contractPrice > 0) setContractPrice(String(record.contractPrice));
@@ -338,15 +362,30 @@ export function ResultJobModal({
 
   const contractNum = parseFloat(contractPrice) || 0;
 
-  const downRows = useMemo(() => rows.filter((r) => r.kind === 'down'), [rows]);
-  const balRows = useMemo(() => rows.filter((r) => r.kind === 'bal'), [rows]);
+  /**
+   * Both structures' rows live in one list, so switching back and forth keeps
+   * whatever the rep already typed on the other side. ⚠️ **Every calculation runs
+   * on `activeRows`**, never on `rows` — the inactive structure's lines are still
+   * in state, and counting them would double the contract.
+   */
+  const activeRows = useMemo(
+    () => rows.filter((r) => (payMode === 'upfront' ? r.kind === 'up' : r.kind !== 'up')),
+    [rows, payMode]
+  );
+
+  const upRows = useMemo(() => activeRows.filter((r) => r.kind === 'up'), [activeRows]);
+  const downRows = useMemo(() => activeRows.filter((r) => r.kind === 'down'), [activeRows]);
+  const balRows = useMemo(() => activeRows.filter((r) => r.kind === 'bal'), [activeRows]);
+  /** Everything collected at the table: the down payment, or the whole upfront contract. */
+  const collectNowRows = useMemo(() => activeRows.filter((r) => r.kind !== 'bal'), [activeRows]);
+
   const downTotal = useMemo(
-    () => downRows.reduce((n, r) => n + effectiveRowAmount(r, rows, contractNum), 0),
-    [downRows, rows, contractNum]
+    () => collectNowRows.reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [collectNowRows, activeRows, contractNum]
   );
   const balanceTotal = useMemo(
-    () => balRows.reduce((n, r) => n + effectiveRowAmount(r, rows, contractNum), 0),
-    [balRows, rows, contractNum]
+    () => balRows.reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [balRows, activeRows, contractNum]
   );
 
   /**
@@ -356,12 +395,12 @@ export function ResultJobModal({
    * row of each half stands in — and the summed totals stay exact.
    */
   const primaryDownMethod = useMemo(
-    () => downRows.find((r) => r.method && effectiveRowAmount(r, rows, contractNum) > 0)?.method || '',
-    [downRows, rows, contractNum]
+    () => collectNowRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
+    [collectNowRows, activeRows, contractNum]
   );
   const primaryBalanceMethod = useMemo(
-    () => balRows.find((r) => r.method && effectiveRowAmount(r, rows, contractNum) > 0)?.method || '',
-    [balRows, rows, contractNum]
+    () => balRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
+    [balRows, activeRows, contractNum]
   );
 
   // Web parity (result-lead-modal.js): fire the `lead_result_field_entry` outcome
@@ -425,7 +464,7 @@ export function ResultJobModal({
     setRows((prev) => prev.filter((r) => r.pid !== pid));
   }, []);
 
-  const addRow = useCallback((kind: 'down' | 'bal') => {
+  const addRow = useCallback((kind: PaymentKind) => {
     setRows((prev) => {
       const next = [...prev];
       // A new line goes AFTER the last row of its own half so the two groups stay
@@ -443,39 +482,103 @@ export function ResultJobModal({
   }, []);
 
   /**
+   * Switch between Down Payment and Upfront.
+   *
+   * ⚠️ Refused once money has started moving (`structureLocked`): an upfront row
+   * the processor has already charged cannot be re-cast as a down payment against
+   * a balance that does not exist. The refusal is EXPLAINED rather than silent —
+   * a card that does nothing on tap reads as a bug.
+   *
+   * The other structure's rows are seeded on first use, not at mount, so they are
+   * never sitting in `rows` un-displayed while `activeRows` has to remember to
+   * exclude them.
+   */
+  const switchPayMode = useCallback(
+    (next: PayMode, allowed: boolean) => {
+      // Identity FIRST: when the structure is locked the selected card is disabled
+      // too, and tapping the option you are already on must not scold you for it.
+      if (next === payMode) return;
+      if (!allowed) {
+        setStructureNudge(true);
+        return;
+      }
+      setStructureNudge(false);
+      setRows((prev) => {
+        const wantUpfront = next === 'upfront';
+        const already = prev.some((r) => (wantUpfront ? r.kind === 'up' : r.kind !== 'up'));
+        if (already) return prev;
+        return wantUpfront
+          ? // Upfront means the whole contract now, so it opens holding all of it.
+            [...prev, { pid: newPaymentId(), kind: 'up', amount: contractNum > 0 ? String(Math.round(contractNum)) : '', method: '' }]
+          : [
+              ...prev,
+              { pid: newPaymentId(), kind: 'down', amount: '', method: '' },
+              { pid: newPaymentId(), kind: 'bal', amount: '', method: '', auto: true },
+            ];
+      });
+      setPayMode(next);
+    },
+    [payMode, contractNum]
+  );
+
+  /**
    * Re-open the auto (remainder) row when money comes unassigned again.
    *
    * The rep can dismiss the auto row once it is holding $0, but lowering a down
    * payment afterwards would leave the gap invisible. Rather than restoring a
    * deleted row, the LAST balance row without a lender decision takes the auto
    * flag back — which is where the remainder belongs anyway.
+   *
+   * Upfront has no remainder row by design — every amount there is typed, and the
+   * `CoverageBar` is what surfaces a gap — so this only runs in split mode.
    */
   useEffect(() => {
-    if (!isSale || contractNum <= 0) return;
-    const hasAuto = rows.some((r) => r.auto);
-    const gap = contractNum - assignedTotal(rows, contractNum);
+    if (!isSale || contractNum <= 0 || payMode === 'upfront') return;
+    const hasAuto = activeRows.some((r) => r.auto);
+    const gap = contractNum - assignedTotal(activeRows, contractNum);
     if (hasAuto || gap <= EPS) return;
-    const candidates = rows.filter((r) => r.kind === 'bal' && !r.decision);
+    const candidates = activeRows.filter((r) => r.kind === 'bal' && !r.decision);
     const target = candidates[candidates.length - 1];
     if (!target) return;
     // Only reclaim a row the rep has not typed into — never overwrite an amount.
     if (parseFloat(target.amount || '0') > 0) return;
     updateRow(target.pid, { auto: true });
-  }, [rows, contractNum, isSale, updateRow]);
+  }, [activeRows, contractNum, isSale, payMode, updateRow]);
 
-  const needsRowId = useMemo(() => needsAttentionRowId(rows, banners), [rows, banners]);
+  const needsRowId = useMemo(() => needsAttentionRowId(activeRows, banners, payMode), [activeRows, banners, payMode]);
+
+  /** Has money moved? Then the structure is settled — see `switchPayMode`. */
+  const structureIsLocked = useMemo(() => structureLocked(payments), [payments]);
+
+  /**
+   * Lender decisions, explained immediately above the group that carries the
+   * remainder — the Balance in split mode, the Upfront group in upfront mode.
+   *
+   * That is where the rep has to act, and it is the row `needsRowId` highlights
+   * amber. Floating the prose above both groups would put "assign the remaining
+   * $X below" above a Down Payment group that has nothing to do with it.
+   */
+  const decisionBanners = banners.map((b) => (
+    <View key={b.id} style={{ backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 }}>
+      <Text style={{ fontSize: 12, fontWeight: '700', lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
+        {b.text}
+      </Text>
+    </View>
+  ));
 
   // ── gate into funding ────────────────────────────────────────────────────
 
-  const fundedRows = useMemo(
-    () => rows.filter((r) => effectiveRowAmount(r, rows, contractNum) > 0),
-    [rows, contractNum]
+  const totalAssigned = useMemo(() => assignedTotal(activeRows, contractNum), [activeRows, contractNum]);
+  /**
+   * Why Confirm is off, listed above it. Same shape as the funding footer's
+   * blockers — the rep works a list rather than tapping a grey button and being
+   * told no. `goFunding` re-checks the same rules as a backstop.
+   */
+  const resultBlockers = useMemo(
+    () => confirmBlockers(activeRows, contractNum, payMode),
+    [activeRows, contractNum, payMode]
   );
-  const totalAssigned = useMemo(() => assignedTotal(rows, contractNum), [rows, contractNum]);
-  const missingMethod = fundedRows.some((r) => !r.method);
-  const overAssigned = totalAssigned > contractNum + EPS;
-  const underAssigned = contractNum > 0 && totalAssigned < contractNum - EPS;
-  const saleReady = contractNum > 0 && fundedRows.length > 0 && !missingMethod && !overAssigned;
+  const saleReady = resultBlockers.length === 0;
 
   /**
    * Confirm — save the pricing rows, then move to Funding.
@@ -486,37 +589,34 @@ export function ResultJobModal({
    * save would show the rep the previous state under the new price.
    */
   const goFunding = useCallback(async () => {
-    if (contractNum <= 0) {
-      FlashMessage.error('Contract price', 'Enter the contract price before confirming.');
+    if (resultBlockers.length) {
+      FlashMessage.error('Not ready to confirm', resultBlockers[0]);
       return;
     }
-    if (missingMethod) {
-      FlashMessage.error('Payment method', 'Every payment line with an amount needs a payment method.');
-      return;
-    }
-    if (overAssigned) {
-      FlashMessage.error(
-        'Over-assigned',
-        `Payments add up to $${totalAssigned.toLocaleString()}, which is more than the $${contractNum.toLocaleString()} contract.`
-      );
-      return;
-    }
+    // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
+    // state, and `payments` is the COMPLETE list — sending them would file the
+    // contract twice over.
     const res = await funding.savePayments(
       Math.round(contractNum),
-      toUpsertRows(rows, contractNum, pricing.plans)
+      toUpsertRows(activeRows, contractNum, pricing.plans)
     );
     if (res.ok) setScreen('funding');
-  }, [contractNum, missingMethod, overAssigned, totalAssigned, rows, pricing.plans, funding]);
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, funding]);
 
   /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
-    const applied = applyDecisionsToRows(rows, payments, contractNum);
-    setRows(applied.rows);
+    const applied = applyDecisionsToRows(activeRows, payments, contractNum, payMode);
+    // Decisions only ever touch the ACTIVE structure, so the other one's rows are
+    // carried through untouched rather than dropped.
+    const inactive = rows.filter((r) => !activeRows.includes(r));
+    setRows([...applied.rows, ...inactive]);
     setBanners(applied.banners);
     if (applied.banners.length) setPriceUnlocked(true);
     funding.clearServerBlockers();
+    // The "void it first" nudge answered a tap that is now several screens back.
+    setStructureNudge(false);
     setScreen('result');
-  }, [rows, payments, contractNum, funding]);
+  }, [rows, activeRows, payments, contractNum, payMode, funding]);
 
   // ── funding actions ──────────────────────────────────────────────────────
 
@@ -652,8 +752,8 @@ export function ResultJobModal({
   const priceEditable = isRehashed || priceUnlocked;
   /** Money a lender has already committed to — the floor the price cannot go under. */
   const lockedTotal = useMemo(
-    () => rows.filter((r) => r.decision).reduce((n, r) => n + effectiveRowAmount(r, rows, contractNum), 0),
-    [rows, contractNum]
+    () => activeRows.filter((r) => r.decision).reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [activeRows, contractNum]
   );
   const priceBelowLocked = priceUnlocked && contractNum < lockedTotal;
 
@@ -699,6 +799,7 @@ export function ResultJobModal({
                    locally; the screen redraws from the record each one returns. */
                 <FundingView
                   payments={payments}
+                  payMode={payMode}
                   contractTotal={contractNum}
                   covered={covered}
                   bankDeclined={bankDeclined}
@@ -828,59 +929,97 @@ export function ResultJobModal({
                         </Text>
                       )}
 
-                      <PaymentRowsGroup
-                        title="Down Payment"
-                        rows={downRows}
-                        allRows={rows}
-                        price={contractNum}
-                        plans={pricing.plans}
-                        // Financing carries a balance, never a deposit — the Down
-                        // Payment picker is cash/card only (see `useDealPricing`).
-                        options={pricing.outcomeDownPaymentMethods}
-                        needsRowId={needsRowId}
-                        canAdd={MULTI_METHOD_ENABLED}
-                        onChangeAmount={(id, t) => updateRow(id, { amount: t })}
-                        onChangeMethod={(id, key) => updateRow(id, { method: key })}
-                        onRemove={removeRow}
-                        onAdd={() => addRow('down')}
+                      {/* How the contract is being paid. Locked once a payment has
+                          started — see `switchPayMode`. */}
+                      <SegmentedChoice<PayMode>
+                        label="How is this being paid?"
+                        value={payMode}
+                        onSelect={switchPayMode}
+                        hint={structureHint(payMode, structureIsLocked, structureNudge)}
+                        hintTone={structureIsLocked ? 'warn' : 'muted'}
+                        options={[
+                          {
+                            value: 'split',
+                            title: 'Down Payment',
+                            subtitle: 'Money now, balance funds later',
+                            disabled: structureIsLocked,
+                          },
+                          {
+                            value: 'upfront',
+                            title: 'Upfront',
+                            subtitle: 'Full contract paid in one go',
+                            disabled: structureIsLocked,
+                          },
+                        ]}
                       />
 
-                      {banners.map((b) => (
-                        <View key={b.id} style={{ backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 }}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
-                            {b.text}
-                          </Text>
-                        </View>
-                      ))}
+                      {payMode === 'upfront' ? (
+                        <>
+                          {decisionBanners}
+                          <PaymentRowsGroup
+                            title="Upfront"
+                            rows={upRows}
+                            allRows={activeRows}
+                            price={contractNum}
+                            plans={pricing.plans}
+                            // Paid in full now, so there is no balance to carry —
+                            // lender plans are not offered here, same as a deposit.
+                            options={pricing.outcomeDownPaymentMethods}
+                            needsRowId={needsRowId}
+                            canAdd={MULTI_METHOD_ENABLED}
+                            onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                            onChangeMethod={(id, key) => updateRow(id, { method: key })}
+                            onRemove={removeRow}
+                            onAdd={() => addRow('up')}
+                            footer={
+                              <>
+                                {/* Upfront has no remainder row to hide a gap in, so
+                                    this is the only running total the rep gets. */}
+                                <CoverageBar assigned={totalAssigned} target={contractNum} />
+                                <Text style={{ fontSize: 11, fontWeight: '600', lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: FUND.MUTED }}>
+                                  Paid in full at the table, so there is no balance to finance. Lender plans are not offered here.
+                                </Text>
+                              </>
+                            }
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <PaymentRowsGroup
+                            title="Down Payment"
+                            rows={downRows}
+                            allRows={activeRows}
+                            price={contractNum}
+                            plans={pricing.plans}
+                            // Financing carries a balance, never a deposit — the Down
+                            // Payment picker is cash/card only (see `useDealPricing`).
+                            options={pricing.outcomeDownPaymentMethods}
+                            needsRowId={needsRowId}
+                            canAdd={MULTI_METHOD_ENABLED}
+                            onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                            onChangeMethod={(id, key) => updateRow(id, { method: key })}
+                            onRemove={removeRow}
+                            onAdd={() => addRow('down')}
+                          />
 
-                      <PaymentRowsGroup
-                        title="Balance"
-                        rows={balRows}
-                        allRows={rows}
-                        price={contractNum}
-                        plans={pricing.plans}
-                        categories={pricing.categories}
-                        needsRowId={needsRowId}
-                        canAdd={MULTI_METHOD_ENABLED}
-                        onChangeAmount={(id, t) => updateRow(id, { amount: t })}
-                        onChangeMethod={(id, key) => updateRow(id, { method: key })}
-                        onRemove={removeRow}
-                        onAdd={() => addRow('bal')}
-                      />
+                          {decisionBanners}
 
-                      {overAssigned ? (
-                        <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.RED_TEXT, marginHorizontal: 4, marginBottom: 12, lineHeight: 16 }}>
-                          Payments add up to ${totalAssigned.toLocaleString()} — ${(totalAssigned - contractNum).toLocaleString()} more than the contract price.
-                        </Text>
-                      ) : underAssigned ? (
-                        /* Only reachable once the rep has dismissed the auto row and
-                           filled every remaining line, so there is nothing left to
-                           absorb the gap. Not blocking — funding lists it as a blocker
-                           too — but it should not first surface a screen later. */
-                        <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.AMBER_TEXT, marginHorizontal: 4, marginBottom: 12, lineHeight: 16 }}>
-                          ${(contractNum - totalAssigned).toLocaleString()} of the contract is not assigned to a payment method yet.
-                        </Text>
-                      ) : null}
+                          <PaymentRowsGroup
+                            title="Balance"
+                            rows={balRows}
+                            allRows={activeRows}
+                            price={contractNum}
+                            plans={pricing.plans}
+                            categories={pricing.categories}
+                            needsRowId={needsRowId}
+                            canAdd={MULTI_METHOD_ENABLED}
+                            onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                            onChangeMethod={(id, key) => updateRow(id, { method: key })}
+                            onRemove={removeRow}
+                            onAdd={() => addRow('bal')}
+                          />
+                        </>
+                      )}
                     </View>
                   )}
 
@@ -970,21 +1109,15 @@ export function ResultJobModal({
             <View style={{ paddingHorizontal: 20, paddingBottom: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#919EAB14' }}>
               {onFunding ? (
                 <>
-                  {bankDeclined ? (
-                    <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
-                      <Text style={{ color: FUND.SUBTEXT }}>No funding to satisfy.</Text>
-                      {'\n'}The job is closing as a bank decline.
-                    </Text>
-                  ) : blockers.length > 0 ? (
-                    <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.MUTED, lineHeight: 17, marginBottom: 11 }}>
-                      <Text style={{ color: FUND.SUBTEXT }}>Before you can submit:</Text>
-                      {blockers.map((b) => `\n• ${b}`).join('')}
-                    </Text>
-                  ) : (
-                    <Text style={{ fontSize: 11.5, fontWeight: '700', color: FUND.GREEN_TEXT, lineHeight: 17, marginBottom: 11 }}>
-                      ✓ Every payment is as far as you can take it. Ready to submit.
-                    </Text>
-                  )}
+                  <BlockerList
+                    items={blockers}
+                    readyText="✓ Every payment is as far as you can take it. Ready to submit."
+                    override={
+                      bankDeclined
+                        ? { title: 'No funding to satisfy.', body: 'The job is closing as a bank decline.' }
+                        : undefined
+                    }
+                  />
                   <TouchableOpacity
                     onPress={goResult}
                     style={{ height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, marginBottom: 10 }}
@@ -1002,13 +1135,20 @@ export function ResultJobModal({
                   </TouchableOpacity>
                 </>
               ) : isSale ? (
-                <TouchableOpacity
-                  disabled={!saleReady}
-                  onPress={goFunding}
-                  style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: saleReady ? '#4CBB17' : '#919EAB' }}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 }}>Confirm</Text>
-                </TouchableOpacity>
+                <>
+                  {/* Same control as the Submit footer — the reasons are visible
+                      before the tap, not discovered by it. */}
+                  <BlockerList items={resultBlockers} title="Before you can confirm:" />
+                  <TouchableOpacity
+                    disabled={!saleReady}
+                    onPress={goFunding}
+                    style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: saleReady ? '#4CBB17' : '#E9EBEE' }}
+                  >
+                    <Text style={{ color: saleReady ? '#fff' : '#A8AEB6', fontWeight: '700', fontSize: 14, letterSpacing: 0.5 }}>
+                      Confirm
+                    </Text>
+                  </TouchableOpacity>
+                </>
               ) : (
                 <TouchableOpacity
                   disabled={demoDisabled}
