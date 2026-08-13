@@ -56,6 +56,8 @@ const getNativeModules = () => {
 
 // Subcomponents
 import { ContractDetailsCard } from './ContractDetailsCard';
+import { AddendumsCard } from './AddendumsCard';
+import { hasPendingDraft } from '../../../utils/addendum-drafts';
 import { TagPhotoModal } from './TagPhotoModal';
 import { ManagePhotosModal } from './ManagePhotosModal';
 import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView';
@@ -89,6 +91,12 @@ interface JobDocsSectionProps {
   onOpenPdf?: (url: string, title?: string) => void;
   secureUrls?: Record<string, string>;
   isRefreshing?: boolean;
+  /**
+   * The lead's addendum drafts (`GET lead/v1/{id}/job-builder-drafts`), fetched once in
+   * `LeadCenter` and shared with the status banners so the two render from ONE request —
+   * the same reason web keeps them in a single `useJobBuilderDrafts` hook.
+   */
+  drafts?: any[];
   /**
    * Override for the Contract Details pencil. Supplied when the Lead Center is opened
    * from My Deals, where the pencil must launch the dynamic deal-edit wizard instead of
@@ -131,6 +139,7 @@ export const JobDocsSection = ({
   secureUrls: _secureUrls = {},
   isRefreshing = false,
   onEditContract,
+  drafts = [],
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -1487,6 +1496,19 @@ export const JobDocsSection = ({
         hasContract={hasContract}
         isResulted={isResulted}
         onAddDocument={handleAddDocument}
+        // The card header is the deal's ONE pending-signature indicator: amber while
+        // an addendum awaits the customer, back to green the moment they approve.
+        hasPendingAddendum={hasPendingDraft(drafts)}
+      />
+
+      {/* Addendums — web `job-docs-tab.js` renders `docsExtras` in exactly this
+          slot, between the contract card and the slots/photos progress row.
+          Renders null when the lead has no addendums. */}
+      <AddendumsCard
+        drafts={drafts}
+        onOpenPdf={onOpenPdf}
+        isDark={isDark}
+        colors={colors}
       />
 
       {/* Progress Bar */}

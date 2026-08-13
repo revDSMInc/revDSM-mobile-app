@@ -24,6 +24,11 @@ interface ContractDetailsCardProps {
   hasContract: boolean;
   isResulted: boolean;
   onAddDocument: (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => void;
+  /**
+   * True when the lead has an addendum awaiting the customer's signature. Second
+   * source for the amber header — see the note beside `showPendingDraft`.
+   */
+  hasPendingAddendum?: boolean;
 }
 
 const cleanNumber = (val: any): number => {
@@ -49,6 +54,7 @@ export const ContractDetailsCard = ({
   hasContract,
   isResulted,
   onAddDocument,
+  hasPendingAddendum = false,
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
 
@@ -57,8 +63,25 @@ export const ContractDetailsCard = ({
   const statusStr = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isDemo = statusStr === 'demo' || statusStr === 'demonosale';
 
+  // The card header IS the deal's pending-signature status, and it has TWO sources —
+  // the amber bar must show while EITHER is awaiting the customer, and flip back to
+  // the green `✓ … - LEAD RESULTED` the moment they approve:
+  //
+  //  1. `leadDraft` — `GET lead/v1/{id}/draft`, created ONLY by an EditContractDetails
+  //     save (`upsertLeadDraft` has exactly one caller). Keeps its `showStatus` gate,
+  //     which is that flow's own opt-in.
+  //  2. `hasPendingAddendum` — a pending row in `GET lead/v1/{id}/job-builder-drafts`,
+  //     which is what the My Deals deal-edit wizard submits. The wizard does NOT write
+  //     a leadDraft, so before this the header stayed GREEN after an addendum while the
+  //     addendums list right below it read "Pending" — the two disagreed on one screen.
+  //
+  // ⚠️ No `showStatus` gate on the addendum arm: that flag belongs to the contract-edit
+  // draft shape and a job-builder draft does not carry it, so requiring it would make
+  // this branch permanently dead.
   const draftStatus = String(leadDraft?.status || '').toLowerCase();
-  const showPendingDraft = draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');
+  const showLeadDraftPending =
+    draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');
+  const showPendingDraft = showLeadDraftPending || hasPendingAddendum;
 
   return (
     <View

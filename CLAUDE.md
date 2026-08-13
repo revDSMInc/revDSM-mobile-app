@@ -129,56 +129,127 @@ and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons ar
 - **`src/screens/DealDetail/` is now UNREACHABLE** (nothing navigates to it) but is still
   registered in the stack. Its **Addendums list** (tap an approved addendum → signed PDF via
   `getDraftAmendmentPdf`, plus the `DraftComparison` diff) has **no equivalent on the Lead Center
-  screen** — Lead Center only shows the pending-signature banner (from its own `leadDraft` fetch).
-  Re-add that list under the contract card if reps need it. ⚠️ The **status banner** half of
-  that gap is now CLOSED — see "The Deal screen shows the pending-addendum / cancelled status
-  banners" below; the addendums LIST is still missing.
+  screen**. ✅ **BOTH halves of that gap are now CLOSED** — the pending-signature status in
+  "The Deal screen's pending-signature status" below, and the addendums LIST itself in the
+  follow-up right after it. The only piece still missing is `DealDetail`'s `DraftComparison`
+  drill-in: on the Lead Center a PENDING addendum warns rather than opening its changes.
 
-### The Deal screen shows the pending-addendum / cancelled status banners
+### The Deal screen's pending-signature status — ONE amber header, back to green on approval
 
-Ticket: *"after submitting status should be show like this, in mobile this thing is missing"* — a web
-screenshot of the Deal screen carrying an amber **PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE** /
-*1 addendum awaiting customer approval* bar. Mobile showed nothing after submitting an addendum.
+Ticket: *"after submitting status should be show like this, in mobile this thing is missing"* (a web
+screenshot of an amber **PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE** bar; mobile showed nothing
+after submitting an addendum), then the design correction: *"a bit change in the design of the status,
+it should be like above, and once the user approved it will come back to the same green"*.
 
-**New `src/widgets/components/LeadCenter/DealBanners.tsx`** — a port of web
-`src/sections/deal/components/deal-banners.js`, rendering **JOB CANCELLED** (`#B91C1C`) and/or the amber
-`#F4B400` pending-addendum bar, both pluralized off the same `pendingCount`, and `null` when the deal is
-neither cancelled nor awaiting a signature. Both can show at once.
+**Final design (the rep's answer to a direct question, not an inference): the Contract Details card
+header IS the deal's single pending indicator.** Amber
+`SALE - PENDING CUSTOMER SIGNATURE` / *Awaiting Amendment Approval: • Contract Pricing* while a
+signature is outstanding, flipping to the green `✓ <STATUS> - LEAD RESULTED` the moment the customer
+approves. No second bar.
 
-Wired into `LeadCenter/index.tsx` exactly where web puts it — web renders it from
-`job-capture-images-view.js` (its Lead Center) as `banners={isDeal ? <DealBanners …/> : null}`, and
-`lead-center-tabs.js` places that *"under the tab bar and above every tab"*. So mobile renders it after
-the **Job docs / Map / Tools** row and OUTSIDE the tab switch: it is page-level status, visible on both
-tabs, gated on **`fromMyDeals`** (mobile's `isDeal`).
+#### What actually drives it
 
-⚠️ **This is NOT `ContractDetailsCard`'s `showPendingDraft` header, and neither replaces the other.**
-They are different endpoints and different features, and the ticket screenshot shows **both bars at
-once** — the amber one above, the card's own green `SALE - LEAD RESULTED` header still green below:
+`ContractDetailsCard`'s `showPendingDraft` now has **two** sources, either of which shows amber:
 
-| | source | what it means |
+| # | source | written by |
 |---|---|---|
-| `ContractDetailsCard` header swap | `GET lead/v1/{id}/draft` + `showStatus` | the remote-signature draft an **EditContractDetails** save creates |
-| `DealBanners` (new) | `GET lead/v1/{id}/job-builder-drafts` | **ADDENDUMS** — what the deal-edit wizard submits |
+| 1 | `leadDraft` — `GET lead/v1/{id}/draft`, **plus its `showStatus` gate** | ONLY an **EditContractDetails** save (`upsertLeadDraft` has exactly one caller) |
+| 2 | `hasPendingAddendum` — a pending row in `GET lead/v1/{id}/job-builder-drafts` | the **My Deals deal-edit wizard** (addendums) |
 
-Mobile already had the first and had never had the second. The banner's own copy already existed in
-`screens/DealDetail/index.tsx`, which is **UNREACHABLE** (My Deals navigates to `LeadCenter`), so the
-text was in the repo and could never render.
+Source 2 is new and is the whole bug: **the wizard never writes a `leadDraft`**, so before this the
+header stayed GREEN after submitting an addendum while the addendums list directly below it read
+`Pending` — two elements on one screen disagreeing about the same deal.
 
-- **The query is gated on `fromMyDeals`.** Web fetches drafts on both routes because its `AddendumsCard`
-  also consumes the list; mobile has no addendums list on this screen, so the banners are the only
-  consumer and the normal lead path makes no extra request. Drop the gate if that list is added.
-- **The focus effect invalidates it.** Submitting an addendum CREATES a draft, and the rep returns here
-  straight from the wizard — without the invalidate the banner would only appear after leaving and
-  re-opening the deal. (Web solves the same problem with `useJobBuilderDrafts`'s `refetch`.)
+⚠️ **The addendum arm must NOT inherit the `showStatus` gate.** That flag belongs to the
+contract-edit draft shape; a job-builder draft does not carry it, so requiring it would make the whole
+branch permanently dead and silently restore the bug. Tested.
+
+#### `DealBanners` is now the CANCELLED bar only — a deliberate divergence from web
+
+`src/widgets/components/LeadCenter/DealBanners.tsx` began as a faithful port of web
+`src/sections/deal/components/deal-banners.js` (rendered from `job-capture-images-view.js` gated on
+`isDeal`; `lead-center-tabs.js` places it *"under the tab bar and above every tab"*, which is why mobile
+renders it after the **Job docs / Map / Tools** row and OUTSIDE the tab switch, gated on `fromMyDeals`).
+
+⚠️ **Web's pending-addendum bar is deliberately NOT rendered.** Web shows two independent indicators for
+one fact — that bar AND the card's own amber header — and on a phone the two sat within half a screen of
+each other saying the same thing. Do not "restore parity" here; it was removed on request.
+
+The **JOB CANCELLED** bar stays: nothing else on the screen reports it, and a cancelled deal would
+otherwise still show a green *LEAD RESULTED* header.
+
+#### Draft status predicates live in `src/utils/addendum-drafts.ts`
+
+`isDraftApproved` / `isPendingDraft` / `countPendingDrafts` / `hasPendingDraft` — pure and RN-free, for
+the reason `utils/inspection-photos.ts` and `utils/job-change-summary.ts` exist: all three consumers
+(`AddendumsCard`, `DealBanners`, `JobDocsSection`) pull in React Native and are untestable under jest
+here. Keeping the rules in one file is also what stops "pending" meaning two different things on two
+surfaces of the same screen.
+
+- **One fetch, shared.** `LeadCenter` holds the single `useQuery` and passes `drafts` down; nothing
+  re-fetches. Mirrors web's shared `useJobBuilderDrafts`.
+- **The focus effect invalidates it.** Submitting an addendum CREATES the draft and the rep returns here
+  straight from the wizard — without the invalidate the header would only turn amber after leaving and
+  re-opening the deal. (Web solves the same problem with that hook's `refetch`.)
 - **A failed fetch returns `[]`, not an error state** (web: *"Addendums are supplementary; a failure must
-  not affect the page"*), so it degrades to "no banner" rather than breaking the Deal screen.
+  not affect the page"*), so it degrades to a green header rather than breaking the Deal screen.
 
-Verified by calling the real component and walking its returned element tree: nothing rendered with no
-pending drafts (and with only accepted/declined ones), the ticket's singular copy, plural in **both**
-lines at 2+, case-insensitive `pending` matching that ignores null/missing statuses, cancelled alone,
-cancelled **and** pending together, `result` taking precedence over `status`, and junk input as a no-op.
-tsc 44 (baseline unchanged); the new file is eslint-clean and `LeadCenter/index.tsx` is byte-identical to
-its HEAD baseline (16 errors / 24 warnings, all pre-existing).
+Verified against the exact `showPendingDraft` expression: a pending addendum turning the header amber
+**with no `leadDraft` at all**, approval (`accepted`/`signed`) returning it to green, a declined
+addendum reading green, one-approved-plus-one-pending staying amber, the `showStatus` gate still
+suppressing the EditContractDetails arm (and still honouring the stringy `'true'`), the addendum arm
+NOT inheriting that gate, both-pending, and null/undefined input as green. tsc 44 (baseline unchanged);
+`utils/addendum-drafts.ts` is eslint-clean, and `LeadCenter/index.tsx` + `JobDocsSection.tsx` together
+are byte-identical to their HEAD baseline (79 problems: 26 errors / 53 warnings, all pre-existing).
+
+#### …and the Addendums list, in web's exact slot
+
+Follow-up, same screen: *"you also have to show this like web in the deal center"* — a web screenshot
+of an **Addendum (1)** card holding a `Pending` chip, `Addendum #1`, its date and a chevron, plus the
+toast *"The addendum PDF is available once the customer approves it"* from tapping that pending row.
+
+**New `src/widgets/components/LeadCenter/AddendumsCard.tsx`** — a port of web
+`src/sections/deal/components/addendums-card.js`. Title `Addendum{s} (N)`; each row is
+`StatusChip · Addendum #N · MM/dd/yyyy` with a right-hand **`file-pdf-box`** when approved and a
+**`chevron-right`** otherwise. Returns `null` with no addendums.
+
+**Placement is web's, not "at the end".** Web threads it as `docsExtras` into `job-docs-tab.js`, which
+renders it between the **contract card** and the **`N/M slots • N photos`** progress row — exactly
+where the screenshot shows it, above `Start Taking Photos`. Mobile renders it in the same slot inside
+`JobDocsSection`, so it is INSIDE the Job docs tab, not a sibling of it.
+
+⚠️ **The drafts query is no longer gated on `fromMyDeals`** (it was, one ticket ago, when the banners
+were the only consumer). Web's own note at the call site: *"The addendums list renders on both routes;
+it is null when the lead has none, so it costs the Lead Center nothing when there are no addendums."*
+**Only the BANNERS stay deal-only.** One `useQuery` in `LeadCenter` feeds both, mirroring web's shared
+`useJobBuilderDrafts` — `drafts` is passed down to `JobDocsSection` rather than re-fetched, so the two
+surfaces can never disagree and there is still exactly one request.
+
+**Tap behaviour is web's, including the dead end.** Approved → `getDraftAmendmentPdf` → the app's PDF
+viewer via the existing `onOpenPdf`. Anything else → the warning flash in the screenshot. Two pure
+exports carry the decisions so the guards are testable — `isDraftApproved` and
+**`resolveAddendumTap(draft, pdfLoadingDraftId)` → `'ignore' | 'not-approved' | 'open-pdf'`**:
+
+- ⚠️ **The in-flight guard OUTRANKS the approval check**, deliberately. `/amendment-pdf` **generates**
+  the document on demand, so a second tap is a second Puppeteer run, a second S3 upload and two
+  `amendment` documents for one addendum. Reversing the order would let a pending row toast mid-build.
+- While one is building, that row reads **"Preparing PDF…"** with a spinner and a green border and
+  **the other rows dim to 0.6** — web's behaviour, so the others read as unavailable rather than
+  silently swallowing a tap. The first open of an addendum approved before this feature existed
+  genuinely builds the PDF and takes a few seconds, which is why the row says so instead of just spinning.
+
+⚠️ **Mobile deliberately does NOT open the change comparison for a pending addendum here**, though it
+could: the unreachable `screens/DealDetail` did that, and `widgets/components/chat/JobChangeDetailsModal`
+already implements it (before/after + the approved→PDF hand-off, with the 409 fallback). Web's toast is a
+dead end and was ported as-is because the ticket asked for web's behaviour; wiring that modal to the
+`'not-approved'` branch is a one-line change if reps want to read a pending addendum from the deal.
+
+Verified: `isDraftApproved` across all three approved spellings (case-insensitive) and rejecting
+pending/declined/missing; the chip's four known labels plus an unknown status shown verbatim and the
+`Draft` fallback, each with both colours; and every `resolveAddendumTap` branch — approved→PDF,
+pending/declined→warn, **a second tap ignored even on an approved row**, a mid-build pending tap ignored
+(guard ordering), and an id-less draft inert. tsc 44 (baseline unchanged); both new files are eslint
+error-free and `JobDocsSection.tsx` is byte-identical to its HEAD baseline (10 errors / 29 warnings).
 
 
 ### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)

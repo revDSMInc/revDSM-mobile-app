@@ -398,11 +398,11 @@ export default function LeadCenterPage() {
     setShowEmailOptions(false);
   };
 
-  // ── addendum drafts → the deal status banners (web `useJobBuilderDrafts`) ─────
-  // Web calls this on BOTH routes because its `AddendumsCard` also consumes the
-  // list; mobile has no addendums list on this screen (see the DealDetail note in
-  // CLAUDE.md), so the banners are the only consumer and the query is gated on
-  // `fromMyDeals` — web's `isDeal`. Drop the gate if that list is ever added.
+  // ── addendum drafts → the status banners AND the addendums list ──────────────
+  // ONE fetch feeding both, exactly like web's shared `useJobBuilderDrafts`. It runs
+  // on BOTH routes (not just `fromMyDeals`) because `AddendumsCard` renders on both —
+  // web's own note: "it is null when the lead has none, so it costs the Lead Center
+  // nothing when there are no addendums." Only the BANNERS are deal-only.
   const { data: dealDrafts = [] } = useQuery({
     queryKey: ['lead-job-builder-drafts', lead?._id],
     queryFn: async () => {
@@ -418,7 +418,7 @@ export default function LeadCenterPage() {
         return [];
       }
     },
-    enabled: Boolean(fromMyDeals && lead?._id),
+    enabled: Boolean(lead?._id),
     staleTime: 30_000,
   });
 
@@ -1221,11 +1221,12 @@ export default function LeadCenterPage() {
             </View>
           </View>
 
-          {/* Status banners — under the tab bar and above EVERY tab, matching web
-              `lead-center-tabs.js`. Deal route only (`fromMyDeals` = web `isDeal`);
-              renders null when the deal is neither cancelled nor awaiting a
-              signature, so the normal lead path is untouched. */}
-          {fromMyDeals && <DealBanners lead={lead} drafts={dealDrafts} />}
+          {/* Cancelled-job banner — under the tab bar and above EVERY tab, matching web
+              `lead-center-tabs.js`. Deal route only (`fromMyDeals` = web `isDeal`) and
+              null unless the job is cancelled, so the normal lead path is untouched.
+              The PENDING-signature status is NOT here — it is the Contract Details
+              card's own amber header. See the note in DealBanners.tsx. */}
+          {fromMyDeals && <DealBanners lead={lead} />}
 
           <View style={{ flex: 1 }}>
             {activeTab === 'job_docs' && (
@@ -1238,6 +1239,7 @@ export default function LeadCenterPage() {
                 secureUrls={secureUrls}
                 isRefreshing={isRefreshing}
                 onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
+                drafts={dealDrafts}
               />
             )}
             {activeTab === 'tools' && (
