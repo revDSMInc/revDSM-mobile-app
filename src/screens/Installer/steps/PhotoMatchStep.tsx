@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   Modal,
   StatusBar,
   StyleSheet,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -224,6 +226,37 @@ export function PhotoMatchStep({
     ? takenTotal > 0
     : requiredTags.length > 0 && matchedTotal === requiredTags.length;
 
+  /**
+   * "Scroll down for Done" hint.
+   *
+   * The Done button is the LAST thing in the tag picker, and the picker is only 32% of
+   * the screen — so on any section with more than a couple of tag rows it sits below the
+   * fold with nothing on screen to say it exists. The hint is a floating pill pinned to
+   * the bottom of the picker: it shows only while there IS something below the fold, and
+   * tapping it scrolls to the button rather than making the installer hunt for it.
+   */
+  const tagScrollRef = useRef<ScrollView>(null);
+  const viewportH = useRef(0);
+  const contentH = useRef(0);
+  const scrollY = useRef(0);
+  const [moreBelow, setMoreBelow] = useState(false);
+
+  // 8px of slack: content that overflows by a hair, or a scroll resting a rounding
+  // error short of the end, is "at the bottom" — a hint that never goes away reads as
+  // broken.
+  const syncMoreBelow = useCallback(() => {
+    const overflow = contentH.current - viewportH.current;
+    setMoreBelow(overflow > 8 && scrollY.current < overflow - 8);
+  }, []);
+
+  const handleTagScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollY.current = e.nativeEvent.contentOffset.y;
+      syncMoreBelow();
+    },
+    [syncMoreBelow]
+  );
+
   const sectionCount = (sid: string) => {
     const tags = sections.find((s) => s.id === sid)?.tags ?? [];
     // No denominator in free-form mode — there is no quota for this section, so a
@@ -329,6 +362,10 @@ export function PhotoMatchStep({
     if (s.id === sectionId) return;
     log.photoSectionChanged(phase, { id: s.id, name: s.name });
     setSectionId(s.id);
+    // A new section starts at its first tag. Without this the picker keeps the previous
+    // section's offset, so a shorter list can open already scrolled past its own tags.
+    tagScrollRef.current?.scrollTo({ y: 0, animated: false });
+    scrollY.current = 0;
   };
 
   // Captures are logged by the upload hook once S3 answers — it is the only place
@@ -518,24 +555,19 @@ export function PhotoMatchStep({
             </Text>
           </View>
 
-          {allDone && (
-            <TouchableOpacity
-              onPress={handleComplete}
-              className="mx-3 mb-2 rounded-xl items-center justify-center py-2.5"
-              style={{ backgroundColor: T_GREEN }}
-            >
-              <Text className="text-[#0e1c16] text-sm font-black">
-                {/* "All Shots Matched" would be a lie in free-form mode — nothing was
-                    matched and nothing more is owed. It names the count instead. */}
-                {isFreeform
-                  ? t('installer.donePhotosTaken', { count: takenTotal })
-                  : t('installer.allShotsMatched')}
-              </Text>
-            </TouchableOpacity>
-          )}
-
           <ScrollView
+            ref={tagScrollRef}
             className="flex-1"
+            scrollEventThrottle={16}
+            onScroll={handleTagScroll}
+            onLayout={(e) => {
+              viewportH.current = e.nativeEvent.layout.height;
+              syncMoreBelow();
+            }}
+            onContentSizeChange={(_w, h) => {
+              contentH.current = h;
+              syncMoreBelow();
+            }}
             contentContainerStyle={{
               paddingHorizontal: 12,
               // The root already clears the system bar, so this is only breathing room
@@ -624,7 +656,58 @@ export function PhotoMatchStep({
                 </View>
               </View>
             )}
+
+            {/*
+              Done sits at the very END of the picker, under "Tag as Extra" — it is the
+              last thing an installer does, and above the tag grid it hid the first row
+              of tags and invited a tap before the optional extras were even seen.
+            */}
+            {allDone && (
+              <TouchableOpacity
+                onPress={handleComplete}
+                className="rounded-xl items-center justify-center py-2.5 mt-2.5"
+                style={{ backgroundColor: T_GREEN }}
+              >
+                <Text className="text-[#0e1c16] text-sm font-black">
+                  {/* "All Shots Matched" would be a lie in free-form mode — nothing was
+                      matched and nothing more is owed. It names the count instead. */}
+                  {isFreeform
+                    ? t('installer.donePhotosTaken', { count: takenTotal })
+                    : t('installer.allShotsMatched')}
+                </Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
+
+          {/*
+            Floating "there is more below" affordance, pinned to the bottom of the
+            picker. `pointerEvents="box-none"` on the wrapper so the tag rows it floats
+            over stay tappable — only the pill itself takes touches.
+          */}
+          {moreBelow && (
+            <View style={styles.scrollHintWrap} pointerEvents="box-none">
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => tagScrollRef.current?.scrollToEnd({ animated: true })}
+                style={[
+                  styles.scrollHintPill,
+                  // Green once Done is actually down there; neutral while it is just
+                  // more tags, so the colour never promises a button that isn't rendered.
+                  allDone
+                    ? { backgroundColor: T_GREEN, borderColor: T_GREEN }
+                    : { backgroundColor: T_CARD, borderColor: T_BORDER },
+                ]}
+              >
+                <Text
+                  className="text-[11px] font-black mr-1"
+                  style={{ color: allDone ? '#0e1c16' : T_DIM }}
+                >
+                  {allDone ? t('installer.scrollForDone') : t('installer.scrollForMore')}
+                </Text>
+                <Icon name="chevron-down" size={15} color={allDone ? '#0e1c16' : T_DIM} />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
@@ -779,4 +862,26 @@ function ReviewPair({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: T_BG },
+  scrollHintWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 8,
+    alignItems: 'center',
+  },
+  scrollHintPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    // Lifts the pill off the tag rows it floats over — without it the neutral variant
+    // reads as just another card.
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
+  },
 });
