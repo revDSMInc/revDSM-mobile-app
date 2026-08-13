@@ -58,7 +58,28 @@ export const ContractDetailsCard = ({
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
 
-  if (!isResulted || !hasContract) return null;
+  // Web `sections/job/components/contract-details.js` splits these two cases, and mobile
+  // used to collapse both into `return null`:
+  //   !isResulted  → nothing at all (a scheduled / self-gen lead has no outcome yet)
+  //   !hasContract → the EMPTY CARD below. The lead WAS resulted, just not as a
+  //                  sale/demo — Reset, No Demo, Not Hit, Cancelled — so there are
+  //                  genuinely no contract details, and saying so beats a silent gap
+  //                  where the card was. This is what the rep sees after a Reset.
+  if (!isResulted) return null;
+
+  if (!hasContract) {
+    return (
+      <View
+        className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 items-center justify-center px-6 py-10"
+        style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
+      >
+        <Icon name="file-remove-outline" size={48} color="#919EAB" />
+        <Text className="text-[15px] font-semibold mt-3 text-center" style={{ color: '#637381' }}>
+          No contract details available
+        </Text>
+      </View>
+    );
+  }
 
   const statusStr = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isDemo = statusStr === 'demo' || statusStr === 'demonosale';
