@@ -252,6 +252,73 @@ pending/declined→warn, **a second tap ignored even on an approved row**, a mid
 error-free and `JobDocsSection.tsx` is byte-identical to its HEAD baseline (10 errors / 29 warnings).
 
 
+### Result Lead ▸ Reset was missing "Not Home", and a reset lead showed no contract card at all
+
+Ticket: *"Result lead - reset - add 'Not Home' like web; and after reset 'No contract details
+available' card should also be show like this."* Two unrelated one-liners on the same flow.
+
+**1. The reason list.** `REASONS_MAP.reset` in `widgets/modals/lead-center/ResultLeadModal.tsx` held
+`['No Time', 'Leaving']`; web `job-capture-images-sections/result-lead-drawer.js` has
+**`['Not Home', 'No Time', 'Leaving']`** — and `Not Home` is FIRST, being the commonest reset reason, so
+reps were filing a door nobody answered as `No Time`. The other two lists (`noDemo`, `notHit`) were
+already verbatim matches; only this one had drifted.
+
+**2. The empty contract card.** Web `sections/job/components/contract-details.js` splits TWO cases that
+mobile collapsed into a single `return null`:
+
+```js
+if (!isResulted) return;                 // scheduled / self-gen — no outcome yet
+if (!hasDetails) return <EmptyCard/>;    // resulted, but not a sale/demo
+```
+
+`ContractDetailsCard` guarded on `if (!isResulted || !hasContract) return null`, so after a **Reset**
+(or No Demo / Not Hit / Cancelled) the card vanished entirely and left a silent gap where it had been.
+It now renders web's placeholder — a centred `file-document-remove-outline` at 48px over
+**"No contract details available"**.
+
+⚠️ **The two flags were already correct and needed no change** — `isResulted` (`JobDocsSection`) accepts
+`reset`/`nothome`/`nothit`/`nodemo`/`cancelled`/`rescheduled` alongside sale/demo, while `hasContract` is
+`sale`/`demo`/`demonosale` only. So `isResulted && !hasContract` was already exactly web's `!hasDetails`
+branch; the card simply never rendered it. Don't "fix" this by widening `hasContract` — that would put a
+$0 contract card on every reset lead.
+
+⚠️ The empty state deliberately carries **no Add Document action** (web's doesn't either): a lead with no
+contract has nothing to attach documents to, and the Job Docs tab's own photo/Manage Photos actions below
+it are unaffected.
+
+### The first Deal Center tab is labelled with the customer's name
+
+Ticket: *"by default if we open deal center first tab name should be first name and last name like web,
+do the same in mobile as well."* Mobile opened on a bare green pill showing only its `⋮` overflow menu;
+web shows **"testt wqwwqe"**.
+
+Cause is a create-path difference, not a naming bug. Web's `CalculatorTabs` renders `calculator.title`
+verbatim, and web **never POSTs a calculator** — the backend creates the appointment's first one already
+titled with the customer. Mobile creates its own (`useDynamicCalculators`) with a **numeric placeholder**
+title, and `CalculatorView.tabCalcs` blanks numeric titles (`/^\d+$/ → ''`, matching web's own
+`CalculatorTabs` line), so the pill rendered empty.
+
+`tabCalcs` now falls back to the customer's name for **tab 0 only**:
+
+```ts
+name: /^\d+$/.test(t.title) ? (idx === 0 ? customerTabName || '' : '') : t.title
+```
+
+fed by a new `customerTabName` prop — `` `${firstName} ${lastName}`.trim() `` from
+`DynamicDealCenterScreen`. Deliberately **not** the screen's existing `customerName`, which falls back to
+`'Lead Center'`; that word on a calculator tab would read as a calculator's name. An unnamed lead yields
+`''` and the tab stays blank exactly as before.
+
+⚠️ **DISPLAY ONLY — do not write this into `title`.** The stored title must stay numeric until the rep
+enters values, because that is what the rollout's `visibleCalculators` keys its `/^\d+$/` "hide empty
+calculators" filter on, and what `computeDerivedTitles` overwrites once a real name (`G+LF`, `(SM)`, the
+📦 package badge) can be derived. Naming the calculator on the server side of that line would put every
+untouched calculator into the rollout as a priceable line.
+
+⚠️ **Tab 0 only.** A second/third empty calculator all reading the same customer name would be worse than
+blank — the rep could not tell them apart. They keep the existing empty label until their contents name
+them.
+
 ### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
 
 `DynamicDealEditScreen.tsx` (the 4-step wizard the Deal pencil opens) previously dropped the rep
