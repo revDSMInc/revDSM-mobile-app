@@ -421,7 +421,13 @@ function collectDealCenterKeysForFieldId(fieldId: string, fieldOptions: DealCent
   const keys = new Set<string>();
   if (!fieldId) return [];
   keys.add(fieldId);
-  const opt = (fieldOptions || []).find((o) => o.key === fieldId || o.fieldId === fieldId);
+  // Canonical match first (unchanged). The legacyKey fallback covers an allocation
+  // that references a field by its legacy `name` instead of its id — without it that
+  // direction of the alias pair is left stale, which is the same shadowing bug the
+  // overlay below exists to prevent, just mirrored.
+  const opt =
+    (fieldOptions || []).find((o) => o.key === fieldId || o.fieldId === fieldId) ||
+    (fieldOptions || []).find((o) => o.legacyKey && o.legacyKey === fieldId);
   if (opt) {
     keys.add(opt.key);
     if (opt.legacyKey) keys.add(opt.legacyKey);
@@ -683,9 +689,29 @@ export function buildCalculatorDetails(
     });
   });
   // Overlay allocation-derived quantities (gutter footage, downspouts, …).
+  //
+  // The alias propagation here is REQUIRED, not defensive — without it a build edit
+  // can be silently unpriceable. `tierFor` reads `details[field.name] ?? details[field.id]`
+  // and `??` does NOT fall through on 0, so whichever alias `dealCenterData` already
+  // holds wins. A mobile calculator seeds EVERY schema field at `inputValue: 0`
+  // (`build-all-entries.ts`, web parity) and `buildDealCenterData` writes each entry
+  // under BOTH the field id and its legacy `name`. Writing only the raw ref therefore
+  // left `details[field.name] === 0` shadowing the overlaid quantity: the LeafFilter
+  // footage reached `base` under the id, `tierFor` read the 0 under the name, and the
+  // deal-edit wizard reported "No priced quantity change detected from the build"
+  // while the Job Build summary showed the change. It only bites when the calculator
+  // carries an entry for the field, which is why a deal created on WEB re-priced and
+  // the same edit on a MOBILE-created deal did not.
+  //
+  // ⚠️ Web (`dynamic-deal-pricing.js:234`) is byte-identical to the old code and has
+  // the same latent bug — this is a deliberate divergence, not a port gap.
   const allocMap = buildAllocationQtyMap(jobState, config, dealCenterData);
   Object.entries(allocMap).forEach(([ref, qty]) => {
-    if (qty) base[ref] = qty;
+    if (!qty) return;
+    base[ref] = qty;
+    collectDealCenterKeysForFieldId(ref, fieldOptions).forEach((alias) => {
+      if (alias !== ref) base[alias] = qty;
+    });
   });
   return base;
 }

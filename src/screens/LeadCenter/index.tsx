@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   View,
   Text,
@@ -46,6 +46,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { logEvent } from '../../services/api/LoggerService';
 import { logBuildJobInitiated, logCalculatorCreated, logPaymentMethodInherited } from '../../utils/activity-log/calculator-log';
 import { JobDocsSection } from '../../widgets/components/LeadCenter/JobDocsSection';
+import { DealBanners } from '../../widgets/components/LeadCenter/DealBanners';
 import { ToolsSection, MapSection } from '../../widgets/components/LeadCenter/OperationalSections';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
@@ -397,11 +398,40 @@ export default function LeadCenterPage() {
     setShowEmailOptions(false);
   };
 
+  // ── addendum drafts → the deal status banners (web `useJobBuilderDrafts`) ─────
+  // Web calls this on BOTH routes because its `AddendumsCard` also consumes the
+  // list; mobile has no addendums list on this screen (see the DealDetail note in
+  // CLAUDE.md), so the banners are the only consumer and the query is gated on
+  // `fromMyDeals` — web's `isDeal`. Drop the gate if that list is ever added.
+  const { data: dealDrafts = [] } = useQuery({
+    queryKey: ['lead-job-builder-drafts', lead?._id],
+    queryFn: async () => {
+      try {
+        const res = await LeadService.getJobBuilderDrafts(lead._id);
+        const body = res?.data;
+        const list = body?.data?.drafts || body?.data || body?.drafts || [];
+        return Array.isArray(list) ? list : [];
+      } catch (err) {
+        // Web parity: "Addendums are supplementary; a failure must not affect the
+        // page." An error must read as "no banner", never as a broken screen.
+        console.warn('[LeadCenter] drafts fetch failed:', err);
+        return [];
+      }
+    },
+    enabled: Boolean(fromMyDeals && lead?._id),
+    staleTime: 30_000,
+  });
+
   // Auto-refresh Lead data when screen is focused
   useFocusEffect(
     useCallback(() => {
       if (lead?._id) {
         queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
+        // Submitting an addendum CREATES a draft this list cannot otherwise learn
+        // about — the rep returns here straight from the edit wizard, so without
+        // this the banner only appears after leaving and re-opening the deal.
+        // (Web solves the same problem with `useJobBuilderDrafts`'s `refetch`.)
+        queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
         refetch(); // Ensure lead data is fresh when returning from other screens
       }
     }, [lead?._id, queryClient, refetch])
@@ -1190,6 +1220,12 @@ export default function LeadCenterPage() {
               />
             </View>
           </View>
+
+          {/* Status banners — under the tab bar and above EVERY tab, matching web
+              `lead-center-tabs.js`. Deal route only (`fromMyDeals` = web `isDeal`);
+              renders null when the deal is neither cancelled nor awaiting a
+              signature, so the normal lead path is untouched. */}
+          {fromMyDeals && <DealBanners lead={lead} drafts={dealDrafts} />}
 
           <View style={{ flex: 1 }}>
             {activeTab === 'job_docs' && (

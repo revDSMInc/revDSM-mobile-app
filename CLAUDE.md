@@ -130,7 +130,56 @@ and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons ar
   registered in the stack. Its **Addendums list** (tap an approved addendum → signed PDF via
   `getDraftAmendmentPdf`, plus the `DraftComparison` diff) has **no equivalent on the Lead Center
   screen** — Lead Center only shows the pending-signature banner (from its own `leadDraft` fetch).
-  Re-add that list under the contract card if reps need it.
+  Re-add that list under the contract card if reps need it. ⚠️ The **status banner** half of
+  that gap is now CLOSED — see "The Deal screen shows the pending-addendum / cancelled status
+  banners" below; the addendums LIST is still missing.
+
+### The Deal screen shows the pending-addendum / cancelled status banners
+
+Ticket: *"after submitting status should be show like this, in mobile this thing is missing"* — a web
+screenshot of the Deal screen carrying an amber **PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE** /
+*1 addendum awaiting customer approval* bar. Mobile showed nothing after submitting an addendum.
+
+**New `src/widgets/components/LeadCenter/DealBanners.tsx`** — a port of web
+`src/sections/deal/components/deal-banners.js`, rendering **JOB CANCELLED** (`#B91C1C`) and/or the amber
+`#F4B400` pending-addendum bar, both pluralized off the same `pendingCount`, and `null` when the deal is
+neither cancelled nor awaiting a signature. Both can show at once.
+
+Wired into `LeadCenter/index.tsx` exactly where web puts it — web renders it from
+`job-capture-images-view.js` (its Lead Center) as `banners={isDeal ? <DealBanners …/> : null}`, and
+`lead-center-tabs.js` places that *"under the tab bar and above every tab"*. So mobile renders it after
+the **Job docs / Map / Tools** row and OUTSIDE the tab switch: it is page-level status, visible on both
+tabs, gated on **`fromMyDeals`** (mobile's `isDeal`).
+
+⚠️ **This is NOT `ContractDetailsCard`'s `showPendingDraft` header, and neither replaces the other.**
+They are different endpoints and different features, and the ticket screenshot shows **both bars at
+once** — the amber one above, the card's own green `SALE - LEAD RESULTED` header still green below:
+
+| | source | what it means |
+|---|---|---|
+| `ContractDetailsCard` header swap | `GET lead/v1/{id}/draft` + `showStatus` | the remote-signature draft an **EditContractDetails** save creates |
+| `DealBanners` (new) | `GET lead/v1/{id}/job-builder-drafts` | **ADDENDUMS** — what the deal-edit wizard submits |
+
+Mobile already had the first and had never had the second. The banner's own copy already existed in
+`screens/DealDetail/index.tsx`, which is **UNREACHABLE** (My Deals navigates to `LeadCenter`), so the
+text was in the repo and could never render.
+
+- **The query is gated on `fromMyDeals`.** Web fetches drafts on both routes because its `AddendumsCard`
+  also consumes the list; mobile has no addendums list on this screen, so the banners are the only
+  consumer and the normal lead path makes no extra request. Drop the gate if that list is added.
+- **The focus effect invalidates it.** Submitting an addendum CREATES a draft, and the rep returns here
+  straight from the wizard — without the invalidate the banner would only appear after leaving and
+  re-opening the deal. (Web solves the same problem with `useJobBuilderDrafts`'s `refetch`.)
+- **A failed fetch returns `[]`, not an error state** (web: *"Addendums are supplementary; a failure must
+  not affect the page"*), so it degrades to "no banner" rather than breaking the Deal screen.
+
+Verified by calling the real component and walking its returned element tree: nothing rendered with no
+pending drafts (and with only accepted/declined ones), the ticket's singular copy, plural in **both**
+lines at 2+, case-insensitive `pending` matching that ignores null/missing statuses, cancelled alone,
+cancelled **and** pending together, `result` taking precedence over `status`, and junk input as a no-op.
+tsc 44 (baseline unchanged); the new file is eslint-clean and `LeadCenter/index.tsx` is byte-identical to
+its HEAD baseline (16 errors / 24 warnings, all pre-existing).
+
 
 ### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
 
@@ -670,6 +719,11 @@ unchanged, suite 926 passing.
 ✅ **Confirmed on device**: after these fixes a GUTTERS edit re-prices to **COST $3,848 / PAR $5,502 /
 RETAIL $8,195** — identical to web to the dollar on the same deal ("QS test"). The bridge works.
 
+> ✅ **CLOSED 2026-08-13 — see "a `0` in `dealCenterData` SHADOWED the overlay" below.** Everything from
+> here to that section is the trail of a hunt that kept landing on the wrong layer; the correlations it
+> records (Versa vs Micro Mesh, combination age, appointment-id shape) are all **coincidences** and are
+> retired there. Read the fix first, then this only if you need the history.
+
 ⚠️ **One case is still open — and it is NOT "LeafFilter-only".** Originally filed that way (the failing
 repro's GUTTERS tab read "No data entered", so LeafFilter was the only quantity in play). A payload
 comparison across four deals on the SAME config (`sales-portal` response, 2026-08-11) reframes it:
@@ -857,6 +911,81 @@ aren't schema field ids/names).
 `DynamicDealEditScreen` and **`DEAL_PRICING_DEBUG` is back to `false`**. The instrumentation itself
 (`describeBridge`, `allocMoved`, `EditedTiersResult.debug`) is retained behind the flag — flip it to
 `true` to diagnose, and read `allocMoved` first.
+
+#### ✅ ROOT CAUSE, FOUND AND FIXED (ticket 339, 2026-08-13): a `0` in `dealCenterData` SHADOWED the overlay
+
+Settled by an A/B the reporter set up: *"while i create the lead from web the above flow works fine in
+the mobile, but when i create lead from mobile the above not works."* Two `sales-portal` captures of the
+SAME company, config (`6a71a118…`) and product — **TEST LEAD** `6a7d6aad…` (job created on web) and
+**testt lead** `6a7d70c6…` (created on mobile). Editing the web-created one in mobile re-prices; the
+mobile-created one shows `PREVIOUS === NEW` and *"No priced quantity change detected from the build"*
+while the step-2 Job Build summary shows the footage the rep just entered.
+
+**⚠️ This RETIRES three earlier conclusions in this file. All three were mine and all three were wrong:**
+
+1. **"`MOVED none` ⇒ an unchanged tier is CORRECT, not a bug"** (the box directly above) — **false**, and
+   it is the sentence that closed the investigation prematurely. `allocMoved` reads the allocation qty
+   map, which is the layer *before* the schema lookup. The refs DID move; they were shadowed one layer
+   later. Read `allocMoved` **and** `priceable`, and treat `allocMoved` non-empty as "keep going".
+2. **"The LeafFilter tab is priced ONLY by grid column sums"** — still true as a config fact, and it is
+   what makes this tab the one that exposes the bug: its allocations have **no `dcField`**, so their only
+   calculator ref is the budget metric's, reached exclusively through the overlay this bug broke. A tab
+   with direct `dcField`s (Gutters) is priced by the *other* overlay, which already propagated aliases —
+   which is exactly why the Gutters edit re-priced to the dollar and LeafFilter never did.
+3. **"the edit wizard priced against `configuredSchemas`"** — a real port gap, correctly fixed, but not
+   this cause. It is already marked superseded above; this is the actual answer.
+
+**Mechanism.** `tierFor` resolves a schema field's quantity as
+`details[field.name] ?? details[field.id]`, and **`??` does NOT fall through on `0`**. Three facts meet:
+
+- A schema field's `id` is portal-generated (`field_1782973860922_36_i4ii`) and its `name` is a separate
+  authored string, so the two keys are distinct. `normalizeField` spreads the field through verbatim.
+- A **mobile** calculator seeds EVERY schema field at `inputValue: 0` (`build-all-entries.ts` — web
+  parity, deliberate), and `buildDealCenterData` writes each entry under **both** the id and the legacy
+  `name` (`collectKeysForEntry`). So `dealCenterData` holds `{ [id]: 0, [name]: 0 }` for every field.
+- `buildCalculatorDetails`' **allocation** overlay wrote `base[ref] = qty` and **only that key**, while the
+  field-map overlay ten lines above it already fanned out to every alias.
+
+Net: the LeafFilter footage reached `base` under the **id**, `tierFor` read the **name** and got the
+calculator's `0`, and the delta was exactly zero. It bites only when the calculator carries an entry for
+that field — which is precisely the web-created vs mobile-created split the reporter isolated.
+
+Fixed in `buildCalculatorDetails` (`utils/dynamic-deal-pricing.ts`): the allocation overlay now runs each
+ref through `collectDealCenterKeysForFieldId` and writes every alias, matching the overlay above it.
+`collectDealCenterKeysForFieldId` also gained a **`legacyKey` fallback** to its `find`, so an allocation
+that references a field by its legacy `name` updates the canonical id too — the same shadowing, mirrored.
+The canonical `key`/`fieldId` match is still attempted first, so existing resolution is byte-identical.
+
+⚠️ **`tierFor` was deliberately NOT touched.** Making it prefer the non-zero alias would diverge from web
+`calculateResultUtil` on the hottest path in pricing. Keeping the two aliases *in agreement* is the
+narrow fix; the lookup stays a faithful port.
+
+⚠️ **Deliberate divergence — do NOT "re-sync" this to web.** `dynamic-deal-pricing.js:234` is
+byte-for-byte the old mobile code and carries the identical latent bug. It is dormant there only while
+web's calculators don't seed the shadowing alias; **web will hit this the moment they do.**
+
+**Ruled out by direct test — do not re-investigate:**
+- **The saved build is NOT the difference.** The mobile-created lead stores
+  `comboGroups[…].combinations: []` for all four LeafFilter sections where the web-created one stores one
+  combination each — a real divergence, from mobile's deliberately stronger `comboHasEnteredData`
+  (`dynamic-job-state-storage.ts`), which drops a combo carrying only LOCKED/`defaultValue` values. Those
+  web combos hold exactly that (`6"`, `Versa`, `grid: null`), so **mobile is the more correct of the two.**
+  Driving the real `deserializeDynamicJobStateFromStorage` → `hydrateJobStateForPersistence` over both
+  captures gives **identical** hydrated states (`ensureTabStateShape` re-seeds the pruned combo), and a
+  555ft edit moves the **same 16 refs with the same delta** on both. The `[]` is harmless.
+- The `locationGrid` is **not** locked and is absent from `defaultItem`, so footage always survives the
+  prune. The prune has never eaten a measurement.
+- `jobBuilder.appointmentId === lead._id` on mobile-created leads (from
+  `fallbackAppointmentId: appointmentId || leadId` in `DynamicJobBuilderScreen`) — real, cosmetically
+  wrong, and **not** this bug: the wizard fetches the calculator by id (`getCalculator`), never via the
+  appointment. Worth its own ticket; it is not a pricing input.
+
+Verified by driving the REAL `computeEditedTiers` over the reporter's own config + both captured builds:
+the ticket repro (zero-seeded `dealCenterData` → **fails before the fix, passes after**), a web-shaped
+empty calculator still pricing, a **non-zero** prior calculator value being replaced rather than summed,
+the mirrored legacy-name allocation, and an untouched build still reporting `changed: false` with
+`next === previous` (no false positives). tsc 44 (baseline unchanged); eslint on the file identical to
+HEAD (0 errors, 2 pre-existing warnings).
 
 #### Also ported en route: web `ticket-1063` (2026-08-11)
 
