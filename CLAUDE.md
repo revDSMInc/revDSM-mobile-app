@@ -2364,6 +2364,86 @@ should not ride along with a logging fix.
 ⚠️ Do **not** "fix" this by pre-compressing the scan without asking: these are contract documents and
 image quality is a business decision, not a perf knob.
 
+### My Deals showed "No leads found" for ~10 s, and made a second API call web doesn't
+
+Ticket: *"can you check it's taking time to open the lead, in web when open my lead only one api call
+and it's open instantly, can you fix this issue?"* Device trace: `sales?page=1&limit=12` →
+**15,719 kB, 10.69 s**, plus a second `sales?page=2&limit=12` → 0.1 kB, 308 ms. Web issues only the
+first. Mid-load the screen showed the **empty state**, not a spinner.
+
+Three separate causes; two are ours and are fixed, one is not.
+
+#### (a) The page-2 request — a ref that lagged state by one render
+
+`onEndReached` was guarded by `loadingRef` / `hasMoreRef`, both mirrored from state via
+`useEffect(() => { loadingRef.current = loading })` — which lands a render **LATE**. FlatList fires
+`onEndReached` on mount whenever the content is shorter than the viewport, and an empty list always is,
+so the guard was still `false` when it fired and page 2 went out under page 1.
+
+- `inFlightRef` (renamed from `loadingRef`) and `hasMoreRef` are now written **synchronously** inside
+  `fetchDeals`, never through an effect.
+- `onEndReached` **returns early when the list is empty**. Pagination off a list with nothing in it is
+  never meaningful, and this is the belt to the braces above.
+
+#### (b) The empty state during the load — one `loading` flag shared by two requests
+
+This is what the rep actually saw. `showInitialLoader` is `loading && !refreshing && !leads.length`;
+page 2's fast empty response hit `finally { setLoading(false) }` while page 1 was still downloading, so
+the flag page 1 owned was cleared by a different request. `showInitialLoader` went false with `leads`
+still `[]`, the `ListEmptyComponent` rendered, and My Deals sat on **"No leads found"** for the rest of
+page 1's 10 s — then filled in.
+
+Fixed with a **`requestIdRef` generation counter**: only the newest request may write state, and a
+superseded one's `finally` clears nothing. A **new-filter/refresh** load is still allowed to start while
+one is in flight (it supersedes), because blocking it would strand the screen on the previous tab's
+results; only *pagination* is blocked.
+
+#### (c) ⚠️ The response is 99 % base64 — and that part is SERVER-side
+
+Measured on the reporter's own capture: a 12-deal page is **31 MB, of which 30.9 MB (99 %) is
+`data:` URIs** — every deal's signed agreements and order sheets inlined as
+`jobBuilder.dynamicJobState.agreements[0].files[0].blob` / `.url` / `.displayUrl`. `limit=12` is already
+the smallest page the screen uses.
+
+**No client change makes this fast.** Web is quicker on the same payload only because the browser's JSON
+parse is native and it has more headroom — it downloads the same bytes. The real fix is for the list
+endpoint to stop embedding document blobs (send `filePath`/`bucketName` and let the client sign on
+demand, as every other document surface already does). Until then the 10 s is the payload.
+
+#### ⚠️ …and the log sanitizer that was supposed to prevent this shrank it by 0 %
+
+`sanitizeForLog` (added when the order-sheet upload was traced to `console.log`, section above) had a
+depth bug that made it **completely ineffective on exactly this payload**:
+
+```ts
+if (!value || typeof value !== 'object' || depth >= LOG_MAX_DEPTH) return value;  // ← returns the SUBTREE
+```
+
+At the cutoff it returned the branch **verbatim and unvisited**, and the weight sits below it —
+`data.leads[i].jobBuilder.dynamicJobState.agreements[0].files[0].blob` is depth 7. So every base64
+document survived and went to `console.log`, which with React Native DevTools attached means pushing it
+across the **CDP websocket**. Measured: **31.14 MB in → 31.14 MB out.** The cutoff now returns
+`'<object>'` / `` `<array ${n}>` ``; the same response logs as **83 kB** (≈375× smaller).
+
+**Moved to `src/utils/sanitize-for-log.ts`** so it is testable — `services/api/index.ts` pulls in MMKV
+and cannot be imported under jest, which is precisely why this shipped untested. Reach for the util; the
+axios module just imports it.
+
+⚠️ This is dev-only (`if (!__DEV__) return`), so it never affected release builds — but every trace the
+team captures is a dev build, so it inflated the very measurements used to diagnose (a) and (b).
+
+Verified against the reporter's capture driven through the REAL function: 31.14 MB → 82.9 kB with no
+`data:image` surviving, a deep subtree replaced by `<object>`, a deep array labelled `<array 3>`, long
+strings truncated while short ones stay verbatim, arrays capped at 20 with the remainder marker,
+primitives/null/undefined untouched, the input left non-destructively intact, and a 5 MB string handled
+in <200 ms (proving only `.length` is read). tsc 44 (baseline unchanged); `sanitize-for-log.ts` and
+`services/api/index.ts` are eslint-clean and `MyDeals/index.tsx` is byte-identical to its HEAD baseline
+(27 warnings, 0 errors).
+
+⚠️ **(a) and (b) still want a device check** — they are render-timing behaviours and the repo cannot
+render-test (see the `ToolsSection` note above). Expect: ONE `sales?page=1` request, a spinner rather
+than "No leads found" throughout, and page 2 only on an actual scroll to the bottom.
+
 ### `FlashMessage.show()` rendered a TRANSPARENT banner for every non-danger type
 
 Ticket: *"when i click on edit splash message is not visible, looking like it's picking the header
