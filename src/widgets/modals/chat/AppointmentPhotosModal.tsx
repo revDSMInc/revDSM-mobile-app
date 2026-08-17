@@ -22,6 +22,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { LeadService } from '../../../services/api/leads';
 import { ENV } from '../../../config/env';
@@ -103,6 +104,12 @@ export default function AppointmentPhotosModal({
   onSend,
 }: AppointmentPhotosModalProps) {
   const { colors } = useTheme();
+  // This sheet is anchored to the BOTTOM of the screen (`justifyContent: 'flex-end'`),
+  // so its last row sits exactly where the Android gesture bar / 3-button navigation
+  // bar is drawn. The app is edge-to-edge (`KeyboardProvider` in `App.tsx` puts it
+  // there), which means nothing insets it automatically and the "Send N photos" button
+  // ends up underneath the system buttons — tappable only by luck.
+  const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(false);
   const [photos, setPhotos] = useState<SalesPhoto[]>([]);
@@ -318,7 +325,17 @@ export default function AppointmentPhotosModal({
               </Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={{ padding: 12 }} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              // With nothing selected there is no send bar beneath, so the LAST ROW of
+              // photos becomes the thing sitting under the nav bar — the same bug one
+              // element up. The inset is only added in that case, otherwise the send
+              // bar's own padding would double it.
+              contentContainerStyle={{
+                padding: 12,
+                paddingBottom: selectedKeys.length > 0 ? 12 : insets.bottom + 12,
+              }}
+              showsVerticalScrollIndicator={false}
+            >
               <View className="flex-row flex-wrap">
                 {photosForTab.map((photo) => {
                   const key = keyOf(photo);
@@ -372,7 +389,13 @@ export default function AppointmentPhotosModal({
 
           {/* Send bar */}
           {selectedKeys.length > 0 && (
-            <View className="px-5 py-3 border-t" style={{ borderColor: colors.border }}>
+            // `pt-3` in the class, bottom padding in `style`: the inset has to be ADDED
+            // to the base padding, so expressing it as a class would just be overridden
+            // and leave it ambiguous which one applied.
+            <View
+              className="px-5 pt-3 border-t"
+              style={{ borderColor: colors.border, paddingBottom: insets.bottom + 12 }}
+            >
               <TouchableOpacity
                 onPress={handleSend}
                 className="h-12 rounded-xl items-center justify-center flex-row"
