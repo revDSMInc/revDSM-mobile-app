@@ -161,22 +161,35 @@ export default function MyDeals({ navigation }: MyDealsProps) {
   const [hasMore, setHasMore] = useState(true);
   const [search, setSearch] = useState('');
 
-  const loadingRef = useRef(false);
+  // ⚠️ These guards MUST be refs written SYNCHRONOUSLY, not state mirrored by an
+  // effect. They used to be `useEffect(() => { loadingRef.current = loading })`,
+  // which lands a render LATE — and `onEndReached` fires on mount (FlatList fires it
+  // whenever the content is shorter than the viewport, which an empty list always is).
+  // So page 2 went out while page 1 was still in flight, and because both shared one
+  // `loading` flag, page 2's fast empty response ran `setLoading(false)` on the way
+  // out. `showInitialLoader` then went false with `leads` still empty, so My Deals sat
+  // on "No leads found" for the REST of page 1's download — the ~10 s the rep sees —
+  // and only filled in when the big response finally landed.
+  const inFlightRef = useRef(false);
   const hasMoreRef = useRef(true);
-
-  useEffect(() => {
-    loadingRef.current = loading;
-  }, [loading]);
-  useEffect(() => {
-    hasMoreRef.current = hasMore;
-  }, [hasMore]);
+  // Only the newest request may write state, so a superseded one (tab switched
+  // mid-flight) can never overwrite the list it no longer belongs to.
+  const requestIdRef = useRef(0);
 
   const fetchDeals = useCallback(
     async (pageNum: number, isNewFilter: boolean) => {
+      // Pagination never overlaps. A new-filter/refresh load is allowed through
+      // because it SUPERSEDES whatever is running — dropping it would strand the
+      // screen on the previous tab's results.
+      if (inFlightRef.current && !isNewFilter) return;
+
+      const requestId = ++requestIdRef.current;
+      inFlightRef.current = true;
       setLoading(true);
       try {
         const scheduleFilter = SCHEDULE_FILTERS[activeTab];
         const res = await LeadService.getSalesDeals({ page: pageNum, limit: PAGE_LIMIT, scheduleFilter });
+        if (requestId !== requestIdRef.current) return;
         const body = res?.data || {};
         const newLeads = body?.data?.leads || body?.leads || [];
         const pagination = body?.pagination || body?.data?.pagination || {};
@@ -187,14 +200,21 @@ export default function MyDeals({ navigation }: MyDealsProps) {
           (total > 0 ? Math.ceil(total / PAGE_LIMIT) : 0);
 
         setLeads((prev) => (isNewFilter ? newLeads : [...prev, ...newLeads]));
-        setHasMore(pageNum < totalPages);
+        hasMoreRef.current = pageNum < totalPages;
+        setHasMore(hasMoreRef.current);
       } catch (err) {
+        if (requestId !== requestIdRef.current) return;
         console.warn('[MyDeals] fetch failed:', err);
         if (isNewFilter) setLeads([]);
+        hasMoreRef.current = false;
         setHasMore(false);
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        // A superseded request must NOT clear the flags the live one owns.
+        if (requestId === requestIdRef.current) {
+          inFlightRef.current = false;
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [activeTab]
@@ -204,20 +224,26 @@ export default function MyDeals({ navigation }: MyDealsProps) {
   useEffect(() => {
     setLeads([]);
     setPage(1);
+    hasMoreRef.current = true;
     setHasMore(true);
     fetchDeals(1, true);
   }, [activeTab, fetchDeals]);
 
   const onEndReached = useCallback(() => {
-    if (loadingRef.current || !hasMoreRef.current) return;
+    // ⚠️ Never paginate an empty list. FlatList fires `onEndReached` on mount when the
+    // content is shorter than the viewport, so with nothing rendered yet this ran
+    // immediately and asked for page 2 before page 1 had returned.
+    if (!leads.length) return;
+    if (inFlightRef.current || !hasMoreRef.current) return;
     const next = page + 1;
     setPage(next);
     fetchDeals(next, false);
-  }, [page, fetchDeals]);
+  }, [leads.length, page, fetchDeals]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     setPage(1);
+    hasMoreRef.current = true;
     setHasMore(true);
     fetchDeals(1, true);
   }, [fetchDeals]);

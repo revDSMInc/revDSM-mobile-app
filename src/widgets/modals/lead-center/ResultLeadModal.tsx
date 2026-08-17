@@ -25,7 +25,10 @@ const REASONS_MAP: { [key: string]: string[] } = {
     'Not Able to Reach',
     'Not Interested',
   ],
-  reset: ['No Time', 'Leaving'],
+  // Verbatim from web `job-capture-images-sections/result-lead-drawer.js` RESULT_REASONS.
+  // `Not Home` was missing here and is FIRST on web — the most common reset reason, so
+  // reps were picking `No Time` for a door nobody answered.
+  reset: ['Not Home', 'No Time', 'Leaving'],
   notHit: ['Car Broke Down', 'Medical Emergency'],
 };
 

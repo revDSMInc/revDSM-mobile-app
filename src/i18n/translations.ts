@@ -203,6 +203,14 @@ export const en = {
     selectTagFree: 'PICK A TAG AND SHOOT — TAKE AS MANY AS YOU NEED',
     allShotsMatched: 'Done — All Shots Matched',
     donePhotosTaken: 'Done — {count} Taken',
+    /**
+     * Floating hint over the tag picker. The Done button is the LAST thing in the
+     * scroll, so on a short picker it sits below the fold with nothing to say it
+     * exists — this points at it (and scrolls to it when tapped).
+     */
+    scrollForDone: 'Scroll down for Done',
+    /** Same pill before the step is finishable — there is no Done to point at yet. */
+    scrollForMore: 'More tags below',
     repSale: 'REP (SALE)',
     tagMatched: '{tag} — Matched',
     extraShotHint: "Free shot — no ghost. Document anything the rep didn't.",
@@ -424,6 +432,8 @@ export const es: TranslationTree = {
     selectTagFree: 'ELIGE UNA ETIQUETA Y FOTOGRAFÍA — TOMA LAS QUE NECESITES',
     allShotsMatched: 'Listo — Todas las fotos coinciden',
     donePhotosTaken: 'Listo — {count} tomadas',
+    scrollForDone: 'Desliza hacia abajo para Listo',
+    scrollForMore: 'Más etiquetas abajo',
     repSale: 'REPRESENTANTE (VENTA)',
     tagMatched: '{tag} — Coincide',
     extraShotHint: 'Foto libre — sin guía. Documenta lo que el representante no captó.',

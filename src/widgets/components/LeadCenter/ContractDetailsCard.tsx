@@ -24,6 +24,11 @@ interface ContractDetailsCardProps {
   hasContract: boolean;
   isResulted: boolean;
   onAddDocument: (type: 'agreement' | 'orderSheet' | 'downPaymentReceipt') => void;
+  /**
+   * True when the lead has an addendum awaiting the customer's signature. Second
+   * source for the amber header — see the note beside `showPendingDraft`.
+   */
+  hasPendingAddendum?: boolean;
 }
 
 const cleanNumber = (val: any): number => {
@@ -49,16 +54,55 @@ export const ContractDetailsCard = ({
   hasContract,
   isResulted,
   onAddDocument,
+  hasPendingAddendum = false,
 }: ContractDetailsCardProps) => {
   const navigation = useNavigation<any>();
 
-  if (!isResulted || !hasContract) return null;
+  // Web `sections/job/components/contract-details.js` splits these two cases, and mobile
+  // used to collapse both into `return null`:
+  //   !isResulted  → nothing at all (a scheduled / self-gen lead has no outcome yet)
+  //   !hasContract → the EMPTY CARD below. The lead WAS resulted, just not as a
+  //                  sale/demo — Reset, No Demo, Not Hit, Cancelled — so there are
+  //                  genuinely no contract details, and saying so beats a silent gap
+  //                  where the card was. This is what the rep sees after a Reset.
+  if (!isResulted) return null;
+
+  if (!hasContract) {
+    return (
+      <View
+        className="bg-white rounded-2xl mb-6 shadow-sm border border-gray-100 items-center justify-center px-6 py-10"
+        style={{ backgroundColor: isDark ? colors.card : '#FFFFFF' }}
+      >
+        <Icon name="file-remove-outline" size={48} color="#919EAB" />
+        <Text className="text-[15px] font-semibold mt-3 text-center" style={{ color: '#637381' }}>
+          No contract details available
+        </Text>
+      </View>
+    );
+  }
 
   const statusStr = (lead?.status || outcomeData?.status || outcomeData?.result || '').toLowerCase().replace(/[^a-z]/g, '');
   const isDemo = statusStr === 'demo' || statusStr === 'demonosale';
 
+  // The card header IS the deal's pending-signature status, and it has TWO sources —
+  // the amber bar must show while EITHER is awaiting the customer, and flip back to
+  // the green `✓ … - LEAD RESULTED` the moment they approve:
+  //
+  //  1. `leadDraft` — `GET lead/v1/{id}/draft`, created ONLY by an EditContractDetails
+  //     save (`upsertLeadDraft` has exactly one caller). Keeps its `showStatus` gate,
+  //     which is that flow's own opt-in.
+  //  2. `hasPendingAddendum` — a pending row in `GET lead/v1/{id}/job-builder-drafts`,
+  //     which is what the My Deals deal-edit wizard submits. The wizard does NOT write
+  //     a leadDraft, so before this the header stayed GREEN after an addendum while the
+  //     addendums list right below it read "Pending" — the two disagreed on one screen.
+  //
+  // ⚠️ No `showStatus` gate on the addendum arm: that flag belongs to the contract-edit
+  // draft shape and a job-builder draft does not carry it, so requiring it would make
+  // this branch permanently dead.
   const draftStatus = String(leadDraft?.status || '').toLowerCase();
-  const showPendingDraft = draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');
+  const showLeadDraftPending =
+    draftStatus === 'pending' && (leadDraft?.showStatus === true || leadDraft?.showStatus === 'true');
+  const showPendingDraft = showLeadDraftPending || hasPendingAddendum;
 
   return (
     <View

@@ -129,57 +129,195 @@ and **Msg Ops/IM**). Only the *edit* behaviour differs, and no result buttons ar
 - **`src/screens/DealDetail/` is now UNREACHABLE** (nothing navigates to it) but is still
   registered in the stack. Its **Addendums list** (tap an approved addendum → signed PDF via
   `getDraftAmendmentPdf`, plus the `DraftComparison` diff) has **no equivalent on the Lead Center
-  screen** — Lead Center only shows the pending-signature banner (from its own `leadDraft` fetch).
-  Re-add that list under the contract card if reps need it. ⚠️ The **status banner** half of
-  that gap is now CLOSED — see "The Deal screen shows the pending-addendum / cancelled status
-  banners" below; the addendums LIST is still missing.
+  screen**. ✅ **BOTH halves of that gap are now CLOSED** — the pending-signature status in
+  "The Deal screen's pending-signature status" below, and the addendums LIST itself in the
+  follow-up right after it. The only piece still missing is `DealDetail`'s `DraftComparison`
+  drill-in: on the Lead Center a PENDING addendum warns rather than opening its changes.
 
-### The Deal screen shows the pending-addendum / cancelled status banners
+### The Deal screen's pending-signature status — ONE amber header, back to green on approval
 
-Ticket: *"after submitting status should be show like this, in mobile this thing is missing"* — a web
-screenshot of the Deal screen carrying an amber **PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE** /
-*1 addendum awaiting customer approval* bar. Mobile showed nothing after submitting an addendum.
+Ticket: *"after submitting status should be show like this, in mobile this thing is missing"* (a web
+screenshot of an amber **PENDING ADDENDUM - AWAITING CUSTOMER SIGNATURE** bar; mobile showed nothing
+after submitting an addendum), then the design correction: *"a bit change in the design of the status,
+it should be like above, and once the user approved it will come back to the same green"*.
 
-**New `src/widgets/components/LeadCenter/DealBanners.tsx`** — a port of web
-`src/sections/deal/components/deal-banners.js`, rendering **JOB CANCELLED** (`#B91C1C`) and/or the amber
-`#F4B400` pending-addendum bar, both pluralized off the same `pendingCount`, and `null` when the deal is
-neither cancelled nor awaiting a signature. Both can show at once.
+**Final design (the rep's answer to a direct question, not an inference): the Contract Details card
+header IS the deal's single pending indicator.** Amber
+`SALE - PENDING CUSTOMER SIGNATURE` / *Awaiting Amendment Approval: • Contract Pricing* while a
+signature is outstanding, flipping to the green `✓ <STATUS> - LEAD RESULTED` the moment the customer
+approves. No second bar.
 
-Wired into `LeadCenter/index.tsx` exactly where web puts it — web renders it from
-`job-capture-images-view.js` (its Lead Center) as `banners={isDeal ? <DealBanners …/> : null}`, and
-`lead-center-tabs.js` places that *"under the tab bar and above every tab"*. So mobile renders it after
-the **Job docs / Map / Tools** row and OUTSIDE the tab switch: it is page-level status, visible on both
-tabs, gated on **`fromMyDeals`** (mobile's `isDeal`).
+#### What actually drives it
 
-⚠️ **This is NOT `ContractDetailsCard`'s `showPendingDraft` header, and neither replaces the other.**
-They are different endpoints and different features, and the ticket screenshot shows **both bars at
-once** — the amber one above, the card's own green `SALE - LEAD RESULTED` header still green below:
+`ContractDetailsCard`'s `showPendingDraft` now has **two** sources, either of which shows amber:
 
-| | source | what it means |
+| # | source | written by |
 |---|---|---|
-| `ContractDetailsCard` header swap | `GET lead/v1/{id}/draft` + `showStatus` | the remote-signature draft an **EditContractDetails** save creates |
-| `DealBanners` (new) | `GET lead/v1/{id}/job-builder-drafts` | **ADDENDUMS** — what the deal-edit wizard submits |
+| 1 | `leadDraft` — `GET lead/v1/{id}/draft`, **plus its `showStatus` gate** | ONLY an **EditContractDetails** save (`upsertLeadDraft` has exactly one caller) |
+| 2 | `hasPendingAddendum` — a pending row in `GET lead/v1/{id}/job-builder-drafts` | the **My Deals deal-edit wizard** (addendums) |
 
-Mobile already had the first and had never had the second. The banner's own copy already existed in
-`screens/DealDetail/index.tsx`, which is **UNREACHABLE** (My Deals navigates to `LeadCenter`), so the
-text was in the repo and could never render.
+Source 2 is new and is the whole bug: **the wizard never writes a `leadDraft`**, so before this the
+header stayed GREEN after submitting an addendum while the addendums list directly below it read
+`Pending` — two elements on one screen disagreeing about the same deal.
 
-- **The query is gated on `fromMyDeals`.** Web fetches drafts on both routes because its `AddendumsCard`
-  also consumes the list; mobile has no addendums list on this screen, so the banners are the only
-  consumer and the normal lead path makes no extra request. Drop the gate if that list is added.
-- **The focus effect invalidates it.** Submitting an addendum CREATES a draft, and the rep returns here
-  straight from the wizard — without the invalidate the banner would only appear after leaving and
-  re-opening the deal. (Web solves the same problem with `useJobBuilderDrafts`'s `refetch`.)
+⚠️ **The addendum arm must NOT inherit the `showStatus` gate.** That flag belongs to the
+contract-edit draft shape; a job-builder draft does not carry it, so requiring it would make the whole
+branch permanently dead and silently restore the bug. Tested.
+
+#### `DealBanners` is now the CANCELLED bar only — a deliberate divergence from web
+
+`src/widgets/components/LeadCenter/DealBanners.tsx` began as a faithful port of web
+`src/sections/deal/components/deal-banners.js` (rendered from `job-capture-images-view.js` gated on
+`isDeal`; `lead-center-tabs.js` places it *"under the tab bar and above every tab"*, which is why mobile
+renders it after the **Job docs / Map / Tools** row and OUTSIDE the tab switch, gated on `fromMyDeals`).
+
+⚠️ **Web's pending-addendum bar is deliberately NOT rendered.** Web shows two independent indicators for
+one fact — that bar AND the card's own amber header — and on a phone the two sat within half a screen of
+each other saying the same thing. Do not "restore parity" here; it was removed on request.
+
+The **JOB CANCELLED** bar stays: nothing else on the screen reports it, and a cancelled deal would
+otherwise still show a green *LEAD RESULTED* header.
+
+#### Draft status predicates live in `src/utils/addendum-drafts.ts`
+
+`isDraftApproved` / `isPendingDraft` / `countPendingDrafts` / `hasPendingDraft` — pure and RN-free, for
+the reason `utils/inspection-photos.ts` and `utils/job-change-summary.ts` exist: all three consumers
+(`AddendumsCard`, `DealBanners`, `JobDocsSection`) pull in React Native and are untestable under jest
+here. Keeping the rules in one file is also what stops "pending" meaning two different things on two
+surfaces of the same screen.
+
+- **One fetch, shared.** `LeadCenter` holds the single `useQuery` and passes `drafts` down; nothing
+  re-fetches. Mirrors web's shared `useJobBuilderDrafts`.
+- **The focus effect invalidates it.** Submitting an addendum CREATES the draft and the rep returns here
+  straight from the wizard — without the invalidate the header would only turn amber after leaving and
+  re-opening the deal. (Web solves the same problem with that hook's `refetch`.)
 - **A failed fetch returns `[]`, not an error state** (web: *"Addendums are supplementary; a failure must
-  not affect the page"*), so it degrades to "no banner" rather than breaking the Deal screen.
+  not affect the page"*), so it degrades to a green header rather than breaking the Deal screen.
 
-Verified by calling the real component and walking its returned element tree: nothing rendered with no
-pending drafts (and with only accepted/declined ones), the ticket's singular copy, plural in **both**
-lines at 2+, case-insensitive `pending` matching that ignores null/missing statuses, cancelled alone,
-cancelled **and** pending together, `result` taking precedence over `status`, and junk input as a no-op.
-tsc 44 (baseline unchanged); the new file is eslint-clean and `LeadCenter/index.tsx` is byte-identical to
-its HEAD baseline (16 errors / 24 warnings, all pre-existing).
+Verified against the exact `showPendingDraft` expression: a pending addendum turning the header amber
+**with no `leadDraft` at all**, approval (`accepted`/`signed`) returning it to green, a declined
+addendum reading green, one-approved-plus-one-pending staying amber, the `showStatus` gate still
+suppressing the EditContractDetails arm (and still honouring the stringy `'true'`), the addendum arm
+NOT inheriting that gate, both-pending, and null/undefined input as green. tsc 44 (baseline unchanged);
+`utils/addendum-drafts.ts` is eslint-clean, and `LeadCenter/index.tsx` + `JobDocsSection.tsx` together
+are byte-identical to their HEAD baseline (79 problems: 26 errors / 53 warnings, all pre-existing).
 
+#### …and the Addendums list, in web's exact slot
+
+Follow-up, same screen: *"you also have to show this like web in the deal center"* — a web screenshot
+of an **Addendum (1)** card holding a `Pending` chip, `Addendum #1`, its date and a chevron, plus the
+toast *"The addendum PDF is available once the customer approves it"* from tapping that pending row.
+
+**New `src/widgets/components/LeadCenter/AddendumsCard.tsx`** — a port of web
+`src/sections/deal/components/addendums-card.js`. Title `Addendum{s} (N)`; each row is
+`StatusChip · Addendum #N · MM/dd/yyyy` with a right-hand **`file-pdf-box`** when approved and a
+**`chevron-right`** otherwise. Returns `null` with no addendums.
+
+**Placement is web's, not "at the end".** Web threads it as `docsExtras` into `job-docs-tab.js`, which
+renders it between the **contract card** and the **`N/M slots • N photos`** progress row — exactly
+where the screenshot shows it, above `Start Taking Photos`. Mobile renders it in the same slot inside
+`JobDocsSection`, so it is INSIDE the Job docs tab, not a sibling of it.
+
+⚠️ **The drafts query is no longer gated on `fromMyDeals`** (it was, one ticket ago, when the banners
+were the only consumer). Web's own note at the call site: *"The addendums list renders on both routes;
+it is null when the lead has none, so it costs the Lead Center nothing when there are no addendums."*
+**Only the BANNERS stay deal-only.** One `useQuery` in `LeadCenter` feeds both, mirroring web's shared
+`useJobBuilderDrafts` — `drafts` is passed down to `JobDocsSection` rather than re-fetched, so the two
+surfaces can never disagree and there is still exactly one request.
+
+**Tap behaviour is web's, including the dead end.** Approved → `getDraftAmendmentPdf` → the app's PDF
+viewer via the existing `onOpenPdf`. Anything else → the warning flash in the screenshot. Two pure
+exports carry the decisions so the guards are testable — `isDraftApproved` and
+**`resolveAddendumTap(draft, pdfLoadingDraftId)` → `'ignore' | 'not-approved' | 'open-pdf'`**:
+
+- ⚠️ **The in-flight guard OUTRANKS the approval check**, deliberately. `/amendment-pdf` **generates**
+  the document on demand, so a second tap is a second Puppeteer run, a second S3 upload and two
+  `amendment` documents for one addendum. Reversing the order would let a pending row toast mid-build.
+- While one is building, that row reads **"Preparing PDF…"** with a spinner and a green border and
+  **the other rows dim to 0.6** — web's behaviour, so the others read as unavailable rather than
+  silently swallowing a tap. The first open of an addendum approved before this feature existed
+  genuinely builds the PDF and takes a few seconds, which is why the row says so instead of just spinning.
+
+⚠️ **Mobile deliberately does NOT open the change comparison for a pending addendum here**, though it
+could: the unreachable `screens/DealDetail` did that, and `widgets/components/chat/JobChangeDetailsModal`
+already implements it (before/after + the approved→PDF hand-off, with the 409 fallback). Web's toast is a
+dead end and was ported as-is because the ticket asked for web's behaviour; wiring that modal to the
+`'not-approved'` branch is a one-line change if reps want to read a pending addendum from the deal.
+
+Verified: `isDraftApproved` across all three approved spellings (case-insensitive) and rejecting
+pending/declined/missing; the chip's four known labels plus an unknown status shown verbatim and the
+`Draft` fallback, each with both colours; and every `resolveAddendumTap` branch — approved→PDF,
+pending/declined→warn, **a second tap ignored even on an approved row**, a mid-build pending tap ignored
+(guard ordering), and an id-less draft inert. tsc 44 (baseline unchanged); both new files are eslint
+error-free and `JobDocsSection.tsx` is byte-identical to its HEAD baseline (10 errors / 29 warnings).
+
+
+### Result Lead ▸ Reset was missing "Not Home", and a reset lead showed no contract card at all
+
+Ticket: *"Result lead - reset - add 'Not Home' like web; and after reset 'No contract details
+available' card should also be show like this."* Two unrelated one-liners on the same flow.
+
+**1. The reason list.** `REASONS_MAP.reset` in `widgets/modals/lead-center/ResultLeadModal.tsx` held
+`['No Time', 'Leaving']`; web `job-capture-images-sections/result-lead-drawer.js` has
+**`['Not Home', 'No Time', 'Leaving']`** — and `Not Home` is FIRST, being the commonest reset reason, so
+reps were filing a door nobody answered as `No Time`. The other two lists (`noDemo`, `notHit`) were
+already verbatim matches; only this one had drifted.
+
+**2. The empty contract card.** Web `sections/job/components/contract-details.js` splits TWO cases that
+mobile collapsed into a single `return null`:
+
+```js
+if (!isResulted) return;                 // scheduled / self-gen — no outcome yet
+if (!hasDetails) return <EmptyCard/>;    // resulted, but not a sale/demo
+```
+
+`ContractDetailsCard` guarded on `if (!isResulted || !hasContract) return null`, so after a **Reset**
+(or No Demo / Not Hit / Cancelled) the card vanished entirely and left a silent gap where it had been.
+It now renders web's placeholder — a centred `file-document-remove-outline` at 48px over
+**"No contract details available"**.
+
+⚠️ **The two flags were already correct and needed no change** — `isResulted` (`JobDocsSection`) accepts
+`reset`/`nothome`/`nothit`/`nodemo`/`cancelled`/`rescheduled` alongside sale/demo, while `hasContract` is
+`sale`/`demo`/`demonosale` only. So `isResulted && !hasContract` was already exactly web's `!hasDetails`
+branch; the card simply never rendered it. Don't "fix" this by widening `hasContract` — that would put a
+$0 contract card on every reset lead.
+
+⚠️ The empty state deliberately carries **no Add Document action** (web's doesn't either): a lead with no
+contract has nothing to attach documents to, and the Job Docs tab's own photo/Manage Photos actions below
+it are unaffected.
+
+### The first Deal Center tab is labelled with the customer's name
+
+Ticket: *"by default if we open deal center first tab name should be first name and last name like web,
+do the same in mobile as well."* Mobile opened on a bare green pill showing only its `⋮` overflow menu;
+web shows **"testt wqwwqe"**.
+
+Cause is a create-path difference, not a naming bug. Web's `CalculatorTabs` renders `calculator.title`
+verbatim, and web **never POSTs a calculator** — the backend creates the appointment's first one already
+titled with the customer. Mobile creates its own (`useDynamicCalculators`) with a **numeric placeholder**
+title, and `CalculatorView.tabCalcs` blanks numeric titles (`/^\d+$/ → ''`, matching web's own
+`CalculatorTabs` line), so the pill rendered empty.
+
+`tabCalcs` now falls back to the customer's name for **tab 0 only**:
+
+```ts
+name: /^\d+$/.test(t.title) ? (idx === 0 ? customerTabName || '' : '') : t.title
+```
+
+fed by a new `customerTabName` prop — `` `${firstName} ${lastName}`.trim() `` from
+`DynamicDealCenterScreen`. Deliberately **not** the screen's existing `customerName`, which falls back to
+`'Lead Center'`; that word on a calculator tab would read as a calculator's name. An unnamed lead yields
+`''` and the tab stays blank exactly as before.
+
+⚠️ **DISPLAY ONLY — do not write this into `title`.** The stored title must stay numeric until the rep
+enters values, because that is what the rollout's `visibleCalculators` keys its `/^\d+$/` "hide empty
+calculators" filter on, and what `computeDerivedTitles` overwrites once a real name (`G+LF`, `(SM)`, the
+📦 package badge) can be derived. Naming the calculator on the server side of that line would put every
+untouched calculator into the rollout as a priceable line.
+
+⚠️ **Tab 0 only.** A second/third empty calculator all reading the same customer name would be worse than
+blank — the rep could not tell them apart. They keep the existing empty label until their contents name
+them.
 
 ### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
 
@@ -2357,6 +2495,86 @@ should not ride along with a logging fix.
 
 ⚠️ Do **not** "fix" this by pre-compressing the scan without asking: these are contract documents and
 image quality is a business decision, not a perf knob.
+
+### My Deals showed "No leads found" for ~10 s, and made a second API call web doesn't
+
+Ticket: *"can you check it's taking time to open the lead, in web when open my lead only one api call
+and it's open instantly, can you fix this issue?"* Device trace: `sales?page=1&limit=12` →
+**15,719 kB, 10.69 s**, plus a second `sales?page=2&limit=12` → 0.1 kB, 308 ms. Web issues only the
+first. Mid-load the screen showed the **empty state**, not a spinner.
+
+Three separate causes; two are ours and are fixed, one is not.
+
+#### (a) The page-2 request — a ref that lagged state by one render
+
+`onEndReached` was guarded by `loadingRef` / `hasMoreRef`, both mirrored from state via
+`useEffect(() => { loadingRef.current = loading })` — which lands a render **LATE**. FlatList fires
+`onEndReached` on mount whenever the content is shorter than the viewport, and an empty list always is,
+so the guard was still `false` when it fired and page 2 went out under page 1.
+
+- `inFlightRef` (renamed from `loadingRef`) and `hasMoreRef` are now written **synchronously** inside
+  `fetchDeals`, never through an effect.
+- `onEndReached` **returns early when the list is empty**. Pagination off a list with nothing in it is
+  never meaningful, and this is the belt to the braces above.
+
+#### (b) The empty state during the load — one `loading` flag shared by two requests
+
+This is what the rep actually saw. `showInitialLoader` is `loading && !refreshing && !leads.length`;
+page 2's fast empty response hit `finally { setLoading(false) }` while page 1 was still downloading, so
+the flag page 1 owned was cleared by a different request. `showInitialLoader` went false with `leads`
+still `[]`, the `ListEmptyComponent` rendered, and My Deals sat on **"No leads found"** for the rest of
+page 1's 10 s — then filled in.
+
+Fixed with a **`requestIdRef` generation counter**: only the newest request may write state, and a
+superseded one's `finally` clears nothing. A **new-filter/refresh** load is still allowed to start while
+one is in flight (it supersedes), because blocking it would strand the screen on the previous tab's
+results; only *pagination* is blocked.
+
+#### (c) ⚠️ The response is 99 % base64 — and that part is SERVER-side
+
+Measured on the reporter's own capture: a 12-deal page is **31 MB, of which 30.9 MB (99 %) is
+`data:` URIs** — every deal's signed agreements and order sheets inlined as
+`jobBuilder.dynamicJobState.agreements[0].files[0].blob` / `.url` / `.displayUrl`. `limit=12` is already
+the smallest page the screen uses.
+
+**No client change makes this fast.** Web is quicker on the same payload only because the browser's JSON
+parse is native and it has more headroom — it downloads the same bytes. The real fix is for the list
+endpoint to stop embedding document blobs (send `filePath`/`bucketName` and let the client sign on
+demand, as every other document surface already does). Until then the 10 s is the payload.
+
+#### ⚠️ …and the log sanitizer that was supposed to prevent this shrank it by 0 %
+
+`sanitizeForLog` (added when the order-sheet upload was traced to `console.log`, section above) had a
+depth bug that made it **completely ineffective on exactly this payload**:
+
+```ts
+if (!value || typeof value !== 'object' || depth >= LOG_MAX_DEPTH) return value;  // ← returns the SUBTREE
+```
+
+At the cutoff it returned the branch **verbatim and unvisited**, and the weight sits below it —
+`data.leads[i].jobBuilder.dynamicJobState.agreements[0].files[0].blob` is depth 7. So every base64
+document survived and went to `console.log`, which with React Native DevTools attached means pushing it
+across the **CDP websocket**. Measured: **31.14 MB in → 31.14 MB out.** The cutoff now returns
+`'<object>'` / `` `<array ${n}>` ``; the same response logs as **83 kB** (≈375× smaller).
+
+**Moved to `src/utils/sanitize-for-log.ts`** so it is testable — `services/api/index.ts` pulls in MMKV
+and cannot be imported under jest, which is precisely why this shipped untested. Reach for the util; the
+axios module just imports it.
+
+⚠️ This is dev-only (`if (!__DEV__) return`), so it never affected release builds — but every trace the
+team captures is a dev build, so it inflated the very measurements used to diagnose (a) and (b).
+
+Verified against the reporter's capture driven through the REAL function: 31.14 MB → 82.9 kB with no
+`data:image` surviving, a deep subtree replaced by `<object>`, a deep array labelled `<array 3>`, long
+strings truncated while short ones stay verbatim, arrays capped at 20 with the remainder marker,
+primitives/null/undefined untouched, the input left non-destructively intact, and a 5 MB string handled
+in <200 ms (proving only `.length` is read). tsc 44 (baseline unchanged); `sanitize-for-log.ts` and
+`services/api/index.ts` are eslint-clean and `MyDeals/index.tsx` is byte-identical to its HEAD baseline
+(27 warnings, 0 errors).
+
+⚠️ **(a) and (b) still want a device check** — they are render-timing behaviours and the repo cannot
+render-test (see the `ToolsSection` note above). Expect: ONE `sales?page=1` request, a spinner rather
+than "No leads found" throughout, and page 2 only on an actual scroll to the bottom.
 
 ### `FlashMessage.show()` rendered a TRANSPARENT banner for every non-danger type
 

@@ -148,6 +148,10 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
   const customerName = cd.firstName
     ? `${cd.firstName} ${cd.lastName || ''}`.trim()
     : lead?.title || lead?.customerName || 'Lead Center';
+  // The customer's name ALONE — no `'Lead Center'` fallback, because this one labels the
+  // first calculator tab and a generic word there would read as a calculator name.
+  // Empty string when the lead has no name, which leaves the tab blank as before.
+  const customerTabName = `${cd.firstName || ''} ${cd.lastName || ''}`.trim();
   const leadTime = lead?.leadTime || '';
 
   const handleResultJob = useCallback((calculatorId: string, result: 'sale' | 'demo', price?: number, paymentMethod?: string, downPayment?: number) => {
@@ -478,6 +482,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       ) : (
         <CalculatorView
           verticals={verticals}
+          customerTabName={customerTabName}
           pricingConfig={pricingConfig}
           entries={activeTab?.entries || {}}
           onEntryChange={handleEntryChange}

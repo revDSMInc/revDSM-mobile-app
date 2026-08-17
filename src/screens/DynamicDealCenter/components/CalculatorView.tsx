@@ -68,6 +68,12 @@ interface CalculatorViewProps {
   appointmentId?: string;
   /** Lowe's lead flag — drives the job-tracker modal's payment-method grouping. */
   isLowesLead?: boolean;
+  /**
+   * The customer's `"<first> <last>"`, used as the FIRST tab's label while that
+   * calculator is still untitled (web parity — see `tabCalcs`). Empty when the lead
+   * carries no name, which leaves the tab blank exactly as before.
+   */
+  customerTabName?: string;
 }
 
 type CatStyle = SchemaStyle;
@@ -580,6 +586,7 @@ export function CalculatorView({
   verticals, entries, onEntryChange, onClearSection, readOnly = false,
   tabs = [], activeTabId, onTabSelect, onAddTab, onDuplicateTab, onDeleteTab, onReorderTabs, onViewAll,
   price = 0, drops = [], appointmentId, isLowesLead = false, pricingConfig, plans, defaultMethod,
+  customerTabName = '',
 }: CalculatorViewProps) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const { user } = useAuth();
@@ -672,13 +679,28 @@ export function CalculatorView({
   }, [entries]);
 
   // Adapt the id-based tab model to the index-based draggable-tabs component.
-  const tabCalcs = useMemo(() => tabs.map((t) => {
+  const tabCalcs = useMemo(() => tabs.map((t, idx) => {
     const pkg = describeFullPackage(t.entries || {}, verticals);
     return {
     _id: t.id,
-    // Numeric draft titles are internal identifiers. New tabs intentionally
-    // remain untitled and display only their overflow menu.
-    name: /^\d+$/.test(t.title) ? '' : t.title,
+    // Numeric draft titles are internal identifiers, so they never render as-is.
+    //
+    // The FIRST tab falls back to the customer's name instead of showing nothing,
+    // matching web: there the backend creates the appointment's calculator already
+    // titled with the customer, and `CalculatorTabs` renders `calculator.title`
+    // verbatim. Mobile POSTs its own calculator with a numeric placeholder title
+    // (`useDynamicCalculators`), so the deal center opened on an unlabelled pill.
+    //
+    // ⚠️ DISPLAY ONLY — the stored `title` is deliberately untouched. It stays
+    // numeric until the rep enters values, which is what `visibleCalculators` keys
+    // its `/^\d+$/` "hide empty calculators" filter on in the rollout, and what
+    // `computeDerivedTitles` overwrites once a real name can be derived. Writing the
+    // customer's name into `title` would put every untouched calculator into the
+    // rollout as a priceable line.
+    //
+    // Only tab 0: a second, third… empty calculator all reading the same customer
+    // name would be worse than blank, since the rep could not tell them apart.
+    name: /^\d+$/.test(t.title) ? (idx === 0 ? customerTabName || '' : '') : t.title,
     isRolloutConfirmed: t.isRolloutConfirmed,
     // Gutter + LeafFilter + Soffit + Trim wrap [Fascia] all entered → the tab shows a
     // package icon + ⓘ instead of the `G+VMax+S+FWrap` letters, plus `+<extras>` for
@@ -690,7 +712,7 @@ export function CalculatorView({
     // as one. The dynamic flow opts out of that check, but the name would still be a trap.
     packageExtras: pkg.extras,
     };
-  }), [tabs, verticals]);
+  }), [tabs, verticals, customerTabName]);
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeTabId));
   const menuTab = menuIdx !== null ? tabs[menuIdx] : null;
 
