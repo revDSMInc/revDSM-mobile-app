@@ -356,6 +356,51 @@ unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical t
 baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
 3 errors / 115 warnings).
 
+### Investment Center spotlight: blurred backdrop, smaller card type, no strike-through
+
+Ticket, three unrelated items against the enlarged (spotlight) program cards:
+*"1- Make these circled fonts smaller so they fit more comfortably in the space. 2- Remove this line in
+the middle of the one year program. 3- Whenever the card is opened in the large view it shouldn't be
+visible in the background — you can make it blury like we already using in deal center."*
+
+**1. Type is sized for the ZOOMED card, not the in-place one.** `SpotlightOverlay` renders the *same*
+`ProgramCard` at roughly **2× scale** (`finalScale`), so type that merely fits in place reads as
+edge-to-edge enlarged — which is what the ticket's screenshot shows for **IN-HOME PRE ORDER** and
+**✓ Job Builder Submitted**. Both were flush against their container with **no horizontal padding at
+all**, so the fix is padding as much as point size: the header title goes `13 → 11` with
+`paddingHorizontal: 14` on the bar, and the opt-in button's label `10 → 9` (submitted) / `12 → 11`
+with `paddingHorizontal: 4 → 12`, its check glyph `12 → 11`.
+
+**2. The line was the crossed-off STRIKE, not the divider.** `ProgramCard`'s crossed-off overlay drew
+`position:'absolute', top:'50%', height:2, #94A3B8` across the card — and at 50% it lands squarely on
+the **Grand Total**, the one number that has to stay readable. Enlarged it stops reading as a strike
+and reads as a rule. Removed; the state is still unmistakable from the clip layer's `opacity: 0.45`
+plus the `#F1F5F9` body.
+
+⚠️ **Do not confuse it with the divider above Grand Total** (`height: 1, #E2E8F0, marginVertical: 8`),
+which is **web parity** — `program-card.js` renders a dotted `<Divider sx={{ mb: 1.25 }} />` in exactly
+that slot. That one stays. Web has no `crossedOff` concept at all (the prop is absent from its
+`propTypes`), so the strike line was mobile's own invention and nothing had to be diverged from.
+
+**3. The backdrop now blurs.** The overlay dimmed with a flat `rgba(15,23,42,0.72)` scrim, which left
+the page legible — and the card's **own in-place copy sits directly behind the enlarged one**, showing
+the same figures at half the size, which is what the screenshot circles. It now carries a
+`BlurView` + a lighter `0.55` scrim, both **inside the existing `AnimatedPressable`** so they fade with
+`backdropStyle` and tap-to-collapse still reaches it.
+
+- **`MODAL_BLUR_AMOUNT` is imported from `DynamicDealCenter/components/modal-chrome`** — the deal
+  center constant the ticket points at. Not a new cross-screen dependency: `OptInConfirmModal`, in
+  this same folder, already imports it (it is a pure constants module, no components).
+- ⚠️ **`blurType` is `"dark"` in BOTH themes**, unlike the deal center's `isDark ? 'dark' : 'light'`
+  modals. This overlay is a dark scrim by design because the program cards are white and have to stand
+  against it; a light frost would sink the card into the background. `reducedTransparencyFallbackColor`
+  is a near-opaque dark for the same reason — with Reduce Transparency on there is no blur, so the
+  fallback has to hide the page by itself.
+
+tsc 44 (baseline unchanged); `SpotlightOverlay.tsx` is byte-identical to its HEAD eslint baseline
+(9 warnings, 0 errors) and `ProgramCard.tsx` drops from 45 to 44 warnings — the one removed is the
+deleted strike-line's own inline style.
+
 ### Lead Center scanner: a filed document can't be deleted, and no longer renders blank
 
 Ticket: *"don't allow user to delete the previously uploaded (once he will select the multiple doc then
