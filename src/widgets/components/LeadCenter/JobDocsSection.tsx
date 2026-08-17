@@ -1754,6 +1754,11 @@ export const JobDocsSection = ({
         initialFiles={
           resolvedDocuments[scannerType === 'agreement' ? 'agreements' : scannerType === 'orderSheet' ? 'orderSheets' : 'downPaymentReceipts'] || []
         }
+        // A document already filed against this lead cannot be removed from here —
+        // web parity for the Contract Details card. Pages scanned in THIS session
+        // keep their ✕, so a misscan is never stuck; only what is already on the
+        // server is protected.
+        allowRemoveExisting={false}
         onSave={handleSaveScannedDocument}
       />
 

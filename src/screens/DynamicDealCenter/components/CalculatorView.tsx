@@ -685,18 +685,13 @@ export function CalculatorView({
     _id: t.id,
     // Numeric draft titles are internal identifiers, so they never render as-is.
     //
-    // The FIRST tab falls back to the customer's name instead of showing nothing,
-    // matching web: there the backend creates the appointment's calculator already
-    // titled with the customer, and `CalculatorTabs` renders `calculator.title`
-    // verbatim. Mobile POSTs its own calculator with a numeric placeholder title
-    // (`useDynamicCalculators`), so the deal center opened on an unlabelled pill.
+    // The FIRST tab falls back to the customer's name instead of showing nothing.
     //
-    // ⚠️ DISPLAY ONLY — the stored `title` is deliberately untouched. It stays
-    // numeric until the rep enters values, which is what `visibleCalculators` keys
-    // its `/^\d+$/` "hide empty calculators" filter on in the rollout, and what
-    // `computeDerivedTitles` overwrites once a real name can be derived. Writing the
-    // customer's name into `title` would put every untouched calculator into the
-    // rollout as a priceable line.
+    // ⚠️ This is now only a LEGACY fallback. A first calculator is CREATED titled
+    // with the customer (`useDynamicCalculators`, web parity), so its title is not
+    // numeric and this branch is not reached. It still matters for every lead whose
+    // calculator was created before that fix and is stored as `"1"` — without it
+    // those deal centers reopen on the unlabelled pill they always had.
     //
     // Only tab 0: a second, third… empty calculator all reading the same customer
     // name would be worse than blank, since the rep could not tell them apart.

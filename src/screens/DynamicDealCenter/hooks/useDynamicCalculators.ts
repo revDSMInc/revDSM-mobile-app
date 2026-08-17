@@ -192,11 +192,23 @@ function parseEntries(arr: any): Record<string, CalculatorEntry> {
   return map;
 }
 
+/**
+ * The customer's own name, or `''`. Web's `customerTitle`
+ * (`job-capture-images-view.js`) verbatim: first + last, trimmed, no fallback —
+ * it titles BOTH the appointment and the first calculator with this.
+ *
+ * Kept separate from `customerTitleOf` below because a fallback that is fine on an
+ * appointment ("Lead") would become a calculator's NAME, and the rep would read it
+ * as one. Callers decide what an unnamed lead gets.
+ */
+function customerNameOf(lead: any): string {
+  const cd = lead?.customerDetails || {};
+  return `${cd.firstName || lead?.firstName || ''} ${cd.lastName || lead?.lastName || ''}`.trim();
+}
+
 /** Best-effort customer display name for a new appointment (web `customerTitle`). */
 function customerTitleOf(lead: any): string {
-  const cd = lead?.customerDetails || {};
-  const full = `${cd.firstName || lead?.firstName || ''} ${cd.lastName || lead?.lastName || ''}`.trim();
-  return full || lead?.customerName || lead?.name || lead?.title || 'Lead';
+  return customerNameOf(lead) || lead?.customerName || lead?.name || lead?.title || 'Lead';
 }
 
 /**
@@ -452,7 +464,7 @@ export function useDynamicCalculators(
   // SM/MD/LG size. Reads only refs, so it is stable ([] deps).
   const resolveSafeTitle = useCallback((tab: CalcTab): string => {
     const derived = computeDerivedTitles(
-      tabsRef.current.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
+      tabsRef.current.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle, storedTitle: t.title })),
       schemasRef.current || [],
     );
     const persistable = getUniquePersistableTitles(derived);
@@ -501,11 +513,13 @@ export function useDynamicCalculators(
 
   const anyInFlight = () => Object.values(saveInFlight.current).some(Boolean);
 
-  // Recompute every tab's derived title from its live entries + configured
-  // schemas. Manual renames win; empty calculators fall back to their position.
+  // Recompute every tab's derived title from its live entries + configured schemas.
+  // Manual renames win; an empty calculator keeps its STORED title (the customer's
+  // name on the first one, a numeric placeholder on the rest) and only then falls
+  // back to its position — so this pass can no longer rename the first tab to "1".
   const retitle = useCallback((list: CalcTab[]): CalcTab[] => {
     const titles = computeDerivedTitles(
-      list.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
+      list.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle, storedTitle: t.title })),
       schemasRef.current || [],
     );
     let changed = false;
@@ -541,7 +555,7 @@ export function useDynamicCalculators(
     if (all.length <= 1) return;
 
     const derived = computeDerivedTitles(
-      all.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle })),
+      all.map((t) => ({ id: t.id, entries: t.entries, price: t.totals?.retail || 0, manualTitle: t.manualTitle, storedTitle: t.title })),
       schemasRef.current || [],
     );
     const persistable = getUniquePersistableTitles(derived);
@@ -711,7 +725,17 @@ export function useDynamicCalculators(
           setTabs(retitle(hydrated));
           setActiveTabId(hydrated[0].id);
         } else {
-          const created = await createRemoteTab(apptId, '1', {}, leadId, enteredBy, schemasRef.current, 1);
+          // The FIRST calculator is titled with the CUSTOMER, not a placeholder —
+          // web parity: `job-capture-images-view.js` POSTs `{ title: customerTitle,
+          // price: 0 }` for it, and only the `+` button (`tab-action-utils.addTab`)
+          // uses `String(length + 1)`. That stored title is what names the tab, and
+          // what every calculator activity log (created / viewed) then carries;
+          // mobile created it as `'1'`, so the portal logged `calculatorTitle: "1"`.
+          // An unnamed lead keeps the numeric placeholder — a blank tab beats a
+          // wrong name, and `/^\d+$/` still hides it from the rollout until built.
+          const created = await createRemoteTab(
+            apptId, customerNameOf(lead) || '1', {}, leadId, enteredBy, schemasRef.current, 1
+          );
           if (cancelled) return;
           if (created) {
             lastSavedTitle.current[created.id] = created.title;

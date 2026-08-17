@@ -286,38 +286,136 @@ $0 contract card on every reset lead.
 contract has nothing to attach documents to, and the Job Docs tab's own photo/Manage Photos actions below
 it are unaffected.
 
-### The first Deal Center tab is labelled with the customer's name
+### The first calculator IS the customer — stored title, tab label and activity logs
 
-Ticket: *"by default if we open deal center first tab name should be first name and last name like web,
-do the same in mobile as well."* Mobile opened on a bare green pill showing only its `⋮` overflow menu;
-web shows **"testt wqwwqe"**.
+Ticket: *"by default if we open deal center first tab name should be first name and last name like
+web"*, then the correction: *"while we are opening calculator first time with new lead
+`calculatorTitle` is going one, it should be the user name like we set in the tab… i also notice while
+new calculator is going to create title name is also going to same, which should be the user name.
+**remember first calculator should always be a customer name.** it's working fine on web app."*
+The `calculator viewed` log read `"calculatorTitle": "1"` while the tab below it read **test mon**.
 
-Cause is a create-path difference, not a naming bug. Web's `CalculatorTabs` renders `calculator.title`
-verbatim, and web **never POSTs a calculator** — the backend creates the appointment's first one already
-titled with the customer. Mobile creates its own (`useDynamicCalculators`) with a **numeric placeholder**
-title, and `CalculatorView.tabCalcs` blanks numeric titles (`/^\d+$/ → ''`, matching web's own
-`CalculatorTabs` line), so the pill rendered empty.
+> ⚠️ **This SUPERSEDES the first pass at this ticket, which was display-only and rested on a wrong
+> reading of web. Two claims made there were false:**
+>
+> 1. *"web **never POSTs** a calculator — the backend creates the appointment's first one already
+>    titled with the customer."* It does POST it. `job-capture-images-view.js` (the **Dynamic Deal
+>    Center** tool handler mobile's bootstrap mirrors) sends `{ title: customerTitle, price: 0 }` on
+>    **both** arms — appointment-exists-but-has-no-calculator, and appointment-just-created. The
+>    original `grep` missed it because web calls the `addLfCalculator` **api helper**, never the
+>    literal `lfcalculators` path.
+> 2. *"⚠️ DISPLAY ONLY — do not write this into `title`… naming the calculator would put every
+>    untouched calculator into the rollout as a priceable line."* Only the **first** calculator is
+>    named; web's `+` button (`tab-action-utils.addTab`) still uses `String(length + 1)`. So exactly
+>    one empty calculator is ever visible in the rollout — which is **web's own behaviour**, since
+>    `ViewAllCalculators.visibleCalculators` runs the same `/^\d+$/` filter over the same data.
 
-`tabCalcs` now falls back to the customer's name for **tab 0 only**:
+**The title is now stored, not painted on.** Three pieces, each a straight port:
 
-```ts
-name: /^\d+$/.test(t.title) ? (idx === 0 ? customerTabName || '' : '') : t.title
-```
+| | web | mobile (now) |
+|---|---|---|
+| first calculator's title | `customerTitle` = `` `${firstName} ${lastName}`.trim() `` | `customerNameOf(lead) \|\| '1'` |
+| `+` / duplicate | `String(length + 1)` | unchanged — `String(tabs.length + 1)` |
+| empty-calculator name | `… \|\| calc.title \|\| String(calc._id)` | `… \|\| storedTitle \|\| String(i + 1)` |
 
-fed by a new `customerTabName` prop — `` `${firstName} ${lastName}`.trim() `` from
-`DynamicDealCenterScreen`. Deliberately **not** the screen's existing `customerName`, which falls back to
-`'Lead Center'`; that word on a calculator tab would read as a calculator's name. An unnamed lead yields
-`''` and the tab stays blank exactly as before.
+- **`useDynamicCalculators`' bootstrap create** passes the customer's name instead of `'1'`. New
+  **`customerNameOf(lead)`** is web's `customerTitle` verbatim — first + last, trimmed, **no
+  fallback**; the existing `customerTitleOf` (which falls back to `'Lead'`) is now a wrapper around
+  it and stays on the APPOINTMENT title only. ⚠️ Keep them apart: `'Lead'` is a fine appointment
+  name and would be read as a *calculator's* name. An unnamed lead therefore keeps `'1'` — a blank
+  tab beats a wrong one, and `/^\d+$/` still hides it from the rollout.
+- **`computeDerivedTitles` (`utils/tab-naming.ts`) gained a `storedTitle` fallback**, and this is the
+  half without which the create change does nothing: the old code went straight to `String(i + 1)`
+  when no values were entered, so the **first `retitle` pass renamed `test mon` back to `1`** in
+  memory and the tab rendered blank again. Web's chain is
+  `getLiveSchemaBaseName(...) || getSchemaCalculatorBaseName(...) || calc.title || String(calc._id)`;
+  mobile now matches it. All three call sites (`retitle`, `resolveSafeTitle`,
+  `saveDisplacedSiblings`) pass `storedTitle: t.title`.
+- **Both activity logs follow for free.** `calculator viewed` sends `calculatorTitle: active.title`
+  and the bootstrap `calculator created` sends `created.title`, so naming the calculator at the
+  source fixes the portal without touching either log — which is exactly how web gets it
+  (`DealCenterContext` logs `details.title`; `job-capture-images-view` logs `response?.data?.title`).
 
-⚠️ **DISPLAY ONLY — do not write this into `title`.** The stored title must stay numeric until the rep
-enters values, because that is what the rollout's `visibleCalculators` keys its `/^\d+$/` "hide empty
-calculators" filter on, and what `computeDerivedTitles` overwrites once a real name (`G+LF`, `(SM)`, the
-📦 package badge) can be derived. Naming the calculator on the server side of that line would put every
-untouched calculator into the rollout as a priceable line.
+**Entered values still win.** `G+LF` / `(SM)` / the ⚠️ duplicate-price warning / the 📦 package badge
+all derive from entries and outrank the stored name, so the customer's name only ever shows while the
+calculator is empty. A manual rename still outranks everything.
 
-⚠️ **Tab 0 only.** A second/third empty calculator all reading the same customer name would be worse than
-blank — the rep could not tell them apart. They keep the existing empty label until their contents name
-them.
+⚠️ **`CalculatorView.tabCalcs`' `customerTabName` fallback is KEPT, and is now purely LEGACY.** A
+first calculator created from here on is stored under the customer's name, so its title is not numeric
+and that branch is never reached. Every lead whose calculator was created *before* this fix is still
+stored as `"1"`, and without the fallback those deal centers reopen on the unlabelled pill they always
+had. It is still tab-0-only, for the original reason: several empty calculators all reading the same
+customer name would be worse than blank.
+
+Verified by driving the real `computeDerivedTitles`: the ticket repro (empty first calculator → the
+customer's name, where the pre-fix path gives `1`), an unnamed lead and a whitespace-only title still
+falling back to the placeholder, entered values deriving `G` over the stored name, a manual rename
+outranking both, a second/third empty tab staying numeric — asserted through the rollout's own
+`/^\d+$/` filter so only the first is visible — and the `(SM)`/`(LG)` and `⚠️ G ⚠️` collision paths
+unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical to their HEAD eslint
+baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
+3 errors / 115 warnings).
+
+### Lead Center scanner: a filed document can't be deleted, and no longer renders blank
+
+Ticket: *"don't allow user to delete the previously uploaded (once he will select the multiple doc then
+those will show and can be removeable before uploading it like web) document from the lead center like
+in the web."* Contract Details ▸ any **Add Document** opened `DocumentScannerModal` with the filed
+document carrying a red ✕, so a rep could delete an executed agreement or a filed receipt from the
+Lead Center.
+
+**`JobDocsSection` now passes `allowRemoveExisting={false}`** — the prop added for the My Deals
+agreement case, applied here to **all three** categories. A page scanned in THIS session keeps its ✕
+(`item.isNew !== false`), so a misscan is never stuck; only what is already on the server is protected.
+The info banner swaps to *"Documents already on file can't be removed here."*
+
+⚠️ **Web is stricter than this, and the difference is worth knowing before anyone "completes" the
+parity.** Web's dialog opens **EMPTY** — `contract-details.js` passes
+`initialDocuments={lead?.jobBuilderData?.agreements || []}` and there IS no `jobBuilderData` on a lead
+(0 occurrences in the sales-portal capture; the field is `jobBuilderDocuments`), so `docsToUse` is
+`[]` and a filed document is never shown at all. That looks like a web typo rather than a decision, and
+matching it on mobile would mean sending ONLY the new pages — which rests on the backend APPENDING
+rather than replacing. Mobile still shows the filed documents and still re-sends them, so nothing can
+be lost. Hiding them is a separate change and needs that append behaviour confirmed first.
+
+#### …and that is why the blank tile had to be fixed in the same pass
+
+The filed document rendered as a **featureless grey card** — the earlier "Scan-document sheet: blank
+PDF tile" ticket fixed this for the My Deals surface but NOT for the Lead Center, and with the ✕ gone
+the tile would have had literally nothing on it. Two independent bugs in the modal's `isPdfFile`, both
+of which made a filed PDF fall through to `<Image>`, which cannot decode one:
+
+1. **A display name short-circuited the url check.** The rule was
+   `String(f?.name || f?.uri || f?.url || '')` — `||`, so only the FIRST truthy candidate is tested.
+   `JobDocsSection`'s `mapWith` **overwrites** `name` with a constant (`'Agreement'` /
+   `'Order Sheet'` / `'Down Payment Receipt'`), none of which has an extension, so the chain stopped
+   there and never reached the url. Every candidate is now tested.
+2. **The extension was read off the raw url.** Document urls are **pre-signed S3 links**, so the
+   string ends in `…&X-Amz-Signature=…` and `.endsWith('.pdf')` is false on every one of them. The
+   path is now split on `?`/`#` first.
+
+Moved to the pure **`src/utils/document-file.ts`** to be testable: the modal imports
+`react-native-document-scanner-plugin`, which resolves a **native TurboModule at import time**, so the
+component cannot be loaded under jest at all (verified — it throws in `TurboModuleRegistry.getEnforcing`).
+
+⚠️ **`fileSrc` was deliberately NOT moved with it.** `SummaryFinalizeCards`' copy prefers `secureUrl`
+over `uri`; the scanner's must prefer `uri`, because a locally-scanned page has only that and
+`docIdentity` reads it — re-resolving could change a document's identity across the scanner
+round-trip, which is the pruned-on-Update bug that ticket already fixed once.
+
+⚠️ **`screens/DynamicDealCenter/utils/document-payloads.ts` has its OWN `isPdfFile` carrying BOTH bugs**
+and was left alone. It sits on the SUBMIT path — it decides whether to run `convertJpegToPdf` on a
+contract document — so it should be changed with its own evidence, not as a ride-along.
+
+Verified with 16 tests over the exact row `mapWith` produces: the repro asserted **false under the old
+rule and true under the new one**, each bug isolated on its own, all three Lead Center document names,
+`contentType`/`mimeType`/`fileData.contentType`/`filePath`/`secureUrl`/`displayUrl`, a local `file://`
+scan, and the negatives that matter — a scanned **jpeg** page, a signed jpeg url, an image
+`contentType`, and `.pdf` appearing in a FOLDER name — plus junk input as `false` rather than a throw.
+The `canRemove` expression is covered too: filed → no ✕, scanned-this-session → ✕, and the two callers
+that pass no prop unchanged. tsc 44 (baseline unchanged); `DocumentScannerModal.tsx` (9 problems) and
+`JobDocsSection.tsx` (39 problems) are byte-identical to their HEAD eslint baselines, and the new util
+is clean.
 
 ### Down Payment Receipt upload is logged — with the `filePath` / `bucketName` web omits
 
