@@ -124,8 +124,12 @@ export function ProgramCard({
       <View style={{ borderRadius: 14.5, overflow: 'hidden', opacity: crossedOff ? 0.45 : 1 }}>
         {/* Header bar — light-gray + dark title (1-Year) / green + white (In-Home),
             matching the reference (was a dark-navy 1-Year header). */}
-        <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#EEF1F4', paddingVertical: 13, alignItems: 'center' }}>
-          <Text style={{ fontSize: 13, fontWeight: '900', color: highlighted ? '#fff' : '#1C252E', letterSpacing: 0.5, textAlign: 'center', textTransform: 'uppercase' }} numberOfLines={2}>{title}</Text>
+        {/* The title is sized to leave a margin inside the bar rather than to fill
+            it. The spotlight zoom renders this same card at roughly twice the size,
+            so anything that merely fits in place reads as edge-to-edge enlarged —
+            which is what it did at 13pt with no horizontal padding. */}
+        <View style={{ backgroundColor: highlighted ? '#4CBB17' : '#EEF1F4', paddingVertical: 13, paddingHorizontal: 14, alignItems: 'center' }}>
+          <Text style={{ fontSize: 11, fontWeight: '900', color: highlighted ? '#fff' : '#1C252E', letterSpacing: 0.5, textAlign: 'center', textTransform: 'uppercase' }} numberOfLines={2}>{title}</Text>
         </View>
 
         <View style={{ padding: 12 }}>
@@ -257,19 +261,21 @@ export function ProgramCard({
             backgroundColor: selected ? accent : (highlighted ? '#4CBB17' : '#EEF2F6'),
             flexDirection: 'row',
             justifyContent: 'center',
-            gap: (readOnly && selected) ? 2 : 4,
-            paddingHorizontal: 4,
+            gap: (readOnly && selected) ? 3 : 4,
+            // Same reasoning as the header title: the label sat flush against the
+            // button's edges, which the spotlight's ~2× zoom magnifies.
+            paddingHorizontal: 12,
           }}
         >
           {readOnly && selected && (
-            <Ionicons name="checkmark" size={12} color="#fff" />
+            <Ionicons name="checkmark" size={11} color="#fff" />
           )}
           <Text
             numberOfLines={1}
             adjustsFontSizeToFit
             minimumFontScale={0.75}
             style={{
-              fontSize: (readOnly && selected) ? 10 : 12,
+              fontSize: (readOnly && selected) ? 9 : 11,
               fontWeight: '900',
               color: selected || highlighted ? '#fff' : '#334155',
             }}
@@ -280,10 +286,15 @@ export function ProgramCard({
         </View>
       </View>
 
-      {/* Crossed-off overlay (the other program was chosen) */}
+      {/* Crossed-off overlay (the other program was chosen).
+          ⚠️ The strike-through rule that used to run across the card at `top: 50%`
+          is GONE — it cut straight through the Grand Total, which is the one number
+          on the card that must stay readable, and enlarged it read as a divider
+          rather than as a strike. The state is still unmistakable: the clip layer
+          above dims to 0.45 and the card body turns `#F1F5F9`. Web's
+          `program-card.js` draws no such line either — it was mobile's own. */}
       {crossedOff && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{ position: 'absolute', top: '50%', left: 8, right: 8, height: 2, backgroundColor: '#94A3B8' }} />
           {!readOnly && (
             <TouchableOpacity onPress={onRevert} style={{ backgroundColor: '#fff', borderRadius: 20, width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#CBD5E1' }}>
               <Ionicons name="close" size={18} color="#64748B" />
