@@ -319,6 +319,79 @@ untouched calculator into the rollout as a priceable line.
 blank — the rep could not tell them apart. They keep the existing empty label until their contents name
 them.
 
+### Down Payment Receipt upload is logged — with the `filePath` / `bucketName` web omits
+
+Ticket: *"add the log with the above payload while we are adding the down payment from the lead center…
+one additional thing you have to add there is bucket name and file path of the document which we are
+going to upload so we can show it on portal side. i also shared how it's calling in web, in web file
+path and bucket name is missing we have to add it on mobile side."*
+
+Lead Center ▸ Contract Details ▸ **Down Payment Receipt(s) ▸ Add Document** emitted **no activity log
+at all** on mobile. Web `sections/job/components/contract-details.js` ›
+`handleDownPaymentReceiptUpload` logs one, so the portal timeline had the event for a web upload and
+nothing for a mobile one. The payload is now web's verbatim —
+`action_type: 'upload'` / `module_type: 'job_builder'` /
+`meta: { leadId, action: 'upload_down_payment_receipts', downPaymentReceipt: N }` — **plus the two
+fields web does not send**, which are the point of the ticket: without them the portal has an event
+saying a receipt was uploaded and no way to open the receipt.
+
+**`filePath` / `bucketName` are generated SERVER-side**, so the device cannot know them at submit time
+(`job-builder-docs/{company}/{lead}/downPaymentReceipts/{ts}-{n}-document.pdf`, bucket
+`np-revdsm-staging`) — they can only be read back off the stored row. Two sources, in order, and
+**neither costs an extra request**:
+
+1. **The `POST lead/v1/{id}/job-builder` response.** Free and immediate. It is **not known** to return
+   the filed rows (web ignores this response too), so a miss is an expected outcome here, not an error.
+2. **The lead refetch this handler already performs.** On a miss the request is parked on
+   `pendingReceiptLogRef` and settled by an effect keyed on `lead.jobBuilderDocuments` — the same
+   change the document list re-resolves from. The handler's existing delayed refetches (1 s / 3 s)
+   cover backend replication lag for free.
+
+⚠️ **`downloadOutcomeDocuments` is NOT a third source.** It reads **LeadOutcomeDocument**, while this
+upload's `/job-builder` POST writes **JobBuilderDocument** — a different collection, and the one
+`lead.jobBuilderDocuments` exposes. Reading it back would be a multi-MB base64 round trip that does not
+contain the row anyway.
+
+**Rules live in the pure `src/utils/uploaded-document-refs.ts`** — `readDocumentGroup`,
+`collectDocumentIds`, `pickNewDocuments`, `toDocumentRefs` — for the reason `utils/addendum-drafts.ts`
+and `utils/inspection-photos.ts` exist: `JobDocsSection.tsx` pulls in React Native and is untestable
+under jest here.
+
+- **The two sources are interchangeable because the diff is by `_id`, not by count.** The response may
+  return the whole group or only the new rows; either way the unknown ids are this upload's. That is
+  what lets one helper serve both paths.
+- **`readDocumentGroup` walks a FIXED list of roots** (`source`, `.data`, `.data.data`, and the
+  `lead`/`outcome` wrappers) × a fixed list of bags (`jobBuilderDocuments`, `leadOutcomeDocuments`,
+  `documents`). An unrecognised shape yields `[]` and the caller falls back — it never guesses a path.
+- **A row with no `filePath` is dropped** (`toDocumentRefs`): an empty path in the log reads as a
+  document that cannot be opened.
+
+⚠️ **`meta.documents` is a LIST, and that is not optional.** One scan files **several** receipts — each
+page becomes its own PDF — so a single `filePath` cannot describe the upload. It first shipped with a
+singular `meta.filePath` / `meta.bucketName` alongside the list, and the reporter asked for them back
+out: they only ever repeated `documents[0]`, and a reader that stops at them silently misses every other
+page of a multi-page receipt. **The array is the only place the paths live.**
+
+⚠️ **`downPaymentReceipt` counts the pages the rep ADDED this session** (`newPages.length`), not
+`filePayloads.length`. Mobile re-sends the already-filed receipts alongside the new ones (that is how
+this endpoint appends), so the payload length is the *total on the lead* and would report "3 uploaded"
+for one new receipt.
+
+⚠️ **AGREEMENTS AND ORDER SHEETS ARE STILL NOT LOGGED** on mobile, though web logs both
+(`upload_agreements` / `upload_order_sheets`) from the same card. `handleSaveScannedDocument` serves all
+three categories, so the branch is one `scannerCategory` test away — it was left out because the ticket
+asked for the down payment only.
+
+Verified with 19 tests over the document rows from the sales-portal capture verbatim: the group read off
+a lead record and off four response shapes (`data.data.jobBuilderDocuments`, a `lead` wrapper, an
+outcome-shaped `leadOutcomeDocuments`, and a bare group array), groups never crossing, junk shapes as a
+no-op; the diff with the response holding the whole group, holding only the new row, on a first upload
+with nothing known, and not-yet-landed (which is what parks the log), plus an id-less row kept and `id`
+honoured beside `_id`; the ref narrowing, a `filePath`-less row dropped, a missing bucket defaulting to
+`''`, and multi-page order preserved; and the assembled `meta` matching the ticket's payload exactly. ✅ Confirmed on device.
+tsc 44 (baseline unchanged); `JobDocsSection.tsx` is byte-identical to its HEAD eslint baseline
+(39 problems: 10 errors / 29 warnings) and the new util is clean.
+
 ### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
 
 `DynamicDealEditScreen.tsx` (the 4-step wizard the Deal pencil opens) previously dropped the rep

@@ -58,6 +58,13 @@ const getNativeModules = () => {
 import { ContractDetailsCard } from './ContractDetailsCard';
 import { AddendumsCard } from './AddendumsCard';
 import { hasPendingDraft } from '../../../utils/addendum-drafts';
+import {
+  DocumentRef,
+  collectDocumentIds,
+  pickNewDocuments,
+  readDocumentGroup,
+  toDocumentRefs,
+} from '../../../utils/uploaded-document-refs';
 import { TagPhotoModal } from './TagPhotoModal';
 import { ManagePhotosModal } from './ManagePhotosModal';
 import { DynamicManagePhotosView } from '../lead-center/DynamicManagePhotosView';
@@ -247,6 +254,62 @@ export const JobDocsSection = ({
     downPaymentReceipts: true,
   });
   const [leadDraft, setLeadDraft] = useState<any>(null);
+
+  /**
+   * A Down Payment Receipt upload whose analytics event is still waiting on the
+   * document's stored `filePath` / `bucketName`.
+   *
+   * Those two are generated server-side, so they can only be read back. The submit
+   * response is tried first (free); when it does not carry the new rows the request
+   * parks here and the effect below settles it off the lead refetch this screen
+   * already performs — so naming the document never costs an extra request.
+   */
+  const pendingReceiptLogRef = useRef<{ knownIds: Set<string>; added: number } | null>(null);
+
+  /**
+   * Web `contract-details.js` › `handleDownPaymentReceiptUpload` logs this event,
+   * and mobile did not log it at all. `filePath` / `bucketName` are the deliberate
+   * addition on top of web's payload: without them the portal has an event saying a
+   * receipt was uploaded and no way to open the receipt.
+   */
+  const logDownPaymentReceiptUpload = useCallback(
+    (refs: DocumentRef[], added: number) => {
+      const userId = user?._id || user?.id;
+      if (!userId || !lead?._id) return;
+      logEvent('upload', {
+        user_id: userId,
+        created_by: userId,
+        module_type: 'job_builder',
+        meta: {
+          leadId: lead._id,
+          action: 'upload_down_payment_receipts',
+          downPaymentReceipt: added,
+          // One scan can file SEVERAL receipts (each page becomes its own PDF), so
+          // the paths are a LIST and only a list — a singular `filePath`/`bucketName`
+          // beside it would repeat `documents[0]` and imply the rest do not exist.
+          documents: refs,
+        },
+      });
+    },
+    [user, lead?._id]
+  );
+
+  // Settles a parked receipt log once the refetched lead carries the uploaded rows.
+  // Keyed on the same `jobBuilderDocuments` change the document list re-resolves
+  // from, so it is free; the handler's delayed refetches cover backend lag. It can
+  // only fire on a receipt id the lead did not have before the upload, so an
+  // unrelated document change never triggers it.
+  useEffect(() => {
+    const pending = pendingReceiptLogRef.current;
+    if (!pending) return;
+    const fresh = pickNewDocuments(
+      pending.knownIds,
+      readDocumentGroup(lead, 'downPaymentReceipt')
+    );
+    if (!fresh.length) return;
+    pendingReceiptLogRef.current = null;
+    logDownPaymentReceiptUpload(toDocumentRefs(fresh), pending.added);
+  }, [lead, logDownPaymentReceiptUpload]);
 
   const getSubcategoryLabel = useCallback((catNameOrId: string, subIdOrName: string) => {
     if (!subIdOrName) return '';
@@ -683,7 +746,31 @@ export const JobDocsSection = ({
         [stateField]: filePayloads,
       };
 
-      await LeadService.submitJobBuilder(leadId, payload);
+      // Snapshot the receipts already on the lead, so whichever source names the
+      // stored documents below can tell this upload's rows from the existing ones.
+      const knownReceiptIds =
+        scannerCategory === 'downPaymentReceipt'
+          ? collectDocumentIds(readDocumentGroup(lead, 'downPaymentReceipt'))
+          : null;
+
+      const submitRes = await LeadService.submitJobBuilder(leadId, payload);
+
+      if (knownReceiptIds) {
+        // Prefer the submit response — it is immediate and free. It is not known to
+        // return the filed rows, so a miss is expected rather than an error: park
+        // the log and let the effect settle it off the refetch below.
+        const fromResponse = pickNewDocuments(
+          knownReceiptIds,
+          readDocumentGroup(submitRes, 'downPaymentReceipt')
+        );
+        const refs = toDocumentRefs(fromResponse);
+        if (refs.length) {
+          logDownPaymentReceiptUpload(refs, newPages.length);
+        } else {
+          pendingReceiptLogRef.current = { knownIds: knownReceiptIds, added: newPages.length };
+        }
+      }
+
       setScannerOpen(false);
       await refetch();
       // Trigger delayed refetches in case of minor backend processing/DB replication lag
