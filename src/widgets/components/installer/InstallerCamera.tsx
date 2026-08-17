@@ -15,7 +15,6 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTranslation } from '../../../i18n/LanguageProvider';
 import { footerBottomPadding } from '../../../utils/installer-insets';
 import { GhostSlider } from './GhostSlider';
-import { HouseGhost } from './HouseGhost';
 import type { CapturedPhoto } from '../../../config/types/installer';
 
 const GREEN = '#4CBB17';
@@ -27,11 +26,14 @@ export interface InstallerCameraProps {
   /** "N taken" badge for multi-shot hubs. */
   count?: number;
   /**
-   * Reference shot to ghost over the viewfinder. When undefined the placeholder
-   * line-art house is used instead (no rep photos from the API yet).
+   * Reference shot to ghost over the viewfinder.
+   *
+   * ⚠️ When the backend supplied no reference, NOTHING is drawn over the viewfinder —
+   * there used to be a line-art house stand-in here, and installers read it as a real
+   * (broken) photo burnt into their shot. No reference ⇒ a plain camera.
    */
   ghostUri?: string | null;
-  /** Show the ghost overlay + opacity slider + hold-to-peek control. */
+  /** Ask for the ghost overlay + opacity slider + hold-to-peek control. */
   withGhost?: boolean;
   /** Side-by-side review after capture instead of a single preview. */
   compareLabels?: { left: string; right: string };
@@ -101,6 +103,15 @@ export function InstallerCamera({
     setCaptured(null);
   };
 
+  /**
+   * Every ghost affordance hangs off this, not off `withGhost`: the overlay, the opacity
+   * slider, the hold-to-peek button, the "line up the ghost" hint and the side-by-side
+   * compare. With no reference photo there is nothing to line up against or compare to,
+   * so the whole apparatus drops out rather than pointing at a placeholder.
+   */
+  const hasGhost = withGhost && !!ghostUri;
+
+  /** Null-safe by construction: no reference photo ⇒ nothing is drawn, ever. */
   const renderGhost = (opacity: number) =>
     ghostUri ? (
       <Image
@@ -108,25 +119,28 @@ export function InstallerCamera({
         resizeMode="cover"
         style={[StyleSheet.absoluteFill, { opacity }]}
       />
-    ) : (
-      <HouseGhost opacity={opacity} />
-    );
+    ) : null;
 
   // ── Review ────────────────────────────────────────────────────────────────
   if (captured) {
+    /* A compare needs two photos. Without a reference the left pane held the line-art
+       house, so the installer was asked to judge their framing against a drawing —
+       fall back to the plain single-photo review instead. */
+    const showCompare = !!compareLabels && !!ghostUri;
+
     return (
       <View style={[StyleSheet.absoluteFill, styles.root, { paddingTop: insets.top + 12 }]}>
         <Text className="text-white text-base font-bold px-4 mb-1">
-          {compareLabels ? 'Compare' : 'Review'} — {label}
+          {showCompare ? 'Compare' : 'Review'} — {label}
         </Text>
-        {compareLabels && (
+        {showCompare && (
           <Text className="text-[#8b93a0] text-xs font-medium px-4 mb-3">
             Same vantage point and framing? Good enough — the scene is supposed to have
             changed.
           </Text>
         )}
 
-        {compareLabels ? (
+        {showCompare && compareLabels ? (
           /* Stacked, not side by side — same as the Matched review in `PhotoMatchStep`.
              Two half-width columns left each photo barely wider than a thumb and portrait-
              tall, so `cover` cropped away most of the frame the installer is meant to be
@@ -187,7 +201,7 @@ export function InstallerCamera({
             style={{ backgroundColor: GREEN }}
           >
             <Text className="text-white text-base font-bold">
-              {compareLabels ? t('common.confirm') : t('installer.usePhoto')}
+              {showCompare ? t('common.confirm') : t('installer.usePhoto')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -219,7 +233,7 @@ export function InstallerCamera({
           </View>
         )}
 
-        {withGhost && renderGhost(peeking ? 0.85 : ghostOpacity)}
+        {hasGhost && renderGhost(peeking ? 0.85 : ghostOpacity)}
 
         <View style={[styles.topChip, { top: insets.top + 12 }]} pointerEvents="none">
           <Text className="text-white text-xs font-bold">{label}</Text>
@@ -241,7 +255,7 @@ export function InstallerCamera({
 
         {!!hint && (
           <Text style={styles.hint} className="text-xs font-semibold">
-            {withGhost ? 'Line up the ghost with the house' : hint}
+            {hasGhost ? 'Line up the ghost with the house' : hint}
           </Text>
         )}
       </View>
@@ -251,7 +265,7 @@ export function InstallerCamera({
         className="px-6 pt-4"
         style={{ paddingBottom: footerBottomPadding(insets.bottom) }}
       >
-        {withGhost && (
+        {hasGhost && (
           <View className="flex-row items-center mb-2">
             <Text className="text-[#8b93a0] text-[11px] font-bold w-12">
               {t('installer.ghost')}
@@ -269,7 +283,7 @@ export function InstallerCamera({
           >
             {isCapturing ? <ActivityIndicator color={GREEN} /> : null}
           </TouchableOpacity>
-          {withGhost ? (
+          {hasGhost ? (
             <TouchableOpacity
               onPressIn={() => setPeeking(true)}
               onPressOut={() => setPeeking(false)}
