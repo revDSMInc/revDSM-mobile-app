@@ -47,6 +47,16 @@ export type FundingResult = 'sale' | 'bankDecline';
 export type FundingRecordStatus = 'pending' | 'submitted';
 
 /**
+ * Why a hosted application/payment page stopped without completing.
+ *
+ * ⚠️ The server RESETS the row to unsent when one of these lands, so `linkSent`
+ * goes back to `false`. Without reading this field the screen says "link not sent
+ * yet" about a link the rep demonstrably sent, which reads as an app bug rather
+ * than as the homeowner having closed the page.
+ */
+export type FundingApplicationClosed = 'abandoned' | 'canceled' | 'expired' | 'error';
+
+/**
  * A payment row as the server holds it.
  *
  * ⚠️ Everything from `step` down is READ-ONLY to the app — an upsert sends only
@@ -79,11 +89,45 @@ export interface FundingPaymentRow {
   charged: boolean;
   collected: boolean;
 
+  /**
+   * The homeowner's hosted page ended without completing — `null` while it is
+   * still live (or was never opened). ⚠️ Comes with `linkSent` reset to `false`,
+   * so it is the ONLY thing distinguishing "never sent" from "sent, and they
+   * closed it". See `FundingApplicationClosed`.
+   */
+  applicationClosed?: FundingApplicationClosed | null;
+  applicationClosedAt?: string | null;
+
   syncedAt?: string | null;
   /** Set once a lender decision lands; the row's amount/method/kind then freeze. */
   lockedAt?: string | null;
   /** Opaque provider bag — do not read or display. */
   providerState?: unknown;
+}
+
+/**
+ * One line of a multi-method allocation, as it is persisted BESIDE the four flat
+ * scalars (`downPayment` / `paymentMethod` / `balance` / `balancePaymentMethod`)
+ * on `Lead`, `LeadOutcome`, `LeadCalculatorOutcome`, `LeadDraft` and
+ * `JobBuilderDraft`.
+ *
+ * ⚠️ **`method` holds a plan KEY, not a label** — the same domain as the
+ * `paymentMethod` scalar it mirrors, which every consumer resolves against the
+ * company's payment-plan catalogue. A joined display string like `"Check + AMEX"`
+ * resolves to nothing everywhere at once.
+ *
+ * ⚠️ Do NOT confuse this with `FundingPaymentRow.method`, which is the catalogue
+ * LABEL — that is the field the funding server derives `type` from. The two live
+ * on different records and carry different values on purpose.
+ */
+export interface PaymentAllocation {
+  /** Plan KEY (`'check'`, `'2521'`, …). */
+  method: string;
+  /** Whole dollars. */
+  amount: number;
+  /** Resolved locally for readers with no catalogue to hand; the server ignores it. */
+  label?: string;
+  type?: FundingMethodType;
 }
 
 /** Written server-side whenever a lender decision arrives. Read-only. */
@@ -164,9 +208,21 @@ export type FundingErrorKind =
   | 'rule'
   /** 409 — conflicts with the record's CURRENT state. Re-GET and re-render. */
   | 'stale'
+  /**
+   * 409 on `…/link` or `…/link-sent` — the company's payment gateway is connected
+   * but cannot accept payments (Stripe `charges_enabled: false`).
+   *
+   * ⚠️ **Terminal for now, and the one 409 that must NOT be retried.** Nothing
+   * about the record is stale, so re-`GET`ting returns the same answer and a client
+   * that implements the documented "refresh and retry" 409 behaviour loops. Someone
+   * with portal access has to finish setup in Stripe. It also used to surface as a
+   * `503 "No payment provider is configured yet"`, which sent whoever was debugging
+   * to check environment variables that were already correct.
+   */
+  | 'setupRequired'
   /** 402 — the processor declined the card. Nothing was collected. */
   | 'cardDeclined'
-  /** 404 — lead or payment not found (or the mock provider is disabled). */
+  /** 404 — the lead or the payment was not found. */
   | 'notFound'
   /** 502 — delivery/provider failure. NOTHING WAS WRITTEN; offer another channel. */
   | 'delivery'
@@ -193,13 +249,42 @@ const KIND_BY_STATUS: Record<number, FundingErrorKind> = {
   503: 'noProvider',
 };
 
-/** Normalize any funding rejection into `{ kind, message, blockers }`. */
-export function classifyFundingError(err: any): FundingError {
+/**
+ * Is this the path of a link endpoint (`…/link` or `…/link-sent`)?
+ *
+ * Read off the failed request rather than passed in by each caller, so no future
+ * call site can forget it and quietly re-introduce the retry loop. Query strings
+ * and trailing slashes are tolerated because the value comes from axios' `config`,
+ * which is whatever the caller handed it.
+ */
+export function isLinkEndpointUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const path = String(url).split('?')[0].split('#')[0].replace(/\/+$/, '');
+  return /\/link(-sent)?$/.test(path);
+}
+
+/**
+ * Normalize any funding rejection into `{ kind, message, blockers }`.
+ *
+ * `opts.linkEndpoint` forces the link-endpoint reading for a caller that knows it
+ * (a re-classified error that has lost its axios `config`, say). Left undefined it
+ * is inferred from the request url.
+ */
+export function classifyFundingError(err: any, opts?: { linkEndpoint?: boolean }): FundingError {
   const httpStatus: number | undefined = err?.httpStatus ?? err?.response?.status;
   const body = err?.response?.data ?? err;
   const blockers = body?.data?.blockers;
+  const url = err?.config?.url ?? err?.response?.config?.url;
+  const onLink = opts?.linkEndpoint ?? isLinkEndpointUrl(url);
+
+  let kind: FundingErrorKind = (httpStatus && KIND_BY_STATUS[httpStatus]) || 'unknown';
+  // ⚠️ The ONE 409 a refresh cannot fix. Must be decided here rather than at the
+  // call sites, or the generic `stale` handling refetches and reports it as an
+  // informational "Funding updated" — which reads as success.
+  if (kind === 'stale' && onLink) kind = 'setupRequired';
+
   return {
-    kind: (httpStatus && KIND_BY_STATUS[httpStatus]) || 'unknown',
+    kind,
     message: body?.message || err?.message || 'Something went wrong',
     httpStatus,
     ...(Array.isArray(blockers) ? { blockers } : {}),
@@ -211,6 +296,9 @@ export function classifyFundingError(err: any): FundingError {
  *
  * `stale` (409) always does. `notFound` on a PAYMENT does too — the row was
  * removed or re-keyed elsewhere — so both should trigger a re-`GET`.
+ *
+ * ⚠️ `setupRequired` deliberately does NOT: the record is perfectly current, the
+ * company's Stripe account is not usable, and re-reading returns the same answer.
  */
 export function shouldRefetchAfter(error: FundingError): boolean {
   return error.kind === 'stale' || error.kind === 'notFound';
@@ -232,7 +320,6 @@ export const FundingEndpoints = {
   activate: (leadId: string, pid: string) => `${row(leadId, pid)}/activate`,
   charge: (leadId: string, pid: string) => `${row(leadId, pid)}/charge`,
   checkCollected: (leadId: string, pid: string) => `${row(leadId, pid)}/check-collected`,
-  mockProvider: (leadId: string, pid: string) => `${row(leadId, pid)}/mock-provider`,
   submit: (leadId: string) => `${base(leadId)}/submit`,
   result: (leadId: string) => `${base(leadId)}/result`,
 } as const;
@@ -255,6 +342,15 @@ export const FundingService = {
    * row that has a sent link or a decision is refused with `409`). Funding state
    * is preserved per `pid` for rows whose `method` is unchanged; changing the
    * `method` resets that row's steps, link and decision.
+   *
+   * Two `422`s became reachable once rows are repeatable, and both NAME the
+   * offending row — surface the message as-is rather than folding it into a
+   * generic failure:
+   *   - a `method` that is not one of this company's payment methods (which used
+   *     to be silently classified as financing);
+   *   - an `amount` of zero.
+   * `toUpsertRows` drops both shapes before they are sent, so in practice these
+   * only fire if a row reaches here another way.
    */
   savePayments: (
     leadId: string,
@@ -280,6 +376,9 @@ export const FundingService = {
    *
    * ⚠️ The url is a BEARER CREDENTIAL scoped to this payment — anyone holding it
    * can complete it. Don't log it, don't persist it, don't let it outlive the send.
+   *
+   * ⚠️ `409` here is the `charges_enabled` gate, NOT a stale record — see
+   * `FundingErrorKind.setupRequired`. Do not re-`GET` and retry.
    */
   getLink: (
     leadId: string,
@@ -296,6 +395,10 @@ export const FundingService = {
    *
    * ⚠️ On `502`/`503` nothing is written — the step does not advance, and the app
    * must not show the link as sent.
+   *
+   * ⚠️ Same for `409`: this endpoint refuses on the `charges_enabled` gate BEFORE
+   * marking anything sent, so the step never advances on a link that could not be
+   * delivered. It is `setupRequired`, not `stale` — do not retry it.
    */
   markLinkSent: (
     leadId: string,
@@ -399,27 +502,17 @@ export const FundingService = {
    */
   setResult: (leadId: string, result: FundingResult, companyId?: string): Promise<FundingResponse> =>
     api.post(FundingEndpoints.result(leadId), { result }, cfg(companyId)),
-
-  /**
-   * TEST ONLY — stand in for the homeowner or the lender.
-   *
-   * Returns `404 Mock provider actions are disabled` unless the server runs with
-   * `FUNDING_PROVIDER=mock`. It only RECORDS what the third party did; the rep
-   * still has to `sync` for it to land, which keeps the production code path under
-   * test. Cards take `cardOnFile`; loans take `full` / `short` (+`approvedAmt`) /
-   * `declined`.
-   */
-  mockProvider: (
-    leadId: string,
-    pid: string,
-    body: { action: 'cardOnFile' | FundingDecision; approvedAmt?: number },
-    companyId?: string
-  ): Promise<FundingResponse> =>
-    api.post(
-      FundingEndpoints.mockProvider(leadId, pid),
-      body.action === 'short' ? body : { action: body.action },
-      cfg(companyId)
-    ),
 };
+
+/**
+ * ⚠️ **`POST …/{pid}/mock-provider` is gone, along with the Scenario Simulator that
+ * drove it.** It stood in for a homeowner or a lender that does not exist in
+ * development, so a tap on it wrote an invented approval or decline onto a real
+ * funding record. Removed on request; the app now only ever reports what the actual
+ * processor or lender did, which is what `syncPayment` reads.
+ *
+ * Do not reintroduce it here. If a simulator is ever needed again it belongs behind
+ * a build flag, not in the service every rep's device ships with.
+ */
 
 export default FundingService;

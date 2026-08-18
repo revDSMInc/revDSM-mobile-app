@@ -403,6 +403,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           visible={resultModal.visible}
           lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
+          // Display never uses it — it links every funding log row back to the quote.
+          calculatorId={resultModal.calculatorId}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
@@ -547,6 +549,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           visible={resultModal.visible}
           lead={lead}
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
+          // Display never uses it — it links every funding log row back to the quote.
+          calculatorId={resultModal.calculatorId}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}

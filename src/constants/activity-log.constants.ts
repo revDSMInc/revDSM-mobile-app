@@ -102,3 +102,24 @@ export const SYSTEM_MODULE = 'system';
  * `src/utils/activity-log/investment-center-log.ts`.
  */
 export const INVESTMENT_CENTER_MODULE = 'investment_center';
+
+/**
+ * Funding — how the contract actually gets paid, and how far each payment has got.
+ *
+ * A NEW grouped category for the Forever Record covering the Result Lead sheet's
+ * pricing panel (the payment rows) and the Funding screen behind it: the structure
+ * (down payment + balance vs upfront), every row added / removed / given a method,
+ * the save that files them, and then each payment's own life cycle — link sent,
+ * card on file, charged, check collected, lender decision, loan activated — through
+ * to the submit.
+ *
+ * Its own module rather than `calculator` / `job_builder` because this is the only
+ * place in the app where **money moves** (`POST …/charge`) and where a third party
+ * (a processor, a lender) decides the outcome. A portal filter on `funding` should
+ * read as the money trail for a job and nothing else — see
+ * `src/utils/activity-log/funding-log.ts`.
+ *
+ * First introduced on mobile (the web funding screen does not log yet), so the
+ * vocabulary is defined here.
+ */
+export const FUNDING_MODULE = 'funding';

@@ -22,6 +22,16 @@ export interface ResultData {
   balance?: number;
   downPaymentMethod?: string;
   balancePaymentMethod?: string;
+  /**
+   * The multi-method breakdown (`ResultJobModal` → `paymentAllocations`), persisted
+   * BESIDE the four scalars above rather than replacing them.
+   *
+   * ⚠️ This builder is a WHITELIST — anything not named here is silently dropped,
+   * which is exactly how a saved split contract would come back as one row of the
+   * summed total on the next open.
+   */
+  downPayments?: { method: string; amount: number; label?: string; type?: string }[];
+  balancePayments?: { method: string; amount: number; label?: string; type?: string }[];
   demoReason?: string;
   reasonExplanation?: string;
   versatile?: boolean;
@@ -87,6 +97,12 @@ export function buildCalculatorOutcomePayload(args: {
     paymentMethod: rd.downPaymentMethod,
     balancePaymentMethod: rd.balancePaymentMethod,
     balance: rd.balance,
+    // Additive to the four scalars above, which stay written as a derived mirror.
+    // ⚠️ Spread conditionally: the backend's `default: undefined` is what tells a
+    // record that PREDATES multi-method apart from one that genuinely has no rows,
+    // and writing `undefined` explicitly on a demo would blank a saved allocation.
+    ...(rd.downPayments ? { downPayments: rd.downPayments } : {}),
+    ...(rd.balancePayments ? { balancePayments: rd.balancePayments } : {}),
     // Web parity — the associated calculator snapshot (only when present).
     ...(hasLFCalculator && { LFCalculator: rd.LFCalculator }),
     selectedAppointmentId: rd.selectedAppointmentId || rd.LFCalculator?.appointmentId || fallbackAppointmentId,

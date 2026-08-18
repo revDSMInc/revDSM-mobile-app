@@ -21,33 +21,34 @@ import type { DealPlan } from '../hooks/useDealPricing';
 import {
   newPaymentId,
   toWholeDollars,
+  type FundingApplicationClosed,
   type FundingDecision,
   type FundingKind,
   type FundingMethodType,
   type FundingPaymentRow,
   type FundingRecord,
   type FundingUpsertRow,
+  type PaymentAllocation,
 } from '../../../services/api/FundingService';
 
 /**
- * Splitting a half of the contract across SEVERAL payment lines is built and
- * tested, but switched **off** for now — the deal is currently one down-payment
- * method and one balance method, as it was before this module.
+ * Splitting a half of the contract across SEVERAL payment lines — **on**.
  *
- * Flipping this to `true` is the only change needed to turn it on: it enables the
- * "Add payment method" buttons **and** the per-row ✕. The two travel together
- * deliberately — with Add disabled, removing a row would be unrecoverable inside
- * the session, so the rep would be one tap away from a dead end.
+ * It gates the "Add payment method" buttons **and** the per-row ✕. The two travel
+ * together deliberately: with Add disabled, removing a row would be unrecoverable
+ * inside the session, so the rep would be one tap away from a dead end.
  *
  * ⚠️ One exception, and it is intentional: the recovery row `applyDecisionsToRows`
  * opens after a DECLINE is not gated. That is not the rep adding a line — it is
  * the system replacing a dead one, and it is the only way a declined deal can be
  * re-assigned at all. The rep still cannot remove it.
+ *
+ * ⚠️ Turning this on is what makes several rows of the SAME amount and method
+ * possible, which is why `describePayment` exists — two identical `$500 Check`
+ * lines otherwise produce two identical blocker sentences and two identical cards,
+ * and the rep cannot tell which one the screen is talking about.
  */
-export const MULTI_METHOD_ENABLED = false;
-
-/** What the mock provider's "Approve partial" grants: 60%, to the nearest $100. */
-export const MOCK_PARTIAL_RATE = 0.6;
+export const MULTI_METHOD_ENABLED = true;
 
 /**
  * How the contract is being paid.
@@ -263,6 +264,30 @@ export function confirmBlockers(rows: PaymentRow[], price: number, mode: PayMode
     );
   }
 
+  /**
+   * ⚠️ The mirror of the rule above, and it only became reachable when
+   * `MULTI_METHOD_ENABLED` turned on: a row the rep ADDED and gave a method but no
+   * amount. `toUpsertRows` drops it (the server rejects a zero amount with 422),
+   * so without this the line the rep just filled in silently never reaches the
+   * deal — the auto row quietly re-absorbs its money and nothing says why.
+   *
+   * The AUTO row is exempt: it is $0 exactly when everything else already covers
+   * the contract, which is the correct end state, not a gap.
+   */
+  const emptyNamed = rows.filter(
+    (r) => !r.auto && !r.decision && (r.method || r.methodLabel) && effectiveRowAmount(r, rows, price) <= 0
+  );
+  if (emptyNamed.length) {
+    // Deliberately NOT named: `PaymentRow.method` is a plan KEY, and this function
+    // has no catalogue to resolve it against — a line reading "Enter an amount for
+    // 2521" is worse than one that doesn't try.
+    out.push(
+      emptyNamed.length === 1
+        ? 'Enter an amount for the payment method you added, or remove that line'
+        : `Enter an amount for every payment method you added — ${emptyNamed.length} have none`
+    );
+  }
+
   const total = assignedTotal(rows, price);
   if (total > price + EPS) {
     out.push(
@@ -321,6 +346,82 @@ export function shortMethod(label: string): string {
   return String(label).split(' (')[0].trim() || label;
 }
 
+// ── naming a payment among its duplicates ──────────────────────────────────
+
+/**
+ * How a payment is named in prose and on its card: `$500 Check`, or
+ * `$500 Check (1 of 2)` when the job carries more than one line with the same
+ * amount AND the same method.
+ *
+ * ⚠️ Not cosmetic. Once a half of the contract can be split across repeated lines,
+ * two `$500 Check` rows produce two byte-identical blocker sentences and two
+ * byte-identical cards, and the rep cannot tell which one the screen means. The
+ * server emits `(1 of 2)` / `(2 of 2)` in its own blockers, and ⚠️ **this must
+ * match it exactly** — the two lists sit in the same footer, the server's
+ * replacing ours on a refused submit, and a divergence there is worse than having
+ * no local list at all because the rep trusts the screen.
+ *
+ * Ordinals are positional in `payments` order, which is the order the server
+ * returns and the order the cards render, so the Nth sentence names the Nth card.
+ */
+export function describePayment(payment: FundingPayment, payments: FundingPayment[]): string {
+  const base = `$${payment.amount.toLocaleString()} ${shortMethod(payment.method)}`;
+  const twins = payments.filter(
+    (p) => p.amount === payment.amount && shortMethod(p.method) === shortMethod(payment.method)
+  );
+  if (twins.length < 2) return base;
+  const ordinal = twins.findIndex((p) => p.pid === payment.pid) + 1;
+  // A row that is not in the list it is being described against (defensive: a
+  // caller passing a filtered group) gets no misleading ordinal.
+  if (ordinal < 1) return base;
+  return `${base} (${ordinal} of ${twins.length})`;
+}
+
+// ── abandoned applications ─────────────────────────────────────────────────
+
+/**
+ * Why the homeowner's hosted page ended, phrased for a rep at a kitchen table.
+ *
+ * ⚠️ The server RESETS the row to unsent when this lands, so without reading it
+ * the screen says *"link not sent yet"* about a link the rep watched them open —
+ * which reads as an app bug rather than as the homeowner having closed the page.
+ */
+export const APPLICATION_CLOSED_TEXT: Record<FundingApplicationClosed, string> = {
+  abandoned: 'The homeowner left the page without finishing.',
+  canceled: 'The homeowner cancelled on the payment page.',
+  expired: 'The link expired before it was completed.',
+  error: 'The provider hit an error and could not finish.',
+};
+
+/** Short form for a blocker line: `— the application was abandoned; send a new link`. */
+const APPLICATION_CLOSED_SHORT: Record<FundingApplicationClosed, string> = {
+  abandoned: 'was abandoned',
+  canceled: 'was cancelled',
+  expired: 'expired',
+  error: 'hit a provider error',
+};
+
+/**
+ * Did this row's hosted page close without completing, and is that still the live
+ * story?
+ *
+ * ⚠️ Gated on `!linkSent` and `!decision` on purpose. The flag is history once the
+ * rep sends a fresh link (`linkSent` back to true) or a lender answers anyway, and
+ * a stale "they abandoned it" banner over a working application is worse than none.
+ */
+export function isApplicationClosed(p: FundingPayment): boolean {
+  return !!p.applicationClosed && !p.linkSent && !p.decision;
+}
+
+/** The sentence for the card banner, or `null` when there is nothing to say. */
+export function applicationClosedNote(p: FundingPayment): string | null {
+  if (!isApplicationClosed(p)) return null;
+  const why = APPLICATION_CLOSED_TEXT[p.applicationClosed as FundingApplicationClosed];
+  // An unrecognised reason still gets a banner: the fact that it closed is the
+  // part the rep acts on, and swallowing it would restore the "never sent" lie.
+  return `${why || 'The application closed without completing.'} Send them a new link to try again.`;
+}
+
 // ── record → screen ────────────────────────────────────────────────────────
 
 /**
@@ -329,6 +430,14 @@ export function shortMethod(label: string): string {
  * ⚠️ This is what keeps `pid` stable across visits, which is the whole merge
  * contract: reopening the sheet must reuse the saved ids, or the next `PUT`
  * creates a second set of rows for the same deal.
+ *
+ * ⚠️ It is also what makes a SPLIT contract survive a reload — three down-payment
+ * rows come back as three rows, not as one row of the summed total. The funding
+ * record is the authoritative multi-row source; the `downPayments` /
+ * `balancePayments` arrays `paymentAllocations` writes onto the lead and the
+ * outcome are for the CONSUMERS of the deal (contract details, agreements,
+ * drafts), never for rehydrating this screen. Do not seed the rows from them —
+ * they carry no `pid`, so doing so would break the merge contract above.
  *
  * The last undecided balance row is re-flagged `auto` so the remainder keeps
  * behaving as it did before the save — the server does not persist that flag
@@ -390,6 +499,54 @@ export function toUpsertRows(
       } as FundingUpsertRow;
     })
     .filter((r): r is FundingUpsertRow => r !== null);
+}
+
+/**
+ * Project the pricing rows into the `downPayments` / `balancePayments` arrays that
+ * are persisted BESIDE the four flat scalars on the lead and the outcome.
+ *
+ * ⚠️ **Additive, never a replacement.** `downPayment` / `paymentMethod` /
+ * `balance` / `balancePaymentMethod` stay written as a derived mirror — section
+ * totals plus the FIRST funded row's plan key — because ~20 consumers read those
+ * four names and the customer-facing agreement and amendment renderers would
+ * degrade *silently* rather than error. An un-upgraded reader then sees a LOSSY
+ * view (one method named for a job that used three), not a wrong one.
+ *
+ * ⚠️ **`method` is the plan KEY**, matching the scalar it mirrors — not the
+ * catalogue label `toUpsertRows` sends to the funding API, and never a joined
+ * `"Check + AMEX"`, which resolves to nothing in every consumer at once.
+ *
+ * A row with no method or no money is omitted: it is not an allocation yet, and it
+ * is the same shape the funding upsert drops.
+ */
+export function paymentAllocations(
+  rows: PaymentRow[],
+  price: number,
+  plans: Record<string, DealPlan>
+): { downPayments: PaymentAllocation[]; balancePayments: PaymentAllocation[] } {
+  const downPayments: PaymentAllocation[] = [];
+  const balancePayments: PaymentAllocation[] = [];
+
+  rows.forEach((row) => {
+    const amount = toWholeDollars(effectiveRowAmount(row, rows, price));
+    // A plan that has left the catalogue keeps its stored label as the key: it is
+    // the only handle the record still has on what the money was committed to.
+    const method = row.method || row.methodLabel || '';
+    if (!method || amount <= 0) return;
+
+    const entry: PaymentAllocation = {
+      method,
+      amount,
+      label: methodLabelOf(plans, row.method) || row.methodLabel || method,
+      ...(methodTypeOf(plans, row.method) ? { type: methodTypeOf(plans, row.method)! } : {}),
+    };
+    // `up` is a client-side grouping — an upfront line is money collected NOW, so
+    // it belongs with the down payments exactly as `wireKind` files it.
+    if (wireKind(row.kind) === 'bal') balancePayments.push(entry);
+    else downPayments.push(entry);
+  });
+
+  return { downPayments, balancePayments };
 }
 
 /** The attempt history as the screen lists it. Read-only, server-written. */
@@ -483,16 +640,21 @@ export function stateOf(p: FundingPayment, covered: boolean): Record<number, Ste
     return st;
   }
 
+  // ⚠️ A closed application leaves `linkSent` false, so "Link Sent" would draw as
+  // a plain un-started step — indistinguishable from a link the rep never sent.
+  // Amber with a `!` says the opposite: this was sent, and it needs sending again.
+  const linkStep: StepState = isApplicationClosed(p) ? 'warn' : p.linkSent ? 'done' : 'now';
+
   if (p.type === 'cc') {
     const onFile = p.step >= 2 || p.charged;
-    st[0] = p.linkSent ? 'done' : 'now';
+    st[0] = linkStep;
     st[1] = onFile ? 'done' : p.linkSent ? 'now' : 'next';
     // A balance card is charged by the processor after install; `charge` refuses it.
     st[2] = p.kind === 'bal' ? 'locked' : p.charged ? 'done' : 'next';
     return st;
   }
 
-  st[0] = p.linkSent ? 'done' : 'now';
+  st[0] = linkStep;
   if (p.decision === 'declined') st[1] = 'bad';
   else if (p.decision === 'short') st[1] = openShort(p, covered) ? 'warn' : 'done';
   else if (p.decision === 'full') st[1] = 'done';
@@ -569,16 +731,33 @@ export function canSync(p: FundingPayment): boolean {
  * its own `blockers` replace this list on a 409. Steps owned by a bank, lender,
  * install crew or processor are excluded — they can never block a submit.
  */
-export function fundingBlockers(payments: FundingPayment[], price: number): string[] {
+export function fundingBlockers(
+  payments: FundingPayment[],
+  price: number,
+  opts?: {
+    /**
+     * The company's payment gateway cannot accept payments — the `charges_enabled`
+     * gate (`FundingErrorKind.setupRequired`). ⚠️ Passed as ONE line rather than
+     * repeated per row: the condition is company-wide, so a job with three card
+     * rows would otherwise meet the same sentence three times.
+     */
+    setupBlocked?: boolean;
+  }
+): string[] {
   const covered = coverageOK(payments, price);
   const out: string[] = [];
   payments.forEach((p) => {
-    const who = `$${p.amount.toLocaleString()} ${shortMethod(p.method)}`;
+    const who = describePayment(p, payments);
     // First match wins — a payment contributes at most ONE blocker, the next thing
     // the rep has to do. Listing every unmet condition would bury the actual step.
     const reason =
       p.decision === 'declined' ? 'was declined — reassign it'
       : openShort(p, covered) ? 'came back short — cover the difference'
+      // ⚠️ Must OUTRANK the "link not sent yet" arm below it. The server resets
+      // `linkSent` when the homeowner closes the page, so without this the rep is
+      // told a link they watched being opened was never sent.
+      : isApplicationClosed(p)
+        ? `— the application ${APPLICATION_CLOSED_SHORT[p.applicationClosed as FundingApplicationClosed] || 'closed'}; send a new link`
       : (p.type === 'cc' || p.type === 'bank') && !p.linkSent ? '— link not sent yet'
       : p.type === 'bank' && !p.decision ? '— waiting on lender decision'
       : p.type === 'bank' && !p.activated ? '— loan not activated yet'
@@ -588,9 +767,26 @@ export function fundingBlockers(payments: FundingPayment[], price: number): stri
       : null;
     if (reason) out.push(`${who} ${reason}`);
   });
+
   const total = payments.reduce((n, p) => n + fundedAmount(p), 0);
-  if (total < price) out.push(`$${(price - total).toLocaleString()} of the contract is still unassigned`);
+  if (total < price - EPS) {
+    out.push(`$${money(price - total)} of the contract is still unassigned`);
+  } else if (total > price + EPS) {
+    // ⚠️ The mirror the client was missing. The server blocks an over-allocated
+    // submit, so without this line the rep sees a satisfied gate and then a 409 —
+    // and this list is exactly what it is replaced by, so the wording matches.
+    out.push(`$${money(total - price)} more than the contract price is allocated`);
+  }
+
+  if (opts?.setupBlocked) {
+    out.push('Payments are not set up for your company yet — contact your office');
+  }
   return out;
+}
+
+/** Running total for a group heading (`DOWN PAYMENT · $2,500`). */
+export function groupTotal(payments: FundingPayment[]): number {
+  return payments.reduce((n, p) => n + fundedAmount(p), 0);
 }
 
 /**

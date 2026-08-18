@@ -13,6 +13,15 @@ import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { useOutcomeLogging } from '../../../hooks/useOutcomeLogging';
 import { useAuth } from '../../../hooks/useAuth';
+import {
+  logFundingEditPayments,
+  logFundingLinkCopied,
+  logFundingMethodSelected,
+  logFundingOpened,
+  logFundingRowAdded,
+  logFundingRowRemoved,
+  logFundingStructureChanged,
+} from '../../../utils/activity-log/funding-log';
 import { FUND } from './funding/funding-theme';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
 import { FundingView } from './funding/FundingView';
@@ -21,7 +30,12 @@ import { SegmentedChoice } from './funding/SegmentedChoice';
 import { CoverageBar } from './funding/CoverageBar';
 import { BlockerList } from './funding/BlockerList';
 import { useFunding } from '../hooks/useFunding';
-import type { FundingChannel, FundingPaymentRow, FundingRecord } from '../../../services/api/FundingService';
+import type {
+  FundingChannel,
+  FundingPaymentRow,
+  FundingRecord,
+  PaymentAllocation,
+} from '../../../services/api/FundingService';
 import {
   applyDecisionsToRows,
   assignedTotal,
@@ -37,6 +51,7 @@ import {
   MULTI_METHOD_ENABLED,
   needsAttentionRowId,
   newPaymentId,
+  paymentAllocations,
   structureHint,
   structureLocked,
   toUpsertRows,
@@ -95,6 +110,12 @@ interface ResultJobModalProps {
   /** The lead — needed to fire the `lead_result_field_entry` outcome logs (web parity). */
   lead?: any;
   calculatorTitle?: string;
+  /**
+   * The calculator this sale is being resulted from. Display never uses it — it is
+   * carried so every funding log row links the money back to the quote it came
+   * from, which is otherwise unrecoverable once the sheet closes.
+   */
+  calculatorId?: string;
   resultType?: 'sale' | 'demo' | null;
   /** prefill for the contract price (the rollout end / latest drop price) */
   initialPrice?: number;
@@ -122,6 +143,22 @@ interface ResultJobModalProps {
     balance?: number;
     downPaymentMethod?: string;
     balancePaymentMethod?: string;
+    /**
+     * The multi-method breakdown, persisted BESIDE the four scalars above (which
+     * stay written as a derived mirror — summed totals plus the first funded row's
+     * plan key).
+     *
+     * ⚠️ Additive on purpose. ~20 consumers read the four flat names, and the
+     * customer-facing agreement and amendment renderers would degrade *silently*
+     * rather than error if they were converted outright. A reader that has not been
+     * upgraded therefore sees a LOSSY view — one method named for a job that used
+     * three — never a wrong one.
+     *
+     * ⚠️ `method` here is a plan KEY, matching `paymentMethod` — NOT the catalogue
+     * label the funding API's own `payments[].method` carries.
+     */
+    downPayments?: PaymentAllocation[];
+    balancePayments?: PaymentAllocation[];
     demoReason?: string;
     reasonExplanation?: string;
     versatile?: boolean;
@@ -225,6 +262,7 @@ export function ResultJobModal({
   visible = false,
   lead,
   calculatorTitle,
+  calculatorId,
   resultType: initialResultType,
   initialPrice,
   initialPaymentMethod,
@@ -257,7 +295,23 @@ export function ResultJobModal({
    * Only the PRICING rows below are local, because they are an unsaved draft until
    * the rep taps Confirm.
    */
-  const funding = useFunding(lead?._id || lead?.leadId || lead?.id, lead?.companyId || user?.companyId);
+  const leadLogId = lead?._id || lead?.leadId || lead?.id;
+  const funding = useFunding(leadLogId, lead?.companyId || user?.companyId, {
+    userId: user?._id || user?.id,
+    calculatorId,
+    calculatorTitle,
+  });
+
+  /**
+   * Identity for the funding events this component fires directly — the ones that
+   * are pure UI and never reach an endpoint (structure, rows, method picks, moving
+   * between the two screens). Everything endpoint-driven is logged inside
+   * `useFunding`, which is the only place the OUTCOME exists.
+   */
+  const fundingLog = useMemo(
+    () => ({ userId: user?._id || user?.id, leadId: leadLogId, calculatorId, calculatorTitle }),
+    [user?._id, user?.id, leadLogId, calculatorId, calculatorTitle]
+  );
 
   /** Which half of the sheet is showing. A demo never leaves `result`. */
   const [screen, setScreen] = useState<'result' | 'funding'>('result');
@@ -392,7 +446,19 @@ export function ResultJobModal({
    * The single-method fields every existing consumer of the outcome payload still
    * reads (`buildCalculatorOutcomePayload`, the outcome logs, the deal-edit
    * baseline). With a split contract there is no one method, so the FIRST funded
-   * row of each half stands in — and the summed totals stay exact.
+   * row of each half stands in — and the summed totals stay exact. The full
+   * breakdown rides alongside in `downPayments` / `balancePayments`.
+   *
+   * ⚠️ **These hold a plan KEY, and must NEVER become a joined display string.**
+   * `getPaymentMethodLabel`, `coerceToPlanKey` and the server's own
+   * `resolvePaymentMethodLabel` all look the value up against the company's
+   * payment-plan catalogue, so a `"Check + AMEX"` resolves to nothing in every
+   * consumer at once. Worse, `resolveTierPaymentMethod`
+   * (`utils/dynamic-deal-pricing.ts:51`) SUBSTRING-SNIFFS this value to pick the
+   * fee that grosses up the whole contract price — a joined string containing
+   * `amex` would silently reprice a signed deal at AMEX's rate. Per-row gross-up
+   * is a pricing decision RevDSM has not made yet; until it does, the one-key
+   * mirror is what keeps that path honest.
    */
   const primaryDownMethod = useMemo(
     () => collectNowRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
@@ -401,6 +467,19 @@ export function ResultJobModal({
   const primaryBalanceMethod = useMemo(
     () => balRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method || '',
     [balRows, activeRows, contractNum]
+  );
+
+  /**
+   * The full allocation, persisted alongside those scalars so a split contract
+   * survives a reload as three rows rather than as one row of the summed total.
+   *
+   * ⚠️ Built from `activeRows` for the same reason `goFunding` saves from them: the
+   * inactive structure's lines are still in `rows`, and including them would file
+   * the contract twice over.
+   */
+  const allocations = useMemo(
+    () => paymentAllocations(activeRows, contractNum, pricing.plans),
+    [activeRows, contractNum, pricing.plans]
   );
 
   // Web parity (result-lead-modal.js): fire the `lead_result_field_entry` outcome
@@ -460,26 +539,80 @@ export function ResultJobModal({
     setRows((prev) => prev.map((r) => (r.pid === pid ? { ...r, ...patch } : r)));
   }, []);
 
-  const removeRow = useCallback((pid: string) => {
-    setRows((prev) => prev.filter((r) => r.pid !== pid));
-  }, []);
-
-  const addRow = useCallback((kind: PaymentKind) => {
-    setRows((prev) => {
-      const next = [...prev];
-      // A new line goes AFTER the last row of its own half so the two groups stay
-      // contiguous — `rows` is one flat list and the groups render from filters.
-      let insertAt = next.length;
-      for (let i = next.length - 1; i >= 0; i -= 1) {
-        if (next[i].kind === kind) {
-          insertAt = i + 1;
-          break;
-        }
+  const removeRow = useCallback(
+    (pid: string) => {
+      // ⚠️ Read and logged BEFORE the state update, not inside the updater — React
+      // may invoke an updater more than once, which would double-log. After this
+      // the row is gone, and the event is the only record that money was ever
+      // assigned to that method.
+      const gone = rows.find((r) => r.pid === pid);
+      if (gone) {
+        logFundingRowRemoved({
+          ...fundingLog,
+          kind: gone.kind,
+          amount: effectiveRowAmount(gone, activeRows, contractNum),
+          method: gone.method || undefined,
+          methodLabel: pricing.plans[gone.method]?.label || gone.methodLabel,
+        });
       }
-      next.splice(insertAt, 0, { pid: newPaymentId(), kind, amount: '', method: '' });
-      return next;
-    });
-  }, []);
+      setRows((prev) => prev.filter((r) => r.pid !== pid));
+    },
+    [rows, activeRows, contractNum, pricing.plans, fundingLog]
+  );
+
+  const addRow = useCallback(
+    (kind: PaymentKind) => {
+      // Same reason as `removeRow`: logged outside the updater, which React may run
+      // more than once. `rowCount` is the count AFTER this add, so the timeline
+      // reads "the contract is now split three ways".
+      logFundingRowAdded({
+        ...fundingLog,
+        kind,
+        rowCount: activeRows.filter((r) => r.kind === kind).length + 1,
+      });
+      setRows((prev) => {
+        const next = [...prev];
+        // A new line goes AFTER the last row of its own half so the two groups stay
+        // contiguous — `rows` is one flat list and the groups render from filters.
+        let insertAt = next.length;
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].kind === kind) {
+            insertAt = i + 1;
+            break;
+          }
+        }
+        next.splice(insertAt, 0, { pid: newPaymentId(), kind, amount: '', method: '' });
+        return next;
+      });
+    },
+    [activeRows, fundingLog]
+  );
+
+  /**
+   * A method was picked on one line.
+   *
+   * Amounts are deliberately NOT logged as they are typed — that would be a row per
+   * keystroke — so the method pick and the Confirm save (which carries every final
+   * amount) are the two events that describe the split.
+   */
+  const selectRowMethod = useCallback(
+    (pid: string, key: string) => {
+      const row = rows.find((r) => r.pid === pid);
+      // Only when it actually changes, matching how the Investment Center logs its
+      // payment-method selection — re-picking the same plan is not an event.
+      if (row && key && key !== row.method) {
+        logFundingMethodSelected({
+          ...fundingLog,
+          kind: row.kind,
+          method: key,
+          methodLabel: pricing.plans[key]?.label,
+          amount: effectiveRowAmount(row, activeRows, contractNum),
+        });
+      }
+      updateRow(pid, { method: key });
+    },
+    [rows, activeRows, contractNum, pricing.plans, fundingLog, updateRow]
+  );
 
   /**
    * Switch between Down Payment and Upfront.
@@ -503,6 +636,10 @@ export function ResultJobModal({
         return;
       }
       setStructureNudge(false);
+      // Logged only once the switch is actually ALLOWED — a refused tap changed
+      // nothing about the deal, and recording it would put a structure change in the
+      // timeline that never happened.
+      logFundingStructureChanged({ ...fundingLog, from: payMode, to: next });
       setRows((prev) => {
         const wantUpfront = next === 'upfront';
         const already = prev.some((r) => (wantUpfront ? r.kind === 'up' : r.kind !== 'up'));
@@ -518,7 +655,7 @@ export function ResultJobModal({
       });
       setPayMode(next);
     },
-    [payMode, contractNum]
+    [payMode, contractNum, fundingLog]
   );
 
   /**
@@ -596,16 +733,26 @@ export function ResultJobModal({
     // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
     // state, and `payments` is the COMPLETE list — sending them would file the
     // contract twice over.
-    const res = await funding.savePayments(
-      Math.round(contractNum),
-      toUpsertRows(activeRows, contractNum, pricing.plans)
-    );
-    if (res.ok) setScreen('funding');
-  }, [resultBlockers, contractNum, activeRows, pricing.plans, funding]);
+    const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
+    // `savePayments` logs the save itself (with the full breakdown) — it is the only
+    // place the server's answer exists.
+    const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
+    if (!res.ok) return;
+    logFundingOpened({
+      ...fundingLog,
+      contractPrice: Math.round(contractNum),
+      paymentCount: upsert.length,
+      payMode,
+    });
+    setScreen('funding');
+  }, [resultBlockers, contractNum, activeRows, pricing.plans, payMode, funding, fundingLog]);
 
   /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
   const goResult = useCallback(() => {
     const applied = applyDecisionsToRows(activeRows, payments, contractNum, payMode);
+    // `reassigning` is the case worth telling apart: a lender decision opened a gap
+    // and the rep is going back to cover it, not just changing their mind.
+    logFundingEditPayments({ ...fundingLog, reassigning: applied.banners.length > 0 });
     // Decisions only ever touch the ACTIVE structure, so the other one's rows are
     // carried through untouched rather than dropped.
     const inactive = rows.filter((r) => !activeRows.includes(r));
@@ -616,7 +763,7 @@ export function ResultJobModal({
     // The "void it first" nudge answered a tap that is now several screens back.
     setStructureNudge(false);
     setScreen('result');
-  }, [rows, activeRows, payments, contractNum, payMode, funding]);
+  }, [rows, activeRows, payments, contractNum, payMode, funding, fundingLog]);
 
   // ── funding actions ──────────────────────────────────────────────────────
 
@@ -627,7 +774,13 @@ export function ResultJobModal({
    * showing the local mirror beforehand means the rep works the list instead of
    * discovering it by tapping a button that says no.
    */
-  const localBlockers = useMemo(() => fundingBlockers(payments, contractNum), [payments, contractNum]);
+  const localBlockers = useMemo(
+    // The `charges_enabled` gate joins the checklist as ONE line — it is why the
+    // link steps below it cannot be finished, and repeating it per card would say
+    // the same company-wide thing three times on a three-card job.
+    () => fundingBlockers(payments, contractNum, { setupBlocked: !!funding.paymentsSetupError }),
+    [payments, contractNum, funding.paymentsSetupError]
+  );
   const blockers = funding.serverBlockers ?? localBlockers;
   /** ⚠️ Read from the record: the server refuses `bankDecline` without a logged decline. */
   const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
@@ -729,6 +882,12 @@ export function ResultJobModal({
       balance: isDemo ? undefined : balanceTotal,
       downPaymentMethod: primaryDownMethod || undefined,
       balancePaymentMethod: primaryBalanceMethod || undefined,
+      // A demo funds nothing, so it carries no allocation. Sent as `undefined`
+      // rather than `[]` — the backend's `default: undefined` is what distinguishes
+      // "predates multi-method" from "genuinely no rows", and an empty array on a
+      // demo would claim the latter about a record that never had payments.
+      downPayments: isDemo ? undefined : allocations.downPayments,
+      balancePayments: isDemo ? undefined : allocations.balancePayments,
       demoReason: isDemo ? demoReason : undefined,
       reasonExplanation: isDemo && demoReason === 'Other (Explain)' ? reasonExplanation : undefined,
       versatile,
@@ -744,7 +903,7 @@ export function ResultJobModal({
     });
   }, [
     resultType, oneLeg, contractNum, downTotal, balanceTotal, primaryDownMethod, primaryBalanceMethod,
-    demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
+    allocations, demoReason, reasonExplanation, versatile, pineapple, bankDeclined, payments, funding, onConfirm,
   ]);
 
   // ── price lock ───────────────────────────────────────────────────────────
@@ -807,14 +966,13 @@ export function ResultJobModal({
                   lastSyncedAt={lastSyncedAt}
                   syncingAll={funding.syncingAll}
                   busyPid={funding.busyPid}
-                  mockDisabled={funding.mockDisabled}
+                  paymentsSetupError={funding.paymentsSetupError}
                   onSyncAll={funding.syncAll}
                   onSyncOne={funding.syncPayment}
                   onSendLink={openSendSheet}
                   onMarkCollected={funding.markCheckCollected}
                   onChargeCard={funding.chargeCard}
                   onActivate={funding.activateLoan}
-                  onSimulate={funding.mockProvider}
                   onEditPayments={goResult}
                   onResultAsBankDecline={() => handleSetResult('bank_decline')}
                   onUndoBankDecline={() => handleSetResult('sale')}
@@ -958,6 +1116,7 @@ export function ResultJobModal({
                           {decisionBanners}
                           <PaymentRowsGroup
                             title="Upfront"
+                            total={downTotal}
                             rows={upRows}
                             allRows={activeRows}
                             price={contractNum}
@@ -968,7 +1127,7 @@ export function ResultJobModal({
                             needsRowId={needsRowId}
                             canAdd={MULTI_METHOD_ENABLED}
                             onChangeAmount={(id, t) => updateRow(id, { amount: t })}
-                            onChangeMethod={(id, key) => updateRow(id, { method: key })}
+                            onChangeMethod={selectRowMethod}
                             onRemove={removeRow}
                             onAdd={() => addRow('up')}
                             footer={
@@ -987,6 +1146,7 @@ export function ResultJobModal({
                         <>
                           <PaymentRowsGroup
                             title="Down Payment"
+                            total={downTotal}
                             rows={downRows}
                             allRows={activeRows}
                             price={contractNum}
@@ -997,7 +1157,7 @@ export function ResultJobModal({
                             needsRowId={needsRowId}
                             canAdd={MULTI_METHOD_ENABLED}
                             onChangeAmount={(id, t) => updateRow(id, { amount: t })}
-                            onChangeMethod={(id, key) => updateRow(id, { method: key })}
+                            onChangeMethod={selectRowMethod}
                             onRemove={removeRow}
                             onAdd={() => addRow('down')}
                           />
@@ -1006,6 +1166,7 @@ export function ResultJobModal({
 
                           <PaymentRowsGroup
                             title="Balance"
+                            total={balanceTotal}
                             rows={balRows}
                             allRows={activeRows}
                             price={contractNum}
@@ -1014,7 +1175,7 @@ export function ResultJobModal({
                             needsRowId={needsRowId}
                             canAdd={MULTI_METHOD_ENABLED}
                             onChangeAmount={(id, t) => updateRow(id, { amount: t })}
-                            onChangeMethod={(id, key) => updateRow(id, { method: key })}
+                            onChangeMethod={selectRowMethod}
                             onRemove={removeRow}
                             onAdd={() => addRow('bal')}
                           />
@@ -1168,7 +1329,20 @@ export function ResultJobModal({
                 link={linkUrl}
                 isLoadingLink={isLoadingLink}
                 isSending={funding.busyPid === linkPayment.pid}
+                blockedReason={funding.paymentsSetupError}
                 onSend={handleSendLink}
+                onCopyLink={() =>
+                  logFundingLinkCopied({
+                    ...fundingLog,
+                    payment: {
+                      pid: linkPayment.pid,
+                      method: linkPayment.method,
+                      type: linkPayment.type,
+                      kind: linkPayment.kind,
+                      amount: linkPayment.amount,
+                    },
+                  })
+                }
                 onClose={() => {
                   setLinkTarget(null);
                   setLinkUrl('');

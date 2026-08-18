@@ -3,7 +3,17 @@ import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { FUND } from './funding-theme';
 import { FundingStepper } from './FundingStepper';
-import { FLOW, canSync, doneFor, formatStamp, openShort, ownerOf, type FundingPayment } from '../../utils/funding';
+import {
+  FLOW,
+  applicationClosedNote,
+  canSync,
+  doneFor,
+  formatStamp,
+  isApplicationClosed,
+  openShort,
+  ownerOf,
+  type FundingPayment,
+} from '../../utils/funding';
 
 /**
  * One payment's funding card: the amount and method it represents, its progress
@@ -21,10 +31,23 @@ import { FLOW, canSync, doneFor, formatStamp, openShort, ownerOf, type FundingPa
 
 interface Props {
   payment: FundingPayment;
+  /**
+   * How this payment is named — `$500 Check`, or `$500 Check (1 of 2)` once the
+   * job carries repeated identical lines. Passed in rather than derived here
+   * because the ordinal is only meaningful against the WHOLE record, and it has to
+   * agree with the footer's blocker list, which numbers the same way.
+   */
+  title?: string;
   /** Is the whole contract covered? Decides whether a partial approval still blocks. */
   covered: boolean;
   /** Result is Bank Decline — the job is closing, so lender actions stop being offered. */
   bankDeclined: boolean;
+  /**
+   * The company's gateway can't accept payments (`charges_enabled`). Links cannot
+   * be created OR marked sent, so the send is withdrawn rather than left live to
+   * fail — the reason is stated once, company-wide, in `FundingView`.
+   */
+  linkBlocked?: boolean;
   /** An action for THIS payment is in flight. */
   isBusy: boolean;
   onSendLink: () => void;
@@ -82,8 +105,10 @@ function Banner({ tone, children }: { tone: 'warn' | 'bad'; children: React.Reac
 
 export function PaymentFundingCard({
   payment: p,
+  title,
   covered,
   bankDeclined,
+  linkBlocked,
   isBusy,
   onSendLink,
   onMarkCollected,
@@ -97,12 +122,21 @@ export function PaymentFundingCard({
   const finished = doneFor(p, covered);
   const isOpenShort = openShort(p, covered);
   const shortfall = p.decision === 'short' && p.requested != null ? p.requested - (p.approvedAmt || 0) : 0;
+  /** The homeowner closed the hosted page. The row is back at unsent — see `funding.ts`. */
+  const closed = isApplicationClosed(p);
+  const closedNote = applicationClosedNote(p);
+  /**
+   * `(1 of 2)` lifted out of the composed title. Only the ordinal is rendered —
+   * the amount and the method already have their own places on the card, and
+   * repeating the whole sentence would say each of them twice.
+   */
+  const ordinal = /\((\d+ of \d+)\)\s*$/.exec(title || '')?.[0] || '';
 
   // Card tint states the verdict before the rep reads a word of it.
   const tint =
     p.decision === 'declined'
       ? { border: FUND.RED_BORDER, bg: FUND.RED_CARD_BG }
-      : isOpenShort
+      : isOpenShort || closed
         ? { border: FUND.AMBER_BORDER, bg: FUND.AMBER_CARD_BG }
         : finished
           ? { border: FUND.GREEN_BORDER, bg: FUND.GREEN_CARD_BG }
@@ -123,9 +157,17 @@ export function PaymentFundingCard({
   return (
     <View style={{ borderWidth: 1.6, borderColor: tint.border, backgroundColor: tint.bg, borderRadius: 16, paddingHorizontal: 14, paddingTop: 15, paddingBottom: 12, marginBottom: 14 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 10 }}>
-        <Text style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.4, color: FUND.TEXT }}>
-          ${p.amount.toLocaleString()}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1 }}>
+          <Text style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.4, color: FUND.TEXT }}>
+            ${p.amount.toLocaleString()}
+          </Text>
+          {/* Only the ordinal, and only when there IS one: two `$500 Check` cards
+              are otherwise pixel-identical and the rep cannot tell which one a
+              blocker sentence is about. */}
+          {!!ordinal && (
+            <Text style={{ fontSize: 12, fontWeight: '800', color: FUND.MUTED }}>{ordinal}</Text>
+          )}
+        </View>
         <View style={{ maxWidth: '58%', backgroundColor: FUND.FILL, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20 }}>
           <Text style={{ fontSize: 12.5, fontWeight: '700', color: FUND.SUBTEXT }} numberOfLines={1}>
             {p.method}
@@ -143,11 +185,24 @@ export function PaymentFundingCard({
         <ActionButton label="Mark collected" onPress={onMarkCollected} busy={isBusy} />
       )}
 
+      {/* ⚠️ Sits ABOVE the send button so the rep reads why they are sending again
+          before the button that does it — the row is back at `linkSent: false`, so
+          without this the card is indistinguishable from one never sent. */}
+      {!!closedNote && !bankDeclined && <Banner tone="warn">{closedNote}</Banner>}
+
       {(p.type === 'cc' || p.type === 'bank') && !p.linkSent && !bankDeclined && (
         <ActionButton
-          label={`Send ${p.type === 'bank' ? 'application' : 'payment'} link`}
+          // "Send again" is the honest label once the homeowner has already had one.
+          label={
+            linkBlocked
+              ? 'Payments not set up — can’t send'
+              : `${closed ? 'Send a new' : 'Send'} ${p.type === 'bank' ? 'application' : 'payment'} link`
+          }
           onPress={onSendLink}
           busy={isBusy}
+          // Withdrawn rather than left live to fail: a 409 the rep cannot fix
+          // invites retry-until-support. The reason is on the banner above.
+          disabled={linkBlocked}
         />
       )}
 

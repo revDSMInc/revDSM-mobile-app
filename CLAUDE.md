@@ -1562,6 +1562,211 @@ true and the Review row renders; unrecognized text → the `resolveTierPaymentMe
 lands on a basic. Lowe's leads scope `downPaymentOptions` to Lowe's methods, so a non-Lowe's key blanks —
 correct, since that method is not offered for the lead, and the payload fallback preserves it.
 
+### Funding: multiple payment methods are LIVE, and a 409 on the link endpoints is terminal
+
+Two backend specs, both at the repo root and both written against the **web** app —
+`FUNDING-MULTI-PAYMENT-FRONTEND-CHANGES.md` and `FUNDING-CHARGES-ENABLED-GATE-CLIENT-CHANGES.md`.
+Mobile's funding module was already ahead of web's "Stage 0" (it has rendered N rows per group since
+it was written), so this pass is the parts mobile was actually missing.
+
+**`MULTI_METHOD_ENABLED` is now `true`** (`screens/DynamicDealCenter/utils/funding.ts`). It gates the
+"Add payment method" button **and** the per-row ✕ together — with Add off, a removed row is
+unrecoverable inside the session. Flipping it on is what makes the rest of this section necessary:
+until now two rows of the same amount and method were impossible.
+
+#### The `charges_enabled` gate — the one 409 that must NOT be retried
+
+`POST …/link` and `…/link-sent` now answer **409** when the company's Stripe account is connected but
+`charges_enabled: false`. It used to surface as `503 "No payment provider is configured yet"`, which
+sent whoever was debugging to check environment variables that were already correct.
+
+⚠️ **The documented 409 rule ("re-`GET` the record and re-render, often succeeds after a refresh")
+LOOPS here.** Nothing about the record is stale; someone with portal access has to finish setup in
+Stripe. So `classifyFundingError` gained a distinct **`setupRequired`** kind, decided from the failed
+request's url via the pure exported **`isLinkEndpointUrl`** — read off `err.config.url` rather than
+passed in by each caller, so no future call site can forget it and quietly restore the loop.
+`shouldRefetchAfter` returns **false** for it, and `useFunding.report` neither refetches nor invites a
+retry; it stores the server's message on **`paymentsSetupError`**.
+
+- ⚠️ **One banner, never one per row.** The condition is company-wide, so a job with three card rows
+  would otherwise meet the same message three times. `FundingView` renders it once at the top,
+  `fundingBlockers(payments, price, { setupBlocked })` adds ONE checklist line, and every card's send
+  button is *withdrawn* (`linkBlocked`) rather than left live to fail — a rep shown only an error
+  retries until they call support.
+- `SendLinkModal` gained `blockedReason`, because the FIRST failure happens inside that sheet. It must
+  not fall through to the generic *"Close this and try again"*.
+- The gate self-clears on any successful `fetchLink` / `markLinkSent` and on `load` — the server trusts
+  a `true` for ten minutes but **re-asks Stripe on every `false`**, precisely so an account that
+  finishes onboarding is never blocked forever (no `account.updated` webhook exists).
+- ⚠️ Every OTHER 409 is still `stale`, **including a refused submit** — that one carries `blockers` and
+  its url is `…/submit`. Tested.
+
+#### The client blocker mirror had drifted from the server's rules
+
+`fundingBlockers` mirrors the server so the rep works a list instead of tapping a button that says no.
+Two gaps, both newly reachable:
+
+- **No over-allocation line.** It had the under-coverage case but not its mirror, so the rep saw a
+  satisfied gate and then a 409. Now `$1,000 more than the contract price is allocated` — **the
+  server's exact wording**, because the server's list *replaces* this one on a refused submit and a
+  divergence there is worse than having no mirror at all.
+- **No row disambiguation.** New **`describePayment(p, payments)`** → `$500 Check (1 of 2)`, matching
+  the server, numbered positionally so the Nth sentence names the Nth card. `PaymentFundingCard` shows
+  only the ordinal (the amount and method already have their own places on the card).
+
+#### Abandoned applications (`applicationClosed`)
+
+The backend gained `abandoned` / `canceled` / `expired` / `error`, and ⚠️ **it RESETS the row to
+unsent**. Nothing read it, so the rep saw *"link not sent yet"* for a link they watched the homeowner
+open — which reads as an app bug. Now `isApplicationClosed` / `applicationClosedNote`, an amber card +
+"Send a **new** link", and in `stateOf` the Link Sent step draws **`warn`** rather than `now`.
+⚠️ In `fundingBlockers` the closed arm must **outrank** the "link not sent yet" arm, or the lie returns.
+The flag is deliberately ignored once `linkSent` or a `decision` lands — a stale "they abandoned it"
+over a working application is worse than none.
+
+#### Stage 1 — the allocation arrays are persisted
+
+New **`paymentAllocations(rows, price, plans)`** → `{ downPayments, balancePayments }`, threaded through
+`ResultJobModal.onConfirm` → `leadData` on the `/job-builder` POST, the outcome mirror, and
+`buildCalculatorOutcomePayload` (a **whitelist** — a field not named there is silently dropped).
+
+- ⚠️ **Additive, never a replacement.** The four scalars stay written as a derived mirror (section
+  totals + the first funded row's key) because ~20 consumers read those names and the customer-facing
+  agreement/amendment renderers would degrade *silently* rather than error. An un-upgraded reader sees a
+  **lossy** view — one method named for a job that used three — not a wrong one.
+- ⚠️ **`method` is a plan KEY here**, matching the scalar it mirrors — NOT the catalogue LABEL
+  `toUpsertRows` sends to the funding API, which is the field the funding server derives `type` from.
+  Do not conflate them.
+- ⚠️ **Never join methods into `"Check + AMEX"`.** `resolveTierPaymentMethod`
+  (`utils/dynamic-deal-pricing.ts:51`) **substring-sniffs** that value to pick the fee that grosses up
+  the whole contract, so a joined string containing `amex` would silently reprice a signed deal.
+- Sent as `undefined` (not `[]`) on a demo: the backend's `default: undefined` is what distinguishes
+  "predates multi-method" from "no rows".
+- ⚠️ **Rehydration still comes from the FUNDING record** (`hydrateRowsFromRecord`), not these arrays —
+  they carry no `pid`, which is the server's merge key.
+
+#### Also fixed: a named row with no amount vanished
+
+`toUpsertRows` drops a row with a method but no money (the server rejects a zero amount with 422), so a
+line the rep added and named silently never reached the deal while the auto row re-absorbed its money.
+`confirmBlockers` now names it. The **auto** row and a **decided** row are exempt — $0 there is the
+correct end state, not a gap.
+
+#### ⛔ NOT done, and deliberately: Stage 2 (per-row gross-up)
+
+Spec §Stage 2 is **blocked on a RevDSM decision** ("per-row gross-up" vs "one primary row") and the doc
+is explicit: *do not guess it — a wrong answer here misprices jobs silently*. It also lives in
+`dynamic-deal-pricing.ts`, not the funding module. The landmine is **not armed on mobile** today only
+because the scalar mirror is one key and is never joined — see the warning above.
+
+Also not done (out of scope here): Stage 3's read-only consumers, which keep working off the scalars.
+
+Verified with 40 tests (`__tests__/screens/DynamicDealCenter/funding-multi-payment.test.ts`): both link
+paths recognised and `/linkage` rejected, the gate classified on both and never refetched, every other
+409 still stale incl. a refused submit's blockers, url read off `response.config` too; duplicate naming
+across identical/different/positional rows and a row absent from its list; all four closed reasons plus
+an unrecognised one, the flag going history on resend or decision, the blocker precedence and the amber
+step with regression guards; over- and under-allocation and exact coverage, the one-line setup gate;
+`groupTotal` counting the APPROVED amount; the blank named row incl. the auto/decided exemptions; and
+`paymentAllocations` storing keys not labels, filing `up` as a down payment, dropping empty rows,
+keeping a retired plan on its stored label, and reconciling with the scalar mirror. tsc 44 (baseline
+unchanged); the original 75-test funding suite still passes; eslint 0 errors across all touched files.
+
+### Funding activity logging — a `funding` module, and every click in it
+
+The funding module fired **no activity logs at all**, so the one surface where money
+actually moves left nothing on the Forever Record. New **`src/utils/activity-log/funding-log.ts`**
+(18 events) plus **`FUNDING_MODULE = 'funding'`** in `constants/activity-log.constants.ts`.
+
+Its own module rather than folding into `calculator` / `job_builder` because this is the only
+place in the app where `POST …/charge` moves real money and where a third party (a processor,
+a lender) decides the outcome — a portal filter on `funding` should read as the money trail for
+a job and nothing else. Modelled on `investment-center-log.ts`, which is the closest precedent
+(a mobile-first module with no web counterpart).
+
+| where | events |
+|---|---|
+| pricing panel | `funding_structure_changed`, `funding_payment_row_added`, `funding_payment_row_removed`, `funding_payment_method_selected`, `funding_payments_saved` |
+| the hand-off | `funding_opened`, `funding_edit_payments` |
+| link | `funding_link_requested` / `_blocked` / `_failed`, `funding_link_sent` / `_send_failed`, `funding_link_copied` |
+| advancing | `funding_payment_synced`, `funding_sync_all`, `funding_check_collected`, `funding_card_on_file`, `funding_card_charged` / `_declined`, `funding_loan_activated` |
+| finishing | `funding_result_changed`, `funding_submitted` / `funding_submit_blocked` |
+
+#### The endpoint-driven half lives in `useFunding`, not at the call sites
+
+Every funding endpoint already funnels through that hook, so a new action cannot ship unlogged —
+but the deciding reason is that **the outcome only exists there**. `sync`'s 200 `message` is what
+the lender actually said (`Lender approved part of the request`), and a `402` on a charge is the
+difference between *"the card was charged"* and *"the card was declined and nothing moved"*; a
+call site sees neither. `useFunding` gained an optional third arg, `logCtx`
+(`{ userId, calculatorId, calculatorTitle }`), and `ResultJobModal` a `calculatorId` prop —
+display never uses it, it is what links the money back to the quote it came from.
+
+⚠️ **`paymentFor(pid)` snapshots the row BEFORE the call.** Every one of these endpoints returns a
+MUTATED record, so reading afterwards would describe a charged card as "charged" in the very event
+that says it was charged — and on a failure the row may not come back at all.
+
+#### Four rules that are not stylistic
+
+- ⚠️ **The hosted-page URL is never logged, and no function in `funding-log.ts` accepts one.** It is
+  a bearer credential scoped to one payment — anyone holding it can complete that payment. The
+  channel and destination are logged instead (the server already stores them as `sentChannel` /
+  `sentTo`). **`funding_link_copied` therefore takes no argument**: what matters is that the
+  credential left the app, which no other event covers. Asserted by a test that scans the payload
+  for anything url-shaped.
+- ⚠️ **Failures are their own actions, not a flag.** A timeline showing only `funding_card_charged`
+  hides a run of declines, and a `402` leaves the row un-charged so the retry is a genuine second
+  attempt. Same for the link: `_blocked` (the `charges_enabled` gate — nobody at the table can fix
+  it) is deliberately distinct from `_failed`.
+- ⚠️ **A refused submit carries the server's `blockers` verbatim.** "The rep could not submit" is
+  only useful with what stopped them, and that list is already itemised and ordered.
+- ⚠️ **There is no event for a simulated lender outcome, and there must not be** — see the removal
+  below. A decision reaches this module only through `funding_payment_synced` (what the lender
+  actually said) or `recordDecision` (a real verdict reported out of band).
+
+#### ⛔ REMOVED: the Scenario Simulator and `POST …/{pid}/mock-provider`
+
+Removed on request. The dashed panel at the foot of the Funding screen stood in for a homeowner or
+a lender that does not exist in development, so a tap on it wrote an **invented approval or decline
+onto a real funding record** — and those rows then sat in `attemptHistory` beside genuine ones with
+nothing distinguishing them.
+
+Gone: `components/funding/ScenarioSimulator.tsx` (deleted), `FundingEndpoints.mockProvider` +
+`FundingService.mockProvider`, `useFunding`'s `mockProvider` / `mockDisabled`, `FundingView`'s
+`onSimulate` / `mockDisabled` props, and `MOCK_PARTIAL_RATE` in `utils/funding.ts`.
+
+⚠️ **`recordDecision` STAYS.** It looks similar and is not: `POST …/{pid}/decision` records a
+lender's *real* verdict reported to the rep out of band, which is a documented production path.
+Only the invented one is gone.
+
+⚠️ A test asserts the route is **absent** (`FundingEndpoints` has no `mockProvider`, and no endpoint
+builds a path containing `mock`) rather than merely deleting the old assertion — re-adding it should
+fail in CI, not ship. If a simulator is ever wanted again it belongs behind a build flag, not in the
+service every rep's device carries.
+
+#### What is deliberately not an event
+
+**Amounts as they are typed** — that would be a row per keystroke. The method pick and the Confirm
+save are the two events that describe the split, and `funding_payments_saved` carries the COMPLETE
+breakdown (the same list the server treats as authoritative), so the deal is reconstructable from
+that one row. A **refused** structure switch is not logged either: nothing changed, and recording it
+would put a structure change in the timeline that never happened. A method **re-picked to the same
+value** is not a change (same rule as `InvestmentPanel.selectPaymentChoice`).
+
+⚠️ `logFundingRowAdded` / `logFundingRowRemoved` fire **outside** the `setRows` updater. React may
+invoke an updater more than once, which would double-log; the removed row is also read before the
+update, since afterwards the event is the only record that money was ever assigned there.
+
+Verified with 35 tests (`__tests__/utils/funding-log.test.ts`, `LoggerService` mocked): the module
+and actor on every row, a `userId`-less call as a no-op, absent identity fields omitted rather than
+blank; each event's verb and action string; both failure variants of the link, the charge and the
+save; a QR send carrying no destination; a 502 logged as a failure rather than a delivery; the
+approved figure beside the ask on activation, `approvedAmt` omitted when absent but a genuine `0`
+kept; blockers verbatim; and two vocabulary guards — every verb one already in use across the app,
+and all 18 actions distinct and `funding_`-namespaced. tsc 44 (baseline unchanged); `funding-log.ts`,
+its test and `activity-log.constants.ts` are eslint-clean, `ResultJobModal.tsx` is at its exact HEAD
+count (65 problems, 0 errors) and `DynamicDealCenterScreen.tsx` at its HEAD 21 pre-existing errors.
+
 ### Rehash with no job scope opens the entry form, not a locked $0 receipt
 
 Ticket: *"in the rehash module when the lead having `isRehashed: true` … if the lead is in the rehash

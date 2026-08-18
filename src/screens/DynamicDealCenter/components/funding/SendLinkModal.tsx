@@ -58,8 +58,26 @@ interface Props {
   isLoadingLink: boolean;
   /** A `link-sent` call is in flight. */
   isSending: boolean;
+  /**
+   * The company's gateway cannot accept payments (`charges_enabled`) — the
+   * server's own wording.
+   *
+   * ⚠️ This is the ONE link failure a retry cannot fix, so it must not fall through
+   * to the generic *"Close this and try again"* below: the rep would try again,
+   * fail again, and call support. Only someone with portal access can resolve it.
+   */
+  blockedReason?: string | null;
   /** Resolves true only when the server confirms the send — see the 502 note above. */
   onSend: (channel: FundingChannel, destination?: string) => Promise<boolean>;
+  /**
+   * The rep put the link on the clipboard.
+   *
+   * ⚠️ Reported as a bare event, and the callback takes NO argument on purpose: the
+   * url is a bearer credential and must not travel to a logger. What matters for the
+   * record is only that the credential left the app — the payment can be completed
+   * from wherever it was pasted, and no other event covers that.
+   */
+  onCopyLink?: () => void;
   onClose: () => void;
 }
 
@@ -93,7 +111,16 @@ function ModalButton({ label, onPress, alt, disabled, busy }: {
   );
 }
 
-export function SendLinkModal({ payment, link, isLoadingLink, isSending, onSend, onClose }: Props) {
+export function SendLinkModal({
+  payment,
+  link,
+  isLoadingLink,
+  isSending,
+  blockedReason,
+  onSend,
+  onCopyLink,
+  onClose,
+}: Props) {
   const [stage, setStage] = useState<Stage>('choose');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -143,6 +170,24 @@ export function SendLinkModal({ payment, link, isLoadingLink, isSending, onSend,
                 <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                   <ActivityIndicator size="large" color={FUND.GREEN} />
                   <Text style={{ fontSize: 12, fontWeight: '600', color: FUND.MUTED, marginTop: 12 }}>Preparing the link…</Text>
+                </View>
+              ) : blockedReason ? (
+                /* ⚠️ NOT "try again". The company's Stripe account is connected but
+                   cannot take payments, and no number of taps changes that — the
+                   rep needs someone with portal access, so say so and name them. */
+                <View style={{ alignSelf: 'stretch', backgroundColor: FUND.RED_BG, borderRadius: 11, padding: 12 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: FUND.RED_TEXT }}>
+                    Payments are not set up for your company yet
+                  </Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: FUND.RED_TEXT, lineHeight: 17, marginTop: 4 }}>
+                    Contact your office — setup has to be finished in Stripe before card and loan links can be sent.
+                    Nothing has been sent.
+                  </Text>
+                  {/* The server's wording names the exact requirement whoever is
+                      called will have to clear. */}
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.RED_TEXT, lineHeight: 16, marginTop: 6, opacity: 0.85 }}>
+                    {blockedReason}
+                  </Text>
                 </View>
               ) : !link ? (
                 /* The link call failed — the hook has already said why. Without a url
@@ -195,6 +240,7 @@ export function SendLinkModal({ payment, link, isLoadingLink, isSending, onSend,
                   <TouchableOpacity
                     onPress={() => {
                       Clipboard.setString(link);
+                      onCopyLink?.();
                       FlashMessage.success('Copied', 'Link copied to the clipboard.');
                     }}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 }}
@@ -206,7 +252,9 @@ export function SendLinkModal({ payment, link, isLoadingLink, isSending, onSend,
               )}
 
               <TouchableOpacity onPress={onClose} style={{ marginTop: 12 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.MUTED }}>Cancel</Text>
+                {/* "Cancel" implies aborting something in progress; when the gate
+                    refused there is nothing in progress to abort. */}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: FUND.MUTED }}>{blockedReason ? 'Close' : 'Cancel'}</Text>
               </TouchableOpacity>
             </>
           )}

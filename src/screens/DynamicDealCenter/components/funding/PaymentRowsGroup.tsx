@@ -22,6 +22,14 @@ import { effectiveRowAmount, type PaymentRow } from '../../utils/funding';
 
 interface Props {
   title: string;
+  /**
+   * Running total for the heading (`Down Payment · $2,500`).
+   *
+   * ⚠️ Worth the prop rather than being derived here: once a half of the contract
+   * is several lines, "does this add up to what we agreed" is no longer answerable
+   * by reading one field, and the auto row hides the arithmetic by design.
+   */
+  total?: number;
   /** Only this group's rows, in display order. */
   rows: PaymentRow[];
   /** All rows across both groups — the auto amount is a whole-contract calculation. */
@@ -35,7 +43,7 @@ interface Props {
   /** The row the rep must fill to close a gap a lender decision opened. */
   needsRowId?: string | null;
   /**
-   * Can the rep add/remove payment lines? Off today — see `MULTI_METHOD_ENABLED`.
+   * Can the rep add/remove payment lines? See `MULTI_METHOD_ENABLED` — on today.
    * Gates the ✕ as well as the Add button: with Add disabled, a removed row could
    * not be brought back.
    */
@@ -66,6 +74,7 @@ function StatusPill({ decision }: { decision: 'full' | 'short' | 'declined' }) {
 
 export function PaymentRowsGroup({
   title,
+  total,
   rows,
   allRows,
   price,
@@ -86,6 +95,12 @@ export function PaymentRowsGroup({
     <View style={{ position: 'relative', backgroundColor: '#fff', borderWidth: 1.6, borderColor: FUND.BORDER, borderRadius: 16, paddingHorizontal: 14, paddingTop: 20, paddingBottom: 14, marginBottom: 18 }}>
       <Text style={{ position: 'absolute', top: -9, left: 16, paddingHorizontal: 6, backgroundColor: FUND.PANEL, fontSize: 13.5, fontWeight: '700', color: FUND.TEXT, zIndex: 2 }}>
         {title}
+        {/* Shown only once the group holds MORE THAN ONE line — with a single row
+            the total is the number already in the field beside it, and repeating
+            it in the heading reads as a second, different figure. */}
+        {rows.length > 1 && total != null && (
+          <Text style={{ fontWeight: '700', color: FUND.SUBTEXT }}>{`  ·  $${Math.round(total).toLocaleString()}`}</Text>
+        )}
       </Text>
 
       {rows.map((row) => {
@@ -223,8 +238,8 @@ export function PaymentRowsGroup({
         );
       })}
 
-      {/* Greyed rather than hidden: the split-payment capability is coming, and a
-          control that vanishes reads as a bug where a dimmed one reads as "not yet". */}
+      {/* Greyed rather than hidden when `canAdd` is off: a control that vanishes
+          reads as a bug where a dimmed one reads as "not here". */}
       <TouchableOpacity
         onPress={onAdd}
         disabled={!canAdd}
