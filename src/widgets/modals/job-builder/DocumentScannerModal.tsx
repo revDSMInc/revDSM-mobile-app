@@ -18,13 +18,16 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { LeadService } from '../../../services/api/leads';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { isPdfFile } from '../../../utils/document-file';
 
-// Same resolution the summary cards use — a server document's source lives on
-// `secureUrl`/`url`, NOT on `uri`, and a signed agreement is a PDF that `Image`
-// cannot decode. Both are why the tile rendered as a blank grey card.
-const isPdfFile = (f: any) =>
-  (f?.contentType || f?.mimeType || '').includes('pdf') ||
-  String(f?.name || f?.uri || f?.url || '').toLowerCase().endsWith('.pdf');
+// A server document's source lives on `secureUrl`/`url`, NOT on `uri`, and a signed
+// agreement is a PDF that `Image` cannot decode. Both are why the tile rendered as a
+// blank grey card.
+//
+// ⚠️ `fileSrc` is deliberately NOT shared with `SummaryFinalizeCards`, whose copy
+// prefers `secureUrl` over `uri`. Here `uri` must win: a locally-scanned page has
+// only that, and `docIdentity` reads it, so re-resolving could change a document's
+// identity across the scanner round-trip.
 const fileSrc = (f: any) =>
   f?.uri || f?.secureUrl || f?.displayUrl || f?.url || f?.thumbnailUrl || f?.file;
 

@@ -287,28 +287,48 @@ export default function PitchbookScreen() {
 
   const pollInterval = useRef<any>(null);
 
+  // Hydrate the FULL lead — `salesPhotos` and `notes` are what this screen renders, and
+  // the lead it is navigated with now comes from the SLIM list (`view=summary`), which
+  // carries `salesPhotos: []`. Without this the Inspection tab is empty.
   const refetch = async () => {
     const lid = lead?._id || lead?.id;
     if (!lid) return;
     try {
-      // Reads the LEAD, not an outcome: `fullLeadData` is only used for
-      // salesPhotos / notes / customerDetails, all of which live on the lead.
-      // The bare lead-scoped outcome route this used to call is deprecated.
+      const response = await LeadService.getSalesPortalLeadById(lid);
+      const data = response.data?.data?.lead || response.data?.lead;
+      if (data) {
+        setFullLeadData(data);
+        return;
+      }
+    } catch {
+      // Fall through to the deal endpoint below. This is NOT only the documented
+      // "rep isn't assigned to this lead" 404 — an API host that predates the
+      // sales-portal optimization has no such ROUTE and answers with an HTML error
+      // page, which is exactly what a not-yet-deployed environment does.
+    }
+    try {
+      // Fallback: what this screen read before the detail endpoint existed. Keeps the
+      // Inspection tab populated on an API that hasn't shipped the optimization yet,
+      // so preferring the new route can never be a regression.
       const response = await LeadService.getSalesDealById(lid);
       const body = response.data;
       setFullLeadData(body?.data?.lead || body?.data || body?.lead || body);
-    } catch (error) { }
+    } catch {
+      // Non-fatal: the deck still presents, falling back to whatever the navigation
+      // param carried.
+    }
   };
 
   useEffect(() => {
-    const result = String(lead?.result || lead?.status || '').toLowerCase();
-    if (result === 'sale' || result === 'demo') {
-      refetch();
-    }
+    // ⚠️ Runs for EVERY lead, not just sold/demo ones. It was gated on
+    // `result === 'sale' || 'demo'` back when the list row already carried the photos
+    // and this call only added outcome data — under `view=summary` that gate left every
+    // non-resulted lead with no photos at all.
+    refetch();
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
     };
-  }, [lead?.id, lead?.result, lead?.status]);
+  }, [lead?.id, lead?._id, lead?.result, lead?.status]);
 
 
   useEffect(() => {

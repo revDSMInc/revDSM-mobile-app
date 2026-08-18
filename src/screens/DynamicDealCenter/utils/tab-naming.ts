@@ -362,18 +362,33 @@ export interface TabNameInput {
   price: number;
   /** a manual (session) rename that overrides the derived name */
   manualTitle?: string;
+  /**
+   * The calculator's own stored title (web `calc.title`) — the fallback when
+   * nothing has been entered yet. See `computeDerivedTitles`.
+   */
+  storedTitle?: string;
 }
 
 /**
  * Computes the display title for every calculator: id → title.
- * Manual renames win; otherwise the schema-derived base name + collision suffix
- * is used AS SOON AS any field is filled — including on the first calculator
- * (web parity: `getSchemaUpdatedCalculatorTitles` derives from entries first and
- * only falls back to the stored title). Empty (no entries) calculators fall back
- * to their 1-based position — which renders as a BLANK tab — for EVERY calculator
- * including the first, exactly as web (`getUpdatedCalculatorTitles` has no first-tab
- * lead-name special case; a freshly-created calculator shows no name until values
- * are entered).
+ *
+ * Manual renames win; otherwise the schema-derived base name + collision suffix is
+ * used AS SOON AS any field is filled — including on the first calculator. With
+ * nothing entered the calculator falls back to its **stored title**, and only then
+ * to its 1-based position.
+ *
+ * That stored-title step is web's, verbatim — `getSchemaUpdatedCalculatorTitles`
+ * resolves `getLiveSchemaBaseName(...) || getSchemaCalculatorBaseName(...) ||
+ * calc.title || String(calc._id)`. It is what makes the FIRST calculator show the
+ * customer's name: web creates it titled `"{firstName} {lastName}"`
+ * (`job-capture-images-view.js` › the Dynamic Deal Center tool handler), and this
+ * chain preserves that name until the rep's own values derive one (`G+LF`).
+ *
+ * ⚠️ Mobile previously went straight to the position here, which DISCARDED the
+ * stored title — so a customer-named calculator was renamed to `"1"` on the first
+ * `retitle` pass and the tab rendered blank. Every calculator after the first is
+ * still created with a numeric placeholder, so it keeps falling through to the
+ * blank tab exactly as before.
  */
 export function computeDerivedTitles(
   tabs: TabNameInput[],
@@ -389,12 +404,13 @@ export function computeDerivedTitles(
     }
     const base = getLiveSchemaBaseName(t.entries, schemas);
     if (!base) {
-      // Nothing entered yet → fall back to the 1-based position. A purely numeric
-      // title renders as a BLANK tab (the `/^\d+$/` check in CalculatorView and web
-      // `TabLabel`), so a freshly-created calculator shows NO name until values are
-      // entered — exactly as web. Web's `getUpdatedCalculatorTitles` has no first-tab
-      // lead-name special case; it just falls back to the stored (numeric) title.
-      result[t.id] = String(i + 1);
+      // Nothing entered yet → the stored title (web `calc.title`), else the 1-based
+      // position. The first calculator is stored under the customer's name and so
+      // shows it; every other one is stored under a numeric placeholder, and a
+      // purely numeric title renders as a BLANK tab (the `/^\d+$/` check in
+      // CalculatorView and web `TabLabel`) — so those still show no name until
+      // values are entered.
+      result[t.id] = (t.storedTitle || '').trim() || String(i + 1);
       return;
     }
     withBase.push({ id: t.id, base, price: t.price || 0 });

@@ -6,7 +6,9 @@ import {
   Pressable,
   Dimensions,
   StatusBar,
+  StyleSheet,
 } from 'react-native';
+import { BlurView } from '@react-native-community/blur';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -15,6 +17,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { MODAL_BLUR_AMOUNT } from '../DynamicDealCenter/components/modal-chrome';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -156,14 +159,32 @@ export function SpotlightOverlay({ spotlight, title, onClosed, onPrev, onNext, c
     <Modal visible={!!spotlight} transparent animationType="none" statusBarTranslucent onRequestClose={requestClose}>
       {!!spotlight && <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />}
 
-      {/* Dimmed backdrop — tap anywhere off the card to collapse it. */}
+      {/* Blurred + dimmed backdrop — tap anywhere off the card to collapse it.
+          The scrim ALONE left the page readable behind the enlarged card, and the
+          card's own in-place copy sat directly behind it reading the same numbers
+          at half the size. The blur is the deal center's (`MODAL_BLUR_AMOUNT`), so
+          the two surfaces match; both live inside the Pressable so they fade
+          together with `backdropStyle` and taps still reach it.
+          ⚠️ `blurType` is "dark" in BOTH themes, unlike the deal center's
+          theme-switched modals: this overlay is a dark scrim by design (the program
+          cards are white and have to stand against it), so a light frost would sink
+          the card into the background. */}
       <AnimatedPressable
         onPress={requestClose}
-        style={[
-          { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.72)' },
-          backdropStyle,
-        ]}
-      />
+        style={[StyleSheet.absoluteFill, backdropStyle]}
+      >
+        <BlurView
+          style={StyleSheet.absoluteFill}
+          blurType="dark"
+          blurAmount={MODAL_BLUR_AMOUNT}
+          reducedTransparencyFallbackColor="rgba(15,23,42,0.94)"
+          pointerEvents="none"
+        />
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(15,23,42,0.55)' }]}
+          pointerEvents="none"
+        />
+      </AnimatedPressable>
 
       {/* Centered enlarged card. box-none lets taps on the empty margin fall
           through to the backdrop, while the card keeps its own touches. */}

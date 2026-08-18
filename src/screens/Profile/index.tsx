@@ -607,37 +607,11 @@ export default function ProfilePage() {
                   color={isDark ? colors.text : colors.textSecondary}
                 />
               </TouchableOpacity>
-              <View className="flex-1">
+              <View className="flex-1" style={{alignItems:'center'}}>
                 <Text className="text-xl font-black" style={{ color: colors.text }}>
                   Account Settings
                 </Text>
-                {/* Installers get no breadcrumb: their only crumb would be the
-                    dashboard, which the back button beside the title already
-                    covers, and the trail then reads "Account Settings" twice. */}
-                {!isInstaller && (
-                  <View className="flex-row items-center mt-1">
-                    <TouchableOpacity
-                      onPress={() => navigation.navigate(homeRoute)}
-                      className="flex-row items-center"
-                    >
-                      <Icon
-                        name="menu"
-                        size={14}
-                        color={colors.textSecondary}
-                        style={{ marginRight: 4 }}
-                      />
-                      <Text className="text-[11px] font-bold" style={{ color: colors.textSecondary }}>
-                        Map View
-                      </Text>
-                    </TouchableOpacity>
-                    <Text className="text-[11px] font-bold mx-2" style={{ color: colors.textSecondary }}>
-                      •
-                    </Text>
-                    <Text className="text-[11px] font-bold " style={{ color: colors.textSecondary }}>
-                      Account Settings
-                    </Text>
-                  </View>
-                )}
+    
               </View>
             </View>
           </View>

@@ -21,7 +21,21 @@ export function useLeadsData(
     queryKey: ['leads', params],
     queryFn: async () => {
       if (!user?._id) return [];
-      const res = await LeadService.getSalesLeads(user._id, params);
+      // `view=summary` — the slim list (SALES-PORTAL-API-OPTIMIZATION.md). The rows
+      // carry exactly what `LeadCard` draws (name, code, address, date/time, status,
+      // pin, action counts) and the server skips ~15 join collections per lead, which
+      // is the whole point: the fat list was hydrating photo arrays, job builder and
+      // installer data for every row so the card could show none of it.
+      //
+      // Web adds this inside its own list hook (`useGetLeads`) for the same reason —
+      // it belongs to the LIST, not to the endpoint, since the same URL without it is
+      // still the full response for the portal.
+      //
+      // ⚠️ A row from here is NOT a complete lead: `salesPhotos` is `[]` and
+      // `jobBuilder` is absent. Nothing may open a lead straight from this array —
+      // hydrate through `LeadService.getSalesPortalLeadById` first. `useLeadCenterData`
+      // does that for every entry point into the Lead Center.
+      const res = await LeadService.getSalesLeads(user._id, { ...params, view: 'summary' });
       const leadsData = res.data?.data?.leads || res.data?.data;
       return Array.isArray(leadsData) ? leadsData : [];
     },

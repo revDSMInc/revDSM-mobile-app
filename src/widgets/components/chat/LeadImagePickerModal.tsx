@@ -121,25 +121,28 @@ export const LeadImagePickerModal = ({
     }
   }, [visible]);
 
-  // Fetch the lead from the Sales Portal endpoint — the SAME source LeadCenter
-  // reads `salesPhotos` from (see useLeadCenterData). `workLead` is a
-  // work-session PUT and does not reliably return the photo array, which is why
-  // this picker previously showed no photos. Gated on `visible` so opening a
-  // chat never triggers a lead fetch on its own.
+  // Fetch the lead from the Sales Portal DETAIL endpoint — the SAME source LeadCenter
+  // hydrates from (see useLeadCenterData). `workLead` is a work-session PUT and does
+  // not reliably return the photo array, which is why this picker previously showed no
+  // photos, so it stays only as a fallback. Gated on `visible` so opening a chat never
+  // triggers a lead fetch on its own.
+  //
+  // ⚠️ This used to request the LIST with `?leadId=` and `.find()` the row. That is now
+  // wrong twice over: the server IGNORES `leadId` on the list, and the list is slim
+  // (`view=summary`), so the row it found would carry `salesPhotos: []` — the picker
+  // would silently fall through to `workLead` and show nothing.
   const { data: lead, isLoading: leadLoading } = useQuery({
     queryKey: ['lead-photos', leadId],
     queryFn: async () => {
       try {
-        const res = await LeadService.getSalesLeads(user!._id, { leadId });
-        const leadsList = res.data?.data?.leads || res.data?.leads || [];
-        const found = leadsList.find(
-          (l: any) => l._id === leadId || l.id === leadId
-        );
+        const res = await LeadService.getSalesPortalLeadById(leadId as string);
+        const found = res.data?.data?.lead || res.data?.lead;
         if (found?.salesPhotos?.length) return found;
       } catch (e) {
         console.warn('[LeadImagePicker] sales-portal lead fetch failed:', e);
       }
-      // Fallback for envs/reps where the sales-portal list doesn't surface it.
+      // Fallback for envs/reps where the detail endpoint doesn't surface it (it 404s
+      // when the signed-in rep isn't the lead's assigned or shadow rep).
       const workRes = await LeadService.workLead(leadId as string, user!._id);
       return workRes.data?.data || workRes.data;
     },

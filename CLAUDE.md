@@ -286,38 +286,254 @@ $0 contract card on every reset lead.
 contract has nothing to attach documents to, and the Job Docs tab's own photo/Manage Photos actions below
 it are unaffected.
 
-### The first Deal Center tab is labelled with the customer's name
+### The first calculator IS the customer — stored title, tab label and activity logs
 
-Ticket: *"by default if we open deal center first tab name should be first name and last name like web,
-do the same in mobile as well."* Mobile opened on a bare green pill showing only its `⋮` overflow menu;
-web shows **"testt wqwwqe"**.
+Ticket: *"by default if we open deal center first tab name should be first name and last name like
+web"*, then the correction: *"while we are opening calculator first time with new lead
+`calculatorTitle` is going one, it should be the user name like we set in the tab… i also notice while
+new calculator is going to create title name is also going to same, which should be the user name.
+**remember first calculator should always be a customer name.** it's working fine on web app."*
+The `calculator viewed` log read `"calculatorTitle": "1"` while the tab below it read **test mon**.
 
-Cause is a create-path difference, not a naming bug. Web's `CalculatorTabs` renders `calculator.title`
-verbatim, and web **never POSTs a calculator** — the backend creates the appointment's first one already
-titled with the customer. Mobile creates its own (`useDynamicCalculators`) with a **numeric placeholder**
-title, and `CalculatorView.tabCalcs` blanks numeric titles (`/^\d+$/ → ''`, matching web's own
-`CalculatorTabs` line), so the pill rendered empty.
+> ⚠️ **This SUPERSEDES the first pass at this ticket, which was display-only and rested on a wrong
+> reading of web. Two claims made there were false:**
+>
+> 1. *"web **never POSTs** a calculator — the backend creates the appointment's first one already
+>    titled with the customer."* It does POST it. `job-capture-images-view.js` (the **Dynamic Deal
+>    Center** tool handler mobile's bootstrap mirrors) sends `{ title: customerTitle, price: 0 }` on
+>    **both** arms — appointment-exists-but-has-no-calculator, and appointment-just-created. The
+>    original `grep` missed it because web calls the `addLfCalculator` **api helper**, never the
+>    literal `lfcalculators` path.
+> 2. *"⚠️ DISPLAY ONLY — do not write this into `title`… naming the calculator would put every
+>    untouched calculator into the rollout as a priceable line."* Only the **first** calculator is
+>    named; web's `+` button (`tab-action-utils.addTab`) still uses `String(length + 1)`. So exactly
+>    one empty calculator is ever visible in the rollout — which is **web's own behaviour**, since
+>    `ViewAllCalculators.visibleCalculators` runs the same `/^\d+$/` filter over the same data.
 
-`tabCalcs` now falls back to the customer's name for **tab 0 only**:
+**The title is now stored, not painted on.** Three pieces, each a straight port:
 
-```ts
-name: /^\d+$/.test(t.title) ? (idx === 0 ? customerTabName || '' : '') : t.title
-```
+| | web | mobile (now) |
+|---|---|---|
+| first calculator's title | `customerTitle` = `` `${firstName} ${lastName}`.trim() `` | `customerNameOf(lead) \|\| '1'` |
+| `+` / duplicate | `String(length + 1)` | unchanged — `String(tabs.length + 1)` |
+| empty-calculator name | `… \|\| calc.title \|\| String(calc._id)` | `… \|\| storedTitle \|\| String(i + 1)` |
 
-fed by a new `customerTabName` prop — `` `${firstName} ${lastName}`.trim() `` from
-`DynamicDealCenterScreen`. Deliberately **not** the screen's existing `customerName`, which falls back to
-`'Lead Center'`; that word on a calculator tab would read as a calculator's name. An unnamed lead yields
-`''` and the tab stays blank exactly as before.
+- **`useDynamicCalculators`' bootstrap create** passes the customer's name instead of `'1'`. New
+  **`customerNameOf(lead)`** is web's `customerTitle` verbatim — first + last, trimmed, **no
+  fallback**; the existing `customerTitleOf` (which falls back to `'Lead'`) is now a wrapper around
+  it and stays on the APPOINTMENT title only. ⚠️ Keep them apart: `'Lead'` is a fine appointment
+  name and would be read as a *calculator's* name. An unnamed lead therefore keeps `'1'` — a blank
+  tab beats a wrong one, and `/^\d+$/` still hides it from the rollout.
+- **`computeDerivedTitles` (`utils/tab-naming.ts`) gained a `storedTitle` fallback**, and this is the
+  half without which the create change does nothing: the old code went straight to `String(i + 1)`
+  when no values were entered, so the **first `retitle` pass renamed `test mon` back to `1`** in
+  memory and the tab rendered blank again. Web's chain is
+  `getLiveSchemaBaseName(...) || getSchemaCalculatorBaseName(...) || calc.title || String(calc._id)`;
+  mobile now matches it. All three call sites (`retitle`, `resolveSafeTitle`,
+  `saveDisplacedSiblings`) pass `storedTitle: t.title`.
+- **Both activity logs follow for free.** `calculator viewed` sends `calculatorTitle: active.title`
+  and the bootstrap `calculator created` sends `created.title`, so naming the calculator at the
+  source fixes the portal without touching either log — which is exactly how web gets it
+  (`DealCenterContext` logs `details.title`; `job-capture-images-view` logs `response?.data?.title`).
 
-⚠️ **DISPLAY ONLY — do not write this into `title`.** The stored title must stay numeric until the rep
-enters values, because that is what the rollout's `visibleCalculators` keys its `/^\d+$/` "hide empty
-calculators" filter on, and what `computeDerivedTitles` overwrites once a real name (`G+LF`, `(SM)`, the
-📦 package badge) can be derived. Naming the calculator on the server side of that line would put every
-untouched calculator into the rollout as a priceable line.
+**Entered values still win.** `G+LF` / `(SM)` / the ⚠️ duplicate-price warning / the 📦 package badge
+all derive from entries and outrank the stored name, so the customer's name only ever shows while the
+calculator is empty. A manual rename still outranks everything.
 
-⚠️ **Tab 0 only.** A second/third empty calculator all reading the same customer name would be worse than
-blank — the rep could not tell them apart. They keep the existing empty label until their contents name
-them.
+⚠️ **`CalculatorView.tabCalcs`' `customerTabName` fallback is KEPT, and is now purely LEGACY.** A
+first calculator created from here on is stored under the customer's name, so its title is not numeric
+and that branch is never reached. Every lead whose calculator was created *before* this fix is still
+stored as `"1"`, and without the fallback those deal centers reopen on the unlabelled pill they always
+had. It is still tab-0-only, for the original reason: several empty calculators all reading the same
+customer name would be worse than blank.
+
+Verified by driving the real `computeDerivedTitles`: the ticket repro (empty first calculator → the
+customer's name, where the pre-fix path gives `1`), an unnamed lead and a whitespace-only title still
+falling back to the placeholder, entered values deriving `G` over the stored name, a manual rename
+outranking both, a second/third empty tab staying numeric — asserted through the rollout's own
+`/^\d+$/` filter so only the first is visible — and the `(SM)`/`(LG)` and `⚠️ G ⚠️` collision paths
+unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical to their HEAD eslint
+baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
+3 errors / 115 warnings).
+
+### Investment Center spotlight: blurred backdrop, smaller card type, no strike-through
+
+Ticket, three unrelated items against the enlarged (spotlight) program cards:
+*"1- Make these circled fonts smaller so they fit more comfortably in the space. 2- Remove this line in
+the middle of the one year program. 3- Whenever the card is opened in the large view it shouldn't be
+visible in the background — you can make it blury like we already using in deal center."*
+
+**1. Type is sized for the ZOOMED card, not the in-place one.** `SpotlightOverlay` renders the *same*
+`ProgramCard` at roughly **2× scale** (`finalScale`), so type that merely fits in place reads as
+edge-to-edge enlarged — which is what the ticket's screenshot shows for **IN-HOME PRE ORDER** and
+**✓ Job Builder Submitted**. Both were flush against their container with **no horizontal padding at
+all**, so the fix is padding as much as point size: the header title goes `13 → 11` with
+`paddingHorizontal: 14` on the bar, and the opt-in button's label `10 → 9` (submitted) / `12 → 11`
+with `paddingHorizontal: 4 → 12`, its check glyph `12 → 11`.
+
+**2. The line was the crossed-off STRIKE, not the divider.** `ProgramCard`'s crossed-off overlay drew
+`position:'absolute', top:'50%', height:2, #94A3B8` across the card — and at 50% it lands squarely on
+the **Grand Total**, the one number that has to stay readable. Enlarged it stops reading as a strike
+and reads as a rule. Removed; the state is still unmistakable from the clip layer's `opacity: 0.45`
+plus the `#F1F5F9` body.
+
+⚠️ **Do not confuse it with the divider above Grand Total** (`height: 1, #E2E8F0, marginVertical: 8`),
+which is **web parity** — `program-card.js` renders a dotted `<Divider sx={{ mb: 1.25 }} />` in exactly
+that slot. That one stays. Web has no `crossedOff` concept at all (the prop is absent from its
+`propTypes`), so the strike line was mobile's own invention and nothing had to be diverged from.
+
+**3. The backdrop now blurs.** The overlay dimmed with a flat `rgba(15,23,42,0.72)` scrim, which left
+the page legible — and the card's **own in-place copy sits directly behind the enlarged one**, showing
+the same figures at half the size, which is what the screenshot circles. It now carries a
+`BlurView` + a lighter `0.55` scrim, both **inside the existing `AnimatedPressable`** so they fade with
+`backdropStyle` and tap-to-collapse still reaches it.
+
+- **`MODAL_BLUR_AMOUNT` is imported from `DynamicDealCenter/components/modal-chrome`** — the deal
+  center constant the ticket points at. Not a new cross-screen dependency: `OptInConfirmModal`, in
+  this same folder, already imports it (it is a pure constants module, no components).
+- ⚠️ **`blurType` is `"dark"` in BOTH themes**, unlike the deal center's `isDark ? 'dark' : 'light'`
+  modals. This overlay is a dark scrim by design because the program cards are white and have to stand
+  against it; a light frost would sink the card into the background. `reducedTransparencyFallbackColor`
+  is a near-opaque dark for the same reason — with Reduce Transparency on there is no blur, so the
+  fallback has to hide the page by itself.
+
+tsc 44 (baseline unchanged); `SpotlightOverlay.tsx` is byte-identical to its HEAD eslint baseline
+(9 warnings, 0 errors) and `ProgramCard.tsx` drops from 45 to 44 warnings — the one removed is the
+deleted strike-line's own inline style.
+
+### Lead Center scanner: a filed document can't be deleted, and no longer renders blank
+
+Ticket: *"don't allow user to delete the previously uploaded (once he will select the multiple doc then
+those will show and can be removeable before uploading it like web) document from the lead center like
+in the web."* Contract Details ▸ any **Add Document** opened `DocumentScannerModal` with the filed
+document carrying a red ✕, so a rep could delete an executed agreement or a filed receipt from the
+Lead Center.
+
+**`JobDocsSection` now passes `allowRemoveExisting={false}`** — the prop added for the My Deals
+agreement case, applied here to **all three** categories. A page scanned in THIS session keeps its ✕
+(`item.isNew !== false`), so a misscan is never stuck; only what is already on the server is protected.
+The info banner swaps to *"Documents already on file can't be removed here."*
+
+⚠️ **Web is stricter than this, and the difference is worth knowing before anyone "completes" the
+parity.** Web's dialog opens **EMPTY** — `contract-details.js` passes
+`initialDocuments={lead?.jobBuilderData?.agreements || []}` and there IS no `jobBuilderData` on a lead
+(0 occurrences in the sales-portal capture; the field is `jobBuilderDocuments`), so `docsToUse` is
+`[]` and a filed document is never shown at all. That looks like a web typo rather than a decision, and
+matching it on mobile would mean sending ONLY the new pages — which rests on the backend APPENDING
+rather than replacing. Mobile still shows the filed documents and still re-sends them, so nothing can
+be lost. Hiding them is a separate change and needs that append behaviour confirmed first.
+
+#### …and that is why the blank tile had to be fixed in the same pass
+
+The filed document rendered as a **featureless grey card** — the earlier "Scan-document sheet: blank
+PDF tile" ticket fixed this for the My Deals surface but NOT for the Lead Center, and with the ✕ gone
+the tile would have had literally nothing on it. Two independent bugs in the modal's `isPdfFile`, both
+of which made a filed PDF fall through to `<Image>`, which cannot decode one:
+
+1. **A display name short-circuited the url check.** The rule was
+   `String(f?.name || f?.uri || f?.url || '')` — `||`, so only the FIRST truthy candidate is tested.
+   `JobDocsSection`'s `mapWith` **overwrites** `name` with a constant (`'Agreement'` /
+   `'Order Sheet'` / `'Down Payment Receipt'`), none of which has an extension, so the chain stopped
+   there and never reached the url. Every candidate is now tested.
+2. **The extension was read off the raw url.** Document urls are **pre-signed S3 links**, so the
+   string ends in `…&X-Amz-Signature=…` and `.endsWith('.pdf')` is false on every one of them. The
+   path is now split on `?`/`#` first.
+
+Moved to the pure **`src/utils/document-file.ts`** to be testable: the modal imports
+`react-native-document-scanner-plugin`, which resolves a **native TurboModule at import time**, so the
+component cannot be loaded under jest at all (verified — it throws in `TurboModuleRegistry.getEnforcing`).
+
+⚠️ **`fileSrc` was deliberately NOT moved with it.** `SummaryFinalizeCards`' copy prefers `secureUrl`
+over `uri`; the scanner's must prefer `uri`, because a locally-scanned page has only that and
+`docIdentity` reads it — re-resolving could change a document's identity across the scanner
+round-trip, which is the pruned-on-Update bug that ticket already fixed once.
+
+⚠️ **`screens/DynamicDealCenter/utils/document-payloads.ts` has its OWN `isPdfFile` carrying BOTH bugs**
+and was left alone. It sits on the SUBMIT path — it decides whether to run `convertJpegToPdf` on a
+contract document — so it should be changed with its own evidence, not as a ride-along.
+
+Verified with 16 tests over the exact row `mapWith` produces: the repro asserted **false under the old
+rule and true under the new one**, each bug isolated on its own, all three Lead Center document names,
+`contentType`/`mimeType`/`fileData.contentType`/`filePath`/`secureUrl`/`displayUrl`, a local `file://`
+scan, and the negatives that matter — a scanned **jpeg** page, a signed jpeg url, an image
+`contentType`, and `.pdf` appearing in a FOLDER name — plus junk input as `false` rather than a throw.
+The `canRemove` expression is covered too: filed → no ✕, scanned-this-session → ✕, and the two callers
+that pass no prop unchanged. tsc 44 (baseline unchanged); `DocumentScannerModal.tsx` (9 problems) and
+`JobDocsSection.tsx` (39 problems) are byte-identical to their HEAD eslint baselines, and the new util
+is clean.
+
+### Down Payment Receipt upload is logged — with the `filePath` / `bucketName` web omits
+
+Ticket: *"add the log with the above payload while we are adding the down payment from the lead center…
+one additional thing you have to add there is bucket name and file path of the document which we are
+going to upload so we can show it on portal side. i also shared how it's calling in web, in web file
+path and bucket name is missing we have to add it on mobile side."*
+
+Lead Center ▸ Contract Details ▸ **Down Payment Receipt(s) ▸ Add Document** emitted **no activity log
+at all** on mobile. Web `sections/job/components/contract-details.js` ›
+`handleDownPaymentReceiptUpload` logs one, so the portal timeline had the event for a web upload and
+nothing for a mobile one. The payload is now web's verbatim —
+`action_type: 'upload'` / `module_type: 'job_builder'` /
+`meta: { leadId, action: 'upload_down_payment_receipts', downPaymentReceipt: N }` — **plus the two
+fields web does not send**, which are the point of the ticket: without them the portal has an event
+saying a receipt was uploaded and no way to open the receipt.
+
+**`filePath` / `bucketName` are generated SERVER-side**, so the device cannot know them at submit time
+(`job-builder-docs/{company}/{lead}/downPaymentReceipts/{ts}-{n}-document.pdf`, bucket
+`np-revdsm-staging`) — they can only be read back off the stored row. Two sources, in order, and
+**neither costs an extra request**:
+
+1. **The `POST lead/v1/{id}/job-builder` response.** Free and immediate. It is **not known** to return
+   the filed rows (web ignores this response too), so a miss is an expected outcome here, not an error.
+2. **The lead refetch this handler already performs.** On a miss the request is parked on
+   `pendingReceiptLogRef` and settled by an effect keyed on `lead.jobBuilderDocuments` — the same
+   change the document list re-resolves from. The handler's existing delayed refetches (1 s / 3 s)
+   cover backend replication lag for free.
+
+⚠️ **`downloadOutcomeDocuments` is NOT a third source.** It reads **LeadOutcomeDocument**, while this
+upload's `/job-builder` POST writes **JobBuilderDocument** — a different collection, and the one
+`lead.jobBuilderDocuments` exposes. Reading it back would be a multi-MB base64 round trip that does not
+contain the row anyway.
+
+**Rules live in the pure `src/utils/uploaded-document-refs.ts`** — `readDocumentGroup`,
+`collectDocumentIds`, `pickNewDocuments`, `toDocumentRefs` — for the reason `utils/addendum-drafts.ts`
+and `utils/inspection-photos.ts` exist: `JobDocsSection.tsx` pulls in React Native and is untestable
+under jest here.
+
+- **The two sources are interchangeable because the diff is by `_id`, not by count.** The response may
+  return the whole group or only the new rows; either way the unknown ids are this upload's. That is
+  what lets one helper serve both paths.
+- **`readDocumentGroup` walks a FIXED list of roots** (`source`, `.data`, `.data.data`, and the
+  `lead`/`outcome` wrappers) × a fixed list of bags (`jobBuilderDocuments`, `leadOutcomeDocuments`,
+  `documents`). An unrecognised shape yields `[]` and the caller falls back — it never guesses a path.
+- **A row with no `filePath` is dropped** (`toDocumentRefs`): an empty path in the log reads as a
+  document that cannot be opened.
+
+⚠️ **`meta.documents` is a LIST, and that is not optional.** One scan files **several** receipts — each
+page becomes its own PDF — so a single `filePath` cannot describe the upload. It first shipped with a
+singular `meta.filePath` / `meta.bucketName` alongside the list, and the reporter asked for them back
+out: they only ever repeated `documents[0]`, and a reader that stops at them silently misses every other
+page of a multi-page receipt. **The array is the only place the paths live.**
+
+⚠️ **`downPaymentReceipt` counts the pages the rep ADDED this session** (`newPages.length`), not
+`filePayloads.length`. Mobile re-sends the already-filed receipts alongside the new ones (that is how
+this endpoint appends), so the payload length is the *total on the lead* and would report "3 uploaded"
+for one new receipt.
+
+⚠️ **AGREEMENTS AND ORDER SHEETS ARE STILL NOT LOGGED** on mobile, though web logs both
+(`upload_agreements` / `upload_order_sheets`) from the same card. `handleSaveScannedDocument` serves all
+three categories, so the branch is one `scannerCategory` test away — it was left out because the ticket
+asked for the down payment only.
+
+Verified with 19 tests over the document rows from the sales-portal capture verbatim: the group read off
+a lead record and off four response shapes (`data.data.jobBuilderDocuments`, a `lead` wrapper, an
+outcome-shaped `leadOutcomeDocuments`, and a bare group array), groups never crossing, junk shapes as a
+no-op; the diff with the response holding the whole group, holding only the new row, on a first upload
+with nothing known, and not-yet-landed (which is what parks the log), plus an id-less row kept and `id`
+honoured beside `_id`; the ref narrowing, a `filePath`-less row dropped, a missing bucket defaulting to
+`''`, and multi-page order preserved; and the assembled `meta` matching the ticket's payload exactly. ✅ Confirmed on device.
+tsc 44 (baseline unchanged); `JobDocsSection.tsx` is byte-identical to its HEAD eslint baseline
+(39 problems: 10 errors / 29 warnings) and the new util is clean.
 
 ### Deal-edit wizard Step 0 now matches web (intro → calendar → confirm time → success)
 

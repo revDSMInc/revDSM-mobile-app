@@ -167,7 +167,16 @@ export async function logLeadActionClick(
     created_by: userId,
     meta: {
       leadId: lead._id || lead.id,
-      hasExistingImages: (lead.salesPhotos || []).length > 0,
+      // `hasSalesPhotos` FIRST — this runs on a lead straight off the list, and a slim
+      // (`view=summary`) row carries `salesPhotos: []` regardless of whether the lead
+      // actually has any. Counting the array alone would log `false` for every lead.
+      // The boolean is the server's answer to exactly that question; the array length
+      // stays as the fallback for a fully-hydrated lead and for older payloads.
+      // (Web makes the same change in its `hasImages()`.)
+      hasExistingImages:
+        typeof lead.hasSalesPhotos === 'boolean'
+          ? lead.hasSalesPhotos
+          : (lead.salesPhotos || []).length > 0,
       isSelfGenerated: isSelfGeneratedLead(lead),
       ...bypassMeta,
       ...extraMeta,
