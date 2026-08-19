@@ -8,6 +8,7 @@ import {
 } from './combination-utils';
 import { isFieldLocked, resolveLockedValue } from './allocation-utils';
 import { resolveConditionalDefault } from './dependency-engine';
+import { isLockedColorSuppressed } from './locked-color-defaults';
 import { buildTabKey } from './product-catalog-utils';
 import { isContainerFieldType } from '../constants/field-types';
 
@@ -96,7 +97,8 @@ function hydrateFieldValue(
   existing: any = {},
   colorValues: any = {},
   dealCenterData: any = {},
-  preserveExisting = false
+  preserveExisting = false,
+  siblingFields: any[] = []
 ) {
   if (!field?.id || (field.key && field.key.startsWith('_'))) return undefined;
 
@@ -119,8 +121,19 @@ function hydrateFieldValue(
     // handled below by `if (existingValue !== undefined) return existingValue`, so a
     // real saved value is still never destroyed. Web parity: dynamic-job-state-
     // storage.js hydrateFieldValue (`if (locked !== undefined && locked !== '—')`).
+    // A locked COLOUR whose paired quantity is empty resolves to '' for the same
+    // reason a not-included product does: seeding the portal's default colour onto
+    // an extra the rep never quoted writes a phantom colour into the saved build
+    // (and paints it back on reopen). See `locked-color-defaults.ts`.
+    const colorSuppressed = isLockedColorSuppressed(field, {
+      fields: siblingFields,
+      state: existing,
+      dealCenterData,
+    });
     const locked = resolveLockedValue(field, dealCenterData, {
-      fallbackDefault: resolveConditionalDefault(field, existing, { dealCenterData }),
+      fallbackDefault: colorSuppressed
+        ? ''
+        : resolveConditionalDefault(field, existing, { dealCenterData }),
     });
     if (locked !== undefined && locked !== '—') return locked;
   }
@@ -141,10 +154,19 @@ function hydrateFieldMap(
   const item: any = {};
   const nextColorValues = { ...(colorValues || {}) };
 
-  flattenFields(fields).forEach((field) => {
+  const flatFields = flattenFields(fields);
+
+  flatFields.forEach((field) => {
     if (!field?.id || (field.key && field.key.startsWith('_'))) return;
 
-    const value = hydrateFieldValue(field, existing, nextColorValues, dealCenterData, preserveExisting);
+    const value = hydrateFieldValue(
+      field,
+      existing,
+      nextColorValues,
+      dealCenterData,
+      preserveExisting,
+      flatFields
+    );
     if (value !== undefined) {
       item[field.id] = value;
     }
