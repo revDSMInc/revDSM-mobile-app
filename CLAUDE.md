@@ -356,6 +356,66 @@ unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical t
 baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
 3 errors / 115 warnings).
 
+### Addendum Review diffs a locationGrid CELL BY CELL, not by its total
+
+Ticket: *"I also notice this when i change in 3rd story — see I added 33, it's showing the summed-up
+value in Addendum Review. It should be like what I changed. Example: `Lighting · Location · 3rd Story`
+and behind it `33`."* The rep added **33** to Left Side / 3rd Story and the review read
+**`Lighting · Location  110 → 143`**.
+
+Both numbers were true and the row was still useless — **an addendum is read as "the original agreement
+PLUS what we added here and MINUS what we removed"**, so restating two totals leaves the customer to
+subtract, and (the reporter's original soffit complaint) invites reading a survivor's total as an
+addition. The review has to name what the rep touched.
+
+Cause is one line of `displayValue` in `dynamic-deal-diff.ts`: an object-valued field returned
+`gridTotal(v)`, so a whole 6×3 grid collapsed to a single number before the diff ever ran.
+
+**`readValues` now expands a grid into ONE ENTRY PER CELL**, keyed
+`` `${fieldId}${CELL_SEP}${rowKey}${CELL_SEP}${colKey}` ``, and the existing diff machinery compares
+cells with no further change. A row reads
+**`Lighting · Location · Left Side · 3rd Story   — → 33`**.
+
+- ⚠️ **`CELL_SEP` is U+0002 and must be written as the ESCAPE SEQUENCE** (``), never a raw
+  control byte — same rule as `SCOPE_SEP`: a literal one makes grep treat this file as binary.
+- **The ROW is kept as well as the column**, though the ticket's example named only "3rd Story":
+  without it, `Left Side / 3rd` and `Front / 3rd` are the same label on one screen.
+- **Blank and zero cells are dropped** (`Number(cell) > 0`). Without it every grid emits ~18 rows of
+  `0` and buries the one that changed; with it, clearing a cell correctly reads `22 → —`.
+- **`gridCellLabels` resolves the names through `resolveLocationGridConfig`** — the same resolver the
+  grid widget itself uses — so an authored custom grid and the `singleStory` variant both name their
+  cells as the rep saw them. An unknown key falls back to the raw coordinate rather than being dropped.
+- **`formatChangeFieldLabel` gained a trailing `cellLabel` segment**, after the combination chip:
+  `<section> · Combination #2 · <field> · <row> · <col>`.
+- **`describeCombo` names cells too**, so a removed combination is described by the measurements it
+  actually held rather than by a total.
+
+⚠️ **The group-meta lookup had to split cell keys as well.** It resolves a section's label by finding
+any labelled field among its combinations; a combination whose only labelled field is a GRID would
+otherwise resolve nothing and the ENTIRE group — every add/remove row in it — would be dropped as
+noise. Tested directly.
+
+Per-cell keys also **sharpen combination matching** for free: `comboSignature` / `overlapScore` now
+compare individual cells instead of one collapsed number, so two combinations that happen to share a
+grand total are no longer indistinguishable to the pairing pass.
+
+⚠️ The reporter re-sent the earlier *"removed the 85' black soffit, kept the 200' white"* description as
+context. That behaviour was fixed previously (see the combination-identity section) and is **asserted
+again here as a regression guard** — the removal emits exactly one `removed` row and none of the
+survivor's values appear as edits.
+
+Verified with 11 tests over a Lighting tab (tab-level grid) and a Soffit combination section: the
+ticket repro naming the cell, an explicit assertion that **no `110 → 143` total row is emitted**, an
+edited cell, a cleared cell, two grid rows staying separate, an untouched grid → `[]`, blank/zero cells
+never reported, a grid nested INSIDE a combination, a removed grid-only combination still reported, and
+the two soffit regression guards. tsc 44 (baseline unchanged); eslint identical to HEAD (2 pre-existing
+errors).
+
+⚠️ **`dynamic-deal-diff.ts` is a CRLF file.** A script that reads/writes it in text mode rewrites all
+466 lines to LF and buries the change in a whole-file diff — that happened here and had to be converted
+back. Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx`; check `file <path>` before
+and after.)
+
 ### ✅ ROOT CAUSE: the Addendum Review's "original" and the live build were ONE object graph
 
 Ticket: *"actually it's 48 but showing 4"*, then, decisively: *"i checked in iphone 14 pro max, still

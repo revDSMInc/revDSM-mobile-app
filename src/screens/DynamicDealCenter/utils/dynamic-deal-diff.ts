@@ -10,6 +10,7 @@
 // "Review & Submit" step to show the rep exactly what changed.
 
 import { isContainerFieldType } from '../../../utils/dynamic-job-builder/constants/field-types';
+import { resolveLocationGridConfig } from '../../../utils/dynamic-job-builder/engine/location-grid-utils';
 
 const STRUCTURAL_STATE_KEYS = new Set(['_storageVersion', 'scheduleTime', 'agreements', 'orderSheets']);
 
@@ -28,11 +29,45 @@ const COLOR_FIELD_TYPES = new Set(['swatch', 'colorSelection', 'customColor']);
 const SCOPE_SEP = '\u0000';
 const qualify = (scopeId: string, fieldId: string) => `${scopeId}${SCOPE_SEP}${fieldId}`;
 
+/**
+ * Separates a locationGrid's CELL coordinates from its field id, so one grid
+ * contributes one key per cell (`<fieldId>\u0002<rowKey>\u0002<colKey>`) instead of
+ * a single rolled-up total.
+ *
+ * ⚠️ Write it as the escape sequence, never a raw control byte — a literal one makes
+ * grep treat this file as binary (the same rule as `SCOPE_SEP` above).
+ */
+const CELL_SEP = '\u0002';
+
+/**
+ * Does this value look like a locationGrid — `{ [rowKey]: { [colKey]: number } }`?
+ *
+ * Shape-based because `readValues` sees only key/value pairs of the runtime state,
+ * never the config that would name the field's type.
+ */
+function isGridValue(v: any): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const rows = Object.values(v);
+  return rows.length > 0 && rows.every((row) => !!row && typeof row === 'object' && !Array.isArray(row));
+}
+
 interface FieldLabelMeta {
   label: string;
   tab?: string;
   sectionLabel?: string;
   vertical?: string;
+  /** locationGrid only — cell coordinate → human label, for naming a changed cell. */
+  gridRowLabels?: Record<string, string>;
+  gridColLabels?: Record<string, string>;
+}
+
+/**
+ * Split a (possibly cell-qualified) field key back into its parts.
+ * `"<fieldId>\u0002<rowKey>\u0002<colKey>"` → `{ fieldId, rowKey, colKey }`.
+ */
+function splitCellKey(fieldKey: string): { fieldId: string; rowKey?: string; colKey?: string } {
+  const [fieldId, rowKey, colKey] = fieldKey.split(CELL_SEP);
+  return { fieldId, rowKey, colKey };
 }
 
 /**
@@ -46,6 +81,23 @@ function resolveFieldLabel(field: any, parentLabel = ''): string {
   if (parentLabel) return parentLabel;
   if (COLOR_FIELD_TYPES.has(field?.type)) return 'Color';
   return field?.id || '';
+}
+
+/**
+ * A grid field's row/column key → label maps, read through the SAME resolver the
+ * grid widget uses, so the review names a cell exactly as the rep saw it (including
+ * an authored custom grid, and the `singleStory` variant).
+ */
+function gridCellLabels(field: any): Pick<FieldLabelMeta, 'gridRowLabels' | 'gridColLabels'> {
+  const cfg = resolveLocationGridConfig(field || {});
+  const toMap = (entries: any[]) => {
+    const out: Record<string, string> = {};
+    (entries || []).forEach((e: any) => {
+      if (e?.key) out[e.key] = String(e.label ?? e.key);
+    });
+    return out;
+  };
+  return { gridRowLabels: toMap(cfg.rows), gridColLabels: toMap(cfg.columns) };
 }
 
 /** Build `{ "<scopeId>\0<fieldId>": { label, tab, sectionLabel, vertical } }` from the config. */
@@ -72,6 +124,9 @@ export function buildFieldLabelMap(config: any): Record<string, FieldLabelMeta> 
             tab: tabLabel,
             sectionLabel: sectionLabel || '',
             vertical: verticalLabel,
+            // A grid's cells are stored under their KEYS (`Left` / `3rd`); the review
+            // has to name them the way the rep saw them ("Left Side · 3rd Story").
+            ...(f?.type === 'locationGrid' || f?.type === 'grid' ? gridCellLabels(f) : null),
           };
         }
       }
@@ -119,6 +174,27 @@ function readValues(obj: any): Record<string, string> {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
   Object.entries(obj).forEach(([k, v]) => {
     if (SKIP_LEAF_KEYS.has(k)) return;
+
+    // ⚠️ A locationGrid contributes ONE ENTRY PER CELL, not its total.
+    //
+    // Rolling it up made every grid edit read as `110 → 143`: true, but useless on an
+    // addendum, which the customer reads as "the original agreement PLUS this". The
+    // rep changed 3rd Story from nothing to 33; the review has to say that, not
+    // restate two totals and leave them to subtract. Per-cell keys also sharpen
+    // combination matching, since `comboSignature`/`overlapScore` now compare cells
+    // rather than one collapsed number.
+    if (isGridValue(v)) {
+      Object.entries(v as Record<string, any>).forEach(([rowKey, row]) => {
+        Object.entries(row || {}).forEach(([colKey, cell]) => {
+          // A blank or zero cell is "not entered", exactly as the grid renders it —
+          // keeping them would emit ~18 rows of "0" per grid and drown the change.
+          if (!(Number(cell) > 0)) return;
+          out[`${k}${CELL_SEP}${rowKey}${CELL_SEP}${colKey}`] = String(cell);
+        });
+      });
+      return;
+    }
+
     const disp = displayValue(v);
     if (disp !== '') out[k] = disp;
   });
@@ -246,11 +322,13 @@ export interface BuildChangeGroup {
  * `comboLabel` is inserted between the two for sections holding more than one
  * combination, so a row names the combination the rep actually edited.
  */
-function formatChangeFieldLabel(meta: FieldLabelMeta, comboLabel = ''): string {
+function formatChangeFieldLabel(meta: FieldLabelMeta, comboLabel = '', cellLabel = ''): string {
   const parts = [
     (meta.sectionLabel || meta.tab || '').trim(),
     comboLabel.trim(),
     (meta.label || '').trim(),
+    // The grid CELL, last: "Lighting · Location · Left Side · 3rd Story".
+    cellLabel.trim(),
   ].filter(Boolean);
   return parts.join(' · ');
 }
@@ -261,16 +339,39 @@ function formatScopeLabel(meta: FieldLabelMeta): string {
 }
 
 /** "Footage 85 · Type PARTIAL · Color Musket Brown" — names a combination by its contents. */
+/**
+ * The label meta for a (possibly cell-qualified) key, plus the cell's own name.
+ *
+ * The label map is keyed by FIELD, so a cell key has to be split before lookup —
+ * and an unknown row/col key falls back to the raw coordinate rather than being
+ * dropped, so a renamed grid column still names something.
+ */
+function resolveKeyMeta(
+  scopeId: string,
+  fieldKey: string,
+  labels: Record<string, FieldLabelMeta>
+): { meta: FieldLabelMeta; cellLabel: string } | null {
+  const { fieldId, rowKey, colKey } = splitCellKey(fieldKey);
+  const meta = labels[qualify(scopeId, fieldId)];
+  if (!meta) return null;
+  if (!rowKey && !colKey) return { meta, cellLabel: '' };
+  const rowLabel = meta.gridRowLabels?.[rowKey || ''] || rowKey || '';
+  const colLabel = meta.gridColLabels?.[colKey || ''] || colKey || '';
+  return { meta, cellLabel: [rowLabel, colLabel].filter(Boolean).join(' · ') };
+}
+
 function describeCombo(
   combo: ComboSnapshot,
   scopeId: string,
   labels: Record<string, FieldLabelMeta>
 ): string {
   const parts: string[] = [];
-  Object.entries(combo.values).forEach(([fieldId, value]) => {
-    const meta = labels[qualify(scopeId, fieldId)];
-    if (!meta) return;
-    const name = (meta.label || '').trim();
+  Object.entries(combo.values).forEach(([fieldKey, value]) => {
+    const resolved = resolveKeyMeta(scopeId, fieldKey, labels);
+    if (!resolved) return;
+    // A grid cell names its coordinate, so a removed combination is described by the
+    // measurements it actually held ("Location Left Side · 3rd Story 33").
+    const name = [(resolved.meta.label || '').trim(), resolved.cellLabel].filter(Boolean).join(' ');
     parts.push(name ? `${name} ${value}` : value);
   });
   return parts.length ? parts.join(' · ') : '—';
@@ -387,9 +488,19 @@ export function computeDynamicBuildChanges(
     const from = oldSnap.flat[key] || '';
     const to = newSnap.flat[key] || '';
     if (from === to) return;
-    const meta = labels[key];
-    if (!meta) return; // unknown field id — skip noise
-    push(meta, { field: formatChangeFieldLabel(meta), from: from || '—', to: to || '—' });
+    // The key is `<scopeId>\0<fieldId>` and, for a grid cell, the field part carries
+    // the cell coordinates — so it is split rather than looked up whole.
+    const sep = key.indexOf(SCOPE_SEP);
+    const resolved =
+      sep < 0
+        ? null
+        : resolveKeyMeta(key.slice(0, sep), key.slice(sep + SCOPE_SEP.length), labels);
+    if (!resolved) return; // unknown field id — skip noise
+    push(resolved.meta, {
+      field: formatChangeFieldLabel(resolved.meta, '', resolved.cellLabel),
+      from: from || '—',
+      to: to || '—',
+    });
   });
 
   // ── combination rows ────────────────────────────────────────────────────────
@@ -406,8 +517,11 @@ export function computeDynamicBuildChanges(
     // the config we were handed and reporting it would be noise.
     let groupMeta: FieldLabelMeta | null = null;
     [...origCombos, ...nextCombos].some((combo) =>
-      Object.keys(combo.values).some((fieldId) => {
-        const meta = labels[qualify(scopeId, fieldId)];
+      // ⚠️ Split the cell coordinates off first: a combination whose only labelled
+      // field is a GRID would otherwise resolve no meta and the entire group — every
+      // add/remove row in it — would be silently dropped as noise.
+      Object.keys(combo.values).some((fieldKey) => {
+        const meta = labels[qualify(scopeId, splitCellKey(fieldKey).fieldId)];
         if (meta) groupMeta = meta;
         return Boolean(meta);
       })
@@ -427,14 +541,14 @@ export function computeDynamicBuildChanges(
       const to = nextCombos[ni].values;
       const comboLabel = isMulti ? `Combination #${nextCombos[ni].number}` : '';
       const fieldIds = new Set([...Object.keys(from), ...Object.keys(to)]);
-      fieldIds.forEach((fieldId) => {
-        const fromVal = from[fieldId] || '';
-        const toVal = to[fieldId] || '';
+      fieldIds.forEach((fieldKey) => {
+        const fromVal = from[fieldKey] || '';
+        const toVal = to[fieldKey] || '';
         if (fromVal === toVal) return;
-        const meta = labels[qualify(scopeId, fieldId)];
-        if (!meta) return;
-        push(meta, {
-          field: formatChangeFieldLabel(meta, comboLabel),
+        const resolved = resolveKeyMeta(scopeId, fieldKey, labels);
+        if (!resolved) return;
+        push(resolved.meta, {
+          field: formatChangeFieldLabel(resolved.meta, comboLabel, resolved.cellLabel),
           from: fromVal || '—',
           to: toVal || '—',
         });
