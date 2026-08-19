@@ -109,7 +109,11 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   const { user } = useAuth();
   const [firstName, setFirstName] = useState(lead?.customerDetails?.firstName || '');
   const [lastName, setLastName] = useState(lead?.customerDetails?.lastName || '');
-  const [phone, setPhone] = useState(lead?.customerDetails?.phone || '');
+  // Seeded THROUGH the formatter, not raw. A stored phone can be bare digits or
+  // E.164 (`4438784937` / `+14438784937`), while the length check in `handleSave`
+  // counts digits on the `+1 (XXX) XXX-XXXX` shape the field itself produces — so an
+  // unformatted seed would make an untouched, perfectly valid number fail to save.
+  const [phone, setPhone] = useState(formatUSPhoneNumber(lead?.customerDetails?.phone || ''));
   const [email, setEmail] = useState(lead?.customerDetails?.email || '');
   const [submitting, setSubmitting] = useState(false);
 
@@ -286,8 +290,18 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       FlashMessage.error('Validation Error', 'Last Name is required.');
       return;
     }
-    if (!phone.trim()) {
+    // Same rule as Add New Lead (`widgets/modals/LeadCreate`): `formatUSPhoneNumber`
+    // always emits the `+1` prefix, so a COMPLETE number is ELEVEN digits — the ten
+    // local ones plus the country code. Without this a half-typed number saved.
+    const phoneDigits = phone.replace(/\D/g, '');
+    // `<= 1` is the empty field: the formatter leaves `'+1 '` behind once the rep has
+    // typed and then cleared the digits, which `.trim()` alone reads as filled in.
+    if (!phone.trim() || phoneDigits.length <= 1) {
       FlashMessage.error('Validation Error', 'Phone Number is required.');
+      return;
+    }
+    if (phoneDigits.length !== 11) {
+      FlashMessage.error('Validation Error', 'Please enter a complete 10-digit phone number');
       return;
     }
     if (!address.trim()) {

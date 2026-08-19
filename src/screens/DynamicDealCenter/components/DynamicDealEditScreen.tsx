@@ -185,7 +185,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // produces the garbage values (e.g. $134k retail on a $200 job). The calculator
   // itself IS saved on the backend at `GET /lfcalculators/{id}` — fetch it so the
   // stored path (`computeStoredTiers`) yields the SAME accurate tiers as the web.
-  const { data: fetchedCalculator } = useQuery({
+  // ⚠️ `isLoading`, not `isPending`. This query is `enabled`-gated, and in TanStack v5
+  // a DISABLED query stays `isPending` forever — gating on that would hang the Review
+  // step for every deal that carries no calculator id. `isLoading` is
+  // `isPending && isFetching`, so it is false unless a request is actually in flight.
+  const { data: fetchedCalculator, isLoading: isCalculatorLoading } = useQuery({
     queryKey: ['dealEditCalculator', editCalculatorId],
     queryFn: async () => {
       try {
@@ -298,6 +302,37 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       return null;
     }
   }, [jobBuilderConfig, savedDynamicJobState, dealCenterData]);
+
+  /**
+   * The state handed to the embedded builder — a DEEP COPY, never `initialState`
+   * itself.
+   *
+   * ⚠️ This is the "48 shows as 4" bug. `hydrateJobStateForPersistence` SHARES object
+   * references with the state it is given — a field's value object is carried across
+   * by reference, not cloned (verified: `hydrated…grid === saved…grid`) — and
+   * `useDynamicJobBuilderSession` seeds its `useState` with that exact object. So the
+   * diff's ORIGINAL and the rep's live build were one object graph, and any in-place
+   * write anywhere in the ~4k-line engine rewrote the "previous value" the Addendum
+   * Review prints. A locationGrid losing one column that way turns a saved total of
+   * 48 into 4 — which is what the review showed.
+   *
+   * It stayed wrong until something recomputed this memo, which is exactly why a Fast
+   * Refresh of THIS file "fixed" it and why no amount of device speed changed it.
+   *
+   * ⚠️ Not just a display bug: `buildChangeGroups` is submitted as
+   * `buildChangeSummary`, so the corrupted original was written onto the addendum the
+   * customer signs.
+   *
+   * A JSON round-trip is the correct clone here: this state is exactly what gets PUT
+   * to the API, so it is plain JSON by construction — no Dates, functions or cycles.
+   * Memoized on `initialState` so its identity changes at exactly the same cadence as
+   * before (the session's re-apply is keyed by `draftToken` = (leadId, calcId), not by
+   * this object's identity, so a fresh copy can never clobber the rep's edits).
+   */
+  const builderInitialState = useMemo(
+    () => (initialState ? JSON.parse(JSON.stringify(initialState)) : null),
+    [initialState]
+  );
 
   const effectiveJobState = editedJobState || initialState;
 
@@ -474,6 +509,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       ? `Cannot exceed the contract price of ${fmtMoney(Number(contractPrice) || 0)}.`
       : '';
   const hasPriceError = Boolean(contractPriceError || downPaymentError);
+
+  // ── "Send Addendum To" phone ────────────────────────────────────────────────
+  // The addendum is TEXTED to this number, so an incomplete one means the customer
+  // is never asked to sign and the draft sits pending forever. Same rule as Add New
+  // Lead / Edit Customer, with one difference that matters: this field renders a
+  // STATIC "+1" beside it and holds the local part only (`formatLocalUSPhone`), so a
+  // complete number is TEN digits here, not the eleven those two screens count.
+  const customerPhoneDigits = customerPhone.replace(/\D/g, '');
+  const customerPhoneError =
+    customerPhoneDigits.length === 0
+      ? 'Phone number is required to send the addendum.'
+      : customerPhoneDigits.length !== 10
+        ? 'Enter a complete 10-digit phone number.'
+        : '';
   // Compare each picker against the SAME baseline it was seeded from, so opening the
   // wizard and touching nothing reads as no change. Both sides go through
   // `coerceToPlanKey` with the matching fallback ('check' for the balance, blank for
@@ -987,7 +1036,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             // `vertical.color` and every card rendered the same purple. The new-deal
             // path (`DynamicDealCenterScreen`) passes this same array as `verticals`.
             calculatorSchemas={configuredSchemas}
-            initialJobState={initialState}
+            initialJobState={builderInitialState}
             dealCenterData={dealCenterData}
             calculatorResultData={{
               ...(calculatorResultData || {}),
@@ -1164,7 +1213,27 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 2 }}>Addendum Review</Text>
             <Text style={{ fontSize: 13, color: '#94A3B8', marginBottom: 14 }}>{customerName}</Text>
 
-            {!hasAnyChange ? (
+            {/* ⚠️ The diff's ORIGINAL side moves until the saved calculator lands.
+                `initialState` is hydrated with `dealCenterData`, which is built from
+                `calculatorData` — and that falls back to the outcome/lead copies
+                (usually empty) while this query is in flight. Rendering the review
+                then compares the edit against a PARTIALLY-hydrated original, so a
+                previous value reads low (the ticket: an old grid total of 48 shown
+                as 4). It self-corrected on any later re-render, which is exactly why
+                it reproduced on an iPhone 7 and not on a fast simulator — the race is
+                against the rep reaching this step.
+
+                This is not cosmetic: `buildChangeGroups` is SUBMITTED as
+                `buildChangeSummary`, so a stale diff would be written onto the
+                addendum the customer signs. Hence a hold rather than a best-effort
+                render, and Submit is disabled alongside it. */}
+            {isCalculatorLoading ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <ActivityIndicator size="small" color="#22C55E" />
+                <Text style={{ fontWeight: '700', color: '#64748B', marginTop: 10 }}>Loading the saved build…</Text>
+                <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 4 }}>Comparing your changes against it.</Text>
+              </View>
+            ) : !hasAnyChange ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                 <Text style={{ fontWeight: '700', color: '#64748B' }}>No changes made</Text>
                 <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 4 }}>Go back and modify the build, schedule, or price.</Text>
@@ -1226,7 +1295,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, padding: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 8 }}>Send Addendum To</Text>
               <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 4 }}>Phone Number</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: customerPhoneError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 12 }}>
                 <Text style={{ color: '#94A3B8', marginRight: 4, fontSize: 14 }}>+1</Text>
                 <TextInput
                   value={customerPhone}
@@ -1241,6 +1310,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 10 }}
                 />
               </View>
+              {!!customerPhoneError && (
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#DC2626', marginTop: 6 }}>
+                  {customerPhoneError}
+                </Text>
+              )}
             </View>
           </KeyboardAwareScrollView>
         )}
@@ -1267,8 +1341,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           ) : (
             <TouchableOpacity
               onPress={handleSubmit}
-              disabled={isSubmitting || !hasAnyChange || hasPriceError}
-              style={{ backgroundColor: hasAnyChange && !hasPriceError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
+              // ⚠️ The phone gates SUBMIT only, never `Next · Review` on step 2 — the
+              // field lives on THIS step, so blocking Next would strand the rep with
+              // a disabled button and nothing on screen explaining it.
+              disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading || !!customerPhoneError}
+              style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading && !customerPhoneError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
             >
               {isSubmitting && <ActivityIndicator size="small" color="#fff" />}
               <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Submit Addendum</Text>
@@ -1635,11 +1712,19 @@ function ReviewRow({
   const valueColor = kind === 'removed' ? '#94A3B8' : '#15803D';
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-      <View style={{ flex: 1, flexShrink: 1, paddingRight: 12 }}>
+      {/* `minWidth: 0` is the flexbox guard that lets this column actually shrink
+          below its content width — without it a long build-field label pushes the
+          row wider instead of wrapping, squeezing everything to its right. */}
+      <View style={{ flex: 1, flexShrink: 1, minWidth: 0, paddingRight: 12 }}>
         <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>{label}</Text>
         {/* An ADDED combination has no previous value — striking through an em
             dash would read as "something was there before". */}
         {kind !== 'added' && (
+          // ⚠️ `from` is NOT free text — for a locationGrid it is `displayValue()` →
+          // the grid's TOTAL. So a wrong value here ("48" reading as "4") is a wrong
+          // SUM, never a clipped glyph, and no amount of width or font styling can
+          // affect it. That was mis-diagnosed once; the cause was the diff's original
+          // side still hydrating — see the note on the Review step's loading hold.
           <Text style={{ fontSize: 11, color: '#DC2626', textDecorationLine: 'line-through' }}>{from}</Text>
         )}
       </View>
