@@ -1731,6 +1731,80 @@ on first keystroke**, still editable between building and confirming, locked aft
 confirm, no retro-unlock when a scoped calculator is cleared (before or after release), ＋ on a scoped
 rehash, duplicates, and a normal lead unchanged.
 
+### An Extras colour showed "Black" beside a Ground Spout of 0
+
+Ticket: *"when i create a calculator and not hit any value in the ground spout section, but when i come
+to this screen here you see the ground spout is still empty. if its empty than why its colour field
+show the black colour. its wrong — if there is no value than the colour value should also be empty."*
+
+The gutter **Extras** section is authored as PAIRS — a locked, calculator-driven quantity
+(`Ground Spout`, `dcField: groundSpout`) immediately followed by its locked **Color**. A colour field
+carries **no `dcField`**, so `resolveLockedValue` fell straight through to `field.defaultValue` — the
+portal's "if they buy one it's Black" default — and painted it on an extra the rep never quoted. The
+`Replace Corner` pair directly below read `—` only because ITS colour happens to carry no default, so
+one screen showed two contradictory answers to the same question.
+
+⚠️ **It was not only a display bug.** `hydrateFieldValue` (`dynamic-job-state-storage.ts`) resolves
+locked fields through the same call, so `"Black"` was **written into the saved job state** and rode
+along to the portal. And on the **Job Summary** tab the phantom survived *alone*: the 0 quantity is
+dropped there (`isDisplayableFieldSummary` rejects a numeric 0) while `buildStackRowSummary` still
+took the row's label from the quantity — rendering **`Ground Spout — Black`** for an extra that is not
+on the job.
+
+**New pure `src/utils/dynamic-job-builder/engine/locked-color-defaults.ts`** holds the rule
+(`isColorField` / `hasEnteredQuantity` / `findPairedQuantityField` / `resolvePairedQuantityValue` /
+`isPairedQuantityEmpty` / `isLockedColorSuppressed` / `resolveLockedColorFallbackDefault`), for the
+reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: all three consumers pull in
+React Native or are untestable here, and "the extra isn't on the job" must mean one thing on all of
+them.
+
+- ⚠️ **The pairing is POSITIONAL, because nothing else links the two fields.** The colour has no
+  `dcField`, no `linkedFieldId`, and no `dependencies.requiredWhen` naming the quantity. The nearest
+  **preceding non-colour field** in the same fields array is the authoring convention the renderer
+  already relies on — `StackFieldGrid` lays an extras stack authored as `[extra, color, extra, color…]`
+  onto one row per pair, and the saved payload shows exactly that alternation
+  (`…__textvalue-uuu1l: 2`, `…__color-gem7v: "Forest Green"`). Structural fields (`sectionLabel`,
+  `allocation`, `combinationSummary`, containers, `_`-keyed) are skipped, and a colour never pairs with
+  another colour, so `Wedges / Straps / Modify Height` (which have no colour) are unaffected.
+- ⚠️ **Scoped to LOCKED colour slots.** An editable colour keeps its configured default as the
+  pre-selected swatch (web `resolveEffectiveColorBehavior`), and every combination colour (gutter runs,
+  downspouts) is editable — so neither is touched.
+- ⚠️ **`lockedWithColor` / any field with `colorKey` is NOT a colour slot**, and neither is a colour
+  carrying its own `dcField`. Those resolve their own value from the calculator; suppressing them would
+  blank a real measurement. Both are excluded in `isColorField` and both are tested.
+- **Suppressed reads `—`, not blank** — the same em dash its unconfigured neighbour already shows.
+- **The saved-state fallback is skipped when suppressed**, so a lead saved BEFORE this fix (carrying the
+  phantom colour in its stored state) also reads `—` rather than resurrecting it.
+
+Three call sites, one rule:
+
+| where | change |
+|---|---|
+| `DynamicTabRenderer` generic locked branch | `resolveLockedValue(…, { fallbackDefault })` + `—` when suppressed |
+| `DynamicTabRenderer` `colorSelection` locked branch | same, via `isPairedQuantityEmpty` — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`), so it can't use `isLockedColorSuppressed` |
+| `hydrateFieldValue` (storage) | `fallbackDefault: ''` when suppressed → the field is EMPTIED, the same mechanism that drops a not-included product from storage |
+| `formatFieldSummaryValue` (`vertical-summary-utils`) | returns the `missing` variant, so the row never reaches the Job Summary |
+
+⚠️ The colorSelection branch also gained web's `resolveLockedColorValue` parity it never had: the
+fallback default is the **condition-resolved** one (`resolveConditionalDefault`), never the raw
+`field.defaultValue`, so a `dependencies.defaultWhen` that is not met can no longer leak its default
+either.
+
+⚠️ **Still unfixed: `dynamic-auto-field-entries.ts`** calls `resolveLockedValue` for the ACTIVITY LOG
+with no fallback, so a suppressed colour can still be logged. Separate surface, separate evidence.
+
+Verified with 23 tests (`__tests__/utils/locked-color-defaults.test.ts`) driving the real helpers, the
+real `hydrateJobStateForPersistence` and the real `buildSimpleSectionSummary`: the ticket repro
+(asserted to yield **`Black` under the old expression** and `—` under the new one), the `Replace Corner`
+pair unchanged, the default still showing once the quantity IS quoted (from the calculator or from
+state), a phantom colour already saved being hidden, a saved colour surviving while its quantity holds,
+the pairing walk (label skipping, colour-never-pairs-with-colour, unpaired colour untouched), the two
+exclusions above, `hasEnteredQuantity` across `0`/`'0'`/`''`/`—`/grids/multi-selects, hydration not
+seeding the colour (and still seeding it when quoted), and the summary row — the summary case
+**fails on the pre-fix code and passes after**. tsc 66 errors (baseline unchanged); the new util is
+eslint-clean and all three touched files are byte-identical to their HEAD eslint baselines
+(`dynamic-job-state-storage` 3 errors, `vertical-summary-utils` clean, `DynamicTabRenderer` 24 problems).
+
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

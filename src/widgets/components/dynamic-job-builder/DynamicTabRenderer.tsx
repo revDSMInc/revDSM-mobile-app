@@ -21,9 +21,15 @@ import {
   isAllocationExcluded,
   isDefaultColorActive,
   isFieldRequired,
+  resolveConditionalDefault,
 } from '../../../utils/dynamic-job-builder/engine/dependency-engine';
 import { isRequiredFieldValueMissing } from '../../../utils/dynamic-job-builder/engine/field-value-utils';
 import { isAllocationField, computeGridTotal, resolveLockedValue } from '../../../utils/dynamic-job-builder/engine/allocation-utils';
+import {
+  isLockedColorSuppressed,
+  isPairedQuantityEmpty,
+  resolveLockedColorFallbackDefault,
+} from '../../../utils/dynamic-job-builder/engine/locked-color-defaults';
 import { isAllocationCardActive } from '../../../utils/dynamic-job-builder/engine/allocation-config-utils';
 import { resolveAllocationMetrics } from '../../../utils/dynamic-job-builder/engine/allocation-value-resolver';
 import { resolveAccordionAllocationStatus } from '../../../utils/dynamic-job-builder/engine/accordion-allocation-utils';
@@ -396,14 +402,33 @@ function renderField(
     // locked field only showed a value in the combination that happened to carry
     // one in state — e.g. LeafFilter Profile rendered blank on Combination #2
     // while #1 showed "Versa Max". resolveLockedValue is combination-independent.
-    const lockedValue = resolveLockedValue(field, dealCenterData);
+    // A locked COLOUR slot whose paired quantity is empty must not paint the
+    // portal's configured default (see `locked-color-defaults.ts`): an Extras row
+    // reading `Ground Spout 0` beside `Color Black` describes a colour for an extra
+    // that is not on the job. Suppressed → the same '—' its unconfigured neighbour
+    // (`Replace Corner ▸ Color`) already shows, and the saved-state fallback below
+    // is skipped too — a lead saved BEFORE this fix still carries the phantom
+    // colour in its stored state.
+    const colorSuppressed = isLockedColorSuppressed(field, {
+      fields: ctx?.sectionFields,
+      state,
+      dealCenterData,
+    });
+    const lockedValue = resolveLockedValue(field, dealCenterData, {
+      fallbackDefault: resolveLockedColorFallbackDefault(field, {
+        fields: ctx?.sectionFields,
+        state,
+        dealCenterData,
+        depCtx,
+      }),
+    });
     if (field.colorKey && (field.palette || field.colors)) {
       return (
         <LockedFieldWithColor
           key={field.id}
           label={field.label}
-          value={lockedValue}
-          colorValue={value}
+          value={colorSuppressed ? '—' : lockedValue}
+          colorValue={colorSuppressed ? '' : value}
           colors={resolveSwatchColors()}
         />
       );
@@ -420,8 +445,14 @@ function renderField(
     // dealCenterData) while restoring submitted Extras/colours that would show blank.
     const dcResolved = lockedValue !== undefined && lockedValue !== '—' && lockedValue !== '';
     const stateFallback =
-      (typeof value === 'string' || typeof value === 'number') && value !== '' ? value : undefined;
-    const lockedDisplay = dcResolved ? lockedValue : stateFallback ?? lockedValue;
+      !colorSuppressed && (typeof value === 'string' || typeof value === 'number') && value !== ''
+        ? value
+        : undefined;
+    const lockedDisplay = colorSuppressed
+      ? '—'
+      : dcResolved
+        ? lockedValue
+        : stateFallback ?? lockedValue;
     return <LockedField key={field.id} label={field.label} value={lockedDisplay} />;
   }
 
@@ -674,7 +705,26 @@ function renderField(
         // survives the save round-trip; it is NOT a deal-center value, so
         // resolveLockedValue returns '—'. Prefer the saved colour so a submitted
         // Extra's colour shows on reopen (previously showed '—').
-        const lockedColor = value || resolveLockedValue(field, dealCenterData) || effectiveDefault || '—';
+        // Web parity (`resolveLockedColorValue`): the fallback default is the
+        // CONDITION-RESOLVED one, never the raw `field.defaultValue` — and it is ''
+        // when the colour's paired quantity is empty, so an unquoted Extra reads '—'
+        // instead of the portal's default colour (`locked-color-defaults.ts`).
+        // This branch is ALSO reached with no `field.locked` (a colorSelection
+        // locked by `lockWhenNotRequired`), so the pairing test is used directly
+        // rather than through `isLockedColorSuppressed`.
+        const quantityEmpty = isPairedQuantityEmpty(field, {
+          fields: ctx?.sectionFields,
+          state,
+          dealCenterData,
+        });
+        const colorFallbackDefault = quantityEmpty
+          ? ''
+          : resolveConditionalDefault(field, state, depCtx);
+        const lockedColor =
+          (quantityEmpty ? '' : value) ||
+          resolveLockedValue(field, dealCenterData, { fallbackDefault: colorFallbackDefault }) ||
+          (quantityEmpty ? '' : effectiveDefault) ||
+          '—';
         return (
           <LockedField
             key={field.id}
