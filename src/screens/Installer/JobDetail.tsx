@@ -1436,18 +1436,21 @@ export default function InstallerJobDetail() {
         >
           {/* Lead summary */}
           <View className="mb-2">
+            {/* Labels carry the weight, values don't. Every value here was `font-black`,
+                so the whole block shouted and nothing in it read as more important than
+                anything else. */}
             <Text className="text-[15px] mb-2">
               <Text className="font-bold" style={{ color: colors.primary.main }}>
                 {t('installer.leadId')}:{' '}
               </Text>
-              <Text className="font-black" style={{ color: colors.text }}>
+              <Text className="font-normal" style={{ color: colors.text }}>
                 {job.leadDisplayId || job.jobNumber || job.leadId || 'N/A'}
               </Text>
             </Text>
 
             <View className="flex-row items-center mb-2">
               <Ionicon name="person" size={15} color={colors.primary.main} />
-              <Text className="ml-2 text-base font-black" style={{ color: colors.text }}>
+              <Text className="ml-2 text-base font-normal" style={{ color: colors.text }}>
                 {name || 'Customer'}
               </Text>
             </View>
@@ -1483,7 +1486,7 @@ export default function InstallerJobDetail() {
             <View className="flex-row items-center mb-2" style={{ gap: 24 }}>
               <View className="flex-row items-center">
                 <Ionicon name="calendar-clear" size={14} color={colors.primary.main} />
-                <Text className="ml-2 text-sm font-black" style={{ color: colors.text }}>
+                <Text className="ml-2 text-sm font-normal" style={{ color: colors.text }}>
                   {job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy') : 'N/A'}
                 </Text>
               </View>
@@ -1491,7 +1494,7 @@ export default function InstallerJobDetail() {
                 <Ionicon name="time-outline" size={14} color={colors.primary.main} />
                 <Text
                   numberOfLines={1}
-                  className="ml-2 text-sm font-black"
+                  className="ml-2 text-sm font-normal"
                   style={{ color: colors.text }}
                 >
                   {job.leadTime || 'N/A'}

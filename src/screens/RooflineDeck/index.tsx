@@ -204,28 +204,45 @@ export default function RooflineDeckScreen() {
 
   const pollInterval = useRef<any>(null);
 
+  // Hydrate the FULL lead — `salesPhotos` and `notes` are what this screen renders, and
+  // the lead it is navigated with now comes from the SLIM list (`view=summary`), which
+  // carries `salesPhotos: []`. Without this the Inspection tab is empty.
   const refetch = async () => {
     const lid = lead?._id || lead?.id;
     if (!lid) return;
     try {
-      // Reads the LEAD, not an outcome: `fullLeadData` is only used for
-      // salesPhotos / notes / customerDetails, all of which live on the lead.
-      // The bare lead-scoped outcome route this used to call is deprecated.
+      const response = await LeadService.getSalesPortalLeadById(lid);
+      const data = response.data?.data?.lead || response.data?.lead;
+      if (data) {
+        setFullLeadData(data);
+        return;
+      }
+    } catch {
+      // Fall through to the deal endpoint below — see the same note in
+      // `screens/Pitchbook`: an API host that predates the sales-portal optimization
+      // has no such route and answers with an HTML error page.
+    }
+    try {
+      // Fallback: what this screen read before the detail endpoint existed, so
+      // preferring the new route can never be a regression.
       const response = await LeadService.getSalesDealById(lid);
       const body = response.data;
       setFullLeadData(body?.data?.lead || body?.data || body?.lead || body);
-    } catch (error) { }
+    } catch {
+      // Non-fatal: the deck still presents, falling back to whatever the navigation
+      // param carried.
+    }
   };
 
   useEffect(() => {
-    const result = String(lead?.result || lead?.status || '').toLowerCase();
-    if (result === 'sale' || result === 'demo') {
-      refetch();
-    }
+    // ⚠️ Runs for EVERY lead, not just sold/demo ones — see the same note in
+    // `screens/Pitchbook`: the old `sale`/`demo` gate left every non-resulted lead with
+    // no photos once the list went slim.
+    refetch();
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
     };
-  }, [lead?.id, lead?.result, lead?.status]);
+  }, [lead?.id, lead?._id, lead?.result, lead?.status]);
 
 
   useEffect(() => {

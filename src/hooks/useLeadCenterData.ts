@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { LeadService } from '../services/api/leads';
 import { resolveS3Url } from '../utils/s3-utils';
@@ -15,6 +15,33 @@ import {
 const EMPTY_OUTCOME_FORM = Object.freeze({});
 const EMPTY_CALCULATOR_DATA = Object.freeze({});
 
+/**
+ * Has `GET demo/v1/leads/sales-portal/:id` been found missing on this API host?
+ *
+ * The detail endpoint ships with the sales-portal optimization
+ * (SALES-PORTAL-API-OPTIMIZATION.md), so an environment running an older build answers
+ * with the server's HTML "no such route" page. Module scope, not a ref: the answer is a
+ * property of the BACKEND, identical for every lead and every mount, so learning it once
+ * should spare every later screen the dead round trip.
+ *
+ * Deliberately NOT persisted — it resets on app restart, so pointing the app at a
+ * freshly-deployed API (or flipping `ENV.API_URL`) picks the endpoint straight back up
+ * without anyone having to clear anything.
+ */
+let salesPortalDetailUnavailable = false;
+
+/**
+ * True when a rejection means "this ROUTE does not exist", as opposed to "this LEAD does
+ * not exist".
+ *
+ * Both are 404s. The discriminator is the body: the API answers a real miss with JSON
+ * (`{ code: 404, message: 'Lead not found', data: {} }`), while an unrouted path falls
+ * through to the server's default HTML error page. `normalizeApiError` attaches `body`
+ * only when the payload was NOT json, so a `body` that opens with `<` is the tell.
+ */
+const isRouteMissing = (err: any): boolean =>
+  err?.httpStatus === 404 && typeof err?.body === 'string' && err.body.trim().startsWith('<');
+
 export const useLeadCenterData = (
   initialLead: any,
   user: any,
@@ -30,6 +57,10 @@ export const useLeadCenterData = (
     }
   }, [initialLead]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // The lead id currently being hydrated, so the open-hydrate and the focus refresh
+  // cannot fire two identical requests. A ref, not state: it must be readable and
+  // writable synchronously inside `refetch`, before any re-render.
+  const hydrateInFlightRef = useRef<string | null>(null);
   // Kept as empty defaults, not state: nothing writes them since the mount-time
   // outcome fetch was removed (see the effect below). The two Job Builder launch
   // paths that consume them now read the real values off their own outcome response
@@ -54,26 +85,75 @@ export const useLeadCenterData = (
     scheduleTime: null,
   });
 
+  /**
+   * Load the FULL lead for this screen — and it is a load, not just a refresh.
+   *
+   * The list this screen is opened from now returns SLIM rows (`view=summary`), which
+   * carry `salesPhotos: []` and no `jobBuilder` at all. Everything below and downstream
+   * reads those — the photo sections, the inspection capture, the chat composer, the
+   * contract card — so without this call the Lead Center opens empty. That is why the
+   * hydrate effect below runs it on open rather than leaving it to a pull-to-refresh.
+   *
+   * ⚠️ It fetches ONE lead by id (`…/sales-portal/:id`). It used to request the LIST
+   * with `?leadId=` and `.find()` the row — that pattern is now actively wrong: the
+   * server IGNORES `leadId` on the list query string, so it would download every lead
+   * the rep has to pick one out client-side.
+   */
   const refetch = useCallback(async () => {
     if (!user?._id || !lead?._id) return;
+    // Collapse the open-hydrate and the focus refresh into a single request when they
+    // land together on mount, and stop a fast re-focus from stacking calls.
+    if (hydrateInFlightRef.current === lead._id) return;
+    hydrateInFlightRef.current = lead._id;
     try {
       setIsRefreshing(true);
-      // Fetch fresh data from the Sales Portal API as it contains the updated generatedReports
-      const repId = lead.assignedRepId || user._id;
-      const res = await LeadService.getSalesLeads(repId, { leadId: lead._id });
-      
-      const leadsList = res.data?.data?.leads || res.data?.leads || [];
-      const updated = leadsList.find((l: any) => l._id === lead._id || l.id === lead._id);
 
-      if (updated) {
+      let full: any = null;
+      if (!salesPortalDetailUnavailable) {
+        try {
+          const res = await LeadService.getSalesPortalLeadById(lead._id);
+          full = res.data?.data?.lead || res.data?.lead;
+        } catch (detailErr: any) {
+          // A 404 here has TWO very different meanings and they must not be conflated:
+          //
+          //  - JSON body (`{ code: 404, message: 'Lead not found' }`) — the documented
+          //    response when the signed-in rep is neither `assignedRepId` nor
+          //    `assignedShadowRepId`. Real, per-lead, and the fallback below covers it.
+          //  - HTML body (`<!DOCTYPE html>…<title>Error</title>`) — the server's default
+          //    "no such route" page, i.e. the endpoint is NOT DEPLOYED on this API host.
+          //    `normalizeApiError` only sets `body` for a non-JSON payload, so its
+          //    presence is what tells the two apart.
+          //
+          // For the undeployed case, latch it off for the rest of the session: retrying
+          // a route that does not exist costs one dead request per lead open AND per
+          // focus, and the fallback below already produces a usable lead.
+          if (isRouteMissing(detailErr)) {
+            salesPortalDetailUnavailable = true;
+            if (__DEV__) {
+              console.warn(
+                '[LeadCenter] sales-portal detail endpoint not deployed on this API — ' +
+                  'falling back to workLead for the rest of the session.'
+              );
+            }
+          } else if (detailErr?.httpStatus !== 404) {
+            // Anything that is not a 404 (500, timeout, offline) is not a routing fact;
+            // let the outer handler report it rather than silently masking it.
+            throw detailErr;
+          }
+        }
+      }
+
+      if (full) {
         setLead((prev: any) => ({
           ...prev,
-          ...updated,
+          ...full,
           // Explicitly prioritize the reports from the Sales Portal response
-          generatedReports: updated.generatedReports || prev?.generatedReports || []
+          generatedReports: full.generatedReports || prev?.generatedReports || [],
         }));
       } else {
-        // Fallback to workLead if sales-portal didn't find the specific lead
+        // Fallback — reached when the detail endpoint is missing, 404s for this lead, or
+        // answers with nothing usable. `workLead` is the check-in PUT and returns the
+        // lead record, so the screen still gets real data instead of the summary row.
         const workRes = await LeadService.workLead(lead._id, user._id);
         const workData = workRes.data?.data || workRes.data;
         if (workData) {
@@ -89,16 +169,32 @@ export const useLeadCenterData = (
       // configured `ENV.API_URL` host isn't listening). That is an environment
       // condition, not a fault in this screen, so it must not `console.error` —
       // in dev that throws the full-screen red LogBox over a working Lead Center.
-      // A genuine API failure still logs at error level.
+      //
+      // ⚠️ A handled condition must never reach `console.error` either: in dev that
+      // red LogBox reads as a crash over a Lead Center that is working fine. Only a
+      // genuinely unexpected failure logs at error level.
       if (err?.httpStatus === undefined) {
         console.warn('[LeadCenter] Refresh skipped — API unreachable:', err?.message || err);
       } else {
         console.error('[LeadCenter] Refresh failed:', err);
       }
     } finally {
+      hydrateInFlightRef.current = null;
       setIsRefreshing(false);
     }
-  }, [user?._id, lead?._id, lead?.assignedRepId]);
+  }, [user?._id, lead?._id]);
+
+  // Hydrate on open. `LeadCenter`'s focus effect also calls `refetch`, but relying on
+  // it alone would leave any OTHER entry point (the chat deep link, the map, a lead
+  // opened straight from a notification) rendering a summary row with no photos. The
+  // in-flight guard above means the two collapse into one request on mount.
+  useEffect(() => {
+    if (!lead?._id || !user?._id) return;
+    refetch();
+    // Keyed on the lead, not on `refetch` — `refetch`'s identity changes with the lead
+    // id it closes over, so depending on it would re-run this on every hydrate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?._id, user?._id]);
 
   // NO outcome fetch on mount — web parity.
   //

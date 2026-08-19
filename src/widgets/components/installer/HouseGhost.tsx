@@ -3,11 +3,15 @@ import { StyleSheet } from 'react-native';
 import Svg, { G, Path, Rect } from 'react-native-svg';
 
 /**
- * Placeholder line-art house used wherever a rep reference photo would appear.
+ * Placeholder line-art house for an EMPTY reference frame — the tagger's reference pane
+ * and the matched-pair review, where a rep photo would have gone.
  *
- * The rep's ARC shots aren't available from the API yet, so this stands in as the
- * ghost the installer aligns against. Once `PhotoTag.repPhotoUrl` is populated,
- * callers pass a real <Image> instead and this is only a fallback.
+ * ⚠️ Never draw it OVER a photo or over the live viewfinder. It used to be the camera's
+ * fallback when a tag had no reference, so installers saw the drawing sitting on top of
+ * the shot they were taking and read it as a broken image burnt into the capture. The
+ * camera now shows nothing at all in that case — see `hasGhost` in `InstallerCamera.tsx`.
+ * In an empty frame it is unambiguous (the caption beside it reads "NO REP PHOTO FOR THIS
+ * TAG"); on top of a real image it is not.
  */
 export function HouseGhost({ opacity = 0.35 }: { opacity?: number }) {
   return (

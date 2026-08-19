@@ -5,6 +5,7 @@ import {
   isSectionScopedCombinationField,
 } from './combination-utils';
 import { isAllocationField, isFieldLocked, resolveLockedValue } from './allocation-utils';
+import { isLockedColorSuppressed } from './locked-color-defaults';
 import { evaluateRuleGroup, isFieldVisibleWithConditions } from './dependency-engine';
 import {
   formatComboFieldSummaryValue,
@@ -265,9 +266,18 @@ function isDisplayableFieldSummary(field: any, formatted: any) {
 // ─── Field value formatting ───────────────────────────────────────────────────
 
 function formatFieldSummaryValue(field: any, state: any = {}, options: any = {}) {
-  const { dealCenterData, editMode } = options;
+  const { dealCenterData, editMode, fields } = options;
   const colorValues = state?.colorValues || {};
   const resolvedState = { ...state };
+
+  // A locked colour whose paired quantity is empty is not on the job, so it must
+  // not reach the summary either — the same rule the tab's locked row applies
+  // (`locked-color-defaults.ts`). Without this an Extras pair whose quantity is 0
+  // (dropped by `isDisplayableFieldSummary`) still rendered as "Ground Spout —
+  // Black", the colour surviving alone on a row named after the missing quantity.
+  if (isLockedColorSuppressed(field, { fields, state, dealCenterData })) {
+    return { text: '', variant: 'missing' };
+  }
 
   // Web parity (`vertical-summary-utils.js:247-255`): in deal-EDIT mode a "locked"
   // field is editable, so the rep's live value must win. Fall back to the
@@ -331,7 +341,11 @@ function buildSingleFieldDetailRow(field: any, state: any, ctx: any): any {
     return locationRows.length ? { locationRows } : null;
   }
 
-  const formatted = formatFieldSummaryValue(field, state, { dealCenterData: ctx.dealCenterData, editMode: ctx.editMode });
+  const formatted = formatFieldSummaryValue(field, state, {
+    dealCenterData: ctx.dealCenterData,
+    editMode: ctx.editMode,
+    fields: ctx.sectionFields,
+  });
   if (!isDisplayableFieldSummary(field, formatted)) return null;
 
   return { label: field.label || field.key || '', text: formatted.text, variant: formatted.variant };
@@ -355,6 +369,7 @@ function buildStackRowSummary(children: any[] = [], state: any, ctx: any): any {
     const formatted = formatFieldSummaryValue(child, state, {
       dealCenterData: ctx.dealCenterData,
       editMode: ctx.editMode,
+      fields: children,
     });
     if (!isDisplayableFieldSummary(child, formatted)) return;
 
@@ -469,7 +484,11 @@ function processSummaryFields(fields: any[] = [], state: any = {}, ctx: any = {}
       return;
     }
 
-    const formatted = formatFieldSummaryValue(field, displayState, { dealCenterData: ctx.dealCenterData, editMode: ctx.editMode });
+    const formatted = formatFieldSummaryValue(field, displayState, {
+      dealCenterData: ctx.dealCenterData,
+      editMode: ctx.editMode,
+      fields,
+    });
     if (!isDisplayableFieldSummary(field, formatted)) return;
 
     if (inCombination && !isContainerFieldType(field.type)) {

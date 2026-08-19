@@ -29,6 +29,14 @@ export const resolveLeadCalculatorId = (lead: any): string | null =>
 export const LeadEndpoints = {
   create: 'lead/v1/create',
   salesPortal: 'demo/v1/leads/sales-portal',
+  // One FULL lead by Mongo `_id` (SALES-PORTAL-API-OPTIMIZATION.md §2). Returns the
+  // same object one row of the un-slimmed list carries, wrapped as `data.lead`.
+  //
+  // ⚠️ This is the ONLY way to fetch a single lead now. `?leadId=` on the list above is
+  // explicitly IGNORED by the server — it returns the whole list regardless — so the
+  // old "fetch the list and `.find()` the lead" pattern both downloads everything and
+  // no longer means what it reads like.
+  salesPortalDetail: (leadId: string) => `demo/v1/leads/sales-portal/${leadId}`,
   // Rehashed leads for the signed-in rep. A DIFFERENT service prefix to everything
   // else in this file (`rehash/` not `lead/`), and the rep is taken from the JWT —
   // there is no repId parameter, unlike `salesPortal`. Web ref:
@@ -167,10 +175,42 @@ export const sanitizeCalculatorPayload = (payload: any): any => {
 
 export const LeadService = {
   createLead: (data: any): Promise<AxiosResponse<any>> => api.post(LeadEndpoints.create, data),
+  /**
+   * The rep's lead list (Issued / Self-Gen / Archived tabs).
+   *
+   * Pass `view: 'summary'` in `params` to get the SLIM rows
+   * (SALES-PORTAL-API-OPTIMIZATION.md) — card fields only, with ~15 join collections
+   * skipped server-side. That is what the list screen should use; see `useLeadsData`.
+   *
+   * ⚠️ A summary row carries `salesPhotos: []` and no `jobBuilder`, and it is NOT a
+   * usable lead on its own. Anything that opens a lead must hydrate it through
+   * `getSalesPortalLeadById` first — see the note there.
+   *
+   * ⚠️ Omitting `view` keeps the OLD full response verbatim (portal / legacy parity),
+   * so this stays backwards compatible for any caller that genuinely needs fat rows.
+   */
   getSalesLeads: (repId: string, params?: any): Promise<AxiosResponse<any>> => {
     const query = new URLSearchParams({ repId, ...params }).toString();
     return api.get(`${LeadEndpoints.salesPortal}?${query}`);
   },
+
+  /**
+   * ONE fully-hydrated lead by Mongo `_id` (SALES-PORTAL-API-OPTIMIZATION.md §2).
+   *
+   * This is the companion to `view=summary`: the list is slim, so every screen that
+   * needs photos / jobBuilder / contract data reads them from here instead. Web does
+   * the same (`getSalesPortalLeadById`, used by the capture view, pitch book,
+   * rev-render and the deal-center tabs).
+   *
+   * ⚠️ The path takes the Mongo `_id`, NOT the display `leadId` — which is frequently
+   * the literal string `"N/A"` on a self-gen lead and would 404.
+   *
+   * 404 when the lead isn't the caller's (the server requires `assignedRepId` /
+   * `assignedShadowRepId` to match), so callers must tolerate a miss rather than treat
+   * it as fatal.
+   */
+  getSalesPortalLeadById: (leadId: string): Promise<AxiosResponse<any>> =>
+    api.get(LeadEndpoints.salesPortalDetail(leadId)),
   /**
    * Rehashed leads for the signed-in rep — web parity with `useGetRehashLeads`
    * (`src/api/leads.js`).
