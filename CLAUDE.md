@@ -2072,6 +2072,105 @@ directions, the required exemption, the no-op write, and the editable picker pai
 `locked-color-defaults.ts` and `vertical-summary-utils.ts` are eslint-clean and the other two files
 are byte-identical to their HEAD baselines (storage 3 errors, `DynamicTabRenderer` 24 problems).
 
+### The Complete-Job payload now matches the backend's contract exactly
+
+Ticket: *"this is the actual payload that is used for the job submit — compare the already implemented
+payload with this provided payload and set the already implemented payload 100% same … all the fields
+should be populated properly that needs on the backend."* Two references, both in the repo root:
+
+| file | what it is |
+|---|---|
+| **`payload.dynamic.json`** | the backend dev's CONTRACT — key set, string money, the calculator key, and the four document groups |
+| **`web-job-builder.txt`** | a capture of a REAL web submit — the same shape with a real `LFCalculator` document (40 entries) |
+
+⚠️ The capture is hand-truncated at the agreement blob (`"blob":"type": "agreement"`), so it does not
+parse and its `jobState` is missing everything after `agreements` — the vertical/tab state was cut, not
+absent. Read it for `leadData` only.
+
+**New pure `src/screens/DynamicDealCenter/utils/job-submit-payload.ts`** assembles the body
+(`buildSubmitLeadData` / `buildCalculatorDocument` / `buildJobSubmitPayload` / `toPayloadAmount` /
+`toPayloadText`). `DynamicJobBuilderScreen.handleComplete` no longer builds it inline.
+
+#### What was wrong
+
+- **The calculator was usually missing entirely.** `leadData.LFCalculator` must be the FULL saved
+  calculator document (`_id`, `createdBy`, `appointmentId`, `entries[]`, `totals`, `price`,
+  `discountPercentage`, `createdAt`/`updatedAt`, …). Mobile attached the in-memory **`CalcTab`**, which
+  has none of those and whose `entries` is a **map keyed by field id, not an array** — and then dropped
+  the key altogether unless the tab happened to carry `createdBy`/`appointmentId`/`title`, which it
+  never does. So the submit went out with no calculator on the vast majority of jobs.
+  **`handleComplete` now reads the server copy** (`GET /lfcalculators/{id}` via
+  `LeadService.getCalculator`) and passes it through `buildCalculatorDocument`; the tab is a shaped
+  FALLBACK for a failed read (entries map flattened back to an array, ids filled from the submit
+  context), so the key is never partial and never absent.
+  ⚠️ The read goes through **`extractCalculatorDocument`**, because the response wrapper varies by
+  deployment — the repo already unwraps it four ways (`DynamicDealEditScreen`:
+  `body?.data?.calculator ?? body?.data ?? body?.calculator ?? body`). Anything without an `_id` is
+  treated as UNRESOLVED so the tab fallback runs: sending a wrapper as the calculator looks exactly
+  like "no calculator" from the backend. `handleComplete` also logs one line naming the attached
+  calculator (`[COMPLETE JOB] leadData calculator: _id=… entries=… source=server|local tab`), so the
+  question is answerable from a device trace.
+- **`leadData` carried the result modal's whole state.** It was `{ ...resultData }` plus mobile-only
+  keys, so it shipped `versatile` / `pineapple` / `resultType` / `demoReason` / `contractPrice`
+  alongside `status`, `installDate`, `timeWindow`, `calculatorId`, `appointmentId` — none of which is in
+  either reference. It is now assembled key by key.
+- **Money went out as NUMBERS.** Both references carry strings (`"originalContractPrice": "24900"`,
+  `"balance": "21900"`) — web's `formData` holds typed text. ⚠️ An unset amount is **`''`, never `0`**:
+  a zero reads as a real quoted figure on the portal.
+- **`paperWork` and `downPaymentReceipt` were never sent.** The contract lists four document groups; the
+  job builder produces only agreements and order sheets, so the other two go out as **empty arrays
+  rather than absent keys** — not the same thing to a partial-update handler.
+- **`lastPriceQuoted` / `originalContractPrice` were both filled from the same field.** Web
+  (`result-lead-modal.js`) sends `lastPriceQuoted` on a **Demo** only and `originalContractPrice` on a
+  **Sale** only; the other is blanked.
+
+#### The two judgement calls (answered by the reporter, not inferred)
+
+1. **The calculator goes out ONLY as `LFCalculator`** — web's spelling, and what web normalizes a
+   stored `lfCalculator` back to on read (`result-lead-modal.js:193`). ⚠️ A lowercase alias holding
+   the SAME object shipped briefly (the contract file and this repo's earlier note on
+   `LeadHandler.submitJobBuilder` both name the lowercase key) and was removed on sight: *"same
+   object sent in two different formats — make sure only upper case is sent"*. If the backend ever
+   turns out to read the lowercase key, **rename** this one rather than adding the second.
+   The *"lf calculator is not appended"* report was never about the key name — it was the missing
+   document below.
+   ⚠️ It is **never null** — web's last line before saving is *"ensure LFCalculator is at least an
+   empty object for backend validation"*, so an absent calculator goes out as `{}`.
+   ⚠️ `selectedAppointmentId` prefers the CALCULATOR's own `appointmentId`
+   (web: `targetCalc?.appointmentId || formData.selectedAppointmentId`).
+2. **`leadData.jobBuilder` is KEPT** — the one mobile-only key retained, so a backend that reads the
+   build from `leadData.jobBuilder` rather than from the top-level `jobState` still gets it. Everything
+   else listed above was removed.
+
+#### Deliberately NOT changed
+
+- **`_storageVersion` stays `1`.** The contract file shows `2`, but the real web capture shows `1` and
+  it is the serializer's own constant — bumping it is a storage-format change, not a payload field.
+- **`agreements[].type` is kept** (`{ name: '', file, type }`). The contract omits it; web's real
+  traffic sends it, and it is what tells the backend which group a document belongs to on the non-Sale
+  path, where agreements are filed AS order sheets.
+- **`explain` is kept.** The contract file omits it (it was empty in their sample); web sends it and it
+  carries the demo explanation.
+- **The lead-scoped outcome mirror right after the POST is untouched** — it has no fixed contract and is
+  what persists `versatile` / `pineapple` / the rest of the modal's fields, so removing them from the
+  POST loses nothing. It now attaches the same resolved calculator document.
+- **The legacy `screens/JobBuilder` submit** (non-dynamic, `isDynamic` false) builds its own payload and
+  was left alone — different contract, and the ticket is about the dynamic flow.
+
+Verified with 26 tests (`__tests__/screens/DynamicDealCenter/job-submit-payload.test.ts`) driving the
+real builders against both references verbatim: `leadData`'s exact key list **in order**, every dropped
+key asserted absent (modal-only and mobile-only), string money and `''`-not-`0`, the Sale/Demo
+blanking, the field-name mapping (`downPaymentMethod` → `paymentMethod`), the server calculator copied
+field for field with its `entries` array and `pricingAtTimeOfEntry` intact, the fallback producing the
+same shape from a tab, the entries map flattened, the uppercase key carrying the document with **no
+lowercase twin**, the `{}`-not-null fallback, the calculator's own `appointmentId` winning, every
+wrapper shape the unwrap
+accepts (and an id-less one rejected), the four document groups always present, and the
+`configSnapshotId` → `'dynamic'` fallback. tsc identical to baseline; the new util is eslint-clean and
+`DynamicJobBuilderScreen` drops from 3 errors to 2 (the removed `_dpm`/`_rawLF` unused destructure).
+
+⚠️ **Needs a device confirmation of the response**, since this is the first submit to carry a real
+calculator document — watch for a validation error naming `lfCalculator`.
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

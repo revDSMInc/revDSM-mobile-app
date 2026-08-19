@@ -1,0 +1,100 @@
+{
+  "leadData": {
+    "oneLeg": "No",
+    "result": "Sale",
+    "reason": "",
+    "lastPriceQuoted": "24900",
+    "originalContractPrice": "24900",
+    "downPayment": "3000",
+    "paymentMethod": "Check",
+    "balancePaymentMethod": "Finance",
+    "balance": "21900",
+    "lfCalculator": "standard",
+    "selectedCalculatorId": "68b3f1c2a7d9e40012ab34cd",
+    "selectedAppointmentId": "68b3f0aa17c2d10012ef99aa"
+  },
+  "isDynamic": true,
+  "configId": "68c1aa4f9b3e2d0012001122",
+  "configSnapshotId": "68c1aa4f9b3e2d0012003344",
+  "jobState": {
+    "_storageVersion": 2,
+    "vertical_gutters__gutters": {
+      "tab_measurements": {
+        "colorValues": {
+          "field_gutter_color__gutter-color": "WHITE",
+          "field_downspout_color__downspout-color": "WHITE"
+        },
+        "sectionFields": {
+          "section_main__main-run": {
+            "field_size__size": "5\" K-STYLE",
+            "field_footage__footage": "115"
+          }
+        },
+        "comboGroups": {
+          "section_runs__runs": {
+            "sectionState": {
+              "field_profile__profile": "K-STYLE"
+            },
+            "combinations": [
+              {
+                "id": 1,
+                "field_color__color": "WHITE",
+                "field_measurements__measurements": [40, 0, 0, 32, 0, 0, 25, 0, 0, 0, 0, 0, 18, 0, 0, 0, 0, 0]
+              }
+            ]
+          }
+        }
+      },
+      "tab_accessories": {
+        "sectionFields": {
+          "section_elbows__elbows": {
+            "field_a_elbows__a-elbows": "4",
+            "field_b_elbows__b-elbows": "6",
+            "field_offset_elbows__offset-elbows": "2"
+          },
+          "section_miters__miters": {
+            "field_miters_outside__miters-outside": "4",
+            "field_miters_inside__miters-inside": "2"
+          }
+        }
+      }
+    },
+    "vertical_leaf_protection__leaf-protection": {
+      "tab_main": {
+        "combinations": [
+          {
+            "id": 1,
+            "field_lf_profile__lf-profile": "K-STYLE",
+            "field_lf_color__lf-color": "BLACK",
+            "field_gutter_opening_width__gutter-opening-width": "5",
+            "field_measurements__measurements": [40, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          }
+        ]
+      },
+      "tab_extras": {
+        "sectionFields": {
+          "section_extras__extras": {
+            "field_csr__csr": 2,
+            "field_corners_filter__corners-filter": 4,
+            "field_remove_protection__remove-protection": 115
+          }
+        }
+      }
+    },
+    "scheduleTime": {
+      "customerName": "John Smith",
+      "date": "TBD",
+      "timeWindow": "TBD",
+      "reason": "Awaiting HOA approval"
+    }
+  },
+  "agreements": [
+    {
+      "name": "Agreement-JS",
+      "file": "data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9MZW5ndGggNiAwIFI+PgpzdHJlYW0KZW5kc3RyZWFtCmVuZG9iagp0cmFpbGVyCjw8L1Jvb3QgMSAwIFI+PgolJUVPRgo="
+    }
+  ],
+  "orderSheets": [],
+  "paperWork": [],
+  "downPaymentReceipt": []
+}
