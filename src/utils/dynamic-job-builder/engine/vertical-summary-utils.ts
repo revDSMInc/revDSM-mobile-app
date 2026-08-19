@@ -5,7 +5,7 @@ import {
   isSectionScopedCombinationField,
 } from './combination-utils';
 import { isAllocationField, isFieldLocked, resolveLockedValue } from './allocation-utils';
-import { isLockedColorSuppressed } from './locked-color-defaults';
+import { isPairedQuantityEmpty } from './locked-color-defaults';
 import { evaluateRuleGroup, isFieldVisibleWithConditions } from './dependency-engine';
 import {
   formatComboFieldSummaryValue,
@@ -275,7 +275,7 @@ function formatFieldSummaryValue(field: any, state: any = {}, options: any = {})
   // (`locked-color-defaults.ts`). Without this an Extras pair whose quantity is 0
   // (dropped by `isDisplayableFieldSummary`) still rendered as "Ground Spout —
   // Black", the colour surviving alone on a row named after the missing quantity.
-  if (isLockedColorSuppressed(field, { fields, state, dealCenterData })) {
+  if (isPairedQuantityEmpty(field, { fields, state, dealCenterData })) {
     return { text: '', variant: 'missing' };
   }
 

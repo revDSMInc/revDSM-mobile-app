@@ -1753,7 +1753,8 @@ on the job.
 
 **New pure `src/utils/dynamic-job-builder/engine/locked-color-defaults.ts`** holds the rule
 (`isColorField` / `hasEnteredQuantity` / `findPairedQuantityField` / `resolvePairedQuantityValue` /
-`isPairedQuantityEmpty` / `isLockedColorSuppressed` / `resolveLockedColorFallbackDefault`), for the
+`isQuantityLikeField` / `isPairedQuantityEmpty` / `findPairedColorFields` /
+`resolveLockedColorFallbackDefault`), for the
 reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: all three consumers pull in
 React Native or are untestable here, and "the extra isn't on the job" must mean one thing on all of
 them.
@@ -1766,9 +1767,13 @@ them.
   (`…__textvalue-uuu1l: 2`, `…__color-gem7v: "Forest Green"`). Structural fields (`sectionLabel`,
   `allocation`, `combinationSummary`, containers, `_`-keyed) are skipped, and a colour never pairs with
   another colour, so `Wedges / Straps / Modify Height` (which have no colour) are unaffected.
-- ⚠️ **Scoped to LOCKED colour slots.** An editable colour keeps its configured default as the
-  pre-selected swatch (web `resolveEffectiveColorBehavior`), and every combination colour (gutter runs,
-  downspouts) is editable — so neither is touched.
+- ⚠️ **Scoped by the PAIRING, not by `field.locked`.** The first pass gated every one of these on
+  `isFieldLocked(colour)` and did **nothing on device** — on the live config the Extras colour is
+  authored as a plain editable swatch (it renders read-only because the TAB is, not because it
+  carries the flag). The scope is instead `isQuantityLikeField`: the colour must FOLLOW A QUANTITY
+  (a `number`/`text` box, a `dcField`-bound or legacy `locked` field). A **combination's** colour
+  follows a SELECTION — gutter runs are `[size toggle, color]`, downspouts `[dsType toggle, dsColor]`
+  — so it never pairs and is never touched. That is the whole guard; there is no locked test left.
 - ⚠️ **`lockedWithColor` / any field with `colorKey` is NOT a colour slot**, and neither is a colour
   carrying its own `dcField`. Those resolve their own value from the calculator; suppressing them would
   blank a real measurement. Both are excluded in `isColorField` and both are tested.
@@ -1781,7 +1786,7 @@ Three call sites, one rule:
 | where | change |
 |---|---|
 | `DynamicTabRenderer` generic locked branch | `resolveLockedValue(…, { fallbackDefault })` + `—` when suppressed |
-| `DynamicTabRenderer` `colorSelection` locked branch | same, via `isPairedQuantityEmpty` — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`), so it can't use `isLockedColorSuppressed` |
+| `DynamicTabRenderer` `colorSelection` locked branch | same — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`) |
 | `hydrateFieldValue` (storage) | `fallbackDefault: ''` when suppressed → the field is EMPTIED, the same mechanism that drops a not-included product from storage |
 | `formatFieldSummaryValue` (`vertical-summary-utils`) | returns the `missing` variant, so the row never reaches the Job Summary |
 
@@ -1804,6 +1809,63 @@ seeding the colour (and still seeding it when quoted), and the summary row — t
 **fails on the pre-fix code and passes after**. tsc 66 errors (baseline unchanged); the new util is
 eslint-clean and all three touched files are byte-identical to their HEAD eslint baselines
 (`dynamic-job-state-storage` 3 errors, `vertical-summary-utils` clean, `DynamicTabRenderer` 24 problems).
+
+#### …and in the deal-edit wizard the colour is CLEARED, not just hidden
+
+Follow-up on the same pair, from the **My Deals ▸ Edit Job Build** flow: *"currently there is a value
+in the ground spout that is 1 — when user change the value from 1 to 0 than the colour should remove
+automatically. currently the colour still available but i dont need color if the ground spout value
+is 0."*
+
+Everything above is a **read** rule, and the edit wizard is the one surface where it cannot apply:
+`editMode` (web `unlockAll`) makes every calculator-locked field editable, so the locked branch — with
+all of its suppression — is never reached. The rep edits `Ground Spout` down to `0` in a real
+`TextField` while a real colour picker keeps showing `Black`, and that colour is stored state, so it
+goes into the **addendum**. Hiding it is not enough here; it has to be removed.
+
+- **`renderField`'s `onChange` is now wrapped** (the raw prop was renamed `onFieldValueChange`, so every
+  case inside picks the wrapper up automatically). When a field's new value is empty
+  (`hasEnteredQuantity` — `0` / `'0'` / `''` / an empty grid), it also writes `''` to each colour slot
+  that belongs to it, through the same `ctx.onFieldChange` the container already uses. Both writes are
+  functional state updaters, so they compose in one tick.
+- **New `findPairedColorFields(quantityField, fields)`** is the inverse of `findPairedQuantityField`:
+  the run of colour fields immediately FOLLOWING the quantity, stopping at the next non-colour field —
+  so `Ground Spout` can never reach into the `Replace Corner` pair below it.
+- ⚠️ **An unconditionally `required: true` colour is exempt** — emptying it would disable **Next**
+  with nothing on screen explaining why. (A `requiredWhen`-gated colour is safe: with the quantity
+  at 0 that rule is not met either.) A combination's picker needs no exemption — it follows a
+  SELECTION, so `isQuantityLikeField` never pairs it in the first place.
+- **`resolveSwatchValue` applies the same rule to the editable picker**, which is what covers a deal
+  **saved before any of this existed**: its stored `Black` sits on a 0 extra, and re-offering it as the
+  selected swatch would just re-submit the phantom. Same exemption.
+- **Nothing is written when there is no colour to clear** (`state[colorId]` already empty), so typing in
+  an Extras field can't dirty the draft on its own.
+
+##### …and the second reason it didn't fire: `dealCenterData` still reports the SOLD quantity
+
+QA came back with a screenshot of `Ground Spout 0` beside a black **Color** chip — the fix above,
+not working. Two causes, both now fixed, and the second one is the subtle half:
+
+1. the `locked`-flag scoping described in the round-1 section (retired for `isQuantityLikeField`), and
+2. **`resolvePairedQuantityValue` preferred the CALCULATOR whenever the state value looked empty.**
+   Its first line was `if (hasEnteredQuantity(fromState)) return fromState;`, so a state value of
+   **`0` fell through to `resolveLockedValue`** — and in the deal-edit wizard `dealCenterData` still
+   holds the quantity the deal was SOLD with (`1`). The rep types 0, the helper reads 1, and the
+   colour is judged to be on the job. It now returns any **explicit** state entry, `0` and `''`
+   included, and reads the calculator ONLY when the field has no entry at all (a build never
+   opened). Same principle `formatFieldSummaryValue` already documents: in edit mode the rep's live
+   value must win.
+
+Verified with 15 more tests in the same suite (38 total), driving the real helpers plus the exact
+side effect and the exact `resolveSwatchValue` expression: the ticket repro (`1 → 0` and `1 → ''`
+both clearing), the typed `0` outranking a calculator that still says `1`, the calculator still
+read when the build has no entry, the colour surviving `1 → 2`, the neighbouring pair untouched, a
+quantity that owns no colour, the walk stopping at the next quantity, an **unlocked** Extras colour
+now covered (the live-config case), a colour that follows a **toggle** left alone in both
+directions, the required exemption, the no-op write, and the editable picker painting nothing on a
+0 extra while still painting a saved colour once the quantity is back. tsc identical to baseline;
+`locked-color-defaults.ts` and `vertical-summary-utils.ts` are eslint-clean and the other two files
+are byte-identical to their HEAD baselines (storage 3 errors, `DynamicTabRenderer` 24 problems).
 
 ---
 
