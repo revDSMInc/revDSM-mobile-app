@@ -356,6 +356,114 @@ unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical t
 baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
 3 errors / 115 warnings).
 
+### ✅ ROOT CAUSE: the Addendum Review's "original" and the live build were ONE object graph
+
+Ticket: *"actually it's 48 but showing 4"*, then, decisively: *"i checked in iphone 14 pro max, still
+same issue — it only set it 48 when i save something in this component, even it's empty line or space."*
+
+**`hydrateJobStateForPersistence` SHARES object references with the state it is given** — a field's
+value object is carried across, not cloned — and `useDynamicJobBuilderSession` seeds its `useState`
+with that exact object (`if (initialJobState) return initialJobState`). So `initialState` (the diff's
+ORIGINAL) and the rep's live build were the same object graph, and **any in-place write anywhere in the
+~4k-line engine rewrote the "previous value" the review prints.** A `locationGrid` losing one column
+that way turns a saved total of **48 into 4** — the reported number, exactly.
+
+Proven, not inferred: driving the real `deserializeDynamicJobStateFromStorage` →
+`hydrateJobStateForPersistence` over a LeafFilter-shaped config asserts
+**`hydrated…grid === saved…grid`** (identity, not equality), and a single in-place `delete` of one
+column then drops the ORIGINAL's total from 48 to 4.
+
+**Fix — the builder gets a DEEP COPY** (`builderInitialState`, a JSON round-trip memoized on
+`initialState`); `initialJobState={builderInitialState}` replaces `initialJobState={initialState}`.
+`initialState` stays pristine for the diff.
+
+- **A JSON round-trip is the right clone**: this state is exactly what gets PUT to the API, so it is
+  plain JSON by construction — no Dates, functions or cycles.
+- **Memoized on `initialState`**, so identity changes at the same cadence as before. Safe because the
+  session's re-apply is keyed by **`draftToken` = (leadId, calcId)**, never by this object's identity —
+  a fresh copy therefore cannot clobber the rep's edits.
+- **It protects the query cache too.** `savedDynamicJobState` returns the sub-object of `lead` /
+  `savedOutcome` verbatim, so before this the engine's writes were also reaching into the cached lead
+  record. Tested.
+
+⚠️ **Not a display bug.** `buildChangeGroups` is submitted as **`buildChangeSummary`**, so the
+corrupted original was written onto the addendum **the customer signs**.
+
+> ⚠️ **Two earlier diagnoses of this same ticket were WRONG. Both are retired; do not revisit them.**
+> 1. *"iOS clips the trailing glyph of strike-through text."* `from` is not free text — for a
+>    `locationGrid` it is `displayValue()` → the grid **TOTAL**, so `"4"` was a wrong SUM and no width
+>    or font styling could ever move it. (The width framing was impossible anyway: the column measures
+>    ~246pt on an iPhone SE against ~12pt for `"48"`, and the row below rendered a *longer* struck
+>    value, `$2,000`, perfectly in the same screenshot.)
+> 2. *"the calculator query is still in flight, so the original is half-hydrated."* Real, and the
+>    `isCalculatorLoading` hold added for it is **kept** — the original genuinely does move while
+>    `dealCenterData` is empty, and a diff computed then must not be rendered OR submitted. But it was
+>    not this bug: the symptom survived on an iPhone 14 Pro Max and persisted indefinitely until a
+>    Fast Refresh, which is mutation, not a race.
+>
+> The tell that settled it: **only a Fast Refresh of THIS file fixed it, permanently and on any
+> device.** Fast Refresh discards `useMemo` caches, so a recompute from the pristine saved state gave
+> 48 while the cached (mutated) object gave 4. A pure memo cannot return two answers for one input —
+> so its OUTPUT was being written to.
+
+⚠️ **The engine treats state as shared-mutable in places.** Any future screen that both seeds the
+builder AND diffs against the same state must hand the builder a copy. `DynamicDealCenterScreen`
+(create path) is unaffected — it has no original to diff against.
+
+Verified with 7 tests: the reference sharing itself, the 48→4 corruption through it, the clone being a
+distinct graph, the same write no longer touching the original, the clone being value-identical (so the
+builder opens on the same build), the saved lead record protected, and `null` in → `null` out. tsc 44
+(baseline unchanged); eslint 0 errors, 136 warnings vs a HEAD baseline of 133 — the three added are
+`react-native/no-inline-styles` on the loading block from the previous pass, the same rule the file
+already carries 133 of.
+
+### Edit Customer accepted a phone number shorter than 10 digits
+
+Ticket: *"add the validation for phone number, currently i am able to save the number less then 10
+digit which is wrong, it should be same like we are doing in the add new lead."*
+
+`EditCustomerModal` checked only `!phone.trim()` — **present**, never **complete** — so `443-87` saved.
+Add New Lead (`widgets/modals/LeadCreate`) already had the rule; it is now here verbatim.
+
+**The rule counts ELEVEN digits, not ten.** Both fields format through
+`formatUSPhoneNumber`, which always emits the `+1 (XXX) XXX-XXXX` prefix, so a complete number strips
+to 11 digits — the ten local ones plus the country code. Writing `!== 10` here would reject every
+valid number.
+
+⚠️ **The SEED had to be formatted for the check to be safe**, and this is the half that is easy to
+miss. `phone` was seeded raw from `lead.customerDetails.phone`, which may be stored as bare digits or
+E.164 (`4438784937` / `+14438784937`) — 10 digits either way. Adding the length check alone would then
+have made an **untouched, perfectly valid record unsaveable**: open the modal, fix the address, and
+Save would refuse over a phone the rep never touched. `useState(formatUSPhoneNumber(...))` normalizes
+every stored shape to the one the field itself produces. (Same reasoning as the deal-edit "Send
+Addendum To" field, which formats its seed for the same reason.)
+
+⚠️ Consequence worth knowing: the submit payload now always carries the FORMATTED string. It already
+did whenever the rep touched the field (the `onChangeText` formats), so this only makes the untouched
+case consistent rather than introducing a new shape.
+
+**Empty and incomplete stay separate messages**, which is a small improvement on Add New Lead rather
+than a copy of it: `formatUSPhoneNumber` leaves `'+1 '` behind once the rep types and then clears the
+digits, and `.trim()` alone reads that as filled in. The required check is therefore
+`!phone.trim() || phoneDigits.length <= 1`, so a cleared field says *"Phone Number is required"* where
+Add New Lead would say *"complete 10-digit"*.
+
+Co-buyer phones were already validated at exactly **10** digits — correct and unchanged: they use
+`formatCoBuyerPhone`, which emits the local digits with **no** country code, and the field renders a
+static `+1` beside the input.
+
+Verified with 9 tests driving the real `formatUSPhoneNumber`: every partial length 1–9 rejected and ten
+accepted, the same verdicts as Add New Lead's own expression on each; all six stored shapes (raw,
+E.164, `1`-prefixed, parens, dashed, already-formatted) seeding to one accepted value; the raw seed
+proven to FAIL without the formatter; a genuinely short stored number still caught; empty vs the
+`'+1 '` residue both reading as *required*; and over-typing truncated by the formatter (with
+`maxLength={17}` backing it). tsc 44 (baseline unchanged); the file is byte-identical to its HEAD
+eslint baseline (4 warnings, 0 errors).
+
+⚠️ **This file is CRLF.** Editing it with a script that reads and writes in text mode rewrites all 776
+lines to LF and buries the change in a whole-file diff — that happened once here and had to be undone.
+Use `newline=''` on both the read and the write (or an editor that preserves endings).
+
 ### Investment Center spotlight: blurred backdrop, smaller card type, no strike-through
 
 Ticket, three unrelated items against the enlarged (spotlight) program cards:
