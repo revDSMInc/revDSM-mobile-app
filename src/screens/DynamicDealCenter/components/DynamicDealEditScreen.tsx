@@ -509,6 +509,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       ? `Cannot exceed the contract price of ${fmtMoney(Number(contractPrice) || 0)}.`
       : '';
   const hasPriceError = Boolean(contractPriceError || downPaymentError);
+
+  // ── "Send Addendum To" phone ────────────────────────────────────────────────
+  // The addendum is TEXTED to this number, so an incomplete one means the customer
+  // is never asked to sign and the draft sits pending forever. Same rule as Add New
+  // Lead / Edit Customer, with one difference that matters: this field renders a
+  // STATIC "+1" beside it and holds the local part only (`formatLocalUSPhone`), so a
+  // complete number is TEN digits here, not the eleven those two screens count.
+  const customerPhoneDigits = customerPhone.replace(/\D/g, '');
+  const customerPhoneError =
+    customerPhoneDigits.length === 0
+      ? 'Phone number is required to send the addendum.'
+      : customerPhoneDigits.length !== 10
+        ? 'Enter a complete 10-digit phone number.'
+        : '';
   // Compare each picker against the SAME baseline it was seeded from, so opening the
   // wizard and touching nothing reads as no change. Both sides go through
   // `coerceToPlanKey` with the matching fallback ('check' for the balance, blank for
@@ -1281,7 +1295,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
             <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, padding: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 8 }}>Send Addendum To</Text>
               <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 4 }}>Phone Number</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: customerPhoneError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 12 }}>
                 <Text style={{ color: '#94A3B8', marginRight: 4, fontSize: 14 }}>+1</Text>
                 <TextInput
                   value={customerPhone}
@@ -1296,6 +1310,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 10 }}
                 />
               </View>
+              {!!customerPhoneError && (
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#DC2626', marginTop: 6 }}>
+                  {customerPhoneError}
+                </Text>
+              )}
             </View>
           </KeyboardAwareScrollView>
         )}
@@ -1322,8 +1341,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           ) : (
             <TouchableOpacity
               onPress={handleSubmit}
-              disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading}
-              style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
+              // ⚠️ The phone gates SUBMIT only, never `Next · Review` on step 2 — the
+              // field lives on THIS step, so blocking Next would strand the rep with
+              // a disabled button and nothing on screen explaining it.
+              disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading || !!customerPhoneError}
+              style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading && !customerPhoneError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
             >
               {isSubmitting && <ActivityIndicator size="small" color="#fff" />}
               <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Submit Addendum</Text>

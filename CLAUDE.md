@@ -356,6 +356,43 @@ unchanged. tsc 44 (baseline unchanged); all three touched files byte-identical t
 baselines (`tab-naming.ts` and `useDynamicCalculators.ts` clean, `CalculatorView.tsx` 118 problems /
 3 errors / 115 warnings).
 
+### "Send Addendum To" now blocks Submit on an incomplete phone number
+
+Ticket: *"add the validation for number, don't allow me submit addendum if phone number is below then
+10 numbers, like we set before."* The Review step's phone field took any length, so a rep could submit
+an addendum whose SMS had nowhere to land — the draft then sits `pending` forever, because the customer
+is never asked to sign.
+
+`customerPhoneError` follows the same shape as this screen's existing `contractPriceError` /
+`downPaymentError`: red border, message under the field, and the **Submit Addendum** button disabled.
+
+⚠️ **TEN digits here, not the ELEVEN Add New Lead and Edit Customer count.** Those two format through
+`formatUSPhoneNumber`, which emits its own `+1 ` prefix, so a complete value strips to 11. This field
+renders a **static `+1` label** beside the input and holds the LOCAL part only
+(`formatLocalUSPhone`, `maxLength={12}` = 10 digits + 2 dashes) — counting 11 here would reject every
+valid number.
+
+⚠️ **The phone gates SUBMIT only, never `Next · Review` on step 2.** The field lives on step 3, so
+gating Next would leave the rep on a screen with a dead button and nothing on it explaining why.
+
+**Empty and incomplete are separate messages** — *"Phone number is required to send the addendum."*
+vs *"Enter a complete 10-digit phone number."* — matching the Edit Customer treatment. An empty field
+is a real case: the seed comes from `lead.customerDetails.phone`, so blank means the lead carries no
+number at all, and the submit payload's fallback to that same field is blank too.
+
+Verified with 9 tests driving the real `formatLocalUSPhone` / `toE164USPhone`: every partial length 1–9
+blocked and ten accepted; the 10-vs-11 distinction asserted directly; all five stored shapes (raw,
+E.164, `1`-prefixed, parens, dashed) seeding to a passing value; a phone-less lead reading *required*
+rather than *incomplete*; a genuinely short stored number caught instead of silently sent; and the
+passing value converting to `+1XXXXXXXXXX` for the provider. tsc 44 (baseline unchanged); eslint
+0 errors, 137 warnings vs a HEAD baseline of 136 — the one added is `react-native/no-inline-styles` on
+the new error `Text`, the rule this file already carries 136 of.
+
+⚠️ Noted while testing: `formatLocalUSPhone` keeps the **LAST** ten digits when handed more (documented
+behaviour — it is what makes `+1…` / `1…` / already-formatted input normalise). So over-long input
+yields a *different* ten digits rather than a truncation of the first ten. `maxLength={12}` keeps it
+unreachable by typing; do not "fix" the formatter to slice from the front, or every E.164 seed breaks.
+
 ### Addendum Review diffs a locationGrid CELL BY CELL, not by its total
 
 Ticket: *"I also notice this when i change in 3rd story — see I added 33, it's showing the summed-up
