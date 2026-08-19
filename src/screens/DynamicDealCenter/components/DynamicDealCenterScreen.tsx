@@ -17,6 +17,7 @@ import { extractCalculatorOutcome, hasSavedJobBuild } from '../utils/saved-job-b
 import { createRehashDraftLatch, latchRehashDrafts, releaseRehashDrafts, isRehashDraftCalculator } from '../utils/rehash-draft-calculators';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
 import { buildSectionLabelMap } from '../utils/item-format';
+import { resolveFundingSource } from '../../../utils/activity-log/funding-log';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
 import { logViewAllCalculators, logBuildJobInitiated } from '../../../utils/activity-log/calculator-log';
@@ -140,6 +141,26 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
 
   // sectionId → label for the Result Lead Job Summary rows (web parity).
   const sectionLabelMap = useMemo(() => buildSectionLabelMap(verticals), [verticals]);
+
+  /**
+   * WHICH FLOW any funding activity on this screen belongs to.
+   *
+   * A plain const, not a `useMemo`: it resolves to a STRING, so there is no
+   * identity to stabilise, and every hook in this component sits after the
+   * edit-mode early return — adding one more would widen that compromise for
+   * nothing. Derived here rather than inside the sheet because the screen is the
+   * only thing that knows how it was entered.
+   * that knows how it was entered. `module_type` still goes up as `funding` — this
+   * only composes the flow onto `meta.action` (`rehash_funding_card_charged`) so
+   * the backend can display rehash, sale and my-deals money under their own
+   * headings. See `resolveFundingSource`.
+   *
+   * NOTE: `mode: 'edit'` never reaches this line — it returns `DynamicDealEditScreen`
+   * above — so in practice this resolves to `rehash` or `sale`. It is passed
+   * through the resolver anyway so all three flows answer the question identically
+   * if the deal-edit wizard ever grows a funding step.
+   */
+  const fundingSource = resolveFundingSource({ lead, mode: route?.params?.mode });
 
   // Header shows the LEAD (customer name + lead time), matching the regular
   // DealCenter header (`src/screens/DealCenter/index.tsx`). The active calculator
@@ -405,6 +426,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
           // Display never uses it — it links every funding log row back to the quote.
           calculatorId={resultModal.calculatorId}
+          fundingSource={fundingSource}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}
@@ -551,6 +573,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           calculatorTitle={tabs.find((t) => t.id === resultModal.calculatorId)?.title}
           // Display never uses it — it links every funding log row back to the quote.
           calculatorId={resultModal.calculatorId}
+          fundingSource={fundingSource}
           resultType={resultModal.resultType}
           initialPrice={resultModal.price}
           initialPaymentMethod={resultModal.paymentMethod}

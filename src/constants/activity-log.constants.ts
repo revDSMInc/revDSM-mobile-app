@@ -123,3 +123,28 @@ export const INVESTMENT_CENTER_MODULE = 'investment_center';
  * vocabulary is defined here.
  */
 export const FUNDING_MODULE = 'funding';
+
+/**
+ * WHICH FLOW the rep reached the funding module through.
+ *
+ * The funding screen itself is identical in all three, but the timeline is not:
+ * money collected while re-pitching a `rehash` lead, money on a fresh `sale`, and
+ * money touched from the `my_deals` deal-edit flow answer different questions, and
+ * the backend has to tell them apart to display them under the right heading.
+ *
+ * ⚠️ This does NOT become the `module_type` — that stays `funding` for every one of
+ * them, so a single filter still returns the whole money trail. It is composed onto
+ * `meta.action` instead (`rehash_funding_card_charged`) and carried alongside as
+ * `meta.fundingSource` — see `composeFundingAction` in
+ * `src/utils/activity-log/funding-log.ts`.
+ */
+export const FUNDING_SOURCES = {
+  /** A re-pitch of a lead that was already sold once (`lead.isRehashed`). */
+  REHASH: 'rehash',
+  /** The ordinary new-deal path: calculator → rollout → Result Lead → funding. */
+  SALE: 'sale',
+  /** Reached from My Deals / the deal-edit flow on an already-submitted job. */
+  MY_DEALS: 'my_deals',
+} as const;
+
+export type FundingSource = (typeof FUNDING_SOURCES)[keyof typeof FUNDING_SOURCES];

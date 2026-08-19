@@ -1744,6 +1744,100 @@ builds a path containing `mock`) rather than merely deleting the old assertion �
 fail in CI, not ship. If a simulator is ever wanted again it belongs behind a build flag, not in the
 service every rep's device carries.
 
+#### The flow the funding was reached through rides on `meta.action`
+
+Follow-up: *"we just append the module type with the meta action because we need to make
+a difference in the log … either the user open the funding module from rehash, sale or my
+deals flow … make sure the main action type should remain the funding, but inside meta we
+need to update the action for each module."*
+
+The funding screen is identical in all three flows, so the rows were indistinguishable.
+Every action is now composed as **`<flow>_<baseAction>`** — `rehash_funding_card_charged`,
+`sale_funding_opened`, `my_deals_funding_submitted` — with `meta.fundingSource` carried
+alongside.
+
+⚠️ **`module_type` stays `funding` for all three.** The flow is never the module, so one
+portal filter still returns the whole money trail for a job. That was the explicit ask.
+
+- **`FUNDING_SOURCES`** (`constants/activity-log.constants.ts`) is the vocabulary;
+  **`resolveFundingSource({ lead, mode })`** is the single answer — `mode === 'edit'` →
+  `my_deals`, else `lead.isRehashed === true` → `rehash`, else `sale`.
+- ⚠️ **The FLOW out-ranks the lead's history**: `mode: 'edit'` is tested FIRST, so a
+  rehashed lead opened from My Deals files under `my_deals`. The two cannot collide today
+  (the deal-edit wizard has no funding step), so this is a documented decision, not an
+  observed case — and `isRehashed` is matched strictly against `true`, since a truthy
+  string off an API record must not reclassify a plain sale.
+- ⚠️ **The prefix is applied in exactly ONE place — `fire()`** — which rewrites the bare
+  `action` each emitter passed in. That is why every emitter routes through a single call:
+  a newly added event cannot ship unprefixed. A test drives all 18 emitters and asserts it.
+- ⚠️ **An unknown source leaves the action BARE rather than defaulting to `sale`.** A mount
+  site that forgets then shows up in the data as "origin unknown" instead of being silently
+  filed under a flow it never came from. `composeFundingAction` is also idempotent, so a
+  double call can't yield `rehash_rehash_funding_opened`.
+- The base name keeps its `funding_` segment, so an existing portal filter on `*funding_*`
+  matches prefixed and bare rows alike. **`baseFundingAction()`** strips it back off so the
+  portal labels from the 29 base names and badges from `fundingSource` — 29 cases, not 87.
+- `DynamicDealCenterScreen` resolves it once and passes `fundingSource` to both
+  `ResultJobModal` mounts; the sheet threads it into `useFunding`'s `logCtx` and its own
+  `fundingLog`. ⚠️ Deliberately a plain `const`, not a `useMemo`: it is a STRING, so there
+  is no identity to stabilise, and every hook in that component sits after the edit-mode
+  early return — a needless hook there costs a `rules-of-hooks` error.
+
+Verified with 25 tests (`__tests__/utils/funding-log-source.test.ts`): the resolver's three
+answers plus the precedence and the strict `isRehashed` check; compose/strip round-trips,
+idempotence and the bare-on-unknown rule; and an end-to-end sweep firing **all 18 emitters
+in each of the three flows** — every action prefixed, every `module_type` still `funding`,
+`fundingSource` mirrored, actions still distinct, verbs untouched, and the no-source
+regression guard. Failure variants (`_card_declined`, `_link_blocked`, `_submit_blocked`)
+carry the prefix too with the rest of the meta unchanged.
+
+#### …and the `lead_result_field_entry` rows carry it too
+
+Follow-up: *"when i input any value for down payment or financing and also when i changed my
+payment methods from the rehash screen than in the logs there is no option that will guide us
+that this change is from rehash module, sale module or my deals module … other logs are
+define clearly but these logs not clear."*
+
+Correct, and they are **not funding-module rows at all** — which is why the flow prefix missed
+them. The down-payment and payment-method rows the rep sees come from
+**`useOutcomeLogging`** under `module_type: 'lead_result_field_entry'`. (Entering a down
+payment fires one because it flips `primaryDownMethod` from `''` to a real key, which the
+form diff sees as a `downPaymentMethod` change.)
+
+That hook now takes an optional **`source`** and stamps each row the same way — the flow
+composed onto `meta.action` plus `meta.fundingSource`, reusing `composeFundingAction` so the
+two modules can never drift apart.
+
+- ⚠️ **All six `logEvent` sites route through ONE local `stamp()`**, for the reason `fire()`
+  exists in `funding-log.ts`: six per-site edits are six chances to forget, and a row that
+  silently loses its origin is the bug being fixed.
+- ⚠️ **It is opt-in, and it has to be.** `useOutcomeLogging` has **three** callers — the
+  dynamic `ResultJobModal`, the classic `DealCenter/OutcomeModal` and
+  `lead-center/ResultLeadModal` — and the WEB app emits the same strings into the same
+  module. With no `source`, `stamp` returns the meta untouched, so the other two callers and
+  web parity are byte-identical. Only the Dynamic Deal Center's sheet passes one.
+- ⚠️ **`'lead field changed'` keeps its space-separated web-parity spelling.** The prefix is
+  composed in FRONT of it (`rehash_lead field changed`) rather than replacing it, so a portal
+  matching with `includes(...)` keeps working. `module_type` is likewise untouched — same
+  principle as leaving `funding` alone.
+- **Two base actions are new**: `lead_result_field_auto_populated` and
+  `lead_result_field_entered`. Those rows carried NO `meta.action` before, and one is added
+  only when a flow is known, so nothing changes for a caller that passes none.
+- ⚠️ On this module an un-prefixed row therefore means *"a different screen emitted it"*, not
+  *"a sale"* — a distinction worth keeping in mind on the portal.
+
+**Amount-as-typed is still not logged here.** `downPayment` is deliberately absent from the
+dynamic sheet's `outcomeForm`, so site `lead_result_field_entered` never fires from it: the
+amounts are already on `<flow>_funding_payments_saved`, which carries the COMPLETE breakdown
+at Confirm. Adding a debounced per-edit row would duplicate that and reintroduce the
+per-keystroke noise the funding vocabulary avoids.
+
+Verified with 4 more tests in `funding-log-source.test.ts` (29 total): each outcome action
+composed for each flow, the web-parity substring surviving the prefix, every one stripping
+back through `baseFundingAction`, and all four left EXACTLY as they were when no flow is
+passed. tsc 44 (baseline unchanged); `useOutcomeLogging.ts` and `ResultJobModal.tsx` are both
+eslint-error-free, the latter still at its HEAD count of 65 problems.
+
 #### What is deliberately not an event
 
 **Amounts as they are typed** — that would be a row per keystroke. The method pick and the Confirm

@@ -21,6 +21,7 @@ import {
   logFundingRowAdded,
   logFundingRowRemoved,
   logFundingStructureChanged,
+  type FundingSource,
 } from '../../../utils/activity-log/funding-log';
 import { FUND } from './funding/funding-theme';
 import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
@@ -116,6 +117,18 @@ interface ResultJobModalProps {
    * from, which is otherwise unrecoverable once the sheet closes.
    */
   calculatorId?: string;
+  /**
+   * WHICH FLOW this sheet was opened through — `rehash` | `sale` | `my_deals`.
+   *
+   * Composed onto every funding `meta.action` so the backend can display the money
+   * trail under the right heading; `module_type` stays `funding` regardless.
+   * Resolve it with `resolveFundingSource`, never by hand.
+   *
+   * ⚠️ Left undefined the actions ship UN-prefixed, which reads as "origin unknown"
+   * in the data. That is deliberate — better than silently filing a rehash under
+   * `sale` because a mount site forgot to pass it.
+   */
+  fundingSource?: FundingSource;
   resultType?: 'sale' | 'demo' | null;
   /** prefill for the contract price (the rollout end / latest drop price) */
   initialPrice?: number;
@@ -263,6 +276,7 @@ export function ResultJobModal({
   lead,
   calculatorTitle,
   calculatorId,
+  fundingSource,
   resultType: initialResultType,
   initialPrice,
   initialPaymentMethod,
@@ -300,6 +314,7 @@ export function ResultJobModal({
     userId: user?._id || user?.id,
     calculatorId,
     calculatorTitle,
+    source: fundingSource,
   });
 
   /**
@@ -309,8 +324,14 @@ export function ResultJobModal({
    * `useFunding`, which is the only place the OUTCOME exists.
    */
   const fundingLog = useMemo(
-    () => ({ userId: user?._id || user?.id, leadId: leadLogId, calculatorId, calculatorTitle }),
-    [user?._id, user?.id, leadLogId, calculatorId, calculatorTitle]
+    () => ({
+      userId: user?._id || user?.id,
+      leadId: leadLogId,
+      calculatorId,
+      calculatorTitle,
+      source: fundingSource,
+    }),
+    [user?._id, user?.id, leadLogId, calculatorId, calculatorTitle, fundingSource]
   );
 
   /** Which half of the sheet is showing. A demo never leaves `result`. */
@@ -484,9 +505,17 @@ export function ResultJobModal({
 
   // Web parity (result-lead-modal.js): fire the `lead_result_field_entry` outcome
   // logs for this resulted lead.
+  //
+  // These are the rows a rep sees when they enter a down payment or switch a
+  // payment method, and they used to arrive with nothing saying WHICH flow they
+  // came from — indistinguishable between a rehash re-pitch, a fresh sale and a My
+  // Deals edit. `source` stamps them the same way every funding row is stamped.
+  // ⚠️ It is opt-in on the hook: the other two callers pass none and keep sending
+  // byte-identical payloads (web parity) — see `useOutcomeLogging`.
   useOutcomeLogging({
     visible,
     lead,
+    source: fundingSource,
     outcomeStatus: resultType,
     outcomeForm: {
       oneLeg,

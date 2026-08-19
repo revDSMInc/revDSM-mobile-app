@@ -8,6 +8,7 @@ import {
   markAutoFieldsLogged,
 } from '../utils/activity-log/job-builder-auto-log';
 import { useAuth } from './useAuth';
+import { composeFundingAction, type FundingSource } from '../utils/activity-log/funding-log';
 
 const RESULT_FIELDS = [
   'oneLeg',
@@ -29,6 +30,22 @@ export function useOutcomeLogging(opts: {
   setActiveIdx?: (idx: number) => void;
   lead?: any;
   disabled?: boolean;
+  /**
+   * WHICH FLOW this Result Lead sheet was opened through — `rehash` | `sale` |
+   * `my_deals`.
+   *
+   * ⚠️ **Opt-in, and it has to be.** These rows are `lead_result_field_entry`, a
+   * module THREE different screens emit into and one the WEB app sends the same
+   * strings for. Passing no source leaves every payload byte-identical to what it
+   * has always sent, so the classic Outcome modal and the Lead Center Result Lead
+   * modal are untouched and web parity is preserved.
+   *
+   * Passed, it stamps each row the way the funding module does — the flow composed
+   * onto `meta.action` plus `meta.fundingSource` — so a payment-method or
+   * down-payment change made while re-pitching a rehash is no longer
+   * indistinguishable from the same change on a fresh sale.
+   */
+  source?: FundingSource;
 }) {
   const { user } = useAuth();
   const {
@@ -39,6 +56,7 @@ export function useOutcomeLogging(opts: {
     activeIdx = 0,
     lead,
     disabled = false,
+    source,
   } = opts;
   const leadId = lead?._id || lead?.leadId || lead?.id;
   const stepViewedRef = useRef(false);
@@ -49,6 +67,27 @@ export function useOutcomeLogging(opts: {
   const jobBuilderRef = useRef<any>(null);
   const loggedSectionsRef = useRef<Record<string, boolean>>({});
   const [sectionsReady, setSectionsReady] = useState(false);
+
+  /**
+   * Stamp one row with the flow it happened in.
+   *
+   * ⚠️ **Every `logEvent` in this hook goes through this**, for the reason
+   * `fire()` exists in `funding-log.ts`: with six emit sites a per-site edit is a
+   * per-site chance to forget, and a row that silently loses its origin is exactly
+   * the bug this is fixing.
+   *
+   * `baseAction` supplies a name for the sites that never carried one — added
+   * ONLY when a source is present, so a caller that passes none still sends the
+   * exact payload it always did.
+   */
+  const stamp = useCallback(
+    (meta: Record<string, any>, baseAction?: string) => {
+      if (!source) return meta;
+      const action = composeFundingAction(String(meta.action || baseAction || ''), source);
+      return { ...meta, ...(action ? { action } : {}), fundingSource: source };
+    },
+    [source]
+  );
 
   const buildResultData = useCallback(() => {
     const activeCalc = calculators && calculators.length > activeIdx ? calculators[activeIdx] : null;
@@ -133,16 +172,19 @@ export function useOutcomeLogging(opts: {
           user_id: userId,
           created_by: userId,
           module_type: 'lead_result_field_entry',
-          meta: {
-            fieldName: entry.key,
-            fieldLabel: entry.label,
-            fieldValue: displayValue,
-            fieldType: entry.fieldType || 'auto',
-            section: 'lead_result',
-            fieldCategory: 'lead_result',
-            leadId,
-            jobBuilderId: leadId,
-          },
+          meta: stamp(
+            {
+              fieldName: entry.key,
+              fieldLabel: entry.label,
+              fieldValue: displayValue,
+              fieldType: entry.fieldType || 'auto',
+              section: 'lead_result',
+              fieldCategory: 'lead_result',
+              leadId,
+              jobBuilderId: leadId,
+            },
+            'lead_result_field_auto_populated'
+          ),
         });
       }
       loggedSectionsRef.current.lead_result = true;
@@ -152,7 +194,7 @@ export function useOutcomeLogging(opts: {
     fireAutoLogs();
     prevFormRef.current = JSON.parse(JSON.stringify(outcomeForm || {}));
     prevActiveIdxRef.current = activeIdx;
-  }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx, disabled]);
+  }, [visible, sectionsReady, user, leadId, buildResultData, outcomeForm, outcomeStatus, activeIdx, disabled, stamp]);
 
   // Calculator switch logging (web parity: selectedCalculatorId change)
   useEffect(() => {
@@ -168,7 +210,7 @@ export function useOutcomeLogging(opts: {
         user_id: userId,
         created_by: userId,
         module_type: 'lead_result_field_entry',
-        meta: {
+        meta: stamp({
           leadId,
           fieldName: 'selectedCalculatorId',
           fieldLabel: 'Selected Calculator',
@@ -179,11 +221,11 @@ export function useOutcomeLogging(opts: {
           section: 'lead_result',
           jobBuilderId: leadId,
           action: 'lead field changed',
-        },
+        }),
       });
       prevActiveIdxRef.current = activeIdx;
     }
-  }, [activeIdx, visible, user, leadId, calculators, disabled]);
+  }, [activeIdx, visible, user, leadId, calculators, disabled, stamp]);
 
   useEffect(() => {
     if (disabled) return;
@@ -200,16 +242,19 @@ export function useOutcomeLogging(opts: {
           user_id: userId,
           created_by: userId,
           module_type: 'lead_result_field_entry',
-          meta: {
-            fieldName: 'downPayment',
-            fieldLabel: 'Down Payment',
-            fieldValue: curr.downPayment,
-            fieldType: 'user',
-            section: 'lead_result',
-            fieldCategory: 'lead_result',
-            leadId,
-            jobBuilderId: leadId,
-          },
+          meta: stamp(
+            {
+              fieldName: 'downPayment',
+              fieldLabel: 'Down Payment',
+              fieldValue: curr.downPayment,
+              fieldType: 'user',
+              section: 'lead_result',
+              fieldCategory: 'lead_result',
+              leadId,
+              jobBuilderId: leadId,
+            },
+            'lead_result_field_entered'
+          ),
         });
       }
       const balance = Number(curr.balance);
@@ -218,16 +263,19 @@ export function useOutcomeLogging(opts: {
           user_id: userId,
           created_by: userId,
           module_type: 'lead_result_field_entry',
-          meta: {
-            fieldName: 'balance',
-            fieldLabel: 'Balance',
-            fieldValue: balance.toLocaleString(),
-            fieldType: 'auto',
-            section: 'lead_result',
-            fieldCategory: 'lead_result',
-            leadId,
-            jobBuilderId: leadId,
-          },
+          meta: stamp(
+            {
+              fieldName: 'balance',
+              fieldLabel: 'Balance',
+              fieldValue: balance.toLocaleString(),
+              fieldType: 'auto',
+              section: 'lead_result',
+              fieldCategory: 'lead_result',
+              leadId,
+              jobBuilderId: leadId,
+            },
+            'lead_result_field_auto_populated'
+          ),
         });
       }
     }
@@ -267,7 +315,7 @@ export function useOutcomeLogging(opts: {
           user_id: userId,
           created_by: userId,
           module_type: 'lead_result_field_entry',
-          meta: {
+          meta: stamp({
             leadId,
             fieldName: change.fieldName,
             fieldLabel: change.fieldLabel,
@@ -276,7 +324,7 @@ export function useOutcomeLogging(opts: {
             section: 'lead_result',
             jobBuilderId: leadId,
             action: 'lead field changed',
-          },
+          }),
         });
       });
       prevFormRef.current = JSON.parse(JSON.stringify(curr));
@@ -285,7 +333,7 @@ export function useOutcomeLogging(opts: {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [outcomeForm, visible, user, leadId, disabled]);
+  }, [outcomeForm, visible, user, leadId, disabled, stamp]);
 
   const logReset = useCallback(() => {
     if (disabled) return;
@@ -295,14 +343,14 @@ export function useOutcomeLogging(opts: {
       user_id: userId,
       created_by: userId,
       module_type: 'lead_result_field_entry',
-      meta: {
+      meta: stamp({
         leadId,
         action: 'reset_lead_result_form',
-      },
+      }),
     });
     autoLoggedRef.current = false;
     stepViewedRef.current = false;
-  }, [user, leadId, disabled]);
+  }, [user, leadId, disabled, stamp]);
 
   return { logReset };
 }

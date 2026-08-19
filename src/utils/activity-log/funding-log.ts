@@ -1,5 +1,9 @@
 import { logEvent } from '../../services/api/LoggerService';
-import { FUNDING_MODULE } from '../../constants/activity-log.constants';
+import {
+  FUNDING_MODULE,
+  FUNDING_SOURCES,
+  type FundingSource,
+} from '../../constants/activity-log.constants';
 
 /**
  * Funding — activity logging (Forever Record).
@@ -42,6 +46,71 @@ export interface FundingLogBase {
   /** The calculator this sale was resulted from, so the money links back to the quote. */
   calculatorId?: string;
   calculatorTitle?: string;
+  /**
+   * WHICH FLOW the rep reached funding through — `rehash` | `sale` | `my_deals`.
+   *
+   * Composed onto `meta.action` by `fire` (`rehash_funding_card_charged`) and
+   * carried alongside as `meta.fundingSource`. ⚠️ It never becomes the
+   * `module_type`: that stays `funding` for all three, so ONE filter still returns
+   * the whole money trail for a job.
+   *
+   * Resolve it with `resolveFundingSource` rather than by hand, so every screen
+   * answers the question the same way.
+   */
+  source?: FundingSource;
+}
+
+export type { FundingSource };
+
+/**
+ * The flow a funding event happened in, derived from what the screen already knows.
+ *
+ * ⚠️ **The FLOW wins over the lead's own history**, which is why `mode: 'edit'` is
+ * tested first: a rehashed lead opened from My Deals is the rep working the My
+ * Deals flow, and that is the heading its events belong under. The two cannot
+ * collide today — the deal-edit wizard has no funding step — so this is a
+ * documented decision rather than an observed case.
+ */
+export function resolveFundingSource(o: {
+  /** The lead. Only `isRehashed` is read. */
+  lead?: { isRehashed?: boolean } | null;
+  /** The Dynamic Deal Center's route `mode`; `'edit'` is the My Deals / deal-edit flow. */
+  mode?: string | null;
+}): FundingSource {
+  if (o?.mode === 'edit') return FUNDING_SOURCES.MY_DEALS;
+  if (o?.lead?.isRehashed === true) return FUNDING_SOURCES.REHASH;
+  return FUNDING_SOURCES.SALE;
+}
+
+/**
+ * `funding_card_charged` + `rehash` → `rehash_funding_card_charged`.
+ *
+ * ⚠️ Applied in exactly ONE place (`fire`, below), so no event can ship with the
+ * wrong prefix or none at all — that is the whole reason every emitter in this file
+ * routes through a single call.
+ *
+ * ⚠️ An UNKNOWN source leaves the action UNTOUCHED rather than defaulting to
+ * `sale`. A caller that forgot to pass one then shows up in the data as an
+ * un-prefixed row — visibly "origin unknown" — instead of being silently filed
+ * under a flow it may not have come from.
+ *
+ * The base name keeps its `funding_` segment either way, so a portal filter on
+ * `*funding_*` still matches every row in the module.
+ */
+export function composeFundingAction(action: string, source?: FundingSource | null): string {
+  const a = String(action || '');
+  if (!source || !a) return a;
+  // Idempotent: composing twice must not yield `rehash_rehash_funding_opened`.
+  if (a.startsWith(`${source}_`)) return a;
+  return `${source}_${a}`;
+}
+
+/** Strip a source prefix back off — the inverse of `composeFundingAction`. */
+export function baseFundingAction(action: string): string {
+  return String(action || '').replace(
+    new RegExp(`^(${Object.values(FUNDING_SOURCES).join('|')})_`),
+    ''
+  );
 }
 
 /**
@@ -81,14 +150,28 @@ const paymentMeta = (p?: FundingLogPayment) =>
       }
     : {};
 
-/** One `logEvent` call, shaped the same way for every event in this module. */
+/**
+ * One `logEvent` call, shaped the same way for every event in this module.
+ *
+ * ⚠️ **The single place the flow prefix is applied.** Every emitter below hands its
+ * own bare `action` (`funding_card_charged`) and this composes the source onto it,
+ * so adding an event cannot accidentally skip the prefix. `module_type` stays
+ * `funding` for all three flows, deliberately.
+ */
 const fire = (verb: string, o: FundingLogBase, meta: Record<string, unknown>) => {
   if (!o.userId) return Promise.resolve();
   return logEvent(verb, {
     user_id: o.userId,
     created_by: o.userId,
     module_type: FUNDING_MODULE,
-    meta: base(o, meta),
+    meta: base(o, {
+      ...meta,
+      // AFTER the spread: this rewrites the bare action each emitter passed in.
+      action: composeFundingAction(String(meta.action || ''), o.source),
+      // Carried as its own field too, so the portal can filter or badge by flow
+      // without having to parse the action string apart.
+      ...(o.source ? { fundingSource: o.source } : {}),
+    }),
   });
 };
 

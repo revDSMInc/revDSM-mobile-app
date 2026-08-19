@@ -25,6 +25,7 @@ import {
   logFundingSyncAll,
   type FundingLogBase,
   type FundingLogPayment,
+  type FundingSource,
 } from '../../../utils/activity-log/funding-log';
 
 /**
@@ -89,6 +90,12 @@ export interface FundingLogContext {
   /** The calculator the sale was resulted from, so the money links back to the quote. */
   calculatorId?: string;
   calculatorTitle?: string;
+  /**
+   * WHICH FLOW this funding screen was reached through — `rehash` | `sale` |
+   * `my_deals`. Composed onto every `meta.action` this hook emits, so the backend
+   * can tell the three apart while `module_type` stays `funding` for all of them.
+   */
+  source?: FundingSource;
 }
 
 export function useFunding(leadId?: string, companyId?: string, logCtx?: FundingLogContext) {
@@ -132,8 +139,9 @@ export function useFunding(leadId?: string, companyId?: string, logCtx?: Funding
       leadId,
       calculatorId: logCtx?.calculatorId,
       calculatorTitle: logCtx?.calculatorTitle,
+      source: logCtx?.source,
     }),
-    [logCtx?.userId, logCtx?.calculatorId, logCtx?.calculatorTitle, leadId]
+    [logCtx?.userId, logCtx?.calculatorId, logCtx?.calculatorTitle, logCtx?.source, leadId]
   );
 
   /** Latest record, readable from inside a callback without re-creating it. */
