@@ -3234,6 +3234,60 @@ are all `react-native/no-inline-styles`, the rule both files already carry 50+ o
 double-tap in **fullscreen portrait, fullscreen landscape and the inline card**, that the arrows
 and ✕ still take their taps over a zoomed slide, and that advancing a slide resets the zoom.
 
+### Inspection slot tick moved INSIDE the label (ticket 384)
+
+Ticket: *"The checkmark icon is absolutely positioned and vertically centered on the full
+button height… on two-line labels (like 'Roof Penetration / Vent Area') the icon drifts away
+from the text and ends up sitting near the button's edge instead of next to the label. This
+appears on BOTH iOS and Android."*
+
+The pill is `SlotButton` in **`widgets/components/lead-center/DynamicInspectionRenderer.tsx`**
+(not `DynamicInspectionView.tsx`, which the ticket names — that screen renders `CategoryBody`
+from the renderer). It is the ONE slot pill behind every layout — `PillGrid`, `CompassLayout`
+and the chip selector's nested bodies — and `DynamicMovePhotoModal` renders the same
+`CategoryBody`, so a single fix covers the tag flow and the move flow.
+
+⚠️ **Nothing was absolutely positioned** — the tick was already a flex-row sibling
+(`alignItems: 'center'`, `gap: 4`). The reported drift has a different cause, and it is why the
+prescribed fix would only have half-worked: **a wrapped `Text` takes the full width it was
+measured against**, so on a two-line label the label's box spans the whole pill, pinning the
+sibling tick to the left edge, and `alignItems: 'center'` then parks it vertically between the
+two lines. `alignItems: 'flex-start'` would have lifted it to line 1 and **left it at the edge**,
+which is the half the screenshot circles.
+
+**The tick is now the first glyph of the label itself**, so there is no second box to drift:
+
+```tsx
+<Text numberOfLines={2} style={{ flexShrink: 1, textAlign: 'center', … }}>
+  {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
+  {filled && !isMoveSource ? ' ' : ''}
+  {isMoveSource ? `FROM · ${slot.name}` : slot.name}
+</Text>
+```
+
+- **This is what the STATIC flow already does** — `LeadCenter/TagPhotoModal.tsx:600` builds
+  `` `✓ ${displayName}` `` as one string, which is exactly why that surface never had the bug.
+  The dynamic view now matches it.
+- **`Icon` renders a `Text`**, so nesting is legal, and `create-icon-set` applies
+  `fontWeight: 'normal'` as a style OVERRIDE — the glyph cannot be synthetically bolded by the
+  label's `fontWeight: '600'`, so it looks identical to before. (Checked in node_modules rather
+  than assumed; that override is what makes the nesting safe.)
+- **The row keeps `alignItems: 'center'`.** With the tick inline, that only governs the upload
+  spinner and the `photos.length` count badge, and centring those against the label block is
+  right — `flex-start` would push the badge to the top of a two-line pill.
+- `flexShrink: 1` on the label so the badge can never push it out of the pill.
+
+Single-line pills are unchanged: the run `✓ Roof Edge — Left Side` centres as one piece, where
+before the icon+label pair centred as a group with the same 4px gap.
+
+tsc 44 (baseline unchanged); eslint on the file identical to HEAD (63 problems, 0 errors).
+⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout.
+
+⚠️ **`DynamicInspectionRenderer.tsx` is a CRLF file** (927 lines). Editing it with a script that
+reads/writes in text mode rewrites every line to LF and buries the change in a whole-file diff.
+Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx` and `dynamic-deal-diff.ts`;
+check `file <path>` before and after — the diff here is 10 insertions / 1 deletion.)
+
 ---
 
 ## 7. Scripts

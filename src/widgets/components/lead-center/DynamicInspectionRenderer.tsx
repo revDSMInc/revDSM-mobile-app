@@ -322,13 +322,13 @@ function SlotButton({
           <ActivityIndicator size="small" color={filled ? '#fff' : GREEN} />
         ) : (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-            {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
             {uploading && (
               <ActivityIndicator size="small" color="#fff" style={{ marginRight: 2 }} />
             )}
             <Text
               numberOfLines={2}
               style={{
+                flexShrink: 1,
                 fontWeight: '600',
                 fontSize: 13,
                 textAlign: 'center',
@@ -337,6 +337,15 @@ function SlotButton({
                 color: isMoveSource ? FROM_YELLOW : '#fff',
               }}
             >
+              {/* The tick is INSIDE the label, not a sibling. As a sibling it was laid
+                  out against the WHOLE two-line text block — vertically centred between
+                  the lines and pushed to the pill's left edge, because a wrapped Text
+                  takes the full width it was measured against. Inline, it is simply the
+                  first glyph of the first line and stays beside the label however many
+                  lines it wraps to. `Icon` renders a Text, so nesting is legal and it
+                  already forces `fontWeight: 'normal'` — the glyph is unchanged. */}
+              {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
+              {filled && !isMoveSource ? ' ' : ''}
               {isMoveSource ? `FROM · ${slot.name}` : slot.name}
             </Text>
             {photos.length > 1 && (
