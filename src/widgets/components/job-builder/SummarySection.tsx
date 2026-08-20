@@ -22,12 +22,6 @@ import { AgreementDialogModal } from '../../modals/job-builder/AgreementDialogMo
 import { AgreementSignatureModal } from '../../modals/job-builder/AgreementSignatureModal';
 import { PdfPreviewModal } from '../../modals/PdfPreviewModal';
 import { LeadService } from '../../../services/api/leads';
-import { FlashMessage } from '../../../config/message';
-import {
-  describeAgreementDelivery,
-  readAgreementSent,
-} from '../../../utils/agreement-delivery';
-import { pollAgreementDelivery } from '../../../screens/DynamicDealCenter/utils/outcome-documents';
 import { useAuth } from '../../../hooks/useAuth';
 import { useLeadQuery } from '../../../hooks/useLeadQuery';
 import { resolveS3Url } from '../../../utils/s3-utils';
@@ -131,40 +125,12 @@ export const SummarySection = ({
   const isAppointmentSet = !!jobState.scheduleTime?.date;
   const stableIsEdit = useMemo(() => isAppointmentSet, [schedulerOpen]);
 
-  // `notifyDelivery` is passed ONLY by the post-signature refresh. This same response
-  // carries `agreementSent` — the SMS / email result for the copy the customer was just
-  // sent — but the block PERSISTS on the outcome record, and this function also runs on
-  // mount, so reporting it unconditionally would re-announce an old delivery failure
-  // every time the summary opened. See `utils/agreement-delivery.ts`.
-  const fetchOutcome = async (opts?: { notifyDelivery?: boolean }) => {
+  const fetchOutcome = async () => {
     if (!leadId) return;
     try {
       // Calculator-scoped read — the bare lead-scoped outcome route is deprecated.
       if (!calculatorData?._id) return;
       const response = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorData._id);
-      if (opts?.notifyDelivery) {
-        // Detached: the retry can take a few seconds and nothing on screen waits on it.
-        (async () => {
-          // The send and the document filing do not always land together, so an absent
-          // block on this first read is not proof there was none.
-          const sent =
-            readAgreementSent(response?.data) ||
-            (await pollAgreementDelivery(leadId, calculatorData?._id));
-          const notice = describeAgreementDelivery(sent);
-          if (__DEV__) {
-            console.log(
-              `[agreementDelivery] (legacy) block=${sent ? JSON.stringify(sent) : 'ABSENT'} ` +
-                `notice=${notice ? `${notice.type}: ${notice.title}` : 'none'}`
-            );
-          }
-          if (!notice) return;
-          if (notice.type === 'warning') {
-            FlashMessage.warning(notice.title, notice.description, notice.duration);
-          } else {
-            FlashMessage.success(notice.title, notice.description, notice.duration);
-          }
-        })().catch(() => {});
-      }
       const data = response.data?.data || response.data;
       setOutcomeData(data);
     } catch (error) {
@@ -1976,11 +1942,8 @@ export const SummarySection = ({
           signatureFields={agreementData.signatureFields}
           pdfDimensions={agreementData.pdfDimensions}
           onSuccess={(pdfUrl) => {
-            // Refresh outcome to pull S3 version once processed. `notifyDelivery` reports
-            // whether the customer's copy actually reached them (parity with the dynamic
-            // flow's `handleRefreshDocs`) — this is the first JSON response after signing,
-            // since `/sign` itself returns the PDF as a blob.
-            fetchOutcome({ notifyDelivery: true });
+            // Refresh outcome to pull S3 version once processed
+            fetchOutcome();
           }}
           // Enables "Send Remotely" (primary buyer + coBuyers[]). Refresh the
           // outcome when the remote session completes so the signed agreement shows.

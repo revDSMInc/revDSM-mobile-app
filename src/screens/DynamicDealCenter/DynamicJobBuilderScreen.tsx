@@ -17,15 +17,12 @@ import { stateHasContent, collectLockedFieldIds } from '../../utils/dynamic-job-
 import { ProgressTracker } from '../../widgets/components/dynamic-job-builder/ProgressTracker';
 import { VerticalTabBar } from '../../widgets/components/dynamic-job-builder/VerticalTabBar';
 import { FlashMessage } from '../../config/message';
-import { describeAgreementDelivery, AgreementSent } from '../../utils/agreement-delivery';
 import { LeadService } from '../../services/api/leads';
 import { useDynamicJobBuilderActivityLog } from './hooks/useDynamicJobBuilderActivityLog';
 import { buildCalculatorOutcomePayload } from './utils/build-outcome-payload';
 import {
   loadResolvedOutcomeDocuments,
   fetchOutcomeDocumentRows,
-  fetchOutcomeDocumentRowsWithDelivery,
-  pollAgreementDelivery,
   resolveOutcomeDocRows,
   dropUnnamedAgreements,
 } from './utils/outcome-documents';
@@ -1389,71 +1386,17 @@ function DynamicJobBuilderInner({
   // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
   // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
   // that row is what keeps a generated agreement from being stored twice.
-  // Tell the rep whether the customer actually RECEIVED their copy.
-  //
-  // Reported HERE rather than in `AgreementSignatureModal`, which is the obvious-looking
-  // place and cannot do it: `/sign` returns the PDF as a BLOB, so that modal never sees a
-  // JSON body. The outcome read below is the first response after signing that carries
-  // the `agreementSent` block.
-  //
-  // ⚠️ `agreementSent` PERSISTS on the outcome record and describes the LAST send, so it
-  // is only meaningful right after a signature. This is reachable from ONE place — the
-  // adopt branch of `handleAgreementGenerated` via `onRefreshDocs` — which is what keeps
-  // the notice tied to the signature rather than re-announcing an old failure.
-  const notifyAgreementDelivery = useCallback(
-    async (firstRead: AgreementSent | null) => {
-      // The send and the document filing do NOT always land together, so a block that is
-      // absent on the first read is not proof there was none — `pollAgreementDelivery`
-      // spends up to two more cheap reads before giving up, and nothing at all when the
-      // first read already had it.
-      const sent = firstRead || (await pollAgreementDelivery(leadId, calcId));
-      const notice = describeAgreementDelivery(sent);
-      if (__DEV__) {
-        // A missing notice used to be indistinguishable from "the code never ran" — the
-        // same trap as the pitch-book list. Say which it was.
-        console.log(
-          `[agreementDelivery] lead=${leadId || '—'} calc=${calcId || '—'} ` +
-            `block=${sent ? JSON.stringify(sent) : 'ABSENT'} ` +
-            `notice=${notice ? `${notice.type}: ${notice.title}` : 'none'}`
-        );
-      }
-      if (!notice) return;
-      // Replaces the signature modal's own "Agreement signed successfully" — deliberately,
-      // and the reason this title repeats that the agreement was signed. One banner, both
-      // facts; a second `show()` would simply wipe the first. See `agreement-delivery.ts`.
-      if (notice.type === 'warning') {
-        FlashMessage.warning(notice.title, notice.description, notice.duration);
-      } else {
-        FlashMessage.success(notice.title, notice.description, notice.duration);
-      }
-    },
-    [leadId, calcId]
-  );
-
+  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
+  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
+  // that row is what keeps a generated agreement from being stored twice.
   const handleRefreshDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet') => {
-      if (!leadId || !calcId) {
-        // Both are required by the calculator-scoped outcome route; without them there is
-        // nothing to read, and this used to return in silence.
-        if (__DEV__) {
-          console.log(
-            `[agreementDelivery] SKIPPED — leadId=${leadId || 'MISSING'} calcId=${calcId || 'MISSING'}`
-          );
-        }
-        return null;
-      }
-      // Same read as before — it now ALSO hands back `agreementSent`, the SMS / email
-      // result for the copy the customer was just sent. No extra request.
-      const { rows, agreementSent } = await fetchOutcomeDocumentRowsWithDelivery(leadId, calcId);
-
-      // NOT awaited: the retry can take a few seconds and the document adopt below must
-      // not wait on a notification. Detached, so a failure here can never break signing.
-      notifyAgreementDelivery(agreementSent).catch(() => {});
-
+      if (!leadId || !calcId) return null;
+      const rows = await fetchOutcomeDocumentRows(leadId, calcId);
       const resolved = await resolveOutcomeDocRows(rows);
       return resolved[cat === 'agreement' ? 'agreements' : 'orderSheets'] || [];
     },
-    [leadId, calcId, notifyAgreementDelivery]
+    [leadId, calcId]
   );
 
   const isLastStep = currentTabIndex === nonSummaryTabs.length;

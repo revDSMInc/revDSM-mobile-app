@@ -3623,140 +3623,57 @@ none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
 Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
 
 
-### A signed agreement now reports whether the customer actually RECEIVED it
+### Signing an agreement says the customer got a copy
 
-Ticket: *"while we are submitting the agreement we have to show these messages as well in the
-splash which are coming in the response"*, against the `agreementSent` block:
+Ticket: *"while we are submitting the agreement we have to show these messages as well in the splash
+which are coming in the response"*, against the `agreementSent` block the sign flow leaves on the
+outcome (`sms` / `email`, each with `to` / `status` / `message`).
 
-```json
-"agreementSent": {
-  "sms":   { "to": "+1 (454) 684-8848", "status": "failed",
-             "message": "Unable to create record: Invalid 'To' Phone Number: +1 (454) 684-XXXX" },
-  "email": { "to": "shahmeerbukhari83@gmail.com", "status": "sent",
-             "message": "Signed agreement link sent to shahmeerbukhari83@gmail.com" }
-}
+**Shipped as a STATIC second line, at the reporter's direction** — the signature success flash now reads
+
+```
+Success
+Agreement signed successfully
+Your finalized document is complete and a copy has been sent to you
 ```
 
-Signing does TWO things server-side — files the PDF as a LeadOutcomeDocument, **and** sends the
-customer a link to their copy. Mobile surfaced only the first: the rep saw a green *"Agreement
-signed successfully"* whether or not the text landed. In the reporter's own trace it did not, and the
-number on the lead is wrong — something only the rep can fix, and invisible a minute later.
+One `FlashMessage.success` in `AgreementSignatureModal.handleSubmit`, the message on a `\n` after the
+existing line. That is the whole change.
 
-⚠️ **No web ref.** `grep agreementSent` over the sales frontend is empty; web ignores the block
-entirely. Written against the payload, like the pitch-book work.
+⚠️ **A live, per-channel version of this was built and then REMOVED on request** (*"just forget this and
+remove the changes… instead just add this message"*). If it is ever wanted again, these are the facts
+that cost the most to establish — do not re-derive them:
 
-#### Where the block is, and why the obvious place can't read it
+- **`/sign` returns the PDF as a BLOB** (`responseType: 'blob'`), so the signing response cannot carry
+  the delivery result. The block rides on `GET lead/v1/{leadId}/outcome/{calcId}` instead.
+- **`agreementSent` is a SIBLING of `outcome`** (`data.data.agreementSent` beside `data.data.outcome`),
+  so `unwrapOutcome` — which returns `body.data.outcome` — cannot see it. It has to be read off the raw
+  body.
+- **The send finishes ASYNCHRONOUSLY.** In a captured payload the outcome's `updatedAt` is **3.5 s
+  after** the agreement row's `createdAt`, so a read taken moments after signing legitimately finds the
+  document and no delivery block. Any polling window has to clear that comfortably.
+- ⚠️ **A flash raised while the signature modal is still up renders BEHIND it.** A native `Modal` is its
+  own view tree above the RN root and the app-wide `<FlashMessage />` lives at that root (`App.tsx`).
+  The existing success message only gets away with it because `onClose()` fires in the same instant;
+  anything raised a few hundred ms later (i.e. after a network read) is drawn under a modal that is
+  still dismissing and is never seen. **This is why the live version reported nothing on device**, and
+  why the static line above works — it is raised in the same tick as the close.
+- **One banner, not two.** `react-native-flash-message` shows a single banner and a second `show()`
+  REPLACES the first, so a delivery notice cannot be appended after the success message; it has to be
+  folded into it.
+- **Web has no equivalent** — `grep agreementSent` over the sales frontend is empty.
 
-`POST pdf-reports/v1/agreement/{leadId}/sign` returns the PDF as a **blob**
-(`responseType: 'blob'`), so `AgreementSignatureModal` — which owns the success flash — never sees a
-JSON body and *cannot* report delivery. The block rides on the next request instead:
-**`GET lead/v1/{leadId}/outcome/{calcId}`**, which the post-sign refresh already makes. So this costs
-**no extra request**.
+⚠️ Noted while tracing, NOT fixed: a failing number was sent to the provider as **`+1 (454) 684-8848`**
+— the display-formatted string, not E.164. `formatUSPhoneNumber` emits exactly that shape and (per the
+Edit Customer ticket) the submit payload always carries the formatted value, so the backend may be
+handing Twilio a string it cannot parse. Area code `454` is also unassigned in the NANP, so that one
+number may simply be invalid — the two explanations are not distinguishable from a single sample. Worth
+its own ticket with a KNOWN-GOOD number: the deal-edit "Send Addendum To" field already converts through
+`toE164USPhone`, and this path has no equivalent.
 
-⚠️ **`agreementSent` is a SIBLING of `outcome`, not a field on it** (`data.data.agreementSent` beside
-`data.data.outcome`). `unwrapOutcome` returns `body.data.outcome`, so every existing reader dropped it
-on the floor — that is why it had to be read off the raw `res.data`.
-
-#### The rules live in the pure `src/utils/agreement-delivery.ts`
-
-`readAgreementSent` / `describeAgreementDelivery` / `describeAgreementDeliveryFromResponse` — for the
-reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: both consumers pull in React
-Native and are untestable under jest here, and *"did it send"* must not come to mean two different
-things on the dynamic and legacy signing surfaces.
-
-- **ONE flash, not two.** `react-native-flash-message` shows a single banner and a second `show()`
-  REPLACES the first, so appending a delivery notice after the modal's own *"Agreement signed
-  successfully"* would wipe it ~300 ms in and read as a flicker. The notice therefore carries both
-  facts: `Agreement signed & sent` / `Agreement signed — SMS not sent` /
-  `Agreement signed — not delivered`.
-- ⚠️ **Never `danger`, even when EVERY channel failed.** The agreement is signed and filed; a red
-  banner at that moment reads as *"the signature failed"* and is worse than the problem it reports.
-  Failures are `warning` at **7 s** (the default 3.5 s cannot be read with two provider sentences in
-  it); the all-sent case is `success` at 4 s.
-- ⚠️ **EVERY line is the server's own `message`, verbatim** — for BOTH channels, which is the whole
-  ticket. The first pass quoted the failure but synthesised the success line as `Emailed to <to>`,
-  dropping *"Signed agreement link sent to …"*, and QA sent it back. Each line is tagged with its
-  channel (a bare provider sentence does not say whether it means the text or the email):
-
-  ```
-  SMS to +1 (454) 684-8848 — Unable to create record: Invalid 'To' Phone Number: +1 (454) 684-XXXX
-  Email — Signed agreement link sent to shahmeerbukhari83@gmail.com
-  ```
-
-  The recipient is appended to the tag **for a failure only**: the provider MASKS the number inside
-  its error (`684-XXXX`), so without it the rep cannot tell which number was wrong — whereas a success
-  message already names the recipient in full. Failures are listed ABOVE the channel that worked.
-- **`queued` / `accepted` are NOT failures** — they are Twilio in-flight states, and reporting them as
-  "not sent" would send a rep chasing a text that is about to arrive. Delivered =
-  `sent|delivered|queued|accepted|ok|success`, case-insensitive.
-- **No block, or no channel reported ⇒ `null` ⇒ no banner**, so an older backend (or a company with no
-  delivery configured) keeps the existing success message rather than gaining an empty one.
-
-#### Two call sites, one rule
-
-| flow | hook |
-|---|---|
-| **Dynamic** (`DynamicJobBuilderScreen.handleRefreshDocs`) | new `fetchOutcomeDocumentRowsWithDelivery` returns `{ rows, agreementSent }`; `fetchOutcomeDocumentRows` delegates to it and drops the block, so its two other callers are unchanged |
-| **Legacy** (`job-builder/SummarySection.fetchOutcome`) | gained `opts.notifyDelivery`, passed ONLY by the signature modal's `onSuccess` |
-
-#### The send and the filing do NOT always land together
-
-QA follow-up: nothing appeared at all. The sign endpoint files the PDF **and** sends the customer
-their copy, and those are not guaranteed to complete in the same instant — in the captured payload the
-outcome's `updatedAt` is **3.5 s after** the agreement row's `createdAt`, while the app reads the
-documents back ~300 ms after signing. A single read can therefore find the documents and no delivery
-block, which presents as the notice silently never appearing.
-
-**New `pollAgreementDelivery`** (`utils/outcome-documents.ts`) — bounded and lazy: the caller passes
-whatever the read it ALREADY made returned, and this spends up to **two** more reads, 1.5 s apart,
-only when that came back empty, stopping at the first hit. The normal case costs nothing.
-
-⚠️ **It is NOT awaited.** The document adopt must not wait on a notification, so both call sites fire
-it detached with a `.catch(() => {})` — a delivery notice can never break signing.
-
-⚠️ **A `__DEV__` log now distinguishes the three outcomes** — `block=ABSENT`, the block verbatim, or
-`SKIPPED — leadId/calcId MISSING`. This is the pitch-book lesson: an empty result and a code path that
-never ran looked identical, including to whoever was debugging it. Grep `[agreementDelivery]`.
-
-⚠️ **`agreementSent` PERSISTS on the outcome record** and describes the LAST send, so it is only
-meaningful immediately after a signature. `fetchOutcome` also runs on MOUNT — reporting it
-unconditionally there would re-announce a week-old delivery failure on every open, which is exactly
-why the legacy path is gated and why `fetchOutcomeDocumentRows` deliberately discards it. In the
-dynamic flow the tie is structural: `onRefreshDocs` has a single call site, the adopt branch of
-`handleAgreementGenerated`.
-
-⚠️ **`FlashMessage.success` / `.warning` gained an optional third `duration` argument**, defaulted to
-the previous constants (3000 / 3500) so every existing call site is behaviourally byte-identical.
-
-⚠️ **REMOTE signing is NOT covered.** `handleRemoteAgreementComplete` reads documents lead-scoped
-(`…/outcome/documents/download`), a different endpoint whose response does not carry the block —
-wiring it would mean inventing a request. The remote flow already reports its own send via
-`onRemoteSent`.
-
-⚠️ Noted while tracing, NOT fixed: the failing number was sent to the provider as
-**`+1 (454) 684-8848`** — the display-formatted string, not E.164. `formatUSPhoneNumber` emits exactly
-that shape and (per the Edit Customer ticket) the submit payload now always carries the formatted
-value, so the backend may be handing Twilio a string it cannot parse. Area code `454` is also
-unassigned in the NANP, so this one number may simply be invalid — the two explanations are not
-distinguishable from a single sample. Worth its own ticket with a KNOWN-GOOD number before changing
-anything: the deal-edit "Send Addendum To" field already converts through `toE164USPhone`, and this
-path has no equivalent.
-
-Verified with 17 tests over the reporter's response verbatim: the block found beside `outcome` (and on
-a bare / doubly-wrapped body), junk and a missing block as `null`; the ticket repro asserting **both**
-server messages quoted word for word, the exact two tagged lines, the unmasked number kept, failure
-ordered first, `warning` not `danger`, the title and the 7 s duration — plus an explicit assertion
-that the success line is NOT the synthesised `Emailed to …` form; both-sent, both-failed, an
-email-only failure naming EMAIL, all four in-flight/delivered spellings, all three no-message
-fallbacks, a single configured channel, and empty channels leaving the existing success message
-alone. tsc 44 (baseline unchanged); `agreement-delivery.ts`, `outcome-documents.ts` and
-`message.ts` are eslint-clean, and `DynamicJobBuilderScreen.tsx` (50 problems) and `SummarySection.tsx`
-(107 problems) are identical to their HEAD baselines.
-
-⚠️ Needs a device check of the one thing tests cannot see: sign an agreement on a lead with a **bad
-phone and a good email** and confirm ONE amber banner naming the SMS failure, then repeat with both
-valid for the green one.
-
+tsc 44 (baseline unchanged); `AgreementSignatureModal.tsx` is at its HEAD eslint baseline (41 problems),
+and `message.ts`, `SummarySection.tsx`, `outcome-documents.ts` and `DynamicJobBuilderScreen.tsx` are
+back to their pre-feature state (the first two verified byte-identical against `3d5dbea^`).
 ---
 
 ## 7. Scripts

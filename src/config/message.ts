@@ -42,18 +42,14 @@ export const FlashMessage = {
   /**
    * Success notification - Professional green background
    */
-  success: (title: string, description: string = '', duration: number = 3000) => {
+  success: (title: string, description: string = '') => {
     triggerSuccess();
     showMessage({
       message: title,
       description: description,
       type: 'success',
       icon: 'success',
-      // `duration` is an OPTIONAL override, defaulted to the previous constant so every
-      // existing call site is byte-identical in behaviour. It exists because a message
-      // that carries a reason the rep has to READ (a failed agreement delivery quoting
-      // the provider's error) cannot be consumed in 3 s.
-      duration: duration,
+      duration: 3000,
       floating: true,
       statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
       style: { zIndex: 9999, elevation: 9999 },
@@ -82,14 +78,13 @@ export const FlashMessage = {
   /**
    * Warning notification - Attention orange background
    */
-  warning: (title: string, description: string = '', duration: number = 3500) => {
+  warning: (title: string, description: string = '') => {
     showMessage({
       message: title,
       description: description,
       type: 'warning',
       icon: 'warning',
-      // Optional override — see `success` above.
-      duration: duration,
+      duration: 3500,
       floating: true,
       statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : undefined,
       style: { zIndex: 9999, elevation: 9999 },
