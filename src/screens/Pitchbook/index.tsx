@@ -5,7 +5,6 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Image,
   Dimensions,
   StyleSheet,
   Animated,
@@ -21,10 +20,12 @@ import greenRooflinesImages, {
   GREEN_ROOFLINES_CATEGORIES,
 } from '../../constants/green-rooflines-pitchbook';
 import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotosPanel';
+import { ZoomableImage } from '../../widgets/common/ZoomableImage';
 import {
   PhotoPeekScrollLockProvider,
   PeekAwareScrollView,
 } from '../../widgets/common/PhotoPeekScrollLock';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
@@ -199,6 +200,11 @@ export default function PitchbookScreen() {
   const currentGlobalPageNumber = useMemo(() => {
     return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex, getGlobalPosition]);
+
+  // Identity of the slide on screen. Handed to every `ZoomableImage` so moving to the
+  // next slide snaps it back to 1x — otherwise the rep advances mid-pitch and lands on
+  // a slide already scrolled to some corner of the previous one's zoom.
+  const slideResetKey = `${activeCategory}:${currentSlideIndex}`;
 
   // Reconcile the selected tab with the deck actually in hand. A remote deck's
   // sections aren't known at mount, so `activeCategory` starts empty and lands here
@@ -890,10 +896,11 @@ export default function PitchbookScreen() {
                 paddingVertical: 3,
               }}
             >
-              <Image
+              <ZoomableImage
                 source={currentCategoryImages[currentSlideIndex]}
+                containerStyle={{ width: '100%', height: '100%' }}
                 style={{ width: '100%', height: '100%' }}
-                resizeMode="contain"
+                resetKey={slideResetKey}
               />
             </View>
           </View>
@@ -981,7 +988,10 @@ export default function PitchbookScreen() {
           supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
           onRequestClose={() => setIsFullscreen(false)}
         >
-          <View style={{ flex: 1, backgroundColor: '#000' }}>
+          {/* A Modal is its own native view tree on Android, so the app-root
+              GestureHandlerRootView in App.tsx does not reach it — without this one the
+              slide's pinch/pan gestures never fire in fullscreen. */}
+          <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000' }}>
             {/* Hide status bar in landscape */}
             <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
 
@@ -997,10 +1007,11 @@ export default function PitchbookScreen() {
                   {/* Upper part: Image and top buttons */}
                   <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
                     {/* Image */}
-                    <Image
+                    <ZoomableImage
                       source={currentCategoryImages[currentSlideIndex]}
+                      containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
-                      resizeMode="contain"
+                      resetKey={slideResetKey}
                     />
 
                     {/* ── Overlay: page counter top-left ── */}
@@ -1208,10 +1219,11 @@ export default function PitchbookScreen() {
                 {/* Image with prev/next arrows */}
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                   {currentCategoryImages[currentSlideIndex] && (
-                    <Image
+                    <ZoomableImage
                       source={currentCategoryImages[currentSlideIndex]}
+                      containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
-                      resizeMode="contain"
+                      resetKey={slideResetKey}
                     />
                   )}
 
@@ -1354,7 +1366,7 @@ export default function PitchbookScreen() {
               uri={pdfPreviewData.url}
               title={pdfPreviewData.title}
             />
-          </View>
+          </GestureHandlerRootView>
         </Modal>
 
         {!isFullscreen && renderInteractiveTools()}

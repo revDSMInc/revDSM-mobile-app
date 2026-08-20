@@ -3144,6 +3144,96 @@ normalizer with and without a `thumbnail` block, and junk input (`undefined` / `
 no-op throughout. tsc 44 (baseline unchanged); eslint on `Pitchbook/index.tsx` back to its HEAD
 baseline of 13 pre-existing errors, and the three new files are clean.
 
+### Pitch Book slides pinch, double-tap and drag to zoom (ticket 380)
+
+Ticket: *"Pitch Book | need pinch and pull to zoom — you have to add zoom out zoom in
+functionality which we normally have while pinching."* A slide was a plain `<Image>` with
+`resizeMode="contain"`, so the fine print on a deck page (the confidential footer, a spec
+table) could not be read on a phone and there was no way to get closer to it.
+
+**New `src/widgets/common/ZoomableImage.tsx`** — a drop-in replacement for `<Image>` with
+the standard photo-viewer gesture set: **pinch** (anchored to the fingers), **double-tap**
+(toward the tapped point, and again to reset) and **drag** while zoomed. Wired into **all
+three** places a slide is painted — the inline card, and the fullscreen viewer's **portrait
+AND landscape** layouts — so the gesture is there wherever the rep sees the slide.
+
+`source` is an `ImageSourcePropType`, so the bundled `require()` decks (LeafFilter, Green
+Rooflines) and a **portal-authored `{ uri }` book** both work with no branching at the call
+site — the same property that let the dynamic pitch books be projected into the static decks'
+shape in the first place.
+
+⚠️ **`RooflineDeck` was NOT named in the ticket and is fixed too.** Its three slide render
+sites are the same code (differing only in `?.src` on the source), so fixing only the
+reported screen would have left the other half of the presentation flow without the gesture —
+the same reasoning as the inspection-photos ticket.
+
+#### The two things that had to be right
+
+⚠️ **A `Modal` is its own native view tree on Android**, so the app-root
+`GestureHandlerRootView` in `App.tsx` never reaches it and **none of the gestures fire in
+fullscreen** — which is the surface the ticket's screenshot shows. Both fullscreen modals
+now wrap their content in their own `GestureHandlerRootView` (`ImageGalleryModal` already
+does this for the same reason). In `Pitchbook` it replaced the modal's existing root `View`;
+`RooflineDeck` had no wrapper at all, so one was added.
+
+**Pan is enabled ONLY while zoomed.** At 1× a drag still belongs to whatever surrounds the
+image, so nothing this component does can swallow a scroll or a pager swipe. (The pitch book's
+own slide area is not inside a scroll view — the main layout is a fixed flex column — but the
+component is shared and must not depend on that.)
+
+**`resetKey={`${activeCategory}:${currentSlideIndex}`}`** snaps back to 1× on every slide
+change. Without it a rep advances mid-pitch and lands on the next slide already scrolled to
+some corner of the previous one's zoom.
+
+The wrapper **clips** (`overflow: 'hidden'`), so a zoomed slide can never paint over the page
+counter, the ✕, the arrows or the category tabs — all of which are absolutely-positioned
+siblings rendered after it, so they still take their taps first.
+
+#### The maths lives in the pure `src/utils/zoom-transform.ts`
+
+`clampZoomScale` / `panBound` / `zoomOrigin` / `anchoredTranslate` / `doubleTapTranslate` /
+`clampPan` — for the reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist:
+the component pulls in react-native + reanimated and cannot be loaded under jest here, and
+these six expressions are the whole of what can be **silently** wrong. An anchor that drifts
+or a bound that lets a zoomed slide be flung off screen both present as "the zoom feels
+broken" and neither throws.
+
+- **Coordinate system**: offsets are SCREEN pixels from the CENTRE of the image box, because
+  that is how RN's `transform: [translateX, translateY, scale]` composes — the content scales
+  about its own centre first, then translates in parent units. A point `origin` from the centre
+  lands at `origin * scale + translate`, which is the identity every test asserts against.
+- **Anchoring** solves that for `translate`: `t = focal − origin × scale`, with
+  `origin = (focal − t_prev) / scale_prev` captured once at `onStart`. Capturing the origin from
+  the PREVIOUS transform is what makes a second pinch — one that starts from an already-panned,
+  already-zoomed state — stay under the fingers instead of jumping.
+- **`panBound` is 0 at 1×**, which is what re-centres the slide when the rep pinches all the way
+  out; no separate "snap back" branch is needed.
+
+⚠️ **Every export carries the `'worklet'` directive** so the gesture callbacks can call it on
+the UI thread; they stay ordinary functions on the JS thread, which is what keeps them testable.
+**This is the repo's first cross-file worklet** (every other one is an inline closure the plugin
+auto-workletizes), so it was verified rather than assumed: running the project's own babel
+config over both files shows **6 worklets in the util and 7 in the component**, each component
+callback capturing the helpers by name in its `__closure`. The plugin is present via
+`nativewind/babel` → `react-native-css-interop/babel`, which registers
+`react-native-worklets/plugin` unconditionally — it is **not** in `babel.config.js`, so don't
+conclude from that file that worklets are unprocessed.
+
+Verified with 16 tests driving the real helpers: the anchor identity (`origin × scale + t`
+returning the focal) from fit, from an already-panned 2× state, and back down to 1× where it
+re-centres; the clamp winning over the anchor when honouring it would pull the image's own edge
+inside the box, alongside the case that needs no clamp (a pinch from fit lands exactly ON the
+bound); double-tap zooming toward the tap rather than the centre, a centre tap staying centred,
+and a corner tap staying in bounds; the pan following the finger, pinned at both limits, and
+inert at 1×; the scale clamped at both ends; and a zero scale not dividing by zero. tsc 44
+(baseline unchanged); both new files eslint-clean, `Pitchbook/index.tsx` 12 errors / 56 warnings
+vs a HEAD baseline of 12 / 55 and `RooflineDeck/index.tsx` 11 / 55 vs 11 / 53 — the added ones
+are all `react-native/no-inline-styles`, the rule both files already carry 50+ of.
+
+⚠️ Needs a device check for the gesture feel itself (this repo cannot render-test): pinch and
+double-tap in **fullscreen portrait, fullscreen landscape and the inline card**, that the arrows
+and ✕ still take their taps over a zoomed slide, and that advancing a slide resets the zoom.
+
 ---
 
 ## 7. Scripts
