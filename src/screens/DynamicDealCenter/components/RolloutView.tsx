@@ -11,7 +11,6 @@ import type { CalculatorSchema } from '../types/calculator';
 import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
-import { dedupeDrops } from '../utils/drop-prices';
 import { describeFullPackage } from '../utils/tab-naming';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
@@ -437,6 +436,20 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, method, calculatorMethod, existingDrop]);
 
+  // Decline / Secure fire exactly once per opening of the sheet. `dedupeDrops` used to
+  // absorb a double-tap by collapsing the identical rows it produced — but a guard that
+  // DELETES rows is the very thing that made mobile's list a subset of the server's, so
+  // the guard belongs on the button instead.
+  const submitted = useRef(false);
+  useEffect(() => {
+    if (visible) submitted.current = false;
+  }, [visible]);
+  const submitOnce = (fn: (data: any) => void) => (data: any) => {
+    if (submitted.current) return;
+    submitted.current = true;
+    fn(data);
+  };
+
   const down = parseFloat(downText) || 0;
   const balance = Math.max(0, dropPrice - down);
   const downExceeds = down > dropPrice;
@@ -601,10 +614,10 @@ function DropOutcomeModal({ visible, dropPrice, method, calculatorMethod, existi
 
               {/* Actions — Decline / Secure This Price */}
               <View style={{ flexDirection: 'row', gap: 12 }}>
-                <TouchableOpacity onPress={() => onDecline({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity onPress={() => submitOnce(onDecline)({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: '#FF5630', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '900', color: '#fff' }}>Decline</Text>
                 </TouchableOpacity>
-                <TouchableOpacity disabled={!canSecure} onPress={() => onSecure({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity disabled={!canSecure} onPress={() => submitOnce(onSecure)({ paymentMethod: selectedPlan, paymentMethods: addedPlans.filter((k) => isFinancing(plans, k)), downPayment: down, balance })} style={{ flex: 1, height: 52, borderRadius: 16, backgroundColor: canSecure ? '#31D076' : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '900', color: canSecure ? '#fff' : '#94A3B8' }}>Secure This Price</Text>
                 </TouchableOpacity>
               </View>
@@ -1212,33 +1225,17 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     }
     const planMin = plans[method]?.minPrice || 0;
     if (planMin && v < planMin) { FlashMessage.error('Invalid drop price', `This payment plan requires a minimum price of ${fmt(planMin)}.`); return; }
-    // Client requirement: a drop must be SAVED THE INSTANT it is entered. The rep may
-    // leave the app before hitting Secure/Decline — so record it as `declined` right
-    // now (persisted via the calculator auto-save). When the rep returns it lists as a
-    // Declined drop with its Display button, ready to re-open and Secure. Secure/Decline
-    // then edit THIS entry in place (via `pendingDropIndex`), never appending a
-    // duplicate. Declining never demotes other drops (single-accepted is a Secure-only
-    // rule).
+    // ⚠️ OPENING THE MODAL WRITES NOTHING. It used to persist the entered price as a
+    // `declined` row immediately ("save the drop the instant it is entered"), which
+    // meant a PUT fired just for opening this sheet and the round existed on the server
+    // before the rep had decided anything — the reporter's "we are calling the api 2
+    // times". The row is now created by the action the rep actually takes:
+    // Decline or Secure This Price. Web behaves the same way.
     //
-    // NO activity log fires here — web parity: web only logs `drop price secured` /
-    // `drop price declined` on the EXPLICIT action, never on entering the price.
-    // Logging on entry produced BOTH a `declined` AND a `secured` log for one drop when
-    // the rep then secured it. The entry only PERSISTS the row; Secure/Decline log.
-    const pricemarkup = markupLabel(v, logTiers);
-    const declined = { price: v, dropedPrice: v, status: 'declined', pricemarkup };
-    const next = dedupeDrops([...drops, declined]);
-    // The row to edit later: the just-added one, or the identical existing row if
-    // dedupe collapsed it (same price/status/plan/down = the same negotiation round).
-    let newIndex = next.indexOf(declined);
-    if (newIndex < 0) {
-      newIndex = next.findIndex(
-        (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0)) === Math.round(v) && d?.status === 'declined'
-      );
-    }
-    if (newIndex < 0) newIndex = next.length - 1;
-    onDropChange(calculator.id, next);
+    // No activity log fires here either (web logs `drop price secured` /
+    // `drop price declined` on the explicit action only).
     setPendingDrop(v);
-    setPendingDropIndex(newIndex); // Secure/Decline edit this persisted row in place
+    setPendingDropIndex(-1); // a fresh round → Secure/Decline APPEND it
     setShowDropModal(true);
     setShowDropInput(false);
     setDropText('');
@@ -1247,15 +1244,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // Resolve which existing drop a Secure/Decline should EDIT in place (vs. append a
   // NEW one). Each drop ACTION is its own numbered negotiation round: opening a fresh
   // drop via "+ Nth Drop" APPENDS a new entry — "1st Dropped Price", "2nd Dropped
-  // Price", … — even at the same price, so the rep sees every round. Re-negotiating an
-  // existing row via its Display button edits THAT row in place.
+  // Price", … — even at the same price, so the rep sees every round, exactly as web's
+  // own list does. Re-negotiating an existing row via its Display button edits THAT row
+  // in place, and `pendingDropIndex` is the row it was opened from.
   //
-  // DUPLICATION GUARD: `openDrop` now persists the pending drop as a `declined` twin the
-  // instant it's entered (client save-on-close). So Secure/Decline must convert THAT
-  // twin, never append a second row beside it. Trust `pendingDropIndex` when it still
-  // points to a row at the price being actioned; otherwise adopt the existing declined
-  // twin for this price (last one, i.e. the round just entered). Only when neither
-  // exists (no twin at all) do we return -1 to append — a genuinely new price.
+  // ⚠️ It deliberately does NOT scan for an existing row at this price. It used to,
+  // because `openDrop` pre-persisted a `declined` twin that Secure/Decline then had to
+  // convert rather than duplicate. Nothing is pre-persisted now, so that scan would
+  // silently fold a genuinely new round into an older one at the same price.
   const resolveDropTargetIndex = () => {
     const priceOf = (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
     const target = Math.round(Number(pendingDrop));
@@ -1265,9 +1261,6 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       priceOf(drops[pendingDropIndex]) === target
     ) {
       return pendingDropIndex;
-    }
-    for (let i = drops.length - 1; i >= 0; i--) {
-      if (priceOf(drops[i]) === target && drops[i]?.status === 'declined') return i;
     }
     return -1;
   };
@@ -1287,16 +1280,16 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
       if (idx === targetIndex) return { ...d, ...accepted };
       return d.status === 'accepted' ? { ...d, status: 'declined' } : d;
     });
-    if (targetIndex < 0) next.push(accepted); // genuinely-new price → append
-    onDropChange(calculator.id, dedupeDrops(next));
+    if (targetIndex < 0) next.push(accepted); // a new round → append, as web does
+    onDropChange(calculator.id, next);
     // Web parity (ViewAllCalculators.js:1147): `drop price secured` rollout log.
     const uidS = user?._id || user?.id;
     if (uidS) {
       // Web parity (handleSecurePrice `lastDroppedPrice`): the transition's OLD value is
       // the price BEFORE this drop — the previous drop, or the rollout end price for the
-      // first — NOT the just-entered drop. `openDrop` already appended the pending drop
-      // (save-on-entry), so read the entry BEFORE `targetIndex`. The portal draws the
-      // yellow `old → new` arrow only when old ≠ new, which is what surfaces this log.
+      // first — NOT the one being secured. A NEW round is not in `drops` yet, so its
+      // predecessor is the LAST existing entry; an edited row's predecessor is the one
+      // before it. The portal draws the yellow `old → new` arrow only when old ≠ new.
       const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
       const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;
@@ -1355,15 +1348,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     const next = targetIndex >= 0
       ? drops.map((d, idx) => (idx === targetIndex ? { ...d, ...declined } : d))
       : [...drops, declined];
-    onDropChange(calculator.id, dedupeDrops(next));
+    onDropChange(calculator.id, next);
     // Web parity (ViewAllCalculators.js:944): `drop price declined` rollout log.
     const uidD = user?._id || user?.id;
     if (uidD) {
       // Web parity (handleDeclinePrice `lastDroppedPrice`): OLD value is the price BEFORE
       // this drop — the previous drop, or the rollout end price for the first — NOT the
-      // just-entered drop. `openDrop` appended the pending drop (save-on-entry), so read
-      // the entry BEFORE `targetIndex`; the portal draws the yellow arrow only when
-      // old ≠ new.
+      // one being declined. A NEW round is not in `drops` yet, so its predecessor is the
+      // LAST existing entry; an edited row's is the one before it.
       const prevIdx = (targetIndex >= 0 ? targetIndex : drops.length) - 1;
       const lastDrop = prevIdx >= 0 ? (drops[prevIdx]?.dropedPrice ?? drops[prevIdx]?.price) : (calculator.price || priceNum);
       const dropNumber = targetIndex >= 0 ? targetIndex + 1 : next.length;

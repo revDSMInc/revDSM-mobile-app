@@ -3288,6 +3288,314 @@ reads/writes in text mode rewrites every line to LF and buries the change in a w
 Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx` and `dynamic-deal-diff.ts`;
 check `file <path>` before and after — the diff here is 10 insertions / 1 deletion.)
 
+### ✅ ROOT CAUSE: mobile's drop-price payload was a SUBSET of the server's array
+
+Ticket: *"while adding or declining the drop price, from mobile when i add the drop price it's
+saving duplicate. issue is in the mismatch of the payload"*, then, decisively, the two payloads
+for the same calculator side by side: *"a huge difference it should be same like web."*
+
+**Two facts about `dropPrice` explain everything, and they compound:**
+
+1. It is a **subdocument array**: a row arriving WITH an `_id` updates that row, a row without one
+   is **filed as new**.
+2. The backend **merges rather than replaces**, so a row the payload OMITS is not deleted — it
+   survives on the server, invisible to the rep.
+
+Web sends the server's array **verbatim, every row, each with its `_id`**, plus the one new
+id-less round:
+
+```json
+{"dropPrice":[{"_id":"6a86b180…","dropedPrice":10000,…,"balance":0},
+              {"_id":"6a86b18a…","dropedPrice":10000,…,"balance":10000},
+              {"_id":"6a86b688…","dropedPrice":8000, …,"balance":0},
+              {"_id":"6a86b6a7…","dropedPrice":8000, …,"balance":8000},
+              {"_id":"6a86b7ce…","dropedPrice":9000, …},
+              {"_id":"6a86c408…","dropedPrice":9999, …},
+              {"dropedPrice":8888,"status":"accepted", …}]}   ← only the new round is id-less
+```
+
+Mobile sent **four rows for the same calculator** — one per distinct price, three ids, and the
+just-entered 9999 id-less **even though the server already held a 9999 row**. So each save both
+hid three rounds from itself and filed a fresh copy of the one it had lost track of.
+
+#### Fix 1 — adopt the `_id` the server assigns
+
+`flushSave` discarded the PUT response, so a round entered and then secured was saved id-less
+twice and filed twice. Three pure helpers in `utils/drop-prices.ts`:
+
+| | |
+|---|---|
+| `toDropPricePayload(drops)` | web's exact row shape, **`_id` included** |
+| `readServerDrops(response)` | the `dropPrice` rows out of whatever the API wraps them in |
+| `adoptServerDropIds(local, serverRows)` | copy each server `_id` onto the local row it belongs to |
+| `idlessDropSignature(drops)` | bounds the fallback read below |
+
+`flushSave` and `saveDisplacedSiblings` both adopt from their response. Adoption is deliberately
+**not marked dirty** — `_id` is absent from `tabSignature`'s `dropSig`, so it cannot mark the tab
+dirty, schedule a save, or make an in-flight save look superseded.
+
+⚠️ **Matching is by (price, status) among unclaimed server rows, NEVER by index.** On an
+already-corrupted record the server array is LONGER than the one we sent, so index alignment is
+exactly the assumption that cannot hold. Each server row is claimed at most once; an unmatched row
+is **left id-less**, because one more duplicate costs a row while a WRONG id overwrites another
+round. This is the rule `useCalculatorSummary.saveDropPriceToServer` already used in the CLASSIC
+deal center — which is why the duplicate was dynamic-only.
+
+**A bounded fallback read.** The PUT does not always echo the calculator back (the classic flow
+re-reads for the same reason), so a response carrying no `dropPrice` triggers one
+`getCalculator(tabId)`. `dropIdFetchTried` spends **at most one GET per distinct set of id-less
+rows**, so a deployment whose PUT never echoes cannot turn every debounced save into a request.
+
+#### Fix 2 — ⚠️ STOP COLLAPSING THE LIST. This is the half that made it "still same"
+
+Fix 1 alone did not close the ticket, and the second payload is why: `collapseDropsByPrice` kept
+**one row per price** on the write path, the read path AND every local update. Web keeps every
+round — its array holds two 10000 rows and two 8000 rows, because entering a drop and then
+actioning it are two records.
+
+That collapse is what produced the 4-vs-7 mismatch, and it also **re-created the id-less row**:
+merging the rep's freshly-entered 9999 with the server's existing 9999 could keep the copy without
+the `_id`, so the next save filed a second 9999. A helper written to hide duplicates was
+manufacturing them.
+
+- `collapseDropsByPrice` is **DELETED** — no call sites remain, and leaving a row-removing helper
+  in that file is the trap this ticket was about.
+- `dedupeDrops` is **off both paths**, surviving only as `RolloutView`'s local double-tap guard.
+  ⚠️ Its signature does not include `_id`, so on a save it could drop a genuinely distinct server
+  row; never reintroduce it to a hydrate or a payload.
+- `normalizeSingleAcceptedDrop` **stays on both paths** — it is web's single-accepted invariant and
+  is safe precisely because it rewrites a STATUS rather than removing a row.
+
+Also `toDropPricePayload` drops mobile's redundant **`price` mirror** (it duplicates `dropedPrice`
+and is not part of the stored shape; every local reader already falls back `price ?? dropedPrice`),
+and `openDrop` now seeds the entry row's **`paymentMethod` from the calculator** — web's entry rows
+read `"paymentMethod":"check"`, mobile's read `""`.
+
+⚠️ **`paymentMethods` (plural) is KEPT** though web does not send it: `DropOutcomeModal` re-opens a
+declined drop with those financing plans still added, so stripping it for exact parity would lose
+that state on reload. Omitted when empty rather than sent as `[]`.
+
+⚠️ **Expect existing test leads to show MORE rows than before.** Those rows are real and already on
+the server — web lists them too; mobile was hiding them while still leaving them there to be
+duplicated. A record corrupted before this fix does not self-heal, because healing means DELETING
+server rows and nothing on this screen may do that.
+
+Verified with 32 tests driving the real helpers over both of the ticket's payloads verbatim: the
+web array reproduced row-for-row with only the new round id-less; both same-price rounds kept; no
+server id ever omitted; the old collapse asserted to yield exactly the 4 rows the ticket reported,
+so the regression cannot return silently; the single-accepted rule rewriting a status without
+losing a row; the entry row's seeded method; the `price` mirror gone and `paymentMethods`
+kept/omitted; the `_id` surviving the write path; **the adoption repro** — the same round asserted
+id-less on the second save before adoption and carrying its id after; price+status matching
+preferring the accepted row at a shared price, the price-only fallback, no id used twice, an id
+already held never re-issued, an unmatched row left alone, id-less server rows ignored, adoption
+against a longer/misaligned array, same-reference return when nothing changes; the full
+enter→save→adopt→secure→save round trip leaving SEVEN rows with the new one updated in place; and
+the fallback guard's signature emptying once every row is filed. tsc 44 (baseline unchanged);
+`drop-prices.ts` and `useDynamicCalculators.ts` eslint-clean, `RolloutView.tsx` identical to HEAD
+(270 problems, 2 errors).
+
+⚠️ Needs a device check of the one thing tests cannot see: **whether the PUT response echoes
+`dropPrice`.** Watch for one `PUT /lfcalculators/{id}` per drop action, at most one
+`GET /lfcalculators/{id}` after the first, and a payload whose `dropPrice` is the server's array
+plus the new round.
+
+#### …and the follow-up that closed it: no save on OPEN, and a payload of only `dropPrice`
+
+Ticket, with a device trace of a `PUT /lfcalculators/{id}` fired while the drop sheet was merely
+open: *"still in backend duplicate secure price is going to create, i think the main issue is we are
+calling the api 2 times, when this modal open no need to call the api, api will call on the basis of
+selecting the 2 buttons Decline and Secure this price… also we only sending the changed data in the
+payload like web, but you are taking the extra things."* Both correct.
+
+**1. Opening the drop sheet wrote a row.** `openDrop` persisted the entered price as a `declined`
+row the instant it was typed — a deliberate earlier requirement (*"a drop must be SAVED THE INSTANT
+it is entered"*), now reversed by the same reporter. So one decision cost two writes: the twin on
+open, then the real row on Secure/Decline. `openDrop` now only sets `pendingDrop` and shows the
+modal; the row is created by the action the rep actually takes.
+
+Two things fell out of that and had to go with it:
+- ⚠️ **`resolveDropTargetIndex`'s scan for an existing row at this price is REMOVED.** It existed to
+  convert the pre-persisted twin. With nothing pre-persisted it would silently fold a genuinely new
+  round into an older one at the same price — and web keeps both (its array holds two 10000 rows).
+  `pendingDropIndex` alone decides: set when a row is re-opened via **Display** (edit in place),
+  `-1` for a fresh round (append).
+- ⚠️ **The double-tap guard moved from `dedupeDrops` to the BUTTON.** `DropOutcomeModal` now accepts
+  one Decline/Secure per opening (`submitted` ref, reset on `visible`). A guard that DELETES rows is
+  the very thing that made mobile's list a subset of the server's, so it cannot live on this path.
+  **`dedupeDrops` is deleted** — no call sites remain.
+
+**2. Drops now PUT `{ dropPrice: [...] }` and nothing else.** New `saveDropsNow` in
+`useDynamicCalculators` fires on the rep's action, and **`dropPrice` is gone from `buildPayload`** —
+the debounced whole-calculator save no longer carries it as a passenger. One writer, one payload,
+byte-comparable with web's.
+
+- **`tabSignature` no longer fingerprints drops.** With drops off the debounced path, a `dropSig`
+  would only mark the calculator dirty and fire a second, redundant whole-calculator request for a
+  change already persisted.
+- **`markDirty` is NOT called** by `handleSetDrops`, for the same reason.
+- **One request per calculator at a time**, with a newer list queued behind an in-flight one
+  (`dropSaveInFlight` / `dropSavePending`). Every request sends the WHOLE array, so latest-wins is
+  safe and a failed request is healed by the next drop action; **one** immediate retry covers the
+  transient case.
+- The response is fed straight to `adoptDropIds`, so the round's `_id` is adopted from the very
+  request that created it.
+
+⚠️ The rollout log's `lastDroppedPrice` still reads the entry BEFORE the target — its arithmetic is
+unchanged and still correct, but for a different reason: a new round is no longer in `drops` at log
+time, so its predecessor is the LAST existing entry (`drops.length - 1`), while an edited row's is
+the one before it. The comments were rewritten; don't "fix" the index.
+
+Verified with 9 further tests over the same rows: the body having exactly one key (`dropPrice`);
+every row sent with its `_id` and only the new round without; **opening the sheet leaving the list
+byte-identical**; Secure and Decline each appending exactly ONE row where the old flow left a twin
+beside it; a new round at an already-tried price staying its own row while **Display** still edits in
+place; the full open→Secure→adopt→re-secure round trip updating the same row; and a second Secure
+demoting the first by status while keeping both rows. tsc 44 (baseline unchanged); `drop-prices.ts`
+and `useDynamicCalculators.ts` eslint-clean, `RolloutView.tsx` identical to HEAD (270 problems,
+2 errors).
+
+⚠️ On device this should now read as **exactly one `PUT /lfcalculators/{id}` per Decline/Secure,
+none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
+
+⚠️ **All three files are CRLF** (`drop-prices.ts`, `useDynamicCalculators.ts`, `RolloutView.tsx`).
+Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
+
+
+### A signed agreement now reports whether the customer actually RECEIVED it
+
+Ticket: *"while we are submitting the agreement we have to show these messages as well in the
+splash which are coming in the response"*, against the `agreementSent` block:
+
+```json
+"agreementSent": {
+  "sms":   { "to": "+1 (454) 684-8848", "status": "failed",
+             "message": "Unable to create record: Invalid 'To' Phone Number: +1 (454) 684-XXXX" },
+  "email": { "to": "shahmeerbukhari83@gmail.com", "status": "sent",
+             "message": "Signed agreement link sent to shahmeerbukhari83@gmail.com" }
+}
+```
+
+Signing does TWO things server-side — files the PDF as a LeadOutcomeDocument, **and** sends the
+customer a link to their copy. Mobile surfaced only the first: the rep saw a green *"Agreement
+signed successfully"* whether or not the text landed. In the reporter's own trace it did not, and the
+number on the lead is wrong — something only the rep can fix, and invisible a minute later.
+
+⚠️ **No web ref.** `grep agreementSent` over the sales frontend is empty; web ignores the block
+entirely. Written against the payload, like the pitch-book work.
+
+#### Where the block is, and why the obvious place can't read it
+
+`POST pdf-reports/v1/agreement/{leadId}/sign` returns the PDF as a **blob**
+(`responseType: 'blob'`), so `AgreementSignatureModal` — which owns the success flash — never sees a
+JSON body and *cannot* report delivery. The block rides on the next request instead:
+**`GET lead/v1/{leadId}/outcome/{calcId}`**, which the post-sign refresh already makes. So this costs
+**no extra request**.
+
+⚠️ **`agreementSent` is a SIBLING of `outcome`, not a field on it** (`data.data.agreementSent` beside
+`data.data.outcome`). `unwrapOutcome` returns `body.data.outcome`, so every existing reader dropped it
+on the floor — that is why it had to be read off the raw `res.data`.
+
+#### The rules live in the pure `src/utils/agreement-delivery.ts`
+
+`readAgreementSent` / `describeAgreementDelivery` / `describeAgreementDeliveryFromResponse` — for the
+reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: both consumers pull in React
+Native and are untestable under jest here, and *"did it send"* must not come to mean two different
+things on the dynamic and legacy signing surfaces.
+
+- **ONE flash, not two.** `react-native-flash-message` shows a single banner and a second `show()`
+  REPLACES the first, so appending a delivery notice after the modal's own *"Agreement signed
+  successfully"* would wipe it ~300 ms in and read as a flicker. The notice therefore carries both
+  facts: `Agreement signed & sent` / `Agreement signed — SMS not sent` /
+  `Agreement signed — not delivered`.
+- ⚠️ **Never `danger`, even when EVERY channel failed.** The agreement is signed and filed; a red
+  banner at that moment reads as *"the signature failed"* and is worse than the problem it reports.
+  Failures are `warning` at **7 s** (the default 3.5 s cannot be read with two provider sentences in
+  it); the all-sent case is `success` at 4 s.
+- ⚠️ **EVERY line is the server's own `message`, verbatim** — for BOTH channels, which is the whole
+  ticket. The first pass quoted the failure but synthesised the success line as `Emailed to <to>`,
+  dropping *"Signed agreement link sent to …"*, and QA sent it back. Each line is tagged with its
+  channel (a bare provider sentence does not say whether it means the text or the email):
+
+  ```
+  SMS to +1 (454) 684-8848 — Unable to create record: Invalid 'To' Phone Number: +1 (454) 684-XXXX
+  Email — Signed agreement link sent to shahmeerbukhari83@gmail.com
+  ```
+
+  The recipient is appended to the tag **for a failure only**: the provider MASKS the number inside
+  its error (`684-XXXX`), so without it the rep cannot tell which number was wrong — whereas a success
+  message already names the recipient in full. Failures are listed ABOVE the channel that worked.
+- **`queued` / `accepted` are NOT failures** — they are Twilio in-flight states, and reporting them as
+  "not sent" would send a rep chasing a text that is about to arrive. Delivered =
+  `sent|delivered|queued|accepted|ok|success`, case-insensitive.
+- **No block, or no channel reported ⇒ `null` ⇒ no banner**, so an older backend (or a company with no
+  delivery configured) keeps the existing success message rather than gaining an empty one.
+
+#### Two call sites, one rule
+
+| flow | hook |
+|---|---|
+| **Dynamic** (`DynamicJobBuilderScreen.handleRefreshDocs`) | new `fetchOutcomeDocumentRowsWithDelivery` returns `{ rows, agreementSent }`; `fetchOutcomeDocumentRows` delegates to it and drops the block, so its two other callers are unchanged |
+| **Legacy** (`job-builder/SummarySection.fetchOutcome`) | gained `opts.notifyDelivery`, passed ONLY by the signature modal's `onSuccess` |
+
+#### The send and the filing do NOT always land together
+
+QA follow-up: nothing appeared at all. The sign endpoint files the PDF **and** sends the customer
+their copy, and those are not guaranteed to complete in the same instant — in the captured payload the
+outcome's `updatedAt` is **3.5 s after** the agreement row's `createdAt`, while the app reads the
+documents back ~300 ms after signing. A single read can therefore find the documents and no delivery
+block, which presents as the notice silently never appearing.
+
+**New `pollAgreementDelivery`** (`utils/outcome-documents.ts`) — bounded and lazy: the caller passes
+whatever the read it ALREADY made returned, and this spends up to **two** more reads, 1.5 s apart,
+only when that came back empty, stopping at the first hit. The normal case costs nothing.
+
+⚠️ **It is NOT awaited.** The document adopt must not wait on a notification, so both call sites fire
+it detached with a `.catch(() => {})` — a delivery notice can never break signing.
+
+⚠️ **A `__DEV__` log now distinguishes the three outcomes** — `block=ABSENT`, the block verbatim, or
+`SKIPPED — leadId/calcId MISSING`. This is the pitch-book lesson: an empty result and a code path that
+never ran looked identical, including to whoever was debugging it. Grep `[agreementDelivery]`.
+
+⚠️ **`agreementSent` PERSISTS on the outcome record** and describes the LAST send, so it is only
+meaningful immediately after a signature. `fetchOutcome` also runs on MOUNT — reporting it
+unconditionally there would re-announce a week-old delivery failure on every open, which is exactly
+why the legacy path is gated and why `fetchOutcomeDocumentRows` deliberately discards it. In the
+dynamic flow the tie is structural: `onRefreshDocs` has a single call site, the adopt branch of
+`handleAgreementGenerated`.
+
+⚠️ **`FlashMessage.success` / `.warning` gained an optional third `duration` argument**, defaulted to
+the previous constants (3000 / 3500) so every existing call site is behaviourally byte-identical.
+
+⚠️ **REMOTE signing is NOT covered.** `handleRemoteAgreementComplete` reads documents lead-scoped
+(`…/outcome/documents/download`), a different endpoint whose response does not carry the block —
+wiring it would mean inventing a request. The remote flow already reports its own send via
+`onRemoteSent`.
+
+⚠️ Noted while tracing, NOT fixed: the failing number was sent to the provider as
+**`+1 (454) 684-8848`** — the display-formatted string, not E.164. `formatUSPhoneNumber` emits exactly
+that shape and (per the Edit Customer ticket) the submit payload now always carries the formatted
+value, so the backend may be handing Twilio a string it cannot parse. Area code `454` is also
+unassigned in the NANP, so this one number may simply be invalid — the two explanations are not
+distinguishable from a single sample. Worth its own ticket with a KNOWN-GOOD number before changing
+anything: the deal-edit "Send Addendum To" field already converts through `toE164USPhone`, and this
+path has no equivalent.
+
+Verified with 17 tests over the reporter's response verbatim: the block found beside `outcome` (and on
+a bare / doubly-wrapped body), junk and a missing block as `null`; the ticket repro asserting **both**
+server messages quoted word for word, the exact two tagged lines, the unmasked number kept, failure
+ordered first, `warning` not `danger`, the title and the 7 s duration — plus an explicit assertion
+that the success line is NOT the synthesised `Emailed to …` form; both-sent, both-failed, an
+email-only failure naming EMAIL, all four in-flight/delivered spellings, all three no-message
+fallbacks, a single configured channel, and empty channels leaving the existing success message
+alone. tsc 44 (baseline unchanged); `agreement-delivery.ts`, `outcome-documents.ts` and
+`message.ts` are eslint-clean, and `DynamicJobBuilderScreen.tsx` (50 problems) and `SummarySection.tsx`
+(107 problems) are identical to their HEAD baselines.
+
+⚠️ Needs a device check of the one thing tests cannot see: sign an agreement on a lead with a **bad
+phone and a good email** and confirm ONE amber banner naming the SMS failure, then repeat with both
+valid for the green one.
+
 ---
 
 ## 7. Scripts

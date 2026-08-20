@@ -1,4 +1,5 @@
 import { LeadService } from '../../../services/api/leads';
+import { readAgreementSent, AgreementSent } from '../../../utils/agreement-delivery';
 
 /**
  * Outcome document helpers — the ONE place that turns the backend's S3 document
@@ -53,19 +54,44 @@ export async function fetchOutcomeDocumentRows(
   leadId?: string,
   calculatorId?: string
 ): Promise<OutcomeDocRows | null> {
-  if (!leadId || !calculatorId) return null;
+  return (await fetchOutcomeDocumentRowsWithDelivery(leadId, calculatorId)).rows;
+}
+
+/**
+ * The same single read, ALSO returning the `agreementSent` delivery block.
+ *
+ * The signed agreement's SMS / email result rides on this very response — as a SIBLING
+ * of `outcome`, which is why `unwrapOutcome` (it returns `body.data.outcome`) cannot
+ * see it and every caller until now dropped it on the floor. Exposing it here means the
+ * post-sign refresh reports delivery for FREE: no extra request, and no second endpoint
+ * that could disagree with the documents it is reported alongside.
+ *
+ * ⚠️ `agreementSent` describes the LAST send on this outcome and PERSISTS on the record,
+ * so it is only meaningful immediately after a signature. Do not wire it to a mount-time
+ * or background read — that would re-announce a week-old delivery failure on every open.
+ * `fetchOutcomeDocumentRows` above deliberately drops it for exactly that reason.
+ */
+export async function fetchOutcomeDocumentRowsWithDelivery(
+  leadId?: string,
+  calculatorId?: string
+): Promise<{ rows: OutcomeDocRows | null; agreementSent: AgreementSent | null }> {
+  if (!leadId || !calculatorId) return { rows: null, agreementSent: null };
   try {
     const res = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorId);
+    const agreementSent = readAgreementSent(res?.data);
     const outcome = unwrapOutcome(res?.data);
     const docs = outcome?.leadOutcomeDocuments;
-    if (!docs) return null;
+    if (!docs) return { rows: null, agreementSent };
     return {
-      agreements: docs.agreements || [],
-      orderSheets: docs.orderSheets || [],
+      rows: {
+        agreements: docs.agreements || [],
+        orderSheets: docs.orderSheets || [],
+      },
+      agreementSent,
     };
   } catch (e) {
     console.warn('[outcome-documents] calculator-scoped document read failed:', e);
-    return null;
+    return { rows: null, agreementSent: null };
   }
 }
 
@@ -107,6 +133,44 @@ export function dropUnnamedAgreementRows<T extends Record<string, any>>(rows: T[
   const isAgreement = (d: any) => (d?.documentType || d?._group) === 'agreement';
   const kept = new Set(dropUnnamedAgreements(list.filter(isAgreement)));
   return list.filter((d) => !isAgreement(d) || kept.has(d));
+}
+
+/**
+ * Wait for the `agreementSent` delivery block to appear on the outcome.
+ *
+ * The sign endpoint files the PDF and sends the customer their copy, and those two do
+ * NOT necessarily land together — the send can be finishing while the app is already
+ * reading the documents back (in one captured trace the outcome's `updatedAt` is 3.5 s
+ * after the agreement row's `createdAt`). A single read taken ~300 ms after signing can
+ * therefore find the documents and no delivery block, which presents as the notice
+ * silently never appearing.
+ *
+ * Bounded and lazy: the caller passes whatever the read it ALREADY made returned, and
+ * this only spends requests when that came back empty. It stops at the first hit, so
+ * the normal case costs nothing.
+ *
+ * ⚠️ Deliberately gives up rather than polling on — a delivery notice is worth two
+ * cheap reads, never an open-ended loop on a screen the rep is still using.
+ */
+export async function pollAgreementDelivery(
+  leadId?: string,
+  calculatorId?: string,
+  attempts: number = 2,
+  delayMs: number = 1500
+): Promise<AgreementSent | null> {
+  if (!leadId || !calculatorId) return null;
+  for (let i = 0; i < attempts; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    try {
+      const res = await LeadService.getLeadOutcomeByCalculator(leadId, calculatorId);
+      const sent = readAgreementSent(res?.data);
+      if (sent) return sent;
+    } catch (e) {
+      console.warn('[outcome-documents] agreement delivery re-read failed:', e);
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
