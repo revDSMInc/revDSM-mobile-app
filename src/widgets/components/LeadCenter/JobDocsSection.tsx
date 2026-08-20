@@ -57,7 +57,7 @@ const getNativeModules = () => {
 // Subcomponents
 import { ContractDetailsCard } from './ContractDetailsCard';
 import { AddendumsCard } from './AddendumsCard';
-import { hasPendingDraft } from '../../../utils/addendum-drafts';
+import { AddendumRecipientCard } from './AddendumRecipientCard';
 import {
   DocumentRef,
   collectDocumentIds,
@@ -104,6 +104,8 @@ interface JobDocsSectionProps {
    * the same reason web keeps them in a single `useJobBuilderDrafts` hook.
    */
   drafts?: any[];
+  /** Refetch the drafts after the rep re-sends / re-addresses a pending addendum. */
+  onDraftsChanged?: () => void;
   /**
    * Override for the Contract Details pencil. Supplied when the Lead Center is opened
    * from My Deals, where the pencil must launch the dynamic deal-edit wizard instead of
@@ -147,6 +149,7 @@ export const JobDocsSection = ({
   isRefreshing = false,
   onEditContract,
   drafts = [],
+  onDraftsChanged,
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -1564,6 +1567,17 @@ export const JobDocsSection = ({
 
   return (
     <View className="px-4 py-2" style={{ flex: 1 }}>
+      {/* Pending addendum — its OWN section, ABOVE the contract card, so the two
+          statuses read as separate blocks (web `deal-banners.js` places its bar in the
+          same slot). Renders null when nothing is pending, so the normal deal is
+          unchanged and the contract card keeps its green LEAD RESULTED header. */}
+      <AddendumRecipientCard
+        lead={lead}
+        isDark={isDark}
+        colors={colors}
+        onRecipientChanged={onDraftsChanged}
+      />
+
       {/* Result Card Details */}
       <ContractDetailsCard
         lead={lead}
@@ -1583,9 +1597,6 @@ export const JobDocsSection = ({
         hasContract={hasContract}
         isResulted={isResulted}
         onAddDocument={handleAddDocument}
-        // The card header is the deal's ONE pending-signature indicator: amber while
-        // an addendum awaits the customer, back to green the moment they approve.
-        hasPendingAddendum={hasPendingDraft(drafts)}
       />
 
       {/* Addendums — web `job-docs-tab.js` renders `docsExtras` in exactly this
