@@ -1958,7 +1958,8 @@ on the job.
 
 **New pure `src/utils/dynamic-job-builder/engine/locked-color-defaults.ts`** holds the rule
 (`isColorField` / `hasEnteredQuantity` / `findPairedQuantityField` / `resolvePairedQuantityValue` /
-`isPairedQuantityEmpty` / `isLockedColorSuppressed` / `resolveLockedColorFallbackDefault`), for the
+`isQuantityLikeField` / `isPairedQuantityEmpty` / `findPairedColorFields` /
+`resolveLockedColorFallbackDefault`), for the
 reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist: all three consumers pull in
 React Native or are untestable here, and "the extra isn't on the job" must mean one thing on all of
 them.
@@ -1971,9 +1972,13 @@ them.
   (`…__textvalue-uuu1l: 2`, `…__color-gem7v: "Forest Green"`). Structural fields (`sectionLabel`,
   `allocation`, `combinationSummary`, containers, `_`-keyed) are skipped, and a colour never pairs with
   another colour, so `Wedges / Straps / Modify Height` (which have no colour) are unaffected.
-- ⚠️ **Scoped to LOCKED colour slots.** An editable colour keeps its configured default as the
-  pre-selected swatch (web `resolveEffectiveColorBehavior`), and every combination colour (gutter runs,
-  downspouts) is editable — so neither is touched.
+- ⚠️ **Scoped by the PAIRING, not by `field.locked`.** The first pass gated every one of these on
+  `isFieldLocked(colour)` and did **nothing on device** — on the live config the Extras colour is
+  authored as a plain editable swatch (it renders read-only because the TAB is, not because it
+  carries the flag). The scope is instead `isQuantityLikeField`: the colour must FOLLOW A QUANTITY
+  (a `number`/`text` box, a `dcField`-bound or legacy `locked` field). A **combination's** colour
+  follows a SELECTION — gutter runs are `[size toggle, color]`, downspouts `[dsType toggle, dsColor]`
+  — so it never pairs and is never touched. That is the whole guard; there is no locked test left.
 - ⚠️ **`lockedWithColor` / any field with `colorKey` is NOT a colour slot**, and neither is a colour
   carrying its own `dcField`. Those resolve their own value from the calculator; suppressing them would
   blank a real measurement. Both are excluded in `isColorField` and both are tested.
@@ -1986,7 +1991,7 @@ Three call sites, one rule:
 | where | change |
 |---|---|
 | `DynamicTabRenderer` generic locked branch | `resolveLockedValue(…, { fallbackDefault })` + `—` when suppressed |
-| `DynamicTabRenderer` `colorSelection` locked branch | same, via `isPairedQuantityEmpty` — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`), so it can't use `isLockedColorSuppressed` |
+| `DynamicTabRenderer` `colorSelection` locked branch | same — that branch is **also reached with no `field.locked`** (a colorSelection locked by `lockWhenNotRequired`) |
 | `hydrateFieldValue` (storage) | `fallbackDefault: ''` when suppressed → the field is EMPTIED, the same mechanism that drops a not-included product from storage |
 | `formatFieldSummaryValue` (`vertical-summary-utils`) | returns the `missing` variant, so the row never reaches the Job Summary |
 
@@ -2010,6 +2015,162 @@ seeding the colour (and still seeding it when quoted), and the summary row — t
 eslint-clean and all three touched files are byte-identical to their HEAD eslint baselines
 (`dynamic-job-state-storage` 3 errors, `vertical-summary-utils` clean, `DynamicTabRenderer` 24 problems).
 
+#### …and in the deal-edit wizard the colour is CLEARED, not just hidden
+
+Follow-up on the same pair, from the **My Deals ▸ Edit Job Build** flow: *"currently there is a value
+in the ground spout that is 1 — when user change the value from 1 to 0 than the colour should remove
+automatically. currently the colour still available but i dont need color if the ground spout value
+is 0."*
+
+Everything above is a **read** rule, and the edit wizard is the one surface where it cannot apply:
+`editMode` (web `unlockAll`) makes every calculator-locked field editable, so the locked branch — with
+all of its suppression — is never reached. The rep edits `Ground Spout` down to `0` in a real
+`TextField` while a real colour picker keeps showing `Black`, and that colour is stored state, so it
+goes into the **addendum**. Hiding it is not enough here; it has to be removed.
+
+- **`renderField`'s `onChange` is now wrapped** (the raw prop was renamed `onFieldValueChange`, so every
+  case inside picks the wrapper up automatically). When a field's new value is empty
+  (`hasEnteredQuantity` — `0` / `'0'` / `''` / an empty grid), it also writes `''` to each colour slot
+  that belongs to it, through the same `ctx.onFieldChange` the container already uses. Both writes are
+  functional state updaters, so they compose in one tick.
+- **New `findPairedColorFields(quantityField, fields)`** is the inverse of `findPairedQuantityField`:
+  the run of colour fields immediately FOLLOWING the quantity, stopping at the next non-colour field —
+  so `Ground Spout` can never reach into the `Replace Corner` pair below it.
+- ⚠️ **An unconditionally `required: true` colour is exempt** — emptying it would disable **Next**
+  with nothing on screen explaining why. (A `requiredWhen`-gated colour is safe: with the quantity
+  at 0 that rule is not met either.) A combination's picker needs no exemption — it follows a
+  SELECTION, so `isQuantityLikeField` never pairs it in the first place.
+- **`resolveSwatchValue` applies the same rule to the editable picker**, which is what covers a deal
+  **saved before any of this existed**: its stored `Black` sits on a 0 extra, and re-offering it as the
+  selected swatch would just re-submit the phantom. Same exemption.
+- **Nothing is written when there is no colour to clear** (`state[colorId]` already empty), so typing in
+  an Extras field can't dirty the draft on its own.
+
+##### …and the second reason it didn't fire: `dealCenterData` still reports the SOLD quantity
+
+QA came back with a screenshot of `Ground Spout 0` beside a black **Color** chip — the fix above,
+not working. Two causes, both now fixed, and the second one is the subtle half:
+
+1. the `locked`-flag scoping described in the round-1 section (retired for `isQuantityLikeField`), and
+2. **`resolvePairedQuantityValue` preferred the CALCULATOR whenever the state value looked empty.**
+   Its first line was `if (hasEnteredQuantity(fromState)) return fromState;`, so a state value of
+   **`0` fell through to `resolveLockedValue`** — and in the deal-edit wizard `dealCenterData` still
+   holds the quantity the deal was SOLD with (`1`). The rep types 0, the helper reads 1, and the
+   colour is judged to be on the job. It now returns any **explicit** state entry, `0` and `''`
+   included, and reads the calculator ONLY when the field has no entry at all (a build never
+   opened). Same principle `formatFieldSummaryValue` already documents: in edit mode the rep's live
+   value must win.
+
+Verified with 15 more tests in the same suite (38 total), driving the real helpers plus the exact
+side effect and the exact `resolveSwatchValue` expression: the ticket repro (`1 → 0` and `1 → ''`
+both clearing), the typed `0` outranking a calculator that still says `1`, the calculator still
+read when the build has no entry, the colour surviving `1 → 2`, the neighbouring pair untouched, a
+quantity that owns no colour, the walk stopping at the next quantity, an **unlocked** Extras colour
+now covered (the live-config case), a colour that follows a **toggle** left alone in both
+directions, the required exemption, the no-op write, and the editable picker painting nothing on a
+0 extra while still painting a saved colour once the quantity is back. tsc identical to baseline;
+`locked-color-defaults.ts` and `vertical-summary-utils.ts` are eslint-clean and the other two files
+are byte-identical to their HEAD baselines (storage 3 errors, `DynamicTabRenderer` 24 problems).
+
+### The Complete-Job payload now matches the backend's contract exactly
+
+Ticket: *"this is the actual payload that is used for the job submit — compare the already implemented
+payload with this provided payload and set the already implemented payload 100% same … all the fields
+should be populated properly that needs on the backend."* Two references, both in the repo root:
+
+| file | what it is |
+|---|---|
+| **`payload.dynamic.json`** | the backend dev's CONTRACT — key set, string money, the calculator key, and the four document groups |
+| **`web-job-builder.txt`** | a capture of a REAL web submit — the same shape with a real `LFCalculator` document (40 entries) |
+
+⚠️ The capture is hand-truncated at the agreement blob (`"blob":"type": "agreement"`), so it does not
+parse and its `jobState` is missing everything after `agreements` — the vertical/tab state was cut, not
+absent. Read it for `leadData` only.
+
+**New pure `src/screens/DynamicDealCenter/utils/job-submit-payload.ts`** assembles the body
+(`buildSubmitLeadData` / `buildCalculatorDocument` / `buildJobSubmitPayload` / `toPayloadAmount` /
+`toPayloadText`). `DynamicJobBuilderScreen.handleComplete` no longer builds it inline.
+
+#### What was wrong
+
+- **The calculator was usually missing entirely.** `leadData.LFCalculator` must be the FULL saved
+  calculator document (`_id`, `createdBy`, `appointmentId`, `entries[]`, `totals`, `price`,
+  `discountPercentage`, `createdAt`/`updatedAt`, …). Mobile attached the in-memory **`CalcTab`**, which
+  has none of those and whose `entries` is a **map keyed by field id, not an array** — and then dropped
+  the key altogether unless the tab happened to carry `createdBy`/`appointmentId`/`title`, which it
+  never does. So the submit went out with no calculator on the vast majority of jobs.
+  **`handleComplete` now reads the server copy** (`GET /lfcalculators/{id}` via
+  `LeadService.getCalculator`) and passes it through `buildCalculatorDocument`; the tab is a shaped
+  FALLBACK for a failed read (entries map flattened back to an array, ids filled from the submit
+  context), so the key is never partial and never absent.
+  ⚠️ The read goes through **`extractCalculatorDocument`**, because the response wrapper varies by
+  deployment — the repo already unwraps it four ways (`DynamicDealEditScreen`:
+  `body?.data?.calculator ?? body?.data ?? body?.calculator ?? body`). Anything without an `_id` is
+  treated as UNRESOLVED so the tab fallback runs: sending a wrapper as the calculator looks exactly
+  like "no calculator" from the backend. `handleComplete` also logs one line naming the attached
+  calculator (`[COMPLETE JOB] leadData calculator: _id=… entries=… source=server|local tab`), so the
+  question is answerable from a device trace.
+- **`leadData` carried the result modal's whole state.** It was `{ ...resultData }` plus mobile-only
+  keys, so it shipped `versatile` / `pineapple` / `resultType` / `demoReason` / `contractPrice`
+  alongside `status`, `installDate`, `timeWindow`, `calculatorId`, `appointmentId` — none of which is in
+  either reference. It is now assembled key by key.
+- **Money went out as NUMBERS.** Both references carry strings (`"originalContractPrice": "24900"`,
+  `"balance": "21900"`) — web's `formData` holds typed text. ⚠️ An unset amount is **`''`, never `0`**:
+  a zero reads as a real quoted figure on the portal.
+- **`paperWork` and `downPaymentReceipt` were never sent.** The contract lists four document groups; the
+  job builder produces only agreements and order sheets, so the other two go out as **empty arrays
+  rather than absent keys** — not the same thing to a partial-update handler.
+- **`lastPriceQuoted` / `originalContractPrice` were both filled from the same field.** Web
+  (`result-lead-modal.js`) sends `lastPriceQuoted` on a **Demo** only and `originalContractPrice` on a
+  **Sale** only; the other is blanked.
+
+#### The two judgement calls (answered by the reporter, not inferred)
+
+1. **The calculator goes out ONLY as `LFCalculator`** — web's spelling, and what web normalizes a
+   stored `lfCalculator` back to on read (`result-lead-modal.js:193`). ⚠️ A lowercase alias holding
+   the SAME object shipped briefly (the contract file and this repo's earlier note on
+   `LeadHandler.submitJobBuilder` both name the lowercase key) and was removed on sight: *"same
+   object sent in two different formats — make sure only upper case is sent"*. If the backend ever
+   turns out to read the lowercase key, **rename** this one rather than adding the second.
+   The *"lf calculator is not appended"* report was never about the key name — it was the missing
+   document below.
+   ⚠️ It is **never null** — web's last line before saving is *"ensure LFCalculator is at least an
+   empty object for backend validation"*, so an absent calculator goes out as `{}`.
+   ⚠️ `selectedAppointmentId` prefers the CALCULATOR's own `appointmentId`
+   (web: `targetCalc?.appointmentId || formData.selectedAppointmentId`).
+2. **`leadData.jobBuilder` is KEPT** — the one mobile-only key retained, so a backend that reads the
+   build from `leadData.jobBuilder` rather than from the top-level `jobState` still gets it. Everything
+   else listed above was removed.
+
+#### Deliberately NOT changed
+
+- **`_storageVersion` stays `1`.** The contract file shows `2`, but the real web capture shows `1` and
+  it is the serializer's own constant — bumping it is a storage-format change, not a payload field.
+- **`agreements[].type` is kept** (`{ name: '', file, type }`). The contract omits it; web's real
+  traffic sends it, and it is what tells the backend which group a document belongs to on the non-Sale
+  path, where agreements are filed AS order sheets.
+- **`explain` is kept.** The contract file omits it (it was empty in their sample); web sends it and it
+  carries the demo explanation.
+- **The lead-scoped outcome mirror right after the POST is untouched** — it has no fixed contract and is
+  what persists `versatile` / `pineapple` / the rest of the modal's fields, so removing them from the
+  POST loses nothing. It now attaches the same resolved calculator document.
+- **The legacy `screens/JobBuilder` submit** (non-dynamic, `isDynamic` false) builds its own payload and
+  was left alone — different contract, and the ticket is about the dynamic flow.
+
+Verified with 26 tests (`__tests__/screens/DynamicDealCenter/job-submit-payload.test.ts`) driving the
+real builders against both references verbatim: `leadData`'s exact key list **in order**, every dropped
+key asserted absent (modal-only and mobile-only), string money and `''`-not-`0`, the Sale/Demo
+blanking, the field-name mapping (`downPaymentMethod` → `paymentMethod`), the server calculator copied
+field for field with its `entries` array and `pricingAtTimeOfEntry` intact, the fallback producing the
+same shape from a tab, the entries map flattened, the uppercase key carrying the document with **no
+lowercase twin**, the `{}`-not-null fallback, the calculator's own `appointmentId` winning, every
+wrapper shape the unwrap
+accepts (and an id-less one rejected), the four document groups always present, and the
+`configSnapshotId` → `'dynamic'` fallback. tsc identical to baseline; the new util is eslint-clean and
+`DynamicJobBuilderScreen` drops from 3 errors to 2 (the removed `_dpm`/`_rawLF` unused destructure).
+
+⚠️ **Needs a device confirmation of the response**, since this is the first submit to carry a real
+calculator document — watch for a validation error naming `lfCalculator`.
 ---
 
 ## 5. Dynamic Deal Center / Dynamic Job Builder — in-progress area

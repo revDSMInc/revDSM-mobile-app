@@ -48,6 +48,7 @@ import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
 import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-log';
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
+import { validateEmail } from '../../../utils/validation';
 // Handles keyboard avoidance on BOTH platforms (its `KeyboardProvider` is mounted in
 // App.tsx). `automaticallyAdjustKeyboardInsets` is iOS-only, and on Android the
 // manifest's `adjustResize` no longer shrinks the window once KeyboardProvider goes
@@ -135,6 +136,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [downPaymentMethod, setDownPaymentMethod] = useState('');
   const [balanceMethod, setBalanceMethod] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  // The addendum's SECOND delivery channel. The submit used to hardcode
+  // `lead.customerDetails.email`, so the rep could neither see nor correct the address
+  // it was mailed to — a stale or misspelt one failed silently, with only the SMS
+  // actually reaching the customer.
+  const [customerEmail, setCustomerEmail] = useState('');
   // Free-text note shown to the customer on the addendum. Persists to the draft and,
   // on signature, to Lead.note / LeadOutcome.note (backend `note` field). `''` clears it.
   const [note, setNote] = useState('');
@@ -225,6 +231,13 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     // belongs in the value.
     setCustomerPhone(
       formatLocalUSPhone(lead?.customerDetails?.phone || lead?.customerDetails?.phoneNumber || '')
+    );
+    // Seed the address the submit previously hardcoded, so the field opens on what the
+    // addendum will really be mailed to. TRIMMED — a stored value carrying whitespace
+    // would otherwise fail the format check on a field the rep never touched, which is
+    // the same trap the phone seed's `formatLocalUSPhone` normalization avoids.
+    setCustomerEmail(
+      String(lead?.customerDetails?.email || lead?.customerDetails?.emailAddress || '').trim()
     );
     // Pre-fill with the lead's existing note so the rep sees the current value and
     // edits from it; a matching value then reads as "no change".
@@ -523,6 +536,23 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       : customerPhoneDigits.length !== 10
         ? 'Enter a complete 10-digit phone number.'
         : '';
+
+  // ── "Send Addendum To" email ────────────────────────────────────────────────
+  // Format-checked with the app's shared `validateEmail` (the same rule login and
+  // forgot-password use), so "email" cannot come to mean two different things.
+  //
+  // ⚠️ OPTIONAL, unlike the phone — and that asymmetry is deliberate. SMS is the
+  // channel that gets the customer to the signature page, so an unreachable phone
+  // leaves the draft pending forever; email is a copy. The submit already tolerated a
+  // blank address (it sent `lead.customerDetails.email || ''`), so requiring one here
+  // would make every email-less lead UNSUBMITTABLE — a regression on a flow that
+  // works today. A blank field therefore means "SMS only", exactly as before; only a
+  // value that is present and malformed blocks Submit.
+  const customerEmailTrimmed = customerEmail.trim();
+  const customerEmailError =
+    customerEmailTrimmed && !validateEmail(customerEmailTrimmed)
+      ? 'Enter a valid email address (e.g. name@example.com).'
+      : '';
   // Compare each picker against the SAME baseline it was seeded from, so opening the
   // wizard and touching nothing reads as no change. Both sides go through
   // `coerceToPlanKey` with the matching fallback ('check' for the balance, blank for
@@ -752,7 +782,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         const formattedPhone = toE164USPhone(customerPhone || lead?.customerDetails?.phone || '');
         try {
           await LeadService.sendDraftSubmitEmail(draftId, {
-            customerEmail: lead?.customerDetails?.email || '',
+            // The address the rep typed, not the lead's stored one — that is the whole
+            // point of the field. Deliberately NOT falling back to the stored value when
+            // blank: the field is SEEDED from it, so an empty field means the rep cleared
+            // it on purpose, and a fallback would mail the addendum to an address they
+            // had just removed.
+            customerEmail: customerEmailTrimmed,
             customerPhone: formattedPhone,
           });
         } catch (emailErr) {
@@ -808,6 +843,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     calculatorData,
     buildChangeGroups,
     customerPhone,
+    customerEmailTrimmed,
     note,
     navigation,
     user,
@@ -1315,6 +1351,37 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   {customerPhoneError}
                 </Text>
               )}
+
+              <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 14, marginBottom: 4 }}>
+                Email Address <Text style={{ color: '#CBD5E1' }}>(optional)</Text>
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: customerEmailError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 12 }}>
+                <Icon name="email-outline" size={16} color="#94A3B8" style={{ marginRight: 6 }} />
+                <TextInput
+                  value={customerEmail}
+                  onChangeText={setCustomerEmail}
+                  keyboardType="email-address"
+                  // An address is case-insensitive and never a proper noun, so the OS
+                  // shift-on-first-letter and autocorrect only ever corrupt it.
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="emailAddress"
+                  placeholder="name@example.com"
+                  placeholderTextColor="#94A3B8"
+                  style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 10 }}
+                />
+              </View>
+              {!!customerEmailError && (
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#DC2626', marginTop: 6 }}>
+                  {customerEmailError}
+                </Text>
+              )}
+              <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 8, lineHeight: 15 }}>
+                {customerEmailTrimmed
+                  ? 'The addendum is texted and emailed to the customer.'
+                  : 'The addendum is texted to the customer. Add an email to send a copy.'}
+              </Text>
             </View>
           </KeyboardAwareScrollView>
         )}
@@ -1341,11 +1408,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           ) : (
             <TouchableOpacity
               onPress={handleSubmit}
-              // ⚠️ The phone gates SUBMIT only, never `Next · Review` on step 2 — the
-              // field lives on THIS step, so blocking Next would strand the rep with
-              // a disabled button and nothing on screen explaining it.
-              disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading || !!customerPhoneError}
-              style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading && !customerPhoneError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
+              // ⚠️ The phone and email gate SUBMIT only, never `Next · Review` on step 2
+              // — both fields live on THIS step, so blocking Next would strand the rep
+              // with a disabled button and nothing on screen explaining it.
+              disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading || !!customerPhoneError || !!customerEmailError}
+              style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading && !customerPhoneError && !customerEmailError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
             >
               {isSubmitting && <ActivityIndicator size="small" color="#fff" />}
               <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Submit Addendum</Text>

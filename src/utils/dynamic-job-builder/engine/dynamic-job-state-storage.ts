@@ -8,7 +8,7 @@ import {
 } from './combination-utils';
 import { isFieldLocked, resolveLockedValue } from './allocation-utils';
 import { resolveConditionalDefault } from './dependency-engine';
-import { isLockedColorSuppressed } from './locked-color-defaults';
+import { isPairedQuantityEmpty } from './locked-color-defaults';
 import { buildTabKey } from './product-catalog-utils';
 import { isContainerFieldType } from '../constants/field-types';
 
@@ -125,7 +125,7 @@ function hydrateFieldValue(
     // reason a not-included product does: seeding the portal's default colour onto
     // an extra the rep never quoted writes a phantom colour into the saved build
     // (and paints it back on reopen). See `locked-color-defaults.ts`.
-    const colorSuppressed = isLockedColorSuppressed(field, {
+    const colorSuppressed = isPairedQuantityEmpty(field, {
       fields: siblingFields,
       state: existing,
       dealCenterData,

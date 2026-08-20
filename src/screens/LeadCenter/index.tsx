@@ -1240,6 +1240,13 @@ export default function LeadCenterPage() {
                 isRefreshing={isRefreshing}
                 onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
                 drafts={dealDrafts}
+                // Resend / Cancel change the DRAFT; an Edit Phone/Email writes the
+                // CUSTOMER record, which the recipient line falls back to — so refetch
+                // both rather than only the drafts.
+                onDraftsChanged={() => {
+                  queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead?._id] });
+                  refetch();
+                }}
               />
             )}
             {activeTab === 'tools' && (
