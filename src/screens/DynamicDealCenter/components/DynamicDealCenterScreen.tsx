@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -16,6 +16,8 @@ import { BuildFromExistingModal } from './BuildFromExistingModal';
 import { extractCalculatorOutcome, hasSavedJobBuild } from '../utils/saved-job-build';
 import { createRehashDraftLatch, latchRehashDrafts, releaseRehashDrafts, isRehashDraftCalculator } from '../utils/rehash-draft-calculators';
 import { buildDealCenterData } from '../utils/build-deal-center-data';
+import { resolveSubmittedCalculatorId } from '../utils/job-builder-submission';
+import { FlashMessage } from '../../../config/message';
 import { buildSectionLabelMap } from '../utils/item-format';
 import { LeadService } from '../../../services/api/leads';
 import { useAuth } from '../../../hooks/useAuth';
@@ -70,6 +72,11 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     prompt: false,
     startFresh: false,
   });
+  // Ticket 409 - the rep reset the job builder in THIS session. `lead` is a nav param,
+  // so it still carries the old `jobBuilder` until the rep leaves and comes back; without
+  // this the tabs would stay locked immediately after the reset that was meant to unlock
+  // them. Web does the same thing locally (`setLead({ ...currentLead, jobBuilder: null })`).
+  const [jobResetLocally, setJobResetLocally] = useState(false);
 
   const {
     config: jobBuilderConfig,
@@ -158,6 +165,59 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     setResultModal({ visible: true, calculatorId, resultType: result, price, paymentMethod, downPayment });
     setCurrentCalculatorId(calculatorId);
   }, []);
+
+  /**
+   * Ticket 409 - the calculator this lead was already resulted from, or null.
+   *
+   * `jobResetLocally` short-circuits it because `lead` is a nav-param snapshot: the PUT
+   * clears the result on the server, but nothing re-reads the lead while the rep is still
+   * in the deal center.
+   */
+  // A plain const, NOT a `useMemo`: the resolver is a handful of `||`s, and every hook
+  // in this component sits after the edit-mode early return (see `rehashBuild`), so one
+  // that buys nothing is pure cost.
+  const submittedCalculatorId = jobResetLocally ? null : resolveSubmittedCalculatorId(lead);
+
+  /**
+   * Reset Job Builder - the only way out of the locked state.
+   *
+   * Confirmation copy and the direct `LeadService.resetLead` call are lifted from the
+   * CLASSIC deal center's `handleResetJobBuilder` (`screens/DealCenter/index.tsx`), so the
+   * two deal centers ask the same question and hit the same endpoint. Calling the service
+   * directly rather than `useResetLeadMutation` is deliberate: every hook in this component
+   * sits after the edit-mode early return (see `rehashBuild`), and `queryClient` is already
+   * in scope above that branch, so this costs no extra hook. A plain function for the same
+   * reason — `PremiumQuoteCard` is not memoised, so a stable identity buys nothing here.
+   */
+  const handleResetJobBuilder = () => {
+    const resetLeadId = lead?._id || lead?.leadId || lead?.id;
+    Alert.alert(
+      'Reset Job Builder',
+      'Are you sure you want to reset this lead result? This will clear the current result and allow you to re-enter the lead',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (resetLeadId) await LeadService.resetLead(resetLeadId);
+              // Unlock immediately - see `jobResetLocally`.
+              setJobResetLocally(true);
+              // The lead list and the Lead Center both render the resulted state.
+              queryClient.invalidateQueries({ queryKey: ['leads'] });
+              if (resetLeadId) queryClient.invalidateQueries({ queryKey: ['lead', resetLeadId] });
+              FlashMessage.success('Success', 'Job builder reset successfully');
+            } catch (err) {
+              console.error('[DynamicDealCenter] Reset job builder failed:', err);
+              FlashMessage.error('Error', 'Could not reset job builder. Please try again.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
 
   // Opt-in handoff from the Investment Center: once the calculators have loaded,
   // open the Result Lead (Sale) modal for the opted-in calculator with the secured
@@ -398,6 +458,8 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
           }}
           activeTabId={activeTabId}
           onTabSelect={setActiveTabId}
+          submittedCalculatorId={submittedCalculatorId}
+          onResetJobBuilder={handleResetJobBuilder}
         />
         <ResultJobModal
           visible={resultModal.visible}
