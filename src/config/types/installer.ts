@@ -674,8 +674,14 @@ export interface CocSignatureRef {
   bucketName?: string;
 }
 
-/** The certificate's two relationship boxes. */
-export type CocRelationshipType = 'homeowner' | 'other';
+/**
+ * Who signed, from the certificate's relationship boxes.
+ *
+ * Mirrors the backend's `CocRelationshipType` enum verbatim. `spouse` is its own
+ * value rather than an `other: "spouse"` write-in — it is the commonest non-owner
+ * signer, and a free-text field spells it a dozen ways.
+ */
+export type CocRelationshipType = 'homeowner' | 'spouse' | 'other';
 
 /**
  * `stepData.coc` — the Certificate of Completion signed on the device.
