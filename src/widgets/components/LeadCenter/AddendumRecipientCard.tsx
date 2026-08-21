@@ -17,14 +17,17 @@ import {
   formatRecipientPhone,
   recipientEditError,
   resolveContactEditPatch,
+  normalizeContactValue,
   buildResendContact,
   describeResendResult,
   channelLabel,
   resolveResendAction,
   resolveCancelAction,
   resolveContactSaveAction,
-  resolveCustomerId,
-  NO_CUSTOMER_MESSAGE,
+  buildDraftContactPayload,
+  canRenderRecipientCard,
+  indexDraftsById,
+  resolveRowContact,
   type AddendumRecipientRow,
 } from '../../../utils/addendum-recipients';
 
@@ -45,6 +48,30 @@ import {
 
 interface AddendumRecipientCardProps {
   lead: any;
+  /**
+   * `GET lead/v1/{leadId}/job-builder-drafts` — already fetched once in `LeadCenter`.
+   * Each row carries the contact the addendum was actually SENT to
+   * (`customerPhone` / `customerEmail`), which is where a rep override lands. Used
+   * here purely as a per-draft contact lookup; the pending list itself still comes
+   * from `pending-addendums`.
+   */
+  drafts?: any[];
+  /**
+   * True once the drafts query above has SETTLED (resolved or failed), not merely
+   * once it returned rows.
+   *
+   * ⚠️ The card holds its FIRST PAINT until this is true. Two sources feed one line
+   * of text — `pending-addendums` (which resolves first and knows only the LEAD's
+   * customer) and the drafts list (which knows the address this addendum actually
+   * went to) — so rendering on the first alone showed the customer contact for a
+   * beat and then swapped it. That read as a bug, and on a deliberately overridden
+   * addendum the value shown first was simply WRONG.
+   *
+   * ⚠️ Defaults TRUE so a caller that forgets it still renders rather than hanging
+   * on a blank section — at the cost of the flicker returning. `JobDocsSection`
+   * passes it; any new caller must too.
+   */
+  draftsReady?: boolean;
   isDark?: boolean;
   colors?: any;
   /** Refresh sibling surfaces (the drafts list / the lead) after an action. */
@@ -53,12 +80,14 @@ interface AddendumRecipientCardProps {
 
 export const AddendumRecipientCard = ({
   lead,
+  drafts = [],
+  draftsReady = true,
   isDark,
   colors,
   onRecipientChanged,
 }: AddendumRecipientCardProps) => {
   const leadId = lead?._id || lead?.id;
-  const { snapshot, refresh } = useLeadPendingAddendums(leadId);
+  const { snapshot, isLoading, refresh } = useLeadPendingAddendums(leadId);
 
   // Which draft has a call in flight. Doubles as the double-tap guard — see
   // `resolveResendAction`, where the in-flight check deliberately outranks validation.
@@ -70,12 +99,26 @@ export const AddendumRecipientCard = ({
   } | null>(null);
 
   const rows = useMemo(() => pendingRecipientRows(snapshot), [snapshot]);
-  const customerId = resolveCustomerId(lead);
+  const draftsById = useMemo(() => indexDraftsById(drafts), [drafts]);
 
-  // ⚠️ Contact is LEAD-LEVEL — one customer record shared by every pending addendum,
-  // which is why an edit here affects them all and why it is not carried per row.
-  const contact = snapshot.customer;
-  const phoneDisplay = formatRecipientPhone(contact.phone);
+  // ⚠️ Contact is resolved PER DRAFT. An addendum carries the address it was actually
+  // sent to (`customerPhone`/`customerEmail` on its own row of the drafts list), which
+  // is where a rep override lands; only when those are EMPTY does it fall back to the
+  // customer details.
+  //
+  // `localContact` holds a contact saved in THIS session. "Edit Phone"/"Edit Email"
+  // write to the CUSTOMER record, which ranks BELOW the draft — so without this,
+  // editing an addendum that carries its own contact would appear to do nothing, and
+  // the next resend would still go to the old address.
+  const [localContact, setLocalContact] = useState<
+    Record<string, { phone?: string; email?: string }>
+  >({});
+
+  const contactFor = useCallback(
+    (draftId: string) =>
+      resolveRowContact(draftsById[draftId], snapshot.customer, lead, localContact[draftId]),
+    [draftsById, snapshot.customer, lead, localContact]
+  );
 
   const titleColor = isDark ? colors?.text : '#1C252E';
   const cardBg = isDark ? '#FFFFFF08' : '#F9FAFB';
@@ -97,7 +140,7 @@ export const AddendumRecipientCard = ({
       try {
         const res = await LeadService.resendJobBuilderDraft(
           row.draftId,
-          buildResendContact(contact)
+          buildResendContact(contactFor(row.draftId))
         );
         // ⚠️ A 2xx does NOT mean the customer was reached: the response reports each
         // channel separately and anything other than 'sent' is a partial failure.
@@ -126,7 +169,7 @@ export const AddendumRecipientCard = ({
         setBusyDraftId(null);
       }
     },
-    [busyDraftId, contact, refreshAll]
+    [busyDraftId, contactFor, refreshAll]
   );
 
   // ── Edit: PATCH lead/v1/customer/{customerId} ───────────────────────────────
@@ -139,34 +182,40 @@ export const AddendumRecipientCard = ({
   const handleSaveContact = useCallback(async () => {
     if (!editing) return;
     const { draftId, field, value } = editing;
-    const original = field === 'phone' ? contact.phone : contact.email;
-    const action = resolveContactSaveAction(customerId, field, value, original, busyDraftId);
+    const rowContact = contactFor(draftId);
+    const original = field === 'phone' ? rowContact.phone : rowContact.email;
+    const action = resolveContactSaveAction(draftId, field, value, original, busyDraftId);
 
     if (action === 'ignore') {
-      // No customer record → make NO request. A "saved" that never saved would let a
-      // later resend report success against a number that was never stored.
-      if (!customerId) FlashMessage.error('Cannot save', NO_CUSTOMER_MESSAGE);
-      else setEditing(null); // unchanged — nothing to send
+      // Unchanged (or no draft id) — close without a request rather than PATCHing a
+      // value the server already holds.
+      setEditing(null);
       return;
     }
     if (action === 'invalid') return;
 
-    const patch = resolveContactEditPatch(field, value, original);
-    if (!patch) return;
-
     setBusyDraftId(draftId);
     try {
-      await LeadService.updateCustomer(customerId, patch);
+      // ⚠️ BOTH fields go, so the untouched channel is sent at its CURRENT value —
+      // sending only the edited one would blank the other.
+      await LeadService.updateJobBuilderDraftContact(
+        draftId,
+        buildDraftContactPayload(rowContact, { [field]: value })
+      );
+      // Held locally as well, so the row updates on the spot rather than waiting for
+      // the drafts refetch to land.
+      setLocalContact((prev) => ({
+        ...prev,
+        [draftId]: { ...prev[draftId], [field]: normalizeContactValue(field, value) },
+      }));
       setEditing(null);
       FlashMessage.success(
         field === 'phone' ? 'Phone updated' : 'Email updated',
         'Tap Resend to send the addendum to the new contact'
       );
-      // The banner re-reads the contact from the server, so no local override is
-      // needed — this endpoint returns the customer alongside the addendums.
       refreshAll();
     } catch (err: any) {
-      console.warn('[AddendumRecipientCard] customer update failed:', err);
+      console.warn('[AddendumRecipientCard] contact update failed:', err);
       FlashMessage.error(
         'Could not update',
         err?.response?.data?.message || 'The contact could not be updated. Please try again.'
@@ -174,18 +223,19 @@ export const AddendumRecipientCard = ({
     } finally {
       setBusyDraftId(null);
     }
-  }, [editing, contact, customerId, busyDraftId, refreshAll]);
+  }, [editing, contactFor, busyDraftId, refreshAll]);
 
   const openEdit = useCallback(
     (row: AddendumRecipientRow, field: 'phone' | 'email') => {
+      const c = contactFor(row.draftId);
       setEditing({
         draftId: row.draftId,
         field,
         // The phone editor holds the LOCAL part only — the static "+1" sits beside it.
-        value: field === 'phone' ? formatRecipientPhone(contact.phone) : contact.email,
+        value: field === 'phone' ? formatRecipientPhone(c.phone) : c.email,
       });
     },
-    [contact]
+    [contactFor]
   );
 
   // ── Cancel: POST lead/v1/job-builder-draft/{id}/cancel ──────────────────────
@@ -230,9 +280,10 @@ export const AddendumRecipientCard = ({
     }
   }, [confirmCancel, busyDraftId, refreshAll]);
 
-  // Nothing pending → nothing to show. An empty list is a REAL state (the last
-  // addendum was signed or cancelled), not a loading gap.
-  if (!rows.length) return null;
+  // Nothing renders until BOTH sources have settled AND something is actually
+  // pending — see `canRenderRecipientCard` for why the flicker mattered. On a
+  // revisit both are cached, so the card is there on the first frame.
+  if (!canRenderRecipientCard(isLoading, draftsReady, rows.length)) return null;
 
   const count = snapshot.pendingCount;
   const plural = count > 1;
@@ -251,6 +302,9 @@ export const AddendumRecipientCard = ({
       <View style={styles.body}>
         {rows.map((row) => {
           const isEditingThis = editing?.draftId === row.draftId;
+          // The address THIS addendum was sent to — its own, else the customer.
+          const contact = contactFor(row.draftId);
+          const phoneDisplay = formatRecipientPhone(contact.phone);
           const isBusy = busyDraftId === row.draftId;
           const editError = isEditingThis ? recipientEditError(editing.field, editing.value) : '';
           // Save is disabled when nothing changed — an untouched editor sends nothing.
@@ -353,7 +407,7 @@ export const AddendumRecipientCard = ({
                   {/* Save and resend are SEPARATE endpoints — say so, or "saved" reads
                       as "the customer has been re-notified". */}
                   <Text style={styles.editHint}>
-                    Saving updates the customer’s contact. Tap Resend to notify them.
+                    Saving updates this addendum’s contact. Tap Resend to notify them.
                   </Text>
                 </>
               ) : (

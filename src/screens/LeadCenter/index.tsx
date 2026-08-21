@@ -403,7 +403,7 @@ export default function LeadCenterPage() {
   // on BOTH routes (not just `fromMyDeals`) because `AddendumsCard` renders on both —
   // web's own note: "it is null when the lead has none, so it costs the Lead Center
   // nothing when there are no addendums." Only the BANNERS are deal-only.
-  const { data: dealDrafts = [] } = useQuery({
+  const { data: dealDrafts = [], isFetched: draftsFetched } = useQuery({
     queryKey: ['lead-job-builder-drafts', lead?._id],
     queryFn: async () => {
       try {
@@ -1240,6 +1240,10 @@ export default function LeadCenterPage() {
                 isRefreshing={isRefreshing}
                 onEditContract={fromMyDeals ? handleEditDealFromMyDeals : undefined}
                 drafts={dealDrafts}
+                // Whether the drafts query has SETTLED (success or handled error).
+                // The pending-addendum card holds its first paint until it has, so a
+                // draft's own contact never flickers in over the customer's.
+                draftsReady={draftsFetched}
                 // Resend / Cancel change the DRAFT; an Edit Phone/Email writes the
                 // CUSTOMER record, which the recipient line falls back to — so refetch
                 // both rather than only the drafts.
