@@ -1,5 +1,19 @@
 /**
- * drop-prices.ts — the single-accepted invariant for rollout drop prices.
+ * drop-prices.ts — the rollout drop-price list: what it means, and how it is wired.
+ *
+ * ⚠️ **NOTHING HERE MAY REMOVE A ROW ON THE READ OR WRITE PATH.** The backend merges
+ * `dropPrice` by `_id` and APPENDS id-less rows, so a row omitted from a save is not
+ * deleted — it survives on the server, invisible to the rep, and the next id-less write
+ * files a second copy beside it. That is the whole duplicate bug: mobile used to collapse
+ * the list to one row per price, so its payload was a SUBSET of the server's while web's
+ * was the server's array verbatim plus the new round. Two helpers lived here for exactly
+ * that — `collapseDropsByPrice` (one row per price) and `dedupeDrops` (byte-identical
+ * rows) — and BOTH have been deleted. The double-tap they doubled as a guard against is
+ * now handled where it belongs: `DropOutcomeModal` accepts one Decline/Secure per
+ * opening. Do not reintroduce either to a save or a hydrate.
+ *
+ * The single-accepted invariant below is the one rule that still runs on both paths, and
+ * it is safe precisely because it rewrites a STATUS rather than dropping a row.
  *
  * A calculator may have many dropped prices but AT MOST ONE may be `accepted`
  * ("SECURED"); every other entry is `declined`. Web enforces this in four places
@@ -33,82 +47,6 @@
  * Returns the SAME array reference when it is already valid, so this is safe to
  * call on every save and every hydrate without churning identity/re-renders.
  */
-/**
- * Remove EXACT-duplicate drop rows, keeping the first occurrence.
- *
- * A drop is a distinct negotiation round — two rows that agree on price, status,
- * down payment, balance and payment plan(s) are the SAME round recorded twice,
- * never two meaningful rounds. Such duplicates crept in from a save/outcome race
- * (the calculator's `dropPrice` was persisted by both the debounced calculator
- * save AND the result-outcome payload, so a round could land twice) and surfaced
- * as "I added 2 drops but see 4" and a phantom extra row auto-appearing on reopen.
- *
- * This is intentionally NARROW: it collapses only byte-for-byte-equal rows, so two
- * genuinely different rounds (different price, status, plan, or down payment) are
- * both kept and still list as "1st / 2nd Dropped Price". Applied on WRITE so a
- * duplicate is never persisted, and on READ so already-corrupted records self-heal
- * on open. Returns the SAME reference when nothing is dropped (no render churn).
- */
-export function dedupeDrops<T extends Record<string, any>>(drops: T[] | null | undefined): T[] {
-  if (!Array.isArray(drops)) return [];
-  const seen = new Set<string>();
-  const out: T[] = [];
-  for (const d of drops) {
-    const sig = [
-      Math.round(Number(d?.price ?? d?.dropedPrice ?? 0)),
-      d?.status ?? '',
-      Math.round(Number(d?.downPayment ?? 0)),
-      Math.round(Number(d?.balance ?? 0)),
-      d?.paymentMethod ?? '',
-      Array.isArray(d?.paymentMethods) ? d.paymentMethods.join('|') : '',
-    ].join('::');
-    if (seen.has(sig)) continue;
-    seen.add(sig);
-    out.push(d);
-  }
-  return out.length === drops.length ? drops : out;
-}
-
-/**
- * Collapse drops so at most ONE entry exists PER PRICE.
- *
- * `dedupeDrops` above is byte-for-byte, so the same negotiated price surviving with a
- * DIFFERENT shape is not merged — and that is exactly what accumulates: the `declined`
- * twin `openDrop` persists on entry sitting beside the `accepted` version after Secure,
- * or a re-saved copy the backend re-created without a matching `_id` (mobile drops carry
- * no `_id`, so a second save of the same price appends a new row). Either way the rep
- * sees the same price listed twice.
- *
- * A negotiated price is ONE outcome, so keep a single entry per price, preferring:
- *   accepted (SECURED) over declined  →  a copy that has a server `_id`  →  a more
- *   complete copy (has a payment method). An `_id` from ANY copy is carried onto the
- *   survivor so the next save updates that row in place instead of appending yet another.
- * Order is preserved by first-seen price. Returns the SAME reference when nothing
- * collapses (no render churn).
- */
-export function collapseDropsByPrice<T extends Record<string, any>>(drops: T[] | null | undefined): T[] {
-  if (!Array.isArray(drops)) return [];
-  const priceOf = (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
-  const rank = (d: any) =>
-    (d?.status === 'accepted' ? 100 : 0) + (d?._id ? 10 : 0) + (d?.paymentMethod ? 1 : 0);
-  const byPrice = new Map<number, T>();
-  const order: number[] = [];
-  for (const d of drops) {
-    const price = priceOf(d);
-    const cur = byPrice.get(price);
-    if (cur === undefined) {
-      byPrice.set(price, d);
-      order.push(price);
-      continue;
-    }
-    const winner = rank(d) > rank(cur) ? d : cur;
-    const id = (winner as any)._id ?? (cur as any)._id ?? (d as any)._id;
-    byPrice.set(price, id ? ({ ...winner, _id: id } as T) : winner);
-  }
-  const out = order.map((p) => byPrice.get(p) as T);
-  return out.length === drops.length ? drops : out;
-}
-
 export function normalizeSingleAcceptedDrop<T extends { status?: string }>(drops: T[] | null | undefined): T[] {
   if (!Array.isArray(drops)) return [];
 
@@ -126,4 +64,136 @@ export function normalizeSingleAcceptedDrop<T extends { status?: string }>(drops
   return drops.map((d, i) =>
     i !== lastAcceptedIndex && d?.status === 'accepted' ? { ...d, status: 'declined' } : d
   );
+}
+
+
+/**
+ * ROOT CAUSE of "adding or declining a drop saves a duplicate".
+ *
+ * The backend treats `dropPrice` as a subdocument array: a row that arrives WITH an
+ * `_id` updates that row, a row WITHOUT one is FILED AS NEW. Web's payload therefore
+ * carries the `_id` of every already-saved round:
+ *
+ *   {"dropPrice":[{"_id":"6a86b180…","dropedPrice":10000,"status":"declined", …},
+ *                 {"dropedPrice":9000,"status":"declined", …}]}   ← only the new one is id-less
+ *
+ * Mobile never adopted the ids the server assigned — `flushSave` discarded the PUT
+ * response — so EVERY save re-sent the same round id-less and the server filed another
+ * copy. One drop, entered then secured, is two saves and therefore two rows; the
+ * debounced engine can make it more. `dedupeDrops`/`collapseDropsByPrice` above were
+ * written to hide exactly this, on both sides of the wire. They stay as the repair path
+ * for records already corrupted, but they are a poultice — the fix is to send the `_id`.
+ */
+
+const dropIdOf = (d: any): string => String(d?._id ?? '');
+const dropPriceOf = (d: any): number => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
+
+/**
+ * The `dropPrice` rows in a `PUT /lfcalculators/{id}` response, whatever it is wrapped in.
+ *
+ * Walks a FIXED list of roots rather than guessing a path: an unrecognised response
+ * yields `[]` and the caller simply doesn't adopt this time (the next save retries),
+ * which is the right failure mode for something that only ever ADDS an id.
+ */
+export function readServerDrops(response: any): any[] {
+  const roots = [
+    response,
+    response?.data,
+    response?.data?.data,
+    response?.calculator,
+    response?.data?.calculator,
+    response?.data?.data?.calculator,
+  ];
+  for (const root of roots) {
+    if (Array.isArray(root?.dropPrice)) return root.dropPrice;
+  }
+  return [];
+}
+
+/**
+ * Copy the server's `_id` onto each local drop that hasn't got one, so the NEXT save
+ * updates that row instead of filing a second copy of it.
+ *
+ * Matched by (price, status) among server rows not already claimed, rather than by
+ * index: when a record is already corrupted the server array is LONGER than the one we
+ * sent, so index alignment is exactly the assumption that cannot be trusted here. Each
+ * server row is claimed at most once, so two genuine rounds at the same price take two
+ * different ids. A row we can't match is left alone — an id-less row costs one more
+ * duplicate, a WRONG id would overwrite somebody else's round.
+ *
+ * Returns the SAME reference when nothing is adopted, so this is safe to call after
+ * every save without churning identity or re-renders.
+ */
+export function adoptServerDropIds<T extends Record<string, any>>(
+  local: T[] | null | undefined,
+  serverRows: any[] | null | undefined,
+): T[] {
+  if (!Array.isArray(local) || !local.length) return Array.isArray(local) ? local : [];
+  if (!Array.isArray(serverRows) || !serverRows.length) return local;
+
+  const claimed = new Set<string>();
+  local.forEach((d) => {
+    const id = dropIdOf(d);
+    if (id) claimed.add(id);
+  });
+
+  let changed = false;
+  const out = local.map((d) => {
+    if (dropIdOf(d)) return d;
+    const price = dropPriceOf(d);
+    const status = d?.status ?? '';
+    const free = (s: any) => !!dropIdOf(s) && !claimed.has(dropIdOf(s));
+    const match =
+      serverRows.find((s) => free(s) && dropPriceOf(s) === price && (s?.status ?? '') === status) ||
+      serverRows.find((s) => free(s) && dropPriceOf(s) === price);
+    if (!match) return d;
+    claimed.add(dropIdOf(match));
+    changed = true;
+    return { ...d, _id: dropIdOf(match) } as T;
+  });
+  return changed ? out : local;
+}
+
+/**
+ * A drop list in the shape the backend (and web) expect.
+ *
+ * Web sends exactly `_id?` / `dropedPrice` / `status` / `paymentMethod` / `pricemarkup` /
+ * `downPayment` / `balance`. Mobile additionally mirrored the amount into a `price` key,
+ * which is redundant with `dropedPrice` and is not part of the stored shape — every local
+ * reader already falls back `price ?? dropedPrice`, so dropping it from the WIRE changes
+ * nothing on screen and makes a mobile row byte-comparable with a web one.
+ *
+ * ⚠️ `paymentMethods` (the financing shortlist a drop was negotiated with) is a MOBILE-ONLY
+ * extra and is deliberately kept: `DropOutcomeModal` re-opens a declined drop with those
+ * plans still added, so stripping it to reach exact web parity would lose that state on
+ * reload. It is omitted when empty rather than sent as `[]`.
+ */
+export function toDropPricePayload(drops: any[] | null | undefined): any[] {
+  return (Array.isArray(drops) ? drops : []).map((d) => {
+    const methods = Array.isArray(d?.paymentMethods) ? d.paymentMethods.filter(Boolean) : [];
+    return {
+      ...(d?._id ? { _id: String(d._id) } : null),
+      dropedPrice: Number(d?.dropedPrice ?? d?.price) || 0,
+      status: d?.status || 'declined',
+      paymentMethod: d?.paymentMethod || '',
+      pricemarkup: d?.pricemarkup || '',
+      downPayment: Number(d?.downPayment) || 0,
+      balance: Number(d?.balance) || 0,
+      ...(methods.length ? { paymentMethods: methods } : null),
+    };
+  });
+}
+
+/**
+ * A stable key for the drops that have NOT been filed yet (price + status of each).
+ *
+ * Used to spend at most one fallback read per distinct set of id-less rows, so a PUT
+ * response that never echoes `dropPrice` cannot make every debounced save issue a GET.
+ */
+export function idlessDropSignature(drops: any[] | null | undefined): string {
+  if (!Array.isArray(drops)) return '';
+  return drops
+    .filter((d) => !dropIdOf(d))
+    .map((d) => `${dropPriceOf(d)}:${d?.status ?? ''}`)
+    .join('|');
 }

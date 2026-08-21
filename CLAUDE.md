@@ -3305,6 +3305,375 @@ normalizer with and without a `thumbnail` block, and junk input (`undefined` / `
 no-op throughout. tsc 44 (baseline unchanged); eslint on `Pitchbook/index.tsx` back to its HEAD
 baseline of 13 pre-existing errors, and the three new files are clean.
 
+### Pitch Book slides pinch, double-tap and drag to zoom (ticket 380)
+
+Ticket: *"Pitch Book | need pinch and pull to zoom — you have to add zoom out zoom in
+functionality which we normally have while pinching."* A slide was a plain `<Image>` with
+`resizeMode="contain"`, so the fine print on a deck page (the confidential footer, a spec
+table) could not be read on a phone and there was no way to get closer to it.
+
+**New `src/widgets/common/ZoomableImage.tsx`** — a drop-in replacement for `<Image>` with
+the standard photo-viewer gesture set: **pinch** (anchored to the fingers), **double-tap**
+(toward the tapped point, and again to reset) and **drag** while zoomed. Wired into **all
+three** places a slide is painted — the inline card, and the fullscreen viewer's **portrait
+AND landscape** layouts — so the gesture is there wherever the rep sees the slide.
+
+`source` is an `ImageSourcePropType`, so the bundled `require()` decks (LeafFilter, Green
+Rooflines) and a **portal-authored `{ uri }` book** both work with no branching at the call
+site — the same property that let the dynamic pitch books be projected into the static decks'
+shape in the first place.
+
+⚠️ **`RooflineDeck` was NOT named in the ticket and is fixed too.** Its three slide render
+sites are the same code (differing only in `?.src` on the source), so fixing only the
+reported screen would have left the other half of the presentation flow without the gesture —
+the same reasoning as the inspection-photos ticket.
+
+#### The two things that had to be right
+
+⚠️ **A `Modal` is its own native view tree on Android**, so the app-root
+`GestureHandlerRootView` in `App.tsx` never reaches it and **none of the gestures fire in
+fullscreen** — which is the surface the ticket's screenshot shows. Both fullscreen modals
+now wrap their content in their own `GestureHandlerRootView` (`ImageGalleryModal` already
+does this for the same reason). In `Pitchbook` it replaced the modal's existing root `View`;
+`RooflineDeck` had no wrapper at all, so one was added.
+
+**Pan is enabled ONLY while zoomed.** At 1× a drag still belongs to whatever surrounds the
+image, so nothing this component does can swallow a scroll or a pager swipe. (The pitch book's
+own slide area is not inside a scroll view — the main layout is a fixed flex column — but the
+component is shared and must not depend on that.)
+
+**`resetKey={`${activeCategory}:${currentSlideIndex}`}`** snaps back to 1× on every slide
+change. Without it a rep advances mid-pitch and lands on the next slide already scrolled to
+some corner of the previous one's zoom.
+
+The wrapper **clips** (`overflow: 'hidden'`), so a zoomed slide can never paint over the page
+counter, the ✕, the arrows or the category tabs — all of which are absolutely-positioned
+siblings rendered after it, so they still take their taps first.
+
+#### The maths lives in the pure `src/utils/zoom-transform.ts`
+
+`clampZoomScale` / `panBound` / `zoomOrigin` / `anchoredTranslate` / `doubleTapTranslate` /
+`clampPan` — for the reason `utils/addendum-drafts.ts` and `utils/inspection-photos.ts` exist:
+the component pulls in react-native + reanimated and cannot be loaded under jest here, and
+these six expressions are the whole of what can be **silently** wrong. An anchor that drifts
+or a bound that lets a zoomed slide be flung off screen both present as "the zoom feels
+broken" and neither throws.
+
+- **Coordinate system**: offsets are SCREEN pixels from the CENTRE of the image box, because
+  that is how RN's `transform: [translateX, translateY, scale]` composes — the content scales
+  about its own centre first, then translates in parent units. A point `origin` from the centre
+  lands at `origin * scale + translate`, which is the identity every test asserts against.
+- **Anchoring** solves that for `translate`: `t = focal − origin × scale`, with
+  `origin = (focal − t_prev) / scale_prev` captured once at `onStart`. Capturing the origin from
+  the PREVIOUS transform is what makes a second pinch — one that starts from an already-panned,
+  already-zoomed state — stay under the fingers instead of jumping.
+- **`panBound` is 0 at 1×**, which is what re-centres the slide when the rep pinches all the way
+  out; no separate "snap back" branch is needed.
+
+⚠️ **Every export carries the `'worklet'` directive** so the gesture callbacks can call it on
+the UI thread; they stay ordinary functions on the JS thread, which is what keeps them testable.
+**This is the repo's first cross-file worklet** (every other one is an inline closure the plugin
+auto-workletizes), so it was verified rather than assumed: running the project's own babel
+config over both files shows **6 worklets in the util and 7 in the component**, each component
+callback capturing the helpers by name in its `__closure`. The plugin is present via
+`nativewind/babel` → `react-native-css-interop/babel`, which registers
+`react-native-worklets/plugin` unconditionally — it is **not** in `babel.config.js`, so don't
+conclude from that file that worklets are unprocessed.
+
+Verified with 16 tests driving the real helpers: the anchor identity (`origin × scale + t`
+returning the focal) from fit, from an already-panned 2× state, and back down to 1× where it
+re-centres; the clamp winning over the anchor when honouring it would pull the image's own edge
+inside the box, alongside the case that needs no clamp (a pinch from fit lands exactly ON the
+bound); double-tap zooming toward the tap rather than the centre, a centre tap staying centred,
+and a corner tap staying in bounds; the pan following the finger, pinned at both limits, and
+inert at 1×; the scale clamped at both ends; and a zero scale not dividing by zero. tsc 44
+(baseline unchanged); both new files eslint-clean, `Pitchbook/index.tsx` 12 errors / 56 warnings
+vs a HEAD baseline of 12 / 55 and `RooflineDeck/index.tsx` 11 / 55 vs 11 / 53 — the added ones
+are all `react-native/no-inline-styles`, the rule both files already carry 50+ of.
+
+⚠️ Needs a device check for the gesture feel itself (this repo cannot render-test): pinch and
+double-tap in **fullscreen portrait, fullscreen landscape and the inline card**, that the arrows
+and ✕ still take their taps over a zoomed slide, and that advancing a slide resets the zoom.
+
+### Inspection slot tick moved INSIDE the label (ticket 384)
+
+Ticket: *"The checkmark icon is absolutely positioned and vertically centered on the full
+button height… on two-line labels (like 'Roof Penetration / Vent Area') the icon drifts away
+from the text and ends up sitting near the button's edge instead of next to the label. This
+appears on BOTH iOS and Android."*
+
+The pill is `SlotButton` in **`widgets/components/lead-center/DynamicInspectionRenderer.tsx`**
+(not `DynamicInspectionView.tsx`, which the ticket names — that screen renders `CategoryBody`
+from the renderer). It is the ONE slot pill behind every layout — `PillGrid`, `CompassLayout`
+and the chip selector's nested bodies — and `DynamicMovePhotoModal` renders the same
+`CategoryBody`, so a single fix covers the tag flow and the move flow.
+
+⚠️ **Nothing was absolutely positioned** — the tick was already a flex-row sibling
+(`alignItems: 'center'`, `gap: 4`). The reported drift has a different cause, and it is why the
+prescribed fix would only have half-worked: **a wrapped `Text` takes the full width it was
+measured against**, so on a two-line label the label's box spans the whole pill, pinning the
+sibling tick to the left edge, and `alignItems: 'center'` then parks it vertically between the
+two lines. `alignItems: 'flex-start'` would have lifted it to line 1 and **left it at the edge**,
+which is the half the screenshot circles.
+
+**The tick is now the first glyph of the label itself**, so there is no second box to drift:
+
+```tsx
+<Text numberOfLines={2} style={{ flexShrink: 1, textAlign: 'center', … }}>
+  {filled && !isMoveSource && <Icon name="check" size={13} color="#fff" />}
+  {filled && !isMoveSource ? ' ' : ''}
+  {isMoveSource ? `FROM · ${slot.name}` : slot.name}
+</Text>
+```
+
+- **This is what the STATIC flow already does** — `LeadCenter/TagPhotoModal.tsx:600` builds
+  `` `✓ ${displayName}` `` as one string, which is exactly why that surface never had the bug.
+  The dynamic view now matches it.
+- **`Icon` renders a `Text`**, so nesting is legal, and `create-icon-set` applies
+  `fontWeight: 'normal'` as a style OVERRIDE — the glyph cannot be synthetically bolded by the
+  label's `fontWeight: '600'`, so it looks identical to before. (Checked in node_modules rather
+  than assumed; that override is what makes the nesting safe.)
+- **The row keeps `alignItems: 'center'`.** With the tick inline, that only governs the upload
+  spinner and the `photos.length` count badge, and centring those against the label block is
+  right — `flex-start` would push the badge to the top of a two-line pill.
+- `flexShrink: 1` on the label so the badge can never push it out of the pill.
+
+Single-line pills are unchanged: the run `✓ Roof Edge — Left Side` centres as one piece, where
+before the icon+label pair centred as a group with the same 4px gap.
+
+tsc 44 (baseline unchanged); eslint on the file identical to HEAD (63 problems, 0 errors).
+⚠️ Needs a device check — this repo cannot render-test, and the whole ticket is layout.
+
+⚠️ **`DynamicInspectionRenderer.tsx` is a CRLF file** (927 lines). Editing it with a script that
+reads/writes in text mode rewrites every line to LF and buries the change in a whole-file diff.
+Use `newline=''` on both ends. (Same trap as `EditCustomerModal.tsx` and `dynamic-deal-diff.ts`;
+check `file <path>` before and after — the diff here is 10 insertions / 1 deletion.)
+
+### ✅ ROOT CAUSE: mobile's drop-price payload was a SUBSET of the server's array
+
+Ticket: *"while adding or declining the drop price, from mobile when i add the drop price it's
+saving duplicate. issue is in the mismatch of the payload"*, then, decisively, the two payloads
+for the same calculator side by side: *"a huge difference it should be same like web."*
+
+**Two facts about `dropPrice` explain everything, and they compound:**
+
+1. It is a **subdocument array**: a row arriving WITH an `_id` updates that row, a row without one
+   is **filed as new**.
+2. The backend **merges rather than replaces**, so a row the payload OMITS is not deleted — it
+   survives on the server, invisible to the rep.
+
+Web sends the server's array **verbatim, every row, each with its `_id`**, plus the one new
+id-less round:
+
+```json
+{"dropPrice":[{"_id":"6a86b180…","dropedPrice":10000,…,"balance":0},
+              {"_id":"6a86b18a…","dropedPrice":10000,…,"balance":10000},
+              {"_id":"6a86b688…","dropedPrice":8000, …,"balance":0},
+              {"_id":"6a86b6a7…","dropedPrice":8000, …,"balance":8000},
+              {"_id":"6a86b7ce…","dropedPrice":9000, …},
+              {"_id":"6a86c408…","dropedPrice":9999, …},
+              {"dropedPrice":8888,"status":"accepted", …}]}   ← only the new round is id-less
+```
+
+Mobile sent **four rows for the same calculator** — one per distinct price, three ids, and the
+just-entered 9999 id-less **even though the server already held a 9999 row**. So each save both
+hid three rounds from itself and filed a fresh copy of the one it had lost track of.
+
+#### Fix 1 — adopt the `_id` the server assigns
+
+`flushSave` discarded the PUT response, so a round entered and then secured was saved id-less
+twice and filed twice. Three pure helpers in `utils/drop-prices.ts`:
+
+| | |
+|---|---|
+| `toDropPricePayload(drops)` | web's exact row shape, **`_id` included** |
+| `readServerDrops(response)` | the `dropPrice` rows out of whatever the API wraps them in |
+| `adoptServerDropIds(local, serverRows)` | copy each server `_id` onto the local row it belongs to |
+| `idlessDropSignature(drops)` | bounds the fallback read below |
+
+`flushSave` and `saveDisplacedSiblings` both adopt from their response. Adoption is deliberately
+**not marked dirty** — `_id` is absent from `tabSignature`'s `dropSig`, so it cannot mark the tab
+dirty, schedule a save, or make an in-flight save look superseded.
+
+⚠️ **Matching is by (price, status) among unclaimed server rows, NEVER by index.** On an
+already-corrupted record the server array is LONGER than the one we sent, so index alignment is
+exactly the assumption that cannot hold. Each server row is claimed at most once; an unmatched row
+is **left id-less**, because one more duplicate costs a row while a WRONG id overwrites another
+round. This is the rule `useCalculatorSummary.saveDropPriceToServer` already used in the CLASSIC
+deal center — which is why the duplicate was dynamic-only.
+
+**A bounded fallback read.** The PUT does not always echo the calculator back (the classic flow
+re-reads for the same reason), so a response carrying no `dropPrice` triggers one
+`getCalculator(tabId)`. `dropIdFetchTried` spends **at most one GET per distinct set of id-less
+rows**, so a deployment whose PUT never echoes cannot turn every debounced save into a request.
+
+#### Fix 2 — ⚠️ STOP COLLAPSING THE LIST. This is the half that made it "still same"
+
+Fix 1 alone did not close the ticket, and the second payload is why: `collapseDropsByPrice` kept
+**one row per price** on the write path, the read path AND every local update. Web keeps every
+round — its array holds two 10000 rows and two 8000 rows, because entering a drop and then
+actioning it are two records.
+
+That collapse is what produced the 4-vs-7 mismatch, and it also **re-created the id-less row**:
+merging the rep's freshly-entered 9999 with the server's existing 9999 could keep the copy without
+the `_id`, so the next save filed a second 9999. A helper written to hide duplicates was
+manufacturing them.
+
+- `collapseDropsByPrice` is **DELETED** — no call sites remain, and leaving a row-removing helper
+  in that file is the trap this ticket was about.
+- `dedupeDrops` is **off both paths**, surviving only as `RolloutView`'s local double-tap guard.
+  ⚠️ Its signature does not include `_id`, so on a save it could drop a genuinely distinct server
+  row; never reintroduce it to a hydrate or a payload.
+- `normalizeSingleAcceptedDrop` **stays on both paths** — it is web's single-accepted invariant and
+  is safe precisely because it rewrites a STATUS rather than removing a row.
+
+Also `toDropPricePayload` drops mobile's redundant **`price` mirror** (it duplicates `dropedPrice`
+and is not part of the stored shape; every local reader already falls back `price ?? dropedPrice`),
+and `openDrop` now seeds the entry row's **`paymentMethod` from the calculator** — web's entry rows
+read `"paymentMethod":"check"`, mobile's read `""`.
+
+⚠️ **`paymentMethods` (plural) is KEPT** though web does not send it: `DropOutcomeModal` re-opens a
+declined drop with those financing plans still added, so stripping it for exact parity would lose
+that state on reload. Omitted when empty rather than sent as `[]`.
+
+⚠️ **Expect existing test leads to show MORE rows than before.** Those rows are real and already on
+the server — web lists them too; mobile was hiding them while still leaving them there to be
+duplicated. A record corrupted before this fix does not self-heal, because healing means DELETING
+server rows and nothing on this screen may do that.
+
+Verified with 32 tests driving the real helpers over both of the ticket's payloads verbatim: the
+web array reproduced row-for-row with only the new round id-less; both same-price rounds kept; no
+server id ever omitted; the old collapse asserted to yield exactly the 4 rows the ticket reported,
+so the regression cannot return silently; the single-accepted rule rewriting a status without
+losing a row; the entry row's seeded method; the `price` mirror gone and `paymentMethods`
+kept/omitted; the `_id` surviving the write path; **the adoption repro** — the same round asserted
+id-less on the second save before adoption and carrying its id after; price+status matching
+preferring the accepted row at a shared price, the price-only fallback, no id used twice, an id
+already held never re-issued, an unmatched row left alone, id-less server rows ignored, adoption
+against a longer/misaligned array, same-reference return when nothing changes; the full
+enter→save→adopt→secure→save round trip leaving SEVEN rows with the new one updated in place; and
+the fallback guard's signature emptying once every row is filed. tsc 44 (baseline unchanged);
+`drop-prices.ts` and `useDynamicCalculators.ts` eslint-clean, `RolloutView.tsx` identical to HEAD
+(270 problems, 2 errors).
+
+⚠️ Needs a device check of the one thing tests cannot see: **whether the PUT response echoes
+`dropPrice`.** Watch for one `PUT /lfcalculators/{id}` per drop action, at most one
+`GET /lfcalculators/{id}` after the first, and a payload whose `dropPrice` is the server's array
+plus the new round.
+
+#### …and the follow-up that closed it: no save on OPEN, and a payload of only `dropPrice`
+
+Ticket, with a device trace of a `PUT /lfcalculators/{id}` fired while the drop sheet was merely
+open: *"still in backend duplicate secure price is going to create, i think the main issue is we are
+calling the api 2 times, when this modal open no need to call the api, api will call on the basis of
+selecting the 2 buttons Decline and Secure this price… also we only sending the changed data in the
+payload like web, but you are taking the extra things."* Both correct.
+
+**1. Opening the drop sheet wrote a row.** `openDrop` persisted the entered price as a `declined`
+row the instant it was typed — a deliberate earlier requirement (*"a drop must be SAVED THE INSTANT
+it is entered"*), now reversed by the same reporter. So one decision cost two writes: the twin on
+open, then the real row on Secure/Decline. `openDrop` now only sets `pendingDrop` and shows the
+modal; the row is created by the action the rep actually takes.
+
+Two things fell out of that and had to go with it:
+- ⚠️ **`resolveDropTargetIndex`'s scan for an existing row at this price is REMOVED.** It existed to
+  convert the pre-persisted twin. With nothing pre-persisted it would silently fold a genuinely new
+  round into an older one at the same price — and web keeps both (its array holds two 10000 rows).
+  `pendingDropIndex` alone decides: set when a row is re-opened via **Display** (edit in place),
+  `-1` for a fresh round (append).
+- ⚠️ **The double-tap guard moved from `dedupeDrops` to the BUTTON.** `DropOutcomeModal` now accepts
+  one Decline/Secure per opening (`submitted` ref, reset on `visible`). A guard that DELETES rows is
+  the very thing that made mobile's list a subset of the server's, so it cannot live on this path.
+  **`dedupeDrops` is deleted** — no call sites remain.
+
+**2. Drops now PUT `{ dropPrice: [...] }` and nothing else.** New `saveDropsNow` in
+`useDynamicCalculators` fires on the rep's action, and **`dropPrice` is gone from `buildPayload`** —
+the debounced whole-calculator save no longer carries it as a passenger. One writer, one payload,
+byte-comparable with web's.
+
+- **`tabSignature` no longer fingerprints drops.** With drops off the debounced path, a `dropSig`
+  would only mark the calculator dirty and fire a second, redundant whole-calculator request for a
+  change already persisted.
+- **`markDirty` is NOT called** by `handleSetDrops`, for the same reason.
+- **One request per calculator at a time**, with a newer list queued behind an in-flight one
+  (`dropSaveInFlight` / `dropSavePending`). Every request sends the WHOLE array, so latest-wins is
+  safe and a failed request is healed by the next drop action; **one** immediate retry covers the
+  transient case.
+- The response is fed straight to `adoptDropIds`, so the round's `_id` is adopted from the very
+  request that created it.
+
+⚠️ The rollout log's `lastDroppedPrice` still reads the entry BEFORE the target — its arithmetic is
+unchanged and still correct, but for a different reason: a new round is no longer in `drops` at log
+time, so its predecessor is the LAST existing entry (`drops.length - 1`), while an edited row's is
+the one before it. The comments were rewritten; don't "fix" the index.
+
+Verified with 9 further tests over the same rows: the body having exactly one key (`dropPrice`);
+every row sent with its `_id` and only the new round without; **opening the sheet leaving the list
+byte-identical**; Secure and Decline each appending exactly ONE row where the old flow left a twin
+beside it; a new round at an already-tried price staying its own row while **Display** still edits in
+place; the full open→Secure→adopt→re-secure round trip updating the same row; and a second Secure
+demoting the first by status while keeping both rows. tsc 44 (baseline unchanged); `drop-prices.ts`
+and `useDynamicCalculators.ts` eslint-clean, `RolloutView.tsx` identical to HEAD (270 problems,
+2 errors).
+
+⚠️ On device this should now read as **exactly one `PUT /lfcalculators/{id}` per Decline/Secure,
+none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
+
+⚠️ **All three files are CRLF** (`drop-prices.ts`, `useDynamicCalculators.ts`, `RolloutView.tsx`).
+Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
+
+
+### Signing an agreement says the customer got a copy
+
+Ticket: *"while we are submitting the agreement we have to show these messages as well in the splash
+which are coming in the response"*, against the `agreementSent` block the sign flow leaves on the
+outcome (`sms` / `email`, each with `to` / `status` / `message`).
+
+**Shipped as a STATIC second line, at the reporter's direction** — the signature success flash now reads
+
+```
+Success
+Agreement signed successfully
+Your finalized document is complete and a copy has been sent to you
+```
+
+One `FlashMessage.success` in `AgreementSignatureModal.handleSubmit`, the message on a `\n` after the
+existing line. That is the whole change.
+
+⚠️ **A live, per-channel version of this was built and then REMOVED on request** (*"just forget this and
+remove the changes… instead just add this message"*). If it is ever wanted again, these are the facts
+that cost the most to establish — do not re-derive them:
+
+- **`/sign` returns the PDF as a BLOB** (`responseType: 'blob'`), so the signing response cannot carry
+  the delivery result. The block rides on `GET lead/v1/{leadId}/outcome/{calcId}` instead.
+- **`agreementSent` is a SIBLING of `outcome`** (`data.data.agreementSent` beside `data.data.outcome`),
+  so `unwrapOutcome` — which returns `body.data.outcome` — cannot see it. It has to be read off the raw
+  body.
+- **The send finishes ASYNCHRONOUSLY.** In a captured payload the outcome's `updatedAt` is **3.5 s
+  after** the agreement row's `createdAt`, so a read taken moments after signing legitimately finds the
+  document and no delivery block. Any polling window has to clear that comfortably.
+- ⚠️ **A flash raised while the signature modal is still up renders BEHIND it.** A native `Modal` is its
+  own view tree above the RN root and the app-wide `<FlashMessage />` lives at that root (`App.tsx`).
+  The existing success message only gets away with it because `onClose()` fires in the same instant;
+  anything raised a few hundred ms later (i.e. after a network read) is drawn under a modal that is
+  still dismissing and is never seen. **This is why the live version reported nothing on device**, and
+  why the static line above works — it is raised in the same tick as the close.
+- **One banner, not two.** `react-native-flash-message` shows a single banner and a second `show()`
+  REPLACES the first, so a delivery notice cannot be appended after the success message; it has to be
+  folded into it.
+- **Web has no equivalent** — `grep agreementSent` over the sales frontend is empty.
+
+⚠️ Noted while tracing, NOT fixed: a failing number was sent to the provider as **`+1 (454) 684-8848`**
+— the display-formatted string, not E.164. `formatUSPhoneNumber` emits exactly that shape and (per the
+Edit Customer ticket) the submit payload always carries the formatted value, so the backend may be
+handing Twilio a string it cannot parse. Area code `454` is also unassigned in the NANP, so that one
+number may simply be invalid — the two explanations are not distinguishable from a single sample. Worth
+its own ticket with a KNOWN-GOOD number: the deal-edit "Send Addendum To" field already converts through
+`toE164USPhone`, and this path has no equivalent.
+
+tsc 44 (baseline unchanged); `AgreementSignatureModal.tsx` is at its HEAD eslint baseline (41 problems),
+and `message.ts`, `SummarySection.tsx`, `outcome-documents.ts` and `DynamicJobBuilderScreen.tsx` are
+back to their pre-feature state (the first two verified byte-identical against `3d5dbea^`).
 ---
 
 ## 7. Scripts

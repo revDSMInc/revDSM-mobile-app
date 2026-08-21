@@ -1386,6 +1386,9 @@ function DynamicJobBuilderInner({
   // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
   // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
   // that row is what keeps a generated agreement from being stored twice.
+  // Re-read the lead's stored documents WITHOUT uploading anything. Used after the
+  // server-side agreement sign, which files its own LeadOutcomeDocument — adopting
+  // that row is what keeps a generated agreement from being stored twice.
   const handleRefreshDocs = useCallback(
     async (cat: 'agreement' | 'orderSheet') => {
       if (!leadId || !calcId) return null;

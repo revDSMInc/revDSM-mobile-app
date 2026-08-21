@@ -5,7 +5,6 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Image,
   Dimensions,
   StyleSheet,
   Animated,
@@ -20,10 +19,12 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import rooflineDeckImages from '../../constants/roofline-deck-images';
 import { InspectionPhotosPanel } from '../../widgets/components/InspectionPhotosPanel';
+import { ZoomableImage } from '../../widgets/common/ZoomableImage';
 import {
   PhotoPeekScrollLockProvider,
   PeekAwareScrollView,
 } from '../../widgets/common/PhotoPeekScrollLock';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
 import { Header } from '../../widgets/common/MainHeader';
@@ -166,6 +167,10 @@ export default function RooflineDeckScreen() {
   const currentGlobalPageNumber = useMemo(() => {
     return getGlobalPosition(activeCategory, currentSlideIndex);
   }, [activeCategory, currentSlideIndex]);
+
+  // Identity of the slide on screen — see the same constant in `screens/Pitchbook`.
+  // Handed to every `ZoomableImage` so advancing a slide snaps the zoom back to 1x.
+  const slideResetKey = `${activeCategory}:${currentSlideIndex}`;
 
   // Lifecycle events for deck open/close
   useEffect(() => {
@@ -730,10 +735,11 @@ export default function RooflineDeckScreen() {
                 paddingVertical: 3,
               }}
             >
-              <Image
+              <ZoomableImage
                 source={currentCategoryImages[currentSlideIndex]?.src}
+                containerStyle={{ width: '100%', height: '100%' }}
                 style={{ width: '100%', height: '100%' }}
-                resizeMode="contain"
+                resetKey={slideResetKey}
               />
             </View>
           </View>
@@ -822,6 +828,10 @@ export default function RooflineDeckScreen() {
           supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
           onRequestClose={() => setIsFullscreen(false)}
         >
+          {/* A Modal is its own native view tree on Android, so the app-root
+              GestureHandlerRootView in App.tsx does not reach it — without this one the
+              slide's pinch/pan gestures never fire in fullscreen. */}
+          <GestureHandlerRootView style={{ flex: 1 }}>
           <StatusBar hidden={isLandscape} backgroundColor="transparent" translucent />
 
           {isLandscape ? (
@@ -837,10 +847,11 @@ export default function RooflineDeckScreen() {
                 <View style={{ flex: 1, position: 'relative', justifyContent: 'center', alignItems: 'center' }}>
                   {/* Image */}
                   {currentCategoryImages[currentSlideIndex] && (
-                    <Image
+                    <ZoomableImage
                       source={currentCategoryImages[currentSlideIndex]?.src}
+                      containerStyle={{ ...StyleSheet.absoluteFillObject }}
                       style={{ width: '100%', height: '100%' }}
-                      resizeMode="contain"
+                      resetKey={slideResetKey}
                     />
                   )}
 
@@ -1053,10 +1064,11 @@ export default function RooflineDeckScreen() {
               {/* Image with prev/next arrows */}
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                 {currentCategoryImages[currentSlideIndex] && (
-                  <Image
+                  <ZoomableImage
                     source={currentCategoryImages[currentSlideIndex]?.src}
+                    containerStyle={{ ...StyleSheet.absoluteFillObject }}
                     style={{ width: '100%', height: '100%' }}
-                    resizeMode="contain"
+                    resetKey={slideResetKey}
                   />
                 )}
 
@@ -1202,6 +1214,7 @@ export default function RooflineDeckScreen() {
             uri={pdfPreviewData.url}
             title={pdfPreviewData.title}
           />
+          </GestureHandlerRootView>
         </Modal>
 
         {!isFullscreen && renderInteractiveTools()}

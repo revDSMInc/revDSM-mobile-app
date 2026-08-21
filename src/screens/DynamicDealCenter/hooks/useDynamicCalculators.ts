@@ -5,7 +5,13 @@ import type { CalculatorEntry, CalculatorTotals, CalculatorSchema } from '../typ
 import { computeDerivedTitles } from '../utils/tab-naming';
 import { computeTitleSaveOrder, getUniquePersistableTitles, TEMP_TITLE_PREFIX } from '../utils/title-save-order';
 import { buildAllEntriesMap, mergeFullEntries } from '../utils/build-all-entries';
-import { normalizeSingleAcceptedDrop, dedupeDrops, collapseDropsByPrice } from '../utils/drop-prices';
+import {
+  normalizeSingleAcceptedDrop,
+  adoptServerDropIds,
+  readServerDrops,
+  toDropPricePayload,
+  idlessDropSignature,
+} from '../utils/drop-prices';
 import { scopeSignature } from '../utils/scope-signature';
 import { logCalculatorFieldEntry, logCalculatorCreated, logCalculatorRename, logPaymentMethodInherited, logSectionCleared, logCalculatorAutoRenamed, logCalculatorViewed } from '../../../utils/activity-log/calculator-log';
 import { buildFieldLogLabel, findFieldStoryLabel } from '../utils/story-log-label';
@@ -156,20 +162,10 @@ function tabSignature(tab: CalcTab): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, e]) => `${id}:${e?.inputValue ?? ''}`)
     .join('|');
-  // Every PERSISTED field of a drop must be in the signature, not just its price.
-  // With price alone, securing/unselecting an EXISTING drop changed no prices, so a
-  // status-only edit that landed while a save was in flight looked identical to the
-  // snapshot: `flushSave` cleared `dirty` (line ~354) and computed `hasNewerEdits`
-  // false (line ~362), so no follow-up was scheduled and the demotion was NEVER PUT.
-  // The server kept the older accepted drop alongside the new one — two SECURED rows
-  // on reopen. Adding a genuinely-new drop changed `dropSig` and so always converged,
-  // which is exactly why the bug looked intermittent.
-  const dropSig = (tab.dropPrice || [])
-    .map(
-      (d: any) =>
-        `${d?.price ?? ''}:${d?.status ?? ''}:${d?.downPayment ?? ''}:${d?.balance ?? ''}:${d?.paymentMethod ?? ''}:${Array.isArray(d?.paymentMethods) ? d.paymentMethods.join('|') : ''}`
-    )
-    .join(',');
+  // ⚠️ Drops are NOT fingerprinted here. They no longer ride the debounced save at all
+  // (`saveDropsNow` PUTs `{ dropPrice }` on the rep's action), so including them would
+  // mark the calculator dirty and fire a second, redundant whole-calculator request for
+  // a change that has already been persisted.
   // Selected renders: a stable key of the chosen run ids so add/remove marks dirty.
   const renderSig = (tab.selectedRenders || [])
     .map((r: any) => r?.runId || r?._id || r?.generatedUrl || '')
@@ -180,7 +176,7 @@ function tabSignature(tab: CalcTab): string {
   // In-Home Monthly shortlist: selected plan + the added-plan list.
   const ih = tab.inHome;
   const inHomeSig = ih ? `${ih.planKey ?? ''}:${Array.isArray(ih.addedPlans) ? ih.addedPlans.join('|') : ''}:${ih.optInProgram ?? ''}` : '';
-  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${dropSig}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${inHomeSig}#${tab.priceScopeSig ?? ''}`;
+  return `${entrySig}#${tab.title}#${tab.isRolloutConfirmed ? 1 : 0}#${tab.price ?? ''}#${tab.pricemarkup ?? ''}#${tab.paymentMethod ?? ''}#${tab.downPayment ?? ''}#${tab.discountPercentage ?? ''}#${renderSig}#${oneYearSig}#${inHomeSig}#${tab.priceScopeSig ?? ''}`;
 }
 
 function parseEntries(arr: any): Record<string, CalculatorEntry> {
@@ -487,12 +483,10 @@ export function useDynamicCalculators(
       // reload, never the price being auto-cleared.
       priceScopeSig: tab.priceScopeSig ?? '',
       paymentMethod: tab.paymentMethod,
-      // Web parity (`ViewAllCalculators.js:1116-1123`): normalize to at most one
-    // accepted drop at SAVE time, so no path can ever persist two SECURED rows.
-    // `collapseDropsByPrice` additionally guarantees at most one row PER PRICE, so a
-    // declined twin + its accepted version (or a backend-re-created no-`_id` copy) can
-    // never be persisted as two rows.
-    dropPrice: normalizeSingleAcceptedDrop(collapseDropsByPrice(dedupeDrops(tab.dropPrice))),
+      // ⚠️ `dropPrice` is deliberately ABSENT. Drops are written by `saveDropsNow` as
+    // their own `{ dropPrice: [...] }` request the moment the rep Declines or Secures —
+    // web's shape exactly — so this debounced whole-calculator save must not carry them
+    // as a passenger. One writer, one payload.
       downPayment: tab.downPayment,
       discountPercentage: tab.discountPercentage,
       // Web parity: the renders bound to this job build + the 1-Year monthly plan
@@ -544,6 +538,102 @@ export function useDynamicCalculators(
     saveTimers.current[tabId] = setTimeout(() => flushSaveRef.current?.(tabId), SAVE_DEBOUNCE_MS);
   }, []);
 
+  // Per-calculator guard for the fallback read in `adoptDropIds` below: the signature of
+  // the id-less drops a GET has already been spent on.
+  const dropIdFetchTried = useRef<Record<string, string>>({});
+  // One drop request per calculator at a time; a newer list queued while one is in
+  // flight supersedes it (every request sends the WHOLE array, so latest wins).
+  const dropSaveInFlight = useRef<Record<string, boolean>>({});
+  const dropSavePending = useRef<Record<string, any[] | null>>({});
+  const saveDropsNowRef = useRef<((tabId: string, drops: any[], attempt?: number) => void) | null>(null);
+
+  /**
+   * Take the `_id` the server assigned to each newly-filed drop back into local state.
+   *
+   * Without this the next PUT re-sends that round id-less and the backend files ANOTHER
+   * copy — the duplicate-drop bug. Deliberately NOT marked dirty: `_id` is absent from
+   * `tabSignature`'s `dropSig`, so adopting cannot mark the tab dirty, schedule a save,
+   * or make an in-flight save look superseded.
+   *
+   * The CLASSIC deal center already does both halves of this (`useCalculatorSummary.
+   * saveDropPriceToServer` back-fills missing ids before its PUT and re-reads
+   * `serverCalc.dropPrice` after it); only the dynamic flow never did, which is why the
+   * duplicate is dynamic-only.
+   */
+  const adoptDropIds = useCallback(async (tabId: string, response: any) => {
+    let serverDrops = readServerDrops(response);
+    if (!serverDrops.length) {
+      // The PUT response does not always echo the calculator back — the classic flow hits
+      // the same case and re-reads. Bounded by `dropIdFetchTried`: one GET per distinct
+      // set of id-less rows, so a response that NEVER carries `dropPrice` cannot turn
+      // every debounced save into an extra request.
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      const sig = idlessDropSignature(tab?.dropPrice);
+      if (!sig || dropIdFetchTried.current[tabId] === sig) return;
+      dropIdFetchTried.current[tabId] = sig;
+      try {
+        serverDrops = readServerDrops(await LeadService.getCalculator(tabId));
+      } catch {
+        return; // next save retries
+      }
+      if (!serverDrops.length) return;
+    }
+    setTabs((prev) => {
+      let touched = false;
+      const next = prev.map((t) => {
+        if (t.id !== tabId || !t.dropPrice?.length) return t;
+        const adopted = adoptServerDropIds(t.dropPrice, serverDrops);
+        if (adopted === t.dropPrice) return t;
+        touched = true;
+        return { ...t, dropPrice: adopted };
+      });
+      if (!touched) return prev;
+      tabsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  /**
+   * `PUT /lfcalculators/{id}` with ONLY `{ dropPrice }` — web's payload for this action.
+   *
+   * Fires on the rep's Decline / Secure, never on opening the drop sheet. Sends the whole
+   * array every time (each row with its `_id`), so a request that fails is healed by the
+   * next drop action rather than needing per-row bookkeeping; one immediate retry covers
+   * the transient case.
+   */
+  const saveDropsNow = useCallback(
+    async (tabId: string, drops: any[], attempt = 0) => {
+      if (!isBackendId(tabId)) return; // local-only tab: nothing to update yet
+      if (dropSaveInFlight.current[tabId]) {
+        dropSavePending.current[tabId] = drops;
+        return;
+      }
+      dropSaveInFlight.current[tabId] = true;
+      setIsSaving(true);
+      try {
+        const res = await LeadService.updateCalculator(tabId, {
+          dropPrice: toDropPricePayload(normalizeSingleAcceptedDrop(drops)),
+        });
+        setLastUpdated(
+          new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+        );
+        await adoptDropIds(tabId, res);
+      } catch {
+        if (attempt === 0) dropSavePending.current[tabId] = drops; // one retry
+      } finally {
+        dropSaveInFlight.current[tabId] = false;
+        setIsSaving(anyInFlight() || Object.values(dropSaveInFlight.current).some(Boolean));
+        const pending = dropSavePending.current[tabId];
+        if (pending) {
+          dropSavePending.current[tabId] = null;
+          saveDropsNowRef.current?.(tabId, pending, attempt + 1);
+        }
+      }
+    },
+    [adoptDropIds]
+  );
+  saveDropsNowRef.current = saveDropsNow;
+
   // Web parity (DealCenterContext.saveDisplacedSiblings). When the changed calc's derived
   // title shifts (its SM/MD/LG size), a SIBLING may still hold that title in the DB, so
   // saving the changed calc first would collide (backend unique-title → 409). Re-title the
@@ -576,7 +666,8 @@ export function useDynamicCalculators(
       if (!isTemp && persistable[step.calculatorId] !== step.newTitle) continue;
       try {
         // eslint-disable-next-line no-await-in-loop
-        await LeadService.updateCalculator(step.calculatorId, { ...buildPayloadRef.current(st), title: step.newTitle });
+        const res = await LeadService.updateCalculator(step.calculatorId, { ...buildPayloadRef.current(st), title: step.newTitle });
+        adoptDropIds(step.calculatorId, res);
         if (!isTemp) {
           const prev = lastSavedTitle.current[step.calculatorId];
           if (enteredBy && prev !== undefined && prev !== step.newTitle) {
@@ -594,7 +685,7 @@ export function useDynamicCalculators(
         // non-fatal — a sibling rename must not block the changed calc's own save
       }
     }
-  }, [enteredBy, appointmentId, leadId]);
+  }, [enteredBy, appointmentId, leadId, adoptDropIds]);
 
   const flushSave = useCallback(
     async (tabId: string) => {
@@ -619,7 +710,10 @@ export function useDynamicCalculators(
       try {
         // Free up any sibling still holding this calc's new title before we save it.
         await saveDisplacedSiblings(tabId);
-        await LeadService.updateCalculator(tabId, buildPayloadRef.current(tab));
+        const res = await LeadService.updateCalculator(tabId, buildPayloadRef.current(tab));
+        // Adopt the ids the server just assigned, so the NEXT save updates these rows
+        // instead of filing second copies of them.
+        adoptDropIds(tabId, res);
         setLastUpdated(
           new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
         );
@@ -653,7 +747,7 @@ export function useDynamicCalculators(
         }
       }
     },
-    [scheduleSave, enteredBy, appointmentId, leadId, saveDisplacedSiblings, resolveSafeTitle]
+    [scheduleSave, enteredBy, appointmentId, leadId, saveDisplacedSiblings, resolveSafeTitle, adoptDropIds]
   );
   flushSaveRef.current = flushSave;
 
@@ -702,12 +796,12 @@ export function useDynamicCalculators(
               price: c.price,
               priceScopeSig: c.priceScopeSig || '',
               paymentMethod: c.paymentMethod || undefined,
-              // Repair records already corrupted by the pre-fix save race, which
-              // otherwise render two SECURED rows on every reopen forever.
-              // `collapseDropsByPrice` also heals records the backend accumulated into
-              // two rows at the same price (declined twin + accepted, or a no-`_id`
-              // re-created copy) so a reopened calculator shows each price once.
-              dropPrice: normalizeSingleAcceptedDrop(collapseDropsByPrice(dedupeDrops(c.dropPrice))),
+              // The server's rows VERBATIM (web parity: its rollout lists `dropPrice`
+              // 1:1). Only the single-accepted repair runs, because it rewrites a status
+              // rather than removing a row — anything that collapsed rows here would
+              // make local state a subset of the server's, and the next save would then
+              // omit rows the rep can no longer see.
+              dropPrice: normalizeSingleAcceptedDrop(c.dropPrice),
               downPayment: c.downPayment || 0,
               discountPercentage: Number(c.discountPercentage) || undefined,
               selectedRenders: Array.isArray(c.selectedRenders) ? c.selectedRenders : [],
@@ -1045,21 +1139,30 @@ export function useDynamicCalculators(
     [markDirty]
   );
 
-  /** Replace a calculator's drop-price list (persisted on the next debounced save). */
+  /**
+   * Replace a calculator's drop-price list and PERSIST IT NOW, as its own request.
+   *
+   * ⚠️ Drops do NOT go through the debounced whole-calculator save. Two reasons, both
+   * from the ticket: the rep's Decline / Secure is a decision that must not sit in a
+   * 1.5 s debounce behind an unrelated field edit, and the payload has to be web's
+   * `{ dropPrice: [...] }` rather than the entire calculator. `markDirty` is therefore
+   * NOT called — `tabSignature` no longer fingerprints drops, so a whole-calculator save
+   * would add nothing but a second request.
+   *
+   * Stored as given: `+ Nth Drop` is its own negotiation round even at a price the rep
+   * already tried, and re-opening a row via Display edits that row in place
+   * (`resolveDropTargetIndex`), so the list is already one row per round.
+   */
   const handleSetDrops = useCallback(
     (tabId: string, drops: any[]) => {
-      // Collapse to one row per price on EVERY update so the live list never shows a
-      // price twice — the declined twin `openDrop` persists on entry merges with its
-      // accepted version on Secure, and any same-price re-add is absorbed.
-      const collapsed = collapseDropsByPrice(drops);
       setTabs((prev) => {
-        const next = prev.map((t) => (t.id === tabId ? { ...t, dropPrice: collapsed } : t));
+        const next = prev.map((t) => (t.id === tabId ? { ...t, dropPrice: drops } : t));
         tabsRef.current = next;
-        markDirty(tabId);
         return next;
       });
+      saveDropsNowRef.current?.(tabId, drops);
     },
-    [markDirty]
+    []
   );
 
   /** Set the pre-order discount % (persisted on the next debounced save). */
