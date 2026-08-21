@@ -86,7 +86,22 @@ export function normalizeSingleAcceptedDrop<T extends { status?: string }>(drops
  */
 
 const dropIdOf = (d: any): string => String(d?._id ?? '');
-const dropPriceOf = (d: any): number => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
+/**
+ * A drop's price, from whichever field carries it.
+ *
+ * ⚠️ `toDropPricePayload` deliberately STRIPS the redundant `price` mirror — it
+ * duplicates `dropedPrice` and is not part of the stored shape. So a drop that has been
+ * through the server carries `dropedPrice` ONLY, while one just entered on this device
+ * still has both. Any reader that looks at `price` alone silently reads `undefined`
+ * after a save or a reload.
+ *
+ * That is exactly what broke the Result Lead hand-off: the button read
+ * `drops[last].price`, got `undefined` on a reloaded calculator, and passed 0 into the
+ * outcome modal — which showed `$0.00` for Original Contract Price and left Build Job
+ * disabled. EXPORTED so every reader shares the one rule and it cannot recur.
+ */
+export const dropPriceOf = (d: any): number =>
+  Math.round(Number(d?.price ?? d?.dropedPrice ?? 0)) || 0;
 
 /**
  * The `dropPrice` rows in a `PUT /lfcalculators/{id}` response, whatever it is wrapped in.
@@ -196,4 +211,57 @@ export function idlessDropSignature(drops: any[] | null | undefined): string {
     .filter((d) => !dropIdOf(d))
     .map((d) => `${dropPriceOf(d)}:${d?.status ?? ''}`)
     .join('|');
+}
+
+/**
+ * Is any drop secured?
+ *
+ * ⚠️ A POSITIVE test (`=== 'accepted'`), never `!declined`. A row with a missing or
+ * unknown status is NOT secured — the same rule the SECURED badge, the single-accepted
+ * demotion and the tab lock icon all use.
+ */
+export function hasAcceptedDrop(drops: any[] | null | undefined): boolean {
+  return (Array.isArray(drops) ? drops : []).some((d) => d?.status === 'accepted');
+}
+
+/**
+ * Which drop "Result Lead" should secure on the rep's behalf, or -1 for none.
+ *
+ * A rep can walk a customer down several drops, decline each one, and then result the
+ * lead anyway — leaving a SOLD deal whose every drop reads Declined and whose secured
+ * price is nothing at all. The job is then built against a price no row agrees with.
+ *
+ * So: with drops present and NONE accepted, the LAST one is secured. Last, because
+ * drops are appended in negotiation order — it is the price the customer actually
+ * settled at, and it is already what the Result Lead button displays and what the
+ * outcome modal is seeded with, so this makes the stored row agree with the figure the
+ * rep is looking at.
+ *
+ * ⚠️ Returns -1 when one is ALREADY accepted. Re-securing the last row would demote a
+ * deliberate earlier choice — the rep may have secured drop #1 and then explored two
+ * more without taking them.
+ *
+ * ⚠️ Returns -1 when there are NO drops. Nothing was negotiated, so the rollout end
+ * price stands on its own and there is no row to mark.
+ */
+export function resolveAutoSecureIndex(drops: any[] | null | undefined): number {
+  const list = Array.isArray(drops) ? drops : [];
+  if (!list.length) return -1;
+  if (hasAcceptedDrop(list)) return -1;
+  return list.length - 1;
+}
+
+/**
+ * The drop list with the last round secured, when nothing is secured yet.
+ *
+ * Returns the SAME array reference when no change is needed, so callers can use
+ * identity to decide whether to persist — no write, no log, no re-render.
+ */
+export function autoSecureLastDrop<T extends Record<string, any>>(
+  drops: T[] | null | undefined
+): T[] {
+  const list = Array.isArray(drops) ? drops : [];
+  const idx = resolveAutoSecureIndex(list);
+  if (idx < 0) return list;
+  return list.map((d, i) => (i === idx ? { ...d, status: 'accepted' } : d));
 }

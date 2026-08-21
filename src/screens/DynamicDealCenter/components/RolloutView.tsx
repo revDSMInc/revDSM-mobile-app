@@ -12,6 +12,7 @@ import { resolveSchemaStyle } from '../utils/icon-color';
 import { formatAmountInput, stripAmount } from '../utils/format-amount';
 import { MODAL_BLUR_AMOUNT, MODAL_SCRIM, MODAL_CARD_SHADOW } from './modal-chrome';
 import { describeFullPackage } from '../utils/tab-naming';
+import { autoSecureLastDrop, dropPriceOf } from '../utils/drop-prices';
 import { FullPackageTitle, FullPackageInfoModal, FullPackageInfoOverlay, type PackageAnchorRect } from './FullPackageBadge';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
@@ -1058,7 +1059,13 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   const priceNum = parseFloat(endPrice) || 0;
   // Below-cost / below-plan-minimum / below-$200 — the full web check set.
   const priceErr = endPriceError(plans, priceNum, calculator, method);
-  const finalPrice = drops.length ? drops[drops.length - 1].price : (calculator.price || priceNum);
+  // ⚠️ `dropPriceOf`, NOT `.price` — a drop that has been through the server carries
+  // `dropedPrice` only (see the note on that helper). Reading `.price` here returned
+  // `undefined` on a reloaded calculator, so the Result Lead button showed no figure
+  // and the outcome modal opened at $0.00 with Build Job disabled.
+  const finalPrice = drops.length
+    ? dropPriceOf(drops[drops.length - 1])
+    : (calculator.price || priceNum);
 
   // ── Result-section values (mirror the regular rollout, CalculatorSummary.tsx:422-429) ──
   // Shown live once a valid end price is entered. Computed via the unit-tested
@@ -1261,7 +1268,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
   // convert rather than duplicate. Nothing is pre-persisted now, so that scan would
   // silently fold a genuinely new round into an older one at the same price.
   const resolveDropTargetIndex = () => {
-    const priceOf = (d: any) => Math.round(Number(d?.price ?? d?.dropedPrice ?? 0));
+    const priceOf = (d: any) => Math.round(dropPriceOf(d));
     const target = Math.round(Number(pendingDrop));
     if (
       pendingDropIndex >= 0 &&
@@ -1391,6 +1398,64 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // continuous, no gap between modals". Replaces the mobile-only toast; neither
     // web nor the regular rollout shows one, they show this modal.
     setDeclinedPrice(pendingDrop);
+  };
+
+  // ── Result Lead ────────────────────────────────────────────────────────────
+  // A rep can walk the customer down several drops, DECLINE each one, and result the
+  // lead anyway. That left a SOLD deal whose every drop reads Declined and whose
+  // secured price is nothing — the job then gets built against a figure no stored row
+  // agrees with. So when nothing is secured, the LAST drop is secured here, before
+  // the outcome modal opens.
+  //
+  // ⚠️ ONLY when nothing is secured. If the rep already secured an earlier drop and
+  // then explored two more without taking them, that deliberate choice stands —
+  // `autoSecureLastDrop` returns the same array reference and nothing is written.
+  //
+  // ⚠️ `onDropChange` persists IMMEDIATELY (`handleSetDrops` → `saveDropsNow`), not
+  // on the debounced calculator save, so the row is filed before the job is built.
+  const openResultChooser = () => {
+    const secured = autoSecureLastDrop(drops);
+    // Seeded from the CURRENT state; overridden below by the row just secured, whose
+    // own plan and down payment are what the deal is being resulted at. `activeMethod`
+    // / `activeDownPayment` derive from an ALREADY-accepted drop, so on this path they
+    // are still the pre-secure values.
+    let chooseAt = finalPrice;
+    let chooseDown = activeDownPayment;
+    if (secured !== drops) {
+      onDropChange(calculator.id, secured);
+      const idx = secured.length - 1;
+      const row = secured[idx];
+      const dropPrice = dropPriceOf(row);
+      if (dropPrice > 0) chooseAt = dropPrice;
+      chooseDown = Number(row?.downPayment) || 0;
+      const uidA = user?._id || user?.id;
+      if (uidA) {
+        // The portal timeline must be able to explain the secured row. Same shape as
+        // `secureDrop`'s log; the OLD value is the price BEFORE this drop (the
+        // previous round, or the rollout end price when this is the only one).
+        const prev = idx > 0 ? secured[idx - 1] : null;
+        const lastDrop = prev ? (prev.dropedPrice ?? prev.price) : (calculator.price || priceNum);
+        logRolloutChange({
+          userId: uidA,
+          leadId,
+          calculator: { id: calculator.id, title: calculator.title, appointmentId: (calculator as any).appointmentId || appointmentId },
+          tiers: logTiers,
+          percentageOfRollout: markupLabel(dropPrice, logTiers),
+          change: {
+            fieldName: 'dropPrice', fieldLabel: 'Drop Price', fieldValue: dropPrice, fieldCategory: 'drop',
+            oldValue: lastDrop, newValue: dropPrice,
+            oldPercentageOfRollout: markupLabel(Number(lastDrop) || 0, logTiers),
+            isSecured: true, isDeclined: false, dropNumber: idx + 1, dropPrice,
+            paymentPlanKey: row?.paymentMethod || activeMethod,
+            paymentPlanLabel: planLabelOf(pricing.plans, row?.paymentMethod || activeMethod),
+            action: 'drop price secured',
+          },
+        }).catch(() => {});
+      }
+    }
+    setChooserPrice(chooseAt);
+    setChooserDown(chooseDown);
+    setShowChooser(true);
   };
 
   // Web `handleDeclineResultLead`: close the modal and result the lead as a DEMO at
@@ -1748,7 +1813,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             // both ignored it, so it could never be cleared.
             const declined = d.status === 'declined';
             const secured = d.status === 'accepted';
-            const dp = d.price ?? d.dropedPrice ?? 0;
+            const dp = dropPriceOf(d);
             return (
               <View key={i} style={{ marginBottom: 24 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
@@ -1855,7 +1920,7 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => { setChooserPrice(finalPrice); setChooserDown(activeDownPayment); setShowChooser(true); }}
+              onPress={openResultChooser}
               style={{ flex: 1, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F97316', backgroundColor: '#fff' }}
             >
               <Ionicons name="document-text-outline" size={16} color="#EA580C" style={{ marginBottom: 2 }} />
