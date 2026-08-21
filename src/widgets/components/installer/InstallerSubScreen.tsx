@@ -92,8 +92,11 @@ export function InstallerSubScreen({
               <Text className="text-lg font-black" style={{ color: colors.text }}>
                 {title}
               </Text>
+              {/* 12 px / secondary — the size sales sets a card subtitle in
+                  (`VerticalSummaryTab`'s "Review all configured job details…"). 11 px was
+                  below anything the sales app puts body copy at. */}
               {!!subtitle && (
-                <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
+                <Text className="text-xs font-semibold" style={{ color: colors.textSecondary }}>
                   {subtitle}
                 </Text>
               )}

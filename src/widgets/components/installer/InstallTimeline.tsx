@@ -10,6 +10,13 @@ interface Props {
   status: Record<InstallStepKey, InstallStepStatus>;
   /** Per-step summary line replacing the default description once work exists. */
   notes?: Partial<Record<InstallStepKey, string | null>>;
+  /**
+   * Steps that hold work but are not finished.
+   *
+   * They read RESUME rather than START: an installer who has already put photos into
+   * a step and comes back to a "START" badge reads it as work that was lost.
+   */
+  inProgress?: Partial<Record<InstallStepKey, boolean>>;
   completedCount: number;
   totalSteps: number;
   onOpen: (key: InstallStepKey) => void;
@@ -24,6 +31,7 @@ interface Props {
 export function InstallTimeline({
   status,
   notes = {},
+  inProgress = {},
   completedCount,
   totalSteps,
   onOpen,
@@ -132,7 +140,9 @@ export function InstallTimeline({
                 </View>
                 {active && (
                   <Text className="text-[11px] font-black ml-2" style={{ color: green }}>
-                    {t('installer.badgeStart')}
+                    {inProgress[step.key]
+                      ? t('installer.badgeResume')
+                      : t('installer.badgeStart')}
                   </Text>
                 )}
                 {done && (

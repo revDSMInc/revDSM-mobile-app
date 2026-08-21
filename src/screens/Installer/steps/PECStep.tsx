@@ -179,7 +179,7 @@ export function PECStep({
           </TouchableOpacity>
           {hasConditions === true && flagged.length > 0 && !allDocumented && (
             <Text
-              className="text-center text-[11px] font-bold mt-1.5"
+              className="text-center text-xs font-bold mt-1.5"
               style={{ color: colors.warning.dark }}
             >
               {t('installer.pecIncomplete')}
@@ -189,7 +189,7 @@ export function PECStep({
       }
     >
       <Text
-        className="text-xs font-semibold leading-5 mb-3"
+        className="text-sm font-semibold leading-6 mb-3"
         style={{ color: colors.textSecondary }}
       >
         {t('installer.pecIntro')}
@@ -210,7 +210,7 @@ export function PECStep({
           }}
         >
           <Text
-            className="text-[13px] font-bold text-center"
+            className="text-sm font-bold text-center"
             style={{ color: hasConditions === false ? colors.primary.main : colors.text }}
           >
             {t('installer.pecNone')}
@@ -226,7 +226,7 @@ export function PECStep({
           }}
         >
           <Text
-            className="text-[13px] font-bold text-center"
+            className="text-sm font-bold text-center"
             style={{ color: hasConditions === true ? colors.warning.dark : colors.text }}
           >
             {t('installer.pecPresent')}
@@ -245,7 +245,7 @@ export function PECStep({
           >
             <Icon name="check" size={12} color="#fff" />
           </View>
-          <Text className="flex-1 text-xs font-semibold" style={{ color: colors.primary.main }}>
+          <Text className="flex-1 text-sm font-semibold" style={{ color: colors.primary.main }}>
             {t('installer.pecNoneConfirmed')}
           </Text>
         </View>
@@ -253,7 +253,7 @@ export function PECStep({
 
       {hasConditions === true && (
         <>
-          <Text className="text-[13px] font-bold mb-2" style={{ color: colors.text }}>
+          <Text className="text-base font-bold mb-2" style={{ color: colors.text }}>
             {t('installer.pecFlagAreas')}
           </Text>
 
@@ -282,7 +282,7 @@ export function PECStep({
                       {on && <Icon name="check" size={12} color="#fff" />}
                     </View>
                     <Text
-                      className="text-[13px] font-bold"
+                      className="text-sm font-bold"
                       style={{ color: on ? colors.warning.dark : colors.text }}
                     >
                       {t(area.labelKey)}
@@ -298,7 +298,7 @@ export function PECStep({
                       }}
                     >
                       <Icon name={count > 0 ? 'check' : 'camera'} size={12} color="#fff" />
-                      <Text className="text-white text-[11px] font-bold ml-1">
+                      <Text className="text-white text-xs font-bold ml-1">
                         {count === 0
                           ? t('installer.pecAddPhoto')
                           : count === 1
@@ -343,7 +343,11 @@ export function PECStep({
                       onBlur={() => commitNote(area)}
                       placeholder={t('installer.pecNotePlaceholder')}
                       placeholderTextColor="#919EAB"
-                      className="rounded-lg px-2.5 py-2 text-xs mb-2"
+                      // ⚠️ A TextInput with no `font-*` class gets NO fontFamily from this
+                      // tailwind config, so the note rendered in the SYSTEM font while every
+                      // label around it was Public Sans — the one thing on this screen that
+                      // did. `font-semibold` puts it back on the same face as its own row.
+                      className="rounded-lg px-2.5 py-2.5 text-sm font-semibold mb-2"
                       style={{
                         borderWidth: 1,
                         borderColor: colors.border,
@@ -359,7 +363,7 @@ export function PECStep({
 
           {flagged.length > 0 && (
             <Text
-              className="text-[11px] font-semibold mt-1"
+              className="text-xs font-semibold mt-1"
               style={{ color: colors.textSecondary }}
             >
               {flagged.length === 1

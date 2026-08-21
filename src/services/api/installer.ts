@@ -374,6 +374,7 @@ const STORED_RECORD_KEYS = [
   'preExistingConditions',
   'jobScopeVerification',
   'materialReturnNothingToReturn',
+  'coc',
 ];
 
 const normalizeStoredRecords = (raw: any): InstallerStoredRecords | undefined => {
@@ -391,6 +392,9 @@ const normalizeStoredRecords = (raw: any): InstallerStoredRecords | undefined =>
       typeof raw.materialReturnNothingToReturn === 'boolean'
         ? raw.materialReturnNothingToReturn
         : undefined,
+    // Passed through as the server keeps it; `installer-hydrate` turns it back into
+    // the device's own record.
+    coc: raw.coc ?? undefined,
   };
 };
 
