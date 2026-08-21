@@ -10,6 +10,7 @@ import {
   preExistingDescriptor,
   resultDescriptor,
   uploadInstallerPhoto,
+  type UploadedPhotoPatch,
 } from '../utils/installer-upload';
 import {
   logInstallerPhotoFailed,
@@ -71,8 +72,11 @@ export function useInstallerPhotoUpload(
       buildDescriptor: Parameters<typeof uploadInstallerPhoto>[3],
       context: PhotoDescriptorContext,
       failureLabel: string
-    ) => {
-      if (!jobId) return;
+    ): Promise<UploadedPhotoPatch | null> => {
+      // Resolves to what was stored, for the callers that need the s3url back —
+      // `patchPhoto` only reaches captures that live in `InstallProgress`, and a CoC
+      // signature does not.
+      if (!jobId) return Promise.resolve(null);
 
       patchPhoto(photo.id, { uploadStatus: 'uploading' });
       setUploadingCount((n) => n + 1);
@@ -102,18 +106,21 @@ export function useInstallerPhotoUpload(
               `Couldn't upload ${failureLabel}`,
               `Tried ${attempts} times. The photo is saved on this device — retake it once you have signal.`
             );
-            return;
+            return null;
           }
 
           if (context.replacing) logInstallerPhotoReplaced(userRef.current, meta);
           else logInstallerPhotoUploaded(userRef.current, meta);
+          return patch;
         })
         .finally(() => {
           inFlight.current.delete(photo.id);
           setUploadingCount((n) => Math.max(0, n - 1));
         });
 
-      inFlight.current.set(photo.id, task);
+      // `waitForUploads` awaits the same promise, so a step's save still drains this.
+      inFlight.current.set(photo.id, task.then(() => undefined));
+      return task;
     },
     [jobId, patchPhoto]
   );
@@ -162,6 +169,31 @@ export function useInstallerPhotoUpload(
           replacing,
         },
         `the ${tag.label} photo`
+      ),
+    [run]
+  );
+
+  /**
+  * One of the certificate's two signatures, rasterised from the on-device form.
+   *
+   * Goes up the SAME way a scanned page does — `phase: 'coc'`, `subcategory: 'coc'`
+   * — because that is the payload the endpoint was given for this phase. ⚠️ It means
+   * a signature and a scanned page are indistinguishable in the stored `subcategory`;
+   * only the file itself tells them apart. The ACTIVITY LOG does record which is
+   * which, so the portal's timeline can still name them.
+   */
+  const uploadCocSignature = useCallback(
+    (photo: CapturedPhoto, who: 'installer' | 'customer') =>
+      run(
+        'coc',
+        photo,
+        (coords) => cocDescriptor(photo, coords),
+        {
+          step: 'coc',
+          category: 'Certificate of Completion',
+          subcategory: who === 'installer' ? "Installer's Signature" : "Customer's Signature",
+        },
+        who === 'installer' ? "the installer's signature" : "the customer's signature"
       ),
     [run]
   );
@@ -231,6 +263,7 @@ export function useInstallerPhotoUpload(
       uploadPreExisting,
       uploadMatched,
       uploadCoc,
+      uploadCocSignature,
       uploadExtra,
       uploadResult,
       waitForUploads,
@@ -242,6 +275,7 @@ export function useInstallerPhotoUpload(
       uploadPreExisting,
       uploadMatched,
       uploadCoc,
+      uploadCocSignature,
       uploadExtra,
       uploadResult,
       waitForUploads,

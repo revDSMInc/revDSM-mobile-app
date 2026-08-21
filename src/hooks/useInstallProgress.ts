@@ -7,6 +7,7 @@ import type {
   InstallStepKey,
   InstallStepStatus,
   CapturedPhoto,
+  CocSignOff,
   PhotoPhase,
   ScopeStatus,
   PECEntry,
@@ -244,7 +245,8 @@ export function useInstallProgress(
         case 'return':
           return progress.return.photos.length > 0 || progress.return.skipped;
         case 'coc':
-          return progress.cocPages.length > 0;
+          // Either route completes it: a scanned page, or the certificate signed here.
+          return progress.cocPages.length > 0 || !!progress.cocSignOff;
         case 'pre':
           // Answers the REP's capture set (empty → free-form; see the param doc).
           return photoPhaseDone(
@@ -286,6 +288,53 @@ export function useInstallProgress(
     },
     [progress, productIds, requiredPhotoTagIds, photoPhaseDone]
   );
+
+  /**
+   * Has this step been WORKED ON, whether or not it is finished?
+   *
+   * A step the installer has already put photos or answers into must not go on
+   * inviting them to START it — that reads as "nothing here yet" and, worse, as work
+   * that was lost. It is deliberately a weaker test than `isStepDone`: any capture,
+   * any answer, counts.
+   */
+  const hasStepWork = useCallback(
+    (key: InstallStepKey): boolean => {
+      const anyExtras = (map: Record<string, CapturedPhoto[]>) =>
+        Object.values(map).some((list) => (list?.length ?? 0) > 0);
+
+      switch (key) {
+        case 'pickup':
+          return progress.pickup.photos.length > 0;
+        case 'return':
+          return progress.return.photos.length > 0;
+        case 'pec':
+          return (
+            progress.pecHasConditions !== null ||
+            Object.keys(progress.pecEntries).length > 0
+          );
+        case 'pre':
+          return Object.keys(progress.preMatched).length > 0 || anyExtras(progress.preExtras);
+        case 'post':
+          return Object.keys(progress.postMatched).length > 0 || anyExtras(progress.postExtras);
+        case 'measure':
+          return Object.keys(progress.scope).length > 0;
+        case 'coc':
+          return progress.cocPages.length > 0 || !!progress.cocSignOff;
+        default:
+          return false;
+      }
+    },
+    [progress]
+  );
+
+  /** Steps that hold work but are not finished — the rail says RESUME, not START. */
+  const stepHasWork = useMemo(() => {
+    const map: Partial<Record<InstallStepKey, boolean>> = {};
+    for (const step of INSTALL_STEPS) {
+      map[step.key] = !isStepDone(step.key) && hasStepWork(step.key);
+    }
+    return map;
+  }, [isStepDone, hasStepWork]);
 
   const stepStatus = useMemo(() => {
     const map: Record<InstallStepKey, InstallStepStatus> = {} as any;
@@ -396,6 +445,18 @@ export function useInstallProgress(
     [commit]
   );
 
+  /**
+   * The certificate signed on the device.
+   *
+   * Whole-record replace, not a merge: re-signing supersedes what was there, and a
+   * half-merged sign-off (new signatures, old attestations) would be a false record.
+   */
+  const setCocSignOff = useCallback(
+    (signOff: CocSignOff | null) =>
+      commit((p) => ({ ...p, cocSignOff: signOff ?? undefined })),
+    [commit]
+  );
+
   // ── Result evidence ───────────────────────────────────────────────────────
   // `?? []` throughout: progress persisted before this field existed rehydrates
   // without it, and MMKV keeps that shape until the job is next written.
@@ -472,6 +533,7 @@ export function useInstallProgress(
     progressRef,
     patch,
     stepStatus,
+    stepHasWork,
     isStepDone,
     completedCount,
     totalSteps: INSTALL_STEPS.length,
@@ -485,6 +547,7 @@ export function useInstallProgress(
     setScopeStatus,
     addCocPage,
     removeCocPage,
+    setCocSignOff,
     addResultPhoto,
     removeResultPhoto,
     clearResultPhotos,

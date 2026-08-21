@@ -128,7 +128,10 @@ export function DiscrepancyModal({ visible, product, jobPhotos, onClose, onSend 
                 multiline
                 placeholder='e.g. "Rear run measures 82 ft, sold at 76 ft"'
                 placeholderTextColor="#919EAB"
-                className="rounded-xl px-3 py-2.5 text-sm mb-4"
+                // Same trap as the PEC note: no `font-*` class means no fontFamily from this
+                // tailwind config, so the typed detail came out in the SYSTEM font under a
+                // Public Sans label.
+                className="rounded-xl px-3 py-2.5 text-sm font-semibold mb-4"
                 style={{
                   minHeight: 72,
                   textAlignVertical: 'top',

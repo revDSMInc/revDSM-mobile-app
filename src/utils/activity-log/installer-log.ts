@@ -607,6 +607,25 @@ const COC = INSTALLER_STEP_MODULES.coc;
 export const logCocCompleted = (user: any, totalPages: number) =>
   emit(user, LOG_ACTIONS.SUBMIT, COC, { totalPages, action: 'coc_completed' });
 
+/**
+ * The certificate signed on the device.
+ *
+ * The two signature IMAGES log themselves through the upload path
+ * (`logInstallerPhotoUploaded`, which carries the s3url and byte size). This is the
+ * form itself: what was attested, by whom, and against which job number — none of
+ * which appears in a photo log.
+ */
+export const logCocSigned = (
+  user: any,
+  meta: {
+    jobNumber?: string;
+    date?: string;
+    relationship?: string;
+    relationshipOther?: string;
+    signatureCount: number;
+  }
+  ) => emit(user, LOG_ACTIONS.SUBMIT, COC, { ...meta, action: 'coc_signed' });
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Result
 // ─────────────────────────────────────────────────────────────────────────────

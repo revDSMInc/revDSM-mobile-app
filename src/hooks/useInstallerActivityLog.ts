@@ -61,6 +61,7 @@ const LOGGERS = {
 
   // Certificate of Completion
   cocCompleted: InstallerLog.logCocCompleted,
+  cocSigned: InstallerLog.logCocSigned,
 
   // Result
   resultOpened: InstallerLog.logInstallerResultOpened,

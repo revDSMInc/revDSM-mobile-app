@@ -70,6 +70,7 @@ import { PECStep } from './steps/PECStep';
 import { PhotoMatchStep } from './steps/PhotoMatchStep';
 import { VerifyScopeStep } from './steps/VerifyScopeStep';
 import { CoCStep } from './steps/CoCStep';
+import type { CoCFormData } from '../../widgets/modals/installer/CoCFormModal';
 import {
   INSTALL_STEPS,
   INSTALLER_RESULT_TYPES,
@@ -87,6 +88,7 @@ import type {
   CapturedPhoto,
   InstallerDeletePhase,
   InstallerJob,
+  CocSignatureRef,
   InstallerJobPatch,
   InstallStepKey,
   InstallerResultType,
@@ -116,6 +118,17 @@ const signatureOf = (body: InstallerJobPatch): string =>
  * from a dead cell is never left watching a spinner they cannot dismiss.
  */
 const UPLOAD_WAIT_CAP_MS = 30000;
+
+/**
+ * The green the SALES Lead Center paints its lead-summary block with.
+ *
+ * ⚠️ Hardcoded there (`screens/LeadCenter/index.tsx`) and deliberately NOT the theme's
+ * `primary.main` (`#4CBB17`). The two are close enough to pass for one colour on their own
+ * screens and different enough to read as wrong when a rep and an installer hold up the same
+ * lead side by side — which is exactly what this block is for. It mirrors the rep's screen,
+ * so it takes the rep's value.
+ */
+const LEAD_SUMMARY_ACCENT = '#72BD00';
 
 /**
  * Installer job detail — lead context, the install timeline, and read-only job
@@ -172,6 +185,7 @@ export default function InstallerJobDetail() {
     progress,
     progressRef,
     stepStatus,
+    stepHasWork,
     completedCount,
     totalSteps,
     addMaterialPhoto,
@@ -183,6 +197,7 @@ export default function InstallerJobDetail() {
     addExtraPhoto,
     setScopeStatus,
     addCocPage,
+    setCocSignOff,
     removeCocPage,
     addResultPhoto,
     removeResultPhoto,
@@ -201,6 +216,18 @@ export default function InstallerJobDetail() {
   const userId = user?._id || user?.id;
   const upload = useInstallerPhotoUpload(job?._id, patchPhoto);
   const queryClient = useQueryClient();
+
+  /**
+   * What the two CoC signature uploads stored, and the tasks that fill them in.
+   *
+   * Refs rather than state: nothing renders from them, and the sign-off handler must
+   * read the latest value in the same tick it builds the payload.
+   */
+  const cocSignatureRefs = useRef<{
+    installer?: CocSignatureRef;
+    customer?: CocSignatureRef;
+  }>({});
+  const cocSignatureTasks = useRef<Promise<unknown>[]>([]);
 
   const [openStep, setOpenStep] = useState<InstallStepKey | null>(null);
   const [resultType, setResultType] = useState<InstallerResultType | null>(null);
@@ -503,6 +530,33 @@ export default function InstallerJobDetail() {
     [addCocPage, upload, progressRef]
   );
 
+  /**
+   * A signature from the on-device Certificate of Completion.
+   *
+   * Uploaded exactly like a scanned CoC page (`phase: 'coc'`) and logged by the
+   * upload hook, which is the only place that knows the s3url and byte size. It is
+   * deliberately NOT added to `cocPages`: it is not a page of the document, and it
+   * must not appear in the step's page grid or its count.
+   */
+  const handleCocSignature = useCallback(
+    (photo: CapturedPhoto, who: 'installer' | 'customer') => {
+      const task = upload.uploadCocSignature(photo, who).then((patch) => {
+        if (patch?.s3url) {
+          cocSignatureRefs.current[who] = {
+            s3url: patch.s3url,
+            bucketName: patch.bucketName,
+          };
+        }
+      });
+      // Kept so the sign-off can WAIT for it. `waitForUploads` drains the request
+      // itself, but the s3url is read one `.then` later — awaiting the task is the
+      // only ordering that guarantees the ref is on hand when the PATCH is built.
+      cocSignatureTasks.current.push(task);
+    },
+    [upload]
+  );
+
+
   const handleMatchPhoto = useCallback(
     (phase: PhotoPhase, tagId: string, photo: CapturedPhoto) => {
       // Read before the mutation: a tag that already holds a shot makes this a
@@ -646,6 +700,50 @@ export default function InstallerJobDetail() {
         return data ? { ...all, ...data } : all;
       }, {}),
     [buildStepData]
+  );
+
+  /**
+   * The certificate submitted on the device → `stepData.coc`.
+   *
+   * Waits for both signature uploads first: their `s3url`s ARE two of the four keys
+   * in the payload, so sending before they land would file a certificate with no
+   * signatures on it. `buildCocSignOffPayload` then drops any that still has none,
+   * rather than sending an empty ref.
+   */
+  const handleCocSignOff = useCallback(
+    async (data: CoCFormData) => {
+      await Promise.all(cocSignatureTasks.current);
+      cocSignatureTasks.current = [];
+
+      setCocSignOff({
+        confirmations: {
+          is18OrOlder: data.isAdult,
+          isHomeownerOrAuthorized: data.isAuthorizedSigner,
+          installationCompletedAsPerContract: data.installedPerContract,
+        },
+        customer: {
+          relationshipType: data.relationship,
+          otherRelationship: data.relationshipOther || null,
+        },
+        // A signature not redrawn this time keeps the one already on file — editing a
+        // tick box must not blank the certificate's signatures.
+        installerSignature:
+          cocSignatureRefs.current.installer ??
+          progressRef.current.cocSignOff?.installerSignature,
+        customerSignature:
+          cocSignatureRefs.current.customer ??
+          progressRef.current.cocSignOff?.customerSignature,
+        jobNumber: data.jobNumber,
+        date: data.date,
+        signedAt: data.signedAt,
+        installerSignaturePaths: data.installerSignaturePaths,
+        customerSignaturePaths: data.customerSignaturePaths,
+        signatureSize: data.signatureSize,
+      });
+
+      await sendStepData('coc');
+    },
+    [sendStepData, setCocSignOff, progressRef]
   );
 
   /**
@@ -1434,23 +1532,25 @@ export default function InstallerJobDetail() {
           className="flex-1"
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         >
-          {/* Lead summary */}
+          {/* Lead summary — typography is the SALES Lead Center's, deliberately.
+              Font size (`text-base` / 16), family+weight (`font-semibold` → PublicSans-SemiBold)
+              and colour (`LEAD_SUMMARY_ACCENT` on the labels/contact rows, `colors.text` on the
+              values) are copied from `screens/LeadCenter/index.tsx`, so a rep and an installer
+              read the same lead in the same type.
+              ⚠️ The values here used to be `font-normal`, which resolves to NO fontFamily in this
+              tailwind config — so half the block rendered in the SYSTEM font while sales rendered in
+              Public Sans. Every line must sit on a named weight class. */}
           <View className="mb-2">
-            {/* Labels carry the weight, values don't. Every value here was `font-black`,
-                so the whole block shouted and nothing in it read as more important than
-                anything else. */}
-            <Text className="text-[15px] mb-2">
-              <Text className="font-bold" style={{ color: colors.primary.main }}>
-                {t('installer.leadId')}:{' '}
-              </Text>
-              <Text className="font-normal" style={{ color: colors.text }}>
+            <Text className="text-base font-semibold mb-2" style={{ color: LEAD_SUMMARY_ACCENT }}>
+              {t('installer.leadId')}:{' '}
+              <Text className="font-semibold" style={{ color: colors.text }}>
                 {job.leadDisplayId || job.jobNumber || job.leadId || 'N/A'}
               </Text>
             </Text>
 
             <View className="flex-row items-center mb-2">
-              <Ionicon name="person" size={15} color={colors.primary.main} />
-              <Text className="ml-2 text-base font-normal" style={{ color: colors.text }}>
+              <Ionicon name="person" size={14} color={LEAD_SUMMARY_ACCENT} />
+              <Text className="ml-1 shrink text-base font-semibold" style={{ color: colors.text }}>
                 {name || 'Customer'}
               </Text>
             </View>
@@ -1466,17 +1566,20 @@ export default function InstallerJobDetail() {
                 disabled={!phone}
                 onPress={() => setShowPhoneOptions(true)}
               >
-                <Ionicon name="call" size={15} color={colors.primary.main} />
-                <Text className="ml-2 text-sm font-bold" style={{ color: colors.primary.main }}>
+                <Ionicon name="call" size={14} color={LEAD_SUMMARY_ACCENT} />
+                <Text
+                  className="ml-1 text-base font-semibold"
+                  style={{ color: LEAD_SUMMARY_ACCENT }}
+                >
                   {phone || 'N/A'}
                 </Text>
               </TouchableOpacity>
               <View className="flex-row items-center flex-1">
-                <Ionicon name="mail" size={15} color={colors.primary.main} />
+                <Ionicon name="mail" size={14} color={LEAD_SUMMARY_ACCENT} />
                 <Text
                   numberOfLines={1}
-                  className="ml-2 text-sm font-bold"
-                  style={{ color: colors.primary.main }}
+                  className="ml-1 text-base font-semibold"
+                  style={{ color: LEAD_SUMMARY_ACCENT }}
                 >
                   {job.customerDetails?.email || 'N/A'}
                 </Text>
@@ -1485,16 +1588,18 @@ export default function InstallerJobDetail() {
 
             <View className="flex-row items-center mb-2" style={{ gap: 24 }}>
               <View className="flex-row items-center">
-                <Ionicon name="calendar-clear" size={14} color={colors.primary.main} />
-                <Text className="ml-2 text-sm font-normal" style={{ color: colors.text }}>
+                <Ionicon name="calendar-clear" size={14} color={LEAD_SUMMARY_ACCENT} />
+                <Text className="ml-1 text-base font-semibold" style={{ color: colors.text }}>
                   {job.leadDate ? format(new Date(job.leadDate), 'MM/dd/yyyy') : 'N/A'}
                 </Text>
               </View>
               <View className="flex-row items-center flex-1">
-                <Ionicon name="time-outline" size={14} color={colors.primary.main} />
+                {/* Sales uses MaterialCommunityIcons `clock` here, not Ionicons `time-outline` —
+                    the outline glyph reads lighter beside the filled calendar next to it. */}
+                <MaterialIcon name="clock" size={14} color={LEAD_SUMMARY_ACCENT} />
                 <Text
                   numberOfLines={1}
-                  className="ml-2 text-sm font-normal"
+                  className="ml-1 text-base font-semibold"
                   style={{ color: colors.text }}
                 >
                   {job.leadTime || 'N/A'}
@@ -1514,13 +1619,13 @@ export default function InstallerJobDetail() {
             >
               <Ionicon
                 name="location-sharp"
-                size={16}
-                color={colors.primary.main}
-                style={{ marginTop: 2 }}
+                size={14}
+                color={LEAD_SUMMARY_ACCENT}
+                style={{ marginTop: 3 }}
               />
               <Text
-                className="flex-1 ml-1.5 text-sm font-bold leading-5"
-                style={{ color: colors.primary.main }}
+                className="flex-1 ml-1 text-base font-semibold leading-6"
+                style={{ color: LEAD_SUMMARY_ACCENT }}
               >
                 {job.fullAddress || 'Address Pending'}
               </Text>
@@ -1595,6 +1700,7 @@ export default function InstallerJobDetail() {
           {/* Timeline */}
           <InstallTimeline
             status={stepStatus}
+            inProgress={stepHasWork}
             notes={stepNotes}
             completedCount={completedCount}
             totalSteps={totalSteps}
@@ -1785,9 +1891,13 @@ export default function InstallerJobDetail() {
 
       <CoCStep
         visible={openStep === 'coc'}
+        job={job}
         pages={progress.cocPages}
         onAddPage={handleCocPage}
         onRemovePage={handleRemoveCocPage}
+        onSignature={handleCocSignature}
+        onSignOff={handleCocSignOff}
+        signOff={progress.cocSignOff}
         onBack={handleCloseStep}
       />
 

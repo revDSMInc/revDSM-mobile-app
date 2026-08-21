@@ -13,7 +13,13 @@ import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog'
 import { FlashMessage } from '../../../config/message';
 import type { ScopeStatus, SoldProduct } from '../../../config/types/installer';
 
-/** Line height of a spec line — also the height of its bullet's centring box. */
+/**
+ * Line height of a spec line — also the height of its bullet's centring box.
+ *
+ * 20 on the 14 px (`text-sm`) spec line, the size the SALES cards set their rows in.
+ * Keep the two in step: the bullet centres itself in a box exactly this tall, so a font
+ * size change without a matching line height puts every dot off the middle of its line.
+ */
 const LINE_HEIGHT = 20;
 
 interface Props {
@@ -113,7 +119,7 @@ export function VerifyScopeStep({
             >
               <Icon name="clock-outline" size={14} color={colors.warning.dark} />
               <Text
-                className="flex-1 ml-2 text-xs font-bold"
+                className="flex-1 ml-2 text-sm font-bold"
                 style={{ color: colors.warning.dark }}
               >
                 {pending === 1
@@ -153,20 +159,20 @@ export function VerifyScopeStep({
           <View className="flex-row items-center mb-2">
             <Icon name="package-variant-closed" size={18} color={colors.warning.dark} />
             <Text
-              className="text-[15px] font-bold ml-2"
+              className="text-base font-bold ml-2"
               style={{ color: colors.warning.dark }}
             >
               {t('installer.scopeNoProducts')}
             </Text>
           </View>
           <Text
-            className="text-xs font-semibold leading-5 mb-2"
+            className="text-sm font-semibold leading-5 mb-2"
             style={{ color: colors.text }}
           >
             {t('installer.scopeNoProductsBody')}
           </Text>
           <Text
-            className="text-xs font-semibold leading-5"
+            className="text-sm font-semibold leading-5"
             style={{ color: colors.textSecondary }}
           >
             {t('installer.scopeNoProductsAction')}
@@ -184,7 +190,7 @@ export function VerifyScopeStep({
             className="rounded-2xl p-3 mb-2.5 border"
             style={{ backgroundColor: accent + '10', borderColor: accent }}
           >
-            <Text className="text-[15px] font-bold mb-1.5" style={{ color: colors.text }}>
+            <Text className="text-base font-black mb-1.5" style={{ color: colors.text }}>
               {product.name}
             </Text>
             {product.lines.map((line, lineIdx) => (
@@ -202,7 +208,7 @@ export function VerifyScopeStep({
                   />
                 </View>
                 <Text
-                  className="flex-1 text-xs font-semibold"
+                  className="flex-1 text-sm font-semibold"
                   style={{ color: colors.text, lineHeight: LINE_HEIGHT }}
                 >
                   {line}
@@ -218,12 +224,12 @@ export function VerifyScopeStep({
                   className="flex-1 rounded-lg items-center justify-center py-2.5 flex-row"
                   style={{ backgroundColor: colors.primary.main }}
                 >
-                  <Icon name="check" size={13} color="#fff" />
+                  <Icon name="check" size={14} color="#fff" />
                   {/* `shrink`, NOT `flex-1`: a flex-1 label would eat the whole row and centre
                       itself inside the leftover space, leaving the icon pinned to the far left.
                       Shrinking keeps icon+label centred as one unit while still letting the
                       wider Spanish "Confirmar correcto" wrap in this half-width button. */}
-                  <Text className="shrink text-white text-xs font-bold ml-1 text-center">
+                  <Text className="shrink text-white text-sm font-bold ml-1 text-center">
                     {t('installer.scopeConfirmCorrect')}
                   </Text>
                 </TouchableOpacity>
@@ -232,9 +238,9 @@ export function VerifyScopeStep({
                   className="flex-1 rounded-lg items-center justify-center py-2.5 flex-row border-2"
                   style={{ borderColor: colors.warning.main, backgroundColor: colors.background }}
                 >
-                  <Icon name="alert-outline" size={13} color={colors.warning.dark} />
+                  <Icon name="alert-outline" size={14} color={colors.warning.dark} />
                   <Text
-                    className="shrink text-xs font-bold ml-1 text-center"
+                    className="shrink text-sm font-bold ml-1 text-center"
                     style={{ color: colors.warning.dark }}
                   >
                     {t('installer.scopeDiscrepancy')}
@@ -249,7 +255,7 @@ export function VerifyScopeStep({
                 >
                   <Icon name="check" size={11} color="#fff" />
                 </View>
-                <Text className="text-xs font-bold" style={{ color: colors.primary.main }}>
+                <Text className="text-sm font-bold" style={{ color: colors.primary.main }}>
                   {t('installer.scopeConfirmed')}
                 </Text>
                 <TouchableOpacity
@@ -257,7 +263,7 @@ export function VerifyScopeStep({
                   className="ml-auto"
                 >
                   <Text
-                    className="text-[11px] font-bold underline"
+                    className="text-xs font-bold underline"
                     style={{ color: colors.textSecondary }}
                   >
                     {t('installer.scopeUndo')}
@@ -274,12 +280,12 @@ export function VerifyScopeStep({
                     className="rounded-md px-1.5 py-0.5 mr-2"
                     style={{ backgroundColor: colors.warning.main }}
                   >
-                    <Text className="text-white text-[9px] font-black tracking-widest">
+                    <Text className="text-white text-[10px] font-black tracking-widest">
                       {t('installer.scopePending')}
                     </Text>
                   </View>
                   <Text
-                    className="flex-1 text-[11px] font-bold"
+                    className="flex-1 text-sm font-bold"
                     style={{ color: colors.warning.dark }}
                   >
                     {t('installer.scopeAwaitingIm', { issue: st.issue ?? '' })}
@@ -299,7 +305,7 @@ export function VerifyScopeStep({
                   className="mt-1.5"
                 >
                   <Text
-                    className="text-[10px] font-bold underline"
+                    className="text-xs font-bold underline"
                     style={{ color: colors.textSecondary }}
                   >
                     DEMO: simulate IM resolve
@@ -321,7 +327,7 @@ export function VerifyScopeStep({
                   <Icon name="check" size={11} color="#fff" />
                 </View>
                 <Text
-                  className="flex-1 text-[11px] font-bold"
+                  className="flex-1 text-sm font-bold"
                   style={{ color: colors.primary.main }}
                 >
                   {t('installer.scopeResolvedBy', { issue: st.issue ?? '' })}
@@ -333,7 +339,7 @@ export function VerifyScopeStep({
       })}
 
       {resolved > 0 && (
-        <Text className="text-[11px] font-semibold" style={{ color: colors.textSecondary }}>
+        <Text className="text-xs font-semibold" style={{ color: colors.textSecondary }}>
           {t('installer.scopeSummary', {
             confirmed: products.length - resolved,
             resolved,

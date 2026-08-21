@@ -1,8 +1,22 @@
 import type {
   PhotoSection,
+  PhotoSlot,
   PhotoTag,
   PreInstallPhotos,
+  RepPhoto,
 } from '../config/types/installer';
+
+/**
+ * The REP's photo for a slot — the only kind that can be ghost-matched against.
+ *
+ * ⚠️ The endpoint returns the crew's OWN pre-install captures in these same slots,
+ * tagged `source: 'installer'`. They are not a reference and must never be treated as
+ * one: taking a photo would otherwise CREATE the requirement to match it, so a step
+ * finished free-form on the first visit reopened as "0/1 matched" and dropped back to
+ * START, with the crew asked to ghost-match their own photo.
+ */
+const repPhotoOf = (slot: PhotoSlot): RepPhoto | undefined =>
+  (slot.photos ?? []).find((photo) => (photo.source ?? '').trim().toLowerCase() !== 'installer');
 
 /** Best-effort MaterialCommunityIcons glyph for a rep-photo category label. */
 const ICON_BY_KEYWORD: Array<[RegExp, string]> = [
@@ -45,20 +59,29 @@ export const buildRepPhotoSections = (photos?: PreInstallPhotos): PhotoSection[]
   products.forEach((prod, pi) => {
     prod.categories.forEach((cat, ci) => {
       const slots = cat.slots ?? [];
-      // Only surface categories the rep actually captured something in.
-      if (!slots.some((s) => (s.photos?.length ?? 0) > 0)) return;
+      // Only surface categories the REP actually captured something in — a category
+      // holding nothing but the crew's own shots is not a reference set.
+      if (!slots.some((slot) => !!repPhotoOf(slot))) return;
 
       const tags: PhotoTag[] = slots.map((slot) => {
-        const first = slot.photos?.[0];
+        const rep = repPhotoOf(slot);
+        // The pairing id falls back to the crew's own capture when the rep skipped the
+        // slot: the POST pass ghosts against the PRE shot, and its upload still has to
+        // reference it — as `preInstallPhotoId`, which `repPhotoSource` selects.
+        const reference = rep ?? slot.photos?.[0];
         return {
           id: slot.id,
           label: slot.name || slot.storageName || 'Photo',
-          hasRep: (slot.photos?.length ?? 0) > 0,
-          repPhotoS3Url: first?.s3url,
-          repPhotoBucket: first?.bucketName,
-          // Carried so the installer's matching shot can be uploaded with
-          // `salesPhotoId` + `category` — that pairing is what links the two images.
-          repPhotoId: first?._id,
+          // Only a REP photo makes this tag owed. Everything else is still shootable
+          // (`isTagOpen`), it just is not demanded.
+          hasRep: !!rep,
+          repPhotoS3Url: rep?.s3url,
+          repPhotoBucket: rep?.bucketName,
+          // Carried so the installer's matching shot can be uploaded with the id +
+          // `category` — that pairing is what links the two images. `source` decides
+          // WHICH id key it goes out under (`matchedPhotoIdRef`).
+          repPhotoId: reference?._id,
+          repPhotoSource: reference?.source,
           categoryLabel: cat.label,
         };
       });
