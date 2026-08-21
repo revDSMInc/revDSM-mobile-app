@@ -17,12 +17,19 @@ interface UseDynamicJobBuilderSessionOptions {
    * clobbered. Omit to keep the legacy "apply until first edit" behaviour.
    */
   draftToken?: any;
+  /**
+   * Has the draft READ finished (regardless of whether it found anything)?
+   * Supply it whenever `draftToken` is used — it is what lets the restore latch on a
+   * lead that has NO saved draft yet. See the effect below.
+   */
+  draftSettled?: boolean;
   dealCenterData?: any;
   onJobStateChange?: (state: JobState) => void;
 }
 
 export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSessionOptions = {}) {
-  const { initialConfig, initialJobState, draftToken, dealCenterData, onJobStateChange } = options;
+  const { initialConfig, initialJobState, draftToken, draftSettled, dealCenterData, onJobStateChange } =
+    options;
 
   const [config, setConfig] = useState<JobBuilderConfig>(() => {
     // No mock/default fallback: the screen only mounts this hook once a real
@@ -52,8 +59,6 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
   const lastAppliedInitialRef = useRef<JobState | undefined>(undefined);
   const lastDraftTokenRef = useRef<any>(undefined);
   useEffect(() => {
-    if (!initialJobState) return;
-
     // Web parity (dynamic-job-builder.js `stateResetKey` effect): when a NEW draft is
     // loaded it is applied unconditionally — web only skips when the key is unchanged,
     // and clears its per-session nav flag on restore. Mobile's old guard latched
@@ -64,7 +69,35 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
     // changes when the server actually returns a different draft.
     if (draftToken !== undefined) {
       if (lastDraftTokenRef.current === draftToken) return;
+
+      // ⚠️ LATCH ON THE READ SETTLING, NOT ON A TRUTHY DRAFT.
+      //
+      // The guard used to sit at the top of this effect as `if (!initialJobState) return;`,
+      // so a lead whose outcome GET found NOTHING (every brand-new lead) never latched the
+      // token — and then the FIRST draft to arrive at ANY later moment was applied
+      // unconditionally, wiping whatever the rep had done in the meantime.
+      //
+      // That is a real flow, not a theoretical one: `commitUploaded` invalidates
+      // ['leadOutcome', leadId] after an agreement is filed, so signing an agreement
+      // REFETCHES this draft — and by then the server holds the draft written by the
+      // 2 s autosave that ran when the appointment was scheduled. That draft carries
+      // `scheduleTime` and no `agreements`, so restoring it deleted the agreement the rep
+      // had just signed, and the next autosave persisted the state without it.
+      // (`useLeadReports` invalidates the same key, so this was never limited to one flow.)
+      //
+      // A settled read that found nothing means there is nothing to restore, ever: any
+      // state the server holds from then on was written BY THIS SESSION.
+      if (draftSettled === undefined) {
+        // Caller supplied no signal — keep the old behaviour (latch on a real draft).
+        if (!initialJobState) return;
+      } else if (!draftSettled) {
+        // Still loading. Waiting here is what preserves the blank-tab fix: a draft that
+        // lands after an early write is still applied, exactly as before.
+        return;
+      }
+
       lastDraftTokenRef.current = draftToken;
+      if (!initialJobState) return;
       lastAppliedInitialRef.current = initialJobState;
       userEditedRef.current = false; // fresh draft → fresh session (web: userNavigatedRef = false)
       setJobState(initialJobState);
@@ -72,11 +105,12 @@ export function useDynamicJobBuilderSession(options: UseDynamicJobBuilderSession
     }
 
     // Legacy path (no token supplied): apply until the rep's first real edit.
+    if (!initialJobState) return;
     if (userEditedRef.current) return;
     if (lastAppliedInitialRef.current === initialJobState) return;
     lastAppliedInitialRef.current = initialJobState;
     setJobState(initialJobState);
-  }, [initialJobState, draftToken]);
+  }, [initialJobState, draftToken, draftSettled]);
 
   const lockedTabIdsByVertical = useMemo(() => {
     const result: Record<string, string[]> = {};

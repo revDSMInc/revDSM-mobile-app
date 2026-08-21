@@ -361,6 +361,11 @@ function DynamicJobBuilderInner({
     //     upload) do NOT restore over the rep's in-progress edits.
     // Edit mode keeps its existing behaviour — its state arrives as a prop.
     draftToken: isEdit ? undefined : `${leadId || ''}:${calcId || ''}`,
+    // Lets the restore latch even when this lead has NO saved draft yet — without it
+    // a brand-new lead stayed permanently open to a late draft, and the refetch that
+    // `commitUploaded` triggers after signing restored a doc-less draft OVER the
+    // agreement the rep had just signed. See the effect in useDynamicJobBuilderSession.
+    draftSettled: isEdit ? undefined : isOutcomeFetched,
   });
 
   const { jobState, updateTabState, updateRootState, clearRootState, lockedTabIdsByVertical } = session;
@@ -414,6 +419,21 @@ function DynamicJobBuilderInner({
   // Blocks the debounced auto-save while a document upload is mid-flight so we
   // don't race the outcome PUT (mirrors normal JB's isDocUploadingRef).
   const isDocUploadingRef = useRef(false);
+
+  // The LIVE job state, for `performAutoSave` to serialize from.
+  //
+  // ⚠️ `performAutoSave` is a `useCallback` that closes over `jobState`, and its
+  // in-flight guard re-invokes THE SAME CLOSURE as a follow-up. So a save that was
+  // coalesced while another was in flight re-sent the state as it stood when the
+  // FIRST save started — silently dropping anything written in between. That is how a
+  // draft could persist `scheduleTime` and not the `agreements` written moments later
+  // (the reported "agreement is not in the payload"): both writes landed on the same
+  // object, but the payload was serialized from a snapshot taken before the second.
+  //
+  // Same fix the calculator save engine already carries (`useDynamicCalculators`
+  // reads the current tab from `tabsRef`, "like web's `entriesRef.current`").
+  const jobStateRef = useRef(jobState);
+  jobStateRef.current = jobState;
 
   // Hydrate previously-saved (server) documents into the display state once the
   // outcome + secure URLs resolve — so a reopened job shows its agreement/order
@@ -519,7 +539,15 @@ function DynamicJobBuilderInner({
       // mobile. Stripping them here meant every 2s autosave OVERWROTE the saved draft
       // with a doc-less copy, so a web-attached agreement disappeared from the deal on
       // the next open, and a mobile-attached one was never visible to web at all.
-      const dynamicJobState = serializeDynamicJobStateForStorage(jobState || {}, initialConfig, dealCenterData);
+      // From the REF, never the closure — see `jobStateRef`. `jobState` stays in this
+      // callback's dependency list so the 2 s debounce still re-arms on every edit;
+      // the ref only guarantees that whichever closure ends up running sends what the
+      // rep actually has now.
+      const dynamicJobState = serializeDynamicJobStateForStorage(
+        jobStateRef.current || {},
+        initialConfig,
+        dealCenterData
+      );
       const configId = (initialConfig as any)?.id || null;
       // Web parity (JobBuilderContext.buildSavePayload): persist which sections
       // already had their auto-populated fields logged, so a reopen dedups them
@@ -562,23 +590,33 @@ function DynamicJobBuilderInner({
     } finally {
       saveInFlightRef.current = false;
       // A save requested while this one was in flight → run one follow-up now.
+      // ⚠️ Through the REF, not `performAutoSave` — calling the identifier here recurses
+      // into THIS closure, i.e. the one captured when this save started, so the
+      // follow-up re-sent stale `initialConfig` / `dealCenterData` too.
       if (needsFollowUpRef.current) {
         needsFollowUpRef.current = false;
-        void performAutoSave();
+        void performAutoSaveRef.current();
       }
     }
-  }, [leadId, jobState, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
+  }, [leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
 
   // Keep the latest saver in a ref so the unmount flush calls the current closure.
   const performAutoSaveRef = useRef(performAutoSave);
   performAutoSaveRef.current = performAutoSave;
 
+  // Debounce. `jobState` is the real trigger and is now named here directly — it used
+  // to reach this effect only as part of `performAutoSave`'s identity, which is what
+  // tied the re-arm to a closure that also carried a SNAPSHOT of the state. The rest of
+  // the list is everything `performAutoSave` reads, so a save is still re-armed when any
+  // of them settles (e.g. `dealCenterData`), exactly as before.
+  //
+  // ⚠️ Fires through the REF so the timer always runs the CURRENT closure.
   useEffect(() => {
     if (!leadId || !initialFetchDoneRef.current || embedded) return;
     autoSaveDirtyRef.current = true;
-    const timer = setTimeout(() => void performAutoSave(), 2000);
+    const timer = setTimeout(() => void performAutoSaveRef.current(), 2000);
     return () => clearTimeout(timer);
-  }, [performAutoSave, leadId, embedded]);
+  }, [jobState, leadId, calcId, initialConfig, dealCenterData, isEdit, appointmentId, calculatorResultData, embedded]);
 
   // Unmount flush: if a debounced edit is still pending, persist it immediately so
   // a value changed then quickly navigated away from is not lost (web parity).
