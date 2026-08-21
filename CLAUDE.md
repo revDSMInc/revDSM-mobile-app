@@ -3674,6 +3674,142 @@ its own ticket with a KNOWN-GOOD number: the deal-edit "Send Addendum To" field 
 tsc 44 (baseline unchanged); `AgreementSignatureModal.tsx` is at its HEAD eslint baseline (41 problems),
 and `message.ts`, `SummarySection.tsx`, `outcome-documents.ts` and `DynamicJobBuilderScreen.tsx` are
 back to their pre-feature state (the first two verified byte-identical against `3d5dbea^`).
+
+### The draft autosave could persist a state SNAPSHOT, losing the agreement
+
+Ticket: *"when i create lead and come to summary, i click schedule appointment — after adding the date
+and time it automatically opens the modal asking to generate the agreement. In that scenario, when I
+submit the agreement the agreement is not going in the payload. It only goes when I generate it from
+the Agreements card."* Two `PUT lead/v1/{id}/outcome/{calcId}` bodies were supplied; both carry
+`jobBuilder.status: 'draft'`, i.e. they are **autosaves**, not the Complete-Job submit.
+
+The two payloads are the whole diagnosis. Both hold the same `scheduleTime`
+(`8/22/2026 · 8:00 AM - 12:00 PM`) and the same vertical state; only one carries
+`dynamicJobState.agreements`. **`scheduleTime` present and `agreements` absent in ONE body is only
+possible if that body was serialized from a snapshot taken between the two writes** — both land on the
+same object through `updateRootState`, which is a functional updater, so nothing can drop one and keep
+the other.
+
+**Cause: `performAutoSave` closed over `jobState`, and its own in-flight guard re-invoked THAT closure.**
+
+```js
+if (saveInFlightRef.current) { needsFollowUpRef.current = true; return; }
+…
+} finally {
+  saveInFlightRef.current = false;
+  if (needsFollowUpRef.current) { needsFollowUpRef.current = false; void performAutoSave(); }
+  //                                                                     ^ recurses into THIS closure
+}
+```
+
+A save coalesced while another was in flight therefore re-sent the state **as it stood when the FIRST
+save started**. The scheduler flow is the one that reliably has a save in flight: scheduling writes
+`scheduleTime` and arms a save, and the agreement is generated on top of that — so the agreement write
+is the one that gets coalesced away. Generating from the Agreements card has no preceding write, so
+its save runs on a fresh closure and the agreement survives. Same class of bug the calculator engine
+already fixed (`useDynamicCalculators` reads the current tab from `tabsRef`, *"like web's
+`entriesRef.current`"*).
+
+Three changes, all in `DynamicJobBuilderScreen`:
+
+- **New `jobStateRef`**, and `performAutoSave` serializes from `jobStateRef.current`. Whichever closure
+  ends up running now sends what the rep actually has.
+- **The follow-up fires through `performAutoSaveRef.current()`**, not the `performAutoSave` identifier
+  — the latter recurses into the captured closure, so it also re-sent stale `initialConfig` /
+  `dealCenterData`.
+- **The debounce effect now names `jobState` directly** and fires through the ref.
+
+⚠️ **`jobState` had to come OUT of `performAutoSave`'s dependency list and INTO the effect's.** It was
+only ever there to make the callback's identity change so the 2 s timer re-armed on each edit — and
+that is precisely what tied the re-arm to a closure carrying a snapshot. Moving it makes the trigger
+explicit; the effect also lists everything else `performAutoSave` reads, so a save is still re-armed
+when `dealCenterData` settles, exactly as before. Do not "simplify" the effect back down to
+`[performAutoSave, …]`, and do not silence the `exhaustive-deps` warning that appears if `jobState` is
+left in the callback — the rule is right, the dependency really is unused there now.
+
+⚠️ **Only the DRAFT was affected, not the submitted job.** `handleComplete` serializes `jobState`
+directly at submit time, so the finished deal always carried the agreement; what was lost was the
+draft on the server between generating and completing — so a reopen (or web) saw a deal with no
+agreement, which is the same failure the "documents ride ALONG WITH the draft" comment in
+`performAutoSave` already warns about.
+
+⚠️ **Ruled out by reading, do not re-investigate:** `updateRootState` (functional, cannot clobber a
+sibling key); both flows sharing ONE `DynamicAgreementDialog` and one `handleAgreementGenerated`; and
+the scheduler's `onGenerate`, which is a plain synchronous call plus `handleModalClose()`.
+
+> ⚠️ **This fix is CORRECT and is KEPT, but it did NOT close the ticket** — the reporter came back with
+> the same payload. And one line of the paragraph above was wrong: *"the session's draft re-apply …
+> runs once on mount and the `commitUploaded` query invalidation cannot re-trigger it."* On a
+> **brand-new lead** it never ran on mount at all, and that is the actual bug. See below.
+
+tsc 44 (baseline unchanged); eslint on the file is back to its exact baseline (49 problems, 2 errors).
+
+#### ✅ ROOT CAUSE: on a NEW lead the draft restore never LATCHED, so a later refetch overwrote the signature
+
+Same ticket, reporter's second pass — *"when we came first time in summary after making the new lead …
+from this flow by clicking it, we came this card (Modal: Job Booked) and after pressing Generate Dynamic
+agreement, when we submit agreement, agreements is not going to sent in the payload"*. The emphasis on
+**first time in summary after making the new lead** is the whole answer: the state was not being
+serialized from a stale snapshot, it was being **reset out from under the save**.
+
+`useDynamicJobBuilderSession`'s restore effect opened with
+
+```js
+if (!initialJobState) return;          // ← before ANY latching
+…
+if (lastDraftTokenRef.current === draftToken) return;
+lastDraftTokenRef.current = draftToken;   // only ever reached with a real draft
+```
+
+so a lead whose outcome GET found **nothing** — every new lead — never wrote `lastDraftTokenRef`, and
+the session stayed open to a restore **forever**. The first draft to arrive at any later moment was then
+applied unconditionally.
+
+One does arrive, and the agreement itself summons it. `commitUploaded` (`SummaryFinalizeCards`) ends with
+`queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] })`, so **filing the agreement
+REFETCHES the draft** — and by then the server holds the draft the 2 s autosave wrote when the
+appointment was scheduled, which carries `scheduleTime` and **no `agreements`**. That draft is restored
+over the just-signed agreement, and the next autosave persists the state without it. Exactly the payload
+in the ticket.
+
+**Why the Agreements-card flow looked fine:** that card is gated on `isAppointmentSet`, so it is
+overwhelmingly used on a deal **reopened** after the appointment was already saved. There the mount-time
+GET finds a draft, the token latches, and the later invalidation is a no-op. Both entry points share one
+`handleAgreementGenerated` — the difference was never the flow, only whether a draft existed at mount.
+
+⚠️ **And it was never limited to that one flow.** `useLeadReports` invalidates the same
+`['leadOutcome', leadId]` key in two places, so on a new lead ANY of those could restore a doc-less draft
+over live work.
+
+**Fix — latch on the READ SETTLING, not on a truthy draft.** New `draftSettled?: boolean` option; the
+screen passes `isEdit ? undefined : isOutcomeFetched`. Once the GET has settled the token is written
+**whether or not it found anything**, because a settled-empty read means there is nothing to restore
+*ever*: from then on, every byte the server holds was written by this session.
+
+- **`draftSettled === undefined` keeps the old behaviour**, so no other caller can be changed by this.
+  (`DynamicJobBuilderScreen` is the only one that passes `draftToken` at all; edit mode passes neither.)
+- **`draftSettled === false` WAITS rather than latching**, which is what preserves the blank-tab fix
+  above it: a draft that lands after an early write is still applied, exactly as before.
+- The legacy (token-less) path keeps its own `if (!initialJobState) return;` — its rule is
+  "apply until the rep's first real edit", which is a different invariant and is untouched.
+
+⚠️ **The `['leadOutcome']` invalidation in `commitUploaded` was deliberately LEFT IN PLACE.** With the
+latch it is harmless, and it is not the defect — the defect is that a restore was possible at all that
+late. Removing it would only hide the class of bug from the one call site that happened to expose it.
+
+Verified by driving the REAL hook through `react-test-renderer` (this is possible for a hook — it is
+`@testing-library/react-native`'s `render` that returns no queries here, so *component* tests are still
+out): the ticket repro asserted **failing under the old rule and passing under the new one** (fresh lead
+→ scheduleTime + agreements written → a scheduleTime-only draft refetched → the agreement survives), the
+blank-tab case still applying a late draft over an early write, a reopened deal still restoring on first
+load and then ignoring a re-fetch of the same draft, and edit mode unchanged. tsc 44 (baseline
+unchanged); eslint 49 problems / 2 errors across both files — the screen's exact HEAD baseline, and the
+session hook clean.
+
+⚠️ Still wants a device check. Repro: create a lead, reach Summary, **Schedule Appointment → Generate
+Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
+`jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
+
 ---
 
 ## 7. Scripts
