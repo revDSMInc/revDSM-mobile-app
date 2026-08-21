@@ -3623,6 +3623,33 @@ none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
 Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
 
 
+### A drop price EQUAL to the rollout price is rejected
+
+Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
+not able to add drop price which equal to the rollout price"*, with the exact copy
+**"Drop Price cannot be added because it is the same as the Rollout Price."**
+
+`openDrop` (`screens/DynamicDealCenter/components/RolloutView.tsx`) already floored the drop at the
+COST tile and capped it at the rollout end price, but the cap was a strict `v > priceNum` — so entering
+the rollout price itself sailed through and opened the Secure/Decline sheet. Securing it then filed a
+negotiation round that dropped nothing.
+
+⚠️ **The equality test needs its OWN branch BEFORE the `>` check**, not a widening of that check to
+`>=`: *"cannot exceed rollout end price"* is a confusing thing to say about a number that does not
+exceed it, and the ticket specifies different copy.
+
+- Placed AFTER the cost floor, so a drop that is both below cost and equal to the rollout price still
+  reports the cost problem first — that ordering only matters for a rollout priced under its own cost,
+  which the end-price validation already prevents.
+- **Strict `===` is safe here**: both sides are `parseFloat` of a digits-only string, so `333` and
+  `333.00` compare equal.
+- `openDrop` is the ONLY entry point — the input's `onSubmitEditing`, its iOS `onBlur` commit and the
+  add button all funnel through it, and the **Display** re-negotiation path reuses an existing row's
+  stored price rather than a typed one, so it cannot reach this.
+
+tsc 44 (baseline unchanged); eslint on `RolloutView.tsx` identical to its HEAD baseline (270 problems:
+2 errors / 268 warnings). ⚠️ The file is CRLF — `newline=''` on both ends.
+
 ### Signing an agreement says the customer got a copy
 
 Ticket: *"while we are submitting the agreement we have to show these messages as well in the splash
@@ -3674,6 +3701,246 @@ its own ticket with a KNOWN-GOOD number: the deal-edit "Send Addendum To" field 
 tsc 44 (baseline unchanged); `AgreementSignatureModal.tsx` is at its HEAD eslint baseline (41 problems),
 and `message.ts`, `SummarySection.tsx`, `outcome-documents.ts` and `DynamicJobBuilderScreen.tsx` are
 back to their pre-feature state (the first two verified byte-identical against `3d5dbea^`).
+
+### The draft autosave could persist a state SNAPSHOT, losing the agreement
+
+Ticket: *"when i create lead and come to summary, i click schedule appointment — after adding the date
+and time it automatically opens the modal asking to generate the agreement. In that scenario, when I
+submit the agreement the agreement is not going in the payload. It only goes when I generate it from
+the Agreements card."* Two `PUT lead/v1/{id}/outcome/{calcId}` bodies were supplied; both carry
+`jobBuilder.status: 'draft'`, i.e. they are **autosaves**, not the Complete-Job submit.
+
+The two payloads are the whole diagnosis. Both hold the same `scheduleTime`
+(`8/22/2026 · 8:00 AM - 12:00 PM`) and the same vertical state; only one carries
+`dynamicJobState.agreements`. **`scheduleTime` present and `agreements` absent in ONE body is only
+possible if that body was serialized from a snapshot taken between the two writes** — both land on the
+same object through `updateRootState`, which is a functional updater, so nothing can drop one and keep
+the other.
+
+**Cause: `performAutoSave` closed over `jobState`, and its own in-flight guard re-invoked THAT closure.**
+
+```js
+if (saveInFlightRef.current) { needsFollowUpRef.current = true; return; }
+…
+} finally {
+  saveInFlightRef.current = false;
+  if (needsFollowUpRef.current) { needsFollowUpRef.current = false; void performAutoSave(); }
+  //                                                                     ^ recurses into THIS closure
+}
+```
+
+A save coalesced while another was in flight therefore re-sent the state **as it stood when the FIRST
+save started**. The scheduler flow is the one that reliably has a save in flight: scheduling writes
+`scheduleTime` and arms a save, and the agreement is generated on top of that — so the agreement write
+is the one that gets coalesced away. Generating from the Agreements card has no preceding write, so
+its save runs on a fresh closure and the agreement survives. Same class of bug the calculator engine
+already fixed (`useDynamicCalculators` reads the current tab from `tabsRef`, *"like web's
+`entriesRef.current`"*).
+
+Three changes, all in `DynamicJobBuilderScreen`:
+
+- **New `jobStateRef`**, and `performAutoSave` serializes from `jobStateRef.current`. Whichever closure
+  ends up running now sends what the rep actually has.
+- **The follow-up fires through `performAutoSaveRef.current()`**, not the `performAutoSave` identifier
+  — the latter recurses into the captured closure, so it also re-sent stale `initialConfig` /
+  `dealCenterData`.
+- **The debounce effect now names `jobState` directly** and fires through the ref.
+
+⚠️ **`jobState` had to come OUT of `performAutoSave`'s dependency list and INTO the effect's.** It was
+only ever there to make the callback's identity change so the 2 s timer re-armed on each edit — and
+that is precisely what tied the re-arm to a closure carrying a snapshot. Moving it makes the trigger
+explicit; the effect also lists everything else `performAutoSave` reads, so a save is still re-armed
+when `dealCenterData` settles, exactly as before. Do not "simplify" the effect back down to
+`[performAutoSave, …]`, and do not silence the `exhaustive-deps` warning that appears if `jobState` is
+left in the callback — the rule is right, the dependency really is unused there now.
+
+⚠️ **Only the DRAFT was affected, not the submitted job.** `handleComplete` serializes `jobState`
+directly at submit time, so the finished deal always carried the agreement; what was lost was the
+draft on the server between generating and completing — so a reopen (or web) saw a deal with no
+agreement, which is the same failure the "documents ride ALONG WITH the draft" comment in
+`performAutoSave` already warns about.
+
+⚠️ **Ruled out by reading, do not re-investigate:** `updateRootState` (functional, cannot clobber a
+sibling key); both flows sharing ONE `DynamicAgreementDialog` and one `handleAgreementGenerated`; and
+the scheduler's `onGenerate`, which is a plain synchronous call plus `handleModalClose()`.
+
+> ⚠️ **This fix is CORRECT and is KEPT, but it did NOT close the ticket** — the reporter came back with
+> the same payload. And one line of the paragraph above was wrong: *"the session's draft re-apply …
+> runs once on mount and the `commitUploaded` query invalidation cannot re-trigger it."* On a
+> **brand-new lead** it never ran on mount at all, and that is the actual bug. See below.
+
+tsc 44 (baseline unchanged); eslint on the file is back to its exact baseline (49 problems, 2 errors).
+
+#### ✅ ROOT CAUSE: on a NEW lead the draft restore never LATCHED, so a later refetch overwrote the signature
+
+Same ticket, reporter's second pass — *"when we came first time in summary after making the new lead …
+from this flow by clicking it, we came this card (Modal: Job Booked) and after pressing Generate Dynamic
+agreement, when we submit agreement, agreements is not going to sent in the payload"*. The emphasis on
+**first time in summary after making the new lead** is the whole answer: the state was not being
+serialized from a stale snapshot, it was being **reset out from under the save**.
+
+`useDynamicJobBuilderSession`'s restore effect opened with
+
+```js
+if (!initialJobState) return;          // ← before ANY latching
+…
+if (lastDraftTokenRef.current === draftToken) return;
+lastDraftTokenRef.current = draftToken;   // only ever reached with a real draft
+```
+
+so a lead whose outcome GET found **nothing** — every new lead — never wrote `lastDraftTokenRef`, and
+the session stayed open to a restore **forever**. The first draft to arrive at any later moment was then
+applied unconditionally.
+
+One does arrive, and the agreement itself summons it. `commitUploaded` (`SummaryFinalizeCards`) ends with
+`queryClient.invalidateQueries({ queryKey: ['leadOutcome', leadId] })`, so **filing the agreement
+REFETCHES the draft** — and by then the server holds the draft the 2 s autosave wrote when the
+appointment was scheduled, which carries `scheduleTime` and **no `agreements`**. That draft is restored
+over the just-signed agreement, and the next autosave persists the state without it. Exactly the payload
+in the ticket.
+
+**Why the Agreements-card flow looked fine:** that card is gated on `isAppointmentSet`, so it is
+overwhelmingly used on a deal **reopened** after the appointment was already saved. There the mount-time
+GET finds a draft, the token latches, and the later invalidation is a no-op. Both entry points share one
+`handleAgreementGenerated` — the difference was never the flow, only whether a draft existed at mount.
+
+⚠️ **And it was never limited to that one flow.** `useLeadReports` invalidates the same
+`['leadOutcome', leadId]` key in two places, so on a new lead ANY of those could restore a doc-less draft
+over live work.
+
+**Fix — latch on the READ SETTLING, not on a truthy draft.** New `draftSettled?: boolean` option; the
+screen passes `isEdit ? undefined : isOutcomeFetched`. Once the GET has settled the token is written
+**whether or not it found anything**, because a settled-empty read means there is nothing to restore
+*ever*: from then on, every byte the server holds was written by this session.
+
+- **`draftSettled === undefined` keeps the old behaviour**, so no other caller can be changed by this.
+  (`DynamicJobBuilderScreen` is the only one that passes `draftToken` at all; edit mode passes neither.)
+- **`draftSettled === false` WAITS rather than latching**, which is what preserves the blank-tab fix
+  above it: a draft that lands after an early write is still applied, exactly as before.
+- The legacy (token-less) path keeps its own `if (!initialJobState) return;` — its rule is
+  "apply until the rep's first real edit", which is a different invariant and is untouched.
+
+⚠️ **The `['leadOutcome']` invalidation in `commitUploaded` was deliberately LEFT IN PLACE.** With the
+latch it is harmless, and it is not the defect — the defect is that a restore was possible at all that
+late. Removing it would only hide the class of bug from the one call site that happened to expose it.
+
+Verified by driving the REAL hook through `react-test-renderer` (this is possible for a hook — it is
+`@testing-library/react-native`'s `render` that returns no queries here, so *component* tests are still
+out): the ticket repro asserted **failing under the old rule and passing under the new one** (fresh lead
+→ scheduleTime + agreements written → a scheduleTime-only draft refetched → the agreement survives), the
+blank-tab case still applying a late draft over an early write, a reopened deal still restoring on first
+load and then ignoring a re-fetch of the same draft, and edit mode unchanged. tsc 44 (baseline
+unchanged); eslint 49 problems / 2 errors across both files — the screen's exact HEAD baseline, and the
+session hook clean.
+
+⚠️ Still wants a device check. Repro: create a lead, reach Summary, **Schedule Appointment → Generate
+Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
+`jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
+
+### Edit Customer Details now logs opened / per-field change / saved
+
+Ticket: *"you have to add logs while we are opening customer details from pencil like web / also you
+have to add when we edit anything"*, with both web payloads supplied verbatim. Opening the Lead Center
+pencil and saving it emitted **nothing** on mobile, so the portal timeline had the events for a web edit
+and a blank for a mobile one.
+
+Three events, ported from web `sections/job/components/job-capture-images-sections/edit-customer-modal.js`:
+
+| when | `action_type` | `meta.action` |
+|---|---|---|
+| the pencil opens the modal | `view` | `edit customer details opened` |
+| per field the rep altered | `change` | `customer field changed` |
+| the PATCH succeeds | `submit` | `customer details saved` |
+
+All three carry `module_type: 'customer_details'` and `meta.customerId` / `meta.leadId`; the `change`
+rows add `fieldLabel` / `fieldName` / `fieldValue` / `fieldCategory` / `oldValue` / `newValue` — the
+ticket's payloads exactly. The ids resolve through ONE helper so no two rows can disagree about which
+record they name.
+
+⚠️ **The `change` rows fire on SAVE, not while typing — a deliberate divergence, and the requested
+one** (*"you have to call this as well when we Save Changes"*). Web debounces each keystroke
+(`useDebounce(changedValue, 2000)`) from inside the modal, so a web row can describe an edit the rep
+then abandoned; mobile diffs the submitted payload against the record, so a row only ever describes a
+change that PERSISTED.
+
+⚠️ **They are emitted AFTER the `submit` row** (*"this log should be call after the submit log"*), so
+the timeline reads opened → saved → changed. That is the OPPOSITE of web, where the debounced rows are
+already sent by the time Save is pressed; on mobile the detail rows are wanted as the breakdown *under*
+the save. `LoggerService` serialises its queue, so the call order is the order the portal receives.
+
+⚠️ **`meta.resetCycle` is added SERVER-side, not by the client.** A payload comparison filed against
+this ticket showed mobile's stored row carrying `resetCycle: 0` where web's did not — but the two
+objects were not the same kind: web's was the REQUEST BODY and mobile's the STORED RECORD (it also
+carried `_id`, `user_activity_log_id`, `created_at`, `updated_at`, `__v`). `grep -rn resetCycle src/`
+finds it only in `utils/activity-log/calculator-log.ts` and `hooks/useDealCalculator.ts`, both of which
+send it deliberately for CALCULATOR logs; nothing on this path does. Mobile sends exactly web's nine
+meta keys. Compare two records or two request bodies before chasing a difference here.
+
+⚠️ **The rules live in the pure `src/utils/customer-detail-changes.ts`**
+(`resolveCustomerLogIds` / `buildCustomerFieldChanges`), for the reason `utils/addendum-drafts.ts` and
+`utils/inspection-photos.ts` exist: `LeadCenter/index.tsx` pulls in React Native and is untestable under
+jest here, and the one thing that can be **silently** wrong — reporting a field the rep never touched —
+leaves no trace except a wrong row on the portal.
+
+⚠️ **Each baseline must reproduce EXACTLY how `EditCustomerModal` seeds that field.** `phone` is the one
+that bites: it is stored raw or E.164 (`4438784937` / `+14438784937`) and the modal seeds it through
+`formatUSPhoneNumber`, so diffing against the STORED string would log a phone edit on **every** save.
+`address` falls back to `lead.fullAddress` for the same reason. (Same trap the modal's own length
+validation hit — see the Edit Customer phone-validation section above.)
+
+⚠️ **Co-buyers are not logged** — web does not track them either; `handleCoBuyerChange` only flips
+`hasUnsavedChanges`.
+
+⚠️ **`customerId` is the CUSTOMER record's id, a DIFFERENT document from the lead** — the ticket's own
+payload shows `…3a94` vs `…3a97`. `handleCustomerSubmit` resolves the PATCH url with
+`lead.customerDetails._id || …id || lead._id || lead.id`, and **that lead-id fallback must not leak into
+the log**: the portal joins on this id, so a lead id there reports the wrong record. The emitter reads
+the customer record only and sends `null` when the lead genuinely carries none (web reads
+`customerData._id` with no fallback at all).
+
+- **The `view` fires on the PENCIL, not in the modal.** Web fires it from an
+  `useEffect(… [open, customerData])`; mobile's modal is mounted by `{showEditCustomerModal && …}`, so
+  the press handler is the same moment and needs no new prop threaded into `EditCustomerModal`.
+- **The `submit` fires AFTER the PATCH resolves**, next to the success flash — web's own position. On
+  the button press it would log edits that then failed to save.
+- ⚠️ Both read the PRE-save `lead`. `handleCustomerSubmit` calls them after its optimistic `setLead`,
+  which is safe because a state setter does not mutate the closure's binding — but that is exactly what
+  the diff depends on, so a future caller that re-reads the lead from the cache first would compare a
+  record against itself and log nothing.
+- **`logEvent` needs no change** — it already emits `{user_id, action_type, module_type, created_by,
+  meta}` and only auto-attaches `meta.leadId` when absent, which it isn't here.
+
+#### …and the header phone is formatted the same way
+
+Follow-up on the same screen: *"number is not showing in proper formate, can you formate it like it's
+showing in the edit customer modal?"* The Lead Center header printed `18757575799` while the modal
+directly below it read `+1 (875) 757-5799` — the header rendered `lead.customerDetails.phone` verbatim
+and the record stores it raw or E.164. It now renders through the same `formatUSPhoneNumber` the modal
+seeds with, so the two agree.
+
+⚠️ **DISPLAY ONLY.** `handleCall` / `handleTextMessage` / `handleCopyPhone` still read
+`customerDetails.phone` and dial through `getRawPhoneNumber`, so the `tel:` / `sms:` links and the
+copied string are unchanged.
+
+⚠️ A NON-US stored number will be reshaped by this (the formatter keeps the last 10 digits after an
+optional leading `1`). That is not new behaviour being introduced — `EditCustomerModal` already seeds
+its field through the same function, so the header now merely matches what the rep is shown when they
+open it. Verified across all six stored shapes, an empty phone still rendering nothing, and a partial
+number degrading to `+1 (875) 757` rather than blanking.
+
+⚠️ **One web event is still NOT ported**: a `view` / `edit customer details modal closed` fired from
+web's **Cancel** button. Left out because the ticket did not ask for it; it is a one-liner on the
+modal's `onClose` if the portal wants it.
+
+Verified with 11 tests driving the real `buildCustomerFieldChanges` + `formatUSPhoneNumber`: the ticket
+repro emitting its payload verbatim, an untouched form emitting nothing, **all five stored phone shapes
+surviving a no-op save** with the naive stored-string comparison asserted to produce the phantom row
+that guard prevents, a real phone edit reported in the format the rep saw, several edits emitting
+several rows in web's field order, the `fullAddress` fallback, a cleared field reported as an emptying
+rather than skipped, a co-buyer-only edit emitting nothing, and junk input as a no-op rather than a
+throw. tsc 44 (baseline unchanged); `customer-detail-changes.ts` is eslint-clean and
+`LeadCenter/index.tsx` is identical to its HEAD baseline (40 problems: 16 errors / 24 warnings).
+
 ---
 
 ## 7. Scripts

@@ -1216,6 +1216,14 @@ function PremiumQuoteCard({ calculator, initialPrice, categoryMeta, isLowesLead,
     // threshold and message match web (`getCalculationResult(calc, '50', method)`).
     const cost = tiers.find((t) => t.label === 'COST')?.value ?? effectiveCostOf(calculator);
     if (v < cost) { FlashMessage.error('Invalid drop price', `Drop price must be at least the cost price (${fmt(cost)}).`); return; }
+    // ⚠️ EQUAL is rejected too, and it needs its OWN branch before the `>` check — a
+    // drop at the rollout price is not a drop, it just files a negotiation round that
+    // changed nothing, and "cannot exceed" would be a confusing thing to say about a
+    // number that does not exceed it.
+    if (priceNum > 0 && v === priceNum) {
+      FlashMessage.error('Invalid drop price', 'Drop Price cannot be added because it is the same as the Rollout Price.');
+      return;
+    }
     if (priceNum > 0 && v > priceNum) { FlashMessage.error('Invalid drop price', `Drop price cannot exceed rollout end price (${fmt(priceNum)})`); return; }
     // Wells Fargo "high" $7,500 hardcoded floor (web `handleAddDrop`) — enforced
     // even if the backend plan omits minPrice.
