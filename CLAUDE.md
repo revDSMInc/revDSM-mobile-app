@@ -3623,6 +3623,108 @@ none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
 Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
 
 
+### Recent Leads chat opens on "All", not "Unresulted Leads"
+
+Ticket: *"by default it should be all when we land on this screen instead of Unresulted leads."*
+`ChatThreads` seeded `statusFilter: 'unresultedleads'` / `selectedStatus: 'Unresulted Leads'`, so the
+list opened already filtered and a rep with only resulted leads landed on **"No Leads Conversations
+found"** — an empty screen that reads as broken rather than filtered.
+
+Two seeds, now `'all'` / `'All'`. Nothing else changed: `useChatThreads` already treats `'all'` as "no
+status constraint" on **both** sides — the server query (`else if (statusFilter !== 'all')` before it
+sets `serverStatus`) and the client-side list filter.
+
+⚠️ **The two seeds must stay in sync.** The dropdown derives the key from the label
+(`opt.toLowerCase().replace(/ /g, '')`), so the pair has to be exactly what tapping the **All** row
+produces — seeding only the label would leave the list filtered while the control claimed otherwise.
+
+tsc 44 (baseline unchanged); eslint on `ChatThreads/index.tsx` identical to its HEAD baseline
+(15 warnings, 0 errors). ⚠️ The file is CRLF **and pure ASCII** — keep new comments ASCII (no warning
+emoji) and use `newline=''` on both ends.
+
+### Ticket 409 — a resulted lead locks every rollout tab, and the resulted one offers Reset Job Builder
+
+Ticket: *"when a lead is resulted from one tab, the other tabs of the same lead remain active, allowing
+the user to result the lead again from another tab… Show a Reset Job Builder button on the resulted
+tab… Until the Job Builder is reset, all other tabs should remain disabled."*
+
+Once the lead carries a resulted calculator the WHOLE quote goes read-only on **every** tab — the item
+rows, Add Renders, the payment-plan picker, the COST/PAR/RETAIL tiles, the Rollout End Price field, the
+installers bar and the drops list all dim to `opacity: 0.6`, and `+ Nth Drop` / `Result Lead` grey out.
+The resulted tab swaps `Result Lead` for a red filled **Reset Job Builder**, which stays live.
+Resetting clears the result and unlocks everything.
+
+⚠️ **Dimming alone is not enough — `pointerEvents: 'none'` is what enforces it.** A first pass disabled
+only the two action buttons and QA came straight back (*"you forgot to disable the upper part… the only
+Reset Job Builder button should be pressable"*): without the wrapper the payment-plan sheet, Add Renders
+and the end-price input stay tappable behind the greying, so a rep can still re-quote a lead that is
+already resulted. Two wrappers do it — one around the main card, one around the installers bar + drops
+list. **The action row sits OUTSIDE the second wrapper**, because Reset Job Builder lives there and is
+the one control that must remain pressable. Mirrors the CLASSIC deal center, which already pairs
+`opacity: 0.6` with `pointerEvents` on `isJobBuilderSubmitted || isJobSubmittedOnOtherCalc`
+(`CalculatorSummary.tsx`).
+
+⚠️ The wrapped children were deliberately **left at their original indentation**. Re-indenting the ~280
+lines inside them would bury a 6-line change in a whole-file diff — the same trap the CRLF notes in this
+file warn about.
+
+⚠️ **"Disable other tabs" means the ACTIONS, not tab NAVIGATION — this is what web does and what the
+ticket's own reference screenshots show.** Web's `<Tab>` carries no `disabled` prop
+(`ViewAllCalculators.js`); the lock is entirely `isLocked` / `isDisabled` on the two buttons. The first
+reference image is a rep sitting on a NON-resulted tab with both buttons greyed, which is only
+reachable if switching tabs is still allowed. Blocking navigation would also hide the resulted tab —
+and with it the only Reset button. If reps do want navigation blocked, that is a deliberate divergence
+and needs its own decision.
+
+**Rules live in the pure `src/screens/DynamicDealCenter/utils/job-builder-submission.ts`**
+(`resolveSubmittedCalculatorId` / `describeCalculatorLock`), for the reason
+`utils/rehash-draft-calculators.ts` exists: `RolloutView.tsx` pulls in React Native and is untestable
+under jest here, and "which tab owns the result" must mean ONE thing to the button that locks and the
+button that unlocks — otherwise a rep is locked out with no tab offering the way back.
+
+⚠️ **It deliberately does NOT require `jobBuilder.status === 'submitted'`.** The ticket is *"after lead
+is RESULTED"*, and the outcome modal writes `selectedCalculatorId` **before** the job builder is
+completed — gating on the submitted status would leave exactly the window a rep would use to result a
+second tab. This matches web's `submittedCalculatorId` chain (`TabbedCalculator.js`), which is also
+status-free; the `jobBuilder.calculatorId` arm is web's second source and is what the CLASSIC mobile
+deal center reads (`CalculatorSummary.resultedCalculatorId`).
+
+⚠️ **Ids compare as STRINGS.** The id arrives both off the calculators list and off the lead record and
+those are not guaranteed to be the same type; a raw `===` silently reports "no tab owns this result",
+which unlocks everything and defeats the ticket. A blank/whitespace id resolves to `null` for the same
+reason — a truthy-looking lock that no tab can match would strand the rep.
+
+⚠️ **Reset Job Builder is NEVER disabled** (web: `disabled={isJobBuilderSubmittedTab ? false : isDisabled}`).
+It is the only way out of the locked state.
+
+- **`jobResetLocally` in `DynamicDealCenterScreen` unlocks immediately after the reset.** `lead` is a
+  nav-param snapshot, so the PUT clears the result on the server while the screen still holds the old
+  `jobBuilder` — without it the tabs stay locked right after the action meant to unlock them. Web does
+  the same locally (`setLead({ ...currentLead, jobBuilder: null })`).
+- **The confirm copy and the direct `LeadService.resetLead` call are lifted from the CLASSIC deal
+  center's `handleResetJobBuilder`** (`screens/DealCenter/index.tsx`), so both deal centers ask the same
+  question and hit the same endpoint (`PUT lead/v1/{id}/reset`).
+- ⚠️ **Only ONE hook was added** (`useState` for the reset flag). `submittedCalculatorId` is a plain
+  const and `handleResetJobBuilder` a plain function — every hook in this component sits after the
+  edit-mode early return (see `rehashBuild`), so each one widens that compromise; `queryClient` was
+  already in scope above the branch, which is why the service is called directly rather than through
+  `useResetLeadMutation`.
+
+Verified with 10 tests over the real helpers: an unresulted lead locking nothing, all five id shapes web
+reads, `leadData` winning the fallback order, the ticket repro (resulted tab → Reset, every other tab →
+locked), the no-status-gate case, string comparison of a non-string and a padded id, blank ids never
+producing an ownerless lock, **every locked state having exactly one tab able to unlock it**, the local
+reset unlocking without mutating the record, and an id-less calculator never mistaken for the resulted
+one. tsc 44 (baseline unchanged); the new util is eslint-clean, `RolloutView.tsx` is +2
+`react-native/no-inline-styles` + 1 for the read-only wrapper (the rule it already carries 268
+of) and `DynamicDealCenterScreen.tsx`
+is +1 `react-hooks/rules-of-hooks` — the single added `useState`, joining the 19 the file already
+carries for the documented reason.
+
+⚠️ Needs a device check (this repo cannot render-test): result a lead from one tab, reopen the deal
+center, confirm every tab's two buttons are greyed, the resulted tab shows the red Reset, and that
+resetting re-enables Result Lead everywhere.
+
 ### A drop price EQUAL to the rollout price is rejected
 
 Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
