@@ -19,6 +19,10 @@ import { useInstallerJobs, useUpdateJobStatus } from '../../hooks/useInstallerJo
 import { useAuth } from '../../hooks/useAuth';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useInstallerActivityLog } from '../../hooks/useInstallerActivityLog';
+import {
+  beginInstallerWorkSession,
+  endInstallerWorkSession,
+} from '../../utils/installer-work-session';
 import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
 import { InstallerJobCard } from '../../widgets/components/installer/InstallerJobCard';
 import {
@@ -306,6 +310,7 @@ export default function InstallerDashboard() {
         const full = await InstallerService.startWork(job._id);
         const merged = full ? mergeInstallerJob(job, full) : job;
         persistActiveInstallerJob(merged);
+        beginInstallerWorkSession(job._id);
         navigation.navigate('InstallerJobDetail', { job: merged, checkedIn: true });
       } catch (err: any) {
         // Held by another crew member — refused here exactly as a live check-in is.
@@ -397,6 +402,10 @@ export default function InstallerDashboard() {
     let checkInJob: InstallerJob | null = null;
     try {
       checkInJob = await InstallerService.startWork(job._id, checkInPayload);
+      // Recorded the moment the session exists, so every way out of the job can close
+      // it — including the ones that never reach the detail screen (see
+      // `utils/installer-work-session.ts`).
+      beginInstallerWorkSession(job._id);
     } catch (err: any) {
       // 409 — the job already holds an open work session:
       //   { code: 409, message: "…already checked in by another crew member…",
@@ -487,9 +496,7 @@ export default function InstallerDashboard() {
       // The session opened a moment ago but the job never opened, so close it again
       // rather than leaving the server believing this installer is still working.
       if (checkedIn) {
-        InstallerService.endWork(job._id).catch((e) =>
-          console.warn('[InstallerJob] Check-out after failed start failed:', e)
-        );
+        void endInstallerWorkSession('left_job', job._id);
       }
     } finally {
       setStartingId(null);

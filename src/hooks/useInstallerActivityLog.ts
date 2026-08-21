@@ -62,6 +62,16 @@ const LOGGERS = {
   // Certificate of Completion
   cocCompleted: InstallerLog.logCocCompleted,
   cocSigned: InstallerLog.logCocSigned,
+  cocFormOpened: InstallerLog.logCocFormOpened,
+  cocFormDismissed: InstallerLog.logCocFormDismissed,
+  cocPaperFallback: InstallerLog.logCocPaperFallback,
+  cocScanned: InstallerLog.logCocScanned,
+  cocConfirmationToggled: InstallerLog.logCocConfirmationToggled,
+  cocRelationshipSelected: InstallerLog.logCocRelationshipSelected,
+  cocSignaturePadOpened: InstallerLog.logCocSignaturePadOpened,
+  cocSignatureSaved: InstallerLog.logCocSignatureSaved,
+  cocSignatureCleared: InstallerLog.logCocSignatureCleared,
+  cocSignaturePadCancelled: InstallerLog.logCocSignaturePadCancelled,
 
   // Result
   resultOpened: InstallerLog.logInstallerResultOpened,

@@ -84,10 +84,14 @@ export function CoCStep({
    * SERVER, so what is shown is what was actually recorded.
    */
   const [formSession, setFormSession] = useState(0);
-  const openForm = useCallback(() => {
-    setFormSession((n) => n + 1);
-    setShowForm(true);
-  }, []);
+  const openForm = useCallback(
+    (source: 'auto' | 'edit' | 'scan_cancelled') => {
+      log.cocFormOpened(source);
+      setFormSession((n) => n + 1);
+      setShowForm(true);
+    },
+    [log]
+  );
 
   /**
    * What the result card draws.
@@ -124,7 +128,7 @@ export function CoCStep({
    */
   const wasVisible = useRef(false);
   useEffect(() => {
-    if (visible && !wasVisible.current && !hasResult) openForm();
+    if (visible && !wasVisible.current && !hasResult) openForm('auto');
     if (!visible) setShowForm(false);
     wasVisible.current = visible;
   }, [visible, hasResult, openForm]);
@@ -238,7 +242,10 @@ export function CoCStep({
   const handlePaperFallback = async () => {
     setShowForm(false);
     const scanned = await startScan();
-    if (scanned === 0 && !hasResult) openForm();
+    // Includes a cancelled pass (`pages: 0`) — a run of those is a scanner the crew
+    // could not get to work, which is invisible if only successes are recorded.
+    log.cocScanned({ pages: scanned, totalPages: pages.length + scanned });
+    if (scanned === 0 && !hasResult) openForm('scan_cancelled');
   };
 
   /** The form's ✕ / Exit. With nothing captured, leaving the form leaves the step. */
@@ -365,7 +372,7 @@ export function CoCStep({
             the result, and a second way in from it read as a choice the installer had
             already made. `startScan` is still reached from there, so nothing is lost. */}
         <TouchableOpacity
-          onPress={openForm}
+          onPress={() => openForm('edit')}
           className="h-12 rounded-xl items-center justify-center flex-row"
           style={{ backgroundColor: colors.primary.main }}
         >

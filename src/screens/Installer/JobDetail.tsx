@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Animated,
   BackHandler,
+  AppState,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -35,6 +36,11 @@ import { useInstallerPhotoUpload } from '../../hooks/useInstallerPhotoUpload';
 import { useAuth } from '../../hooks/useAuth';
 import { persistActiveInstallerJob } from '../../utils/activity-log/installer-log';
 import { InstallerService } from '../../services/api/installer';
+import {
+  beginInstallerWorkSession,
+  endInstallerWorkSession,
+  getActiveInstallerWorkJobId,
+} from '../../utils/installer-work-session';
 import ChatService from '../../services/api/ChatService';
 import { LeadService } from '../../services/api/leads';
 import { ENV } from '../../config/env';
@@ -186,6 +192,7 @@ export default function InstallerJobDetail() {
     progressRef,
     stepStatus,
     stepHasWork,
+    isStepDone,
     completedCount,
     totalSteps,
     addMaterialPhoto,
@@ -282,10 +289,39 @@ export default function InstallerJobDetail() {
     const jobId = job?._id;
     if (!checkedIn || !jobId) return;
     return () => {
-      InstallerService.endWork(jobId).catch((err) =>
-        console.warn('[InstallerJob] Check-out failed:', err)
-      );
+      void endInstallerWorkSession('left_job', jobId);
     };
+  }, [checkedIn, job?._id]);
+
+  /**
+   * Leaving the job by leaving the APP.
+   *
+   * Nothing unmounts when the app is backgrounded, so without this the office goes on
+   * showing the crew as being on this job for as long as the phone is in a pocket —
+   * and if the OS then kills the app, nothing ever closes it. Coming back re-opens the
+   * session, so the installer returns to a job they are checked into rather than one
+   * the server thinks they left.
+   *
+   * ⚠️ The re-check-in is sent WITHOUT a geofence body. The gate was already passed to
+   * get here; re-running it would refuse a crew member who has since walked to the
+   * far side of the property, and the endpoint's contract accepts a body-less PUT.
+   */
+  useEffect(() => {
+    const jobId = job?._id;
+    if (!checkedIn || !jobId) return;
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') {
+        void endInstallerWorkSession('app_background', jobId);
+        return;
+      }
+      if (state === 'active' && !getActiveInstallerWorkJobId()) {
+        InstallerService.startWork(jobId)
+          .then(() => beginInstallerWorkSession(jobId))
+          .catch((err) => console.warn('[InstallerJob] Re-check-in failed:', err));
+      }
+    });
+    return () => sub.remove();
   }, [checkedIn, job?._id]);
 
   /**
@@ -483,6 +519,29 @@ export default function InstallerJobDetail() {
   useEffect(() => {
     navigation.setOptions({ gestureEnabled: uploadingCount === 0 });
   }, [navigation, uploadingCount]);
+
+  /**
+   * What a step is worth reporting when it completes without its own Done handler.
+   *
+   * Read from `progressRef` so a completion logged in the same tick as the capture that
+   * satisfied it counts that capture.
+   */
+  const stepCompletionMeta = useCallback(
+    (step: InstallStepKey): Record<string, any> => {
+      const p = progressRef.current;
+      switch (step) {
+        case 'pickup':
+          return { photos: p.pickup.photos.length, skipped: p.pickup.skipped };
+        case 'return':
+          return { photos: p.return.photos.length, skipped: p.return.skipped };
+        case 'coc':
+          return { pages: p.cocPages.length, signedOnDevice: !!p.cocSignOff };
+        default:
+          return {};
+      }
+    },
+    [progressRef]
+  );
 
   /** Opening a timeline step. Its status tells the portal whether it was a re-visit. */
   const handleOpenStep = useCallback(
@@ -907,11 +966,21 @@ export default function InstallerJobDetail() {
     [progressRef, removeCocPage, upload, deleteStoredImages, sendStepData]
   );
 
+  /**
+   * Steps whose completion has already been logged this visit.
+   *
+   * `finishStep` and the close-time fallback below can both fire for one step — a step
+   * that completes and is then backed out of — and the portal must not see the
+   * completion twice.
+   */
+  const completionLogged = useRef<Partial<Record<InstallStepKey, boolean>>>({});
+
   /** Marks the step done locally, logs it, then pushes its data to the server. */
   const finishStep = useCallback(
     (step: InstallStepKey, logMeta: Record<string, any> = {}) => {
       completeStep(step);
       log.stepCompleted(step, logMeta);
+      completionLogged.current[step] = true;
       void sendStepData(step);
     },
     [completeStep, log, sendStepData]
@@ -1151,11 +1220,19 @@ export default function InstallerJobDetail() {
    */
   const handleCloseStep = useCallback(() => {
     if (openStep) {
+      // ⚠️ Not every step has a "Done" that runs `finishStep` — PICKUP, RETURN and CoC
+      // are finished by their own actions and then backed out of, so the portal never
+      // saw a completion for them at all. Their doneness is derived, so it is read here
+      // and logged once, on the way out.
+      if (!completionLogged.current[openStep] && isStepDone(openStep)) {
+        log.stepCompleted(openStep, stepCompletionMeta(openStep));
+        completionLogged.current[openStep] = true;
+      }
       log.stepClosed(openStep);
       void sendStepData(openStep);
     }
     setOpenStep(null);
-  }, [openStep, log, sendStepData]);
+  }, [openStep, log, sendStepData, isStepDone, stepCompletionMeta]);
 
   // Shots captured so far, offered as evidence when reporting a discrepancy.
   const jobPhotos: JobPhotoRef[] = useMemo(() => {

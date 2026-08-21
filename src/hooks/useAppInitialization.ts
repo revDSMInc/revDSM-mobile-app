@@ -7,6 +7,7 @@ import { Storage } from '../utils/storage';
 import { migrateAsyncStorageToMMKV } from '../utils/migrate-storage';
 import { AuthService } from '../services/api/auth';
 import { setSessionHeader } from '../services/api';
+import { endStaleInstallerWorkSession } from '../utils/installer-work-session';
 import { setInitial } from '../redux/reducer/auth.reducer';
 import SocketManager from '../services/SocketManager';
 import { startOfflineSyncTimer, stopOfflineSyncTimer } from '../services/api/offlineUploadManager';
@@ -117,6 +118,12 @@ export function useAppInitialization() {
         // now — this is the cold-start equivalent of the flush after sign-in.
         flushPendingLogs(userData);
         dispatch(setInitial({ user: userData }));
+
+        // An installer work session the last run never closed — the app was killed
+        // rather than backgrounded, so no cleanup ran and the office is still showing
+        // that crew on the job. Closed here, after the token is restored, because a
+        // tokenless check-out is dropped.
+        void endStaleInstallerWorkSession();
       } else {
         setSessionHeader(null);
         dispatch(setInitial({ user: null }));

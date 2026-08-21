@@ -22,6 +22,7 @@ import Svg, { Path } from 'react-native-svg';
 import { captureRef } from 'react-native-view-shot';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
+import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
 import type { CocSignOff, InstallerJob } from '../../../config/types/installer';
 
 /**
@@ -124,6 +125,9 @@ export function CoCFormModal({
 }: Props) {
   const { colors, isDark } = useTheme();
   const { t } = useTranslation();
+  // Every interaction on this form is logged from HERE — the step only sees the
+  // submitted certificate, so it cannot report what was ticked, cleared or abandoned.
+  const log = useInstallerActivityLog();
 
   /**
    * Job # and Date are READ-ONLY, and derived rather than entered.
@@ -233,21 +237,61 @@ export function CoCFormModal({
   );
 
   const openSigPad = (slot: SignatureSlot) => {
+    log.cocSignaturePadOpened(slot);
     setLivePaths([...signatures[slot]]);
     setCurrentPath('');
     setSigSlot(slot);
   };
-  const closeSigPad = () => setSigSlot(null);
+  const closeSigPad = () => {
+    if (sigSlot) log.cocSignaturePadCancelled(sigSlot);
+    setSigSlot(null);
+  };
   const saveSig = () => {
-    if (sigSlot) setSignatures((prev) => ({ ...prev, [sigSlot]: [...livePaths] }));
+    if (sigSlot) {
+      log.cocSignatureSaved({
+        who: sigSlot,
+        strokes: livePaths.length,
+        // A line that already carried a signature — drawn again, or an earlier one
+        // being replaced on a certificate that was already filed.
+        replaced: signatures[sigSlot].length > 0 || !!filedSignature[sigSlot],
+      });
+      setSignatures((prev) => ({ ...prev, [sigSlot]: [...livePaths] }));
+    }
     setSigSlot(null);
   };
   const clearSig = () => {
+    if (sigSlot) log.cocSignatureCleared(sigSlot);
     setLivePaths([]);
     setCurrentPath('');
     currentPathRef.current = '';
   };
 
+
+  /** Ticking or un-ticking one attestation — logged either way, by its payload key. */
+  const toggleAttest = (
+    field: keyof typeof attest,
+    confirmation: 'is18OrOlder' | 'isHomeownerOrAuthorized' | 'installationCompletedAsPerContract'
+  ) => {
+    const checked = !attest[field];
+    log.cocConfirmationToggled({ confirmation, checked });
+    setAttest((prev) => ({ ...prev, [field]: checked }));
+  };
+
+  /** Tapping the ticked box clears the answer — that is a state, and it is logged. */
+  const selectRelationship = (value: CoCRelationship) => {
+    const next = relationship === value ? null : value;
+    log.cocRelationshipSelected({
+      relationship: next,
+      otherRelationship: next === 'other' ? formData.relationshipOther || undefined : undefined,
+    });
+    setRelationship(next);
+  };
+
+  /** Cancel and the header ✕ both land here, and are told apart in the log. */
+  const dismiss = (via: 'cancel' | 'close') => {
+    log.cocFormDismissed({ via, signed: !!initial });
+    setShowExitConfirm(true);
+  };
 
   const relationshipNamed =
     relationship === 'homeowner' ||
@@ -476,10 +520,16 @@ export function CoCFormModal({
           >
             <Text className="text-white text-sm font-semibold">{t('installer.cocFormTitle')}</Text>
             <View className="flex-row items-center" style={{ gap: 12 }}>
-              <TouchableOpacity onPress={onPaperFallback} className="bg-white rounded-md px-2 py-0.5">
+              <TouchableOpacity
+                onPress={() => {
+                  log.cocPaperFallback();
+                  onPaperFallback();
+                }}
+                className="bg-white rounded-md px-2 py-0.5"
+              >
                 <Text className="text-[#1C252E] text-sm">{t('installer.cocPaperFallback')}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setShowExitConfirm(true)}>
+              <TouchableOpacity onPress={() => dismiss('close')}>
                 <Icon name="close" size={22} color="white" />
               </TouchableOpacity>
             </View>
@@ -505,13 +555,13 @@ export function CoCFormModal({
             {/* The three attestations — all required, as on paper. */}
             <View className="mb-4">
               {renderCheck(attest.adult, t('installer.cocAttestAdult'), () =>
-                setAttest((p) => ({ ...p, adult: !p.adult }))
+                toggleAttest('adult', 'is18OrOlder')
               )}
               {renderCheck(attest.authorized, t('installer.cocAttestAuthorized'), () =>
-                setAttest((p) => ({ ...p, authorized: !p.authorized }))
+                toggleAttest('authorized', 'isHomeownerOrAuthorized')
               )}
               {renderCheck(attest.completed, t('installer.cocAttestCompleted'), () =>
-                setAttest((p) => ({ ...p, completed: !p.completed }))
+                toggleAttest('completed', 'installationCompletedAsPerContract')
               )}
             </View>
 
@@ -531,10 +581,10 @@ export function CoCFormModal({
               {renderCheck(
                 relationship === 'homeowner',
                 t('installer.cocRelationshipHomeowner'),
-                () => setRelationship(relationship === 'homeowner' ? null : 'homeowner')
+                () => selectRelationship('homeowner')
               )}
               {renderCheck(relationship === 'other', t('installer.cocRelationshipOther'), () =>
-                setRelationship(relationship === 'other' ? null : 'other')
+                selectRelationship('other')
               )}
               {/* The paper's write-in line, which only exists once "Other" is ticked. */}
               {relationship === 'other' &&
@@ -548,7 +598,7 @@ export function CoCFormModal({
             {/* Footer */}
             <View className="flex-row justify-end pb-12" style={{ gap: 12 }}>
               <TouchableOpacity
-                onPress={() => setShowExitConfirm(true)}
+                onPress={() => dismiss('cancel')}
                 className="px-3 py-1.5 rounded-lg border"
                 style={{ borderColor: '#919EAB52' }}
               >
