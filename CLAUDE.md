@@ -3623,6 +3623,33 @@ none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
 Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
 
 
+### A drop price EQUAL to the rollout price is rejected
+
+Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
+not able to add drop price which equal to the rollout price"*, with the exact copy
+**"Drop Price cannot be added because it is the same as the Rollout Price."**
+
+`openDrop` (`screens/DynamicDealCenter/components/RolloutView.tsx`) already floored the drop at the
+COST tile and capped it at the rollout end price, but the cap was a strict `v > priceNum` — so entering
+the rollout price itself sailed through and opened the Secure/Decline sheet. Securing it then filed a
+negotiation round that dropped nothing.
+
+⚠️ **The equality test needs its OWN branch BEFORE the `>` check**, not a widening of that check to
+`>=`: *"cannot exceed rollout end price"* is a confusing thing to say about a number that does not
+exceed it, and the ticket specifies different copy.
+
+- Placed AFTER the cost floor, so a drop that is both below cost and equal to the rollout price still
+  reports the cost problem first — that ordering only matters for a rollout priced under its own cost,
+  which the end-price validation already prevents.
+- **Strict `===` is safe here**: both sides are `parseFloat` of a digits-only string, so `333` and
+  `333.00` compare equal.
+- `openDrop` is the ONLY entry point — the input's `onSubmitEditing`, its iOS `onBlur` commit and the
+  add button all funnel through it, and the **Display** re-negotiation path reuses an existing row's
+  stored price rather than a typed one, so it cannot reach this.
+
+tsc 44 (baseline unchanged); eslint on `RolloutView.tsx` identical to its HEAD baseline (270 problems:
+2 errors / 268 warnings). ⚠️ The file is CRLF — `newline=''` on both ends.
+
 ### Signing an agreement says the customer got a copy
 
 Ticket: *"while we are submitting the agreement we have to show these messages as well in the splash
@@ -3809,6 +3836,110 @@ session hook clean.
 ⚠️ Still wants a device check. Repro: create a lead, reach Summary, **Schedule Appointment → Generate
 Dynamic Agreement**, sign, then watch the next `PUT …/outcome/{calcId}` and confirm
 `jobBuilder.dynamicJobState.agreements` is present alongside `scheduleTime`.
+
+### Edit Customer Details now logs opened / per-field change / saved
+
+Ticket: *"you have to add logs while we are opening customer details from pencil like web / also you
+have to add when we edit anything"*, with both web payloads supplied verbatim. Opening the Lead Center
+pencil and saving it emitted **nothing** on mobile, so the portal timeline had the events for a web edit
+and a blank for a mobile one.
+
+Three events, ported from web `sections/job/components/job-capture-images-sections/edit-customer-modal.js`:
+
+| when | `action_type` | `meta.action` |
+|---|---|---|
+| the pencil opens the modal | `view` | `edit customer details opened` |
+| per field the rep altered | `change` | `customer field changed` |
+| the PATCH succeeds | `submit` | `customer details saved` |
+
+All three carry `module_type: 'customer_details'` and `meta.customerId` / `meta.leadId`; the `change`
+rows add `fieldLabel` / `fieldName` / `fieldValue` / `fieldCategory` / `oldValue` / `newValue` — the
+ticket's payloads exactly. The ids resolve through ONE helper so no two rows can disagree about which
+record they name.
+
+⚠️ **The `change` rows fire on SAVE, not while typing — a deliberate divergence, and the requested
+one** (*"you have to call this as well when we Save Changes"*). Web debounces each keystroke
+(`useDebounce(changedValue, 2000)`) from inside the modal, so a web row can describe an edit the rep
+then abandoned; mobile diffs the submitted payload against the record, so a row only ever describes a
+change that PERSISTED.
+
+⚠️ **They are emitted AFTER the `submit` row** (*"this log should be call after the submit log"*), so
+the timeline reads opened → saved → changed. That is the OPPOSITE of web, where the debounced rows are
+already sent by the time Save is pressed; on mobile the detail rows are wanted as the breakdown *under*
+the save. `LoggerService` serialises its queue, so the call order is the order the portal receives.
+
+⚠️ **`meta.resetCycle` is added SERVER-side, not by the client.** A payload comparison filed against
+this ticket showed mobile's stored row carrying `resetCycle: 0` where web's did not — but the two
+objects were not the same kind: web's was the REQUEST BODY and mobile's the STORED RECORD (it also
+carried `_id`, `user_activity_log_id`, `created_at`, `updated_at`, `__v`). `grep -rn resetCycle src/`
+finds it only in `utils/activity-log/calculator-log.ts` and `hooks/useDealCalculator.ts`, both of which
+send it deliberately for CALCULATOR logs; nothing on this path does. Mobile sends exactly web's nine
+meta keys. Compare two records or two request bodies before chasing a difference here.
+
+⚠️ **The rules live in the pure `src/utils/customer-detail-changes.ts`**
+(`resolveCustomerLogIds` / `buildCustomerFieldChanges`), for the reason `utils/addendum-drafts.ts` and
+`utils/inspection-photos.ts` exist: `LeadCenter/index.tsx` pulls in React Native and is untestable under
+jest here, and the one thing that can be **silently** wrong — reporting a field the rep never touched —
+leaves no trace except a wrong row on the portal.
+
+⚠️ **Each baseline must reproduce EXACTLY how `EditCustomerModal` seeds that field.** `phone` is the one
+that bites: it is stored raw or E.164 (`4438784937` / `+14438784937`) and the modal seeds it through
+`formatUSPhoneNumber`, so diffing against the STORED string would log a phone edit on **every** save.
+`address` falls back to `lead.fullAddress` for the same reason. (Same trap the modal's own length
+validation hit — see the Edit Customer phone-validation section above.)
+
+⚠️ **Co-buyers are not logged** — web does not track them either; `handleCoBuyerChange` only flips
+`hasUnsavedChanges`.
+
+⚠️ **`customerId` is the CUSTOMER record's id, a DIFFERENT document from the lead** — the ticket's own
+payload shows `…3a94` vs `…3a97`. `handleCustomerSubmit` resolves the PATCH url with
+`lead.customerDetails._id || …id || lead._id || lead.id`, and **that lead-id fallback must not leak into
+the log**: the portal joins on this id, so a lead id there reports the wrong record. The emitter reads
+the customer record only and sends `null` when the lead genuinely carries none (web reads
+`customerData._id` with no fallback at all).
+
+- **The `view` fires on the PENCIL, not in the modal.** Web fires it from an
+  `useEffect(… [open, customerData])`; mobile's modal is mounted by `{showEditCustomerModal && …}`, so
+  the press handler is the same moment and needs no new prop threaded into `EditCustomerModal`.
+- **The `submit` fires AFTER the PATCH resolves**, next to the success flash — web's own position. On
+  the button press it would log edits that then failed to save.
+- ⚠️ Both read the PRE-save `lead`. `handleCustomerSubmit` calls them after its optimistic `setLead`,
+  which is safe because a state setter does not mutate the closure's binding — but that is exactly what
+  the diff depends on, so a future caller that re-reads the lead from the cache first would compare a
+  record against itself and log nothing.
+- **`logEvent` needs no change** — it already emits `{user_id, action_type, module_type, created_by,
+  meta}` and only auto-attaches `meta.leadId` when absent, which it isn't here.
+
+#### …and the header phone is formatted the same way
+
+Follow-up on the same screen: *"number is not showing in proper formate, can you formate it like it's
+showing in the edit customer modal?"* The Lead Center header printed `18757575799` while the modal
+directly below it read `+1 (875) 757-5799` — the header rendered `lead.customerDetails.phone` verbatim
+and the record stores it raw or E.164. It now renders through the same `formatUSPhoneNumber` the modal
+seeds with, so the two agree.
+
+⚠️ **DISPLAY ONLY.** `handleCall` / `handleTextMessage` / `handleCopyPhone` still read
+`customerDetails.phone` and dial through `getRawPhoneNumber`, so the `tel:` / `sms:` links and the
+copied string are unchanged.
+
+⚠️ A NON-US stored number will be reshaped by this (the formatter keeps the last 10 digits after an
+optional leading `1`). That is not new behaviour being introduced — `EditCustomerModal` already seeds
+its field through the same function, so the header now merely matches what the rep is shown when they
+open it. Verified across all six stored shapes, an empty phone still rendering nothing, and a partial
+number degrading to `+1 (875) 757` rather than blanking.
+
+⚠️ **One web event is still NOT ported**: a `view` / `edit customer details modal closed` fired from
+web's **Cancel** button. Left out because the ticket did not ask for it; it is a one-liner on the
+modal's `onClose` if the portal wants it.
+
+Verified with 11 tests driving the real `buildCustomerFieldChanges` + `formatUSPhoneNumber`: the ticket
+repro emitting its payload verbatim, an untouched form emitting nothing, **all five stored phone shapes
+surviving a no-op save** with the naive stored-string comparison asserted to produce the phantom row
+that guard prevents, a real phone edit reported in the format the rep saw, several edits emitting
+several rows in web's field order, the `fullAddress` fallback, a cleared field reported as an emptying
+rather than skipped, a co-buyer-only edit emitting nothing, and junk input as a no-op rather than a
+throw. tsc 44 (baseline unchanged); `customer-detail-changes.ts` is eslint-clean and
+`LeadCenter/index.tsx` is identical to its HEAD baseline (40 problems: 16 errors / 24 warnings).
 
 ---
 
