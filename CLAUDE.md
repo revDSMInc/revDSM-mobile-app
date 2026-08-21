@@ -3623,6 +3623,33 @@ none on opening the sheet**, with a body of `{"dropPrice":[…]}`.
 Use `newline=''` on both ends — same trap as `dynamic-deal-diff.ts` and `EditCustomerModal.tsx`.
 
 
+### A drop price EQUAL to the rollout price is rejected
+
+Ticket: *"you have to add one more validation here while we are adding the drop price, user also will
+not able to add drop price which equal to the rollout price"*, with the exact copy
+**"Drop Price cannot be added because it is the same as the Rollout Price."**
+
+`openDrop` (`screens/DynamicDealCenter/components/RolloutView.tsx`) already floored the drop at the
+COST tile and capped it at the rollout end price, but the cap was a strict `v > priceNum` — so entering
+the rollout price itself sailed through and opened the Secure/Decline sheet. Securing it then filed a
+negotiation round that dropped nothing.
+
+⚠️ **The equality test needs its OWN branch BEFORE the `>` check**, not a widening of that check to
+`>=`: *"cannot exceed rollout end price"* is a confusing thing to say about a number that does not
+exceed it, and the ticket specifies different copy.
+
+- Placed AFTER the cost floor, so a drop that is both below cost and equal to the rollout price still
+  reports the cost problem first — that ordering only matters for a rollout priced under its own cost,
+  which the end-price validation already prevents.
+- **Strict `===` is safe here**: both sides are `parseFloat` of a digits-only string, so `333` and
+  `333.00` compare equal.
+- `openDrop` is the ONLY entry point — the input's `onSubmitEditing`, its iOS `onBlur` commit and the
+  add button all funnel through it, and the **Display** re-negotiation path reuses an existing row's
+  stored price rather than a typed one, so it cannot reach this.
+
+tsc 44 (baseline unchanged); eslint on `RolloutView.tsx` identical to its HEAD baseline (270 problems:
+2 errors / 268 warnings). ⚠️ The file is CRLF — `newline=''` on both ends.
+
 ### Signing an agreement says the customer got a copy
 
 Ticket: *"while we are submitting the agreement we have to show these messages as well in the splash
