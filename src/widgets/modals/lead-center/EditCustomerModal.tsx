@@ -33,6 +33,13 @@ export interface CoBuyerPayload {
   lastName: string;
   phone: string | null;
   email: string;
+  /**
+   * ⚠️ MOBILE-ONLY — web's co-buyer has NO address (`edit-customer-modal.js`
+   * `sanitizedCoBuyers` sends name/phone/email only), so nothing on that side writes
+   * this key. If the backend's coBuyers sub-schema does not declare it, Mongoose drops
+   * it silently: the box will look right and read back EMPTY on the next open.
+   */
+  address: string;
 }
 
 export interface EditCustomerPayload {
@@ -55,6 +62,10 @@ interface CoBuyerDraft {
   lastName: string;
   phone: string;
   email: string;
+  /** The co-buyer's OWN address — untouched while `sameAsPrimary` is on, so unticking
+   *  the box gives the rep back whatever they had typed. */
+  address: string;
+  sameAsPrimary: boolean;
 }
 
 // Web parity: `edit-customer-modal.js` caps a customer at three co-buyers.
@@ -65,6 +76,11 @@ const emptyCoBuyer = (): CoBuyerDraft => ({
   lastName: '',
   phone: '',
   email: '',
+  address: '',
+  // ⚠️ Deliberately OFF for a new co-buyer. Most co-buyers do share the primary's
+  // address, so defaulting it on would save a tap — but it would also write an address
+  // the rep never affirmed, onto a record they may only have opened to fix a name.
+  sameAsPrimary: false,
 });
 
 /**
@@ -83,14 +99,27 @@ const formatCoBuyerPhone = (value: string): string => {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 };
 
-const normalizeCoBuyers = (coBuyers: any[] = []): CoBuyerDraft[] =>
-  (Array.isArray(coBuyers) ? coBuyers : []).map((coBuyer) => ({
-    _id: coBuyer?._id,
-    firstName: coBuyer?.firstName || '',
-    lastName: coBuyer?.lastName || '',
-    phone: formatCoBuyerPhone(coBuyer?.phone || ''),
-    email: coBuyer?.email || '',
-  }));
+/**
+ * ⚠️ `sameAsPrimary` is DERIVED, never stored. Persisting a second flag beside the
+ * address would give the record two ways to disagree with itself — and the answer is
+ * already implied by the address matching. The empty case matters: two blank addresses
+ * are not "the same address", they are two unanswered questions, so the box stays off.
+ */
+export const normalizeCoBuyers = (coBuyers: any[] = [], primaryAddress = ''): CoBuyerDraft[] => {
+  const primary = (primaryAddress || '').trim();
+  return (Array.isArray(coBuyers) ? coBuyers : []).map((coBuyer) => {
+    const address = coBuyer?.address || '';
+    return {
+      _id: coBuyer?._id,
+      firstName: coBuyer?.firstName || '',
+      lastName: coBuyer?.lastName || '',
+      phone: formatCoBuyerPhone(coBuyer?.phone || ''),
+      email: coBuyer?.email || '',
+      address,
+      sameAsPrimary: !!primary && address.trim() === primary,
+    };
+  });
+};
 
 interface EditCustomerModalProps {
   visible: boolean;
@@ -119,7 +148,10 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
 
   // ─── Co-buyers ─────────────────────────────────────────────────────────────
   const [coBuyers, setCoBuyers] = useState<CoBuyerDraft[]>(() =>
-    normalizeCoBuyers(lead?.customerDetails?.coBuyers)
+    normalizeCoBuyers(
+      lead?.customerDetails?.coBuyers,
+      lead?.customerDetails?.address || lead?.fullAddress || ''
+    )
   );
 
   const atCoBuyerLimit = coBuyers.length >= MAX_CO_BUYERS;
@@ -140,7 +172,24 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     setCoBuyers((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleCoBuyerChange = (index: number, field: keyof CoBuyerDraft, value: string) => {
+  const handleCoBuyerSameAddress = (index: number, checked: boolean) => {
+    setCoBuyers((prev) =>
+      prev.map((coBuyer, i) => (i === index ? { ...coBuyer, sameAsPrimary: checked } : coBuyer))
+    );
+  };
+
+  /**
+   * The address a co-buyer actually has.
+   *
+   * ⚠️ DERIVED on every read rather than copied into `coBuyer.address` when the box is
+   * ticked. A stored mirror goes stale the moment the rep edits the primary address
+   * below — the co-buyer would keep the old street while the box still claimed "same as
+   * primary buyer". Deriving also means unticking hands back whatever they had typed.
+   */
+  const coBuyerAddressOf = (coBuyer: CoBuyerDraft) =>
+    coBuyer.sameAsPrimary ? address : coBuyer.address;
+
+  const handleCoBuyerChange = (index: number, field: 'firstName' | 'lastName' | 'phone' | 'email' | 'address', value: string) => {
     setCoBuyers((prev) =>
       prev.map((coBuyer, i) =>
         i === index
@@ -338,6 +387,8 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
         lastName: coBuyer.lastName.trim(),
         phone: digits || null,
         email: coBuyer.email?.trim() || '',
+        // Resolved, not the flag — see `coBuyerAddressOf`.
+        address: coBuyerAddressOf(coBuyer).trim(),
       };
       if (coBuyer._id) payload._id = coBuyer._id;
       return payload;
@@ -441,74 +492,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
               {renderField('Phone Number', phone, setPhone, true, 'phone-pad')}
               {renderField('Email', email, setEmail, false, 'email-address')}
 
-              {/* Co-Buyers — up to three, each a bordered block with a Remove
-                  action, matching the web modal. */}
-              {coBuyers.map((coBuyer, index) => (
-                <View key={coBuyer._id || `co-buyer-${index}`} style={styles.coBuyerCard}>
-                  <View style={styles.coBuyerHeader}>
-                    <Text style={styles.coBuyerTitle}>Co-Buyer {index + 1}</Text>
-                    <TouchableOpacity
-                      onPress={() => handleRemoveCoBuyer(index)}
-                      disabled={submitting}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Text style={styles.coBuyerRemove}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {renderField(
-                    'First Name',
-                    coBuyer.firstName,
-                    (t) => handleCoBuyerChange(index, 'firstName', t),
-                    true
-                  )}
-                  {renderField(
-                    'Last Name',
-                    coBuyer.lastName,
-                    (t) => handleCoBuyerChange(index, 'lastName', t),
-                    true
-                  )}
-                  {/* "+1" sits beside the input, as on web, so the digits the
-                      rep types are never mistaken for a country code. */}
-                  <View style={styles.fieldWrap}>
-                    <View style={styles.floatingLabel}>
-                      <Text style={styles.floatingLabelText}>Phone Number</Text>
-                    </View>
-                    <View style={styles.fieldBox}>
-                      <Text style={styles.phonePrefix}>+1</Text>
-                      <TextInput
-                        value={coBuyer.phone}
-                        onChangeText={(t) => handleCoBuyerChange(index, 'phone', t)}
-                        placeholder="Enter Phone Number"
-                        placeholderTextColor="#919EAB"
-                        keyboardType="phone-pad"
-                        style={styles.fieldInput}
-                        maxLength={14}
-                        editable={!submitting}
-                      />
-                    </View>
-                  </View>
-                  {renderField(
-                    'Email',
-                    coBuyer.email,
-                    (t) => handleCoBuyerChange(index, 'email', t),
-                    false,
-                    'email-address'
-                  )}
-                </View>
-              ))}
-
-              <TouchableOpacity
-                onPress={handleAddCoBuyer}
-                disabled={submitting || atCoBuyerLimit}
-                style={[styles.addCoBuyerBtn, addCoBuyerStyle]}
-              >
-                <Icon name="plus" size={16} color={colors.primary.main} />
-                <Text style={[styles.addCoBuyerText, { color: colors.primary.main }]}>
-                  Add Co-Buyer
-                </Text>
-              </TouchableOpacity>
-
               {/* Address — type a street, town or landmark to search, or tap the
                   crosshair to drop in the rep's current location. */}
               <View style={styles.fieldWrap}>
@@ -579,6 +562,121 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
                   </View>
                 )}
               </View>
+
+              {/* Co-Buyers — up to three, each a bordered block with a Remove
+                  action, matching the web modal. */}
+              {coBuyers.map((coBuyer, index) => (
+                <View key={coBuyer._id || `co-buyer-${index}`} style={styles.coBuyerCard}>
+                  <View style={styles.coBuyerHeader}>
+                    <Text style={styles.coBuyerTitle}>Co-Buyer {index + 1}</Text>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveCoBuyer(index)}
+                      disabled={submitting}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.coBuyerRemove}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {renderField(
+                    'First Name',
+                    coBuyer.firstName,
+                    (t) => handleCoBuyerChange(index, 'firstName', t),
+                    true
+                  )}
+                  {renderField(
+                    'Last Name',
+                    coBuyer.lastName,
+                    (t) => handleCoBuyerChange(index, 'lastName', t),
+                    true
+                  )}
+                  {/* "+1" sits beside the input, as on web, so the digits the
+                      rep types are never mistaken for a country code. */}
+                  <View style={styles.fieldWrap}>
+                    <View style={styles.floatingLabel}>
+                      <Text style={styles.floatingLabelText}>Phone Number</Text>
+                    </View>
+                    <View style={styles.fieldBox}>
+                      <Text style={styles.phonePrefix}>+1</Text>
+                      <TextInput
+                        value={coBuyer.phone}
+                        onChangeText={(t) => handleCoBuyerChange(index, 'phone', t)}
+                        placeholder="Enter Phone Number"
+                        placeholderTextColor="#919EAB"
+                        keyboardType="phone-pad"
+                        style={styles.fieldInput}
+                        maxLength={14}
+                        editable={!submitting}
+                      />
+                    </View>
+                  </View>
+                  {renderField(
+                    'Email',
+                    coBuyer.email,
+                    (t) => handleCoBuyerChange(index, 'email', t),
+                    false,
+                    'email-address'
+                  )}
+
+                  {/* Same-address opt-in. Ticking it fills the box below from the
+                      primary buyer's Address field ABOVE — which is why the whole
+                      co-buyer block now sits under that field rather than over it:
+                      a checkbox that mirrors a value the rep has not reached yet
+                      reads as broken. */}
+                  <TouchableOpacity
+                    onPress={() => handleCoBuyerSameAddress(index, !coBuyer.sameAsPrimary)}
+                    disabled={submitting}
+                    activeOpacity={0.7}
+                    style={styles.sameAddressRow}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <View
+                      style={[
+                        styles.checkbox,
+                        coBuyer.sameAsPrimary && {
+                          backgroundColor: colors.primary.main,
+                          borderColor: colors.primary.main,
+                        },
+                      ]}
+                    >
+                      {coBuyer.sameAsPrimary && <Icon name="check" size={13} color="#fff" />}
+                    </View>
+                    <Text style={styles.sameAddressText}>Same address as primary buyer?</Text>
+                  </TouchableOpacity>
+
+                  {/* Read-only while mirrored — the value lives in the primary field,
+                      so editing it here would silently diverge from the box's claim. */}
+                  <View style={styles.fieldWrap}>
+                    <View style={styles.floatingLabel}>
+                      <Text style={styles.floatingLabelText}>Address</Text>
+                    </View>
+                    <View
+                      style={[styles.fieldBox, coBuyer.sameAsPrimary && styles.fieldBoxReadOnly]}
+                    >
+                      <TextInput
+                        value={coBuyerAddressOf(coBuyer)}
+                        onChangeText={(t) => handleCoBuyerChange(index, 'address', t)}
+                        placeholder="Street, town or city"
+                        placeholderTextColor="#919EAB"
+                        style={styles.fieldInput}
+                        editable={!submitting && !coBuyer.sameAsPrimary}
+                        multiline
+                      />
+                    </View>
+                  </View>
+                </View>
+              ))}
+
+              <TouchableOpacity
+                onPress={handleAddCoBuyer}
+                disabled={submitting || atCoBuyerLimit}
+                style={[styles.addCoBuyerBtn, addCoBuyerStyle]}
+              >
+                <Icon name="plus" size={16} color={colors.primary.main} />
+                <Text style={[styles.addCoBuyerText, { color: colors.primary.main }]}>
+                  Add Co-Buyer
+                </Text>
+              </TouchableOpacity>
             </ScrollView>
 
             {/* Footer */}
@@ -709,6 +807,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#FF4842',
+  },
+  sameAddressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sameAddressText: {
+    marginLeft: 10,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#454F5B',
+  },
+  // Mirrored from the primary field, so it reads as a value rather than an input.
+  fieldBoxReadOnly: {
+    backgroundColor: '#F4F6F8',
   },
   addCoBuyerBtn: {
     flexDirection: 'row',
