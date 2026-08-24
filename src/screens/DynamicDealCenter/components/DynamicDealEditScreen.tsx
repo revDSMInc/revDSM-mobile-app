@@ -42,7 +42,11 @@ import {
   parsePrice,
   type Tiers,
 } from '../utils/dynamic-deal-pricing';
-import { computeDynamicBuildChanges, type BuildChangeKind } from '../utils/dynamic-deal-diff';
+import {
+  computeDynamicBuildChanges,
+  type BuildChangeKind,
+  type ComboField,
+} from '../utils/dynamic-deal-diff';
 import { LeadService } from '../../../services/api/leads';
 import { FlashMessage } from '../../../config/message';
 import { useAuth } from '../../../hooks/useAuth';
@@ -1280,7 +1284,14 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   <View key={group.vertical} style={{ marginBottom: 10 }}>
                     <Text style={{ fontSize: 11, fontWeight: '900', color: '#64748B', marginBottom: 4 }}>{group.vertical}</Text>
                     {group.changes.map((c, i) => (
-                      <ReviewRow key={`${c.field}-${i}`} label={c.field} from={c.from} to={c.to} kind={c.kind} />
+                      <ReviewRow
+                        key={`${c.field}-${i}`}
+                        label={c.field}
+                        from={c.from}
+                        to={c.to}
+                        kind={c.kind}
+                        comboFields={c.comboFields}
+                      />
                     ))}
                   </View>
                 ))}
@@ -1764,11 +1775,13 @@ function ReviewRow({
   from,
   to,
   kind,
+  comboFields,
 }: {
   label: string;
   from: string;
   to: string;
   kind?: BuildChangeKind;
+  comboFields?: ComboField[];
 }) {
   // A whole combination dropped from (or added to) the build is not an edit of a
   // value, so it must not read as one — the eyebrow names the operation instead
@@ -1777,6 +1790,35 @@ function ReviewRow({
   const eyebrow = kind === 'removed' ? 'REMOVED' : kind === 'added' ? 'ADDED' : 'NEW';
   const eyebrowColor = kind === 'removed' ? '#DC2626' : '#94A3B8';
   const valueColor = kind === 'removed' ? '#94A3B8' : '#15803D';
+
+  // A whole combination is rendered as the portal's build card renders it — the
+  // measurements as a labelled table, in the config's field order. Run together on
+  // one line ("Type PARTIAL · Vinyl Soffit Footage 200 · Soffit Type HIDDEN VENT
+  // VINYL · Color White") they wrap into a green paragraph the rep has to parse word
+  // by word, and two combinations of the same section read as different products.
+  if (comboFields?.length) {
+    return (
+      <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <Text style={{ flex: 1, minWidth: 0, paddingRight: 12, fontSize: 13, fontWeight: '700', color: '#334155' }}>
+            {label}
+          </Text>
+          <Text style={{ fontSize: 10, fontWeight: '700', color: eyebrowColor }}>{eyebrow}</Text>
+        </View>
+        <View style={styles.comboCard}>
+          {comboFields.map((f, i) => (
+            <View key={`${f.label}-${i}`} style={styles.comboRow}>
+              {/* `flexShrink` on BOTH columns, so a long label wraps instead of
+                  shunting the value off the right edge of a phone. */}
+              <Text style={styles.comboLabel}>{f.label}</Text>
+              <Text style={[styles.comboValue, { color: valueColor }]}>{f.value}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
       {/* `minWidth: 0` is the flexbox guard that lets this column actually shrink
@@ -1811,6 +1853,35 @@ function ReviewRow({
 // card: a white rounded panel with a hairline border, a soft shadow, and
 // full-width stacked actions.
 const styles = StyleSheet.create({
+  // The portal's build card: a soft tinted panel holding one row per measurement.
+  comboCard: {
+    marginTop: 8,
+    backgroundColor: '#EFF8FA',
+    borderWidth: 1,
+    borderColor: '#CFE7EC',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  comboRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  comboLabel: {
+    flexShrink: 1,
+    paddingRight: 12,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  comboValue: {
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
   dateCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,

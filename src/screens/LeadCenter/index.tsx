@@ -6,6 +6,7 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
+  RefreshControl,
   StyleSheet,
   Platform,
   StatusBar,
@@ -437,6 +438,22 @@ export default function LeadCenterPage() {
       }
     }, [lead?._id, queryClient, refetch])
   );
+
+  // Pull-to-refresh — the same three refreshes the focus effect above performs, so a
+  // pull and a re-focus can never leave the screen in different states.
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const handlePullToRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      if (lead?._id) {
+        queryClient.invalidateQueries({ queryKey: ['revrender-runs', lead._id] });
+        queryClient.invalidateQueries({ queryKey: ['lead-job-builder-drafts', lead._id] });
+      }
+      await refetch();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [lead?._id, queryClient, refetch]);
 
   // Just returned from finishing a job (Complete Job) — the route param `lead` is the
   // pre-result snapshot, so force fresh refetches. A couple of delayed passes beat the
@@ -1112,6 +1129,17 @@ export default function LeadCenterPage() {
           showsVerticalScrollIndicator={false}
           stickyHeaderIndices={[1]}
           contentContainerStyle={{ paddingBottom: 20 }}
+          refreshControl={
+            // ⚠️ Its OWN flag, not the hook's `isRefreshing`. That one is also true for
+            // the mount and focus refetches, so reusing it would spin the control every
+            // time the rep navigates back to this screen without having pulled anything.
+            <RefreshControl
+              refreshing={pullRefreshing}
+              onRefresh={handlePullToRefresh}
+              tintColor="#72BD00"
+              colors={['#72BD00']}
+            />
+          }
         >
           <View className="px-4">
             <View className="flex-row gap-4 mb-4">

@@ -4179,6 +4179,112 @@ tsc 44 (baseline unchanged); `EditCustomerModal.tsx` is byte-identical to its HE
 (4 warnings, 0 errors), `LeadCenter/index.tsx` to its own (40 problems: 16 errors / 24 warnings), and
 `customer-detail-changes.ts` is clean.
 
+### The `inspection_photo` view log on "Start Taking Photos" is gone
+
+Ticket: *"there is one extra log going to call while we press the Start Taking Photos button — remove
+that log"*, with the captured payload: `action_type: view` / `module_type: inspection_photo` /
+`meta: { leadId }` and **no `action`**.
+
+⚠️ **It was NOT in `JobDocsSection.tsx`**, where the button lives. `handleStartTakingPhotos` only sets
+`showDynamicCapture`, and the log was a **mount effect inside `DynamicInspectionView`**
+(*"Log a view event on mount (parity with the legacy inspection modal)"*). Removed, along with its
+now-unused `logEvent` import; `useAuth`/`user` stay (line ~120 still reads the id).
+
+⚠️ So it fired on **every** mount of the dynamic inspection view, not only from this button —
+`DynamicMovePhotoModal` renders the same `CategoryBody`, but the log was on the VIEW, so the button was
+simply the reported path. Nothing else in `JobDocsSection` was touched; its own `upload` and `submit`
+rows are unrelated and remain.
+
+The bare `meta` in the capture is the tell: the effect passed no `meta` at all, and `LoggerService`
+auto-attaches the stored `leadId` for any module not in `ExcludedModuleTypes`. A log with no `action`
+cannot be rendered as anything on the portal timeline, which is why it read as noise.
+
+tsc 44 (baseline unchanged); `DynamicInspectionView.tsx` is byte-identical to its HEAD eslint baseline
+(123 problems, 0 errors) — the dropped import and the dropped `eslint-disable` cancel out.
+
+### Addendum Review renders a combination as the portal's TABLE, in config field order
+
+Ticket: *"you have to set the my ui same like web"*, with the Review step's two
+**Combination Added** rows circled beside the portal's Lead Details build card.
+
+An added/removed combination was one run-on green sentence —
+`Type PARTIAL · Vinyl Soffit Footage 200 · Soffit Type HIDDEN VENT VINYL · Color White` — which wraps
+to four lines on a phone and has to be read word by word to find a single measurement. The portal shows
+the same combination as a labelled table, so mobile now does too.
+
+**Two defects, and the second is the one that isn't cosmetic.**
+
+1. **No structure.** `ReviewRow` gained an optional **`comboFields`**; when present it renders the label
+   + eyebrow on top and a tinted card beneath holding one `label ⟷ value` row per measurement
+   (`styles.comboCard` / `comboRow` / `comboLabel` / `comboValue`). The plain-row path is untouched, so
+   ordinary field edits, Contract Price, Install Date and the payment-method rows are unchanged.
+2. ⚠️ **The two combinations of ONE section listed their fields in DIFFERENT orders.** The screenshot's
+   first row reads `Type · Footage · Soffit Type · Color` and its sibling
+   `Color · Soffit Type · Type · Footage` — the same four fields, so the two read as different products.
+   `describeCombo` walked `Object.entries(combo.values)`, i.e. **whatever order the stored object
+   happens to hold**, which is not the order the rep filled them in and is not stable between siblings.
+
+**The order now comes from the CONFIG.** `FieldLabelMeta` gained an `order`, stamped by a counter as
+`buildFieldLabelMap` walks the config, and the new **`comboFields()`** sorts on it — so a combination is
+listed exactly as the portal's card lists it. The sort is stable (ties keep read order), and a field the
+label map never saw sorts last rather than being dropped.
+
+⚠️ **`describeCombo` is KEPT and is now DERIVED from `comboFields`.** It is not display-only — that
+string is what `buildChangeSummary` puts on the addendum **the customer signs**. Deriving it means the
+table and the signed document can never describe one combination differently; it also picks up the
+ordering fix for free.
+
+⚠️ **`comboFields` is set ONLY on `added`/`removed` rows**, and `from`/`to` stay authoritative. An
+ordinary field edit has no breakdown, so `ReviewRow` falls through to the existing two-column layout —
+asserted, so a future change here can't silently reshape every row on the screen.
+
+The card is a soft tint (`#EFF8FA` on `#CFE7EC`) rather than the mobile review's usual slate, matching
+the portal card the ticket points at and separating a whole-combination row from the field rows around
+it. A **removal keeps its grey values** (`valueColor`), since nothing new was entered.
+
+Verified by driving the REAL `computeDynamicBuildChanges` over a Vinyl Soffit section whose second
+combination is stored key-scrambled: both added rows breaking out into config order, the scrambled one
+no longer Color-first, its derived `to` string reordering with it, a removed combination carrying the
+breakdown too, and an ordinary edit carrying **none**. The pre-fix code was run from `git show HEAD:` in
+the same harness and emits the ticket's screenshot string verbatim
+(`Color Musket Brown · Soffit Type HIDDEN VENT VINYL · Type PARTIAL · Vinyl Soffit Footage 100`), so the
+repro is asserted against the real defect rather than a reconstruction of it.
+
+tsc 44 (baseline unchanged); `dynamic-deal-diff.ts` is identical to its HEAD eslint baseline (2
+pre-existing errors) and `DynamicDealEditScreen.tsx` goes 144 → 148 warnings, all four
+`react-native/no-inline-styles` — the only rule that file carries, 144 of them already.
+
+⚠️ Needs a device check (this repo cannot render-test): that a long measurement label wraps inside the
+card instead of pushing its value off the right edge.
+
+### Lead Center pulls to refresh
+
+Ticket: *"add pull to refresh option here, currently we have no pull to refresh option."* The screen's
+`ScrollView` bounced but had no `RefreshControl`, so a pull opened a blank gap and did nothing.
+
+**No new fetching was written** — `useLeadCenterData` already exposes `refetch`, and the screen's
+`useFocusEffect` already knew what "refresh this screen" means. `handlePullToRefresh` performs exactly
+those three, in the same order: invalidate `['revrender-runs', leadId]`, invalidate
+`['lead-job-builder-drafts', leadId]`, then `await refetch()`. Keeping them identical is the point — a
+pull and a re-focus must not be able to leave the screen in different states.
+
+⚠️ **The control has its OWN `pullRefreshing` flag; it deliberately does NOT reuse the hook's
+`isRefreshing`.** That one is also true for the mount hydrate and every focus refetch, so binding it to
+`RefreshControl.refreshing` would spin the control each time the rep merely navigated BACK to this
+screen — a refresh animation for something they didn't ask for.
+
+⚠️ `refetch` early-returns while one is already in flight (`hydrateInFlightRef`), so pulling in the
+instant after a focus refetch closes the spinner immediately. The data still refreshes — the in-flight
+fetch is the same request — only the animation is short. Do not "fix" this by removing the guard; it is
+what stops a fast re-focus from stacking calls.
+
+The Map tab navigates to `MapDetail` rather than rendering a map inside this `ScrollView` (only
+`job_docs` and `tools` render inline), so there is no gesture to conflict with. `stickyHeaderIndices`
+is unaffected — the control sits above the sticky child.
+
+tsc 44 (baseline unchanged); `LeadCenter/index.tsx` is identical to its HEAD eslint baseline
+(40 problems: 16 errors / 24 warnings).
+
 ---
 
 ## 7. Scripts
