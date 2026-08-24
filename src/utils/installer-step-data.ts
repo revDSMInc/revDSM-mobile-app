@@ -24,6 +24,7 @@ import {
   INSTALLER_PATCH_FIELDS,
   type CapturedPhoto,
   type DiscrepancyCategory,
+  type CocRelationshipType,
   type CocSignOff,
   type CocStepPayload,
   type InstallProgress,
@@ -337,7 +338,13 @@ export const buildCocSignOffPayload = (
 ): CocStepPayload | null => {
   if (!signOff) return null;
 
-  const isOther = signOff.customer?.relationshipType === 'other';
+  const relationshipType: CocRelationshipType =
+    signOff.customer?.relationshipType === 'other'
+      ? 'other'
+      : signOff.customer?.relationshipType === 'spouse'
+      ? 'spouse'
+      : 'homeowner';
+  const isOther = relationshipType === 'other';
   const other = (signOff.customer?.otherRelationship ?? '').trim();
 
   const payload: CocStepPayload = {
@@ -348,7 +355,8 @@ export const buildCocSignOffPayload = (
         !!signOff.confirmations?.installationCompletedAsPerContract,
     },
     customer: {
-      relationshipType: isOther ? 'other' : 'homeowner',
+      relationshipType,
+      // Only `other` has anything to write in — the enum says the rest.
       otherRelationship: isOther && other ? other : null,
     },
   };
