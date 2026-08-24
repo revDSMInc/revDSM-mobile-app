@@ -49,6 +49,8 @@ import { useAuth } from '../../../hooks/useAuth';
 import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-log';
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 import { validateEmail } from '../../../utils/validation';
+import { readLeadPhone, readLeadEmail } from '../../../utils/addendum-recipients';
+import { toPayloadText } from '../utils/job-submit-payload';
 // Handles keyboard avoidance on BOTH platforms (its `KeyboardProvider` is mounted in
 // App.tsx). `automaticallyAdjustKeyboardInsets` is iOS-only, and on Android the
 // manifest's `adjustResize` no longer shrinks the window once KeyboardProvider goes
@@ -229,16 +231,12 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     // Seed already dash-formatted — the stored value may be raw digits or E.164
     // (`+14438784937`), and the field renders its own "+1", so only the local part
     // belongs in the value.
-    setCustomerPhone(
-      formatLocalUSPhone(lead?.customerDetails?.phone || lead?.customerDetails?.phoneNumber || '')
-    );
+    setCustomerPhone(formatLocalUSPhone(readLeadPhone(lead)));
     // Seed the address the submit previously hardcoded, so the field opens on what the
     // addendum will really be mailed to. TRIMMED — a stored value carrying whitespace
     // would otherwise fail the format check on a field the rep never touched, which is
     // the same trap the phone seed's `formatLocalUSPhone` normalization avoids.
-    setCustomerEmail(
-      String(lead?.customerDetails?.email || lead?.customerDetails?.emailAddress || '').trim()
-    );
+    setCustomerEmail(readLeadEmail(lead));
     // Pre-fill with the lead's existing note so the rep sees the current value and
     // edits from it; a matching value then reads as "no change".
     setNote(lead?.note != null ? String(lead.note) : '');
@@ -725,8 +723,23 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           (calculatorData as any).title
       );
 
+      // The Deal Center job-submit builds `leadData` with a fixed key set
+      // (`buildSubmitLeadData`). This draft is a DIFFERENT endpoint with a flatter
+      // shape, but the OUTCOME fields it carries should be the same ones — three were
+      // missing here, so an addendum dropped them and the signed record disagreed with
+      // the original submit. Sale/Demo blanking follows the same rule as there.
+      const isSaleResult = (lead?.result || 'Sale') === 'Sale';
+
       const payload: any = {
         result: lead?.result || 'Sale',
+        // ⚠️ Present on the draft record (it reads `oneLeg: null` today) and on the
+        // Deal Center payload, but never sent from here — so every addendum silently
+        // cleared it. Defaults to 'No', matching `buildSubmitLeadData`.
+        oneLeg: toPayloadText(savedOutcome?.oneLeg ?? lead?.oneLeg ?? 'No'),
+        // Demo-only, blank on a Sale — exactly as the Deal Center does. Resolution
+        // chain matches `EditContractDetailsModal`, which reads the same two fields.
+        reason: toPayloadText(isSaleResult ? '' : (savedOutcome?.reason ?? lead?.reason)),
+        explain: toPayloadText(isSaleResult ? '' : (savedOutcome?.explain ?? lead?.explain)),
         lastPriceQuoted: lead?.lastPriceQuoted || '',
         originalContractPrice: String(contractPrice),
         // Normalize to a number-string (web parity): an empty field still saves "0"
@@ -751,6 +764,18 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         // Free-text note ("" → null). Stored on the draft now, written to
         // Lead.note / LeadOutcome.note when the customer signs.
         note,
+        // ── who this addendum goes to ──────────────────────────────────────────
+        // ROOT-LEVEL on the draft-create POST. Both fields are seeded from the
+        // customer record and shown on the Review step, so the rep can OVERRIDE them:
+        // typing a different number/address here sends the addendum there instead of
+        // to whatever the customer record holds.
+        //
+        // ⚠️ E.164 (`+12542343674`) for the phone, per the documented payload. The
+        // field itself renders a static "+1" and holds the LOCAL part, so the display
+        // value must go through `toE164USPhone` — sending it raw would hand the SMS
+        // provider "232-123-2112".
+        customerPhone: toE164USPhone(customerPhone || readLeadPhone(lead)),
+        customerEmail: customerEmailTrimmed,
       };
       if (lfCalculatorComplete) payload.LFCalculator = calculatorData;
 
@@ -779,7 +804,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         // string like "+1 443-878-4937" reached the API with spaces and dashes; and
         // a stored "14438784937" became "+114438784937". `toE164USPhone` strips
         // formatting and takes the last 10 digits, so every shape normalizes.
-        const formattedPhone = toE164USPhone(customerPhone || lead?.customerDetails?.phone || '');
+        const formattedPhone = toE164USPhone(customerPhone || readLeadPhone(lead));
         try {
           await LeadService.sendDraftSubmitEmail(draftId, {
             // The address the rep typed, not the lead's stored one — that is the whole

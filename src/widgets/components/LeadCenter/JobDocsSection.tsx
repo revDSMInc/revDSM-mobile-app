@@ -104,6 +104,8 @@ interface JobDocsSectionProps {
    * the same reason web keeps them in a single `useJobBuilderDrafts` hook.
    */
   drafts?: any[];
+  /** True once the drafts query has settled — see `AddendumRecipientCard`. */
+  draftsReady?: boolean;
   /** Refetch the drafts after the rep re-sends / re-addresses a pending addendum. */
   onDraftsChanged?: () => void;
   /**
@@ -149,6 +151,7 @@ export const JobDocsSection = ({
   isRefreshing = false,
   onEditContract,
   drafts = [],
+  draftsReady = true,
   onDraftsChanged,
 }: JobDocsSectionProps) => {
   const { colors, isDark } = useTheme();
@@ -1573,6 +1576,10 @@ export const JobDocsSection = ({
           unchanged and the contract card keeps its green LEAD RESULTED header. */}
       <AddendumRecipientCard
         lead={lead}
+        // Carries each draft’s own `customerPhone`/`customerEmail`, which is the
+        // address that addendum was actually sent to.
+        drafts={drafts}
+        draftsReady={draftsReady}
         isDark={isDark}
         colors={colors}
         onRecipientChanged={onDraftsChanged}

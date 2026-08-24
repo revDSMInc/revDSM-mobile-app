@@ -4145,6 +4145,92 @@ carries for the documented reason.
 center, confirm every tab's two buttons are greyed, the resulted tab shows the red Reset, and that
 resetting re-enables Result Lead everywhere.
 
+### ✅ ROOT CAUSE: the TNT board showed the wrong calculator as sold — the fix had been MERGE-REVERTED
+
+Ticket: *"we create a lead with multiple calculators with different decline drop prices and some with
+accepted drop prices but we can go with the calculator in which drop price is decline; when we complete
+this lead the TNT portal show that the calculator that have an accepted drop price is sold but in actual
+we sold the other calculator in which drop price is decline. This same flow from the website works
+perfectly."*
+
+**The sold calculator carried no marker of what the customer agreed to.** A rep walks the customer down
+several drops on calculator B, the customer DECLINES every one, and the rep sells B anyway at its
+rollout price. Every row on B then reads `declined`, so the only definite *"the customer took this
+price"* record anywhere on the lead is the `accepted` drop on the sibling calculator A — which is what
+the board reported as sold.
+
+⚠️ **This was fixed once and silently reverted.** Commit **`c65e14f` ("Drop Price TNT Board issu
+fixed")** added `openResultChooser` to `RolloutView` — securing the last drop before the outcome modal
+opens. Ticket 409 (`6c2e15a`) branched from a commit that PREDATED it, and the merge `9708df7` resolved
+`RolloutView.tsx` to the 409 side, dropping the whole thing. The half in `utils/drop-prices.ts`
+(`resolveAutoSecureIndex` / `autoSecureLastDrop`) survived and sat there as dead code with only tests
+referencing it — which is exactly what a merge-revert looks like. ⚠️ `git log -- <file>` HIDES it
+(history simplification skips a change undone by a merge); `git diff c65e14f HEAD -- <file>` is what
+shows it.
+
+Restored verbatim, plus the three `dropPriceOf` call sites that were lost with it:
+
+| what | why it matters |
+|---|---|
+| `openResultChooser` on **Result Lead** | secures the last drop when NOTHING is accepted, so the sold calculator owns the accepted row |
+| `finalPrice` | a server round-tripped drop carries **`dropedPrice` only**, so `.price` was `undefined` → Result Lead showed no figure and the outcome modal opened at `$0.00` with Build Job disabled |
+| `resolveDropTargetIndex` / the drop row `dp` | same field, same failure — a reloaded drop could not be matched or displayed |
+
+⚠️ **Only when nothing is secured.** A rep who deliberately secured drop #1 and then explored two more
+without taking them keeps that choice — `autoSecureLastDrop` returns the SAME array reference, so
+nothing is written and nothing is logged. The sibling calculator is never touched either.
+
+⚠️ **The write is immediate**, not debounced: `onDropChange` → `handleSetDrops` → `saveDropsNow` PUTs
+`{ dropPrice: [...] }` with every row's `_id`, so the row is filed before the job is built and no
+duplicate is appended. A `drop price secured` rollout log is fired for it so the portal timeline can
+explain the row.
+
+#### …and the `rollout_and_drop_summary` log the board reads was wrong on three counts
+
+Web fires `logRolloutDropSummaryOnSubmit` with its whole `appointmentsCalculator` list and its
+`cleanLeadData`. Mobile's dynamic submit passed neither:
+
+- **`allCalculators: [selectedCalc]`** — a lead worked across four rollouts logged as ONE, with only
+  its own drops counted, so `noOfRollouts` / `noOfDropsAllJobs` / `aggregatedRetailPrice` /
+  `percentageJobsAt*` under-reported every multi-calculator lead. `DynamicDealCenterScreen` now passes
+  the full list (`allCalculators`, backend-shaped from `tabs`), and the resulted calculator is
+  force-merged in by id so its LIVE drops/price win over a list that is a render behind.
+- **`leadData: rd` verbatim** — the result modal produces `resultType` / `contractPrice` /
+  `downPaymentMethod`, while the log reads `result` / `originalContractPrice` / `paymentMethod`. So
+  **every dynamic submit logged `resultStatus: "Unknown"`** and a resulted price of `0`
+  (`deltaFromRolloutToResult: "0%"`). It is now built by the SAME `buildSubmitLeadData` that assembles
+  the submit payload, so the log and the job can never disagree about the result, or about which of
+  `lastPriceQuoted` / `originalContractPrice` a Demo vs a Sale carries.
+- **`appointmentId: undefined`** — `CalcTab` has no `appointmentId` and the screen never passed the
+  hook's. Now threaded, which also stops the outcome write falling back to the LEAD id (the documented
+  `jobBuilder.appointmentId === lead._id` oddity on mobile-created jobs).
+
+⚠️ **`calculateTiers` in `utils/activity-log/rollout-summary.ts` is the LEGACY calculator** — it prices
+the hardcoded `gutter5DsE` / `versa6Ft1` columns, which a dynamic calculator does not have, so every
+dynamic job came back with the same floored tiers, bucketed them all as `atRetail`, and logged
+`resultedJobCost/Par/Retail` that no screen agrees with. Web has no such problem: its version passes
+`schemas`. Mobile's port is not schema-aware, so the dynamic caller opts in with
+**`preferStoredTotals: true`** and the tiers come from the calculator's persisted `totals` (the pure
+tier sum `computeTotals` wrote — the same numbers the rollout tiles derive from). **Opt-in, never
+inferred:** a classic calculator can carry a `totals` object too, and there the legacy computation is
+the correct one.
+
+Verified with 11 tests (`__tests__/screens/DynamicDealCenter/tnt-sold-calculator.test.ts`) over TWO
+calculators — the shape a single-calculator test cannot express: the pre-fix state asserted directly
+(the lead's only accepted drop sits on the calculator that was NOT sold), resulting the all-declined
+calculator securing its last round, the sibling untouched by reference, every `_id` preserved through
+`toDropPricePayload` so nothing is re-filed, exactly one accepted row after the save normalizer, a
+deliberate earlier secure not overridden, a drop-less calculator and junk input as no-ops, and the
+submit/summary naming the sold calculator at the secured price on both the Sale and Demo arms (with
+`resultStatus` asserted against the raw `rd` that used to read `Unknown`). tsc 68 (baseline unchanged);
+`rollout-summary.ts` is eslint-clean and `RolloutView.tsx` (273 problems), `DynamicJobBuilderScreen.tsx`
+(49) and `DynamicDealCenterScreen.tsx` (38) are each byte-identical to their HEAD eslint baselines.
+
+⚠️ Needs a device check of the board itself: sell the DECLINED calculator on a lead that also has an
+accepted drop elsewhere, then confirm one `PUT /lfcalculators/{B}` with `{"dropPrice":[…]}` carrying
+exactly one `accepted` row, and that the submit's `rollout_and_drop_summary` names calculator B with
+`resultStatus: "Sale"` and the real `noOfRollouts`.
+
 ### A drop price EQUAL to the rollout price is rejected
 
 Ticket: *"you have to add one more validation here while we are adding the drop price, user also will

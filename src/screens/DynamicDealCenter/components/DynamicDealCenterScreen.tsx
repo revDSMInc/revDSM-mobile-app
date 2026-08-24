@@ -289,6 +289,7 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
       LFCalculator: calc || {},
       selectedAppointmentId: calc?.appointmentId,
     });
+
     // Web parity (result-lead-modal.js:3192 "Build Job" click): tapping Build Job
     // COMPLETES the lead-result milestone and moves the job build to active —
     // `{ leadResulted: 'completed', jobBuild: 'active' }` (salesProcess already done).
@@ -410,6 +411,27 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
     });
   }, [lead, calculatorResultData, currentCalculatorId, tabs, activeTab, verticals]);
 
+  /**
+   * Every calculator on the appointment, in the BACKEND shape, for the
+   * `rollout_and_drop_summary` activity log the portal board reads. Web hands that log
+   * its whole `appointmentsCalculator` list; passing only the resulted calculator made
+   * a lead worked across four rollouts log as one, with only its own drops counted.
+   *
+   * A plain const, not a `useMemo`: every hook in this component sits after the
+   * edit-mode early return, so each new one widens that compromise — and the only
+   * consumer is a submit-time callback, where identity churn costs nothing.
+   */
+  const summaryCalculators = tabs.map((t) => ({
+    _id: t.id,
+    title: t.title,
+    appointmentId,
+    price: t.price,
+    dropPrice: t.dropPrice || [],
+    paymentMethod: t.paymentMethod,
+    totals: t.totals,
+    entries: t.entries,
+  }));
+
   if (flowStep === 'jobBuilder') {
     return (
       <DynamicJobBuilderScreen
@@ -423,6 +445,13 @@ export default function DynamicDealCenterScreen({ navigation, route }: DynamicDe
         dealCenterData={consolidatedDealCenterData}
         calculatorResultData={calculatorResultData}
         leadId={lead?._id || lead?.leadId || lead?.id}
+        // Web sends the calculator's OWN appointment id on every outcome write and names
+        // it in the rollout/drop summary log. Without it the log shipped
+        // `appointmentId: undefined` and the outcome fell back to the LEAD id, which is
+        // why mobile-created jobs read `jobBuilder.appointmentId === lead._id`.
+        appointmentId={appointmentId || undefined}
+        // The whole rollout list for the summary log (web `appointmentsCalculator`).
+        allCalculators={summaryCalculators}
         // Rehash + "Start Fresh": load the outcome but not its saved build.
         startFresh={rehashBuild.startFresh}
         onGoBack={handleJobBuilderBack}
