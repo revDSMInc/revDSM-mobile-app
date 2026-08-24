@@ -23,7 +23,11 @@ import { captureRef } from 'react-native-view-shot';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
-import type { CocSignOff, InstallerJob } from '../../../config/types/installer';
+import type {
+  CocRelationshipType,
+  CocSignOff,
+  InstallerJob,
+} from '../../../config/types/installer';
 
 /**
  * Certificate of Completion — Install, signed on the device.
@@ -47,8 +51,13 @@ import type { CocSignOff, InstallerJob } from '../../../config/types/installer';
  * only route that files the paper document.
  */
 
-/** Who the signer is, from the certificate's own two boxes. */
-export type CoCRelationship = 'homeowner' | 'other';
+/**
+ * Who the signer is, from the certificate's relationship boxes.
+ *
+ * Re-exported rather than redeclared — this used to be its own two-value union, and a
+ * third value on the wire would have left the form unable to represent it.
+ */
+export type CoCRelationship = CocRelationshipType;
 
 /** What the form hands back on submit. Device-local — see the note above. */
 export interface CoCFormData {
@@ -100,6 +109,20 @@ interface Props {
   initial?: CocSignOff | null;
   submitting?: boolean;
 }
+
+/**
+ * The header's "Paper Fallback" pill — HIDDEN by request.
+ *
+ * ⚠️ It was the last entry point to the document scanner in this step (the result
+ * screen's own Scan button was removed earlier), so with this off the certificate can
+ * only be signed on the device. Pages scanned before that still display, and can still
+ * be deleted, from the result screen.
+ *
+ * Kept as a flag rather than deleted: the whole scan path — `onPaperFallback` here,
+ * `startScan` and the page grid in `CoCStep` — is intact behind it, so putting the
+ * button back is this one boolean.
+ */
+const SHOW_PAPER_FALLBACK = false;
 
 const two = (n: number) => n.toString().padStart(2, '0');
 
@@ -520,15 +543,19 @@ export function CoCFormModal({
           >
             <Text className="text-white text-sm font-semibold">{t('installer.cocFormTitle')}</Text>
             <View className="flex-row items-center" style={{ gap: 12 }}>
-              <TouchableOpacity
-                onPress={() => {
-                  log.cocPaperFallback();
-                  onPaperFallback();
-                }}
-                className="bg-white rounded-md px-2 py-0.5"
-              >
-                <Text className="text-[#1C252E] text-sm">{t('installer.cocPaperFallback')}</Text>
-              </TouchableOpacity>
+              {SHOW_PAPER_FALLBACK && (
+                <TouchableOpacity
+                  onPress={() => {
+                    log.cocPaperFallback();
+                    onPaperFallback();
+                  }}
+                  className="bg-white rounded-md px-2 py-0.5"
+                >
+                  <Text className="text-[#1C252E] text-sm">
+                    {t('installer.cocPaperFallback')}
+                  </Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity onPress={() => dismiss('close')}>
                 <Icon name="close" size={22} color="white" />
               </TouchableOpacity>
@@ -582,6 +609,11 @@ export function CoCFormModal({
                 relationship === 'homeowner',
                 t('installer.cocRelationshipHomeowner'),
                 () => selectRelationship('homeowner')
+              )}
+              {renderCheck(
+                relationship === 'spouse',
+                t('installer.cocRelationshipSpouse'),
+                () => selectRelationship('spouse')
               )}
               {renderCheck(relationship === 'other', t('installer.cocRelationshipOther'), () =>
                 selectRelationship('other')
