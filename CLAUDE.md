@@ -2066,6 +2066,133 @@ and all 18 actions distinct and `funding_`-namespaced. tsc 44 (baseline unchange
 its test and `activity-log.constants.ts` are eslint-clean, `ResultJobModal.tsx` is at its exact HEAD
 count (65 problems, 0 errors) and `DynamicDealCenterScreen.tsx` at its HEAD 21 pre-existing errors.
 
+### My Deals ▸ Job Price is now the Deal Center's pricing + funding flow
+
+Ticket: the mockup `Funding-UI-Mokap-My-Deals-Code.txt` (repo root) — the deal-edit
+wizard's **3rd step (Job Price)** re-drawn as the multi-method payment allocation, with
+a **Confirm →** into the Funding screen. *"implement this new Funding flow in the
+existing flow and use the reuseable components that is already created in the Deal
+center side."*
+
+`DynamicDealEditScreen` step 2 held four single-value fields — **Down Payment**,
+**Down Pmt Method**, **Balance** (read-only), **Balance Method** — so an addendum could
+only ever describe a one-method deal. Re-pricing a job is precisely when the split
+changes, and the funding module has rendered N rows per group since it was written.
+
+**Step 2 is now TWO screens behind one wizard step**, exactly as `ResultJobModal` is:
+
+| | |
+|---|---|
+| `priceScreen === 'price'` | PREVIOUS / NEW build tiers + Auto Adjust, the contract price, then the **Down Payment** / **Balance** (or **Upfront**) groups and the **Result** field |
+| `priceScreen === 'funding'` | `FundingView` — one card per payment, driven to the end of its own life cycle |
+
+⚠️ **Nothing was re-implemented.** Every control is the Deal Center component:
+`funding/PaymentRowsGroup`, `SegmentedChoice`, `CoverageBar`, `BlockerList`,
+`FundingView`, `SendLinkModal`, plus `hooks/useFunding` and the whole of
+`utils/funding`. The wizard composes them the way the Result Lead sheet does, so a
+change to either lands on both — and the pricing panel is deliberately wrapped in a
+`FUND.PANEL` block because `PaymentRowsGroup` **notches its title out of that exact
+colour**; on white the label reads as floating text.
+
+- **`MethodPicker` is DELETED.** Its only two call sites were the two method fields
+  above, and `PaymentRowsGroup` renders the same provider-grouped catalogue with the
+  same `planBelowMin` gating, **per line** rather than once for the whole contract. A
+  second payment-method picker in this file is exactly how the two surfaces would drift.
+- **The four scalars are DERIVED, not dropped** — `downTotal` / `balanceTotal` /
+  `primaryDownMethod` / `primaryBalanceMethod` — so `downPayment`, `paymentMethod`,
+  `balance` and `balancePaymentMethod` still go out on the addendum draft byte-compatibly.
+  `downPayments` / `balancePayments` (`paymentAllocations`) ride **alongside** them.
+  ⚠️ Additive, never a replacement: ~20 consumers read the flat names, and the
+  customer-facing agreement/amendment renderers would degrade *silently*.
+- **`funding.load()` fires on MOUNT**, not on reaching step 2. It resolves long before
+  the rep walks Install Date → Job Build, so the hydrate can never land mid-typing —
+  the opposite trade-off (defer the request) buys one saved GET for a race on the
+  screen that matters.
+- **Confirm SAVES.** `goFunding` runs `toUpsertRows` over `activeRows` and `PUT`s the
+  COMPLETE list, then advances **only on success** — the funding screen renders the
+  server's record, so opening it after a failed save would show the previous state
+  under the new price. Back / **Edit payments** runs `applyDecisionsToRows`, which is
+  the ONE path that folds a lender decision onto the rows, so the header's back arrow
+  is wired to it too rather than to `goBack`.
+
+#### Two phantom-change bugs the sale sheet cannot have
+
+The Review step DIFFS these values, which `ResultJobModal` never does — so two rules
+that are correct there are wrong here:
+
+1. ⚠️ **The mirror falls back to a named row holding $0.** The sale sheet's rule is
+   strictly *"the first FUNDED row"*. A deal sold with **$0 down** and
+   `paymentMethod: 'check'` seeds a down row with a method and no money, so that read
+   returns `''` while the baseline reads `check` — and the Review step lists a
+   **Down Pmt Method** edit on a wizard the rep opened and did not touch, **with Submit
+   enabled behind it**. Same for the balance on a contract paid in full at the table.
+   A funded row still wins; a named line with no money now falls back to naming itself.
+   The payload is unaffected either way (it already falls back to `lead.paymentMethod`).
+2. ⚠️ **`downPaymentChanged` rounds BOTH sides.** The rows hold whole dollars
+   (`Math.round` on seed, `toWholeDollars` on upsert), so a stored `500.50` could never
+   equal the `500` the field can express and every deal with cents opened as an edit.
+
+⚠️ **The standalone `downPaymentError` ("cannot exceed the contract price") is MOVED,
+not dropped.** With the contract split across N lines the honest question is whether
+every line TOGETHER adds up — `confirmBlockers` asks it and `CoverageBar` shows it
+live. A per-field ceiling could only ever check one line and would have read as
+satisfied on a job over-allocated across two. It joins `contractPriceError` in one
+`confirmGate` list rendered above Confirm.
+
+#### Deliberate deviations from the mockup
+
+- **The funding screen's primary button is `Next · Review →`, not `Submit Funding`.**
+  The wizard's terminal action is the ADDENDUM; funding is submitted at sale time and
+  the endpoint is idempotent anyway. The blocker checklist still renders — but it
+  **reports, it does not block**: submitting an addendum has never required funding to
+  be complete, and a company sitting behind the `charges_enabled` gate (which no rep
+  can clear at the table) would otherwise be unable to send a change the customer still
+  has to sign.
+- **The contract price is always editable; amber is "needs attention", not a lock** —
+  an addendum exists to re-price the job. `priceUnlocked` is set by `goPricing` when a
+  decision produced banners.
+- **Result is locked to `Sale` until a lender declines**, then two pills. The switch
+  goes through `funding.setResult`, which the server **refuses without a logged decline**
+  on the record. ⚠️ It sets the FUNDING record's result only — the addendum draft still
+  carries `lead.result`. Re-resulting a signed deal is a different decision from
+  recording that a lender said no.
+- **The mockup's archive / restore / swap of a balance plan is NOT ported.** The deal
+  center models the same fact differently and already ships it: a row a lender has
+  answered LOCKS with an Approved / Declined pill and its approved amount, and
+  `applyDecisionsToRows` opens the gap it left. Porting a second, parallel history of
+  the same decision is how "pending" comes to mean two things on one screen.
+- **Funding is a sub-screen of Job Price, so it carries no stepper** and the header
+  subtitle reads `Funding · <customer>`.
+
+`resolveFundingSource({ lead, mode: 'edit' })` → `my_deals`, so every funding row this
+wizard writes is filed under the My Deals flow while `module_type` stays `funding`.
+⚠️ Its doc comment claimed *"the deal-edit wizard has no funding step"* — that
+collision is now REACHABLE (a rehashed lead edited from My Deals) and resolves to
+`my_deals`, which is the intended answer; the comment was corrected.
+
+Verified with 20 tests (`__tests__/screens/DynamicDealCenter/deal-edit-funding.test.ts`)
+driving the real funding helpers plus the screen's exact derivations: an untouched deal
+reading as no change across a normal sale, **$0 down with a stored method** (with the
+funded-only value asserted directly, so the phantom cannot return silently), a contract
+paid in full, cents on the stored down payment, a financing plan stored in
+`paymentMethod` blanking both sides, and a balance-method-less deal; each real edit
+still reported; a three-way split where the auto row holds only the remainder, the
+mirror names the first funded row and **never a joined string**, the allocations keep
+plan KEYS while the upsert sends catalogue LABELS; the Confirm gate ready / method-less
+/ **over-allocated across two lines** / price floor first; and upfront filing as a down
+payment with the inactive structure never counted. tsc 44 (baseline unchanged); eslint
+on `DynamicDealEditScreen.tsx` 143 problems / 0 errors against a HEAD baseline of 144 /
+0, `funding-log.ts` and the new test clean. Suite 569 passing, 1 pre-existing failure
+(`installer-card-state`, unrelated).
+
+⚠️ Needs a device check (this repo cannot render-test): the split rows and the pickers
+inside the recessed panel, **Confirm** saving and opening Funding, **Edit payments** /
+the header arrow folding a decision back, the Send Link sheet covering the sticky
+footer, and the Review step listing no payment rows on a deal opened and left alone.
+
+⚠️ `DynamicDealEditScreen.tsx` and `funding-log.ts` are both CRLF — use `newline=''`
+on both ends (same trap as `dynamic-deal-diff.ts`).
+
 ### Rehash with no job scope opens the entry form, not a locked $0 receipt
 
 Ticket: *"in the rehash module when the lead having `isRehashed: true` … if the lead is in the rehash

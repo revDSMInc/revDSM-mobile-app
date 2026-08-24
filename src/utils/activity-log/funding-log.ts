@@ -67,9 +67,12 @@ export type { FundingSource };
  *
  * ⚠️ **The FLOW wins over the lead's own history**, which is why `mode: 'edit'` is
  * tested first: a rehashed lead opened from My Deals is the rep working the My
- * Deals flow, and that is the heading its events belong under. The two cannot
- * collide today — the deal-edit wizard has no funding step — so this is a
- * documented decision rather than an observed case.
+ * Deals flow, and that is the heading its events belong under.
+ *
+ * ⚠️ That collision is now REACHABLE — the deal-edit wizard's Job Price step carries
+ * the full pricing + funding flow (`DynamicDealEditScreen`), so a rehashed lead
+ * edited from My Deals really does fire funding events. It resolves to `my_deals`,
+ * which is the intended answer: the flow the rep is in, not the lead's history.
  */
 export function resolveFundingSource(o: {
   /** The lead. Only `isRehashed` is read. */

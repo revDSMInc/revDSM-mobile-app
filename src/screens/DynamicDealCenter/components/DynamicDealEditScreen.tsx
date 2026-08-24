@@ -56,6 +56,53 @@ import { toPayloadText } from '../utils/job-submit-payload';
 // manifest's `adjustResize` no longer shrinks the window once KeyboardProvider goes
 // edge-to-edge — so the phone field stayed hidden behind the keypad there.
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+// The Job Price step is now the Deal Center's pricing + funding flow, built from the
+// SAME components the Result Lead sheet uses (`ResultJobModal`). Nothing here is a
+// second implementation: an addendum's payment split and a fresh sale's are literally
+// the same screen, so a change to either lands on both.
+import { FUND } from './funding/funding-theme';
+import { PaymentRowsGroup } from './funding/PaymentRowsGroup';
+import { FundingView } from './funding/FundingView';
+import { SendLinkModal } from './funding/SendLinkModal';
+import { SegmentedChoice } from './funding/SegmentedChoice';
+import { CoverageBar } from './funding/CoverageBar';
+import { BlockerList } from './funding/BlockerList';
+import { useFunding } from '../hooks/useFunding';
+import type { FundingChannel } from '../../../services/api/FundingService';
+import {
+  applyDecisionsToRows,
+  assignedTotal,
+  attemptLog,
+  confirmBlockers,
+  coverageOK,
+  effectiveRowAmount,
+  formatStamp,
+  fundingBlockers,
+  hasDecline,
+  hydrateRowsFromRecord,
+  inferPayMode,
+  MULTI_METHOD_ENABLED,
+  needsAttentionRowId,
+  newPaymentId,
+  paymentAllocations,
+  structureHint,
+  structureLocked,
+  toUpsertRows,
+  type DecisionBanner,
+  type PaymentKind,
+  type PaymentRow,
+  type PayMode,
+} from '../utils/funding';
+import {
+  logFundingEditPayments,
+  logFundingLinkCopied,
+  logFundingMethodSelected,
+  logFundingOpened,
+  logFundingRowAdded,
+  logFundingRowRemoved,
+  logFundingStructureChanged,
+  resolveFundingSource,
+} from '../../../utils/activity-log/funding-log';
 
 /**
  * 4-step DYNAMIC deal-edit wizard. Faithful port of web
@@ -74,6 +121,12 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
  */
 
 const STEP_LABELS = ['Install Date', 'Job Build', 'Job Price', 'Review & Submit'];
+
+// Shown under an amber contract price on the Job Price step. Deliberately not a
+// lock: the price stays editable, the tint only says the number needs a second
+// look because a lender decision moved what this job can fund.
+const PRICE_ATTENTION_HINT =
+  'A lender decision changed what this job can fund — the balance no longer matches what was approved. Re-check the price and the split below.';
 
 const fmtMoney = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString()}`;
 
@@ -134,9 +187,38 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const [proposedSlotIdx, setProposedSlotIdx] = useState(0);
 
   const [contractPrice, setContractPrice] = useState(0);
-  const [downPayment, setDownPayment] = useState(0);
-  const [downPaymentMethod, setDownPaymentMethod] = useState('');
-  const [balanceMethod, setBalanceMethod] = useState('');
+
+  // ── Job Price: pricing rows + funding ──────────────────────────────────────
+  /**
+   * Step 2 is TWO screens behind one wizard step, exactly as the Deal Center's
+   * Result Lead sheet is: `price` splits the contract across as many payment
+   * methods as the deal needs, and `funding` drives each of those payments to the
+   * end of its own life cycle.
+   *
+   * ⚠️ The old single `Down Payment` / `Down Pmt Method` / `Balance Method` fields
+   * are GONE. They could only ever describe a one-method deal, and re-pricing a job
+   * is precisely when the split changes — so the scalars they held are now DERIVED
+   * from the rows (see `downTotal` / `primaryDownMethod`), which is what keeps the
+   * addendum payload byte-compatible with every consumer that still reads them.
+   */
+  const [priceScreen, setPriceScreen] = useState<'price' | 'funding'>('price');
+  /** Down Payment + Balance, or the whole contract collected now. */
+  const [payMode, setPayMode] = useState<PayMode>('split');
+  /** The rep tried to switch structure after money started moving. */
+  const [structureNudge, setStructureNudge] = useState(false);
+  /** The editable pricing lines. One down row + one auto balance row to start. */
+  const [rows, setRows] = useState<PaymentRow[]>([]);
+  /** Messages a lender decision left above the Balance group. */
+  const [banners, setBanners] = useState<DecisionBanner[]>([]);
+  /** A decision changed what the job can fund, so the contract price reads amber. */
+  const [priceUnlocked, setPriceUnlocked] = useState(false);
+  /** `bank_decline` is only reachable once a lender has actually declined. */
+  const [resultChoice, setResultChoice] = useState<'sale' | 'bank_decline'>('sale');
+  /** Payment pid whose share sheet is open, plus the url `POST …/link` returned. */
+  const [linkTarget, setLinkTarget] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [isLoadingLink, setIsLoadingLink] = useState(false);
+
   const [customerPhone, setCustomerPhone] = useState('');
   // The addendum's SECOND delivery channel. The submit used to hardcode
   // `lead.customerDetails.email`, so the rep could neither see nor correct the address
@@ -220,14 +302,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     setScheduleDate(sched.date || null);
     setScheduleTimeWindow(sched.timeWindow || '');
     setContractPrice(parsePrice(lead?.originalContractPrice));
-    setDownPayment(parsePrice(lead?.downPayment));
-    // Seed BOTH methods from the sale (web parity — `dynamic-deal-edit-modal.js`
-    // seeds `lead.paymentMethod` / `lead.balancePaymentMethod`). These used to open
-    // blank on the theory that the rep should re-pick; the result was that the deal's
-    // own payment method simply never showed. The change flags below compare against
-    // the same lead values, so a seeded picker still reads as "no change".
-    setDownPaymentMethod(lead?.paymentMethod || '');
-    setBalanceMethod(lead?.balancePaymentMethod || '');
+    // The down payment and BOTH payment methods are no longer single fields — they
+    // are the multi-method PAYMENT ROWS, seeded by their own effect below. That one
+    // has to wait for the payment-plan catalogue (a saved row carries its catalogue
+    // LABEL and is mapped back to a plan key through it) and for the lead's own
+    // funding record, neither of which is available on this first pass.
     // Seed already dash-formatted — the stored value may be raw digits or E.164
     // (`+14438784937`), and the field renders its own "+1", so only the local part
     // belongs in the value.
@@ -395,11 +474,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [paymentOptions]
   );
 
-  // Web parity (`dynamic-deal-edit-modal.js`): the BALANCE always resolves — it falls
-  // back to `check` — because every sold deal has a balance to collect. The DOWN
-  // PAYMENT may legitimately be unset (a deal with no money down), so it stays blank
-  // and the picker shows its placeholder.
-  const balanceMethodKey = coerceToPlanKey(balanceMethod, 'check');
+  // NOTE: `balanceMethodKey` / `downPaymentMethodKey` are defined further down, once
+  // the payment ROWS they are now derived from exist. Neither is picker state any
+  // more — each is the first FUNDED row of its half (see `primaryBalanceMethod`).
 
   /**
    * Coerce a stored value to a DOWN-PAYMENT key, which must be one of the cash/card
@@ -424,7 +501,413 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     [coerceToPlanKey, downPaymentOptions]
   );
 
-  const downPaymentMethodKey = toDownPaymentKey(downPaymentMethod);
+  // ── funding record + the rows that price it ────────────────────────────────
+  /**
+   * The Funding API, reached through the SAME hook the Result Lead sheet uses. It
+   * owns ONE piece of truth — the record the server last returned — and
+   * ⚠️ **nothing on the funding screen ever ticks a step locally**: every action is
+   * an endpoint, and the screen redraws from the record it answers with.
+   *
+   * `source` is `my_deals`, which is exactly what `resolveFundingSource` answers for
+   * `mode: 'edit'` — so every funding row this wizard writes is filed under the My
+   * Deals flow while `module_type` stays `funding`. Resolved through that helper
+   * rather than passed literally, so the three flows can never answer the question
+   * differently.
+   */
+  const fundingSource = resolveFundingSource({ lead, mode: 'edit' });
+  const funding = useFunding(leadId, lead?.companyId || user?.companyId, {
+    userId: user?._id || user?.id,
+    calculatorId: editCalculatorId || undefined,
+    calculatorTitle: (calculatorData as any)?.title || undefined,
+    source: fundingSource,
+  });
+
+  /**
+   * Identity for the funding events this screen fires DIRECTLY — the ones that are
+   * pure UI and never reach an endpoint (structure, rows, method picks, moving
+   * between the two screens). Everything endpoint-driven is logged inside
+   * `useFunding`, which is the only place the outcome exists.
+   */
+  const fundingLog = useMemo(
+    () => ({
+      userId: user?._id || user?.id,
+      leadId,
+      calculatorId: editCalculatorId || undefined,
+      calculatorTitle: (calculatorData as any)?.title || undefined,
+      source: fundingSource,
+    }),
+    [user?._id, user?.id, leadId, editCalculatorId, calculatorData, fundingSource]
+  );
+
+  const contractNum = Number(contractPrice) || 0;
+
+  /**
+   * Both structures' rows live in one list, so switching back and forth keeps
+   * whatever the rep already typed on the other side. ⚠️ **Every calculation runs on
+   * `activeRows`**, never on `rows` — the inactive structure's lines are still in
+   * state, and counting them would double the contract.
+   */
+  const activeRows = useMemo(
+    () => rows.filter((r) => (payMode === 'upfront' ? r.kind === 'up' : r.kind !== 'up')),
+    [rows, payMode]
+  );
+  const upRows = useMemo(() => activeRows.filter((r) => r.kind === 'up'), [activeRows]);
+  const downRows = useMemo(() => activeRows.filter((r) => r.kind === 'down'), [activeRows]);
+  const balRows = useMemo(() => activeRows.filter((r) => r.kind === 'bal'), [activeRows]);
+  /** Everything collected at the table: the down payment, or the whole upfront contract. */
+  const collectNowRows = useMemo(() => activeRows.filter((r) => r.kind !== 'bal'), [activeRows]);
+
+  const downTotal = useMemo(
+    () => collectNowRows.reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [collectNowRows, activeRows, contractNum]
+  );
+  const balanceTotal = useMemo(
+    () => balRows.reduce((n, r) => n + effectiveRowAmount(r, activeRows, contractNum), 0),
+    [balRows, activeRows, contractNum]
+  );
+
+  /**
+   * The single-method scalars the addendum draft still carries. With a split
+   * contract there is no ONE method, so the FIRST funded row of each half stands in
+   * — and the summed totals stay exact. The full breakdown rides alongside in
+   * `downPayments` / `balancePayments`.
+   *
+   * ⚠️ **Never a joined "Check + AMEX".** Every consumer resolves this value against
+   * the company's plan catalogue, and `resolveTierPaymentMethod` SUBSTRING-SNIFFS it
+   * to pick the bank fee that grosses up the whole contract — a joined string
+   * containing `amex` would silently reprice a signed deal.
+   */
+  /**
+   * ⚠️ **Deliberate divergence from the Result Lead sheet, and it is not cosmetic.**
+   * There the mirror is strictly "the first FUNDED row", because an unfunded line has
+   * no claim to name the deal's method. Here that rule produces a PHANTOM CHANGE: a
+   * deal sold with `$0` down and `paymentMethod: 'check'` seeds a down row holding a
+   * method and no money, so the funded-only read returns `''` while the baseline this
+   * is compared against reads `check` — and the Review step lists a "Down Pmt Method"
+   * edit on a wizard the rep opened and did not touch, with Submit enabled behind it.
+   * The same happens to the balance on a contract paid in full at the table.
+   *
+   * So a funded row still wins; a methodless-but-funded contract still reads blank;
+   * and a named line with no money falls back to naming itself. The payload is
+   * unaffected either way — it already falls back to `lead.paymentMethod`.
+   */
+  const primaryDownMethod = useMemo(
+    () =>
+      collectNowRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method ||
+      collectNowRows.find((r) => r.method)?.method ||
+      '',
+    [collectNowRows, activeRows, contractNum]
+  );
+  const primaryBalanceMethod = useMemo(
+    () =>
+      balRows.find((r) => r.method && effectiveRowAmount(r, activeRows, contractNum) > 0)?.method ||
+      balRows.find((r) => r.method)?.method ||
+      '',
+    [balRows, activeRows, contractNum]
+  );
+
+  // Web parity (dynamic-deal-edit-modal.js): the BALANCE always resolves — it falls
+  // back to `check`, because every sold deal has a balance to collect. The DOWN
+  // PAYMENT may legitimately be unset (a deal with no money down), so it stays blank.
+  // Both sides of every change flag below coerce the same way, so a deal reopened and
+  // left alone still reads as "no change".
+  const balanceMethodKey = coerceToPlanKey(primaryBalanceMethod, 'check');
+  const downPaymentMethodKey = toDownPaymentKey(primaryDownMethod);
+
+  /**
+   * The full allocation, persisted alongside those scalars so a split contract
+   * survives a reload as three rows rather than as one row of the summed total.
+   * Built from `activeRows` for the same reason `goFunding` saves from them: the
+   * inactive structure's lines are still in `rows`, and including them would file the
+   * contract twice over.
+   */
+  const allocations = useMemo(
+    () => paymentAllocations(activeRows, contractNum, pricing.plans),
+    [activeRows, contractNum, pricing.plans]
+  );
+
+  const rowsSeededRef = useRef(false);
+  /**
+   * Seed the pricing rows from the sold deal, then fold in whatever funding this
+   * lead already has.
+   *
+   * ⚠️ **Held until the payment-plan catalogue has settled.** `hydrateRowsFromRecord`
+   * maps each saved row's catalogue LABEL back to a plan key through it, and the
+   * static fallback catalogue would map a dynamic company's financing plans to
+   * nothing — the rows would come back methodless and read as a change the rep never
+   * made.
+   *
+   * ⚠️ **Hydrating rather than re-seeding is what keeps `pid` STABLE.** It is the
+   * server's merge key, so minting fresh ids on every open would file a second set of
+   * rows for the same deal on the next save.
+   *
+   * ⚠️ The CONTRACT PRICE is deliberately NOT taken from the funding record here (the
+   * sale sheet does prefer it). On this screen the lead's `originalContractPrice` is
+   * the figure the addendum is edited FROM, and the Review step's diff compares
+   * against it — taking the funding record's copy would make an untouched deal read
+   * as a price change.
+   */
+  useEffect(() => {
+    if (rowsSeededRef.current) return;
+    if (pricing.isLoading || !outcomeFetched) return;
+    rowsSeededRef.current = true;
+
+    const seededDown = parsePrice(lead?.downPayment);
+    setRows([
+      {
+        pid: newPaymentId(),
+        kind: 'down',
+        amount: seededDown > 0 ? String(Math.round(seededDown)) : '',
+        method: toDownPaymentKey(lead?.paymentMethod),
+      },
+      // The auto row absorbs whatever the down payment leaves, so the two halves can
+      // never silently stop adding up to the contract.
+      {
+        pid: newPaymentId(),
+        kind: 'bal',
+        amount: '',
+        method: coerceToPlanKey(lead?.balancePaymentMethod, ''),
+        auto: true,
+      },
+    ]);
+
+    let cancelled = false;
+    funding.load().then((record) => {
+      if (cancelled || !record) return;
+      const saved = hydrateRowsFromRecord(record, pricing.plans);
+      // The structure is not a stored field — `inferPayMode` reads it back off the
+      // saved rows, and BOTH reads come from that one function so the mode and the
+      // rows it produced can never describe different structures.
+      if (saved.length) {
+        setRows(saved);
+        setPayMode(inferPayMode(record));
+      }
+      if (record.result === 'bankDecline') setResultChoice('bank_decline');
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricing.isLoading, outcomeFetched]);
+
+  // ── pricing-row editing ────────────────────────────────────────────────────
+
+  const updateRow = useCallback((pid: string, patch: Partial<PaymentRow>) => {
+    setRows((prev) => prev.map((r) => (r.pid === pid ? { ...r, ...patch } : r)));
+  }, []);
+
+  const removeRow = useCallback(
+    (pid: string) => {
+      // ⚠️ Read and logged BEFORE the state update, never inside the updater — React
+      // may invoke an updater more than once, which would double-log. After this the
+      // row is gone, and the event is the only record that money was ever assigned to
+      // that method.
+      const gone = rows.find((r) => r.pid === pid);
+      if (gone) {
+        logFundingRowRemoved({
+          ...fundingLog,
+          kind: gone.kind,
+          amount: effectiveRowAmount(gone, activeRows, contractNum),
+          method: gone.method || undefined,
+          methodLabel: pricing.plans[gone.method]?.label || gone.methodLabel,
+        });
+      }
+      setRows((prev) => prev.filter((r) => r.pid !== pid));
+    },
+    [rows, activeRows, contractNum, pricing.plans, fundingLog]
+  );
+
+  const addRow = useCallback(
+    (kind: PaymentKind) => {
+      // Same reason as removeRow: logged outside the updater, which React may run
+      // more than once. `rowCount` is the count AFTER this add, so the timeline reads
+      // "the contract is now split three ways".
+      logFundingRowAdded({
+        ...fundingLog,
+        kind,
+        rowCount: activeRows.filter((r) => r.kind === kind).length + 1,
+      });
+      setRows((prev) => {
+        const next = [...prev];
+        // A new line goes AFTER the last row of its own half so the two groups stay
+        // contiguous — `rows` is one flat list and the groups render from filters.
+        let insertAt = next.length;
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].kind === kind) {
+            insertAt = i + 1;
+            break;
+          }
+        }
+        next.splice(insertAt, 0, { pid: newPaymentId(), kind, amount: '', method: '' });
+        return next;
+      });
+    },
+    [activeRows, fundingLog]
+  );
+
+  /**
+   * A method was picked on one line.
+   *
+   * Amounts are deliberately NOT logged as they are typed — that would be a row per
+   * keystroke — so the method pick and the Confirm save (which carries every final
+   * amount) are the two events that describe the split.
+   */
+  const selectRowMethod = useCallback(
+    (pid: string, key: string) => {
+      const row = rows.find((r) => r.pid === pid);
+      // Only when it actually changes: re-picking the same plan is not an event.
+      if (row && key && key !== row.method) {
+        logFundingMethodSelected({
+          ...fundingLog,
+          kind: row.kind,
+          method: key,
+          methodLabel: pricing.plans[key]?.label,
+          amount: effectiveRowAmount(row, activeRows, contractNum),
+        });
+      }
+      updateRow(pid, { method: key });
+    },
+    [rows, activeRows, contractNum, pricing.plans, fundingLog, updateRow]
+  );
+
+  /**
+   * Switch between Down Payment and Upfront.
+   *
+   * ⚠️ Refused once money has started moving (`structureLocked`): an upfront row the
+   * processor has already charged cannot be re-cast as a down payment against a
+   * balance that does not exist. The refusal is EXPLAINED rather than silent — a card
+   * that does nothing on tap reads as a bug.
+   */
+  const switchPayMode = useCallback(
+    (next: PayMode, allowed: boolean) => {
+      // Identity FIRST: when the structure is locked the selected card is disabled
+      // too, and tapping the option you are already on must not scold you for it.
+      if (next === payMode) return;
+      if (!allowed) {
+        setStructureNudge(true);
+        return;
+      }
+      setStructureNudge(false);
+      // Logged only once the switch is actually ALLOWED — a refused tap changed
+      // nothing about the deal, and recording it would put a structure change in the
+      // timeline that never happened.
+      logFundingStructureChanged({ ...fundingLog, from: payMode, to: next });
+      setRows((prev) => {
+        const wantUpfront = next === 'upfront';
+        const already = prev.some((r) => (wantUpfront ? r.kind === 'up' : r.kind !== 'up'));
+        if (already) return prev;
+        return wantUpfront
+          ? // Upfront means the whole contract now, so it opens holding all of it.
+            [
+              ...prev,
+              {
+                pid: newPaymentId(),
+                kind: 'up' as PaymentKind,
+                amount: contractNum > 0 ? String(Math.round(contractNum)) : '',
+                method: '',
+              },
+            ]
+          : [
+              ...prev,
+              { pid: newPaymentId(), kind: 'down' as PaymentKind, amount: '', method: '' },
+              { pid: newPaymentId(), kind: 'bal' as PaymentKind, amount: '', method: '', auto: true },
+            ];
+      });
+      setPayMode(next);
+    },
+    [payMode, contractNum, fundingLog]
+  );
+
+  /**
+   * Re-open the auto (remainder) row when money comes unassigned again.
+   *
+   * The rep can dismiss the auto row once it is holding $0, but lowering a down
+   * payment — or raising the contract price, which is what this whole screen is for
+   * — would leave the gap invisible. Rather than restoring a deleted row, the LAST
+   * balance row without a lender decision takes the auto flag back, which is where
+   * the remainder belongs anyway.
+   *
+   * Upfront has no remainder row by design: every amount there is typed and the
+   * CoverageBar is what surfaces a gap.
+   */
+  useEffect(() => {
+    if (contractNum <= 0 || payMode === 'upfront') return;
+    const hasAuto = activeRows.some((r) => r.auto);
+    const gap = contractNum - assignedTotal(activeRows, contractNum);
+    if (hasAuto || gap <= 0.01) return;
+    const candidates = activeRows.filter((r) => r.kind === 'bal' && !r.decision);
+    const target = candidates[candidates.length - 1];
+    if (!target) return;
+    // Only reclaim a row the rep has not typed into — never overwrite an amount.
+    if (parseFloat(target.amount || '0') > 0) return;
+    updateRow(target.pid, { auto: true });
+  }, [activeRows, contractNum, payMode, updateRow]);
+
+  const needsRowId = useMemo(() => needsAttentionRowId(activeRows, banners, payMode), [activeRows, banners, payMode]);
+  /** Has money moved? Then the structure is settled — see switchPayMode. */
+  const structureIsLocked = useMemo(() => structureLocked(funding.payments), [funding.payments]);
+  const totalAssigned = useMemo(() => assignedTotal(activeRows, contractNum), [activeRows, contractNum]);
+
+  /**
+   * Lender decisions, explained immediately above the group that carries the
+   * remainder — that is where the rep has to act, and it is the row `needsRowId`
+   * highlights amber.
+   */
+  const decisionBanners = banners.map((b) => (
+    <View
+      key={b.id}
+      style={{
+        backgroundColor: b.tone === 'bad' ? FUND.RED_BG : FUND.AMBER_BG,
+        borderRadius: 11,
+        paddingHorizontal: 12,
+        paddingVertical: 11,
+        marginBottom: 12,
+      }}
+    >
+      <Text style={{ fontSize: 12, fontWeight: '700', lineHeight: 17, color: b.tone === 'bad' ? FUND.RED_TEXT : FUND.AMBER_TEXT }}>
+        {b.text}
+      </Text>
+    </View>
+  ));
+
+  // ── funding screen state ───────────────────────────────────────────────────
+
+  const covered = useMemo(() => coverageOK(funding.payments, contractNum), [funding.payments, contractNum]);
+  /**
+   * The live checklist. The SERVER's list replaces it the moment a submit is refused
+   * — that one is authoritative and already ordered — but showing the local mirror
+   * beforehand means the rep works the list instead of discovering it by tapping a
+   * button that says no.
+   */
+  const localFundingBlockers = useMemo(
+    // The charges_enabled gate joins the checklist as ONE line: it is why the link
+    // steps below it cannot be finished, and repeating it per card would say the same
+    // company-wide thing three times on a three-card job.
+    () => fundingBlockers(funding.payments, contractNum, { setupBlocked: !!funding.paymentsSetupError }),
+    [funding.payments, contractNum, funding.paymentsSetupError]
+  );
+  const fundingBlockerList = funding.serverBlockers ?? localFundingBlockers;
+  /** ⚠️ Read from the RECORD: the server refuses bankDecline without a logged decline. */
+  const declineHappened = useMemo(() => hasDecline(funding.record), [funding.record]);
+  const attempts = useMemo(() => attemptLog(funding.record), [funding.record]);
+  /** The most recent status check across every row. */
+  const lastSyncedAt = useMemo(() => {
+    const stamps = funding.payments.map((p) => p.syncedAt).filter(Boolean) as string[];
+    if (!stamps.length) return null;
+    return formatStamp(stamps.sort().slice(-1)[0]);
+  }, [funding.payments]);
+  const bankDeclined = resultChoice === 'bank_decline';
+
+  // A rep who reassigns a declined amount can end up with no live decline; the job
+  // must not stay resulted as a Bank Decline in that case.
+  useEffect(() => {
+    if (!declineHappened && resultChoice === 'bank_decline') setResultChoice('sale');
+  }, [declineHappened, resultChoice]);
+
+  const linkPayment = useMemo(
+    () => funding.payments.find((p) => p.pid === linkTarget) || null,
+    [funding.payments, linkTarget]
+  );
 
   // Plan key → human label for the Review rows, e.g. `2511` → "2511 (6 Months 0%
   // Interest No Payments…) (Bank Fee: 4%)". Web parity: `resolvePlanLabel`. Falls
@@ -460,7 +943,10 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   const customerName =
     `${lead?.customerDetails?.firstName || ''} ${lead?.customerDetails?.lastName || ''}`.trim() ||
     'Customer';
-  const balance = Math.max(0, (Number(contractPrice) || 0) - (Number(downPayment) || 0));
+  // The balance is what the BALANCE ROWS actually carry, not a bare
+  // `price − down`: those agree only while the auto row is absorbing the whole
+  // remainder, and in `upfront` mode there is no balance at all.
+  const balance = balanceTotal;
   const newMarkup = getMarkupInfo(contractPrice, tierResult.next, undefined);
   // Markup badge for the PREVIOUS build's contract price vs its tiers (web parity —
   // the previous card shows a "RETAIL +X%" badge next to its contract price too).
@@ -503,7 +989,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   // A note edit is itself an addendum change, so the rep can send a note-only
   // addendum (baseline is the lead's existing note).
   const noteChanged = String(lead?.note ?? '') !== note;
-  const downPaymentChanged = parsePrice(lead?.downPayment) !== Number(downPayment);
+  // ⚠️ ROUNDED on BOTH sides. The rows hold whole dollars (they are seeded with
+  // `Math.round` and `toUpsertRows` sends `toWholeDollars`), so a stored `500.50`
+  // would otherwise never equal the `500` the field can express — and every deal with
+  // cents on its down payment would open already reading as an edit.
+  const downPaymentChanged = Math.round(parsePrice(lead?.downPayment)) !== Math.round(downTotal);
 
   // ── price validation (web parity: `contractPriceError` / `downPaymentError`) ──
   // Selling under the rebuilt COST loses money on the addendum, and a down payment
@@ -515,11 +1005,24 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     costFloor > 0 && (Number(contractPrice) || 0) < costFloor
       ? `Cannot be below the cost of ${fmtMoney(costFloor)}.`
       : '';
-  const downPaymentError =
-    (Number(downPayment) || 0) > (Number(contractPrice) || 0)
-      ? `Cannot exceed the contract price of ${fmtMoney(Number(contractPrice) || 0)}.`
-      : '';
-  const hasPriceError = Boolean(contractPriceError || downPaymentError);
+  // ⚠️ The old standalone `downPaymentError` ("cannot exceed the contract price") is
+  // GONE — not dropped, MOVED. With the contract split across N lines the honest
+  // question is whether every line together adds up, which is what `confirmBlockers`
+  // asks and `CoverageBar` shows live. A per-field ceiling could only ever check one
+  // of them, and it would have read as satisfied on a job over-allocated across two.
+  const hasPriceError = Boolean(contractPriceError);
+
+  /**
+   * Everything standing between the rep and **Confirm**, in one list rendered above
+   * the button — the price floor first, then the allocation rules.
+   *
+   * Same control as the Deal Center's Confirm footer, and for the same reason: the
+   * reasons are visible BEFORE the tap, not discovered by it.
+   */
+  const confirmGate = useMemo(
+    () => [...(contractPriceError ? [contractPriceError] : []), ...confirmBlockers(activeRows, contractNum, payMode)],
+    [contractPriceError, activeRows, contractNum, payMode]
+  );
 
   // ── "Send Addendum To" phone ────────────────────────────────────────────────
   // The addendum is TEXTED to this number, so an incomplete one means the customer
@@ -576,6 +1079,105 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     downPaymentChanged ||
     downPaymentMethodChanged ||
     balanceMethodChanged;
+
+  // ── Job Price ⇄ Funding ────────────────────────────────────────────────────
+
+  /**
+   * **Confirm** — save the pricing rows, then move to the Funding screen.
+   *
+   * The PUT is the save for the whole screen: `payments` is the COMPLETE list, so a
+   * row the rep deleted is deleted server-side too. Only advance on success — the
+   * funding screen renders the server's record, so opening it after a failed save
+   * would show the rep the previous state under the new price.
+   */
+  const goFunding = useCallback(async () => {
+    if (confirmGate.length) {
+      FlashMessage.error('Not ready to confirm', confirmGate[0]);
+      return;
+    }
+    // ⚠️ `activeRows`, not `rows`: the inactive structure's lines are still in
+    // state, and `payments` is the COMPLETE list — sending them would file the
+    // contract twice over.
+    const upsert = toUpsertRows(activeRows, contractNum, pricing.plans);
+    // savePayments logs the save itself (with the full breakdown) — it is the only
+    // place the server's answer exists.
+    const res = await funding.savePayments(Math.round(contractNum), upsert, payMode);
+    if (!res.ok) return;
+    logFundingOpened({
+      ...fundingLog,
+      contractPrice: Math.round(contractNum),
+      paymentCount: upsert.length,
+      payMode,
+    });
+    setPriceScreen('funding');
+  }, [confirmGate, activeRows, contractNum, pricing.plans, payMode, funding, fundingLog]);
+
+  /** Back / "Edit payments" — fold every lender decision onto the pricing rows. */
+  const goPricing = useCallback(() => {
+    const applied = applyDecisionsToRows(activeRows, funding.payments, contractNum, payMode);
+    // `reassigning` is the case worth telling apart: a lender decision opened a gap
+    // and the rep is going back to cover it, not just changing their mind.
+    logFundingEditPayments({ ...fundingLog, reassigning: applied.banners.length > 0 });
+    // Decisions only ever touch the ACTIVE structure, so the other one's rows are
+    // carried through untouched rather than dropped.
+    const inactive = rows.filter((r) => !activeRows.includes(r));
+    setRows([...applied.rows, ...inactive]);
+    setBanners(applied.banners);
+    if (applied.banners.length) setPriceUnlocked(true);
+    funding.clearServerBlockers();
+    // The "void it first" nudge answered a tap that is now a screen back.
+    setStructureNudge(false);
+    setPriceScreen('price');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, activeRows, funding, contractNum, payMode, fundingLog]);
+
+  /**
+   * Open the send sheet and fetch the hosted-page url.
+   *
+   * ⚠️ `POST …/link` marks NOTHING — merely opening the sheet must not tick Link
+   * Sent. It is idempotent, so backing out and reopening returns the same page rather
+   * than minting a second live link.
+   */
+  const openSendSheet = useCallback(
+    async (pid: string) => {
+      setLinkTarget(pid);
+      setLinkUrl('');
+      setIsLoadingLink(true);
+      const res = await funding.fetchLink(pid);
+      setLinkUrl(res.ok ? res.data?.url || '' : '');
+      setIsLoadingLink(false);
+    },
+    [funding]
+  );
+
+  /** The rep confirmed a send happened. Resolves false if the server did not deliver. */
+  const handleSendLink = useCallback(
+    async (channel: FundingChannel, destination?: string): Promise<boolean> => {
+      if (!linkTarget) return false;
+      const res = await funding.markLinkSent(linkTarget, channel, destination);
+      return res.ok;
+    },
+    [funding, linkTarget]
+  );
+
+  /**
+   * Bank Decline / back to Sale.
+   *
+   * ⚠️ Only mirrored locally once the SERVER accepts it — it refuses the switch
+   * without a logged lender decline, and refuses to undo one after submission.
+   *
+   * ⚠️ This sets the FUNDING record's result. It deliberately does not rewrite the
+   * addendum draft's own `result` field, which still carries the deal's
+   * (`lead.result`) — re-resulting a signed deal is a different decision from
+   * recording that a lender said no, and it is not what an addendum submits.
+   */
+  const handleSetFundingResult = useCallback(
+    async (next: 'sale' | 'bank_decline') => {
+      const res = await funding.setResult(next === 'bank_decline' ? 'bankDecline' : 'sale');
+      if (res.ok) setResultChoice(next);
+    },
+    [funding]
+  );
 
   // ── handlers ────────────────────────────────────────────────────────────────
   // Tapping a calendar day only SELECTS it (web `handleDatePick`) — the rep then
@@ -744,10 +1346,26 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         originalContractPrice: String(contractPrice),
         // Normalize to a number-string (web parity): an empty field still saves "0"
         // so it doesn't read as a phantom down-payment change on the customer's addendum.
-        downPayment: String(Number(downPayment) || 0),
+        downPayment: String(Math.round(downTotal)),
         paymentMethod: downPaymentMethodKey || lead?.paymentMethod || '',
         balancePaymentMethod: balanceMethodKey || lead?.balancePaymentMethod || '',
-        balance: String(balance),
+        balance: String(Math.round(balance)),
+        /**
+         * The multi-method breakdown, persisted BESIDE the four scalars above —
+         * which stay written as a DERIVED MIRROR (section totals plus the first
+         * funded row's plan key).
+         *
+         * ⚠️ Additive, never a replacement. ~20 consumers read the flat names, and
+         * the customer-facing agreement and amendment renderers would degrade
+         * *silently* rather than error if they were converted outright. An
+         * un-upgraded reader sees a LOSSY view — one method named for a job that
+         * used three — never a wrong one.
+         *
+         * ⚠️ `method` here is a plan KEY, matching the scalar it mirrors — NOT the
+         * catalogue LABEL the funding API's own `payments[].method` carries.
+         */
+        downPayments: allocations.downPayments,
+        balancePayments: allocations.balancePayments,
         selectedCalculatorId:
           savedOutcome?.selectedCalculatorId ||
           lead?.selectedCalculatorId ||
@@ -833,7 +1451,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           summary: {
             ...(draftId ? { draftId } : {}),
             contractPrice: Number(contractPrice) || 0,
-            downPayment: Number(downPayment) || 0,
+            downPayment: downTotal,
             buildChanged,
             scheduleChanged,
             priceChanged,
@@ -861,10 +1479,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
     scheduleDate,
     scheduleTimeWindow,
     contractPrice,
-    downPayment,
+    downTotal,
     downPaymentMethodKey,
     balanceMethodKey,
     balance,
+    allocations,
     calculatorData,
     buildChangeGroups,
     customerPhone,
@@ -904,7 +1523,20 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       }}
     >
       <TouchableOpacity
-        onPress={() => (step === 2 || step === 3 ? goBack() : navigation?.goBack())}
+        onPress={() => {
+          // On the funding sub-screen "back" is Edit payments, not a step back: it is
+          // the ONE path that folds any lender decision onto the pricing rows, so
+          // stepping past it would drop a decline the rep has to price around.
+          if (step === 2 && priceScreen === 'funding') {
+            goPricing();
+            return;
+          }
+          if (step === 2 || step === 3) {
+            goBack();
+            return;
+          }
+          navigation?.goBack();
+        }}
         style={{ width: 32, height: 32, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}
       >
         <Ionicons name="arrow-back" size={16} color="#637381" />
@@ -912,7 +1544,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 16, fontWeight: '900', color: '#0F172A' }}>Edit Job Build</Text>
         <Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8', marginTop: 1 }}>
-          {STEP_LABELS[step]} · {customerName}
+          {step === 2 && priceScreen === 'funding' ? 'Funding' : STEP_LABELS[step]} · {customerName}
         </Text>
       </View>
       {/* Persistent exit (web keeps an always-visible close in addition to the
@@ -970,7 +1602,9 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={[]}>
       {Header}
-      <StepDots step={step} />
+      {/* Funding is a sub-screen of Job Price, not a fifth step — showing the tracker
+          there would claim the rep had advanced. */}
+      {!(step === 2 && priceScreen === 'funding') && <StepDots step={step} />}
 
       <View style={{ flex: 1 }}>
         {/* STEP 0 — Install Date */}
@@ -1131,10 +1765,16 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           />
         </View>
 
-        {/* STEP 2 — Job Price */}
-        {step === 2 && (
-          // Same keyboard treatment as step 3 — the Contract Price / Down Payment
-          // inputs are equally low on the page once the payment pickers are expanded.
+        {/* STEP 2 — Job Price (pricing) then Funding.
+            Two screens behind one wizard step, exactly as the Deal Center's Result
+            Lead sheet is: the first answers "who is paying what", the second "how far
+            has each of those payments actually got". Every control on both is the one
+            the Deal Center already ships (funding/PaymentRowsGroup, SegmentedChoice,
+            CoverageBar, FundingView, SendLinkModal, BlockerList) — there is no second
+            implementation of any of it. */}
+        {step === 2 && priceScreen === 'price' && (
+          // Same keyboard treatment as step 3 — the contract price and the payment
+          // amounts sit low on the page once the method pickers are expanded.
           <KeyboardAwareScrollView
             contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
             keyboardShouldPersistTaps="handled"
@@ -1177,7 +1817,22 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
               <TierRow tiers={tierResult.next} highlight />
 
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginTop: 8, marginBottom: 4 }}>Contract Price</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: contractPriceError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 12, marginBottom: contractPriceError ? 4 : 12 }}>
+              {/* Always editable on this screen — an addendum exists to re-price the
+                  job. AMBER is therefore not a lock, it is "this needs a second look":
+                  a lender decision or a price move means the balance no longer matches
+                  what was approved. */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  borderWidth: 1.5,
+                  borderColor: contractPriceError ? '#DC2626' : priceUnlocked ? FUND.AMBER : '#CBD5E1',
+                  backgroundColor: priceUnlocked && !contractPriceError ? FUND.AMBER_CARD_BG : '#fff',
+                  borderRadius: 10,
+                  paddingHorizontal: 12,
+                  marginBottom: contractPriceError ? 4 : 12,
+                }}
+              >
                 <Text style={{ color: '#94A3B8', marginRight: 6, fontSize: 16 }}>$</Text>
                 <TextInput
                   value={String(contractPrice)}
@@ -1185,6 +1840,11 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   keyboardType="numeric"
                   style={{ flex: 1, fontSize: 16, fontWeight: '800', color: '#0F172A', paddingVertical: 10 }}
                 />
+                {priceUnlocked && (
+                  <View style={{ backgroundColor: FUND.AMBER_BG, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6 }}>
+                    <Text style={{ color: FUND.AMBER_TEXT, fontWeight: '800', fontSize: 9.5, letterSpacing: 0.4 }}>NEEDS ATTENTION</Text>
+                  </View>
+                )}
                 <View style={{ backgroundColor: '#E0F2FE', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
                   <Text style={{ color: '#0284C7', fontWeight: '800', fontSize: 11 }}>
                     {newMarkup.text}
@@ -1199,60 +1859,177 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   {contractPriceError}
                 </Text>
               )}
+              {priceUnlocked && !contractPriceError && (
+                <Text style={{ fontSize: 11.5, fontWeight: '700', lineHeight: 16, marginBottom: 12, color: FUND.AMBER_TEXT }}>
+                  {PRICE_ATTENTION_HINT}
+                </Text>
+              )}
 
-              {/* Down Payment + its method, side by side (web parity). */}
-              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Payment</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: downPaymentError ? '#DC2626' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 10 }}>
-                    <Text style={{ color: '#94A3B8', marginRight: 4 }}>$</Text>
-                    <TextInput
-                      value={String(downPayment)}
-                      onChangeText={(t) => setDownPayment(parseFloat(t.replace(/[^0-9.]/g, '')) || 0)}
-                      keyboardType="numeric"
-                      style={{ flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 12 }}
+              {/* PAYMENT — the contract and everything paying it, in the same recessed
+                  panel the Result Lead sheet uses. The panel colour is not decoration:
+                  PaymentRowsGroup notches its title out of FUND.PANEL, so the label
+                  only reads correctly on that background. */}
+              <View style={{ backgroundColor: FUND.PANEL, borderWidth: 1, borderColor: FUND.PANEL_LINE, borderRadius: 18, paddingHorizontal: 12, paddingTop: 14, paddingBottom: 4, marginTop: 4, marginBottom: 12 }}>
+                {/* How the contract is being paid. Locked once a payment has started
+                    — see switchPayMode. */}
+                <SegmentedChoice<PayMode>
+                  label="How is this being paid?"
+                  value={payMode}
+                  onSelect={switchPayMode}
+                  hint={structureHint(payMode, structureIsLocked, structureNudge)}
+                  hintTone={structureIsLocked ? 'warn' : 'muted'}
+                  options={[
+                    {
+                      value: 'split',
+                      title: 'Down Payment',
+                      subtitle: 'Money now, balance funds later',
+                      disabled: structureIsLocked,
+                    },
+                    {
+                      value: 'upfront',
+                      title: 'Upfront',
+                      subtitle: 'Full contract paid in one go',
+                      disabled: structureIsLocked,
+                    },
+                  ]}
+                />
+
+                {payMode === 'upfront' ? (
+                  <>
+                    {decisionBanners}
+                    <PaymentRowsGroup
+                      title="Upfront"
+                      total={downTotal}
+                      rows={upRows}
+                      allRows={activeRows}
+                      price={contractNum}
+                      plans={pricing.plans}
+                      // Paid in full now, so there is no balance to carry — lender
+                      // plans are not offered here, same as a deposit.
+                      options={pricing.outcomeDownPaymentMethods}
+                      needsRowId={needsRowId}
+                      canAdd={MULTI_METHOD_ENABLED}
+                      onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                      onChangeMethod={selectRowMethod}
+                      onRemove={removeRow}
+                      onAdd={() => addRow('up')}
+                      footer={
+                        <>
+                          {/* Upfront has no remainder row to hide a gap in, so this is
+                              the only running total the rep gets. */}
+                          <CoverageBar assigned={totalAssigned} target={contractNum} />
+                          <Text style={{ fontSize: 11, fontWeight: '600', lineHeight: 16, marginTop: 9, marginHorizontal: 4, color: FUND.MUTED }}>
+                            Paid in full at the table, so there is no balance to finance. Lender plans are not offered here.
+                          </Text>
+                        </>
+                      }
                     />
-                  </View>
-                  {!!downPaymentError && (
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#DC2626', marginTop: 4 }}>
-                      {downPaymentError}
-                    </Text>
-                  )}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Down Pmt Method</Text>
-                  <MethodPicker
-                    options={downPaymentOptions}
-                    selected={downPaymentMethodKey}
-                    onSelect={(k) => setDownPaymentMethod(k)}
-                    allowNone
-                  />
-                </View>
+                  </>
+                ) : (
+                  <>
+                    <PaymentRowsGroup
+                      title="Down Payment"
+                      total={downTotal}
+                      rows={downRows}
+                      allRows={activeRows}
+                      price={contractNum}
+                      plans={pricing.plans}
+                      // Financing carries a balance, never a deposit — the Down
+                      // Payment picker is cash/card only (see useDealPricing).
+                      options={pricing.outcomeDownPaymentMethods}
+                      needsRowId={needsRowId}
+                      canAdd={MULTI_METHOD_ENABLED}
+                      onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                      onChangeMethod={selectRowMethod}
+                      onRemove={removeRow}
+                      onAdd={() => addRow('down')}
+                    />
+
+                    {decisionBanners}
+
+                    <PaymentRowsGroup
+                      title="Balance"
+                      total={balanceTotal}
+                      rows={balRows}
+                      allRows={activeRows}
+                      price={contractNum}
+                      plans={pricing.plans}
+                      categories={pricing.categories}
+                      needsRowId={needsRowId}
+                      canAdd={MULTI_METHOD_ENABLED}
+                      onChangeAmount={(id, t) => updateRow(id, { amount: t })}
+                      onChangeMethod={selectRowMethod}
+                      onRemove={removeRow}
+                      onAdd={() => addRow('bal')}
+                    />
+                  </>
+                )}
               </View>
 
-              {/* Balance + its method, side by side (web parity). */}
-              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Balance</Text>
-                  <View style={{ borderWidth: 1.5, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 13, backgroundColor: '#F1F5F9' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{fmtMoney(balance)}</Text>
+              {/* RESULT — locked to Sale until a lender actually declines. Once one
+                  has, the only other honest outcome for this job becomes selectable,
+                  and the switch goes through the SERVER, which refuses it without a
+                  logged decline on the record. */}
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 6 }}>Result</Text>
+              {declineHappened ? (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => handleSetFundingResult('sale')}
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, borderWidth: 1.5, borderColor: bankDeclined ? '#E5E7EB' : '#34D399', backgroundColor: bankDeclined ? '#fff' : '#ECFDF5' }}
+                  >
+                    <Text style={{ fontSize: 13.5, fontWeight: '700', color: bankDeclined ? '#6B7280' : '#047857' }}>Sale</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleSetFundingResult('bank_decline')}
+                    style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, borderWidth: 1.5, borderColor: bankDeclined ? '#FDA4AF' : '#E5E7EB', backgroundColor: bankDeclined ? '#FFF1F2' : '#fff' }}
+                  >
+                    <Text style={{ fontSize: 13.5, fontWeight: '700', color: bankDeclined ? '#BE123C' : '#6B7280' }}>Bank Decline</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <View style={{ borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#F9FAFB' }}>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#111827' }}>Sale</Text>
                   </View>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>Balance Method</Text>
-                  <MethodPicker
-                    options={paymentOptions}
-                    selected={balanceMethodKey}
-                    onSelect={(k) => setBalanceMethod(k)}
-                    // Grouped picker (Basic / GreenSky / Wells Fargo / …) with proper
-                    // plan labels — same categorised list the rollout / job-builder
-                    // payment picker uses, instead of a flat unlabelled dropdown.
-                    categories={pricing?.categories}
-                  />
-                </View>
-              </View>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: FUND.MUTED, marginTop: 6 }}>
+                    Locked to Sale unless a lender declines.
+                  </Text>
+                </>
+              )}
             </View>
           </KeyboardAwareScrollView>
+        )}
+
+        {/* STEP 2b — Funding. Every callback is an ENDPOINT: nothing here ticks a
+            step locally, the screen redraws from the record each one returns. */}
+        {step === 2 && priceScreen === 'funding' && (
+          <ScrollView
+            contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <FundingView
+              payments={funding.payments}
+              payMode={payMode}
+              contractTotal={contractNum}
+              covered={covered}
+              bankDeclined={bankDeclined}
+              log={attempts}
+              lastSyncedAt={lastSyncedAt}
+              syncingAll={funding.syncingAll}
+              busyPid={funding.busyPid}
+              paymentsSetupError={funding.paymentsSetupError}
+              onSyncAll={funding.syncAll}
+              onSyncOne={funding.syncPayment}
+              onSendLink={openSendSheet}
+              onMarkCollected={funding.markCheckCollected}
+              onChargeCard={funding.chargeCard}
+              onActivate={funding.activateLoan}
+              onEditPayments={goPricing}
+              onResultAsBankDecline={() => handleSetFundingResult('bank_decline')}
+              onUndoBankDecline={() => handleSetFundingResult('sale')}
+            />
+          </ScrollView>
         )}
 
         {/* STEP 3 — Review & Submit */}
@@ -1320,7 +2097,7 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
                   <ReviewRow label="Contract Price" from={fmtMoney(parsePrice(lead?.originalContractPrice))} to={fmtMoney(contractPrice)} />
                 )}
                 {downPaymentChanged && (
-                  <ReviewRow label="Down Payment" from={fmtMoney(parsePrice(lead?.downPayment))} to={fmtMoney(downPayment)} />
+                  <ReviewRow label="Down Payment" from={fmtMoney(parsePrice(lead?.downPayment))} to={fmtMoney(downTotal)} />
                 )}
                 {downPaymentMethodChanged && (
                   <ReviewRow
@@ -1412,38 +2189,117 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
         )}
       </View>
 
-      {/* Footer — Price / Review steps (Install Date + Build own their nav) */}
+      {/* Footer — Price / Funding / Review steps (Install Date + Build own their nav) */}
       {(step === 2 || step === 3) && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, paddingBottom: Math.max(insets.bottom, 16), borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#fff', gap: 12 }}>
-          <TouchableOpacity onPress={goBack} disabled={isSubmitting} style={{ borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 18, paddingVertical: 12 }}>
-            <Text style={{ fontWeight: '800', fontSize: 13, color: '#334155' }}>Back</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }} />
-          {step === 2 ? (
-            // Web parity: a price below cost (or a down payment above it) blocks the
-            // step — the rep must correct it before Review, not discover it later.
-            <TouchableOpacity
-              onPress={() => setStep(3)}
-              disabled={hasPriceError}
-              style={{ backgroundColor: hasPriceError ? '#CBD5E1' : '#0F172A', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}
-            >
-              <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Next · Review</Text>
-              <Icon name="arrow-right" size={16} color="#fff" />
-            </TouchableOpacity>
+        <View style={{ padding: 16, paddingBottom: Math.max(insets.bottom, 16), borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#fff' }}>
+          {step === 2 && priceScreen === 'funding' ? (
+            <>
+              {/* The same checklist the Deal Center's Submit footer shows. The
+                  SERVER's list replaces it the moment a save or submit is refused —
+                  that one is authoritative and already ordered.
+
+                  ⚠️ It reports, it does not BLOCK. Submitting an addendum has never
+                  required funding to be complete, and a job whose links cannot be sent
+                  yet (the company-wide charges_enabled gate) is exactly the case where
+                  gating Review would strand the rep with no way forward on a change
+                  the customer still has to sign. */}
+              <BlockerList
+                items={fundingBlockerList}
+                readyText="✓ Every payment is as far as you can take it."
+                override={
+                  bankDeclined
+                    ? { title: 'No funding to satisfy.', body: 'The job is closing as a bank decline.' }
+                    : undefined
+                }
+              />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={goPricing}
+                  style={{ borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 18, paddingVertical: 12 }}
+                >
+                  <Text style={{ fontWeight: '800', fontSize: 13, color: '#334155' }}>Edit payments</Text>
+                </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                  onPress={() => setStep(3)}
+                  style={{ backgroundColor: '#0F172A', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                >
+                  <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Next · Review</Text>
+                  <Icon name="arrow-right" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </>
           ) : (
-            <TouchableOpacity
-              onPress={handleSubmit}
-              // ⚠️ The phone and email gate SUBMIT only, never `Next · Review` on step 2
-              // — both fields live on THIS step, so blocking Next would strand the rep
-              // with a disabled button and nothing on screen explaining it.
-              disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading || !!customerPhoneError || !!customerEmailError}
-              style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading && !customerPhoneError && !customerEmailError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
-            >
-              {isSubmitting && <ActivityIndicator size="small" color="#fff" />}
-              <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Submit Addendum</Text>
-            </TouchableOpacity>
+            <>
+              {/* Why Confirm is off, listed above it — the price floor first, then the
+                  allocation rules. Same control, same reasoning as the funding footer:
+                  the rep works a list instead of tapping a grey button and being told no. */}
+              {step === 2 && <BlockerList items={confirmGate} title="Before you can confirm:" />}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity onPress={goBack} disabled={isSubmitting} style={{ borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 18, paddingVertical: 12 }}>
+                  <Text style={{ fontWeight: '800', fontSize: 13, color: '#334155' }}>Back</Text>
+                </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                {step === 2 ? (
+                  // Confirm SAVES the split (the PUT is the save for the whole screen)
+                  // and only then opens Funding — see goFunding.
+                  <TouchableOpacity
+                    onPress={goFunding}
+                    disabled={confirmGate.length > 0 || funding.isSaving}
+                    style={{ backgroundColor: confirmGate.length > 0 ? '#CBD5E1' : '#0F172A', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: funding.isSaving ? 0.7 : 1 }}
+                  >
+                    {funding.isSaving && <ActivityIndicator size="small" color="#fff" />}
+                    <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Confirm</Text>
+                    <Icon name="arrow-right" size={16} color="#fff" />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    onPress={handleSubmit}
+                    // ⚠️ The phone and email gate SUBMIT only, never the Job Price step
+                    // — both fields live on THIS step, so blocking the way in would
+                    // strand the rep with a disabled button and nothing on screen
+                    // explaining it.
+                    disabled={isSubmitting || !hasAnyChange || hasPriceError || isCalculatorLoading || !!customerPhoneError || !!customerEmailError}
+                    style={{ backgroundColor: hasAnyChange && !hasPriceError && !isCalculatorLoading && !customerPhoneError && !customerEmailError ? '#22C55E' : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6, opacity: isSubmitting ? 0.7 : 1 }}
+                  >
+                    {isSubmitting && <ActivityIndicator size="small" color="#fff" />}
+                    <Text style={{ fontWeight: '800', fontSize: 13, color: '#fff' }}>Submit Addendum</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
           )}
         </View>
+      )}
+
+      {/* Share sheet — an in-sheet overlay, not a nested Modal (see SendLinkModal),
+          mounted as the LAST child of the screen root so it covers the footer too. It
+          reports the send; the STEP comes back on the record, never from here. */}
+      {!!linkPayment && (
+        <SendLinkModal
+          payment={linkPayment}
+          link={linkUrl}
+          isLoadingLink={isLoadingLink}
+          isSending={funding.busyPid === linkPayment.pid}
+          blockedReason={funding.paymentsSetupError}
+          onSend={handleSendLink}
+          onCopyLink={() =>
+            logFundingLinkCopied({
+              ...fundingLog,
+              payment: {
+                pid: linkPayment.pid,
+                method: linkPayment.method,
+                type: linkPayment.type,
+                kind: linkPayment.kind,
+                amount: linkPayment.amount,
+              },
+            })
+          }
+          onClose={() => {
+            setLinkTarget(null);
+            setLinkUrl('');
+          }}
+        />
       )}
 
       {/* Cancel Job confirmation */}
@@ -1658,129 +2514,6 @@ function TierRow({ tiers, highlight }: { tiers: Tiers; highlight?: boolean }) {
         );
       })}
     </View>
-  );
-}
-
-// Payment-method selector rendered as a DROPDOWN (web parity), not a horizontally
-// scrollable pill list — the plan labels are long, so a dropdown lets the rep see
-// and pick every option. Tapping the field opens a modal list of the options.
-// When `categories` is supplied (Balance Method), the list is GROUPED under coloured
-// category headers — Basic Options / GreenSky Plans / Wells Fargo Plans / … — exactly
-// like the rollout / job-builder payment picker, instead of a flat unlabelled list.
-function MethodPicker({
-  options,
-  selected,
-  onSelect,
-  allowNone,
-  categories,
-}: {
-  options: { key: string; label: string }[];
-  selected: string;
-  onSelect: (key: string) => void;
-  allowNone?: boolean;
-  categories?: { title: string; bg: string; text: string; plans: string[] }[];
-}) {
-  const [open, setOpen] = useState(false);
-  const labelByKey = useMemo(() => {
-    const m: Record<string, string> = {};
-    options.forEach((o) => {
-      m[o.key] = o.label;
-    });
-    return m;
-  }, [options]);
-  const items = allowNone ? [{ key: '', label: 'Select payment method' }, ...options] : options;
-  const selectedLabel = labelByKey[selected] || (selected ? selected : 'Select payment method');
-  const hasSelection = !!selected;
-  const useGroups = Array.isArray(categories) && categories.length > 0;
-
-  const renderOption = (key: string, label: string) => {
-    const active = selected === key;
-    return (
-      <TouchableOpacity
-        key={key || 'none'}
-        onPress={() => {
-          onSelect(key);
-          setOpen(false);
-        }}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: 16,
-          paddingVertical: 14,
-          borderBottomWidth: 1,
-          borderBottomColor: '#F8FAFC',
-          backgroundColor: active ? '#F0FDF4' : '#fff',
-        }}
-      >
-        <Text style={{ flex: 1, fontSize: 13, fontWeight: active ? '800' : '600', color: active ? '#15803D' : '#334155', marginRight: 8 }}>
-          {label}
-        </Text>
-        {active && <Icon name="check" size={18} color="#22C55E" />}
-      </TouchableOpacity>
-    );
-  };
-
-  return (
-    <>
-      <TouchableOpacity
-        onPress={() => setOpen(true)}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderWidth: 1.5,
-          borderColor: '#CBD5E1',
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 12,
-          backgroundColor: '#fff',
-        }}
-      >
-        <Text
-          numberOfLines={1}
-          style={{ flex: 1, fontSize: 13, fontWeight: '700', color: hasSelection ? '#0F172A' : '#94A3B8', marginRight: 8 }}
-        >
-          {selectedLabel}
-        </Text>
-        <Icon name="chevron-down" size={20} color="#94A3B8" />
-      </TouchableOpacity>
-
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setOpen(false)}
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', paddingHorizontal: 24 }}
-        >
-          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: '#fff', borderRadius: 16, maxHeight: '70%', overflow: 'hidden' }}>
-            <View style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>Select Payment Method</Text>
-            </View>
-            <ScrollView>
-              {useGroups ? (
-                <>
-                  {allowNone && renderOption('', 'Select payment method')}
-                  {categories!.map((cat, ci) => (
-                    <View key={cat.title || `cat-${ci}`}>
-                      {cat.title ? (
-                        <View style={{ backgroundColor: cat.bg, paddingHorizontal: 16, paddingVertical: 8 }}>
-                          <Text style={{ fontSize: 11, fontWeight: '900', color: cat.text, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            {cat.title}
-                          </Text>
-                        </View>
-                      ) : null}
-                      {cat.plans.map((planKey) => renderOption(planKey, labelByKey[planKey] || planKey))}
-                    </View>
-                  ))}
-                </>
-              ) : (
-                items.map((o) => renderOption(o.key, o.label))
-              )}
-            </ScrollView>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-    </>
   );
 }
 
