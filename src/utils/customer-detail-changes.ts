@@ -85,6 +85,13 @@ const TRACKED_FIELDS: Array<{
  * but a future caller that re-reads the lead from the cache first would diff a record
  * against itself and log nothing.
  */
+/**
+ * ⚠️ NO LONGER WIRED — kept for reference only.
+ *
+ * The per-field `change` rows are now emitted by `EditCustomerModal`'s own DEBOUNCED
+ * tracker as the rep types (web parity), not derived from the saved payload. Re-wiring
+ * this into `handleCustomerSubmit` would put every edit on the timeline TWICE.
+ */
 export function buildCustomerFieldChanges(lead: any, next: CustomerFieldValues): CustomerFieldChange[] {
   const customer = lead?.customerDetails || {};
   const changes: CustomerFieldChange[] = [];

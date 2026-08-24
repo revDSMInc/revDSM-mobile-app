@@ -4015,16 +4015,13 @@ rows add `fieldLabel` / `fieldName` / `fieldValue` / `fieldCategory` / `oldValue
 ticket's payloads exactly. The ids resolve through ONE helper so no two rows can disagree about which
 record they name.
 
-⚠️ **The `change` rows fire on SAVE, not while typing — a deliberate divergence, and the requested
-one** (*"you have to call this as well when we Save Changes"*). Web debounces each keystroke
-(`useDebounce(changedValue, 2000)`) from inside the modal, so a web row can describe an edit the rep
-then abandoned; mobile diffs the submitted payload against the record, so a row only ever describes a
-change that PERSISTED.
-
-⚠️ **They are emitted AFTER the `submit` row** (*"this log should be call after the submit log"*), so
-the timeline reads opened → saved → changed. That is the OPPOSITE of web, where the debounced rows are
-already sent by the time Save is pressed; on mobile the detail rows are wanted as the breakdown *under*
-the save. `LoggerService` serialises its queue, so the call order is the order the portal receives.
+> ⚠️ **SUPERSEDED — the two paragraphs that stood here are now WRONG and are retired.** They said the
+> `change` rows fire on SAVE and land AFTER the `submit` row, both of which were the requested
+> behaviour at the time. The reporter reversed it — *"we implemented the change log in wrong way,
+> once we will write any input after a second that log will call"* — so the rows are now **debounced
+> off the rep's typing inside the modal**, exactly as web does, and therefore land BEFORE the submit
+> row. See "…and the change rows are DEBOUNCED off typing" below. The `view` and `submit` rows are
+> unchanged.
 
 ⚠️ **`meta.resetCycle` is added SERVER-side, not by the client.** A payload comparison filed against
 this ticket showed mobile's stored row carrying `resetCycle: 0` where web's did not — but the two
@@ -4098,6 +4095,89 @@ several rows in web's field order, the `fullAddress` fallback, a cleared field r
 rather than skipped, a co-buyer-only edit emitting nothing, and junk input as a no-op rather than a
 throw. tsc 44 (baseline unchanged); `customer-detail-changes.ts` is eslint-clean and
 `LeadCenter/index.tsx` is identical to its HEAD baseline (40 problems: 16 errors / 24 warnings).
+
+#### …and the change rows are DEBOUNCED off typing, not derived on save
+
+Reversal of the requirement above: *"adding denouncing like web, i mean we implemented the change log
+in wrong way — once we will write any input after a second that log will call"*, with a devtools
+capture of web's own `change` row.
+
+The save-time derivation is **gone**. `buildCustomerFieldChanges` is still exported from
+`utils/customer-detail-changes.ts` but is **NO LONGER WIRED** (a note on it says so) — the rows are now
+produced by a debounced tracker inside `EditCustomerModal` itself, a port of web's
+`trackFieldChange` / `useDebounce(changedValue, 2000)` / flush-effect trio.
+
+| | web | mobile (now) |
+|---|---|---|
+| queue | `pendingChangesRef` array, filtered per field | `pendingChangesRef` **map keyed by fieldName** — same "last write per field wins" |
+| baseline | `lastValuesRef`, seeded on open, advanced on flush | identical (`seedTrackedValues`) |
+| trigger | `useDebounce(changedValue, 2000)` | one `setTimeout` ref, `FIELD_CHANGE_DEBOUNCE_MS = 2000` |
+
+⚠️ **A `setTimeout` ref, not a `useDebounce` hook.** Web's `setChangedValue(entry)` re-renders the
+whole modal on **every keystroke** purely to drive the debounce. The timer does the same job with no
+render, which matters more here — this modal re-renders a Places autocomplete and up to three co-buyer
+blocks.
+
+⚠️ **The timer fires through `flushFieldChangesRef.current()`, never the identifier.** The flush reads
+`user` and `lead`; a captured stale closure would log against the wrong ids. Same trap
+`performAutoSaveRef` exists for in `DynamicJobBuilderScreen`.
+
+⚠️ **Two flush points web does not have, because mobile can lose the pending row where web cannot.**
+The modal is unmounted on close (`{showEditCustomerModal && …}`), which clears the timer — so an edit
+made inside the last 2 s before Save or Cancel would vanish. `handleSave` flushes before `onSubmit`,
+and a mount effect returns `flushFieldChangesRef.current` as its cleanup. The save flush is also what
+puts the change rows **ahead of** the `submit` row, which is web's natural ordering.
+
+⚠️ **The baselines advance even when there is no `user_id` to log as.** Otherwise the next flush would
+report an `oldValue` the rep moved on from two edits ago.
+
+⚠️ **Deliberate divergence: a row whose value came back to where it started is dropped.** Type a letter
+and delete it inside the window and web still logs `Testa → Testa`. Skipping can only remove noise.
+
+⚠️ **The silent GPS auto-fill is NOT tracked.** `applyCurrentLocation(prompt)` runs once on mount with
+`prompt: false` when the customer has no address on file; only the crosshair TAP (`prompt: true`) is an
+edit the rep made. The typed / cleared / picked-from-suggestions paths are all tracked.
+
+##### Co-buyers are tracked by the same machinery
+
+Mobile-only — web calls `trackFieldChange` for the five primary fields and **nothing** for co-buyers
+(`grep` shows no co-buyer call sites). Rows carry `fieldCategory: 'co_buyer'`,
+`action: 'co-buyer field changed'`, a `coBuyerNumber`, and `fieldName: coBuyer_<N>_<field>`.
+
+- ⚠️ **`N` is 1-BASED in the key, matching `coBuyerNumber` and the "Co-Buyer N" heading.** It shipped
+  0-based beside a 1-based number for one pass; that is an off-by-one a reader of the payload has no
+  way to spot.
+- ⚠️ **The key is POSITIONAL, because a co-buyer has no `_id` until the customer record is saved.**
+  `handleRemoveCoBuyer` therefore **flushes first** (so pending edits are attributed while the indexes
+  still mean what they did) and then **re-seeds every co-buyer baseline** against the new positions —
+  without that, the co-buyer who shifts up inherits the removed one's values and their next edit
+  reports a change against a stranger.
+- **Ticking "Same address as primary buyer?" emits an address change**, because the tracked value is
+  the DERIVED address (`coBuyerAddressOf`), not the flag.
+- **Two structural rows**: `view` / `add co-buyer opened` on the `+` button, and `change` /
+  `co-buyer removed` on Remove. The removal row carries `removedCoBuyer` (the name) as well as the
+  number, since the number shifts the moment another is removed and cannot identify who left.
+- **`meta.is_co_buyer: true` on the add row**, requested by the portal side. It is a **constant** —
+  that row only ever fires from the `+ Add Co-Buyer` button — and exists so the portal can attribute
+  the event to the co-buyer without pattern-matching on `action`. Not sent on the other rows, which
+  already carry `fieldCategory: 'co_buyer'`.
+
+**`CO-BUYER-ACTIVITY-LOGS.md` (repo root) is the payload reference handed to the backend**, since the
+portal does not render these `meta.action` values yet. Keep it in step with this code.
+
+Also in this pass, on request: **`floatingLabelText` dropped its `fontWeight: '600'`** so the input
+titles render at normal weight, matching web. ⚠️ That weight predates the co-buyer ticket (it is
+`'600'` at `58c577b^` too) — it was not a regression from moving the co-buyer block, so don't go
+looking for one.
+
+⚠️ Needs a device check (this repo cannot render-test): type in a field and confirm ONE `change` row
+lands ~2 s later carrying the whole edit, that a burst across several fields flushes together, that
+Save no longer emits a second copy of each row, and that removing co-buyer 1 does not attribute
+co-buyer 2's next edit to the wrong person.
+
+tsc 44 (baseline unchanged); `EditCustomerModal.tsx` is byte-identical to its HEAD eslint baseline
+(4 warnings, 0 errors), `LeadCenter/index.tsx` to its own (40 problems: 16 errors / 24 warnings), and
+`customer-detail-changes.ts` is clean.
 
 ---
 

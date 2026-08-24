@@ -35,10 +35,7 @@ import {
 import { LeadService, resolveLeadCalculatorId } from '../../services/api/leads';
 import { resolveS3Url } from '../../utils/s3-utils';
 import { getRawPhoneNumber, formatUSPhoneNumber } from '../../utils/phone-util';
-import {
-  buildCustomerFieldChanges,
-  resolveCustomerLogIds,
-} from '../../utils/customer-detail-changes';
+import { resolveCustomerLogIds } from '../../utils/customer-detail-changes';
 import { parseApiError } from '../../utils/error-util';
 import { ConsentFormModal } from '../../widgets/modals/lead-center/ConsentFormModal';
 import { RoofWaiverModal } from '../../widgets/modals/lead-center/RoofWaiverModal';
@@ -741,24 +738,6 @@ export default function LeadCenterPage() {
     });
   };
 
-  // Web parity (`edit-customer-modal.js` `trackFieldChange`): one `change` row per field
-  // the rep actually altered, so the portal timeline reads "Changed First Name from X to
-  // Y" and not just "saved". The rules — including the formatting the baseline has to
-  // match — live in `utils/customer-detail-changes.ts`; this only emits them.
-  const logCustomerFieldChanges = (data: EditCustomerPayload) => {
-    const uId = user?._id || user?.id;
-    if (!uId) return;
-    const ids = resolveCustomerLogIds(lead);
-    buildCustomerFieldChanges(lead, data).forEach((change) => {
-      logEvent('change', {
-        user_id: uId,
-        created_by: uId,
-        module_type: 'customer_details',
-        meta: { ...ids, ...change },
-      });
-    });
-  };
-
   const handleCustomerSubmit = async (data: EditCustomerPayload) => {
     try {
       const customerId = lead.customerDetails?._id || lead.customerDetails?.id || lead?._id || lead?.id;
@@ -808,12 +787,10 @@ export default function LeadCenterPage() {
 
       FlashMessage.success('Success', 'Customer details updated successfully.');
       logCustomerDetailsEvent('submit', 'customer details saved');
-      // ⚠️ AFTER the `submit` row, on request. Web's field rows land BEFORE it (they are
-      // debounced off each keystroke, so they are already sent by the time Save is
-      // pressed) — mobile derives them from the saved payload, and the reporter wants the
-      // detail rows to read as the breakdown UNDER the save. `LoggerService` serialises
-      // its queue, so this call order is the order the portal receives them in.
-      logCustomerFieldChanges(data);
+      // ⚠️ The per-field `change` rows are NOT emitted here. They are debounced off the
+      // rep's typing inside `EditCustomerModal` (web parity), so they have already been
+      // sent by the time Save is pressed — emitting them again from the saved payload
+      // would put every edit on the timeline twice.
       refetch();
     } catch (error: any) {
       const apiError = error?.response?.data || error?.data || error;
