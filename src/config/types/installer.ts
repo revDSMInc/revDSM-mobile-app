@@ -792,6 +792,16 @@ export interface InstallProgress {
   scope: Record<string, ScopeStatus>;
   cocPages: CapturedPhoto[];
   /**
+   * Every s3url this device has ever known to be a CERTIFICATE SIGNATURE.
+   *
+   * ⚠️ A signature and a scanned page are uploaded identically — same phase, same
+   * `subcategory: 'coc'` — so the server cannot tell them apart and returns both in
+   * `installerCocPhotos`. `cocSignOff` names only the LATEST pair, so re-signing
+   * orphans the previous one and it comes back as a "page". This set is what makes
+   * the pruning survive a re-sign; it only ever grows.
+   */
+  cocSignatureS3Urls?: string[];
+  /**
    * The certificate signed on the device, once submitted.
    *
    * Lives here rather than in the step so it survives a remount and so the step-data

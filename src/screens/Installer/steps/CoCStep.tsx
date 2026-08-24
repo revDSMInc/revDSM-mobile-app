@@ -1,15 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Image, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Path } from 'react-native-svg';
 import DocumentScanner from 'react-native-document-scanner-plugin';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../i18n/LanguageProvider';
 import { InstallerSubScreen } from '../../../widgets/components/installer/InstallerSubScreen';
-import { ConfirmActionModal } from '../../../widgets/modals/installer/ConfirmActionModal';
 import { CoCFormModal, type CoCFormData } from '../../../widgets/modals/installer/CoCFormModal';
 import { useInstallerActivityLog } from '../../../hooks/useInstallerActivityLog';
-import { usePhotoDeleteConfirm } from '../../../hooks/usePhotoDeleteConfirm';
 import type { CapturedPhoto, CocSignOff, InstallerJob } from '../../../config/types/installer';
 
 interface Props {
@@ -17,11 +15,6 @@ interface Props {
   job: InstallerJob;
   pages: CapturedPhoto[];
   onAddPage: (page: CapturedPhoto) => void;
-  /**
-   * Resolves once the page is gone from the server as well as from state — the confirm
-   * dialog holds its spinner on this promise.
-   */
-  onRemovePage: (pageId: string) => void | Promise<void>;
   /**
    * One rasterised signature from the on-device certificate, ready for
    * `installer/v1/{jobId}/images`. Called once per signature; the parent uploads and
@@ -61,7 +54,6 @@ export function CoCStep({
   job,
   pages,
   onAddPage,
-  onRemovePage,
   onSignature,
   onSignOff,
   signOff,
@@ -204,17 +196,6 @@ export function CoCStep({
     }
   }, [onAddPage, pages.length]);
 
-  const del = usePhotoDeleteConfirm<{ page: CapturedPhoto; index: number }>(
-    async ({ page, index }) => {
-      await onRemovePage(page.id);
-      log.photoRemoved({
-        step: 'coc',
-        category: 'Certificate of Completion',
-        subcategory: `Page ${index + 1}`,
-        timestamp: page.takenAt,
-      });
-    }
-  );
 
   /**
    * One saved signature, straight to the parent for upload.
@@ -330,39 +311,18 @@ export function CoCStep({
           </View>
         )}
 
-        {hasPages && (
-          <View className="flex-row flex-wrap mb-3" style={{ gap: 10 }}>
-            {pages.map((page, i) => (
-              <View
-                key={page.id}
-                className="rounded-xl overflow-hidden border"
-                style={{
-                  width: '31%',
-                  aspectRatio: 0.77,
-                  borderColor: colors.border,
-                  backgroundColor: '#e8e6df',
-                }}
-              >
-                <Image source={{ uri: page.uri }} style={{ flex: 1 }} resizeMode="cover" />
-                <View
-                  className="absolute bottom-0 left-0 right-0 py-0.5 items-center"
-                  style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
-                >
-                  <Text className="text-white text-[10px] font-bold">
-                    {t('installer.cocPage', { number: i + 1 })}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => del.request({ page, index: i })}
-                  className="absolute top-1 right-1 w-6 h-6 rounded-full items-center justify-center"
-                  style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
-                >
-                  <Icon name="close" size={12} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
+        {/*
+          ⚠️ The scanned-page tiles were REMOVED from this screen, by request.
+
+          They were showing the certificate's own signatures back as "Page 1..6": a
+          signature and a scanned page are uploaded identically (`phase: 'coc'`,
+          `subcategory: 'coc'`), so every re-sign orphaned a pair that returned from
+          the server as pages — directly under the card already displaying them.
+
+          That duplication is fixed at its source in `installer-hydrate`, and this
+          screen no longer carries a tile grid at all: it is the RESULT view for a
+          signed certificate, and the pages it was drawing were never its subject.
+        */}
 
         {/* Back into the certificate — a correction to what is shown above it, not a
             landing choice.
@@ -382,20 +342,6 @@ export function CoCStep({
           </Text>
         </TouchableOpacity>
 
-        <ConfirmActionModal
-          visible={del.visible}
-          icon="file-remove-outline"
-          tone="danger"
-          title={t('installer.cocDeleteTitle')}
-          description={t('installer.cocDeleteBody', {
-            number: (del.target?.index ?? 0) + 1,
-          })}
-          confirmLabel={t('installer.delete')}
-          cancelLabel={t('installer.keep')}
-          submitting={del.deleting}
-          onCancel={del.cancel}
-          onConfirm={del.confirm}
-        />
       </InstallerSubScreen>
 
       {/* The step itself. Rendered as a SIBLING of the sub-screen, not inside it: the
