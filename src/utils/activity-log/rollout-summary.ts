@@ -14,7 +14,35 @@ const calculateDelta = (current: number, previous: number) => {
   return Number.isFinite(pct) ? Number(pct.toFixed(1)) : 0;
 };
 
-const calculateTiers = (calculator: any, isLowesLead: boolean) => {
+/**
+ * COST / PAR / RETAIL for one calculator.
+ *
+ * ⚠️ `calculateResultUtil` is the LEGACY calculator: it prices the hardcoded
+ * `gutter5DsE` / `versa6Ft1` / … columns. A DYNAMIC calculator stores nothing there —
+ * its quantities live in `entries` and are priced from the company's schema — so every
+ * dynamic job came back with the same floored tiers, which put all of them in the
+ * `atRetail` bucket and logged `resultedJobCost/Par/Retail` that no screen agrees with.
+ *
+ * Web has no such problem: its `calculateTiers` passes `schemas: schema`, so the same
+ * function prices a dynamic calculator. Mobile's port is not schema-aware, so the
+ * dynamic caller opts into the tiers the calculator ALREADY carries — `totals` is the
+ * pure tier sum the deal center computed and persisted (`computeTotals`), i.e. the same
+ * numbers the rollout tiles are derived from.
+ *
+ * Opt-in, never inferred: the classic flow's calculators can carry a `totals` object
+ * too, and there the legacy computation IS the right one.
+ */
+const calculateTiers = (calculator: any, isLowesLead: boolean, preferStoredTotals = false) => {
+  if (preferStoredTotals) {
+    const t = calculator?.totals;
+    if (t && (Number(t.cost) || Number(t.par) || Number(t.retail))) {
+      return {
+        cost: Math.round(Number(t.cost) || 0),
+        par: Math.round(Number(t.par) || 0),
+        retail: Math.round(Number(t.retail) || 0),
+      };
+    }
+  }
   const tier = (markupKey: string) =>
     Math.round(
       calculateResultUtil({
@@ -40,8 +68,11 @@ export const logRolloutAndDropSummary = async (opts: {
   selectedCalculator: any;
   leadData: any;
   isLowesLead?: boolean;
+  /** Dynamic deal center: take each calculator's tiers from its stored `totals`
+   *  instead of the legacy column pricing. See `calculateTiers`. */
+  preferStoredTotals?: boolean;
 }) => {
-  const { userId, leadId, allCalculators, selectedCalculator, leadData, isLowesLead } = opts;
+  const { userId, leadId, allCalculators, selectedCalculator, leadData, isLowesLead, preferStoredTotals } = opts;
   if (!userId || !selectedCalculator) return;
 
   const noOfRollouts = allCalculators?.length || 0;
@@ -53,7 +84,9 @@ export const logRolloutAndDropSummary = async (opts: {
     allCalculators?.reduce(
       (acc, calc) => ({
         totalRetail: acc.totalRetail + (parseFloat(String(calc.price)) || 0),
-        totalCost: acc.totalCost + (parseFloat(String(calc.cost)) || calculateTiers(calc, !!isLowesLead).cost),
+        totalCost:
+          acc.totalCost +
+          (parseFloat(String(calc.cost)) || calculateTiers(calc, !!isLowesLead, preferStoredTotals).cost),
       }),
       { totalRetail: 0, totalCost: 0 }
     ) || { totalRetail: 0, totalCost: 0 };
@@ -61,7 +94,7 @@ export const logRolloutAndDropSummary = async (opts: {
   const jobCategories = allCalculators?.reduce(
     (acc, calc) => {
       const price = parseFloat(String(calc.price)) || 0;
-      const { par, retail } = calculateTiers(calc, !!isLowesLead);
+      const { par, retail } = calculateTiers(calc, !!isLowesLead, preferStoredTotals);
       if (price < par) acc.atCost += 1;
       else if (price >= par && price < retail) acc.atPar += 1;
       else acc.atRetail += 1;
@@ -98,7 +131,7 @@ export const logRolloutAndDropSummary = async (opts: {
   const resultedPrice = parseFloat(String(leadData?.originalContractPrice || leadData?.lastPriceQuoted || 0));
   const rolloutPrice = parseFloat(String(selectedCalculator?.price)) || 0;
   const deltaFromRolloutToResult = calculateDelta(resultedPrice, rolloutPrice);
-  const resultedJobTiers = calculateTiers(selectedCalculator, !!isLowesLead);
+  const resultedJobTiers = calculateTiers(selectedCalculator, !!isLowesLead, preferStoredTotals);
 
   const paymentPlanSequence: string[] = [];
   const rolloutMethod = selectedCalculator?.paymentMethod || selectedCalculator?.inputs?.paymentPlan || '';

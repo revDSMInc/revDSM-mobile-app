@@ -50,6 +50,7 @@ import { logDealAddendumSubmitted } from '../../../utils/activity-log/my-deal-lo
 import { formatLocalUSPhone, toE164USPhone } from '../../../utils/phone-util';
 import { validateEmail } from '../../../utils/validation';
 import { readLeadPhone, readLeadEmail } from '../../../utils/addendum-recipients';
+import { toPayloadText } from '../utils/job-submit-payload';
 // Handles keyboard avoidance on BOTH platforms (its `KeyboardProvider` is mounted in
 // App.tsx). `automaticallyAdjustKeyboardInsets` is iOS-only, and on Android the
 // manifest's `adjustResize` no longer shrinks the window once KeyboardProvider goes
@@ -722,8 +723,23 @@ export function DynamicDealEditScreen({ navigation, route }: DynamicDealEditScre
           (calculatorData as any).title
       );
 
+      // The Deal Center job-submit builds `leadData` with a fixed key set
+      // (`buildSubmitLeadData`). This draft is a DIFFERENT endpoint with a flatter
+      // shape, but the OUTCOME fields it carries should be the same ones — three were
+      // missing here, so an addendum dropped them and the signed record disagreed with
+      // the original submit. Sale/Demo blanking follows the same rule as there.
+      const isSaleResult = (lead?.result || 'Sale') === 'Sale';
+
       const payload: any = {
         result: lead?.result || 'Sale',
+        // ⚠️ Present on the draft record (it reads `oneLeg: null` today) and on the
+        // Deal Center payload, but never sent from here — so every addendum silently
+        // cleared it. Defaults to 'No', matching `buildSubmitLeadData`.
+        oneLeg: toPayloadText(savedOutcome?.oneLeg ?? lead?.oneLeg ?? 'No'),
+        // Demo-only, blank on a Sale — exactly as the Deal Center does. Resolution
+        // chain matches `EditContractDetailsModal`, which reads the same two fields.
+        reason: toPayloadText(isSaleResult ? '' : (savedOutcome?.reason ?? lead?.reason)),
+        explain: toPayloadText(isSaleResult ? '' : (savedOutcome?.explain ?? lead?.explain)),
         lastPriceQuoted: lead?.lastPriceQuoted || '',
         originalContractPrice: String(contractPrice),
         // Normalize to a number-string (web parity): an empty field still saves "0"
