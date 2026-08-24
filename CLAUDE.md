@@ -4165,6 +4165,40 @@ Mobile-only — web calls `trackFieldChange` for the five primary fields and **n
 **`CO-BUYER-ACTIVITY-LOGS.md` (repo root) is the payload reference handed to the backend**, since the
 portal does not render these `meta.action` values yet. Keep it in step with this code.
 
+##### …and the co-buyer Address searches Places, like the primary one
+
+Follow-up: *"see the address in co-buyer, it should be search same like the above one — no suggestion
+showing for co-buyer address field."* The box was a plain `TextInput`; a rep typed `Lahore` and nothing
+was offered, while the primary field directly above it listed suggestions.
+
+It now runs the same machinery — the 600 ms debounce, `fetchPlacePredictions`, the `predictionList`
+rows, the inline spinner — with three differences that matter:
+
+- ⚠️ **ONE prediction list for all three co-buyers, scoped by `coBuyerSearchIndex`.** Only the focused
+  box can be typing, and keying the list to that index is what makes it impossible to drop a suggestion
+  into a DIFFERENT co-buyer's address. The list renders only under `coBuyerSearchIndex === index`.
+- ⚠️ **No `geocodePlaceId` call.** `CoBuyerPayload` carries an address and no coordinates, so the
+  primary field's follow-up geocode would be a request whose result is discarded.
+- **A pick goes through `handleCoBuyerChange`**, so it is debounce-logged exactly like a typed address
+  rather than bypassing the tracker.
+
+⚠️ **`coBuyerSkipSearchRef` is armed in `onChangeText`, NOT in `handleCoBuyerChange`** — the pick
+handler calls that same function, so arming it there would make a chosen suggestion immediately search
+itself and reopen the list underneath showing the address back. Same rule, same reason, as the
+primary's `skipSearchRef`.
+
+⚠️ **`closeCoBuyerAddressSearch()` fires on remove and on ticking "Same address as primary buyer?"**
+The search is scoped by POSITION, so an open list would survive a removal and belong to whoever shifted
+up into that slot; and a mirrored box is read-only, so anything still being offered for it is unpickable.
+
+⚠️ The query reads `coBuyers[i].address` — the RAW typed value, never `coBuyerAddressOf` — so a
+mirrored co-buyer cannot make the primary's address search itself.
+
+tsc 44 (baseline unchanged); `EditCustomerModal.tsx` is at its HEAD eslint baseline (4 warnings,
+0 errors). ⚠️ Needs a device check (this repo cannot render-test): suggestions appearing under the
+co-buyer box, a pick landing in the right co-buyer with two of them on screen, and no stale list left
+behind after Remove.
+
 Also in this pass, on request: **`floatingLabelText` dropped its `fontWeight: '600'`** so the input
 titles render at normal weight, matching web. ⚠️ That weight predates the co-buyer ticket (it is
 `'600'` at `58c577b^` too) — it was not a regression from moving the co-buyer block, so don't go
@@ -4256,6 +4290,78 @@ pre-existing errors) and `DynamicDealEditScreen.tsx` goes 144 → 148 warnings, 
 
 ⚠️ Needs a device check (this repo cannot render-test): that a long measurement label wraps inside the
 card instead of pushing its value off the right edge.
+
+#### …and every combination of a section shares ONE block, edited or added
+
+Follow-up, same screen: *"you set the design but for leaffilter it's showing same, fix that too."* Seven
+loose rows — `LeafFilter · Gutter Profile`, `LeafFilter · LeafFilter Color`,
+`LeafFilter · Measurements · Left Side · 1st Story` … — sat directly above a tidy
+`Fascia Boards · Combination Added` card. Same tab, same kind of edit, two different-looking answers.
+
+**Settled from the captured build (`sale-portal-api-response.txt`), not by reading the labels.** The
+LeafFilter tab holds **four UNLABELLED sections, each carrying ONE combination**
+(`section_1782373742457__section-4`, `section_1782386890583__section-5`, …). So:
+
+- a section whose combination existed already is **PAIRED**, and a pair emits one row per changed
+  field — the loose rows;
+- a section that had none is an **ADD**, and gets the card;
+- `isMulti` is false for every one of them (one combo each), so **no `Combination #N` chip**, and with
+  no section label the prefix falls back to the TAB — every row reads `LeafFilter · <field>` and the
+  label alone cannot tell two gutter sizes apart.
+
+**`groupComboRows` now produces the portal's shape: one bordered panel per section, holding
+`Combination #1`, `Combination #2`, … as tinted tables** (`ComboSectionCard`). An edit's rows carry the
+previous value struck through above the new one (`ComboField.from`, set only on an edit); an add or a
+removal says so in its own eyebrow inside the block.
+
+⚠️ **One panel per section, not one per combination.** The first pass emitted a separate card per
+combination and the reporter sent it straight back — *"you are making 2 blocks, it should be one block
+like web."* Two panels under one heading read as two products. `addBlock` therefore appends to the
+panel already open when the section head matches, and `splitComboHead` strips a trailing
+`Combination #N` from the head so two combinations of the SAME section can merge instead of each
+opening its own.
+
+⚠️ **Merging is by the section HEAD, so two LABELLED sections never merge** — `Vinyl Soffit` and
+`Porch Ceiling` stay separate panels. The LeafFilter sections merge precisely because they are
+unlabelled and all fall back to the tab name, which is also why they looked identical in the first
+place. Tested both ways.
+
+**Blocks are numbered the portal's way**: the authored `Combination #N` chip wins where the diff
+carries one (a section holding several combinations), and the rest are numbered by position — so a
+panel never repeats one title.
+
+⚠️ **The grouping is DISPLAY ONLY and the `BuildChange` rows stay separate.** They are what
+`buildChangeSummary` puts on the addendum **the customer signs** — collapsing them into one row would
+change the signed document. That is also why the helper lives beside the diff rather than replacing it.
+
+⚠️ **`comboKey` (`<groupKey>#<comboIndex>`) is what makes the grouping safe.** With four unlabelled
+sections all rendering `LeafFilter · …`, grouping on the label would merge two different gutter sizes
+into one card. It rides along in the submitted payload as an additive key, like `comboFields`.
+
+⚠️ **A pair that changed only ONE field stays a plain row.** A card holding a single value is heavier
+than the row it replaces, and it keeps an ordinary one-field edit reading exactly as it did before.
+
+⚠️ **The pairs loop now sorts its fields by config `order` too.** They came from
+`new Set([...Object.keys(from), ...Object.keys(to)])`, i.e. neither the order the rep entered nor
+anything stable between two combinations — the same defect the section above fixes for an added
+combination. This **reorders rows within `buildChangeSummary`**; the same rows are present, and the
+order now matches the portal's build card.
+
+⚠️ `groupComboRows` / `commonLabelPrefix` live in `utils/dynamic-deal-diff.ts`, not the screen, for the
+usual reason — `DynamicDealEditScreen.tsx` pulls in React Native and cannot be loaded under jest, and
+the prefix walk is exactly the kind of thing that fails silently (it stops one segment short of
+consuming a label whole, or a row would have no name left).
+
+Verified with 8 tests over the captured shape: the repro (two edited sections folding into ONE panel of
+two combinations, in config order, with the grid cells named), an ADDED combination joining that same
+panel, two labelled sections staying separate, a section's own two combinations keeping their authored
+chips, a removal reporting its own kind inside the block, an edit keeping its struck `from` while an add
+has none, a one-field pair staying a plain row alongside untouched flat rows, and an untouched build
+producing nothing.
+
+tsc 44 (baseline unchanged); `dynamic-deal-diff.ts` is identical to its HEAD eslint baseline (2
+pre-existing errors) and `DynamicDealEditScreen.tsx` is at 147 warnings, all `react-native/no-inline-styles`
+— the only rule that file carries.
 
 ### Lead Center pulls to refresh
 

@@ -316,6 +316,11 @@ export type BuildChangeKind = 'change' | 'added' | 'removed';
 export interface ComboField {
   label: string;
   value: string;
+  /**
+   * The previous value, struck through beside the new one. Set only when the row is
+   * an EDIT of an existing combination; an added/removed one has nothing to compare to.
+   */
+  from?: string;
 }
 
 export interface BuildChange {
@@ -330,6 +335,17 @@ export interface BuildChange {
    * they are what the submitted addendum carries.
    */
   comboFields?: ComboField[];
+  /**
+   * Which COMBINATION this row belongs to, for rows produced by editing an existing
+   * one. Display only — the review groups consecutive rows sharing it into a single
+   * card, so an edited combination reads like an added one instead of scattering
+   * across four unattributed rows.
+   *
+   * ⚠️ The rows themselves stay SEPARATE. They are what `buildChangeSummary` puts on
+   * the addendum the customer signs, so collapsing them here would change the signed
+   * document — the grouping has to live in the renderer.
+   */
+  comboKey?: string;
 }
 export interface BuildChangeGroup {
   vertical: string;
@@ -519,6 +535,136 @@ function matchCombinations(orig: ComboSnapshot[], next: ComboSnapshot[]): ComboM
  * Compare two dynamic job states and return labelled changes grouped by
  * vertical: `[{ vertical, changes: [{ field, from, to, kind }] }]`.
  */
+/**
+ * The review's rendering plan: every combination of one section folded into ONE block,
+ * with each combination inside it, and everything else passed through untouched.
+ *
+ * The LeafFilter tab is the case this exists for. It holds four UNLABELLED sections,
+ * each carrying one combination, so a section the rep FILLED IN scattered into four
+ * rows all reading `LeafFilter · <field>` while a section that had no combination at
+ * all rendered as one tidy `Combination Added` card — same tab, same edit, two
+ * different-looking answers. The portal renders the whole lot as a single section card
+ * holding `Combination #1`, `Combination #2`, … and this produces that shape.
+ *
+ * ⚠️ Display only. The underlying `BuildChange` rows stay separate because they are
+ * what `buildChangeSummary` puts on the addendum the customer signs.
+ *
+ * ⚠️ A pair that changed only ONE field is left as a plain row — a block holding a
+ * single value is heavier than the row it replaces, and it keeps an ordinary
+ * one-field edit reading exactly as it did before.
+ */
+export interface ComboBlock {
+  /** "Combination #1" — the authored chip when the diff carries one, else its position. */
+  title: string;
+  kind: BuildChangeKind;
+  rows: ComboField[];
+}
+
+export type ReviewEntry =
+  | { change: BuildChange; blocks?: undefined; label?: undefined }
+  | { change?: undefined; blocks: ComboBlock[]; label: string };
+
+/**
+ * Split `"LeafFilter · Combination #2"` into its section head and its chip.
+ *
+ * The chip is only present when a section holds more than one combination, so it is the
+ * authored number where there is one — and where there is not, the block is numbered by
+ * its position instead. Both are needed: without the split, two combinations of the SAME
+ * section would have different heads and would never merge into one block.
+ */
+function splitComboHead(label: string): { head: string; chip: string } {
+  const parts = label.split(' · ');
+  const last = parts[parts.length - 1] || '';
+  if (/^Combination #\d+$/.test(last)) {
+    return { head: parts.slice(0, -1).join(' · '), chip: last };
+  }
+  return { head: label, chip: '' };
+}
+
+export function groupComboRows(changes: BuildChange[]): ReviewEntry[] {
+  const out: ReviewEntry[] = [];
+
+  // Consecutive blocks under the SAME section head join the block already open, so a
+  // section reads as one card however many of its combinations the rep touched.
+  const addBlock = (head: string, block: ComboBlock) => {
+    const last = out[out.length - 1];
+    if (last?.blocks && last.label === head) {
+      last.blocks.push(block);
+      return;
+    }
+    out.push({ label: head, blocks: [block] });
+  };
+
+  let i = 0;
+  while (i < changes.length) {
+    const change = changes[i];
+
+    // An EDITED combination — a run of rows sharing one `comboKey`.
+    if (change.comboKey) {
+      let j = i;
+      while (j < changes.length && changes[j].comboKey === change.comboKey) j += 1;
+      const run = changes.slice(i, j);
+      i = j;
+      if (run.length < 2) {
+        run.forEach((c) => out.push({ change: c }));
+        continue;
+      }
+      // Every row of one combination shares the same `<section> · [Combination #N] · `
+      // prefix, so the common head names the block and the remainder names each row.
+      const prefix = commonLabelPrefix(run.map((c) => c.field));
+      const { head, chip } = splitComboHead(prefix);
+      addBlock(head, {
+        title: chip,
+        kind: 'change',
+        rows: run.map((c) => ({
+          label: c.field.slice(prefix ? prefix.length + 3 : 0) || c.field,
+          value: c.to,
+          from: c.from,
+        })),
+      });
+      continue;
+    }
+
+    // A whole combination added or removed — already broken out by the diff.
+    if (change.comboFields?.length && (change.kind === 'added' || change.kind === 'removed')) {
+      // `field` is `<section> · Combination Added`; the trailing segment is the
+      // operation, which the block's own eyebrow says, so it is dropped from the head.
+      const parts = change.field.split(' · ');
+      const head = parts.length > 1 ? parts.slice(0, -1).join(' · ') : change.field;
+      addBlock(head, { title: '', kind: change.kind, rows: change.comboFields });
+      i += 1;
+      continue;
+    }
+
+    out.push({ change });
+    i += 1;
+  }
+
+  // Number the blocks the portal's way. An authored chip always wins; the rest are
+  // numbered by position, so a section whose combinations carry none still reads
+  // `Combination #1` / `Combination #2` rather than repeating one title.
+  out.forEach((entry) => {
+    entry.blocks?.forEach((block, idx) => {
+      if (!block.title) block.title = `Combination #${idx + 1}`;
+    });
+  });
+
+  return out;
+}
+
+/** The longest ` · `-separated head every label starts with. */
+function commonLabelPrefix(labels: string[]): string {
+  const parts = labels.map((l) => l.split(' · '));
+  const head: string[] = [];
+  for (let i = 0; i < parts[0].length - 1; i += 1) {
+    const seg = parts[0][i];
+    // `- 1` above: never consume a label whole, or its row would have no name left.
+    if (!parts.every((p) => p.length > i + 1 && p[i] === seg)) break;
+    head.push(seg);
+  }
+  return head.join(' · ');
+}
+
 export function computeDynamicBuildChanges(
   originalState: any,
   editedState: any,
@@ -594,19 +740,36 @@ export function computeDynamicBuildChanges(
       const from = origCombos[oi].values;
       const to = nextCombos[ni].values;
       const comboLabel = isMulti ? `Combination #${nextCombos[ni].number}` : '';
-      const fieldIds = new Set([...Object.keys(from), ...Object.keys(to)]);
-      fieldIds.forEach((fieldKey) => {
-        const fromVal = from[fieldKey] || '';
-        const toVal = to[fieldKey] || '';
-        if (fromVal === toVal) return;
-        const resolved = resolveKeyMeta(scopeId, fieldKey, labels);
-        if (!resolved) return;
-        push(resolved.meta, {
-          field: formatChangeFieldLabel(resolved.meta, comboLabel, resolved.cellLabel),
-          from: fromVal || '—',
-          to: toVal || '—',
+      // Unique per (section, combination). A tab can hold several UNLABELLED sections
+      // that each carry one combination — the LeafFilter tab has four — so every one of
+      // their rows reads `LeafFilter · <field>` and the label alone cannot tell them
+      // apart. Without this key the renderer would merge two gutter sizes into one card.
+      const comboKey = `${groupKey}#${ni}`;
+      // ⚠️ CONFIG order, not the stored object's. The keys come from two combinations
+      // merged into a Set, so their order is neither what the rep entered nor stable
+      // between two combinations of the same section — the same defect `comboFields`
+      // fixes for an added combination. Sorting here keeps an EDITED combination reading
+      // identically to an added one and to the portal's own build card.
+      const fieldKeys = [...new Set([...Object.keys(from), ...Object.keys(to)])];
+      fieldKeys
+        .map((fieldKey, i) => ({ fieldKey, i, resolved: resolveKeyMeta(scopeId, fieldKey, labels) }))
+        .sort(
+          (a, b) =>
+            (a.resolved?.meta.order ?? Number.MAX_SAFE_INTEGER) -
+              (b.resolved?.meta.order ?? Number.MAX_SAFE_INTEGER) || a.i - b.i
+        )
+        .forEach(({ fieldKey, resolved }) => {
+          const fromVal = from[fieldKey] || '';
+          const toVal = to[fieldKey] || '';
+          if (fromVal === toVal) return;
+          if (!resolved) return;
+          push(resolved.meta, {
+            field: formatChangeFieldLabel(resolved.meta, comboLabel, resolved.cellLabel),
+            from: fromVal || '—',
+            to: toVal || '—',
+            comboKey,
+          });
         });
-      });
     });
 
     // An addendum is "the original agreement PLUS what we added here and MINUS
